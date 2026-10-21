@@ -121,6 +121,7 @@ class FoldedQuoteProjector:
         self._pending = {}
         self._cached = OrderedDict()
         self._preview_bases = OrderedDict()
+        self._preview_generation = 0
         self._recovery_retry_after = OrderedDict()
         self._slots = asyncio.Semaphore(2)
         self._recovery_slots = asyncio.Semaphore(RECOVERY_MAX_SLOTS)
@@ -131,14 +132,21 @@ class FoldedQuoteProjector:
         self._last_load_started_at = float("-inf")
 
     def project_preview(self, event_id, frame, *, members, floors, elapsed_ms=0):
-        base = self._preview_bases.get(event_id)
+        key = (event_id, frozenset(str(member) for member in members))
+        base = self._preview_bases.get(key)
         if base is None:
             return None
-        self._preview_bases.move_to_end(event_id)
+        self._preview_bases.move_to_end(key)
         return base.project(frame, members=members, floors=floors, elapsed_ms=elapsed_ms)
 
     def forget_preview_base(self, event_id):
-        self._preview_bases.pop(event_id, None)
+        # One scalar fences pre-recovery loads without an unbounded event map.
+        # Other events retain their already warm bases; an in-flight load may
+        # conservatively abstain from warming until its next fresh read.
+        self._preview_generation += 1
+        for key in list(self._preview_bases):
+            if key[0] == event_id:
+                self._preview_bases.pop(key)
 
     def _dark(self, now):
         since = self._last_success_at
@@ -148,6 +156,7 @@ class FoldedQuoteProjector:
 
     async def _load(self, event_id, origin_id, revision, fresh, deadline):
         quote = None
+        preview_generation = self._preview_generation
         load_started = asyncio.get_running_loop().time()
         try:
             async with asyncio.timeout_at(deadline):
@@ -162,16 +171,21 @@ class FoldedQuoteProjector:
         # Record once per actual load, not once per coalesced reader.
         if quote is not None:
             base = getattr(quote, "preview_base", None)
+            if base is not None and preview_generation != self._preview_generation:
+                # A post-boundary caller may have joined this older work. It
+                # still owes a warm read; None keeps the route's retry alive.
+                return None
             if base is not None:
-                held_base = self._preview_bases.get(event_id)
-                # A slow older read cannot replace a dominating base. Changed
-                # membership requires a new stream's exact membership check.
+                key = (event_id, frozenset(base.revision))
+                held_base = self._preview_bases.get(key)
+                # Memberships have separate authority: a late old-fold read
+                # cannot replace a new stream's base. Within one membership,
+                # preserve the existing revision-domination fence.
                 if (held_base is None or (
-                        set(base.revision) == set(held_base.revision)
-                        and all(base.revision[key] >= value
+                        all(base.revision[key] >= value
                                 for key, value in held_base.revision.items()))):
-                    self._preview_bases[event_id] = base
-                    self._preview_bases.move_to_end(event_id)
+                    self._preview_bases[key] = base
+                    self._preview_bases.move_to_end(key)
                     while len(self._preview_bases) > MAX_CACHED:
                         self._preview_bases.popitem(last=False)
             if self._dark(now):

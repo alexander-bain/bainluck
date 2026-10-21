@@ -599,6 +599,13 @@ async def _stream(
                 control, retained = recovery_coverage.result()  # Failure closes.
                 recovery_coverage = None
                 note_floors(control.get("removal_rev"))
+                if preview_on and len(subscription.subscriptions) > 1:
+                    # Rewarm even when no committed revision changed during
+                    # reconnect. Retained-frame dedup must not strand previews.
+                    origin, revision = next(iter(control["removal_rev"].items()))
+                    pending_quote_control = ({
+                        "event_id": int(origin), "rev": {origin: revision},
+                    }, control)
                 if recovery_force or control["custody_id"] != last_state_control:
                     yield sse_encode(json.dumps(control), event="reconcile")
                     last_state_control = control["custody_id"]
@@ -684,6 +691,9 @@ async def _stream(
             if payload is not None:
                 frame = parse_frame(payload)
                 if frame is not None and is_preview_frame(frame):
+                    from app.utils.live_fanout import mailbox_age_ms
+
+                    elapsed_ms = mailbox_age_ms(payload)
                     # #10090: a provisional blend has no revision and is
                     # never a `probability` frame. Forwarded under its own
                     # event name only for a canary event's unfolded page;
@@ -705,6 +715,7 @@ async def _stream(
                             project_preview = getattr(hub, "project_folded_preview", None)
                             projected = project_preview(
                                 event_id, frame, members=list(subscription.subscriptions), floors=preview_floors,
+                                elapsed_ms=elapsed_ms,
                             ) if callable(project_preview) else None
                             if projected is not None:
                                 active_preview_origin = origin_id

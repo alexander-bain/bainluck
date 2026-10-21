@@ -418,6 +418,9 @@ export function createLiveStreamController(
       }
       if (typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation <= recoveryGeneration) return;
       recoveryGeneration = generation;
+      // The hub has discarded its provisional authority. Withdraw the held
+      // headline/chart/clock before requesting committed recovery coverage.
+      onPreviewReset?.();
       // Recovery signals delivery debt, never fresh data or a new quote clock.
       onRecovery?.(++recoveryNotifications);
     });

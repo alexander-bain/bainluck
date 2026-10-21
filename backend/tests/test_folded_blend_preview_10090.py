@@ -190,3 +190,93 @@ async def test_route_keeps_reading_previews_and_terminal_while_projection_waits(
         await stream.aclose()
     assert cancelled.is_set()
     assert len(hub.released) == 3
+
+
+@pytest.mark.parametrize("as_bytes", [False, True])
+async def test_actual_mailbox_route_subtracts_age_and_refuses_expired_preview(monkeypatch, as_bytes):
+    from app.routes import event_stream as route
+    from app.utils import live_fanout
+    from app.utils.folded_live_quote import FoldedQuoteProjector
+    from tests.test_folded_event_stream_invalidation_837 import Hub, Request
+
+    _, _, _, base, preview, _, _ = rig()
+    hub = Hub()
+    hub._quote_projector = FoldedQuoteProjector()
+    hub._quote_projector._preview_bases[(1, frozenset(base.revision))] = base
+    hub.project_folded_preview = live_fanout.LiveFanout.project_folded_preview.__get__(hub)
+    clock = [100.]
+    monkeypatch.setattr(live_fanout, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(live_fanout, "fanout", lambda: hub)
+    monkeypatch.setattr(route, "preview_route_events", lambda: {1})
+    monkeypatch.setattr(route, "latest_frames", lambda ids: asyncio.sleep(0, result=[]))
+    monkeypatch.setattr(route, "_current_reconcile", lambda *args: asyncio.sleep(0, result={
+        "event_id": 1, "custody_id": "state:test", "removal_rev": base.revision,
+    }))
+    stream = route._stream(1, Request(), [1, 2, 3])
+    try:
+        await anext(stream)
+        await anext(stream)
+        assert "event: reconcile" in await asyncio.wait_for(anext(stream), 1)
+        sub = hub.subscriptions["live:event:2"]
+        payload = json.dumps(preview)
+        sub.offer(payload.encode() if as_bytes else payload)
+        clock[0] += .125
+        chunk = await asyncio.wait_for(anext(stream), 1)
+        assert chunk.startswith("event: preview\n")
+        actual = json.loads(chunk.split("data: ")[1])
+        assert actual["preview"]["ttl_ms"] == preview["preview"]["ttl_ms"] - 125
+        # Suspend the generator at its SSE yield; the queued claim expires
+        # before the downstream reader asks for the next frame.
+        sub.offer(payload.encode() if as_bytes else payload)
+        clock[0] += preview["preview"]["ttl_ms"] / 1000 + .1
+        sub.offer(live_fanout.CLOSED)
+        assert "event: reconnect" in await asyncio.wait_for(anext(stream), 1)
+    finally:
+        await stream.aclose()
+
+
+@pytest.mark.parametrize("confirmation_only", [False, True])
+async def test_recovery_rewarms_same_revision_without_a_new_committed_frame(monkeypatch, confirmation_only):
+    from app.routes import event_stream as route
+    from app.utils import live_fanout
+    from tests.test_folded_event_stream_invalidation_837 import Hub, Request
+
+    _, _, _, base, preview, _, _ = rig()
+    hub = Hub()
+    warm = [False]
+    loads = []
+
+    async def load(*args):
+        loads.append(args)
+        warm[0] = True
+        return {"event_id": 1, "status": "live", "blend_fold_revision": base.revision}
+
+    hub.project_recovery_quote = load
+    hub.forget_folded_preview = lambda eid: warm.__setitem__(0, False)
+    hub.project_folded_preview = lambda eid, frame, **kw: base.project(frame, **kw) if warm[0] else None
+    monkeypatch.setattr(live_fanout, "fanout", lambda: hub)
+    monkeypatch.setattr(route, "preview_route_events", lambda: {1})
+    monkeypatch.setattr(route, "latest_frames", lambda ids: asyncio.sleep(0, result=[]))
+    monkeypatch.setattr(route, "_current_reconcile", lambda eid, ids: asyncio.sleep(0, result={
+        "event_id": 1, "custody_id": "state:unchanged",
+        "removal_rev": {str(member): base.revision[str(member)] for member in ids},
+    }))
+    stream = route._stream(1, Request(), [1, 2, 3])
+    try:
+        await anext(stream)
+        await anext(stream)
+        assert "event: reconcile" in await asyncio.wait_for(anext(stream), 1)
+        assert "event: folded_probability" in await asyncio.wait_for(anext(stream), 1)
+        assert len(loads) == 1
+        hub.subscriptions["live:event:2"].offer(
+            live_fanout.CONFIRMED if confirmation_only else live_fanout.Recovery(1))
+        if not confirmation_only:
+            assert "event: resync" in await asyncio.wait_for(anext(stream), 1)
+            assert not warm[0]
+            assert "event: reconcile" in await asyncio.wait_for(anext(stream), 1)
+        assert "event: folded_probability" in await asyncio.wait_for(anext(stream), 1)
+        assert len(loads) == 2 and warm[0]
+        hub.subscriptions["live:event:2"].offer(json.dumps(preview))
+        assert "event: preview" in await asyncio.wait_for(anext(stream), 1)
+    finally:
+        await stream.aclose()
