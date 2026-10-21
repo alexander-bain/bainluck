@@ -381,6 +381,11 @@ struct OddsChartView: View {
     /// `ScoreDifferentialChartView`, the other chart on this page, has taken the
     /// same `event.sport` since it was written.
     var sportKey: String?
+    /// #9483 tennis (Design C3) — the page's scoreboard (`event.homeScore` /
+    /// `awayScore`; sets in tennis, `SportVocab.scoreboardUnit`). Read only by
+    /// the full-size tennis header's result line, never by a reading.
+    var homeScore: Int?
+    var awayScore: Int?
     /// True while the live push stream is delivering (#2687). Read only by the
     /// fullscreen chart, which covers the page's toolbar and so carries the
     /// page's one freshness status itself (#8320).
@@ -459,6 +464,10 @@ struct OddsChartView: View {
     /// Only the crosshair/readout observe selection. A reference held in State
     /// does not subscribe this data-plot owner to finger movement (#8651).
     @State private var selection: OddsChartSelection
+    /// #9483 tennis — the reading a lifted finger (or opening full size) holds,
+    /// shared by the inline chart and its cover; held as `selection` is, so only
+    /// the panel and its marker observe it.
+    @State private var tennisPin = TennisReadingPin9483()
     @StateObject private var vm: OddsChartViewModel
     @State private var isFullscreen = false
     /// The drawn plot area's width, reported by each chart's own overlay. The
@@ -523,9 +532,84 @@ struct OddsChartView: View {
                                 pageGaveCard: Bool) -> ChartReadoutContext9483 {
         let source = Self.readoutSource(in: dataPoints, pageGaveCard: pageGaveCard)
             ?? Self.primarySource(in: dataPoints)
+        // #9483 tennis — no "Pregame" badge on a tennis reading: the cut is at
+        // best a scheduled start, and the tennis panel says "Before scheduled
+        // start" where it is one (`TennisChartReading9483`).
+        if TennisChartReading9483.applies(sportKey: sportKey) {
+            return .chart(playStart: nil, gameFinished: EventState.isFinished(status),
+                          readoutPoints: dataPoints.filter { $0.source == source },
+                          checkpoints: checkpoints)
+        }
         return .chart(playStart: sinceStartDate, gameFinished: EventState.isFinished(status),
                       readoutPoints: dataPoints.filter { $0.source == source },
                       checkpoints: checkpoints)
+    }
+
+    /// #9483 tennis — the chart's readout series as the tennis panel reads it,
+    /// or nil off tennis. Taken before the range cut, so a held reading and its
+    /// baseline survive a switch between All and Since Start; after the
+    /// finished-match clip and the page's original window, so neither is
+    /// post-match drift. Nil under a checkpoint mount (#4974): a scrub there
+    /// lands on a stored checkpoint, and that chart keeps its own readout.
+    private func tennisSeries(enriched: [ChartDataPoint],
+                              checkpoints: PublicationCheckpointMount4974?) -> TennisChartReading9483.Series? {
+        guard TennisChartReading9483.applies(sportKey: sportKey), checkpoints == nil else { return nil }
+        var points = enriched
+        if EventState.isFinished(status), let endDate = gameEndDate {
+            points = points.filter { $0.date <= endDate }
+        }
+        if let legacyDataDomain {
+            points = points.filter { SharedChartWindow.contains($0.date, in: legacyDataDomain) }
+        }
+        return TennisChartReading9483.series(
+            eventId: eventId, points: points,
+            source: Self.readoutSource(in: points, pageGaveCard: readout != nil),
+            scheduledStart: kickoffDate, gameStart: gameStartDate,
+            finished: EventState.isFinished(status), history: vm.history)
+    }
+
+    private func tennisPanel(_ series: TennisChartReading9483.Series, expanded: Bool) -> TennisReadingPanel9483 {
+        TennisReadingPanel9483(pin: tennisPin, series: series, homeName: homeShort, awayName: awayShort,
+                               colors: teamColors, expanded: expanded)
+    }
+
+    /// #9483 tennis (Design C1) — both competitors' lines: the paired drawing
+    /// the NFL/NBA/MLB-final pages use, in the two team colours, admitted by
+    /// the tennis panel's own source contract instead of the balance ink's
+    /// (`TennisChartReading9483.drawsBothCompetitors`). `supplied` is the
+    /// consensus's own away sides, empty over the blend, whose second line is
+    /// its complement. Nil off tennis and under a checkpoint mount (#4974),
+    /// whose layer replaces the blend's line.
+    private func tennisPairedLines(
+        for dataPoints: [ChartDataPoint],
+        checkpoints: PublicationCheckpointMount4974?
+    ) -> (colors: (home: Color, away: Color), supplied: [Date: Double])? {
+        guard TennisChartReading9483.applies(sportKey: sportKey), checkpoints == nil, let teamColors else { return nil }
+        let drawn = Self.defaultVisibleSources(in: dataPoints)
+        let supplied = drawn == ["consensus"] ? TennisChartReading9483.suppliedAways(in: vm.history) : [:]
+        guard TennisChartReading9483.drawsBothCompetitors(drawnSources: drawn, points: dataPoints,
+                                                          supplied: supplied) else { return nil }
+        return (colors: (home: teamColors.home, away: teamColors.away), supplied: supplied)
+    }
+
+    /// #9483 tennis (Design C3) — the full-size header: the match, and once it
+    /// is over, Final with the scoreboard's result in its own unit.
+    private var tennisHeader: some View {
+        VStack(spacing: 1) {
+            Text(TennisMatchContext9483.matchup(home: homeShort, away: awayShort))
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+            if let result = TennisMatchContext9483.result(
+                finished: EventState.isFinished(status), homeScore: homeScore, awayScore: awayScore,
+                sportKey: sportKey) {
+                Text(result)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 
     /// Show the All / Since Start picker only when the game has started
@@ -587,6 +671,8 @@ struct OddsChartView: View {
          homeTeamLogo: String? = nil, awayTeamLogo: String? = nil,
          homeTeamAbbrev: String? = nil, awayTeamAbbrev: String? = nil,
          sportKey: String? = nil,
+         homeScore: Int? = nil,
+         awayScore: Int? = nil,
          refreshStreaming: Bool = false,
          liveUpdateStatus: LiveUpdateStatus = .hidden,
          priceActivity: LivePriceActivity? = nil,
@@ -619,6 +705,8 @@ struct OddsChartView: View {
         self.homeTeamAbbrev = homeTeamAbbrev
         self.awayTeamAbbrev = awayTeamAbbrev
         self.sportKey = sportKey
+        self.homeScore = homeScore
+        self.awayScore = awayScore
         self.refreshStreaming = refreshStreaming
         self.liveUpdateStatus = liveUpdateStatus
         self.priceActivity = priceActivity
@@ -863,6 +951,7 @@ struct OddsChartView: View {
                 let checkpoints = checkpointMount(for: dataPoints)
                 let moments = checkpoints?.moments(from: history.moments)
                     ?? Self.chartMoments(from: history.moments, points: dataPoints)
+                let tennis = tennisSeries(enriched: enrichedPoints, checkpoints: checkpoints)
                 // #3278 — "drawable", not "non-empty". See `hasDrawableLine`: one
                 // snapshot in the window rendered the whole frame around no line.
                 if !Self.chartIsDrawable(dataPoints, mount: checkpoints) {
@@ -934,7 +1023,8 @@ struct OddsChartView: View {
                                   floatingCard: Self.inlineScrubCard(
                                     page: readout, homeTeam: homeTeamName, awayTeam: awayTeamName,
                                     colors: teamColors, homeLogo: homeTeamLogo, awayLogo: awayTeamLogo,
-                                    finished: EventState.isFinished(status)))
+                                    finished: EventState.isFinished(status)),
+                                  tennis: tennis)
                     }
                     .frame(height: chartHeight)
 
@@ -957,6 +1047,14 @@ struct OddsChartView: View {
                         .padding(.leading, chartTeamGutterWidth)
                         .padding(.top, 2)
                         .frame(maxWidth: .infinity, alignment: .leading)
+
+                    // #9483 tennis — the held reading, below the plot so its
+                    // arrival on a lifted finger never moves the chart (#925).
+                    if let tennis {
+                        tennisPanel(tennis, expanded: false)
+                            .padding(.leading, chartTeamGutterWidth)
+                            .padding(.top, 6)
+                    }
                 }
             }
         }
@@ -984,6 +1082,7 @@ struct OddsChartView: View {
                     let checkpoints = checkpointMount(for: dataPoints)
                     let moments = checkpoints?.moments(from: history.moments)
                         ?? Self.chartMoments(from: history.moments, points: dataPoints)
+                    let tennis = tennisSeries(enriched: enrichedPoints, checkpoints: checkpoints)
                     // #3278 — the same drawability test the inline chart uses. This
                     // branch used to render literally nothing (a blank sheet under a
                     // nav bar) when there were no points, and the full frame around
@@ -1026,7 +1125,13 @@ struct OddsChartView: View {
                             // has a scoring play, so a 0–0 game opened fullscreen
                             // printed no probability at all (Patriots at Jaguars,
                             // 14782706, NE 42% → 39% in the first quarter).
-                            if let card = Self.fullscreenReadout(
+                            // #9483 tennis — the held reading above its dated
+                            // baseline, in the card's place; opening holds the
+                            // reading shown, so the return finds the same one.
+                            if let tennis {
+                                TennisScrubbedReadingPanel9483(selection: selection,
+                                                               panel: tennisPanel(tennis, expanded: true))
+                            } else if let card = Self.fullscreenReadout(
                                 page: readout, homeTeam: homeTeamName, awayTeam: awayTeamName,
                                 colors: teamColors, homeLogo: homeTeamLogo, awayLogo: awayTeamLogo) {
                                 OddsChartSelectionReadout(selection: selection,
@@ -1086,7 +1191,7 @@ struct OddsChartView: View {
                                           periodMarkers: periodMarkers, moments: moments,
                                           checkpoints: checkpoints,
                                           plotWidth: $fullscreenPlotWidth, sharesPageAxis: false,
-                                          pageGaveCard: readout != nil)
+                                          pageGaveCard: readout != nil, tennis: tennis)
                             }
                             legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
                             momentCaption(moments)
@@ -1111,6 +1216,12 @@ struct OddsChartView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
+                // #9483 tennis (Design C3) — the match and its result stay in
+                // view full size, in the bar's own space, not a card that
+                // takes the chart's.
+                if TennisChartReading9483.applies(sportKey: sportKey) {
+                    ToolbarItem(placement: .principal) { tennisHeader }
+                }
                 // #9185 — a word, not a grey `xmark` in a glass circle: Alex
                 // read that circle as a control that did nothing.
                 ToolbarItem(placement: .confirmationAction) {
@@ -1651,7 +1762,8 @@ struct OddsChartView: View {
         liveSplit: LiveEdgeSplit? = nil,
         balanceSource: String? = nil,
         checkpoints: PublicationCheckpointMount4974? = nil,
-        paired: (home: Color, away: Color)? = nil
+        paired: (home: Color, away: Color)? = nil,
+        tennisSupplied: [Date: Double]? = nil
     ) -> some ChartContent {
         let _ = vm.onPlotBuild?()
         // 50% reference line (single 0–100 axis: even is 0.5)
@@ -1723,32 +1835,41 @@ struct OddsChartView: View {
                     }
                     // #9483 — the away team's line over the same run, in its own
                     // series so no run is ever joined to its neighbour (#7878).
+                    // Tennis (Design C1) takes it by source: the consensus line
+                    // breaks wherever it supplied no away side, and each piece
+                    // is its own series too.
                     if let paired {
-                        let awayRun = PairedWinLines9483.awayRun(segment)
-                        ForEach(Array(awayRun.enumerated()), id: \.offset) { _, vertex in
-                            LineMark(
-                                x: .value("Time", vertex.date),
-                                y: .value("Win probability", vertex.probability),
-                                series: .value("Source", "\(source)#away#\(index)")
-                            )
-                            .foregroundStyle(paired.away)
-                            .lineStyle(stroke)
-                            .interpolationMethod(.linear)
-                        }
-                        if segment.count == 1, index != split?.continuedRun, let only = awayRun.first {
-                            PointMark(
-                                x: .value("Time", only.date),
-                                y: .value("Win probability", only.probability)
-                            )
-                            .foregroundStyle(paired.away)
-                            .symbolSize(18)
+                        let awayRuns = tennisSupplied.map {
+                            TennisChartReading9483.awayRuns(segment, source: source, supplied: $0)
+                        } ?? [PairedWinLines9483.awayRun(segment)]
+                        ForEach(Array(awayRuns.enumerated()), id: \.offset) { piece, awayRun in
+                            ForEach(Array(awayRun.enumerated()), id: \.offset) { _, vertex in
+                                LineMark(
+                                    x: .value("Time", vertex.date),
+                                    y: .value("Win probability", vertex.probability),
+                                    series: .value("Source", "\(source)#away#\(index)#\(piece)")
+                                )
+                                .foregroundStyle(paired.away)
+                                .lineStyle(stroke)
+                                .interpolationMethod(.linear)
+                            }
+                            if awayRun.count == 1, !(segment.count == 1 && index == split?.continuedRun),
+                               let only = awayRun.first {
+                                PointMark(
+                                    x: .value("Time", only.date),
+                                    y: .value("Win probability", only.probability)
+                                )
+                                .foregroundStyle(paired.away)
+                                .symbolSize(18)
+                            }
                         }
                     }
                 }
                 // #9483 — the live edge's last segment from the away side. The
                 // home tail is the overlay's (`LiveChartEdgeMarker`); this one is
                 // drawn in the plot, ending at the same instant.
-                if let paired, let split {
+                if let paired, let split,
+                   tennisSupplied == nil || TennisChartReading9483.drawsAwayTail(source: source) {
                     let tail = PairedWinLines9483.awayTail(split.tail)
                     ForEach(Array(tail.enumerated()), id: \.offset) { _, vertex in
                         LineMark(
@@ -1836,7 +1957,8 @@ struct OddsChartView: View {
                            periodMarkers: [PeriodMarker], moments: [ChartMoment],
                            checkpoints: PublicationCheckpointMount4974? = nil,
                            plotWidth: Binding<CGFloat>, sharesPageAxis: Bool,
-                           pageGaveCard: Bool, floatingCard: GamePlayCardView? = nil) -> some View {
+                           pageGaveCard: Bool, floatingCard: GamePlayCardView? = nil,
+                           tennis: TennisChartReading9483.Series? = nil) -> some View {
         // Filter period markers to visible data range
         let visibleMarkers: [PeriodMarker]
         if let minDate = dataPoints.map(\.date).min(),
@@ -1877,7 +1999,9 @@ struct OddsChartView: View {
             ? balancePlan(dataPoints: dataPoints, liveSplit: liveSplit, domain: domain) : nil
         // #9483 — on an NFL page the admitted pair is drawn as two team lines
         // instead of the balance ink: the same admission, the same number.
-        let paired = pairedLineColors(admitted: balance)
+        // #9483 tennis (Design C1) — the same two lines, by the tennis contract.
+        let tennisPaired = tennisPairedLines(for: dataPoints, checkpoints: checkpoints)
+        let paired = tennisPaired?.colors ?? pairedLineColors(admitted: balance)
         let ink = paired == nil ? balance : nil
         let balanceColors = ink == nil ? nil : teamColors
 
@@ -1887,7 +2011,8 @@ struct OddsChartView: View {
                          liveSplit: liveSplit,
                          balanceSource: ink == nil ? nil : Self.primarySource(in: dataPoints),
                          checkpoints: checkpoints,
-                         paired: paired)
+                         paired: paired,
+                         tennisSupplied: tennisPaired?.supplied)
         }
         .chartYScale(domain: yMin...yMax)
         .chartXScale(domain: domain)
@@ -1968,7 +2093,8 @@ struct OddsChartView: View {
                     // (a scrub hides it, as it hides the home number) and draws
                     // only where it covers neither line's newest move nor the
                     // home number; otherwise the named keys carry it.
-                    if let paired, let label = pairedAwayLabel9483, !label.isEmpty {
+                    if let paired, let label = pairedAwayLabel9483, !label.isEmpty,
+                       tennisPaired == nil || TennisChartReading9483.drawsAwayTail(source: liveSplit.source) {
                         let awayTail = PairedWinLines9483.awayTail(liveSplit.tail)
                         if let tip = awayTail.last {
                             PairedAwayEndpointLabel9483(
@@ -2008,6 +2134,12 @@ struct OddsChartView: View {
                         .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
+                }
+                if let tennis {
+                    TennisHeldReadingMarker9483(pin: tennisPin, selection: selection, series: tennis,
+                                                proxy: proxy, plotFrame: plotFrame,
+                                                color: teamColors?.home ?? .accentColor,
+                                                awayColor: tennisPaired?.colors.away)
                 }
                 OddsChartSelectionOverlay(selection: selection, proxy: proxy, plotFrame: plotFrame,
                                           dataPoints: dataPoints, homeShort: homeShort,
@@ -2052,6 +2184,11 @@ struct OddsChartView: View {
                     },
                     holdsTheScrollStill: { selection.holdsTheScrollStill },
                     onEnd: {
+                        // #9483 tennis — the lifted finger holds the observation
+                        // it was reading, or the break it was over.
+                        if let tennis, let date = selection.date {
+                            tennisPin.hold(tennis.inspect(at: date))
+                        }
                         selection.end()
                     }
                 )
@@ -2127,6 +2264,9 @@ struct OddsChartView: View {
     /// #9483 — `pairedLineColors(admitted:)` for a whole point set, read the
     /// way the legend reads it (no checkpoint mount).
     private func pairedLineColors(for dataPoints: [ChartDataPoint]) -> (home: Color, away: Color)? {
+        if TennisChartReading9483.applies(sportKey: sportKey) {
+            return tennisPairedLines(for: dataPoints, checkpoints: checkpointMount(for: dataPoints))?.colors
+        }
         guard MLBFinalPage11284.adoptsPairedPage(sportKey: sportKey, status: status) else { return nil }
         let domain = xAxisDomain(for: dataPoints)
         return pairedLineColors(admitted: balancePlan(
@@ -2224,7 +2364,9 @@ struct OddsChartView: View {
                                    liveSplit: liveEdgeSplit(dataPoints: dataPoints, domain: domain),
                                    domain: domain)
         // #9483 — a paired chart's key is its two teams, each in its line's colour.
-        let paired = pairedLineColors(admitted: admitted)
+        let paired = (TennisChartReading9483.applies(sportKey: sportKey)
+            ? tennisPairedLines(for: dataPoints, checkpoints: checkpointMount(for: dataPoints))?.colors : nil)
+            ?? pairedLineColors(admitted: admitted)
         let inkedColors = admitted == nil ? nil : teamColors
         // (`pairedLineColors(for:)` is this same reading, for the gutter.)
 

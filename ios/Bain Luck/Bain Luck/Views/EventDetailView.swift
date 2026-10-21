@@ -418,6 +418,10 @@ struct EventDetailView: View {
                                          homeTeamAbbrev: event.homeTeamData?.abbreviation,
                                          awayTeamAbbrev: event.awayTeamData?.abbreviation,
                                          sportKey: event.sport,
+                                         // #9483 tennis (Design C3) — the scoreboard,
+                                         // for the full-size header's result line.
+                                         homeScore: event.homeScore,
+                                         awayScore: event.awayScore,
                                          // #8320 — the page's one decision, so the
                                          // fullscreen dot cannot claim a push the
                                          // toolbar does not.
