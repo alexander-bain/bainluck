@@ -212,12 +212,13 @@ final class FoldedBlendPreview10090Tests: XCTestCase {
     }
 
     private func v2Wire(_ sequence: Int = 1, session: String = "s1", kind: String = "blend",
-                        authority: [String: Any]? = nil, ttl: Int = 1_000) -> [String: Any] {
+                        authority: [String: Any]? = nil, ttl: Int = 1_000,
+                        base: [String: Int] = ["4242": 10, "4243": 20]) -> [String: Any] {
         ["event_id": id, "p": kind == "blend" ? 0.65 : NSNull(), "p_away": 0.2,
          "sport": "soccer_epl", "status": "live", "display_observed_at": observed,
          "preview": ["kind": kind, "folded_version": 2, "fold_session": session, "fold_seq": sequence,
                      "ttl_ms": kind == "blend" ? ttl : 0,
-                     "base_fold_revision": ["4242": 10, "4243": 20],
+                     "base_fold_revision": base,
                      "origin_authority": authority ?? ["4242": origin(100, 2), "4243": origin(2, 1)]]]
     }
 
@@ -360,6 +361,122 @@ final class FoldedBlendPreview10090Tests: XCTestCase {
         XCTAssertEqual(current.held?.expiresAt, 101)
         let reset = try opened(BlendPreview.readerReset(prior), session: "s2")
         XCTAssertEqual(try applyV2(reset, v2Wire(session: "s2", authority: ["4243": origin(5, 1)])), reset)
+    }
+
+    /// The membership 1/2 -> 1/3 stall web reproduced, on Native: with only
+    /// reset/reconnect as a boundary, the old fold's member set, fences and
+    /// floors refuse every snapshot of the new fold for good. The authoritative
+    /// membership boundary prunes the removed member and its floor, keeps the
+    /// survivor's identity and deadline, withdraws the display, drops the
+    /// session, admits the new fold and refuses old-session and old-membership
+    /// packets.
+    func testV2AuthoritativeMembershipChangeAdmitsTheNewFoldAndRefusesTheOld() throws {
+        let old = BlendPreview.readerAfterMembership(try opened(), members: ["4242", "4243"])
+        var both = try applyV2(old, v2Wire())
+        both = BlendPreview.readerAfterCommitFloor(both, FoldRevision(["4242": 10, "4243": 20]))
+        XCTAssertEqual(both.held?.p, 0.65)
+        XCTAssertEqual(both.authorityMembers, ["4242", "4243"])
+        let newFold = v2Wire(session: "s2", authority: ["4242": origin(100, 2), "4244": origin(7, 1)],
+                             base: ["4242": 11, "4244": 30])
+
+        // The reproduced stall: reset (disconnect) and a new session are not a
+        // membership boundary; each retained guard alone refuses the new fold.
+        let stalled = try opened(BlendPreview.readerReset(both), session: "s2")
+        XCTAssertEqual(try applyV2(stalled, newFold, now: 100.3), stalled, "members + fences + floors")
+        var onlyMembers = stalled; onlyMembers.originFences = [:]; onlyMembers.floors = nil
+        XCTAssertEqual(try applyV2(onlyMembers, newFold, now: 100.3), onlyMembers, "old member set alone")
+        var onlyFences = stalled; onlyFences.foldMembers = nil; onlyFences.floors = nil
+        XCTAssertEqual(try applyV2(onlyFences, newFold, now: 100.3), onlyFences, "old fences alone (3 origins)")
+        var onlyFloors = stalled; onlyFloors.foldMembers = nil; onlyFloors.originFences = [:]
+        XCTAssertEqual(try applyV2(onlyFloors, newFold, now: 100.3), onlyFloors, "old floor naming 4243 alone")
+
+        // The authoritative detail now folds 4242 with 4244 instead.
+        let changed = BlendPreview.readerAfterMembership(both, members: ["4242", "4244"])
+        XCTAssertNil(changed.held, "the old fold's preview is withdrawn")
+        XCTAssertNil(changed.foldSession, "the session is dropped so the stream reopens")
+        XCTAssertEqual(changed.foldSeq, -1)
+        XCTAssertEqual(changed.sessionOrigins, [])
+        XCTAssertEqual(changed.foldMembers, ["4242", "4244"])
+        XCTAssertEqual(changed.authorityMembers, ["4242", "4244"])
+        XCTAssertEqual(Set(changed.originFences.keys), ["4242"], "the removed member loses its fence")
+        XCTAssertEqual(changed.originFences["4242"], both.originFences["4242"], "the survivor keeps identity and deadline")
+        XCTAssertEqual(changed.floors?.rows, ["4242": 10], "and only the survivor's floor remains")
+        XCTAssertEqual(BlendPreview.readerAfterMembership(changed, members: ["4242", "4244"]), changed,
+                       "the same membership again records nothing")
+        XCTAssertEqual(BlendPreview.readerAfterMembership(changed, members: []), changed, "no membership, no claim")
+
+        // Session two on the new fold is admitted; the survivor's unchanged
+        // tuple keeps its first-seen deadline across the change.
+        let reopened = try opened(changed, session: "s2")
+        let shown = try applyV2(reopened, newFold, now: 100.3)
+        XCTAssertEqual(shown.held?.p, 0.65)
+        XCTAssertEqual(shown.held?.baseFoldRevision?.rows, ["4242": 11, "4244": 30])
+        XCTAssertEqual(BlendPreview.displayed(shown.held, held: try detail(revision: ["4242": 11, "4244": 30]), now: 100.3), 0.65)
+        XCTAssertEqual(shown.held?.expiresAt, 101, "A's (100,2) lease is not renewed by the new fold")
+        XCTAssertEqual(shown.originFences["4244"]?.epoch, 7)
+        XCTAssertEqual(shown.originFences["4244"]?.deadline, 101.3)
+        XCTAssertEqual(shown.sessionOrigins, ["4242", "4244"])
+        XCTAssertEqual(try applyV2(shown, v2Wire(2, session: "s2", authority: ["4242": origin(100, 1), "4244": origin(7, 2)],
+                                        base: ["4242": 11, "4244": 30]), now: 100.4), shown, "an older A tuple stays fenced")
+
+        // Old-fold packets: the old session, and the removed member's membership.
+        XCTAssertEqual(try applyV2(shown, v2Wire(2, session: "s1", authority: ["4242": origin(100, 3), "4244": origin(7, 2)],
+                                        base: ["4242": 11, "4244": 30]), now: 100.4), shown, "old session")
+        XCTAssertEqual(try applyV2(shown, v2Wire(2, session: "s2"), now: 100.4), shown, "old membership 4242/4243")
+        XCTAssertEqual(try applyV2(shown, v2Wire(2, session: "s2", authority: ["4242": origin(100, 3), "4243": origin(2, 2)],
+                                        base: ["4242": 11, "4243": 21]), now: 100.4), shown, "removed member cannot return")
+
+        // Ordinary disconnect/resync after the change: fences and deadlines stay.
+        var resync = shown; resync.held = nil
+        XCTAssertEqual(try applyV2(resync, v2Wire(2, session: "s2", authority: ["4242": origin(100, 2), "4244": origin(7, 1)],
+                                        base: ["4242": 11, "4244": 30]), now: 100.5).held?.expiresAt, 101)
+        let reconnected = try opened(BlendPreview.readerReset(shown), session: "s3")
+        XCTAssertEqual(reconnected.originFences, shown.originFences)
+        XCTAssertEqual(reconnected.foldMembers, ["4242", "4244"])
+        XCTAssertEqual(try applyV2(reconnected, v2Wire(session: "s3", authority: ["4242": origin(100, 2), "4244": origin(7, 1)],
+                                        base: ["4242": 11, "4244": 30]), now: 100.6).held?.expiresAt, 101)
+    }
+
+    /// A singleton visit that becomes a fold carries its own row's identity and
+    /// deadline into the fold's v2 authority. On the v1 folded path, a floor
+    /// naming the removed row stalls every new-fold frame until the boundary
+    /// prunes it (the ab5 reader has no such boundary).
+    func testMembershipChangeCarriesTheSingletonFenceAndPrunesLegacyFloors() throws {
+        let single = BlendPreview.readerAfter(
+            BlendPreview.readerAfterMembership(.empty, members: ["4242"]),
+            BlendPreviewFrame(eventId: id, p: 0.7, status: "live", kind: .blend, epoch: 100, seq: 2, baseRev: 10, ttlMs: 1_000),
+            eventId: id, now: 100)
+        XCTAssertEqual(BlendPreview.displayed(single.held, held: try detail(revision: ["4242": 10]), now: 100), 0.7)
+        let folded = BlendPreview.readerAfterMembership(single, members: ["4242", "4244"])
+        XCTAssertNil(folded.held)
+        XCTAssertEqual(folded.originFences["4242"],
+                       BlendPreviewReader.OriginFence(epoch: 100, seq: 2, retired: false, deadline: 101))
+        let session = try opened(folded, session: "s2")
+        let newFold = v2Wire(session: "s2", authority: ["4242": origin(100, 2), "4244": origin(7, 1)],
+                             base: ["4242": 10, "4244": 30])
+        XCTAssertEqual(try applyV2(session, newFold, now: 100.5).held?.expiresAt, 101,
+                       "the singleton's (100,2) lease does not renew in the fold")
+        XCTAssertEqual(try applyV2(session, v2Wire(session: "s2", authority: ["4242": origin(100, 1), "4244": origin(7, 1)],
+                                          base: ["4242": 10, "4244": 30]), now: 100.5), session, "an older own tuple is fenced")
+        XCTAssertEqual(try applyV2(session, newFold, now: 101), session, "the expired tuple stays expired")
+
+        var v1 = BlendPreview.readerAfterMembership(try reader(), members: ["4242", "4243"])
+        v1 = BlendPreview.readerAfterCommitFloor(v1, FoldRevision(["4243": 21]))
+        XCTAssertNil(v1.held)
+        var w = wire(seq: 2), meta = w["preview"] as! [String: Any]
+        meta["origin_event_id"] = 4244; meta["base_rev"] = 30; meta["base_fold_revision"] = ["4242": 10, "4244": 30]
+        w["preview"] = meta
+        let v1New = try XCTUnwrap(BlendPreviewFrame.decode(raw(w)))
+        XCTAssertNil(BlendPreview.readerAfter(v1, v1New, eventId: id, now: 100.2).held, "the 4243 floor holds the new fold out")
+        let pruned = BlendPreview.readerAfterMembership(v1, members: ["4242", "4244"])
+        XCTAssertNil(pruned.floors)
+        XCTAssertNil(pruned.foldedSequence, "the removed origin's v1 order is dropped")
+        XCTAssertEqual(pruned.epoch, 5, "the legacy epoch floor stays")
+        let admitted = BlendPreview.readerAfter(pruned, v1New, eventId: id, now: 100.2)
+        XCTAssertEqual(admitted.held?.p, 0.6)
+        XCTAssertEqual(BlendPreview.displayed(admitted.held, held: try detail(revision: ["4242": 10, "4244": 30]), now: 100.2), 0.6)
+        XCTAssertEqual(BlendPreview.readerAfter(pruned, try frame(seq: 3), eventId: id, now: 100.2), pruned,
+                       "the old fold's v1 frame (4242/4243) is refused outright")
     }
 
 }

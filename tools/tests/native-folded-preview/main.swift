@@ -24,6 +24,8 @@ do {
     try tests.testV2MalformedAuthorityNeverDecodesOrFallsBack()
     try tests.testV2ColdBaseWithdrawalPreservesSiblingDeadline()
     try tests.testV2UpgradeRetainsPriorV1OriginFence()
+    try tests.testV2AuthoritativeMembershipChangeAdmitsTheNewFoldAndRefusesTheOld()
+    try tests.testMembershipChangeCarriesTheSingletonFenceAndPrunesLegacyFloors()
 } catch {
     ReaderChecks.failures += 1
     print("Unexpected error: \(error)")

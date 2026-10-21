@@ -281,6 +281,9 @@ nonisolated struct BlendPreviewReader: Sendable, Equatable {
     var sessionOrigins: Set<String> = []
     var originFences: [String: OriginFence] = [:]
     var foldMembers: Set<String>? = nil
+    /// The page's authoritative fold membership, from its adopted detail
+    /// (`readerAfterMembership`). A change of it is a different fold.
+    var authorityMembers: Set<String>? = nil
 
     struct OriginFence: Sendable, Equatable {
         let epoch: Int
@@ -330,6 +333,46 @@ nonisolated enum BlendPreview {
               packet.eventId == eventId, validSession(packet.foldSession) else { return reader }
         var next = reader
         next.foldSession = packet.foldSession
+        return next
+    }
+
+    /// Whether `members` changes the page's authoritative fold membership. The
+    /// first membership a visit learns is not a change.
+    static func membershipChanges(_ reader: BlendPreviewReader, members: Set<String>) -> Bool {
+        reader.authorityMembers.map { $0 != members } ?? false
+    }
+
+    /// The reader after the page's authoritative detail folds `members`. The
+    /// same membership records nothing new. A changed membership is a
+    /// different fold, and the old fold's authority can neither hold it out
+    /// nor get back in: the held preview is withdrawn and the session dropped
+    /// (the owner reopens the stream, whose server-side composition is bound
+    /// to the membership it opened with); members the page no longer folds
+    /// lose their fences and commit floors; surviving members keep theirs —
+    /// identity, retirement and first-seen deadline — so the new fold cannot
+    /// renew or resurrect them. Snapshots of the old membership are refused
+    /// (`foldMembers`). A singleton visit's own row carries its held identity
+    /// and deadline into the fold. Ordinary disconnect and resync are not
+    /// membership changes and go through `readerReset` as before.
+    static func readerAfterMembership(_ reader: BlendPreviewReader, members: Set<String>) -> BlendPreviewReader {
+        guard !members.isEmpty else { return reader }
+        var next = reader
+        next.authorityMembers = members
+        guard membershipChanges(reader, members: members) else { return next }
+        next = readerReset(next)
+        next.foldMembers = members
+        next.originFences = reader.originFences.filter { members.contains($0.key) }
+        next.floors = reader.floors.flatMap { floors in
+            FoldRevision(floors.rows.filter { members.contains($0.key) })
+        }
+        if let order = reader.foldedSequence, !members.contains(String(order.originEventId)) {
+            next.foldedSequence = nil
+        }
+        if let held = reader.held, held.baseFoldRevision == nil, members.contains(String(held.eventId)),
+           next.originFences[String(held.eventId)] == nil {
+            next.originFences[String(held.eventId)] = BlendPreviewReader.OriginFence(
+                epoch: held.epoch, seq: held.seq, retired: false, deadline: held.expiresAt)
+        }
         return next
     }
 
@@ -434,6 +477,11 @@ nonisolated enum BlendPreview {
                             eventId: Int, now: TimeInterval) -> BlendPreviewReader {
         if frame.foldedVersion == 2 { return readerAfterV2(reader, frame, eventId: eventId, now: now) }
         guard !reader.enteredV2, frame.eventId == eventId, frame.epoch >= reader.epoch else { return reader }
+        // A folded frame for a membership the page no longer folds is refused
+        // outright, as on the v2 path (`readerAfterMembership`).
+        if let base = frame.baseFoldRevision, let members = reader.foldMembers, Set(base.rows.keys) != members {
+            return reader
+        }
         if let order = reader.foldedSequence {
             if frame.kind == .revoke, frame.originEventId != order.originEventId { return reader }
             if frame.epoch == order.epoch, frame.seq <= order.seq { return reader }

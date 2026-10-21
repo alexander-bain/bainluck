@@ -16,3 +16,13 @@ withdraw/recompose controls. V2 uses `preview_protocol=folded-v2`. Its parser
 accepts full authority withdrawals without a probability while a sibling remains
 pending; that sibling keeps its first-seen deadline. App/controller/transport
 execution and installed-phone validation still belong to Native's real build.
+
+## Membership boundary
+
+`BlendPreview.readerAfterMembership` is the authoritative detail's membership
+boundary (the adopted detail calls it): a changed fold prunes removed members'
+fences and floors, keeps survivors' identity/deadline fences, withdraws the
+display, drops the session and refuses old-membership packets, and the page
+reopens its stream on the new fold. The harness runs the reader half (both
+v2 and v1 paths); `AMembershipChangeReopensTheFoldedPreview10090Tests` covers
+the page's stream reopen and runs only in Native's real build.

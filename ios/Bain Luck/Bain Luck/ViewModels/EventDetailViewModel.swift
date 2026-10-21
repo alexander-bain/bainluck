@@ -661,6 +661,21 @@ final class EventDetailViewModel: ObservableObject {
             &latestSourceFrames, over: fetched, streamRecoverable: streamRecoverable
         )
         event = fetched
+        // #10090 — the adopted detail is the authority on the fold's membership.
+        // A change of it is a different fold: the old fold's preview authority
+        // is retired (`BlendPreview.readerAfterMembership`) and its connection,
+        // whose server-side composition is bound to the membership it opened
+        // with, is closed so the caller's `configureAutoRefresh()` opens the new
+        // fold. An unchanged membership records nothing and keeps the stream.
+        if let revision = LiveEventPriceReconciliation.pairedFoldRevision(in: fetched) {
+            let members = Set(revision.rows.keys)
+            let changed = BlendPreview.membershipChanges(blendPreviewReader, members: members)
+            blendPreviewReader = BlendPreview.readerAfterMembership(blendPreviewReader, members: members)
+            if changed {
+                publishPreview(nil, at: now())
+                if stream != nil { stopStream() }
+            }
+        }
         LiveTimingSeam.readAdopted(prior: prior, fetched: fetched)
         if recordsPriceActivity, let prior, LivePriceActivity.isNewer(fetched, than: prior) {
             recordPriceActivity(from: prior, to: fetched)
