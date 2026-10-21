@@ -20371,9 +20371,13 @@ async def get_event(
     # time and kind. A sibling of `prematch_odds`, never inside it: that
     # object's `source` names the probability prior's venue. Asked by the
     # status this page PRINTS, the same key every list surface uses.
+    # `live_detail`: this page alone also asks while the game prints `live`, so
+    # its headline can set the in-play pair beside the retained one. Lists stay
+    # settled-only (see "LIVE DETAIL" in `app/utils/pregame_projection`).
     _projection = await read_pregame_projections(
         db, [event], lambda _e: event_sport_key,
         status_of=lambda _e: response.get("status"),
+        live_detail=True,
     )
     attach_pregame_projection(response, _projection.get(event.id))
 
