@@ -258,6 +258,9 @@ def _run_writer(monkeypatch, *, main_grid, soccer_grid, redis):
         def __init__(self, payload):
             self._payload = payload
 
+        def first(self):
+            return None
+
         def all(self):
             return self._payload
 
@@ -265,6 +268,9 @@ def _run_writer(monkeypatch, *, main_grid, soccer_grid, redis):
         async def execute(self, statement, params=None, *a, **k):
             sql = str(statement)
             if "SET LOCAL statement_timeout" in sql:
+                return _Result([])
+            # #1479: the per-transaction session tag, not a chunk.
+            if "set_config('application_name'" in sql:
                 return _Result([])
             if "date_trunc('month'" in sql:
                 if "soccer_three_way_since" in sql:
@@ -282,6 +288,9 @@ def _run_writer(monkeypatch, *, main_grid, soccer_grid, redis):
             return _Result([_Row(5, cat, 20, 11, 10.0, 4.0)])
 
         async def rollback(self):
+            return None
+
+        async def commit(self):
             return None
 
         async def __aenter__(self):

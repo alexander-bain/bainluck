@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update, text, func
 
 from app.models import FuturesMarket, FuturesOutcome
-from app.tasks.base import get_task_session
+from app.tasks.base import get_task_session, tag_task_session
 from app.utils import kalshi_market_status as kms
 from app.utils.calibration_closing_line import (
     closing_line_boundary_sql,
@@ -11916,6 +11916,10 @@ _CHUNK_MIN_SPAN_S = 3600.0
 #: aggregate-and-publish tail after the walk is a single ``setex``.
 _TRAVERSAL_BUDGET_S = 1620.0  # soft_time_limit=1800, keep a 180s margin
 
+#: #1479 — the name this sweep's backends carry in ``pg_stat_activity``. Inside
+#: ``db_session_identity``'s 29-character task field, so it is never cut short.
+_BOOKMAKER_SESSION_TASK = "bookmaker_calibration"
+
 def _add_month(dt: datetime) -> datetime:
     """The exclusive upper edge of ``dt``'s calendar month.
 
@@ -12167,7 +12171,35 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                                    "failed (%s) — this run still publishes on "
                                    "its own reads (#10697)", e)
 
+        from app.tasks.calibration_main_build import run_owner
+        from app.utils.durable_state import generation_for
+
+        identity = {
+            "task": _BOOKMAKER_SESSION_TASK,
+            "run_generation": generation_for(datetime.now(timezone.utc)),
+            "owner": run_owner(),
+        }
+
         async with get_task_session() as session:
+            # #1479 — EVERY READ ENDS ITS TRANSACTION ONCE ITS ROWS ARE IN HAND.
+            # Until this, nothing on the success path ended one: the grid, every
+            # landed slice and the soccer grid shared the transaction the first
+            # SELECT opened, and only `get_task_session`'s exit — after the walk,
+            # the bank writes and the publish — committed it. Only a timed-out
+            # slice rolled back. So a healthy walk held one snapshot for up to the
+            # whole traversal budget. Each read now commits as soon as `.all()`
+            # has materialized it, so no transaction outlives the statement it was
+            # opened for, and a commit that fails raises into the fail-closed
+            # terminal below like any other non-timeout error.
+            #
+            # The tag is `set_config(..., is_local)`, so it ends with each
+            # transaction as well and is re-armed at the start of every one.
+            async def _begin_read() -> None:
+                await tag_task_session(session, **identity)
+
+            async def _end_read() -> None:
+                await session.commit()
+
             # The grid comes from where the events ACTUALLY are, not from a
             # fixed span. Starting each category at one wide window and halving
             # into its dense region costs a full 45 s timeout PER LEVEL on the
@@ -12177,6 +12209,7 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
             # (category, month) cells that contain eligible events, so an empty
             # span is never queried at all and a dense cell starts one halving
             # away from its answer.
+            await _begin_read()
             grid = (await session.execute(text("""
                 SELECT s.key AS category,
                        date_trunc('month', e.commence_time) AS bucket_start
@@ -12189,6 +12222,7 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                 GROUP BY 1, 2
                 ORDER BY 1, 2
             """))).all()
+            await _end_read()
 
             async def _slice(category, lo, hi, sink, unrun, failed, depth=0,
                              sql=_BOOKMAKER_CHUNK_SQL, params=None):
@@ -12212,6 +12246,7 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                         f"{depth}")
                     return False
                 try:
+                    await _begin_read()
                     await session.execute(
                         text(f"SET LOCAL statement_timeout = '{_CHUNK_TIMEOUT_S}s'"))
                     rows = (await session.execute(
@@ -12235,6 +12270,7 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                                      depth + 1, sql=sql, params=params)
                     return a and b
 
+                await _end_read()
                 chunks_done += 1
                 sink.extend(_bookmaker_row_tuple(r) for r in rows)
                 return True
@@ -12277,9 +12313,11 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
             # above. The two-way soccer rows the walk above still produces are
             # published by nobody: the reader keeps a soccer bucket only when it
             # carries the three-way stamp these rows are given below.
+            await _begin_read()
             soccer_grid = (await session.execute(
                 text(_BOOKMAKER_SOCCER_THREE_WAY_GRID_SQL),
                 SOCCER_THREE_WAY_PARAMS)).all()
+            await _end_read()
             soccer_cell_rows: dict[str, list] = {}
             soccer_missing: list = []
             soccer_open: list = []
