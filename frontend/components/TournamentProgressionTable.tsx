@@ -349,6 +349,24 @@ function cellDisplay(
 }
 
 /**
+ * The glyph a DECIDED column prints: in@✓, out@—.
+ *
+ * #11369: this used to read the number alone, but a register-won cell carries
+ * a result and no number (Q295), so every clinched team — the NL champion
+ * Brewers, all twelve playoff qualifiers — printed "—" beside the eliminated
+ * clubs. The cell's status is the result; the number is only consulted for a
+ * cell the register still serves as live.
+ */
+export function decidedGlyph(
+  probability: number | null,
+  status: ProgressionCellStatus,
+): string {
+  if (status === "clinched") return GRID_CELL_TERMINAL_GLYPH.clinched;
+  if (status !== null) return "—";
+  return probability != null && probability >= 0.5 ? GRID_CELL_TERMINAL_GLYPH.clinched : "—";
+}
+
+/**
  * Format probability for display in cells.
  * Shows percentage with appropriate precision.
  */
@@ -998,7 +1016,7 @@ export default function TournamentProgressionTable({
                         <div className="flex flex-col items-center relative">
                           {isResolved ? (
                             <span className="font-mono text-sm text-text-muted">
-                              {prob != null && prob >= 0.5 ? "✓" : "—"}
+                              {decidedGlyph(prob, status)}
                             </span>
                           ) : (
                             <>
