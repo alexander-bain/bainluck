@@ -7,9 +7,10 @@ forecast and result.
 URL, behind an exclusive ``ATTEMPT-STARTED`` fence, inside one 15 s deadline and
 one 262,144-byte cap. These tests never open a network connection: every
 "network child" here is a real subprocess that writes canned bytes, sleeps or
-exits, so the parent's real fence, process-group kill, reap, byte cap, framing
-and deadline all run. The real child's network half is driven in-process
-through a fake TLS socket. Every response body below is a SYNTHETIC fixture,
+exits, so the parent's real fence, kill, reap, byte cap, framing and deadline
+all run, and the reader itself runs as a real process under a real external
+timer to prove the timer contains its network child. The real child's network
+half is driven in-process through a fake TLS socket. Every response body below is a SYNTHETIC fixture,
 not venue evidence.
 """
 
@@ -19,6 +20,7 @@ import ast
 import importlib.util
 import json
 import os
+import shutil
 import signal
 import socket
 import ssl
@@ -127,10 +129,9 @@ class Spawner:
     marker exactly as the real one does and writes canned bytes."""
 
     def __init__(self, tmp: Path, data: bytes, *, step: int = 65_536, gap: float = 0.0,
-                 pause: float = 0.0, code: int = 0, grandchild: bool = False) -> None:
+                 pause: float = 0.0, code: int = 0) -> None:
         self.tmp, self.data = tmp, data
         self.step, self.gap, self.pause, self.code = step, gap, pause, code
-        self.grandchild = tmp / "grandchild.pid" if grandchild else None
         self.calls: list[float] = []
         self.procs: list[subprocess.Popen] = []
 
@@ -139,10 +140,9 @@ class Spawner:
         src = self.tmp / f"served-{len(self.calls)}.bin"
         src.write_bytes(self.data)
         argv = [sys.executable, "-c", FAKE_CHILD, str(src), str(self.step), str(self.gap),
-                str(self.pause), str(self.code), str(self.grandchild or "-")]
+                str(self.pause), str(self.code), "-"]
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, start_new_session=True,
-                                pass_fds=(marker_fd,), env={})
+                                stderr=subprocess.DEVNULL, pass_fds=(marker_fd,), env={})
         self.procs.append(proc)
         return proc
 
@@ -211,7 +211,9 @@ def test_the_real_spawn_passes_an_empty_environment_and_only_the_marker(reader, 
     assert seen["argv"][4:] == ["7", str(tmp_path / "ATTEMPT-STARTED"), "13.500"]
     assert seen["env"] == {"SSL_CERT_FILE": "/etc/ssl/cert.pem"}
     assert seen["pass_fds"] == (7,) and seen["close_fds"] is True
-    assert seen["start_new_session"] is True
+    # No new session or group: an external timer's group signal must reach the child.
+    assert not seen.get("start_new_session") and "process_group" not in seen
+    assert "preexec_fn" not in seen
     assert seen["stderr"] is subprocess.DEVNULL and seen["stdin"] is subprocess.DEVNULL
 
 
@@ -350,20 +352,14 @@ def test_no_bytes_is_never_an_empty_provider_response(reader, cdir, tmp_path):
 # ── the deadline is a hard bound on the network child ────────────────────────
 
 
-def test_a_silent_child_is_killed_with_its_whole_session_inside_the_deadline(reader, cdir, tmp_path):
-    sp = Spawner(tmp_path, b"", pause=60.0, grandchild=True)
+def test_a_silent_child_is_killed_and_reaped_inside_the_deadline(reader, cdir, tmp_path):
+    sp = Spawner(tmp_path, b"", pause=60.0)
     t0 = time.monotonic()
     code, r, clock = run(reader, cdir, sp, deadline=2.0)
     took = time.monotonic() - t0
     assert code == reader.NO_RESULT and r["reason"] == "DEADLINE"
     assert took < 2.0, took  # killed at deadline - 1 s, finalized inside the rest
     assert r["child_reaped"] is True and not alive(sp.procs[0].pid)
-    grandchild = int((tmp_path / "grandchild.pid").read_text())
-    for _ in range(50):  # the killed grandchild is reaped by init, not by us
-        if not alive(grandchild):
-            break
-        time.sleep(0.02)
-    assert not alive(grandchild), "the child's session outlived the deadline"
 
 
 def test_a_trickling_child_is_killed_at_the_deadline_and_never_paid(reader, cdir, tmp_path):
@@ -371,6 +367,170 @@ def test_a_trickling_child_is_killed_at_the_deadline_and_never_paid(reader, cdir
     code, r, _ = run(reader, cdir, Spawner(tmp_path, served, step=16, gap=0.05), deadline=2.0)
     assert code == reader.NO_RESULT and r["reason"] == "DEADLINE"
     assert 0 < r["raw_bytes"] < len(served)
+
+
+# ── an external whole-command timer contains the reader AND its network child ─
+
+READER_UNDER_TIMER = r"""
+import http.client, ssl  # before the socket refusal: ssl subclasses socket.socket
+import importlib.util, socket, subprocess, sys
+from pathlib import Path
+
+def refuse(*a, **k):
+    raise AssertionError("the reader under test touched the network")
+
+socket.socket = socket.getaddrinfo = socket.create_connection = refuse
+reader_path, cdir, deadline, fake_child, served, child_file, grandchild = sys.argv[1:8]
+spec = importlib.util.spec_from_file_location("contract1089_reader_under_timer", reader_path)
+reader = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(reader)
+real_popen = subprocess.Popen
+
+def canned(argv, **kw):
+    # The real spawn_pump runs; only its argv is swapped for a canned silent
+    # worker. Every other argument, the process topology under test, is its own.
+    assert argv[3] == "--pump"
+    proc = real_popen([sys.executable, fake_child, served, "65536", "0", "60", "0", grandchild], **kw)
+    Path(child_file).write_text(str(proc.pid))
+    return proc
+
+subprocess.Popen = canned
+raise SystemExit(reader.main(["--contract-dir", cdir, "--send-the-one-request"],
+                             clock=reader.Clock(float(deadline))))
+"""
+
+TIMEOUT_BIN = shutil.which("timeout") or shutil.which("gtimeout")
+
+
+def under_timer(tmp: Path, cdir: Path, *, deadline: float, grandchild: bool, prefix=(), **popen):
+    """The reader as a real process with its real ``spawn_pump``, a canned
+    silent network child, and no socket anywhere."""
+    (tmp / "fake_child.py").write_text(FAKE_CHILD)
+    (tmp / "reader_under_timer.py").write_text(READER_UNDER_TIMER)
+    (tmp / "served-timer.bin").write_bytes(b"")
+    child, grand = tmp / "child.pid", tmp / "grandchild.pid"
+    argv = [*prefix, sys.executable, "-I", str(tmp / "reader_under_timer.py"), str(READER),
+            str(cdir), str(deadline), str(tmp / "fake_child.py"), str(tmp / "served-timer.bin"),
+            str(child), str(grand) if grandchild else "-"]
+    with open(tmp / "reader.err", "wb") as err:
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=err, env={}, **popen)
+    return proc, child, grand
+
+
+def pid_from(path: Path, proc, tmp: Path, limit: float = 10.0) -> int:
+    end = time.monotonic() + limit
+    while time.monotonic() < end:
+        if path.exists() and path.read_text():
+            return int(path.read_text())
+        if proc.poll() is not None:
+            break
+        time.sleep(0.01)
+    pytest.fail(f"no {path.name}: rc={proc.poll()} {(tmp / 'reader.err').read_text()[-2000:]}")
+
+
+def zombie(pid: int) -> bool:
+    """Linux only: a killed orphan that init has not reaped yet is dead."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "Z"
+    except (OSError, IndexError):
+        return False
+
+
+def gone(pid: int, limit: float = 5.0) -> bool:
+    end = time.monotonic() + limit
+    while alive(pid) and not zombie(pid):  # an orphan is reaped by init, not by us
+        if time.monotonic() > end:
+            return False
+        time.sleep(0.02)
+    return True
+
+
+def kill_quietly(pids) -> None:
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
+@pytest.mark.parametrize("timer", ["group-SIGKILL", "group-SIGTERM", "coreutils-timeout"])
+def test_an_external_timer_takes_the_network_child_without_the_readers_cleanup(reader, cdir, tmp_path, timer):
+    """The reader dies before any cleanup of its own can run; the timer's group
+    signal alone ends the network child and anything it started. The spent
+    attempt survives and no verdict is written. Restoring the child's own
+    session fails this: the child outlives the timer."""
+    if timer == "coreutils-timeout" and not TIMEOUT_BIN:
+        pytest.skip("no coreutils timeout on this host; the group-signal arms carry the guard")
+    left = []
+    try:
+        if timer == "coreutils-timeout":
+            # Without --foreground, timeout leads its own group and signals all of it.
+            proc, cf, gf = under_timer(tmp_path, cdir, deadline=60.0, grandchild=True,
+                                       prefix=(TIMEOUT_BIN, "-s", "TERM", "-k", "1", "4"))
+        else:
+            # The test is the timer: the reader leads a fresh group, as timeout does (setpgid).
+            proc, cf, gf = under_timer(tmp_path, cdir, deadline=60.0, grandchild=True,
+                                       process_group=0)
+        child = pid_from(cf, proc, tmp_path)
+        left.append(child)
+        left.append(pid_from(gf, proc, tmp_path))
+        marker = cdir / reader.MARKER_NAME
+        fenced = marker.read_bytes()
+        if timer == "coreutils-timeout":
+            assert proc.wait(timeout=20) == 124  # the TERM ended it; no kill-after needed
+        else:
+            sig = signal.SIGKILL if timer == "group-SIGKILL" else signal.SIGTERM
+            os.killpg(proc.pid, sig)
+            assert proc.wait(timeout=10) == -sig  # killed outright: no exit path ran
+        assert gone(left[0]), "the network child outlived the external timer"
+        assert gone(left[1]), "the network child's descendant outlived the external timer"
+        assert marker.read_bytes() == fenced
+        assert (cdir / reader.RECEIPT_NAME).read_bytes() == b""
+        assert (cdir / reader.RAW_NAME).read_bytes() == b""
+        again = reader.main(["--contract-dir", str(cdir), "--send-the-one-request"],
+                            spawn=lambda *a: pytest.fail("a second request after an interruption"))
+        assert again == reader.ATTEMPT_SPENT and marker.read_bytes() == fenced
+    finally:
+        kill_quietly(left)
+
+
+def test_the_readers_own_deadline_kills_and_reaps_only_its_child(reader, cdir, tmp_path):
+    """With no external timer, the internal deadline still SIGKILLs and reaps the
+    child, and signals nothing else: the invoker's group and an unrelated
+    process in it survive."""
+    left = []
+    try:
+        proc, cf, _ = under_timer(tmp_path, cdir, deadline=2.0, grandchild=False,
+                                  process_group=0)
+        bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                     stdin=subprocess.DEVNULL, process_group=proc.pid, env={})
+        left.append(bystander.pid)
+        child = pid_from(cf, proc, tmp_path)
+        left.append(child)
+        assert proc.wait(timeout=15) == reader.NO_RESULT
+        r = json.loads((cdir / reader.RECEIPT_NAME).read_text())
+        assert r["reason"] == "DEADLINE" and r["child_reaped"] is True
+        assert not alive(child)  # reaped by the reader itself, not left to init
+        assert bystander.poll() is None and os.getpgid(bystander.pid) == proc.pid
+    finally:
+        kill_quietly(left)
+
+
+def test_the_network_child_starts_no_process_of_its_own():
+    """The internal kill is by pid, so the child must leave no descendant behind:
+    its whole code path names no process primitive."""
+    fns = {n.name: n for n in ast.parse(READER.read_text()).body if isinstance(n, ast.FunctionDef)}
+    names = set()
+    for name in ("pump_main", "_check_inherited_marker", "contract_dir_ok", "pump", "open_tls",
+                 "_write_all", "_continuous"):
+        for node in ast.walk(fns[name]):
+            if isinstance(node, ast.Attribute):
+                names.add(node.attr)
+            elif isinstance(node, ast.Name):
+                names.add(node.id)
+    assert names.isdisjoint({"subprocess", "Popen", "fork", "forkpty", "system", "popen",
+                             "execv", "execve", "execvp", "spawnv", "posix_spawn", "posix_spawnp"})
 
 
 def test_a_result_whose_receipt_write_returns_late_is_rewritten_no_result(reader, cdir, tmp_path, monkeypatch):

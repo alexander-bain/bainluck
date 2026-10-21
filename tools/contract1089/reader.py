@@ -34,8 +34,11 @@ parent that created it, so the child cannot be run alone to bypass the fence.
 THE ENVELOPE. One 15 s deadline from the top of ``main``, read on the awake,
 sleep-counting and wall clocks (the largest wins). The network work (trust
 store, name resolution, connect, TLS, request, response) runs in a child
-process in its own session; at 14 s the parent SIGKILLs that session, so no
-network wait, including ``getaddrinfo``, can outlive the deadline. The last
+process; at 14 s the parent SIGKILLs that child, by pid, and reaps it, so no
+network wait, including ``getaddrinfo``, can outlive the deadline. The child
+stays in the reader's own process group, so a whole-command timer that signals
+the group (``timeout`` without ``--foreground``) takes the child with the reader
+even when the reader is killed before its own cleanup runs. The last
 second is reserved for the parent's local writes. The clock is read again after
 the raw write and after each receipt step; a result whose step returns at or
 past 15 s is rewritten NO_RESULT LATE_FINALIZATION, so whenever control returns
@@ -92,7 +95,6 @@ import json
 import os
 import re
 import select
-import signal
 import socket
 import ssl
 import stat
@@ -426,7 +428,7 @@ def spawn_pump(marker_fd: int, marker_path: Path, seconds: float):
             str(marker_fd), str(marker_path), f"{seconds:.3f}"]
     return subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, close_fds=True, pass_fds=(marker_fd,),
-                            start_new_session=True, env=child_env())
+                            env=child_env())  # no new session: the child stays in the reader's group
 
 
 class Transfer:
@@ -442,8 +444,9 @@ class Transfer:
 
 
 def _kill_and_reap(proc, clock: Clock, transfer: Transfer) -> None:
+    # The child alone, by pid; the group it shares is the invoker's.
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
+        proc.kill()
     except (ProcessLookupError, PermissionError):
         pass
     # Reaping a SIGKILLed child is a local wait; it gets what is left of the
@@ -461,7 +464,7 @@ def _kill_and_reap(proc, clock: Clock, transfer: Transfer) -> None:
 def transfer_from(proc, clock: Clock) -> Transfer:
     """Read the child's stdout until the response is complete by its own
     framing, the stream ends, the cap is passed, or the network share of the
-    deadline is gone. The child's whole session is SIGKILLed on the way out."""
+    deadline is gone. The child is SIGKILLed and reaped on the way out."""
     t = Transfer()
     fd = proc.stdout.fileno()
     os.set_blocking(fd, False)
