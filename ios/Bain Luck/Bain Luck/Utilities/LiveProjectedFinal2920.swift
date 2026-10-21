@@ -7,9 +7,8 @@ import SwiftUI
 /// instead of it.
 ///
 /// `LiveProjectedFinalAdmission2920` decides; this file only hands it the row:
-/// `currentOdds.liveProjection` and nothing else, the row's own start and its
-/// placeholder/schedule flags, the score the surface PRINTS, and soccer's phase
-/// from the served period (`espn.period`, the field the producer's own
+/// `currentOdds.liveProjection` and nothing else, the row's own start, the
+/// score the surface PRINTS, and soccer's phase from the served period (`espn.period`, the field the producer's own
 /// regulation test reads). No clock of its own beyond the caller's `now`, no
 /// fetch, no state: a pushed score or period re-renders the surface and this
 /// answers again; a pushed probability leaves the object as it was.
@@ -21,15 +20,14 @@ enum LiveProjectedFinal2920 {
     /// The one call both surfaces make.
     static func resolve(
         odds: CurrentOdds?, sport: String?, status: String?,
-        commenceTime: String?, startIsTbd: Bool?, startIsFromSchedule: Bool?,
+        commenceTime: String?,
         homeScore: Int?, awayScore: Int?, servedPeriod: String?,
         now: Date
     ) -> LiveProjectedFinalAdmission2920.Outcome {
         LiveProjectedFinalAdmission2920.resolve(
             projection: odds?.liveProjection,
             sport: sport, status: status,
-            rowStart: .init(commenceTime: commenceTime,
-                            isTBD: startIsTbd, isFromSchedule: startIsFromSchedule),
+            rowStart: .init(commenceTime: commenceTime),
             homeScore: homeScore, awayScore: awayScore,
             phase: LiveProjectedFinalAdmission2920.soccerPhase(servedPeriod: servedPeriod),
             now: now)
@@ -39,8 +37,7 @@ enum LiveProjectedFinal2920 {
     /// while it is live, so the score handed in is the one on the card.
     static func card(_ event: FeedEventData, now: Date = Date()) -> LiveProjectedFinalAdmission2920.Printed? {
         resolve(odds: event.currentOdds, sport: event.sport, status: event.status,
-                commenceTime: event.commenceTime, startIsTbd: event.startIsTbd,
-                startIsFromSchedule: event.startIsFromSchedule,
+                commenceTime: event.commenceTime,
                 homeScore: event.homeScore, awayScore: event.awayScore,
                 servedPeriod: event.espn?.period, now: now).printed
     }
@@ -67,15 +64,16 @@ enum LiveProjectedFinal2920 {
     static func page(_ event: EventDetail, now: Date = Date()) -> PagePair {
         guard event.status == "live" else { return .notLive }
         if let start = event.commenceTime?.asDate, start > now { return .notLive }
+        // Absent is the object's absence, as web tests `live_projection` for
+        // null; anything served goes through the helper.
+        guard event.currentOdds?.liveProjection != nil else { return .absent }
         let outcome = resolve(
             odds: event.currentOdds, sport: event.sport, status: event.status,
-            commenceTime: event.commenceTime, startIsTbd: event.startIsTbd,
-            startIsFromSchedule: event.startIsFromSchedule,
+            commenceTime: event.commenceTime,
             homeScore: event.homeScore, awayScore: event.awayScore,
             servedPeriod: event.espn?.period, now: now)
         switch outcome {
         case .printed(let printed): return .admitted(printed)
-        case .withheld(.absent): return .absent
         case .withheld: return .withheld
         }
     }

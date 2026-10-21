@@ -7,7 +7,7 @@ import SwiftUI
 ///
 /// `LiveProjectedFinalAdmission2920Tests` decides every gate of the helper; this
 /// suite decides the WIRING: that each surface hands the helper its own row —
-/// `currentOdds.liveProjection`, the row's start and flags, the score it prints,
+/// `currentOdds.liveProjection`, the row's start, the score it prints,
 /// soccer's served period — and that nothing else (the bare `projected_*` pair,
 /// the ladders on a refused object) reaches a live surface.
 ///
@@ -140,12 +140,14 @@ final class LiveProjectedFinalOnCardsAndPage2920Tests: XCTestCase {
             XCTAssertNil(sports, status)
             XCTAssertNil(discover, status)
         }
-        // The row's own start says placeholder: the object no longer matches it.
+        // A placeholder flag on the row refuses nothing, as on web (C1): the
+        // object's own boundary against the row's start is the witness.
         let tbd = try cards(rowJSON(tbd: true, liveProjection: Self.nflObject))
-        XCTAssertNil(tbd.sports, "placeholder start")
-        XCTAssertNil(tbd.discover, "placeholder start")
-        XCTAssertEqual(LiveProjectedFinal2920.page(try detail(rowJSON(tbd: true, liveProjection: Self.nflObject))),
-                       .withheld, "placeholder start on the page")
+        XCTAssertEqual(tbd.sports.map { [$0.home, $0.away] }, [30, 19], "placeholder flag still prints")
+        XCTAssertEqual(tbd.discover, tbd.sports, "placeholder flag still prints")
+        guard case .admitted = LiveProjectedFinal2920.page(try detail(rowJSON(tbd: true, liveProjection: Self.nflObject))) else {
+            return XCTFail("placeholder flag on the page still admits")
+        }
         // A live status whose start is still ahead is not live yet.
         let ahead = ISO8601DateFormatter().string(from: Date().addingTimeInterval(3600))
         XCTAssertNil(try cards(rowJSON(start: ahead, liveProjection: Self.nflObject)).sports, "not started")
@@ -199,6 +201,10 @@ final class LiveProjectedFinalOnCardsAndPage2920Tests: XCTestCase {
                        "a malformed object is refused, not absent")
         XCTAssertEqual(LiveProjectedFinal2920.page(try detail(rowJSON(home: 31, away: 10, liveProjection: Self.nflObject))),
                        .withheld, "an unreachable pair is refused")
+        // W3 — the away side passed. Read with the score swapped, 14 – 20 would
+        // sit under 30 – 19 and admit; only the row's own orientation refuses.
+        XCTAssertEqual(LiveProjectedFinal2920.page(try detail(rowJSON(home: 14, away: 20, liveProjection: Self.nflObject))),
+                       .withheld, "away passed is refused")
         XCTAssertEqual(LiveProjectedFinal2920.page(try detail(rowJSON(sport: "soccer_epl", period: "ET",
                                                                      liveProjection: Self.soccerObject))),
                        .withheld, "extra time refuses the held regulation object")
@@ -225,6 +231,61 @@ final class LiveProjectedFinalOnCardsAndPage2920Tests: XCTestCase {
             sport: "americanfootball_nfl", status: "live", commenceTime: underway,
             projectedHome: nil, projectedAway: nil, ladderHome: 27.2, ladderAway: 20.4,
             hasScore: true, now: now), "by default a live game never reads the ladders")
+    }
+
+    /// W1 — the ladders' live pair is checked against the score the page prints,
+    /// per side, after the rounding the line prints (web's
+    /// `projectedPairIsReachableFromTheScore`). 27.2 / 20.4 prints 27 – 20.
+    func testALiveLadderPairBelowTheScoreIsWithheld() {
+        let underway = Date(timeIntervalSince1970: 1_760_905_500)
+        let now = underway.addingTimeInterval(2700)
+        let ladder = { (score: (home: Int, away: Int)?) in
+            EventDetailView.projectionText(
+                sport: "americanfootball_nfl", status: "live", commenceTime: underway,
+                projectedHome: nil, projectedAway: nil, ladderHome: 27.2, ladderAway: 20.4,
+                ladderWhileLive: true, hasScore: true, score: score, now: now)
+        }
+        XCTAssertEqual(ladder((home: 14, away: 10)), "Proj. 20-27", "positive control")
+        XCTAssertEqual(ladder((home: 27, away: 20)), "Proj. 20-27", "equal is reachable")
+        XCTAssertNil(ladder((home: 31, away: 10)), "home passed")
+        XCTAssertNil(ladder((home: 10, away: 28)), "away passed")
+        XCTAssertEqual(ladder((home: 27, away: 20)), ladder(nil), "no score passed: nothing to contradict")
+    }
+
+    // MARK: - Event page: the slot's text, by behaviour (W2)
+
+    /// The page's fixed clock: 45 minutes past the producer's start, after its
+    /// objects' capture.
+    private static let pageNow = ISO8601DateFormatter().date(from: "2026-10-19T21:10:00Z")!
+
+    /// What the page's projected-final slot prints for a CONSTRUCTED row, with
+    /// the page's own `hasScore` and the ladders' pair `/history` would serve.
+    private func pageText(_ json: String, ladder: (home: Double, away: Double)? = nil,
+                          file: StaticString = #filePath, line: UInt = #line) throws -> String? {
+        let e = try detail(json, file: file, line: line)
+        return EventDetailView.projectionText(
+            e, ladderHome: ladder?.home, ladderAway: ladder?.away,
+            hasScore: EventDetailView.showsScore(status: e.status, away: e.awayScore, home: e.homeScore),
+            now: Self.pageNow)
+    }
+
+    func testThePageSlotPrintsEachArmByBehaviour() throws {
+        let ladder = (home: 27.2, away: 20.4)
+        // Served and refused: nothing, though the bare pair and the ladders are there.
+        XCTAssertNil(try pageText(rowJSON(liveProjection: "{}"), ladder: ladder), "refused object")
+        // Not served: never the bare pair; the ladders, under W1.
+        XCTAssertNil(try pageText(rowJSON(liveProjection: nil)), "absent, no ladders: the bare pair stays unread")
+        XCTAssertEqual(try pageText(rowJSON(liveProjection: nil), ladder: ladder), "Proj. 20-27", "absent: ladders")
+        XCTAssertNil(try pageText(rowJSON(home: 31, away: 10, liveProjection: nil), ladder: ladder),
+                     "absent: ladders below the printed score")
+        // Admitted: the object's pair, home and away where they belong, over the bare 37 – 11.
+        XCTAssertEqual(try pageText(rowJSON(liveProjection: Self.nflObject), ladder: ladder), "Proj. 19-30")
+        // Soccer admitted at 67', 0 – 1 to the home side: away first, and 90 minutes said.
+        XCTAssertEqual(try pageText(rowJSON(sport: "soccer_epl", home: 1, away: 0, period: "67'",
+                                            liveProjection: Self.soccerObject)), "Proj. 1-2 (90 min)")
+        // Before the start: the bare pair, as today.
+        XCTAssertEqual(try pageText(rowJSON(status: "scheduled", start: "2026-10-19T22:10:00+00:00",
+                                            home: nil, away: nil, liveProjection: nil)), "Proj. 11-37")
     }
 
     // MARK: - Wiring (source guards)
@@ -256,6 +317,8 @@ final class LiveProjectedFinalOnCardsAndPage2920Tests: XCTestCase {
         XCTAssertTrue(discover.contains("structNativeEventDiscoverCard:View{"), "anti-vacuity")
         for (name, code) in [("EventCardView", sports), ("DiscoverEventCard", discover)] {
             XCTAssertEqual(occurrences("LiveProjectedFinalLine2920(", in: code), 1, name)
+            // W3 — which team each number sits beside, pinned on the call itself.
+            XCTAssertEqual(occurrences("LiveProjectedFinalLine2920(printed:liveProjection,awayName:event.awayTeam,homeName:event.homeTeam)", in: code), 1, name)
             XCTAssertEqual(occurrences("ifletliveProjection=liveProjectedFinal2920{", in: code), 1, name)
             XCTAssertTrue(code.contains("guardisLive,!isSuspendedelse{returnnil}returnLiveProjectedFinal2920.card(event)"), name)
             XCTAssertFalse(code.contains("liveProjection?."), "\(name): the card never reads the object's fields itself")
@@ -263,12 +326,21 @@ final class LiveProjectedFinalOnCardsAndPage2920Tests: XCTestCase {
         }
     }
 
+    func testTheLiveLinePrintsEachNameBesideItsOwnNumber() throws {
+        let line = try source("Utilities/LiveProjectedFinal2920.swift")
+        XCTAssertTrue(line.contains("structLiveProjectedFinalLine2920:View{"), "anti-vacuity")
+        XCTAssertEqual(occurrences("LiveProjectedFinal2920.pairText(printed,awayName:awayName,homeName:homeName)", in: line), 1)
+        XCTAssertEqual(occurrences("LiveProjectedFinal2920.spokenText(printed,awayName:awayName,homeName:homeName)", in: line), 1)
+        XCTAssertEqual(occurrences("awayName:homeName", in: line), 0, "no name handed to the other side")
+        XCTAssertEqual(occurrences("homeName:awayName", in: line), 0, "no name handed to the other side")
+    }
+
     func testThePageChoosesItsPairThroughTheLiveReader() throws {
         let page = try source("Views/EventDetailView.swift")
-        let start = try XCTUnwrap(page.range(of: "privatefuncprojectionText(_event:EventDetail,hasScore:Bool)->String?{"))
+        let start = try XCTUnwrap(page.range(of: "staticfuncprojectionText(_event:EventDetail,"))
         let end = try XCTUnwrap(page.range(of: "staticfuncprojectionText(", range: start.upperBound..<page.endIndex))
         let body = String(page[start.upperBound..<end.lowerBound])
-        XCTAssertTrue(body.contains("letlive=LiveProjectedFinal2920.page(event)"))
+        XCTAssertTrue(body.contains("letlive=LiveProjectedFinal2920.page(event,now:now)"))
         XCTAssertTrue(body.contains("case.withheld:returnnil"), "a refused object prints nothing")
         XCTAssertTrue(body.contains("case.absent:projected=(nil,nil)"), "no object: never the bare pair")
         XCTAssertTrue(body.contains("case.admitted(letprinted):projected=(printed.admitted.home,printed.admitted.away)"))

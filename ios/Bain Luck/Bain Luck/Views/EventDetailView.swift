@@ -1220,7 +1220,24 @@ struct EventDetailView: View {
     /// `projected_*` keys are read only before the game, where they are the
     /// sportsbooks' pregame pair the search card prints (#9034).
     private func projectionText(_ event: EventDetail, hasScore: Bool) -> String? {
-        let live = LiveProjectedFinal2920.page(event)
+        EventDetailView.projectionText(
+            event,
+            ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
+            ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
+            hasScore: hasScore)
+    }
+
+    /// The page's choice of pair, pure, so every arm is decided by behaviour:
+    /// the row, the ladders' pair `/history` served, whether the page prints a
+    /// score, and the caller's clock. When it prints one, that score is the
+    /// one the pair is checked against (#2920 W1).
+    static func projectionText(
+        _ event: EventDetail,
+        ladderHome: Double?, ladderAway: Double?,
+        hasScore: Bool,
+        now: Date = Date()
+    ) -> String? {
+        let live = LiveProjectedFinal2920.page(event, now: now)
         var projected = (home: event.currentOdds?.projectedHomeScore,
                          away: event.currentOdds?.projectedAwayScore)
         switch live {
@@ -1229,15 +1246,23 @@ struct EventDetailView: View {
         case .withheld: return nil
         case .absent: projected = (nil, nil)
         }
+        let score: (home: Int, away: Int)?
+        if hasScore, let home = event.homeScore, let away = event.awayScore {
+            score = (home, away)
+        } else {
+            score = nil
+        }
         let text = EventDetailView.projectionText(
             sport: event.sport, status: event.status,
             commenceTime: event.commenceTime?.asDate,
             projectedHome: projected.home,
             projectedAway: projected.away,
-            ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
-            ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
+            ladderHome: ladderHome,
+            ladderAway: ladderAway,
             ladderWhileLive: live == .absent,
-            hasScore: hasScore)
+            hasScore: hasScore,
+            score: score,
+            now: now)
         // Soccer's lines settle on 90 minutes; the line says so, as web's
         // label does.
         if case .admitted(let printed) = live, printed.admitted.provenance.period == .regulation {
@@ -1273,12 +1298,19 @@ struct EventDetailView: View {
     /// halves must be positive, and a sport that cannot end level never prints a
     /// level final (#8156) — Red Sox–Yankees' `3.2 – 3.0` rounds to `3-3` and
     /// is withheld. Notice 34: the space is left empty, not explained.
+    ///
+    /// #2920 W1 — and, given the `score` the page prints, a pair either of whose
+    /// rounded halves sits below its own side's score is withheld: points are
+    /// never taken back. Web's `projectedPairIsReachableFromTheScore`, per side,
+    /// after the rounding the line prints, equal reachable. It binds the
+    /// ladders' live pair, which nothing upstream checks against the game.
     static func projectionText(
         sport: String?, status: String?, commenceTime: Date?,
         projectedHome: Double?, projectedAway: Double?,
         ladderHome: Double? = nil, ladderAway: Double? = nil,
         ladderWhileLive: Bool = false,
         hasScore: Bool,
+        score: (home: Int, away: Int)? = nil,
         now: Date = Date()
     ) -> String? {
         let vocab = SportVocab.forSport(sport)
@@ -1303,6 +1335,7 @@ struct EventDetailView: View {
         let home = Int(pair.home.rounded()), away = Int(pair.away.rounded())
         guard pair.home > 0, pair.away > 0,
               vocab.canEndInATie || home != away else { return nil }
+        if let score, home < score.home || away < score.away { return nil }
         let text = "\(away)-\(home)"
         return "Proj. \(vocab.scoreboardCountsTheUnit ? text : vocab.withUnit(text))"
     }
