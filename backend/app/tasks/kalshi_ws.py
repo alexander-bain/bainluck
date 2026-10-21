@@ -1327,6 +1327,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # One disposable same-BBO observation per eligible outcome. These never
     # enter price_buffer, primary quote custody, held quotes or final-drain debt.
     book_observation_pending = {}
+    book_observation_wake = asyncio.Event()
     # #10090: the steady game clients (see "Connections" below), declared
     # here because the bundled-pair proof readers iterate them.
     game_clients: list[_KalshiClient] = []
@@ -2728,14 +2729,24 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             mark = tail_receipts.note_input(eid, oid, value, "book_observation", msg.get("ts_ms"))
             if mark is not None:
                 book_observation_pending[oid] = (eid, value, bound, mark, ticker, signature)
+                book_observation_wake.set()
                 flush_wake.set()
 
     async def flush_book_observations():
         async with buffer_lock:
             if not book_observation_pending:
                 return
-            snapshot = dict(book_observation_pending)
-            book_observation_pending.clear()
+            owned = (prices.held_events(blend_refresher)
+                     if prices.stamping is not None and not prices.stamping.done() else set())
+            if owned is None:
+                return
+            busy = owned | {event_id_by_outcome.get(oid) for oid in price_buffer}
+            snapshot = {oid: entry for oid, entry in book_observation_pending.items()
+                        if entry[0] not in busy}
+            if not snapshot:
+                return
+            for oid in snapshot:
+                book_observation_pending.pop(oid)
             window = getattr(blend_refresher, "_admission", None)
             releases = {entry[0]: window.released.get(entry[0], 0) if window else 0
                         for entry in snapshot.values()}
@@ -2767,7 +2778,21 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         allowed.add(eid)
                 return allowed
 
-        await blend_refresher.preview_accepted_observations(groups, validate)
+        async def restore():
+            async with buffer_lock:
+                for oid, entry in snapshot.items():
+                    # Newer arrivals own the slot. Never re-date the retry.
+                    book_observation_pending.setdefault(oid, entry)
+                book_observation_wake.set()
+
+        try:
+            accepted = await blend_refresher.preview_accepted_observations(groups, validate)
+        except asyncio.CancelledError:
+            await restore()
+            raise
+        if accepted is False:
+            await restore()
+            return
         held = getattr(blend_refresher, "held_quotes", None)
         if held is not None and any(entry[2] == getattr(held, "_database_bound", None)
                                     for entry in snapshot.values()):
@@ -3237,14 +3262,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # #10090: an in-place scope change swaps the maps between flushes, never
     # under one that planned its phases from the previous maps.
     flush_gate = asyncio.Lock()
+    from app.tasks.ws_observation_drain import ObservationDrain
+    observation_drain = ObservationDrain(
+        flush_book_observations, lambda: bool(book_observation_pending),
+        book_observation_wake, flush_period,
+    )
 
     async def timed_flush(flush_started):
         async with flush_gate:
             started = time.monotonic()
             try:
-                result = await flush_prices(flush_started)
-                await flush_book_observations()
-                return result
+                return await observation_drain.run_with(lambda: flush_prices(flush_started))
             finally:
                 flush_timings.flushed(time.monotonic() - started)
 
