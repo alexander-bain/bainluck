@@ -316,3 +316,125 @@ class TestOwnerWiring:
         unset.held_quotes = HeldRowQuotes()
         assert set(unset.held_quotes.preview_events()) == set()
         assert unset.held_quotes is not None and LiveBlendRefresher("kalshi").held_quotes is None
+
+
+# ------------------------------------------------- lifecycle (812 review REVISE)
+
+
+def _owner(monkeypatch, source="kalshi"):
+    from app.tasks.live_blend_refresh import LiveBlendRefresher
+    from app.utils import blend_preview
+
+    monkeypatch.delenv("LIVE_BLEND_PREVIEW_SOURCES", raising=False)
+    monkeypatch.setenv(blend_preview.SOURCE_ENV, source)
+    monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, str(EV))
+    return LiveBlendRefresher(source)
+
+
+async def _active(owner, clock):
+    """Install a HeldRowQuotes through the REAL setter and get its sampler running."""
+    db = FakeDB(clock)
+    held = HeldRowQuotes()
+    held._now, held._sleep = clock.now, clock.sleep
+    owner.held_quotes = held
+    await held.sample_database_clock(db)  # the consumer's startup sample
+    await _phase(held, db, clock, clock.t + 0.01)
+    await _run_until(clock, clock.t + 1.0)
+    assert held._idle_task is not None and not held._idle_task.done() and held.idle_samples > 0
+    return held, db
+
+
+class TestLifecycleWiring:
+    async def test_replacing_held_quotes_closes_the_old_sampler_and_the_run_reaps_it(self, monkeypatch):
+        from app.tasks.live_blend_refresh import reap_stopped_loops
+
+        clock = Clock()
+        owner = _owner(monkeypatch)
+        old, old_db = await _active(owner, clock)
+        task = old._idle_task
+        new, _new_db = await _active(owner, clock)  # the reviewer's countercase: replacement
+        assert old._closed and old._idle_task is None
+        assert await reap_stopped_loops("kalshi", ()) == 0
+        assert task.done()
+        reads = old_db.calls
+        old.note_input(_mark())  # the abandoned instance never restarts
+        await _run_until(clock, clock.t + 5.0)
+        assert old._idle_task is None and old_db.calls == reads
+        assert not new._closed and not new._idle_task.done()  # the successor is untouched
+        new.close()
+
+    async def test_consumer_teardown_closes_and_joins_the_sampler(self, monkeypatch):
+        from app.tasks.live_blend_refresh import hand_off_pending, reap_stopped_loops
+
+        clock = Clock()
+        owner = _owner(monkeypatch, "polymarket")
+        held, db = await _active(owner, clock)
+        task = held._idle_task
+        # The consumers' teardown order: hand off, then reap the stopped loops.
+        hand_off_pending(owner)
+        assert held._closed
+        assert await reap_stopped_loops("polymarket", ()) == 0
+        assert task.done()
+        reads = db.calls
+        held.note_input(_mark())
+        await _run_until(clock, clock.t + 5.0)
+        assert held._idle_task is None and db.calls == reads
+
+    async def test_a_read_in_flight_at_teardown_is_cancelled_and_publishes_nothing(self, monkeypatch):
+        from app.tasks.live_blend_refresh import hand_off_pending, reap_stopped_loops
+
+        clock = Clock()
+        owner = _owner(monkeypatch)
+        held, db = await _active(owner, clock)
+        db.gates.append(asyncio.Event())  # the next idle read never answers
+        before_calls, bound = db.calls, held._database_bound
+        for _ in range(200):
+            clock.t += 0.01
+            await _settle()
+            if db.calls > before_calls:
+                break
+        assert held._sampling == 1  # the idle read is in flight
+        task = held._idle_task
+        hand_off_pending(owner)
+        assert await reap_stopped_loops("kalshi", ()) == 0
+        assert task.cancelled() and held._sampling == 0
+        assert held._database_bound == bound  # a cancelled read publishes nothing
+
+    async def test_a_second_cancellation_during_teardown_leaves_no_sampler_running(self, monkeypatch):
+        from app.tasks.live_blend_refresh import hand_off_pending, reap_stopped_loops
+
+        clock = Clock()
+        owner = _owner(monkeypatch)
+        held, db = await _active(owner, clock)
+        task = held._idle_task
+
+        async def teardown():
+            try:
+                await asyncio.sleep(3600)  # stands in for the drain a cancellation lands on
+            finally:
+                hand_off_pending(owner)
+                await reap_stopped_loops("kalshi", ())
+
+        run = asyncio.create_task(teardown())
+        await _settle()
+        run.cancel()
+        await _settle()
+        run.cancel()  # a second cancellation lands on the reap's await
+        with pytest.raises(asyncio.CancelledError):
+            await run
+        await _settle()
+        assert task.done() and held._closed
+        reads = db.calls
+        await _run_until(clock, clock.t + 5.0)
+        assert db.calls == reads
+
+    def test_both_consumers_tear_down_through_hand_off_then_reap(self):
+        """The lifecycle above rides wiring the consumers already have."""
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1] / "app" / "tasks"
+        for name in ("kalshi_ws.py", "polymarket_ws.py"):
+            text = (root / name).read_text()
+            hand_off = text.index("hand_off_pending(blend_refresher)")
+            reap = text.index("await reap_stopped_loops(", hand_off)
+            assert hand_off < reap, name
