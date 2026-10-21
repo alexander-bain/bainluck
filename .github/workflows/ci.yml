@@ -5263,6 +5263,7 @@ jobs:
           PM_WITHDRAWAL_REDIS_URL: redis://localhost:56379/11
         run: |
           if python -m pytest tests/integration/test_live_normal_publication_recovery_10090_pg.py \
+            tests/test_blend_preview_ledger_tsp1_10090.py \
             -v -rs > /tmp/normal-recovery10090.txt 2>&1; then
             gate_status=0
           else
@@ -5275,8 +5276,8 @@ jobs:
             echo "::error::#10090 normal-publication recovery gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]23 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
-            echo "::error::#10090 normal-publication recovery gate did not run all twenty-three cases"
+          grep -qE "[^0-9]59 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
+            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 59 cases"
             exit 1
           }
 
