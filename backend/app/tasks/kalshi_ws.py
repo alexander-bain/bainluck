@@ -1321,6 +1321,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     input_marks: dict = {}
     from app.utils.kalshi_primary_quote import PrimaryQuoteCustody
     primary_quote_custody = PrimaryQuoteCustody()
+    # Optional DNPL observations only: same quote retains continuity, while
+    # changes/invalidity/reconnection end it. Never durable write debt.
+    observation_continuity = {}
     # #10090: the steady game clients (see "Connections" below), declared
     # here because the bundled-pair proof readers iterate them.
     game_clients: list[_KalshiClient] = []
@@ -1406,6 +1409,29 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     blend_refresher.current_book_primary_price = steady_book_primary_price
     blend_refresher.require_current_book_proof = True
     blend_refresher.current_book_midpoint = steady_book_midpoint
+    def observation_signature(ticker):
+        ids = ticker_to_ids.get(ticker)
+        if ids is None or ids[0] in prices.settled_market_ids:
+            return None
+        owners = tuple(
+            (id(client.sock), getattr(client.sock, "_primary_generation", None))
+            for client in game_clients
+            if ticker in client.tickers and client.task is not None and not client.task.done()
+        )
+        if len(owners) != 1:
+            return None
+        return ids, event_id_by_outcome.get(ids[1]), owners, steady_book_signature(ticker)
+
+    def note_observation_continuity(outcome_id, ticker, entry):
+        signature = observation_signature(ticker) if entry is not None else None
+        if (event_id_by_outcome.get(outcome_id) in blend_refresher.preview_events
+                and outcome_id not in non_blend_outcome_ids and signature is not None):
+            previous = observation_continuity.get(outcome_id)
+            if previous is None or previous[1:] != (entry, ticker, signature):
+                observation_continuity[outcome_id] = (object(), entry, ticker, signature)
+        else:
+            observation_continuity.pop(outcome_id, None)
+
     # #9462 review: stamps the previous run still owed when it recycled. Its
     # prices are already stored; the first flush below stamps them.
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
@@ -1480,6 +1506,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             }
             primary_quote_custody.retain(ids[1] for ids in ticker_to_ids.values())
             batch_primary_inputs = primary_quote_custody.snapshot(batch)
+            if getattr(blend_refresher, "preview_events", ()):
+                for oid in tuple(observation_continuity):
+                    if cohort_event_ids.get(oid) not in blend_refresher.preview_events:
+                        observation_continuity.pop(oid, None)
             if exact_trace is not None:
                 with contextlib.suppress(Exception):
                     exact_trace.snapshot(batch_marks.values())
@@ -2005,6 +2035,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                     oid: held_quotes.bound_for(batch_marks.get(oid))
                                     for oid in phase
                                 }
+                            preview_observations = (
+                                getattr(blend_refresher, "preview_accepted_observations", None)
+                                if not final_drain and getattr(blend_refresher, "preview_events", ()) else None
+                            )
+                            observation_tokens = (
+                                {oid: observation_continuity.get(oid) for oid in phase}
+                                if callable(preview_observations) else {}
+                            )
                         # #10693: the phase's rows go through the run's price pipeline,
                         # in batch order. A run of two or more consecutive rows of one
                         # shape (full book / no book, `utils/kalshi_price_statement.py`)
@@ -2291,6 +2329,51 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     # A committed write advanced last_updated: sample AFTER it,
                     # for future inputs only.
                     await held_quotes.sample_database_clock(get_task_session)
+                if callable(preview_observations):
+                    observation_groups = {}
+                    written_events = event_ids_for_outcomes(cohort_event_ids, written_outcome_ids)
+                    for oid, (value, _bid, _ask) in phase.items():
+                        eid = cohort_event_ids.get(oid)
+                        if eid in blend_refresher.preview_events and eid not in written_events:
+                            observation_groups.setdefault(eid, {})[oid] = (
+                                value, phase_bounds.get(oid), batch_marks.get(oid),
+                            )
+                    window = getattr(blend_refresher, "_admission", None)
+                    releases = {eid: window.released.get(eid, 0) if window else 0
+                                for eid in observation_groups}
+
+                    async def validate_observations(event_ids):
+                        async with buffer_lock:
+                            held = (prices.held_events(blend_refresher)
+                                    if prices.stamping is not None and not prices.stamping.done() else set())
+                            current_window = getattr(blend_refresher, "_admission", None)
+                            if held is None or (current_window is not None and current_window is not window):
+                                return set()
+                            allowed = set()
+                            for eid in event_ids:
+                                if eid in held or (window and window.released.get(eid, 0) != releases[eid]):
+                                    continue
+                                valid = True
+                                for oid, (value, bound, mark) in observation_groups[eid].items():
+                                    token = observation_tokens.get(oid)
+                                    latest = input_marks.get(oid)
+                                    if (token is None or observation_continuity.get(oid) != token
+                                            or observation_signature(token[2]) != token[3]
+                                            or cohort_event_ids.get(oid) != eid
+                                            or market_id_by_outcome.get(oid) in prices.settled_market_ids
+                                            or oid in non_blend_outcome_ids
+                                            or mark is None or latest is None or bound is None
+                                            or getattr(mark, "probability", None) != value
+                                            or getattr(latest, "probability", None) != value
+                                            or getattr(latest, "seq", -1) < getattr(mark, "seq", 0)):
+                                        valid = False
+                                        break
+                                if valid:
+                                    allowed.add(eid)
+                            return allowed
+
+                    if observation_groups:
+                        await preview_observations(observation_groups, validate_observations)
                 # The event refresh uses its own session and committed prices.
                 # Start it before awaiting the separate MARKET notification;
                 # either delivery can progress while the other awaits Redis.
@@ -2557,6 +2640,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # The socket's historical open bounds, kept: a terminal 0 or 1 is
         # settlement's to write (`handle_lifecycle`), never a streamed tick's.
         if prob is None or not 0 < prob < 1:
+            if getattr(blend_refresher, "preview_events", ()):
+                note_observation_continuity(outcome_id, ticker, None)
             if exact_trace is not None:
                 with contextlib.suppress(Exception):
                     exact_trace.decided(
@@ -2571,6 +2656,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         async with buffer_lock:
             primary_quote_custody.receive(outcome_id, msg)
             price_buffer[outcome_id] = (prob, yes_bid, yes_ask)
+            if getattr(blend_refresher, "preview_events", ()):
+                note_observation_continuity(outcome_id, ticker, (prob, yes_bid, yes_ask))
             # Under the lock, so seq order is buffer order. Never raises into
             # the socket: a receipt is evidence about the price, not the price.
             try:
