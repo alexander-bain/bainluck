@@ -99,7 +99,9 @@ struct NativeEventDiscoverCard: View {
         return FinalForecastComparison11296.resolve(
             sport: event.sport, status: event.status,
             homeScore: event.homeScore, awayScore: event.awayScore,
-            actualPeriod: .fullGame, projection: event.pregameProjection)
+            actualPeriod: FinalForecastComparison11296.actualPeriod(
+                sport: event.sport, servedFinalScorePeriod: event.finalScorePeriod),
+            projection: event.pregameProjection)
     }
 
     /// #2920 — on a live game, the producer's marked in-play pair, by the same
