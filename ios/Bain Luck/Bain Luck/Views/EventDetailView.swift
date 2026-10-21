@@ -443,7 +443,6 @@ struct EventDetailView: View {
                                              status: event.status, commenceTime: event.commenceTime?.asDate,
                                              isOpeningLine: event.currentOdds.map {
                                                  OpeningLineHero.resolve($0, for: event).isOpeningLine } ?? false,
-                                             // #10090 — the displayed number's own clock.
                                              observedAt: vm.displayedProbabilityObservedAt(event),
                                              deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
                                              now: tick.date)

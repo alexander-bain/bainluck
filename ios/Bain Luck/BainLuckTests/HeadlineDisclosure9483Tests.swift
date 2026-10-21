@@ -376,7 +376,8 @@ final class HeadlineDisclosure9483Tests: XCTestCase {
         let text = try page()
         let call = try XCTUnwrap(text.range(of: "EventHeadlinePhase9483.resolve("))
         let args = String(text[call.upperBound...].prefix(500))
-        XCTAssertTrue(args.contains("observedAt: event.heroProbabilityObservedAt?.asDate"),
+        // #10090 — the displayed number's clock: committed, or a shown preview's own.
+        XCTAssertTrue(args.contains("observedAt: vm.displayedProbabilityObservedAt(event)"),
                       "the phase must read the hero quote's own clock")
         XCTAssertTrue(args.contains("now: tick.date"), "the phase must age on the minute tick")
         let before = String(text[..<call.lowerBound].suffix(300))
