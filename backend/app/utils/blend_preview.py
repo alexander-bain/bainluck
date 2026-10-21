@@ -77,6 +77,7 @@ the freshly read row. No pending state is shared between processes.
 from __future__ import annotations
 
 import itertools
+import json
 import math
 import os
 import time
@@ -329,6 +330,18 @@ class PreviewRegistry:
             SimpleNamespace(win_probability_sources=clock_bag, status=state.status),
             state.status, require_complete=True,
         )
+        # Folded readers need the exact policy inputs, not this row's scalar
+        # aggregate. Round-trip a strict JSON copy so retained frame metadata
+        # cannot alias the registry's committed base. Invalid legacy metadata
+        # leaves singleton behavior intact and gives folded readers no claim.
+        pending_entries = None
+        try:
+            pending_entries = json.loads(json.dumps(
+                {name: bag[name] for name in sorted(state.pending)},
+                allow_nan=False,
+            ))
+        except (TypeError, ValueError):
+            pass
         return {
             "event_id": int(event_id),
             "p": float(probability),
@@ -346,6 +359,8 @@ class PreviewRegistry:
                 "base_rev": state.base_rev,
                 "ttl_ms": ttl_ms,
                 "pending": {name: float(e.value) for name, e in sorted(state.pending.items())},
+                "pending_entries_version": 1,
+                "pending_entries": pending_entries,
             },
         }
 

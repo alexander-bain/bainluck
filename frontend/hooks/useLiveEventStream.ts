@@ -9,6 +9,7 @@ import {
   EMPTY_BLEND_PREVIEW_READER,
   parseBlendPreview,
   readerAfter,
+  readerAfterCommitFloor,
   type BlendPreviewReader,
   type BlendPreviewState,
 } from '@/lib/blendPreview';
@@ -212,6 +213,10 @@ export function useLiveEventStream(
       },
       onReconcile: (control) => {
         if (!mounted.current) return;
+        setPreview(previous => ({
+          reader: readerAfterCommitFloor(previous.reader, control.floor),
+          previewNow: Date.now(),
+        }));
         try {
           onReconcileRef.current?.(control);
         } catch (error) {
@@ -232,11 +237,25 @@ export function useLiveEventStream(
           previewNow: at,
         }));
       },
+      onPreviewFloor: (raw) => {
+        if (!mounted.current) return;
+        try {
+          const packet = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          if (!packet || packet.event_id !== eventId) return;
+          setPreview(previous => ({
+            reader: readerAfterCommitFloor(previous.reader, packet.floor), previewNow: Date.now(),
+          }));
+        } catch {
+          setPreview(previous => ({
+            reader: { ...previous.reader, held: null }, previewNow: Date.now(),
+          }));
+        }
+      },
       onPreviewReset: () => {
         // Clears the held preview; keeps the epoch floor (epochs only rise).
         if (mounted.current) {
           setPreview(previous => ({
-            reader: { held: null, epoch: previous.reader.epoch }, previewNow: Date.now(),
+            reader: { ...previous.reader, held: null }, previewNow: Date.now(),
           }));
         }
       },

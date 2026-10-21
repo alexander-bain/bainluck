@@ -275,6 +275,18 @@ class LiveFanout:
             self._quote_projector = FoldedQuoteProjector()
         return await self._quote_projector.project(event_id, frame, fresh=True)
 
+    def project_folded_preview(self, event_id, frame, *, members, floors):
+        """A cold base abstains; warm preview composition never awaits SQL."""
+        if self._quote_projector is None:
+            return None
+        return self._quote_projector.project_preview(
+            event_id, frame, members=members, floors=floors,
+        )
+
+    def forget_folded_preview(self, event_id):
+        if self._quote_projector is not None:
+            self._quote_projector.forget_preview_base(event_id)
+
     # -- the Redis side -----------------------------------------------------
 
     async def _connect_locked(self) -> None:

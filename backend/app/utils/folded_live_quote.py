@@ -22,7 +22,8 @@ from app.utils.kalshi_occurrence_start import loaded_sport_key
 from app.utils.lifecycle import served_event_status
 from app.utils.price_evidence import load_price_evidence
 from app.utils.probability_source_format import format_probability_sources
-from app.utils.proven_duplicates import FoldedBlendView, folded_probability_sources_with_revision
+from app.utils.proven_duplicates import FoldedBlendView, folded_probability_state
+from app.utils.folded_blend_preview import FoldedPreviewBase, QuoteWithPreviewBase
 from app.utils.serve_fold_absorbed import serve_fold_absorbed_rows
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ async def load_folded_quote(event_id: int, origin_id: int, origin_rev: int):
         if event is None:
             return None
         absorbed = await serve_fold_absorbed_rows(db, event)
-        sources, revision = await folded_probability_sources_with_revision(db, event, absorbed)
+        sources, owners, revision = await folded_probability_state(db, event, absorbed)
         if (revision is None or str(event_id) not in revision
                 or revision.get(str(origin_id), -1) < origin_rev):
             return None
@@ -90,7 +91,9 @@ async def load_folded_quote(event_id: int, origin_id: int, origin_rev: int):
         # Shared legacy formatting accepts numeric shapes; transport authority
         # additionally needs valid JSON numbers, without changing detail policy.
         json.dumps(quote, allow_nan=False)
-        return quote
+        return QuoteWithPreviewBase(
+            quote, FoldedPreviewBase.capture(event, sources, owners, revision, sport),
+        )
 
 
 @dataclass
@@ -115,6 +118,7 @@ class FoldedQuoteProjector:
     def __init__(self):
         self._pending = {}
         self._cached = OrderedDict()
+        self._preview_bases = OrderedDict()
         self._recovery_retry_after = OrderedDict()
         self._slots = asyncio.Semaphore(2)
         self._recovery_slots = asyncio.Semaphore(RECOVERY_MAX_SLOTS)
@@ -123,6 +127,16 @@ class FoldedQuoteProjector:
         self._first_load_at = None
         self._last_success_at = None
         self._last_load_started_at = float("-inf")
+
+    def project_preview(self, event_id, frame, *, members, floors, elapsed_ms=0):
+        base = self._preview_bases.get(event_id)
+        if base is None:
+            return None
+        self._preview_bases.move_to_end(event_id)
+        return base.project(frame, members=members, floors=floors, elapsed_ms=elapsed_ms)
+
+    def forget_preview_base(self, event_id):
+        self._preview_bases.pop(event_id, None)
 
     def _dark(self, now):
         since = self._last_success_at
@@ -145,6 +159,19 @@ class FoldedQuoteProjector:
         now = asyncio.get_running_loop().time()
         # Record once per actual load, not once per coalesced reader.
         if quote is not None:
+            base = getattr(quote, "preview_base", None)
+            if base is not None:
+                held_base = self._preview_bases.get(event_id)
+                # A slow older read cannot replace a dominating base. Changed
+                # membership requires a new stream's exact membership check.
+                if (held_base is None or (
+                        set(base.revision) == set(held_base.revision)
+                        and all(base.revision[key] >= value
+                                for key, value in held_base.revision.items()))):
+                    self._preview_bases[event_id] = base
+                    self._preview_bases.move_to_end(event_id)
+                    while len(self._preview_bases) > MAX_CACHED:
+                        self._preview_bases.popitem(last=False)
             if self._dark(now):
                 for retry in self._recovery_retry_after.values():
                     if not retry.spent:

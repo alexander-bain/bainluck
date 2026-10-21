@@ -109,6 +109,7 @@ export interface LiveStreamDeps {
   onPreview?: (raw: unknown) => void;
   /** #10090: previews are never replayed, so every (re)open and the end of the match clear them. */
   onPreviewReset?: () => void;
+  onPreviewFloor?: (raw: unknown) => void;
   /**
    * #10200 — what the TRANSPORT is doing, for the reader-facing status only.
    *
@@ -464,6 +465,10 @@ export function createLiveStreamController(
     next.addEventListener('preview', (event) => {
       if (stopped || handle !== next) return;
       onPreview?.((event as { data?: unknown })?.data);
+    });
+    next.addEventListener('fold_preview_floor', (event) => {
+      if (stopped || handle !== next) return;
+      deps.onPreviewFloor?.((event as { data?: unknown })?.data);
     });
 
     next.addEventListener('heartbeat', () => {
