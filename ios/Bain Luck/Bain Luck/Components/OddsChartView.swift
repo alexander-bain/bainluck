@@ -481,6 +481,8 @@ struct OddsChartView: View {
     /// axis only; `0` leaves it on its own width.
     var pageAxisPlotWidth: CGFloat = 0
     @Environment(\.horizontalSizeClass) private var sizeClass
+    /// #10796 — read only by the full-size chart (`fullscreenEnlargedPlotFloor`).
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     /// #925 — false only under a raster (see `chartScrubSurfaces`).
     @Environment(\.chartScrubSurfaces) private var scrubSurfaces
 
@@ -497,6 +499,27 @@ struct OddsChartView: View {
         if bounds.width > bounds.height { return 320 }
         #endif
         return 380
+    }
+
+    /// #10796 — the full-size plot's height when a finished tennis match is
+    /// read at an accessibility text size, or nil to lay the full-size chart
+    /// out as it always has.
+    ///
+    /// Full size gives the plot whatever height its readout leaves. At AX1 on
+    /// a 375×667 phone the tennis panel's stacked names, held chances, dated
+    /// baseline and Show latest left it 30pt: five y-axis labels on top of each
+    /// other and two flat strips, less chart than the page it was opened from
+    /// (Design's mounted review of 3d52, all three matches; the 26d8 control
+    /// is the same 30pt). At these sizes the cover scrolls instead, the plot
+    /// keeps the inline chart's height, and the panel follows it as it does
+    /// inline — so its numbers are under the plot when the cover opens, and a
+    /// lift that resizes the panel never moves the chart under the finger
+    /// (#925). The text is never shrunk to buy the room.
+    static func fullscreenEnlargedPlotFloor(tennisReading: Bool, finished: Bool,
+                                            textSize: DynamicTypeSize,
+                                            inlinePlotHeight: CGFloat) -> CGFloat? {
+        guard tennisReading, finished, textSize.isAccessibilitySize else { return nil }
+        return inlinePlotHeight
     }
 
     private var gameStartDate: Date? {
@@ -1110,6 +1133,11 @@ struct OddsChartView: View {
                         }
                         .padding()
                     } else {
+                        // #10796 — nil everywhere but enlarged finished tennis,
+                        // where the plot keeps this height and the cover scrolls.
+                        let enlargedPlotFloor = Self.fullscreenEnlargedPlotFloor(
+                            tennisReading: tennis != nil, finished: EventState.isFinished(status),
+                            textSize: dynamicTypeSize, inlinePlotHeight: chartHeight)
                         VStack(spacing: 8) {
                             if showPicker {
                                 HStack {
@@ -1129,8 +1157,11 @@ struct OddsChartView: View {
                             // baseline, in the card's place; opening holds the
                             // reading shown, so the return finds the same one.
                             if let tennis {
-                                TennisScrubbedReadingPanel9483(selection: selection,
-                                                               panel: tennisPanel(tennis, expanded: true))
+                                // #10796 — enlarged, it follows the plot instead.
+                                if enlargedPlotFloor == nil {
+                                    TennisScrubbedReadingPanel9483(selection: selection,
+                                                                   panel: tennisPanel(tennis, expanded: true))
+                                }
                             } else if let card = Self.fullscreenReadout(
                                 page: readout, homeTeam: homeTeamName, awayTeam: awayTeamName,
                                 colors: teamColors, homeLogo: homeTeamLogo, awayLogo: awayTeamLogo) {
@@ -1193,10 +1224,19 @@ struct OddsChartView: View {
                                           plotWidth: $fullscreenPlotWidth, sharesPageAxis: false,
                                           pageGaveCard: readout != nil, tennis: tennis)
                             }
+                            // #10796 — nil leaves the row as flexible as it was.
+                            .frame(height: enlargedPlotFloor)
                             legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
                             momentCaption(moments)
+                            if enlargedPlotFloor != nil, let tennis {
+                                TennisScrubbedReadingPanel9483(selection: selection,
+                                                               panel: tennisPanel(tennis, expanded: true))
+                            }
                         }
                         .padding()
+                        // #10796 — the scrub surface already holds an enclosing
+                        // scroll view still while a press owns the touch.
+                        .modifier(FullscreenOverflowScroll10796(scrolls: enlargedPlotFloor != nil))
                     }
                 }
             }
@@ -4279,5 +4319,20 @@ private extension View {
     func pairedGutterHidden9483(_ hidden: Bool) -> some View {
         opacity(hidden ? 0 : 1)
             .accessibilityHidden(hidden)
+    }
+}
+
+/// #10796 — the full-size chart's content, scrolled only where its plot has a
+/// floor (`OddsChartView.fullscreenEnlargedPlotFloor`); otherwise untouched.
+/// Done stays in the navigation bar above it either way.
+private struct FullscreenOverflowScroll10796: ViewModifier {
+    let scrolls: Bool
+
+    func body(content: Content) -> some View {
+        if scrolls {
+            ScrollView(.vertical) { content }
+        } else {
+            content
+        }
     }
 }
