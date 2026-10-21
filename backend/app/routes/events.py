@@ -27058,6 +27058,21 @@ async def _build_game_markets(
                 event, market, market_outcomes, _gm_now
             )
 
+            # #1529 reader gate — a full-game winner has no section of its own,
+            # so its legs land in `other` below; without the class it already
+            # carries, the catalog files "Philadelphia vs New York" under Other
+            # (event 15195694, 2026-10-21). The row keeps its section and gains
+            # the classifier's answer under the key totals/period rows use.
+            # NOT on a matchup-named player container: one player-shaped leg
+            # makes every sibling the rescue leaves behind an unknown, not the
+            # game's winner.
+            other_market_type = (
+                "moneyline"
+                if market_type == "moneyline"
+                and not any(_PLAYER_OUTCOME_RE.match(o.name or "") for o in market_outcomes)
+                else None
+            )
+
             # Rescue player-prop-shaped outcomes from "other" markets.
             # Some markets land here because their name is a generic matchup
             # ("Celtics at Warriors") with no stat keywords, yet their
@@ -27184,6 +27199,7 @@ async def _build_game_markets(
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
                     **_settled_grade_fields(market, o, **_grade_ctx),
+                    **({"market_type": other_market_type} if other_market_type else {}),
                     "_market_id": market.id,
                 })
 
