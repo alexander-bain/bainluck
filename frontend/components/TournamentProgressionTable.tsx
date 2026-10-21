@@ -349,21 +349,51 @@ function cellDisplay(
 }
 
 /**
- * The glyph a DECIDED column prints: in@✓, out@—.
+ * What a cell in a DECIDED column prints and says: in@✓, out@—, and nothing
+ * else unless the register confirms it.
  *
  * #11369: this used to read the number alone, but a register-won cell carries
  * a result and no number (Q295), so every clinched team — the NL champion
  * Brewers, all twelve playoff qualifiers — printed "—" beside the eliminated
- * clubs. The cell's status is the result; the number is only consulted for a
- * cell the register still serves as live.
+ * clubs. The cell's status is the result.
+ *
+ * #11384: and ONLY the status. A cell the register still serves live kept a ✓
+ * at >=0.5 — Tampa Bay at 0.995 read as a pennant winner beside the Brewers,
+ * who had actually won. A checkmark is a confirmed achievement, never a price
+ * cutoff, in both directions: live 0.995 is not a clinch and live 0.01 is not
+ * an elimination. A live cell keeps its number (the shared formatter, so 0.995
+ * never rounds to 100%) and says its result is unconfirmed; a cell with no
+ * result and no admissible number is awaiting one, never "—", which in this
+ * column means out. The column being decided settles nobody: the label here,
+ * not "Decided", is what the cell's title and accessible name carry.
+ *
+ * A live cell also prints a visible "Unconfirmed" under its number: a phone
+ * reader never sees the title, and a bare 100% under a Decided heading reads as
+ * a result. Every live cell carries it — it marks the state, not a price level.
  */
-export function decidedGlyph(
+export function decidedCellDisplay(
   probability: number | null,
   status: ProgressionCellStatus,
-): string {
-  if (status === "clinched") return GRID_CELL_TERMINAL_GLYPH.clinched;
-  if (status !== null) return "—";
-  return probability != null && probability >= 0.5 ? GRID_CELL_TERMINAL_GLYPH.clinched : "—";
+): {
+  text: string;
+  label: string;
+  state: "clinched" | "eliminated" | "live" | "awaiting";
+  qualifier?: string;
+} {
+  if (status === "clinched") {
+    return { text: GRID_CELL_TERMINAL_GLYPH.clinched, label: "Clinched", state: "clinched" };
+  }
+  if (status === "eliminated") return { text: "—", label: "Eliminated", state: "eliminated" };
+  if (status === null && probability != null && Number.isFinite(probability)) {
+    const text = formatProb(probability);
+    return {
+      text,
+      label: `Result unconfirmed · Live probability ${text}`,
+      state: "live",
+      qualifier: "Unconfirmed",
+    };
+  }
+  return { text: "Awaiting", label: "Awaiting result", state: "awaiting" };
 }
 
 /**
@@ -997,14 +1027,16 @@ export default function TournamentProgressionTable({
                       : undefined;
                     const isResolved = !!stage.resolved;
                     // Resolved columns: no live bar, no change indicator — a muted
-                    // decided glyph (in@✓ / out@—) so it can't read as a live bar.
+                    // decided cell (in@✓ / out@— / an unconfirmed live number /
+                    // awaiting) so it can't read as a live bar.
                     const bw = isResolved ? 0 : barWidth(prob, barScaleMax);
                     const display = cellDisplay(prob, status);
+                    const decided = isResolved ? decidedCellDisplay(prob, status) : null;
                     return (
                       <td
                         key={stage.key}
                         className="py-1.5 px-2 text-center relative"
-                        title={isResolved ? "Decided" : (tooltip ?? display.label)}
+                        title={decided ? decided.label : (tooltip ?? display.label)}
                       >
                         {/* Inline data bar — scaled width, single-hue accent */}
                         {bw > 0 && (
@@ -1014,9 +1046,21 @@ export default function TournamentProgressionTable({
                           />
                         )}
                         <div className="flex flex-col items-center relative">
-                          {isResolved ? (
-                            <span className="font-mono text-sm text-text-muted">
-                              {decidedGlyph(prob, status)}
+                          {decided ? (
+                            <span
+                              className="font-mono text-sm text-text-muted"
+                              aria-label={decided.label}
+                              data-decided-cell={decided.state}
+                            >
+                              {decided.text}
+                              {decided.qualifier && (
+                                <span
+                                  className="block font-sans text-[9px] leading-none uppercase tracking-wide mt-0.5"
+                                  data-decided-qualifier
+                                >
+                                  {decided.qualifier}
+                                </span>
+                              )}
                             </span>
                           ) : (
                             <>
