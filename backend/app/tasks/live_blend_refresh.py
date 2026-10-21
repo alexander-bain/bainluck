@@ -1304,6 +1304,20 @@ class HeldRowQuotes:
     SAMPLE_BACKOFF_S = 5.0
     #: #10090 — `stored_at_or_after` waits at most this for a relation lock.
     AMBIGUITY_READ_LOCK_TIMEOUT_MS = 10
+    #: #10090 IDLE BOUND (Root page max, run 20261021T111728). Samples run only
+    #: after a phase commits, so after a quiet spell the newest completed one is
+    #: as old as the source's previous phase, and the first input after it
+    #: previews THAT time (PM venue 11:18:01.262 printed 11:17:59.866). While
+    #: an input for one of the owner's preview events arrived within
+    #: IDLE_ACTIVE_S, ONE task per process keeps the newest completed sample
+    #: at most IDLE_SAMPLE_S old: the same read, timeout and backoff, one at a
+    #: time, on the same pool. The semantics are unchanged: a sample that
+    #: completed before acceptance, frozen at `note_input`.
+    IDLE_SAMPLE_S = 0.25
+    IDLE_ACTIVE_S = 30.0
+    #: An input noted after the last sample STARTED is owed its phase's own
+    #: post-commit sample; the idle task leaves that phase this long first.
+    IDLE_PHASE_GRACE_S = 1.0
 
     def __init__(self) -> None:
         self._quotes: dict[int, tuple[float, float]] = {}
@@ -1311,35 +1325,108 @@ class HeldRowQuotes:
         self._database_bound: float | None = None
         self._sample_backoff_until = 0.0
         self.sample_failures = 0
+        # Idle bound (class doc). The owning refresher installs its CURRENT
+        # preview events; empty means no idle sampling at all.
+        self.preview_events: Callable[[], Iterable[int]] = frozenset
+        self._sessions = None
+        self._idle_task: Optional[asyncio.Task] = None
+        self._sample_started = 0  # ordinal of the newest sample started
+        self._sample_published = 0  # ordinal of the sample `_database_bound` holds
+        self._sampling = 0
+        self._last_sample_started = -math.inf
+        self._last_sample_done = -math.inf
+        self._last_input_at = -math.inf
+        self._last_preview_input_at = -math.inf
+        self.idle_samples = 0
+        self.idle_skips = 0
+
+    @staticmethod
+    def _now() -> float:
+        return time.monotonic()
+
+    @staticmethod
+    async def _sleep(seconds: float) -> None:
+        await asyncio.sleep(seconds)
 
     async def sample_database_clock(self, sessions) -> bool:
         """Bounded read; only inputs accepted AFTER it completes may use it."""
-        import asyncio
-        import time
-
         from sqlalchemy import func, select
 
-        if time.monotonic() < self._sample_backoff_until:
+        if self._now() < self._sample_backoff_until:
             return False
+        self._sessions = sessions
+        self._sample_started += 1
+        ordinal = self._sample_started
+        self._sampling += 1
+        self._last_sample_started = self._now()
         try:
             async with asyncio.timeout(self.SAMPLE_TIMEOUT_S):
                 async with sessions() as session:
                     value = (await session.execute(select(func.clock_timestamp()))).scalar_one()
-                # Publish the sample only after the session has fully exited.
-                self._database_bound = value.timestamp()
+                # Publish the sample only after the session has fully exited,
+                # and never over one that STARTED later: an idle read that
+                # overlapped a phase's post-commit read must not replace it.
+                if ordinal > self._sample_published:
+                    self._sample_published = ordinal
+                    self._database_bound = value.timestamp()
+                self._last_sample_done = self._now()
                 return True
         except Exception:
             # The ordinary price writer stays available when the optional fast
             # path cannot establish an order. Cancellation still propagates.
             self.sample_failures += 1
-            self._sample_backoff_until = time.monotonic() + self.SAMPLE_BACKOFF_S
+            self._sample_backoff_until = self._now() + self.SAMPLE_BACKOFF_S
             return False
+        finally:
+            self._sampling -= 1
 
     def note_input(self, mark) -> None:
         """Freeze the newest completed sample as this input's lower bound."""
         self._input_bounds[mark.outcome_id] = (
             mark.seq, round(float(mark.probability), 6), self._database_bound,
         )
+        now = self._now()
+        self._last_input_at = now
+        if getattr(mark, "event_id", None) in self.preview_events():
+            self._last_preview_input_at = now
+            self._start_idle_sampler()
+
+    def _start_idle_sampler(self) -> None:
+        if self._sessions is None or (self._idle_task is not None and not self._idle_task.done()):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._idle_task = loop.create_task(self._idle_sampler(), name="held-quotes-idle-bound")
+
+    async def _idle_sampler(self) -> None:
+        """Keep the bound fresh while preview inputs arrive; exits by itself."""
+        try:
+            while True:
+                now = self._now()
+                if (now - self._last_preview_input_at >= self.IDLE_ACTIVE_S
+                        or not self.preview_events()):
+                    return
+                due = max(self._last_sample_done + self.IDLE_SAMPLE_S, self._sample_backoff_until)
+                if self._last_input_at > self._last_sample_started:
+                    due = max(due, self._last_input_at + self.IDLE_PHASE_GRACE_S)
+                if now < due:
+                    await self._sleep(min(due - now, self.IDLE_SAMPLE_S))
+                    continue
+                if self._sampling:
+                    self.idle_skips += 1  # a phase's read is in flight
+                    await self._sleep(self.IDLE_SAMPLE_S)
+                    continue
+                self.idle_samples += 1
+                await self.sample_database_clock(self._sessions)
+        except Exception:
+            logger.warning("held quotes: idle bound sampler stopped", exc_info=True)
+
+    def close(self) -> None:
+        """Cancel the idle sampler (it also exits by itself once inputs stop)."""
+        if self._idle_task is not None and not self._idle_task.done():
+            self._idle_task.cancel()
 
     def bound_for(self, mark) -> float | None:
         """This exact input's frozen bound, or None (another input, or none yet).
@@ -1408,7 +1495,7 @@ class HeldRowQuotes:
         new = self._new_bounds(quotes)
         if not new:
             return set()
-        if time.monotonic() < self._sample_backoff_until:
+        if self._now() < self._sample_backoff_until:
             return None
         try:
             async with asyncio.timeout(self.SAMPLE_TIMEOUT_S):
@@ -1425,7 +1512,7 @@ class HeldRowQuotes:
             # Shares the sample's window: a sick pool still costs one timeout
             # per window, and later sample attempts back off behind this one.
             self.sample_failures += 1
-            self._sample_backoff_until = time.monotonic() + self.SAMPLE_BACKOFF_S
+            self._sample_backoff_until = self._now() + self.SAMPLE_BACKOFF_S
             return None
         found = set()
         for oid, last_updated in rows:
@@ -1645,6 +1732,18 @@ class LiveBlendRefresher:
     other's entries, and so a reconnect starts clean.
     """
 
+    @property
+    def held_quotes(self) -> Optional[HeldRowQuotes]:
+        return self.__dict__.get("_held_quotes")
+
+    @held_quotes.setter
+    def held_quotes(self, quotes: Optional[HeldRowQuotes]) -> None:
+        self.__dict__["_held_quotes"] = quotes
+        if isinstance(quotes, HeldRowQuotes):
+            # #10090 idle bound: this refresher's CURRENT preview events gate
+            # the owner's idle sampler (legacy single-source and ledger alike).
+            quotes.preview_events = lambda: getattr(self, "preview_events", frozenset())
+
     def __init__(
         self,
         source: str,
@@ -1676,7 +1775,7 @@ class LiveBlendRefresher:
         self._custody_ready: dict[int, asyncio.Event] = {}
         self._custody_clock: dict[int, float] = {}
         #: #11138 — the owning consumer's `HeldRowQuotes`, or None (no overlay).
-        self.held_quotes: Optional[HeldRowQuotes] = None
+        self.held_quotes = None
         #: #10090 — the Kalshi WS owner's current-book proof for the bundled
         #: Challenger pair (`compute_source_home_probability`). Off unless the
         #: owner installs all of them before its first refresh can run: the
