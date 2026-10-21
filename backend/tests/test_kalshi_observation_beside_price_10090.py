@@ -126,10 +126,20 @@ async def test_capacity_restoration_delivers_frozen_input_without_new_tick(monke
     await task
 
 
-async def test_read_failure_retains_frozen_observation_for_retry(monkeypatch):
+@pytest.mark.parametrize(
+    "pause_before_retry",
+    [False, True],
+    ids=["original-missed-state-control", "barrier-preserves-frozen-input"],
+)
+async def test_read_failure_retains_frozen_observation_for_retry(
+    monkeypatch, pause_before_retry
+):
     rig = timed_rig(monkeypatch)
     original = rig.r._read_groups
     attempts = 0
+    restored, retry_release, retried = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    now = [10.0]
+    rig.drain._clock = lambda: now[0]
 
     async def unavailable_once(*args, **kwargs):
         nonlocal attempts
@@ -138,26 +148,59 @@ async def test_read_failure_retains_frozen_observation_for_retry(monkeypatch):
             raise TimeoutError("bounded observation read")
         return await original(*args, **kwargs)
 
-    rig.r._read_groups = unavailable_once
-    task = asyncio.create_task(rig.ns["timed_flush"](time.monotonic()))
-    await rig.entered.wait()
-    await feed(rig)
-    frozen = dict(rig.ns["book_observation_pending"])
-    await until(lambda: attempts == 1)
-    assert rig.ns["book_observation_pending"] == frozen
-    rig.held._database_bound += 10
-    await until(lambda: len(_blends(rig.frames)) == 1)
-    from datetime import datetime
+    original_drain = rig.drain._drain
 
-    assert (
-        datetime.fromisoformat(
-            _blends(rig.frames)[0]["display_observed_at"]
-        ).timestamp()
-        == rig.bound
-    )
-    assert attempts == 2 and rig.r.preview_stats["publish_errors"] == 1
-    rig.release.set()
-    await task
+    async def drain_with_retry_barrier():
+        await original_drain()
+        # Make retry due before the test observer resumes. The unsynchronized
+        # control deterministically misses attempts==1; the barrier must still
+        # expose the fully restored tuple, not an in-progress read failure.
+        now[0] = rig.drain._next + 1
+        if attempts == 1:
+            restored.set()
+            if pause_before_retry:
+                await retry_release.wait()
+        elif attempts == 2:
+            retried.set()
+
+    rig.r._read_groups = unavailable_once
+    rig.drain._drain = drain_with_retry_barrier
+    task = asyncio.create_task(rig.ns["timed_flush"](time.monotonic()))
+    try:
+        await rig.entered.wait()
+        await feed(rig)
+        frozen = dict(rig.ns["book_observation_pending"])
+        if pause_before_retry:
+            async with asyncio.timeout(1):
+                await restored.wait()
+            assert rig.drain._clock() >= rig.drain._next
+            assert attempts == 1
+            assert rig.ns["book_observation_pending"] == frozen
+            assert not _blends(rig.frames)
+            rig.held._database_bound += 10
+            retry_release.set()
+        else:
+            # Reproduce the original observer being scheduled only after the
+            # fast retry. Its former polling condition can never become true.
+            async with asyncio.timeout(1):
+                await retried.wait()
+            assert attempts == 2
+            with pytest.raises(TimeoutError):
+                await until(lambda: attempts == 1)
+        await until(lambda: len(_blends(rig.frames)) == 1)
+        from datetime import datetime
+
+        assert (
+            datetime.fromisoformat(
+                _blends(rig.frames)[0]["display_observed_at"]
+            ).timestamp()
+            == rig.bound
+        )
+        assert attempts == 2 and rig.r.preview_stats["publish_errors"] == 1
+    finally:
+        retry_release.set()
+        rig.release.set()
+        await task
 
 
 async def test_retry_restore_never_overwrites_newer_arrival(monkeypatch):
