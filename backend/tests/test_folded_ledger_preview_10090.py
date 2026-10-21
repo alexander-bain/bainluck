@@ -4,6 +4,7 @@ No split-origin union: books stay in the committed fold, all pending entries
 must be elected from the single ledger event. Reuse real Redis send controls.
 """
 from copy import deepcopy
+from datetime import datetime, timezone
 
 import pytest
 
@@ -184,8 +185,10 @@ async def test_actual_folded_route_forwards_both_entries_then_terminal_floor(rig
         assert actual["preview"]["pending"] == {"kalshi": .6, "polymarket": .7}
         assert actual["preview"]["ttl_ms"] <= frame["preview"]["ttl_ms"]
         hub.subscriptions["live:event:8"].offer(json.dumps({
+            # Stamped now: the route drops a frame older than MAX_FRAME_AGE_S,
+            # and FRESH is fixed at import, so it ages with the session.
             "event_id": 8, "p": 1., "status": "completed", "rev": {"8": 4},
-            "updated_at": FRESH,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }))
         assert "event: fold_preview_floor" in await asyncio.wait_for(anext(stream), 1)
         assert "event: probability" in await asyncio.wait_for(anext(stream), 1)
