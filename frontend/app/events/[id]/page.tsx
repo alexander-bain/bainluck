@@ -1386,8 +1386,8 @@ export default function EventPage({ params }: EventPageProps) {
   // #10090: one disposable chart projection supplies the line and its resting
   // probability. The adopted history/cache and source/score observations stay intact.
   const previewChartLine = useMemo(() => overlayBlendPreviewLine(
-    event, blendPreview, blendPreviewNow, historyData?.aggregate_line ?? undefined,
-  ), [event, blendPreview, blendPreviewNow, historyData?.aggregate_line]);
+    event, blendPreview, blendPreviewNow, historyData?.aggregate_line ?? undefined, servedHistory,
+  ), [event, blendPreview, blendPreviewNow, historyData?.aggregate_line, servedHistory]);
   const previewChartHistory = useMemo(() => historyData &&
     previewChartLine !== (historyData.aggregate_line ?? undefined)
     ? { ...historyData, aggregate_line: previewChartLine } : historyData,

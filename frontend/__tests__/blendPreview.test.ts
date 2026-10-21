@@ -165,6 +165,35 @@ class FakeSource implements StreamHandle {
 }
 
 describe('stream controller seam', () => {
+  test('accepted hub resync withdraws provisional authority before committed recovery', () => {
+    const source = new FakeSource();
+    let reader = EMPTY_BLEND_PREVIEW_READER;
+    const atRecovery: (number | null)[] = [];
+    const controller = createLiveStreamController({
+      open: () => source,
+      now: () => 0,
+      onFrame: () => undefined,
+      onDeliveringChange: () => undefined,
+      onPreview: raw => {
+        const parsed = parseBlendPreview(raw);
+        if (parsed) reader = readerAfter(reader, parsed, EVENT, 0);
+      },
+      onPreviewReset: () => { reader = { ...reader, held: null }; },
+      onRecovery: () => { atRecovery.push(displayedPreview(reader.held, held(10), 0)); },
+    });
+    controller.start();
+    source.emit('open');
+    source.emit('preview', JSON.stringify(blend(1, .7)));
+    expect(displayedPreview(reader.held, held(10), 0)).toBe(.7);
+    source.emit('resync', JSON.stringify({ generation: 1 }));
+    expect(atRecovery).toEqual([null]);
+    // Even before the same-revision recovery read returns, the old preview
+    // no longer owns headline, clock or disposable chart state.
+    expect(reader.held).toBeNull();
+    source.emit('resync', JSON.stringify({ generation: 1 }));
+    expect(atRecovery).toHaveLength(1);
+    controller.stop();
+  });
   test('a preview event reaches onPreview, never onFrame, and touches no delivery state; open and closed reset it', () => {
     const sources: FakeSource[] = [];
     const frames: unknown[] = [];

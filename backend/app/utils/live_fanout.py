@@ -72,6 +72,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 import logging
+from time import monotonic
 from typing import Any, Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
@@ -131,6 +132,19 @@ class Recovery:
     generation: int
 
 
+class _ReceivedText(str):
+    """Wire-compatible payload with a process-local mailbox receipt clock."""
+
+
+class _ReceivedBytes(bytes):
+    """Redis may return bytes instead of decoded text."""
+
+
+def mailbox_age_ms(payload):
+    received_at = getattr(payload, "received_at", None)
+    return 0 if received_at is None else max(0, (monotonic() - received_at) * 1000)
+
+
 class Subscription:
     """One stream's view of one channel: a bounded, drop-oldest mailbox."""
 
@@ -155,6 +169,11 @@ class Subscription:
         per subscriber per frame, so one wedged client must not be able to hold
         up delivery to every other reader on the dyno.
         """
+        # Preserve the original receipt if an already stamped payload is handed
+        # between mailboxes. The attribute never becomes part of wire JSON.
+        if isinstance(payload, (str, bytes)) and not hasattr(payload, "received_at"):
+            payload = _ReceivedText(payload) if isinstance(payload, str) else _ReceivedBytes(payload)
+            payload.received_at = monotonic()
         while True:
             try:
                 self._queue.put_nowait(payload)
@@ -274,6 +293,18 @@ class LiveFanout:
 
             self._quote_projector = FoldedQuoteProjector()
         return await self._quote_projector.project(event_id, frame, fresh=True)
+
+    def project_folded_preview(self, event_id, frame, *, members, floors, elapsed_ms=0):
+        """A cold base abstains; warm preview composition never awaits SQL."""
+        if self._quote_projector is None:
+            return None
+        return self._quote_projector.project_preview(
+            event_id, frame, members=members, floors=floors, elapsed_ms=elapsed_ms,
+        )
+
+    def forget_folded_preview(self, event_id):
+        if self._quote_projector is not None:
+            self._quote_projector.forget_preview_base(event_id)
 
     # -- the Redis side -----------------------------------------------------
 

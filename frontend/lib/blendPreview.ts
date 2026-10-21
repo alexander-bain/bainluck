@@ -36,6 +36,8 @@ const PREVIEW_STATUSES = new Set(["live", "scheduled", "suspended"]);
 export interface BlendPreviewFrame {
   event_id: number;
   p: number | null;
+  p_away?: number | null;
+  sport?: string | null;
   status?: string | null;
   provisional?: boolean;
   /** Legacy producer attempt time; never used as a chart observation. */
@@ -51,6 +53,9 @@ export interface BlendPreviewFrame {
     through_seq?: number;
     reason?: string;
     pending?: Record<string, number>;
+    folded_version?: number;
+    origin_event_id?: number;
+    base_fold_revision?: Record<string, number>;
   };
 }
 
@@ -64,6 +69,10 @@ export interface BlendPreviewState {
   /** `now()` milliseconds after which the preview is no longer shown. */
   expiresAt: number;
   observedAt?: string;
+  baseFoldRevision?: Record<string, number>;
+  originEventId?: number;
+  pAway?: number | null;
+  sport?: string | null;
 }
 
 const safeInt = (value: unknown): value is number =>
@@ -90,6 +99,16 @@ export function parseBlendPreview(raw: unknown): BlendPreviewFrame | null {
   if (preview.kind !== "blend") return null;
   if (typeof f.p !== "number" || !Number.isFinite(f.p) || f.p < 0 || f.p > 1) return null;
   if (!safeInt(preview.base_rev) || !safeInt(preview.ttl_ms)) return null;
+  if (preview.folded_version !== undefined || preview.base_fold_revision !== undefined) {
+    const vector = parseFoldRevision(preview.base_fold_revision);
+    if (preview.folded_version !== 1 || !vector || Object.keys(vector).length < 2
+        || !safeInt(preview.origin_event_id) || preview.origin_event_id <= 0
+        || !Object.prototype.hasOwnProperty.call(vector, String(f.event_id))
+        || vector[String(preview.origin_event_id)] !== preview.base_rev
+        || !(typeof f.sport === "string" || f.sport === null)
+        || !(f.p_away === null || (typeof f.p_away === "number"
+          && Number.isFinite(f.p_away) && f.p_away >= 0 && f.p_away <= 1))) return null;
+  }
   return frame as BlendPreviewFrame;
 }
 
@@ -98,6 +117,8 @@ export interface BlendPreviewReader {
   held: BlendPreviewState | null;
   /** The fence floor: frames from a lower epoch are refused. -1 before any. */
   epoch: number;
+  floors?: Record<string, number>;
+  foldedSequence?: { epoch: number; seq: number };
 }
 
 export const EMPTY_BLEND_PREVIEW_READER: BlendPreviewReader = { held: null, epoch: -1 };
@@ -113,7 +134,37 @@ export function readerAfter(
   const epoch = frame.preview.epoch;
   if (epoch < reader.epoch) return reader;
   const held = epoch > reader.epoch ? null : reader.held;
-  return { held: previewAfter(held, frame, eventId, now), epoch };
+  if (reader.foldedSequence?.epoch === epoch
+      && frame.preview.seq <= reader.foldedSequence.seq) return reader;
+  if (frame.preview.base_fold_revision && reader.floors
+      && !coversPreviewFloors(frame.preview.base_fold_revision, reader.floors)) {
+    return { ...reader, held: null, epoch };
+  }
+  if (frame.preview.kind === "revoke" && held?.originEventId !== undefined
+      && frame.preview.origin_event_id !== held.originEventId) return reader;
+  return { ...reader, held: previewAfter(held, frame, eventId, now), epoch,
+    ...((frame.preview.base_fold_revision || reader.foldedSequence) ? {
+      foldedSequence: { epoch, seq: frame.preview.seq },
+    } : {}),
+  };
+}
+
+function coversPreviewFloors(base: Record<string, number>, floors: Record<string, number>): boolean {
+  return Object.entries(floors).every(([key, value]) =>
+    Object.prototype.hasOwnProperty.call(base, key) && base[key] >= value);
+}
+
+/** Raw commit evidence invalidates before a slower folded quote is available. */
+export function readerAfterCommitFloor(reader: BlendPreviewReader, value: unknown): BlendPreviewReader {
+  const incoming = parseFoldRevision(value);
+  if (!incoming) return { ...reader, held: null };
+  const floors = { ...reader.floors };
+  for (const [key, revision] of Object.entries(incoming)) {
+    floors[key] = Math.max(revision, floors[key] ?? -1);
+  }
+  const held = reader.held?.baseFoldRevision
+    && !coversPreviewFloors(reader.held.baseFoldRevision, floors) ? null : reader.held;
+  return { ...reader, floors, held };
 }
 
 /** Within one epoch: the preview to hold after `frame` arrives at `now`. */
@@ -138,6 +189,10 @@ export function previewAfter(
     status: frame.status ?? null,
     expiresAt: now + (preview.ttl_ms as number),
     observedAt: typeof frame.display_observed_at === "string" ? frame.display_observed_at : undefined,
+    ...(preview.base_fold_revision ? {
+      baseFoldRevision: { ...preview.base_fold_revision }, originEventId: preview.origin_event_id,
+      pAway: frame.p_away, sport: frame.sport,
+    } : {}),
   };
 }
 
@@ -146,6 +201,7 @@ interface HeldBlend {
   status?: string | null;
   hero_probability_source?: string | null;
   blend_fold_revision?: unknown;
+  sport?: string | null;
 }
 
 /** The provisional hero probability to show, or null for committed truth. */
@@ -160,6 +216,12 @@ export function displayedPreview(
   // Only a singleton revision of this very row can be ordered against base_rev;
   // a folded hero (several rows) or no revision at all shows committed truth.
   const committed = parseFoldRevision(held.blend_fold_revision);
+  if (state.baseFoldRevision) {
+    if (!committed || held.sport !== state.sport
+        || Object.keys(committed).length !== Object.keys(state.baseFoldRevision).length
+        || !coversPreviewFloors(state.baseFoldRevision, committed)) return null;
+    return state.p;
+  }
   const key = String(state.eventId);
   if (!committed || Object.keys(committed).length !== 1 || !(key in committed)) return null;
   return committed[key] > state.baseRev ? null : state.p;
@@ -174,7 +236,8 @@ export function overlayBlendPreview<T extends HeldBlend | null | undefined>(
 ): T {
   const p = displayedPreview(state, event, now);
   if (p === null || !event) return event;
-  return { ...event, hero_probability: p, hero_probability_away: 1 - p } as T;
+  return { ...event, hero_probability: p,
+    hero_probability_away: state?.baseFoldRevision ? state.pAway : 1 - p } as T;
 }
 
 /**
@@ -194,6 +257,14 @@ export function displayedProbabilityObservedAt(
   return timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : null;
 }
 
+interface PreviewChartHistory {
+  event_id: number;
+  aggregate_line?: PreviewChartPoint[] | null;
+  blend_edge_pinned?: boolean | null;
+  blend_edge_observed_at?: string | null;
+  blend_edge_fold_revision?: unknown;
+}
+
 interface PreviewChartPoint {
   timestamp: string;
   home_probability: number;
@@ -210,15 +281,35 @@ export function overlayBlendPreviewLine(
   state: BlendPreviewState | null,
   now: number,
   line: PreviewChartPoint[] | undefined,
+  served?: PreviewChartHistory | null,
 ): PreviewChartPoint[] | undefined {
   const p = displayedPreview(state, event, now);
   const timestamp = state?.observedAt;
   if (p === null || !timestamp) return line;
   const at = Date.parse(timestamp);
   if (!Number.isFinite(at)) return line;
-  for (const point of line ?? []) {
+  // A refreshed history may pin its old committed value at the READ time,
+  // after this preview's actual observation. That synthetic edge is not a
+  // newer quote. Remove only that proven presentation point from this render
+  // copy; leave the cached history and all real observations untouched.
+  const edge = line?.[line.length - 1];
+  const servedEdge = served?.aggregate_line?.[served.aggregate_line.length - 1];
+  const edgeRevision = parseFoldRevision(served?.blend_edge_fold_revision);
+  const base = state?.baseFoldRevision ?? (state ? { [String(state.eventId)]: state.baseRev } : null);
+  const edgeObserved = Date.parse(served?.blend_edge_observed_at ?? "");
+  const replaceSyntheticEdge = edge !== undefined && servedEdge !== undefined
+    && served?.event_id === state?.eventId && served.blend_edge_pinned === true
+    && Number.isFinite(edgeObserved) && edgeObserved < at
+    && Date.parse(edge.timestamp) >= at
+    && Date.parse(servedEdge.timestamp) === Date.parse(edge.timestamp)
+    && servedEdge.home_probability === edge.home_probability
+    && edgeRevision !== null && base !== null
+    && Object.keys(edgeRevision).length === Object.keys(base).length
+    && coversPreviewFloors(base, edgeRevision);
+  const historical = replaceSyntheticEdge ? line!.slice(0, -1) : line ?? [];
+  for (const point of historical) {
     const committedAt = Date.parse(point.timestamp);
     if (!Number.isFinite(committedAt) || committedAt >= at) return line;
   }
-  return [...(line ?? []), { timestamp, home_probability: p }];
+  return [...historical, { timestamp, home_probability: p }];
 }
