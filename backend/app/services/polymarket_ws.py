@@ -1321,7 +1321,10 @@ class PolymarketWebSocket:
                 except Exception:
                     # A failed callback leaves the identity retryable; failure
                     # in one child must not hide healthy siblings.
-                    logger.exception("Polymarket extracted quote handler error")
+                    logger.exception(
+                        "Polymarket book snapshot price handler error"
+                        if book_snapshot else "Polymarket price handler error"
+                    )
                 result = None
             if start + batch_size < len(quotes):
                 await asyncio.sleep(0)
