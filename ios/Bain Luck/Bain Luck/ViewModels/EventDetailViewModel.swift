@@ -142,8 +142,9 @@ final class EventDetailViewModel: ObservableObject {
     @Published private(set) var streamHasPushedPrice = false
 
     /// #10090 — the held provisional blend (`BlendPreview`), or nil. Never part
-    /// of `event` or `liveBlend`: the page overlays it on the hero alone
-    /// (`headline(_:)`), so nothing committed — history, chart, rail, revision,
+    /// of `event` or `liveBlend`: the page overlays it on the hero
+    /// (`headline(_:)`) and projects it onto the chart's end (`chartFrames(_:)`)
+    /// at render time, so nothing committed — history, rail, revision,
     /// delivery — ever reads it. Always nil when the server sends none. Cleared
     /// when its lifetime ends; `blendPreviewReader` keeps its ordering.
     @Published private(set) var blendPreview: BlendPreviewState?
@@ -1336,6 +1337,22 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor
     func headline(_ event: EventDetail) -> EventDetail {
         BlendPreview.overlay(event, blendPreview, now: now())
+    }
+
+    /// The clock of the probability `headline(event)` prints: the preview's
+    /// observation time while one shows (nil when unknown), else the committed
+    /// one. Source-age warnings keep reading the committed clocks.
+    @MainActor
+    func displayedProbabilityObservedAt(_ event: EventDetail) -> Date? {
+        BlendPreview.displayedObservedAt(blendPreview, held: event, now: now(),
+                                         committed: event.heroProbabilityObservedAt?.asDate)
+    }
+
+    /// `liveBlend` with the displayed preview projected onto its end, for the
+    /// chart to draw (`BlendPreview.chartFrames`). Never stored.
+    @MainActor
+    func chartFrames(_ event: EventDetail) -> [LiveBlendPoint] {
+        BlendPreview.chartFrames(liveBlend, history: history, state: blendPreview, held: event, now: now())
     }
 
     @MainActor
