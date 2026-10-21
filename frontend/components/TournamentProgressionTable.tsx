@@ -366,18 +366,32 @@ function cellDisplay(
  * result and no admissible number is awaiting one, never "—", which in this
  * column means out. The column being decided settles nobody: the label here,
  * not "Decided", is what the cell's title and accessible name carry.
+ *
+ * A live cell also prints a visible "Unconfirmed" under its number: a phone
+ * reader never sees the title, and a bare 100% under a Decided heading reads as
+ * a result. Every live cell carries it — it marks the state, not a price level.
  */
 export function decidedCellDisplay(
   probability: number | null,
   status: ProgressionCellStatus,
-): { text: string; label: string; state: "clinched" | "eliminated" | "live" | "awaiting" } {
+): {
+  text: string;
+  label: string;
+  state: "clinched" | "eliminated" | "live" | "awaiting";
+  qualifier?: string;
+} {
   if (status === "clinched") {
     return { text: GRID_CELL_TERMINAL_GLYPH.clinched, label: "Clinched", state: "clinched" };
   }
   if (status === "eliminated") return { text: "—", label: "Eliminated", state: "eliminated" };
   if (status === null && probability != null && Number.isFinite(probability)) {
     const text = formatProb(probability);
-    return { text, label: `Result unconfirmed · Live probability ${text}`, state: "live" };
+    return {
+      text,
+      label: `Result unconfirmed · Live probability ${text}`,
+      state: "live",
+      qualifier: "Unconfirmed",
+    };
   }
   return { text: "Awaiting", label: "Awaiting result", state: "awaiting" };
 }
@@ -1039,6 +1053,14 @@ export default function TournamentProgressionTable({
                               data-decided-cell={decided.state}
                             >
                               {decided.text}
+                              {decided.qualifier && (
+                                <span
+                                  className="block font-sans text-[9px] leading-none uppercase tracking-wide mt-0.5"
+                                  data-decided-qualifier
+                                >
+                                  {decided.qualifier}
+                                </span>
+                              )}
                             </span>
                           ) : (
                             <>

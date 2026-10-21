@@ -15,6 +15,12 @@
 // register still serves LIVE no longer earns a ✓ at >=0.5. A checkmark is a
 // confirmed achievement; Tampa Bay's 0.995 pennant cell prints its number and
 // says its result is unconfirmed. The register-won fix above is unchanged.
+//
+// #11385 (Design, 2026-10-21): "unconfirmed" in the title and accessible name
+// is invisible on a phone, so every live decided cell also PRINTS
+// "Unconfirmed" under its number. `visible` below is the cell's text with every
+// tag — and so every title/aria-label attribute — stripped, so it cannot pass
+// on the tooltip's wording.
 
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
@@ -80,7 +86,10 @@ function build(teams: { name: string; cells: Record<string, unknown> }[] = TEAMS
 }
 
 interface DecidedCell {
+  /** The decided span's own first text: the glyph or the number. */
   text: string;
+  /** Everything a sighted reader sees in the cell: tags and attributes stripped. */
+  visible: string;
   title: string | undefined;
   spoken: string | undefined;
   state: string | undefined;
@@ -92,14 +101,19 @@ function decidedCellsFor(html: string, team: string): DecidedCell[] {
   const row = body.split("<tr").find((r) => r.includes(team));
   if (!row) throw new Error(`no row for ${team}`);
   const attr = (tag: string, name: string) => tag.match(new RegExp(`${name}="([^"]*)"`))?.[1];
-  return Array.from(row.matchAll(/<td([^>]*)>(?:(?!<\/td>)[\s\S])*?<span([^>]*data-decided-cell="[^"]*"[^>]*)>([^<]*)<\/span>/g)).map(
-    (m) => ({
-      text: m[3],
-      title: attr(m[1], "title")?.replace(/&#x27;/g, "'"),
-      spoken: attr(m[2], "aria-label"),
-      state: attr(m[2], "data-decided-cell"),
-    }),
-  );
+  return Array.from(row.matchAll(/<td([^>]*)>((?:(?!<\/td>)[\s\S])*)<\/td>/g)).flatMap((m) => {
+    const span = m[2].match(/<span([^>]*data-decided-cell="[^"]*"[^>]*)>([^<]*)/);
+    if (!span) return [];
+    return [
+      {
+        text: span[2],
+        visible: m[2].replace(/<[^>]*>/g, ""),
+        title: attr(m[1], "title")?.replace(/&#x27;/g, "'"),
+        spoken: attr(span[1], "aria-label"),
+        state: attr(span[1], "data-decided-cell"),
+      },
+    ];
+  });
 }
 
 const decidedGlyphsFor = (html: string, team: string) => decidedCellsFor(html, team).map((c) => c.text);
@@ -110,7 +124,7 @@ describe("#11369 decided columns print the result the register served", () => {
   test("the NL champion reads ✓ in every decided column, titled and spoken as clinched", () => {
     expect(decidedGlyphsFor(html, "Milwaukee Brewers")).toEqual(["✓", "✓", "✓"]);
     for (const cell of decidedCellsFor(html, "Milwaukee Brewers")) {
-      expect(cell).toEqual({ text: "✓", title: "Clinched", spoken: "Clinched", state: "clinched" });
+      expect(cell).toEqual({ text: "✓", visible: "✓", title: "Clinched", spoken: "Clinched", state: "clinched" });
     }
   });
 
@@ -121,6 +135,7 @@ describe("#11369 decided columns print the result the register served", () => {
     const pennant = decidedCellsFor(html, "Tampa Bay Rays")[2];
     expect(pennant).toEqual({
       text: "99.5%",
+      visible: "99.5%Unconfirmed",
       title: "Result unconfirmed · Live probability 99.5%",
       spoken: "Result unconfirmed · Live probability 99.5%",
       state: "live",
@@ -137,6 +152,7 @@ describe("#11369 decided columns print the result the register served", () => {
     expect(decidedGlyphsFor(html, "New York Yankees")).toEqual(["✓", "—", "—"]);
     expect(decidedCellsFor(html, "New York Yankees")[1]).toEqual({
       text: "—",
+      visible: "—",
       title: "Eliminated",
       spoken: "Eliminated",
       state: "eliminated",
@@ -182,7 +198,35 @@ describe("#11384 a decided column marks only confirmed results", () => {
     const cells = decidedCellsFor(html, "Unknown Club");
     expect(cells).toHaveLength(3);
     for (const cell of cells) {
-      expect(cell).toEqual({ text: "Awaiting", title: "Awaiting result", spoken: "Awaiting result", state: "awaiting" });
+      expect(cell).toEqual({
+        text: "Awaiting",
+        visible: "Awaiting",
+        title: "Awaiting result",
+        spoken: "Awaiting result",
+        state: "awaiting",
+      });
+    }
+  });
+
+  // #11385: the deciding check. `visible` has no attributes in it, so a title or
+  // aria-label saying "unconfirmed" cannot satisfy this; only printed text can.
+  test("every live decided cell PRINTS Unconfirmed under its number — 100% included", () => {
+    const cells = decidedCellsFor(html, "Live Low Club");
+    expect(cells.map((c) => c.visible)).toEqual(["1.0%Unconfirmed", "50%Unconfirmed", "100%Unconfirmed"]);
+    for (const cell of cells) expect(cell.visible).not.toContain("Result unconfirmed");
+  });
+
+  test("only live cells carry the qualifier — confirmed, eliminated and awaiting cells print none", () => {
+    const all = [build(), build(SPECIMENS)].flatMap((data) => {
+      const page = renderToStaticMarkup(<TournamentProgressionTable data={data} pageType="playoff_grid" />);
+      return data.participants.flatMap((p) => decidedCellsFor(page, p.name));
+    });
+    const live = all.filter((c) => c.state === "live");
+    expect(live).toHaveLength(4);
+    for (const cell of live) expect(cell.visible).toBe(`${cell.text}Unconfirmed`);
+    for (const cell of all.filter((c) => c.state !== "live")) {
+      expect(cell.visible).toBe(cell.text);
+      expect(cell.visible.toLowerCase()).not.toContain("unconfirmed");
     }
   });
 
@@ -203,6 +247,9 @@ describe("decidedCellDisplay", () => {
     expect(decidedCellDisplay(0.9, "unavailable").state).toBe("awaiting");
     expect(decidedCellDisplay(null, null).state).toBe("awaiting");
     expect(decidedCellDisplay(Number.NaN, null).state).toBe("awaiting");
+    for (const s of ["clinched", "eliminated", "missing"] as const) {
+      expect(decidedCellDisplay(0.9, s).qualifier).toBeUndefined();
+    }
   });
 
   // #11384: the old contract pinned decidedGlyph(0.5, null) = ✓ and
@@ -221,6 +268,7 @@ describe("decidedCellDisplay", () => {
         text,
         label: `Result unconfirmed · Live probability ${text}`,
         state: "live",
+        qualifier: "Unconfirmed",
       });
     }
   });
