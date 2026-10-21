@@ -87,6 +87,12 @@ from app.utils.sport_keys import NON_SPORT_LLM_CATEGORIES, SPORT_PREFIX_TO_LLM_C
 from app.utils.futures_market_snapshot import (
     outcome_prints_a_price as _outcome_prints_a_price,
 )
+from app.utils.card_projected_pair import (
+    LIVE_PROJECTION_KEY,
+    attach_card_projected_pair,
+    event_live_projection,
+    own_event_rows,
+)
 from app.utils.pregame_projection import (
     attach_pregame_projection,
     read_pregame_projections,
@@ -11640,6 +11646,24 @@ async def search_events(
             event, aggregated_odds_map.get(event.id), gei_percentiles, team_lookup,
             folded_sources=folded_map.get(event.id),
         )
+        # #2920 — the event page's marked in-play pair, from the rows this route
+        # already read, so a search row and the page it opens agree.
+        _odds_entry = aggregated_odds_map.get(event.id)
+        if _odds_entry and isinstance(formatted.get("current_odds"), dict):
+            try:
+                attach_card_projected_pair(
+                    formatted["current_odds"],
+                    {
+                        LIVE_PROJECTION_KEY: event_live_projection(
+                            _odds_entry["all_snapshots"],
+                            event,
+                            served_status=formatted.get("status"),
+                            sport_key=loaded_sport_key(event),
+                        )
+                    },
+                )
+            except Exception:  # noqa: BLE001 — gotcha #42: one row, not the page
+                logger.exception("live projection failed for event %s", event.id)
         formatted_results.append(formatted)
 
         # Track sports for disambiguation info.
@@ -19935,14 +19959,14 @@ async def get_event(
 
     absorbed = await serve_fold_absorbed_rows(db, event)
     odds_event_ids = await folded_series_event_ids(db, event_id, absorbed)
-    latest_snapshots = latest_snapshot_for_each_bookmaker(
-        list(
-            (await db.execute(latest_odds_per_bookmaker_query(odds_event_ids)))
-            .scalars()
-            .all()
-        ),
-        event_id,
+    # #2920 C1 — the raw per-(event, sportsbook) rows are kept: the marked
+    # in-play pair reads only this event's own rows, exactly as its card does.
+    _latest_rows = list(
+        (await db.execute(latest_odds_per_bookmaker_query(odds_event_ids)))
+        .scalars()
+        .all()
     )
+    latest_snapshots = latest_snapshot_for_each_bookmaker(_latest_rows, event_id)
 
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
@@ -20177,6 +20201,24 @@ async def get_event(
             # feature to show, outside a short closed list of comparison surfaces
             # this payload is not on.
         }
+        # #2920 — the in-play pair, marked, by the cards' admission and from
+        # this event's OWN rows of the read above (never the folded twins the
+        # price table uses), so the page and its card cannot print two finals.
+        # Asked by the status this page PRINTS. Optional: never the page.
+        try:
+            attach_card_projected_pair(
+                response["current_odds"],
+                {
+                    LIVE_PROJECTION_KEY: event_live_projection(
+                        own_event_rows(_latest_rows, event.id),
+                        event,
+                        served_status=response.get("status"),
+                        sport_key=event_sport_key,
+                    )
+                },
+            )
+        except Exception:  # noqa: BLE001 — gotcha #42
+            logger.exception("live projection failed for event %s", event.id)
 
         # Show ALL bookmakers in the table (not just filtered ones)
         # so users see every book we ever had odds from.
