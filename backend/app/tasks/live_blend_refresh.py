@@ -4407,6 +4407,8 @@ class LiveBlendRefresher:
             factory = self._session_factory or get_task_session
             # Optional display work must not queue the game loop behind a
             # contended pool/read. It has no retry debt when this budget ends.
+            if self._session_slots.locked():
+                return
             async with asyncio.timeout(.25), self._session_slot(), factory() as session:
                 grouped = await self._read_groups(session, sorted(event_ids), overlay_held=False)
             plans = {}

@@ -211,6 +211,47 @@ async def test_accepted_observation_uses_only_ephemeral_clocks_and_no_stamp_stat
     assert not r._dispositions and not r._history
 
 
+async def test_accepted_observation_skips_busy_slots_without_read_or_error(monkeypatch):
+    from time import perf_counter
+    from unittest.mock import AsyncMock
+
+    r, session, frames, committed, _, _, observations, _, _ = acknowledged_rig(monkeypatch)
+    executes = AsyncMock(wraps=session.execute)
+    monkeypatch.setattr(session, "execute", executes)
+    slots = r._session_slots
+    held = 0
+
+    async def validate(event_ids):
+        nonlocal held
+        # Slots can become occupied during the awaited first validation.
+        while not slots.locked():
+            await slots.acquire()
+            held += 1
+        return set(event_ids)
+
+    errors_before = r.preview_stats["publish_errors"]
+    try:
+        started = perf_counter()
+        await r.preview_accepted_observations(observations, validate)
+        elapsed = perf_counter() - started
+    finally:
+        for _ in range(held):
+            slots.release()
+    assert elapsed < .01
+    executes.assert_not_awaited()
+    assert not frames and not session.updates and not committed
+    assert r.preview_stats["publish_errors"] == errors_before
+    assert not r._lock_retry and not r._history and not r._dispositions
+
+    async def validate_available(event_ids):
+        return set(event_ids)
+
+    # Skipping optional work must not poison the next available flush.
+    await r.preview_accepted_observations(observations, validate_available)
+    executes.assert_awaited_once()
+    assert len(_blends(frames)) == 1
+
+
 @pytest.mark.parametrize("refusal", ["unknown-orientation", "missing-partner", "settled-row", "closed-market",
                                     "changed-price", "newer-stored-row", "equal-bound", "db-clock-ahead",
                                     "no-bound", "terminal"])
