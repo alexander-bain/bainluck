@@ -30,7 +30,7 @@ import { providerGameNumber } from "@/lib/teamGames";
 import { PinIcon } from "@/components/PinButton";
 import { cardProjectedFinal, liveCardProjectedFinal, projectedFinalLabel } from "@/lib/projectedFinalPair";
 import ProjectedFinalLine from "@/components/ProjectedFinalLine";
-import { finalForecastComparison } from "@/lib/finalForecastComparison";
+import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
 import {
   hasNoReportedResult,
   isFinishedStatus,
@@ -629,14 +629,15 @@ export default function EventCard({
       : null;
   const bandScore = showProjectedFinal ? projectedScore : liveProjectedScore;
   // #11296 — and on a final, the sportsbooks' last pair before the scheduled
-  // start, beneath the result the score strip prints. A scoreboard final covers
-  // the full game; soccer's 90-minute forecasts are refused (see the helper).
+  // start, beneath the result the score strip prints. A football or basketball
+  // final covers the full game; a soccer final is compared only when the row
+  // serves `final_score_period: "regulation"` (see the helper).
   const finalForecast = finalForecastComparison({
     sportKey: event.sport,
     status: event.status,
     homeScore: event.home_score,
     awayScore: event.away_score,
-    actualPeriod: "full_game",
+    actualPeriod: finalScorePeriod(event.sport, event.final_score_period),
     projection: event.pregame_projection,
   });
   const showFooter = !isFinished && !isSuspended && (footerHasLead || !!event.espn?.broadcast);

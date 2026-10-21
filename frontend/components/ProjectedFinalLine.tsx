@@ -23,7 +23,7 @@
 
 import React from "react";
 
-import { FINAL_FORECAST_LABEL } from "@/lib/finalForecastComparison";
+import { isFinalForecastLabel } from "@/lib/finalForecastComparison";
 
 export interface ProjectedFinalSide {
   name: string;
@@ -97,12 +97,14 @@ export default function ProjectedFinalLine({
           before / scheduled start" and neither the card's numbers nor the
           headline's team columns lose room they had (the headline centre is
           sized by its content, so a one-line long label would widen it into
-          the team columns). Only that label is capped: the pre-game labels
-          lay out as before, and soccer's "Projected final (90 min)" (~136px)
-          is wider than the cap, so capping it would break a line that fits. */}
+          the team columns). Only the final labels are capped (soccer's
+          "Projection (90 min) before scheduled start" wraps the same way): the
+          pre-game labels lay out as before, and soccer's "Projected final
+          (90 min)" (~136px) is wider than the cap, so capping it would break a
+          line that fits. */}
       <span
         className={`text-xs font-medium text-text-secondary flex-shrink-0${
-          label === FINAL_FORECAST_LABEL ? " max-w-[8rem]" : ""
+          isFinalForecastLabel(label) ? " max-w-[8rem]" : ""
         }`}
         aria-hidden="true"
       >
