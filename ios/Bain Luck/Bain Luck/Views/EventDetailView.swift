@@ -1460,6 +1460,10 @@ struct EventDetailView: View {
             // does not adopt keep the hero below, unchanged.
             if let paired = nflPairedHeadline(event, hasScore: hasScore) {
                 nflPairedHeadlineView(event, paired, colors: colors, stacked: stacked, hasScore: hasScore)
+            } else if let tennis = tennisFinalHeadline(event, hasScore: hasScore) {
+                // #9483 tennis — each player's chance before the match under
+                // their own name, beside the actual result in sets.
+                tennisFinalHeadlineView(tennis, colors: colors)
             } else {
             // At larger text sizes the probability takes its own full-width
             // row FIRST and the competitors share the row beneath it (#10796;
@@ -2307,6 +2311,86 @@ struct EventDetailView: View {
                     .foregroundStyle(Color.primary)
             }
         }
+    }
+
+    // MARK: - #9483 tennis completed-match headline
+
+    /// The completed tennis headline, or nil to keep today's hero. Reads what
+    /// the hero's finished branch reads — `heroOutcome`, the shown scoreboard
+    /// and `PrematchReading` — so the two can never disagree about one match.
+    private func tennisFinalHeadline(_ event: EventDetail, hasScore: Bool) -> TennisFinalHeadline9483? {
+        guard TennisFinalHeadline9483.applies(sportKey: event.sport, status: event.status) else { return nil }
+        return TennisFinalHeadline9483.resolve(
+            awayName: event.awayTeam, homeName: event.homeTeam, sportKey: event.sport,
+            outcome: heroOutcome(event),
+            score: hasScore ? (away: event.awayScore ?? 0, home: event.homeScore ?? 0) : nil,
+            pregame: PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds))
+    }
+
+    /// The adopted headline's anatomy (`nflPairedHeadlineView`): a column per
+    /// player, away first, the result row under a hairline. Accessibility
+    /// sizes stack the players, as the adopted pair does; nothing shrinks the
+    /// chart or the figures to fit.
+    private func tennisFinalHeadlineView(
+        _ headline: TennisFinalHeadline9483, colors: (away: Color, home: Color)
+    ) -> some View {
+        let sides = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+            : AnyLayout(HStackLayout(alignment: .nflPairedFigure9483, spacing: 12))
+        return VStack(alignment: .leading, spacing: 8) {
+            sides {
+                tennisFinalSide(headline.away, label: headline.chanceLabel, color: colors.away)
+                tennisFinalSide(headline.home, label: headline.chanceLabel, color: colors.home)
+            }
+            if let result = headline.result {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(result.figure)
+                        .font(.system(size: eventHeadlineScoreSize9483, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(Color.primary)
+                        .fixedSize()
+                    Text(result.caption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
+                .overlay(alignment: .top) { Divider() }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(headline.accessibilityLabel)
+        .accessibilityIdentifier("tennis-final-headline")
+    }
+
+    /// One player: full name (wrapping between words, never shrunk or cut),
+    /// Won/Lost, the chance at the headline's size and what it is.
+    private func tennisFinalSide(
+        _ side: TennisFinalHeadline9483.Side, label: String, color: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(side.name)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(color)
+                .fixedSize(horizontal: false, vertical: true)
+            if let won = side.won {
+                Label(won ? "Won" : "Lost", systemImage: won ? "checkmark" : "xmark")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+            }
+            Text(side.chance ?? TennisFinalHeadline9483.unavailableText)
+                .font(side.chance == nil ? .headline
+                      : .system(size: eventHeadlineChanceSize9483, weight: .black, design: .rounded).monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// The pregame meta row's broadcast and start, as one line for the adopted
