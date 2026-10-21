@@ -200,6 +200,11 @@ class TestSourceEquality:
         manifest = json.loads((TOOL / 'packet' / 'MANIFEST.json').read_text())
         assert manifest['statements'][name]['library_output_sha256'] == hashlib.sha256(library.encode()).hexdigest()
 
+    def test_the_acceptance_accounting_grades_only_the_sealed_window(self):
+        from app.utils import capture_census_acceptance as acc
+
+        assert acc.ACCEPTANCE_WINDOW_DAYS == contract.WINDOW_DAYS == 30
+
     def test_the_pinned_source_blobs_are_todays_files(self):
         for path, blob in contract.SOURCE_BLOBS.items():
             assert _git_blob_sha1((REPO / path).read_bytes()) == blob, self.MESSAGE

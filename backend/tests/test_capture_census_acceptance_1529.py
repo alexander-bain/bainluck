@@ -422,3 +422,72 @@ class TestNoResult:
 
     def test_a_result_set_given_as_a_string_is_no_result(self):
         assert passing_core().grade(games_rows='baseball_mlb,10')['verdict'] == 'NO_RESULT'
+
+    # Root's 043 review of ed7ee034e3: games_rows=[1] and market_rows=[None] escaped a
+    # TypeError from tuple(row) instead of returning the promised NO_RESULT.
+    @pytest.mark.parametrize('field', ['games_rows', 'market_rows', 'source_rows', 'fixture_day_rows'])
+    @pytest.mark.parametrize('bad', [1, None, 2.5, 'ab', b'ab', {'a': 1, 'b': 2}, {'a', 'b'}])
+    def test_a_row_that_is_not_a_record_is_no_result_not_an_exception(self, field, bad):
+        rows = self._rows()
+        out = passing_core().grade(**{field: rows[field] + [bad]})
+        assert out['verdict'] == 'NO_RESULT'
+        assert out['reconciliation']['failures'][0]['code'] == 'MALFORMED_ROW'
+        assert 'sports' not in out and 'core_verdicts' not in out
+
+    @pytest.mark.parametrize('field', ['games_rows', 'market_rows', 'source_rows', 'fixture_day_rows'])
+    def test_a_result_set_that_is_not_iterable_is_no_result(self, field):
+        out = passing_core().grade(**{field: 7})
+        assert out['verdict'] == 'NO_RESULT'
+        assert out['reconciliation']['failures'][0]['code'] == 'MALFORMED_RESULT'
+
+    @pytest.mark.parametrize('field,index,bad', [
+        ('games_rows', 0, 7),                 # sport key
+        ('fixture_day_rows', 0, 7),           # sport key
+        ('fixture_day_rows', 1, 20261010),    # fixture day
+        ('source_rows', 0, 7),                # sport key
+        ('source_rows', 1, 7),                # source
+        ('market_rows', 0, 7),                # sport key
+        ('market_rows', 1, 7),                # name
+        ('market_rows', 2, 7),                # external id
+        ('market_rows', 8, b'Yankees'),       # home team
+        ('market_rows', 9, ['Red Sox']),      # away team
+        ('market_rows', 10, 20261010),        # fixture day
+    ])
+    def test_a_key_name_id_side_or_day_of_the_wrong_type_is_no_result(self, field, index, bad):
+        rows = self._rows()
+        row = list(rows[field][0])
+        row[index] = bad
+        rows[field][0] = tuple(row)
+        out = passing_core().grade(**{field: rows[field]})
+        assert out['verdict'] == 'NO_RESULT'
+        assert out['reconciliation']['failures'][0]['code'] == 'MALFORMED_VALUE'
+
+    def test_a_classifier_defect_escapes_and_is_never_a_favorable_result(self, monkeypatch):
+        # Only malformed INPUT is NO_RESULT. A defect in the code grading well-formed rows
+        # must surface as itself, not as an empty or NO_RESULT verdict.
+        def broken(*a, **kw):
+            raise RuntimeError('classifier defect')
+
+        monkeypatch.setattr(acc, 'classify_game_market_class', broken)
+        with pytest.raises(RuntimeError, match='classifier defect'):
+            passing_core().grade()
+
+
+class TestAcceptanceWindow:
+    """Root's 043 review of ed7ee034e3: a complete passing census graded with
+    window_days=1 returned PASS. #1529's acceptance subject is the frozen 30-day
+    phase-A census; another window is not admitted, however well formed."""
+
+    def test_control_the_frozen_30_day_window_is_graded(self):
+        assert acc.ACCEPTANCE_WINDOW_DAYS == 30
+        assert passing_core().grade(window_days=30)['verdict'] == 'PASS'
+
+    @pytest.mark.parametrize('window', [1, 7, 14, 29, 31, 90])
+    def test_any_other_positive_window_is_not_admitted_and_never_pass(self, window):
+        out = passing_core().grade(window_days=window)
+        assert out['verdict'] == 'NO_RESULT'
+        assert out['reconciliation']['failures'] == [{
+            'code': 'WINDOW_NOT_ACCEPTANCE_COHORT', 'window_days': window, 'acceptance_window_days': 30}]
+        # Reported as given, never relabelled as the 30-day cohort; no grades published.
+        assert out['window_days'] == window
+        assert 'sports' not in out and 'core_verdicts' not in out

@@ -32,8 +32,11 @@ Each of those is right for an alarm and wrong for an acceptance gate. Here:
   markets, stay counted and are disclosed, never dropped;
 * the four result sets must reconcile with each other (fixture days to games, markets
   to games and days, source split to markets). Any failure, a missing result set or a
-  malformed row makes the whole verdict NO_RESULT: a partial census is never zero and
-  never PASS.
+  malformed result, row or value makes the whole verdict NO_RESULT: a partial census is
+  never zero and never PASS;
+* the acceptance subject is the frozen 30-day phase-A census
+  (``capture_census.py --phase a --window 30``, sealed in ``tools/plan1529``). Any other
+  window, however well formed, is not admitted: NO_RESULT, never a narrower PASS.
 
 Class answers come from the shared classifier exactly as ``tally_market_rows`` calls it;
 ``TestNoClassifierDrift`` holds the two to the same counts.
@@ -48,6 +51,11 @@ from app.utils import capture_census as cc
 from app.utils.game_market_class import classify_game_market_class
 
 SCHEMA = "capture-census-1529-phase-a-acceptance/v1"
+
+# #1529's acceptance cohort: the four phase-A statements at window 30, the window
+# tools/plan1529's contract seals (WINDOW_DAYS). Rows from any other window are a
+# different subject and are refused, not graded.
+ACCEPTANCE_WINDOW_DAYS = 30
 
 # Result-set arities, from capture_census's own SQL (games_sql, market_rows_sql,
 # source_split_sql, fixture_days_sql at window=30).
@@ -101,6 +109,19 @@ def _day_key(value) -> str:
     return str(value)
 
 
+def _text(value, field: str, row_index: int, statement: str):
+    # Keys, names, ids and sides are text or NULL; anything else is a malformed value.
+    if value is not None and type(value) is not str:
+        raise _Malformed("MALFORMED_VALUE", statement=statement, row=row_index, field=field)
+    return value
+
+
+def _day(value, row_index: int, statement: str):
+    if value is not None and not isinstance(value, (str, date, datetime)):
+        raise _Malformed("MALFORMED_VALUE", statement=statement, row=row_index, field="fixture_day")
+    return value
+
+
 def _count(value, field: str, row_index: int, statement: str) -> int:
     if type(value) is not int or value < 0:
         raise _Malformed("MALFORMED_COUNTER", statement=statement, row=row_index, field=field)
@@ -112,9 +133,19 @@ def _rows(rows, arity: int, statement: str) -> list[tuple]:
         raise _Malformed("MISSING_RESULT", statement=statement)
     if isinstance(rows, (str, bytes, dict)):
         raise _Malformed("MALFORMED_RESULT", statement=statement)
+    try:
+        iterator = iter(rows)
+    except TypeError:
+        raise _Malformed("MALFORMED_RESULT", statement=statement) from None
     out = []
-    for i, row in enumerate(rows):
-        row = tuple(row)
+    for i, row in enumerate(iterator):
+        # A row is an ordered record; a scalar, NULL, text, mapping or set is not one.
+        if row is None or isinstance(row, (str, bytes, bytearray, dict, set, frozenset)):
+            raise _Malformed("MALFORMED_ROW", statement=statement, row=i)
+        try:
+            row = tuple(row)
+        except TypeError:
+            raise _Malformed("MALFORMED_ROW", statement=statement, row=i) from None
         if len(row) != arity:
             raise _Malformed("MALFORMED_ROW", statement=statement, row=i, arity=len(row), expected=arity)
         out.append(row)
@@ -167,6 +198,11 @@ def phase_a_acceptance(
     if type(window_days) is not int or window_days <= 0:
         return {**base, "verdict": NO_RESULT, "reconciliation": {
             "ok": False, "failures": [{"code": "MALFORMED_WINDOW"}]}}
+    if window_days != ACCEPTANCE_WINDOW_DAYS:
+        return {**base, "verdict": NO_RESULT, "reconciliation": {
+            "ok": False, "failures": [{"code": "WINDOW_NOT_ACCEPTANCE_COHORT",
+                                       "window_days": window_days,
+                                       "acceptance_window_days": ACCEPTANCE_WINDOW_DAYS}]}}
     try:
         report = _account(games_rows, market_rows, source_rows, fixture_day_rows)
     except _Malformed as exc:
@@ -187,7 +223,7 @@ def _account(games_rows, market_rows, source_rows, fixture_day_rows) -> dict:
 
     games: dict[str, int] = {}
     for i, (sport, n) in enumerate(games_raw):
-        key = _key(sport)
+        key = _key(_text(sport, "sport_key", i, "games"))
         n = _count(n, "games", i, "games")
         if key in games:
             raise _Malformed("DUPLICATE_GROUP", statement="games", sport=key)
@@ -197,7 +233,8 @@ def _account(games_rows, market_rows, source_rows, fixture_day_rows) -> dict:
 
     days: dict[str, dict[str, int]] = {}
     for i, (sport, day, n) in enumerate(days_raw):
-        key, dkey = _key(sport), _day_key(day)
+        key = _key(_text(sport, "sport_key", i, "fixture_days"))
+        dkey = _day_key(_day(day, i, "fixture_days"))
         n = _count(n, "games", i, "fixture_days")
         if dkey in days.get(key, {}):
             raise _Malformed("DUPLICATE_GROUP", statement="fixture_days", sport=key, fixture_day=dkey)
@@ -207,7 +244,8 @@ def _account(games_rows, market_rows, source_rows, fixture_day_rows) -> dict:
 
     sources: dict[str, dict[str, dict]] = {}
     for i, (sport, source, outc, well, volp, voln, art) in enumerate(sources_raw):
-        key, skey = _key(sport), _key(source)
+        key = _key(_text(sport, "sport_key", i, "source_split"))
+        skey = _key(_text(source, "source", i, "source_split"))
         if skey in sources.get(key, {}):
             raise _Malformed("DUPLICATE_GROUP", statement="source_split", sport=key, source=skey)
         entry = {
@@ -227,6 +265,10 @@ def _account(games_rows, market_rows, source_rows, fixture_day_rows) -> dict:
                 "null_side_markets": 0, "null_fixture_day_markets": 0, "unclassified_markets": 0,
                 "zero_outcome_markets": 0, "null_source_groups": 0}
     for i, (sport, name, ext, outc, well, volp, voln, art, home, away, day) in enumerate(markets_raw):
+        for field, value in (("sport_key", sport), ("name", name), ("external_id", ext),
+                             ("home_team", home), ("away_team", away)):
+            _text(value, field, i, "markets")
+        _day(day, i, "markets")
         key = _key(sport)
         counts = {
             "outcomes": _count(outc, "outcomes", i, "markets"),
