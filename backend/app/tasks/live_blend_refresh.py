@@ -4408,9 +4408,11 @@ class LiveBlendRefresher:
                     continue
                 rows = {row.id: (entry, row) for entry in group for row in entry.outcomes}
                 snapshot = observations[eid]
-                if any(oid in rows and (rows[oid][0].market.status != "open"
-                       or rows[oid][1].resolution_source is not None
-                       or rows[oid][1].is_winner is not None) for oid in snapshot):
+                relevant = [entry for entry in group
+                            if any(row.id in snapshot for row in entry.outcomes)]
+                if any(entry.market.status != "open"
+                       or any(row.resolution_source is not None or row.is_winner is not None
+                              for row in entry.outcomes) for entry in relevant):
                     refusals[eid] = "settled"
                     continue
                 reading = compute_source_home_probability(group, event.home_team_name, event.away_team_name)

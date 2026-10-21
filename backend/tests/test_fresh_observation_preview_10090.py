@@ -350,3 +350,16 @@ async def test_authoritative_invalidity_retires_existing_observation_preview(mon
         assert not blend_preview.registry().has_pending(1, 'polymarket')
         assert len(_revokes(frames)) == 1
     assert not session.updates
+
+
+async def test_settled_opposite_leg_retires_pending_singleton_winner_preview(monkeypatch):
+    r, session, frames, _, rows, reading, observations, validate, _ = acknowledged_rig(monkeypatch)
+    reading.contributing_outcomes = [rows[0]]
+    observations[1].pop(rows[1].id)
+    await r.preview_accepted_observations(observations, validate)
+    assert blend_preview.registry().has_pending(1, 'polymarket')
+    frames.clear()
+    rows[1].is_winner = True
+    await r.preview_accepted_observations(observations, validate)
+    assert not blend_preview.registry().has_pending(1, 'polymarket')
+    assert len(_revokes(frames)) == 1 and not session.updates
