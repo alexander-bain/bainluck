@@ -205,4 +205,161 @@ final class FoldedBlendPreview10090Tests: XCTestCase {
         XCTAssertEqual(OddsChartView.extendingBlendToLiveEdge(mismatch, with: preview, history: h).map(\.id), mismatch.map(\.id))
     }
 
+    private func origin(_ epoch: Int, _ seq: Int, state: String = "pending", ttl: Int = 1_000) -> [String: Any] {
+        var value: [String: Any] = ["epoch": epoch, "seq": seq, "state": state]
+        if state == "pending" { value["ttl_ms"] = ttl }
+        return value
+    }
+
+    private func v2Wire(_ sequence: Int = 1, session: String = "s1", kind: String = "blend",
+                        authority: [String: Any]? = nil, ttl: Int = 1_000) -> [String: Any] {
+        ["event_id": id, "p": kind == "blend" ? 0.65 : NSNull(), "p_away": 0.2,
+         "sport": "soccer_epl", "status": "live", "display_observed_at": observed,
+         "preview": ["kind": kind, "folded_version": 2, "fold_session": session, "fold_seq": sequence,
+                     "ttl_ms": kind == "blend" ? ttl : 0,
+                     "base_fold_revision": ["4242": 10, "4243": 20],
+                     "origin_authority": authority ?? ["4242": origin(100, 2), "4243": origin(2, 1)]]]
+    }
+
+    private func opened(_ reader: BlendPreviewReader = .empty, session: String = "s1") throws -> BlendPreviewReader {
+        BlendPreview.readerOpened(reader, raw: try raw(["event_id": id, "fold_session": session]), eventId: id)
+    }
+
+    private func applyV2(_ reader: BlendPreviewReader, _ wire: [String: Any], now: TimeInterval = 100) throws -> BlendPreviewReader {
+        BlendPreview.readerAfter(reader, try XCTUnwrap(BlendPreviewFrame.decode(raw(wire))), eventId: id, now: now)
+    }
+
+    func testV2IndependentEpochsAndSharedSurfaceAdmission() throws {
+        let first = try applyV2(opened(), v2Wire(authority: ["4242": origin(100, 2)]))
+        let both = try applyV2(first, v2Wire(2))
+        XCTAssertEqual(both.originFences["4243"]?.epoch, 2, "B does not compare with A epoch100")
+        XCTAssertEqual(both.originFences["4242"]?.seq, 2)
+        let event = try detail()
+        XCTAssertEqual(BlendPreview.displayed(both.held, held: event, now: 100), 0.65)
+        XCTAssertEqual(BlendPreview.overlay(event, both.held, now: 100).heroProbabilityAway, 0.2)
+        XCTAssertEqual(BlendPreview.displayedObservedAt(both.held, held: event, now: 100, committed: nil), observed.asDate)
+        XCTAssertEqual(BlendPreview.chartFrames([], history: nil, state: both.held, held: event, now: 100).last?.homeProbability, 0.65)
+        XCTAssertNil(BlendPreview.displayed(both.held, held: event, now: 101))
+    }
+
+    func testV2CannotLoseSiblingOrAdvanceFencesOnPartialValidation() throws {
+        let first = try applyV2(opened(), v2Wire())
+        let missing = try applyV2(first, v2Wire(2, authority: ["4243": origin(2, 2)]))
+        XCTAssertEqual(missing, first)
+        let incomparable = try applyV2(first, v2Wire(2, authority: ["4242": origin(100, 1), "4243": origin(3, 20)]))
+        XCTAssertEqual(incomparable, first, "bad A cannot advance B or fold_seq")
+        let merged = try applyV2(first, v2Wire(2, authority: ["4242": origin(100, 2), "4243": origin(2, 2)]))
+        XCTAssertEqual(merged.foldSeq, 2)
+        XCTAssertEqual(merged.originFences["4243"]?.seq, 2)
+        XCTAssertEqual(try applyV2(merged, v2Wire(2)), merged, "old fold sequence cannot mutate authority")
+    }
+
+    func testV2RetirementRecomposesSiblingAndCannotResurrect() throws {
+        let first = try applyV2(opened(), v2Wire())
+        for state in ["revoked", "expired", "committed"] {
+            let retired = try applyV2(first, v2Wire(2, authority: ["4242": origin(100, 2, state: state), "4243": origin(2, 1)]))
+            XCTAssertEqual(retired.held?.p, 0.65, "server recomposition keeps B")
+            XCTAssertEqual(retired.originFences["4242"]?.retired, true)
+            XCTAssertEqual(try applyV2(retired, v2Wire(3)), retired, "same tuple cannot return")
+            let newer = try applyV2(retired, v2Wire(3, authority: ["4242": origin(100, 3), "4243": origin(2, 1)]))
+            XCTAssertEqual(newer.originFences["4242"]?.retired, false)
+        }
+        let withdrawn = try applyV2(first, v2Wire(2, kind: "revoke", authority: [
+            "4242": origin(100, 3, state: "revoked"), "4243": origin(2, 2, state: "revoked")]))
+        XCTAssertNil(withdrawn.held)
+        XCTAssertEqual(withdrawn.foldSeq, 2)
+        XCTAssertEqual(try applyV2(withdrawn, v2Wire(3)), withdrawn)
+    }
+
+    func testV2SiblingActivityAndReconnectCannotExtendLease() throws {
+        let first = try applyV2(opened(), v2Wire())
+        let update = try applyV2(first, v2Wire(2, authority: ["4242": origin(100, 2), "4243": origin(2, 2)]), now: 100.7)
+        XCTAssertEqual(update.held?.expiresAt, 101)
+        XCTAssertEqual(update.originFences["4243"]?.deadline, 101.7)
+        let reset = BlendPreview.readerReset(update)
+        XCTAssertNil(reset.held)
+        XCTAssertNil(reset.foldSession)
+        let newSession = try opened(reset, session: "s2")
+        let replay = try applyV2(newSession, v2Wire(session: "s2"), now: 100.8)
+        XCTAssertEqual(replay, newSession, "B sequence regresses")
+        let same = try applyV2(newSession, v2Wire(session: "s2", authority: ["4242": origin(100, 2), "4243": origin(2, 2)]), now: 100.8)
+        XCTAssertEqual(same.held?.expiresAt, 101)
+        XCTAssertEqual(try applyV2(same, v2Wire(2, session: "s2", authority: ["4242": origin(100, 2), "4243": origin(2, 3)]), now: 101.01), same)
+    }
+
+    func testV2NewSessionMayOmitQuietPriorOriginButPreservesItsFence() throws {
+        let first = try applyV2(opened(), v2Wire())
+        let next = try opened(BlendPreview.readerReset(first), session: "s2")
+        let onlyB = try applyV2(next, v2Wire(session: "s2", authority: ["4243": origin(2, 2)]), now: 100.2)
+        XCTAssertEqual(onlyB.held?.p, 0.65)
+        XCTAssertEqual(onlyB.sessionOrigins, ["4243"])
+        XCTAssertEqual(onlyB.originFences["4242"]?.seq, 2)
+        let staleA = try applyV2(onlyB, v2Wire(2, session: "s2", authority: ["4242": origin(100, 1), "4243": origin(2, 2)]))
+        XCTAssertEqual(staleA, onlyB)
+        XCTAssertEqual(try applyV2(onlyB, v2Wire(20, session: "s1")), onlyB)
+    }
+
+    func testV2OpenSessionAndDowngradeFences() throws {
+        XCTAssertEqual(try applyV2(.empty, v2Wire()), .empty)
+        let first = try applyV2(opened(), v2Wire())
+        XCTAssertEqual(try opened(first, session: "attacker"), first, "unsolicited open cannot swap active session")
+        let badOpen = BlendPreview.readerOpened(.empty, raw: #"{"event_id":999,"fold_session":"s1"}"#, eventId: id)
+        XCTAssertEqual(badOpen, .empty)
+        let reset = BlendPreview.readerReset(first)
+        XCTAssertEqual(BlendPreview.readerAfter(reset, try frame(epoch: 999), eventId: id, now: 100), reset)
+        let floor = BlendPreview.readerAfterCommitFloor(first, FoldRevision(["4243": 21]))
+        XCTAssertNil(floor.held)
+        XCTAssertEqual(try applyV2(floor, v2Wire(2)), floor, "uncovered floor cannot advance fences")
+    }
+
+    func testV2MalformedAuthorityNeverDecodesOrFallsBack() throws {
+        var invalid: [[String: Any]] = []
+        for (key, value) in [("folded_version", 3 as Any), ("fold_session", ""), ("fold_seq", -1),
+                             ("origin_authority", [:]), ("origin_authority", ["4244": origin(1, 1)]),
+                             ("origin_authority", ["04242": origin(1, 1)]),
+                             ("origin_authority", ["4242": origin(1, 1, state: "mystery")]),
+                             ("origin_authority", ["4242": origin(1, 1, ttl: 0)]),
+                             ("origin_authority", ["4242": ["epoch": true, "seq": 1, "state": "pending", "ttl_ms": 1_000]]),
+                             ("origin_authority", ["4242": ["epoch": 1, "seq": 1, "state": "revoked", "ttl_ms": NSNull()]])] {
+            var w = v2Wire(), meta = w["preview"] as! [String: Any]
+            meta[key] = value; w["preview"] = meta; invalid.append(w)
+        }
+        for key in ["folded_version", "fold_session", "fold_seq", "base_fold_revision", "origin_authority"] {
+            var w = v2Wire(), meta = w["preview"] as! [String: Any]
+            meta.removeValue(forKey: key); w["preview"] = meta; invalid.append(w)
+        }
+        var mixed = wire(), mixedMeta = mixed["preview"] as! [String: Any]
+        mixedMeta["fold_session"] = "s1"; mixed["preview"] = mixedMeta; invalid.append(mixed)
+        invalid.append(v2Wire(ttl: 2_000))
+        for status in [NSNull(), "final", "unknown"] as [Any] {
+            var w = v2Wire(); w["status"] = status; invalid.append(w)
+        }
+        var invalidRevoke = v2Wire(kind: "revoke"); invalidRevoke["p"] = 0.6
+        invalid.append(invalidRevoke) // withdrawal cannot carry a probability
+        for value in invalid { XCTAssertNil(BlendPreviewFrame.decode(try raw(value)), "\(value)") }
+        _ = try XCTUnwrap(BlendPreviewFrame.decode(try raw(v2Wire()))) // no scalar epoch/seq
+    }
+
+    func testV2ColdBaseWithdrawalPreservesSiblingDeadline() throws {
+        let first = try applyV2(opened(), v2Wire())
+        var cold = v2Wire(2, kind: "revoke", authority: ["4242": origin(100, 2, state: "committed"), "4243": origin(2, 1)])
+        cold.removeValue(forKey: "sport"); cold.removeValue(forKey: "p_away")
+        let withdrawn = try applyV2(first, cold, now: 100.4)
+        XCTAssertNil(withdrawn.held)
+        XCTAssertEqual(withdrawn.originFences["4243"]?.deadline, 101)
+        let warm = try applyV2(withdrawn, v2Wire(3, authority: ["4242": origin(100, 2, state: "committed"), "4243": origin(2, 1)]), now: 100.6)
+        XCTAssertEqual(warm.held?.expiresAt, 101)
+        XCTAssertEqual(warm.held?.p, 0.65)
+    }
+
+    func testV2UpgradeRetainsPriorV1OriginFence() throws {
+        let prior = try opened(reader())
+        let stale = try applyV2(prior, v2Wire(authority: ["4243": origin(4, 999)]))
+        XCTAssertEqual(stale, prior)
+        let current = try applyV2(prior, v2Wire(authority: ["4243": origin(5, 1)]), now: 100.8)
+        XCTAssertEqual(current.held?.expiresAt, 101)
+        let reset = try opened(BlendPreview.readerReset(prior), session: "s2")
+        XCTAssertEqual(try applyV2(reset, v2Wire(session: "s2", authority: ["4243": origin(5, 1)])), reset)
+    }
+
 }

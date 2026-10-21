@@ -1276,6 +1276,15 @@ final class EventDetailViewModel: ObservableObject {
             onReconcile: { [weak self] control in self?.receiveReconcile(control) },
             onPreview: { [weak self] raw in self?.receivePreview(raw) },
             onPreviewFloor: { [weak self] raw in self?.receivePreviewFloor(raw) },
+            onPreviewOpen: { [weak self] raw in
+                guard let self else { return }
+                self.blendPreviewReader = BlendPreview.readerOpened(self.blendPreviewReader, raw: raw, eventId: self.eventId)
+            },
+            onPreviewInvalidate: { [weak self] in
+                guard let self else { return }
+                self.blendPreviewReader.held = nil
+                self.publishPreview(nil, at: self.now())
+            },
             onPreviewReset: { [weak self] in self?.clearPreview() },
             deliversFoldedQuotes: true
         )
@@ -1379,7 +1388,7 @@ final class EventDetailViewModel: ObservableObject {
     /// Clears only the held preview; keeps epoch, sequence and commit floors.
     @MainActor
     private func clearPreview() {
-        blendPreviewReader.held = nil
+        blendPreviewReader = BlendPreview.readerReset(blendPreviewReader)
         publishPreview(nil, at: now())
     }
 

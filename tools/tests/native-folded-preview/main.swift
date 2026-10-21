@@ -15,6 +15,15 @@ do {
     try tests.testSingletonContinuesToWorkButCannotMasqueradeAsFolded()
     try tests.testOnlyAProvenSyntheticPinCanYieldToTheActualObservation()
     try tests.testActualChartReplacesOnlyMatchingPinAndRestoresItWithoutPreview()
+    try tests.testV2IndependentEpochsAndSharedSurfaceAdmission()
+    try tests.testV2CannotLoseSiblingOrAdvanceFencesOnPartialValidation()
+    try tests.testV2RetirementRecomposesSiblingAndCannotResurrect()
+    try tests.testV2SiblingActivityAndReconnectCannotExtendLease()
+    try tests.testV2NewSessionMayOmitQuietPriorOriginButPreservesItsFence()
+    try tests.testV2OpenSessionAndDowngradeFences()
+    try tests.testV2MalformedAuthorityNeverDecodesOrFallsBack()
+    try tests.testV2ColdBaseWithdrawalPreservesSiblingDeadline()
+    try tests.testV2UpgradeRetainsPriorV1OriginFence()
 } catch {
     ReaderChecks.failures += 1
     print("Unexpected error: \(error)")

@@ -35,6 +35,32 @@ import Foundation
 /// observation clock, or one not newer than the drawn line, it keeps committed
 /// history. The probability's clock follows the same admission
 /// (`displayedObservedAt`).
+/// Per-origin authority; epochs from different event rows are never compared.
+nonisolated struct FoldOriginAuthority: Decodable, Sendable, Equatable {
+    enum State: String, Decodable, Sendable { case pending, revoked, expired, committed }
+    let epoch: Int
+    let seq: Int
+    let state: State
+    let ttlMs: Int?
+
+    private enum CodingKeys: String, CodingKey { case epoch, seq, state, ttlMs }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        epoch = try c.decode(Int.self, forKey: .epoch)
+        seq = try c.decode(Int.self, forKey: .seq)
+        state = try c.decode(State.self, forKey: .state)
+        ttlMs = try c.decodeIfPresent(Int.self, forKey: .ttlMs)
+        guard (0...FoldRevision.maxSafeInteger).contains(epoch),
+              (0...FoldRevision.maxSafeInteger).contains(seq),
+              state == .pending
+                ? (ttlMs.map { (0...FoldRevision.maxSafeInteger).contains($0) } ?? false)
+                : !c.contains(.ttlMs) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                   debugDescription: "invalid origin authority"))
+        }
+    }
+}
+
 nonisolated struct BlendPreviewFrame: Decodable, Sendable, Equatable {
     enum Kind: String, Sendable { case blend, revoke }
 
@@ -62,6 +88,10 @@ nonisolated struct BlendPreviewFrame: Decodable, Sendable, Equatable {
     let originEventId: Int?
     let pAway: Double?
     let sport: String?
+    var foldedVersion: Int? = nil
+    var foldSession: String? = nil
+    var foldSeq: Int? = nil
+    var originAuthority: [String: FoldOriginAuthority]? = nil
 
     init(eventId: Int, p: Double?, status: String?, kind: Kind, epoch: Int, seq: Int,
          baseRev: Int? = nil, ttlMs: Int? = nil, throughSeq: Int? = nil, displayObservedAt: Date? = nil,
@@ -88,7 +118,7 @@ nonisolated struct BlendPreviewFrame: Decodable, Sendable, Equatable {
     }
 
     private enum PreviewKeys: String, CodingKey {
-        case kind, epoch, seq, baseRev, ttlMs, throughSeq, foldedVersion, originEventId, baseFoldRevision
+        case kind, epoch, seq, baseRev, ttlMs, throughSeq, foldedVersion, originEventId, baseFoldRevision, foldSession, foldSeq, originAuthority
     }
 
     /// Web's `safeInt`: a non-negative integer a JSON number carries exactly.
@@ -112,8 +142,10 @@ nonisolated struct BlendPreviewFrame: Decodable, Sendable, Equatable {
             throw refuse("unknown preview kind")
         }
         self.kind = kind
-        epoch = try preview.decode(Int.self, forKey: .epoch)
-        seq = try preview.decode(Int.self, forKey: .seq)
+        foldedVersion = try preview.decodeIfPresent(Int.self, forKey: .foldedVersion)
+        // v2 has independent origin authority; scalar order has no meaning.
+        epoch = foldedVersion == 2 ? 0 : try preview.decode(Int.self, forKey: .epoch)
+        seq = foldedVersion == 2 ? 0 : try preview.decode(Int.self, forKey: .seq)
         baseRev = try preview.decodeIfPresent(Int.self, forKey: .baseRev)
         ttlMs = try preview.decodeIfPresent(Int.self, forKey: .ttlMs)
         throughSeq = try preview.decodeIfPresent(Int.self, forKey: .throughSeq)
@@ -128,7 +160,50 @@ nonisolated struct BlendPreviewFrame: Decodable, Sendable, Equatable {
             }
         }
         let folded = preview.contains(.foldedVersion) || preview.contains(.baseFoldRevision)
-        if folded {
+            || preview.contains(.foldSession) || preview.contains(.foldSeq) || preview.contains(.originAuthority)
+        if foldedVersion != 2 && (preview.contains(.foldSession) || preview.contains(.foldSeq)
+                                  || preview.contains(.originAuthority)) {
+            throw refuse("v2 authority cannot fall back to legacy ordering")
+        }
+        if foldedVersion == 2 {
+            guard Self.safe(eventId), eventId > 0,
+                  let vector = BlendPreview.validRevision(
+                    try preview.decode([String: Int].self, forKey: .baseFoldRevision)),
+                  vector.rows.count >= 2, vector.rows[String(eventId)] != nil,
+                  Self.safe(ttlMs) else {
+                throw refuse("invalid folded v2 base")
+            }
+            baseFoldRevision = vector
+            pAway = try c.decodeIfPresent(Double.self, forKey: .pAway)
+            sport = try c.decodeIfPresent(String.self, forKey: .sport)
+            foldSession = try preview.decode(String.self, forKey: .foldSession)
+            foldSeq = try preview.decode(Int.self, forKey: .foldSeq)
+            originAuthority = try preview.decode([String: FoldOriginAuthority].self, forKey: .originAuthority)
+            guard let session = foldSession, BlendPreview.validSession(session), Self.safe(foldSeq),
+                  let authority = originAuthority, (1...2).contains(authority.count),
+                  authority.keys.allSatisfy({ vector.rows[$0] != nil }),
+                  pAway.map({ $0.isFinite && (0...1).contains($0) }) ?? true else {
+                throw refuse("invalid folded v2 authority")
+            }
+            let active = authority.values.filter { $0.state == .pending }
+            if kind == .blend {
+                guard c.contains(.pAway), c.contains(.sport), !active.isEmpty,
+                      let status, EventPriceStreaming.isEligible(status),
+                      let p, p.isFinite, (0...1).contains(p),
+                      let ttlMs, ttlMs > 0, active.allSatisfy({ ttlMs <= $0.ttlMs! }) else {
+                    throw refuse("unprintable folded v2 blend")
+                }
+            } else {
+                // A cold committed base can withdraw the whole display while
+                // a sibling still owns pending authority. It supplies no price;
+                // retain that sibling's original deadline for later composition.
+                guard c.contains(.p), p == nil, let ttlMs,
+                      active.isEmpty ? ttlMs == 0 : active.allSatisfy({ ttlMs <= $0.ttlMs! }) else {
+                    throw refuse("invalid folded v2 withdrawal")
+                }
+            }
+            return
+        } else if folded {
             guard kind == .blend, try preview.decode(Int.self, forKey: .foldedVersion) == 1,
                   let originEventId, Self.safe(eventId), eventId > 0,
                   let vector = BlendPreview.validRevision(
@@ -200,6 +275,19 @@ nonisolated struct BlendPreviewReader: Sendable, Equatable {
     var floors: FoldRevision? = nil
     /// Retained across expiry, revoke and reconnect; a replay cannot renew TTL.
     var foldedSequence: FoldedSequence? = nil
+    var enteredV2 = false
+    var foldSession: String? = nil
+    var foldSeq = -1
+    var sessionOrigins: Set<String> = []
+    var originFences: [String: OriginFence] = [:]
+    var foldMembers: Set<String>? = nil
+
+    struct OriginFence: Sendable, Equatable {
+        let epoch: Int
+        let seq: Int
+        let retired: Bool
+        let deadline: TimeInterval?
+    }
 
     struct FoldedSequence: Sendable, Equatable {
         let epoch: Int
@@ -218,6 +306,91 @@ nonisolated struct BlendPreviewChartAuthority: Sendable, Equatable {
 }
 
 nonisolated enum BlendPreview {
+    static func validSession(_ value: String) -> Bool {
+        !value.isEmpty && value.utf8.count <= 128
+    }
+
+    /// Disconnect/navigation between connections withdraws display. Origin
+    /// fences/deadlines survive, while a new open may establish a new session.
+    static func readerReset(_ reader: BlendPreviewReader) -> BlendPreviewReader {
+        var next = reader
+        next.held = nil
+        next.foldSession = nil
+        next.foldSeq = -1
+        next.sessionOrigins = []
+        return next
+    }
+
+    static func readerOpened(_ reader: BlendPreviewReader, raw: String, eventId: Int) -> BlendPreviewReader {
+        struct Packet: Decodable { let eventId: Int; let foldSession: String }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard reader.foldSession == nil, raw.utf8.count <= BlendPreviewFrame.maxFrameBytes,
+              let data = raw.data(using: .utf8), let packet = try? decoder.decode(Packet.self, from: data),
+              packet.eventId == eventId, validSession(packet.foldSession) else { return reader }
+        var next = reader
+        next.foldSession = packet.foldSession
+        return next
+    }
+
+    /// All validation precedes fence mutation. A bad snapshot cannot poison
+    /// future ordering or discard the sibling's admitted contribution.
+    private static func readerAfterV2(_ reader: BlendPreviewReader, _ frame: BlendPreviewFrame,
+                                     eventId: Int, now: TimeInterval) -> BlendPreviewReader {
+        guard frame.eventId == eventId, let session = reader.foldSession,
+              frame.foldSession == session, let sequence = frame.foldSeq, sequence > reader.foldSeq,
+              let base = frame.baseFoldRevision, let authority = frame.originAuthority else { return reader }
+        let members = Set(base.rows.keys)
+        guard reader.foldMembers.map({ $0 == members }) ?? true,
+              reader.floors.map({ base.covers($0) }) ?? true,
+              reader.sessionOrigins.isSubset(of: Set(authority.keys)),
+              Set(reader.originFences.keys).union(authority.keys).count <= 2 else { return reader }
+        var fences = reader.originFences
+        // Upgrading this visit from v1 must not forget its origin's accepted
+        // authority, even though v2 never uses the old global epoch ordering.
+        if let prior = reader.foldedSequence, fences[String(prior.originEventId)] == nil {
+            let held = reader.held.flatMap { value -> BlendPreviewState? in
+                value.originEventId == prior.originEventId && value.epoch == prior.epoch
+                    && value.seq == prior.seq ? value : nil
+            }
+            fences[String(prior.originEventId)] = .init(epoch: prior.epoch, seq: prior.seq,
+                                                       retired: held == nil, deadline: held?.expiresAt)
+        }
+        guard Set(fences.keys).union(authority.keys).count <= 2 else { return reader }
+        var deadline = now + Double(frame.ttlMs ?? 0) / 1000
+        for (origin, value) in authority {
+            let old = fences[origin]
+            if let old, value.epoch < old.epoch || (value.epoch == old.epoch && value.seq < old.seq) {
+                return reader
+            }
+            let same = old.map { $0.epoch == value.epoch && $0.seq == value.seq } ?? false
+            var expires: TimeInterval? = nil
+            if value.state == .pending {
+                guard !(same && old?.retired == true), let ttl = value.ttlMs else { return reader }
+                expires = now + Double(ttl) / 1000
+                if same, let prior = old?.deadline { expires = min(expires!, prior) }
+                // An expired tuple stays expired, including across reconnects.
+                guard let expires, frame.kind == .revoke || expires > now else { return reader }
+                deadline = min(deadline, expires)
+            }
+            fences[origin] = .init(epoch: value.epoch, seq: value.seq,
+                                   retired: value.state != .pending, deadline: expires ?? (same ? old?.deadline : nil))
+        }
+        var next = reader
+        next.enteredV2 = true
+        next.foldMembers = members
+        next.foldSeq = sequence
+        next.sessionOrigins.formUnion(authority.keys)
+        next.originFences = fences
+        if frame.kind == .revoke { next.held = nil; return next }
+        guard let p = frame.p, let rev = base.rows[String(eventId)], deadline > now else { return reader }
+        next.held = BlendPreviewState(eventId: eventId, epoch: 0, seq: sequence, baseRev: rev,
+                                     p: p, status: frame.status, expiresAt: deadline,
+                                     observedAt: frame.displayObservedAt, baseFoldRevision: base,
+                                     pAway: frame.pAway, sport: frame.sport)
+        return next
+    }
+
     /// Canonical positive row identifiers and safe integer revisions only.
     static func validRevision(_ rows: [String: Int]) -> FoldRevision? {
         guard rows.keys.allSatisfy({ key in
@@ -259,7 +432,8 @@ nonisolated enum BlendPreview {
     /// higher one raises the floor and voids the older epoch's preview first.
     static func readerAfter(_ reader: BlendPreviewReader, _ frame: BlendPreviewFrame,
                             eventId: Int, now: TimeInterval) -> BlendPreviewReader {
-        guard frame.eventId == eventId, frame.epoch >= reader.epoch else { return reader }
+        if frame.foldedVersion == 2 { return readerAfterV2(reader, frame, eventId: eventId, now: now) }
+        guard !reader.enteredV2, frame.eventId == eventId, frame.epoch >= reader.epoch else { return reader }
         if let order = reader.foldedSequence {
             if frame.kind == .revoke, frame.originEventId != order.originEventId { return reader }
             if frame.epoch == order.epoch, frame.seq <= order.seq { return reader }
