@@ -516,7 +516,11 @@ struct EventCardView: View {
                 // a finished row we hold no score for keeps today's settled dim,
                 // which is a different treatment answering a different question.
                 .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))
-                .lineLimit(1)
+                // #9483 — "Pregame" costs the row width; on a narrow phone it
+                // would cut a name that used to fit, so a finished card with a
+                // pre-game reading lets the name take a second line instead.
+                // One line whenever it fits; every other card is unchanged.
+                .lineLimit(isFinished && prematch != nil ? 2 : 1)
             if let record, !isFinished {
                 Text(record)
                     .font(.caption2)
@@ -895,7 +899,16 @@ struct EventCardView: View {
     ///
     /// `labelled` (#11325, the finished accessibility row only) stacks the same
     /// number under a "Pregame win chance" label, so it cannot be mistaken for
-    /// a second score. The default draws exactly what every other row draws.
+    /// a second score.
+    ///
+    /// #9483 — the finished single row says what the number is too. At default
+    /// size Stuttgart's actual "1" sat beside a bare "32%", and neither FINAL
+    /// nor the forecast line says that percent is from before the game. So a
+    /// finished row prints "Pregame" in front of the same number, in the same
+    /// caption type, held whole (`fixedSize`) so the name gives way first and
+    /// the qualifier never truncates. Same selection, rounding, withholding and
+    /// colour; no number, no word. A suspended row keeps its bare number under
+    /// "No result reported" — nothing on it is final.
     @ViewBuilder
     private func preGameOddsLabel(for side: TeamSide, labelled: Bool = false) -> some View {
         let reading = prematch
@@ -931,6 +944,14 @@ struct EventCardView: View {
                     number
                         .fixedSize()
                 }
+            } else if isFinished {
+                HStack(spacing: 4) {
+                    Text("Pregame")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    number
+                }
+                .fixedSize()
             } else {
                 number
             }
