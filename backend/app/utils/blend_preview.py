@@ -111,14 +111,18 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 import math
 import os
 import time
 from collections import OrderedDict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 SOURCE_ENV = "LIVE_BLEND_PREVIEW_SOURCE"
 EVENT_IDS_ENV = "LIVE_BLEND_PREVIEW_EVENT_IDS"
@@ -165,6 +169,18 @@ LEDGER_TTL_TOKEN = '"@@TTL@@"'
 LEDGER_MAX_EVENTS = DEFAULT_MAX_EVENTS
 #: Lists bigger than this are not stored as a committed floor (it is skipped).
 LEDGER_MAX_BASE_BYTES = 262144
+#: Refusals that mean the ledger's display authority or admission failed —
+#: not supersession (`stale`, `terminal`) or expiry. Each is logged in the
+#: fixed `LEDGER_ALARM_FORMAT` so the operator can stop on the first one
+#: (#11388 admission review, item 4); the counters alone are never logged.
+LEDGER_ALARM_STATUSES = frozenset({"fenced", "lost", "malformed", "exhausted", "full", "no_base"})
+#: The operator's matcher keys on this shape; change it only with that matcher.
+#: phase = claim, propose, settle, terminal or publish. One line per (status,
+#: phase, source) per batch; `count` includes refusals held back since that
+#: key's previous line, and `event_id` is the first of them (`-` for a claim).
+LEDGER_ALARM_FORMAT = "blend_preview ledger ALARM status=%s phase=%s source=%s count=%d event_id=%s"
+#: A persisting refusal repeats its line at most this often per key.
+LEDGER_ALARM_INTERVAL_S = 10.0
 # KEYS: ledger hash, init marker, shared epoch counter, then the single-source
 # owner keys (read only at first initialization). ARGV[1] is the operation.
 # Canonical integers: Wee-Bey's reviewed helper (PR #11376 SOURCE-REVIEW).
@@ -960,6 +976,10 @@ class LedgerRegistry(PreviewRegistry):
         self.claims: dict[str, int] = {}
         self._chains: dict[tuple[int, str], int] = {}
         self._dropped: list[tuple[str, int]] = []
+        #: (status, phase, source) -> (refusals not yet logged, first event id).
+        self._alarm_owed: dict[tuple[str, str, str], tuple[int, Optional[int]]] = {}
+        self._alarm_last: dict[tuple[str, str, str], float] = {}
+        self._alarm_batch_open = False
 
     def unclaimed(self, source: str) -> bool:
         return source not in self.claims
@@ -1135,6 +1155,7 @@ class LedgerRegistry(PreviewRegistry):
     async def claim(self, call, source: str) -> int:
         reply = await self._eval(call, "claim", source)
         if reply[0] != "ok":
+            self._alarm(reply[0], "claim", source, None)
             raise RuntimeError(f"ledger claim refused: {reply[0]}")
         self.claims[source] = int(reply[1])
         return self.claims[source]
@@ -1204,11 +1225,11 @@ class LedgerRegistry(PreviewRegistry):
 
     async def _mutate(self, op: dict, call, stats: dict) -> list[dict]:
         source, event_id = op["source"], op["event_id"]
+        kind = op["ledger_op"]
         claim = self.claims.get(source)
         if claim is None:
-            stats["fenced"] = stats.get("fenced", 0) + 1
+            self._refusal(stats, "fenced", kind, source, event_id)
             return []
-        kind = op["ledger_op"]
         common = (source, claim, event_id, " ".join(self.sources))
         if kind == "propose":
             reply = await self._eval(
@@ -1225,7 +1246,7 @@ class LedgerRegistry(PreviewRegistry):
         status = reply[0]
         if kind == "terminal":
             if status != "ok":
-                self._refusal(stats, status)
+                self._refusal(stats, status, kind, source, event_id)
                 return []
             gen, seq = int(reply[1]), int(reply[2])
             if seq <= 1:
@@ -1241,7 +1262,7 @@ class LedgerRegistry(PreviewRegistry):
             self._forget(event_id, source)
         if status not in ("ok", "expired"):
             if status not in ("unchanged", "none"):
-                self._refusal(stats, status)
+                self._refusal(stats, status, kind, source, event_id)
             return []
         frame, excluded = self._compose_readset(
             event_id, source, reply, "expired" if status == "expired" else op.get("reason", "stale"))
@@ -1252,10 +1273,44 @@ class LedgerRegistry(PreviewRegistry):
                 self._settle_op(event_id, source, op["local_seq"], "stale"), call, stats)
         return [] if frame is None else [frame]
 
-    @staticmethod
-    def _refusal(stats: dict, status: str) -> None:
+    def _refusal(self, stats: dict, status: str, phase: str, source: str,
+                 event_id: int) -> None:
         key = "fenced" if status == "fenced" else "ledger_refused"
         stats[key] = stats.get(key, 0) + 1
+        self._alarm(status, phase, source, event_id)
+
+    def _alarm(self, status: str, phase: str, source: str,
+               event_id: Optional[int]) -> None:
+        if status not in LEDGER_ALARM_STATUSES:
+            return
+        key = (status, phase, source)
+        count, first = self._alarm_owed.get(key, (0, event_id))
+        self._alarm_owed[key] = (count + 1, first)
+        if not self._alarm_batch_open:
+            self._flush_alarms()
+
+    def _flush_alarms(self) -> None:
+        now = self._clock()
+        for key, (count, first) in list(self._alarm_owed.items()):
+            last = self._alarm_last.get(key)
+            if last is not None and now - last < LEDGER_ALARM_INTERVAL_S:
+                continue
+            del self._alarm_owed[key]
+            self._alarm_last[key] = now
+            logger.warning(LEDGER_ALARM_FORMAT, *key, count, "-" if first is None else first)
+
+    @contextmanager
+    def _alarm_batch(self):
+        """One batch's alarms log when it ends — also when a timeout cuts it."""
+        if self._alarm_batch_open:
+            yield
+            return
+        self._alarm_batch_open = True
+        try:
+            yield
+        finally:
+            self._alarm_batch_open = False
+            self._flush_alarms()
 
     async def _publish(self, frame: dict, call, channel, stats: dict, retries: int = 2) -> None:
         meta = frame.pop("_ledger")
@@ -1269,8 +1324,8 @@ class LedgerRegistry(PreviewRegistry):
         source = frame["source"]
         claim = self.claims.get(source)
         if claim is None or payload.count(LEDGER_TTL_TOKEN) != 1:
-            stats["fenced" if claim is None else "ledger_refused"] = (
-                stats.get("fenced" if claim is None else "ledger_refused", 0) + 1)
+            self._refusal(stats, "fenced" if claim is None else "malformed", "publish",
+                          source, frame["event_id"])
             return
         argv = [source, claim, frame["event_id"], " ".join(self.sources),
                 meta["gen"], meta["seq"], channel(frame["event_id"]), payload]
@@ -1294,23 +1349,25 @@ class LedgerRegistry(PreviewRegistry):
             # tombstone superseded this read-set.
             stats["ledger_superseded"] = stats.get("ledger_superseded", 0) + 1
         else:
-            self._refusal(stats, status)
+            self._refusal(stats, status, "publish", source, frame["event_id"])
 
     async def prepare(self, items: list, call, stats: dict) -> list[dict]:
         """Run every operation; return composed frames, unpublished, in order."""
         frames: list[dict] = []
-        for item in items:
-            if "ledger_op" in item:
-                frames.extend(await self._mutate(item, call, stats))
-            elif "_ledger" in item:
-                frames.append(item)
+        with self._alarm_batch():
+            for item in items:
+                if "ledger_op" in item:
+                    frames.extend(await self._mutate(item, call, stats))
+                elif "_ledger" in item:
+                    frames.append(item)
         return frames
 
     async def execute(self, items: list, call, channel, stats: dict) -> None:
         """Each operation's frames are published before the next operation runs."""
-        for item in items:
-            for frame in await self.prepare([item], call, stats):
-                await self._publish(frame, call, channel, stats)
+        with self._alarm_batch():
+            for item in items:
+                for frame in await self.prepare([item], call, stats):
+                    await self._publish(frame, call, channel, stats)
 
 
 _REGISTRY: Optional[PreviewRegistry] = None
