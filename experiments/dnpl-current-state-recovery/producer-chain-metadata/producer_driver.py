@@ -26,8 +26,10 @@ sys.path.insert(0, str(SOURCE / 'backend'))
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://fixture:fixture@127.0.0.1:1/fixture')
 import pytest
 from sqlalchemy.sql.dml import Insert, Update
-from app.tasks import live_blend_refresh as lbr
-from app.utils import blend_preview
+from current_source import load
+# Bind the selected candidate before fixture imports. Direct use must not rely
+# on a test module having already replaced app.utils.blend_preview.
+blend_preview, lbr = load(candidate=True)
 from app.utils.aggregation import observation_basis, stamp_source_reading
 from app.utils.live_push import build_frame, build_source_snapshot
 from tests.test_live_blend_refresh import _LockedRowSession, _Result

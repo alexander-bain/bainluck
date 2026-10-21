@@ -24,9 +24,10 @@
     },
     {
       "path": "GATES.md",
-      "sha256": "87672a80c76b73f5f216f98add8433fd76194e28fc88ab87cc69448e798a6310",
+      "sha256": "36876bb4357f0086069294f630bc80d47f94bfed4bfce9cdbc0bce3cacb5b026",
       "previous_sha256": null,
-      "followup_previous_sha256": "041334f9bb7e8b199741b3aa6282707169a5ab52965db2c34bd870ba2364af6e"
+      "followup_previous_sha256": "041334f9bb7e8b199741b3aa6282707169a5ab52965db2c34bd870ba2364af6e",
+      "restoration_previous_sha256": "87672a80c76b73f5f216f98add8433fd76194e28fc88ab87cc69448e798a6310"
     },
     {
       "path": "INTEGRATION.md",
@@ -80,6 +81,11 @@
       "previous_sha256": "1883364436fa2afb6cf94625dcdca32bf59124dfb8a6503a7e1dfae523466ab0"
     },
     {
+      "path": "evidence/CODEQL-TRIAGE.md",
+      "previous_sha256": null,
+      "sha256": "92e9f8b76d2aa9fc95c11a4b8d5a9b866b08a10449a57213916645db85feb45a"
+    },
+    {
       "path": "evidence/history/blocked-real-redis-review.md",
       "sha256": "4a06199a35f23fc1c365fd390d3de04501f905629872cff7e48f1684bf0e7aaf",
       "previous_sha256": null
@@ -130,6 +136,11 @@
       "previous_sha256": null
     },
     {
+      "path": "evidence/validation/RESTORATION.json",
+      "previous_sha256": null,
+      "sha256": "de55c36764ca00c59964cff2f06997b111fe9a96647bc41e19fe3aeb95c6bb25"
+    },
+    {
       "path": "evidence/validation/backend-startup.log",
       "sha256": "863ca0cb814d4b6558726ba2edd27c72efbcc180b5f993e35bf23a8c0faf6235",
       "previous_sha256": null
@@ -168,6 +179,66 @@
       "path": "evidence/validation/real-redis-selection-only.log",
       "sha256": "98edc1ee7ecef7f023b57b8fbdd44bb35ff7fcbb1e2eb4b194083a2cf0cacee0",
       "previous_sha256": null
+    },
+    {
+      "path": "evidence/validation/restored-client-tests.log",
+      "previous_sha256": null,
+      "sha256": "757dd202c7f10d2794bc681cbf1afb4818e7e9895ab211d044168cf885d5a6bf"
+    },
+    {
+      "path": "evidence/validation/restored-frontend-build.log",
+      "previous_sha256": null,
+      "sha256": "f61425f0b0a281147e03fd25c79a1ef8e98bd20893b98a30f8721c46baff6301"
+    },
+    {
+      "path": "evidence/validation/restored-independent-client-tests.log",
+      "previous_sha256": null,
+      "sha256": "cfb0bf8cbcdd2ede8f617c899e5638f2f703d850f5deed0ab5ca832a3241d88b"
+    },
+    {
+      "path": "evidence/validation/restored-producer-tests.log",
+      "previous_sha256": null,
+      "sha256": "cc2bbaee47c7e56ca2fe0ba29f0ab07f2dbf5cd09a3b2a56ccd9eeda51140b0e"
+    },
+    {
+      "path": "evidence/validation/restored-python-freeze.txt",
+      "previous_sha256": null,
+      "sha256": "a399e6eea422777b69752eb0f156a6ca54132b2ca0c78cdf40b8d11c89fb2dbd"
+    },
+    {
+      "path": "evidence/validation/restored-review-producer-tests.log",
+      "previous_sha256": null,
+      "sha256": "88272c1a42b4854bf1bf848cde091d6b18b2abf5aa32b35fa5f938ddd0b2ed6d"
+    },
+    {
+      "path": "evidence/validation/restored-runtime-contract-tests.log",
+      "previous_sha256": null,
+      "sha256": "921b3cf7965fb988e913d39a5033cb63b3493303e5883a98428f542f10e6fce2"
+    },
+    {
+      "path": "evidence/validation/restored-scoped-tsc.log",
+      "previous_sha256": null,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "evidence/validation/restored-selector-tests.log",
+      "previous_sha256": null,
+      "sha256": "5ca86342b4d2c10282c1f4cbb4e5423b1fbcda602b409180a024d06dec75bcc3"
+    },
+    {
+      "path": "evidence/validation/restored-server-model-tests.log",
+      "previous_sha256": null,
+      "sha256": "54d62a0149f447ee2867b9e102287fade45e0a057ff3b969489678c98884e9ae"
+    },
+    {
+      "path": "evidence/validation/restored-startup.log",
+      "previous_sha256": null,
+      "sha256": "ed520a34654204a5734cb0260fa5f549b855835e8ec34b53e02d9abb57a5b36a"
+    },
+    {
+      "path": "evidence/validation/restored-typecheck.log",
+      "previous_sha256": null,
+      "sha256": "08bd6caf92246dfff54a5831bd66e9426069a7c12f5cecd36ccdd13fd8e3e0f9"
     },
     {
       "path": "evidence/validation/runtime-portability-artifacts.log",
@@ -241,8 +312,9 @@
     },
     {
       "path": "monotonic-candidate/useLiveEventStream.ts",
-      "sha256": "73c6cc7257f1fbf7fbc78632400d1984782e8f13f2a6d2a25c0910efade8aeb0",
-      "previous_sha256": "73c6cc7257f1fbf7fbc78632400d1984782e8f13f2a6d2a25c0910efade8aeb0"
+      "sha256": "b3156b3f44a95966352063b2ecf7babca3108677299131e8fb93d18bbab5ce06",
+      "previous_sha256": "73c6cc7257f1fbf7fbc78632400d1984782e8f13f2a6d2a25c0910efade8aeb0",
+      "restoration_previous_sha256": "73c6cc7257f1fbf7fbc78632400d1984782e8f13f2a6d2a25c0910efade8aeb0"
     },
     {
       "path": "monotonic-review/PROTOCOL.md",
@@ -256,8 +328,9 @@
     },
     {
       "path": "monotonic-review/hook_harness.cjs",
-      "sha256": "6c0f4f52a6af8669687470636095a779bb89fdb3b8bc15a7a1783ae1cbe232eb",
-      "previous_sha256": "6c0f4f52a6af8669687470636095a779bb89fdb3b8bc15a7a1783ae1cbe232eb"
+      "sha256": "6be64483baf0481771191d2fb133845f7d67599e21d3c8502c2f73cb043dbc02",
+      "previous_sha256": "6c0f4f52a6af8669687470636095a779bb89fdb3b8bc15a7a1783ae1cbe232eb",
+      "restoration_previous_sha256": "6c0f4f52a6af8669687470636095a779bb89fdb3b8bc15a7a1783ae1cbe232eb"
     },
     {
       "path": "monotonic-review/load_candidate.cjs",
@@ -311,8 +384,9 @@
     },
     {
       "path": "producer-chain-metadata/current_source.py",
-      "sha256": "e17e3bbf4e7577af343b4b95ba259cd3c15127069394400d12c796ec4da42116",
-      "previous_sha256": "e17e3bbf4e7577af343b4b95ba259cd3c15127069394400d12c796ec4da42116"
+      "sha256": "9c2a2d37f47d31f0dfbbdb2eb86f3f1a02285ec5e259fd95f8bf62fc058d49fd",
+      "previous_sha256": "e17e3bbf4e7577af343b4b95ba259cd3c15127069394400d12c796ec4da42116",
+      "restoration_previous_sha256": "e17e3bbf4e7577af343b4b95ba259cd3c15127069394400d12c796ec4da42116"
     },
     {
       "path": "producer-chain-metadata/producer-chain.patch",
@@ -321,8 +395,9 @@
     },
     {
       "path": "producer-chain-metadata/producer_driver.py",
-      "sha256": "6ee49f5623ba7988ab2b677f63ba6a5a7f1e021c0585c34f5840492cbeb8eb6b",
-      "previous_sha256": "6ee49f5623ba7988ab2b677f63ba6a5a7f1e021c0585c34f5840492cbeb8eb6b"
+      "sha256": "da45a55117dcc855da1e12f15448d0551f1b1550fe6b54081a221227b1807909",
+      "previous_sha256": "6ee49f5623ba7988ab2b677f63ba6a5a7f1e021c0585c34f5840492cbeb8eb6b",
+      "restoration_previous_sha256": "6ee49f5623ba7988ab2b677f63ba6a5a7f1e021c0585c34f5840492cbeb8eb6b"
     },
     {
       "path": "producer-chain-metadata/reference/backend/app/tasks/live_blend_refresh.py",
@@ -360,6 +435,11 @@
       "previous_sha256": "ef7fa66654bf7c2ac23ef218c5a7e7dc4154afa403c499660c5de23e24544196"
     },
     {
+      "path": "producer-chain-metadata/tests/test_direct_driver.py",
+      "previous_sha256": null,
+      "sha256": "71268c14a331e006ffe2ed0e34852f520986212b8e4d3b54b8c1c328f6fd0476"
+    },
+    {
       "path": "producer-chain-metadata/tests/test_metadata.py",
       "sha256": "8938e732daf413e2e903b9cd5e2c2d2f6fc172ef9c76a4fb5e73721d85e05801",
       "previous_sha256": "8938e732daf413e2e903b9cd5e2c2d2f6fc172ef9c76a4fb5e73721d85e05801"
@@ -382,9 +462,10 @@
     },
     {
       "path": "real-redis-unexecuted/test_real_redis.py",
-      "sha256": "5dd1ce40055c6f668b31d24ab034963bf2774b50765a5b0364647825f97d4212",
+      "sha256": "b95bbc69e74e046259bf3c23786b869e622886fe963c6060e341666755ef3b25",
       "previous_sha256": null,
-      "followup_previous_sha256": "c16c802ff1bc45cd0ca62394c1a07fb85c2e89b665d449e6b2200114c88742dc"
+      "followup_previous_sha256": "c16c802ff1bc45cd0ca62394c1a07fb85c2e89b665d449e6b2200114c88742dc",
+      "restoration_previous_sha256": "5dd1ce40055c6f668b31d24ab034963bf2774b50765a5b0364647825f97d4212"
     },
     {
       "path": "real-redis-unexecuted/test_runtime_selection.py",
@@ -453,8 +534,9 @@
     },
     {
       "path": "review/monotonic-get/mounted-harness.cjs",
-      "sha256": "9b970d6a7f9d63854d8ffa20927bc2e73bc865d9ff6e86957d5b103fcb6cc7e9",
-      "previous_sha256": "9b970d6a7f9d63854d8ffa20927bc2e73bc865d9ff6e86957d5b103fcb6cc7e9"
+      "sha256": "e4dfefd25132f3c0e594a95ded3a172842e41822fb10668b7bf7a15f2fd51fda",
+      "previous_sha256": "9b970d6a7f9d63854d8ffa20927bc2e73bc865d9ff6e86957d5b103fcb6cc7e9",
+      "restoration_previous_sha256": "9b970d6a7f9d63854d8ffa20927bc2e73bc865d9ff6e86957d5b103fcb6cc7e9"
     },
     {
       "path": "review/monotonic-get/mounted-results-coherent.txt",
@@ -498,8 +580,9 @@
     },
     {
       "path": "review/producer-chain/test_integration.py",
-      "sha256": "3a7cbefba00a022b59181ff8ea17d59126a4cf3ebd70517c43e3afd0321e253b",
-      "previous_sha256": "3a7cbefba00a022b59181ff8ea17d59126a4cf3ebd70517c43e3afd0321e253b"
+      "sha256": "a027542776cf4e200535e294742ea25796131ca43e56cd2bd237228a96c8bdd3",
+      "previous_sha256": "3a7cbefba00a022b59181ff8ea17d59126a4cf3ebd70517c43e3afd0321e253b",
+      "restoration_previous_sha256": "3a7cbefba00a022b59181ff8ea17d59126a4cf3ebd70517c43e3afd0321e253b"
     },
     {
       "path": "run-focused.sh",
@@ -518,5 +601,11 @@
     "purpose": "Explicit reviewed portable Redis runtime contract; no auto-selection/install/download;6.2.14 compatibility is not7.2.16 proof",
     "receipt": "evidence/validation/PORTABILITY.json",
     "lua_adapter_unchanged": true
+  },
+  "restored_pending_correction": {
+    "base_head": "4ea72a1cde247c6f5b914323b761bdefddafad4a",
+    "receipt": "evidence/validation/RESTORATION.json",
+    "status": "Required restored local gates passed; hosted outcome must be checked at the resulting commit",
+    "reference_source_unchanged": true
   }
 }

@@ -146,7 +146,7 @@ export function useLiveEventStream(
     statusEventId: number | undefined; status: LiveStreamStatus;
   }>({ statusEventId: eventId, status: 'idle' });
   const [recovery, setRecovery] = useState({ eventId, ordinal: 0 });
-  const [{ reader, previewNow }, setPreview] = useState<{
+  const [{ reader }, setPreview] = useState<{
     reader: BlendPreviewReader; previewNow: number;
   }>({ reader: EMPTY_BLEND_PREVIEW_READER, previewNow: 0 });
   const preview = reader.held;

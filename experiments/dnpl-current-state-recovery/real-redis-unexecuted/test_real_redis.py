@@ -4,8 +4,6 @@ No server case has run. This file is not part of run-focused.sh. Future executio
 needs separately permitted private Unix-only runtime; no transport fallback.
 """
 import concurrent.futures
-import hashlib
-import itertools
 import json
 import os
 from pathlib import Path
@@ -70,7 +68,8 @@ class RealRedis(unittest.TestCase):
   cls.cleaned=True
   try:
    cls.r.config_set('maxmemory',0) # restore only this disposable instance before cleanup
-  except redis.exceptions.RedisError:pass
+  except redis.exceptions.RedisError as exc:
+   RESULTS.setdefault('cleanup_warnings',[]).append({'operation':'restore disposable maxmemory','error':type(exc).__name__,'message':str(exc)})
   cls.r.close()
   if cls.proc.poll() is None:cls.proc.terminate()
   cls.proc.wait(timeout=5);cls.log.close()

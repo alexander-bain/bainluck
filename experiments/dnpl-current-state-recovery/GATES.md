@@ -28,3 +28,9 @@ The follow-up changes only runtime selection, its tests, and evidence. Thirteen 
 An earlier build attempt lost its execution handle before completion; its outcome and possible metadata transmission remain unknown. The fresh retry above is the observed success. PORTABILITY.json records both separately and supplies raw/normalized log hashes. No runtime server was launched, installed or downloaded. All23 real-engine methods remain unexecuted here.
 
 Hosted security hold on the original head654df183: CodeQL reports one error and47 notes. Its exact alerts are being triaged, not waived as experiment-only. This follow-up does not claim hosted checks are green or grant production approval.
+
+## Restored CodeQL correction, 2026-10-21
+
+The previous cloud workspace was replaced. The uncommitted correction was reconstructed from published head4ea72a1 and reviewed afresh. In this restored workspace, producer29, independent producer12, no-socket runtime13 and artifact-selection3 tests pass, exit0; syntax and diff checks pass. RESTORATION.json and its logs record these fresh results separately. No frontend/client/model build or test result is inferred from the lost environment.
+
+The earlier correction-build outcomes remain unknown. After clarified permission on 2026-10-21 at 17:58 UTC, the new frontend build completed exit0 with Next telemetry disabled and no Sentry upload token. Its mandatory subsequent typecheck passed the unchanged66-error baseline (ratchet, not zero errors). Fresh affected client81 + independent17, snapshot model8, scoped tsc and backend startup4 also passed. Unchanged numeric Lua/model evidence remains historical and hash-pinned, not rerun here. RESTORATION.json supplies raw/normalized log hashes. Exact staged review and hosted CodeQL reevaluation are separate from these local results. No gate bypass, Redis runtime, production source wiring or deployment occurred.

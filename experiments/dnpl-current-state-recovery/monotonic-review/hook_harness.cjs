@@ -1,6 +1,4 @@
 /* Independent deterministic hook boundary harness. Bundles the hook only in memory. */
-const test = require('node:test');
-const assert = require('node:assert/strict');
 const path = require('node:path');
 const Module = require('node:module');
 const ROOT = path.resolve(__dirname, '..');

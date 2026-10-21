@@ -1,5 +1,4 @@
 """Independent source-seam checks; in-memory boundaries, no sockets or services."""
-import copy
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -55,7 +54,7 @@ def test_equal_start_siblings_have_distinct_chains_and_drop_selects_remaining():
  assert b['preview']['lease_id']=='pending:'+str(p.identity)
  assert b['preview']['original_expires_at_ms']==a['preview']['original_expires_at_ms']
 def test_expiring_oldest_reveals_siblings_original_not_fresh_deadline():
- r,c=registry();a=propose(r,c)[0];c.t=5;propose(r,c,source='polymarket',value=.8)
+ r,c=registry();propose(r,c);c.t=5;propose(r,c,source='polymarket',value=.8)
  sibling=r._events[1].pending['polymarket'].lease;c.t=10;b=r.expire()[0]
  assert b['preview']['ttl_ms']==5000
  assert b['preview']['lease_id']=='pending:'+str(sibling.identity)
