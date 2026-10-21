@@ -381,6 +381,27 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
         XCTAssertLessThan(revealed.lowerBound, primary.lowerBound)
     }
 
+    /// The Sources control is easy to tap: both its states hit-test a frame at
+    /// least 44pt tall and wide (the caption alone is ~26pt), laid in the key's
+    /// own row AFTER the plot's fixed frame, so the extra height never comes
+    /// out of the plot box.
+    func testTheSourcesToggleHitsA44PointFrameOutsideThePlot() throws {
+        let chart = try chartCode()
+        let show = try XCTUnwrap(chart.range(of: "privatefuncsourcesShowButton("))
+        let hide = try XCTUnwrap(chart.range(of: "privatefuncsourcesHideButton("))
+        let after = try XCTUnwrap(chart.range(of: "privatefuncisMultiSource(", range: hide.upperBound..<chart.endIndex))
+        let buttons = String(chart[show.lowerBound..<after.lowerBound])
+        XCTAssertEqual(count(".frame(minWidth:44,minHeight:44,alignment:.leading).contentShape(Rectangle())", in: buttons), 2,
+                       "each state's shape is laid on its 44pt frame, not on the caption")
+        XCTAssertFalse(buttons.contains(".padding(.vertical,6).contentShape("), "the ~26pt target is back")
+        XCTAssertTrue(chart.contains("tennis:tennis)}.frame(height:chartHeight)legendView(dataPoints:dataPoints,"
+                                     + "sources:history.winProbSources??[:],sourcesOpen:$inlineSourcesOpen,rail:false)"),
+                      "inline: the key sits below the fixed-height plot")
+        XCTAssertTrue(chart.contains(".frame(height:enlargedPlotFloor)legendView(dataPoints:dataPoints,"
+                                     + "sources:history.winProbSources??[:],sourcesOpen:$fullscreenSourcesOpen,rail:true)"),
+                      "full size: the key is its own row under the plot row")
+    }
+
     /// The four seams UX's later TipKit re-cut attaches to (HOST-COMPOSITION-
     /// CONSTRAINTS-AB5B), held by name.
     func testTheTipKitAttachmentSeamsAreKept() throws {

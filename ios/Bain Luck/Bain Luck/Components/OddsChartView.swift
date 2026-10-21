@@ -2447,7 +2447,10 @@ struct OddsChartView: View {
                     .font(.system(size: 8, weight: .bold))
             }
             .foregroundStyle(.secondary)
-            .padding(.vertical, 6)
+            // The tap target is the 44pt frame, not the caption-sized text: the
+            // frame sits in the key's own row under the plot, so the plot box
+            // never gives it a point, and the shape is laid on the frame.
+            .frame(minWidth: 44, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -2467,7 +2470,7 @@ struct OddsChartView: View {
                     .font(.system(size: 8, weight: .bold))
             }
             .foregroundStyle(.secondary)
-            .padding(.vertical, 6)
+            .frame(minWidth: 44, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
