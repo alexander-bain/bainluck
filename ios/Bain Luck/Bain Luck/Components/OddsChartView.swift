@@ -2051,15 +2051,10 @@ struct OddsChartView: View {
         // reading. A live page keeps its edge marker's label; a page that is
         // neither prints no number at the end (its newest price is the hero's,
         // with its own currentness).
-        let finishedEnd: (date: Date, probability: Double)? = {
-            guard liveSplit == nil, EventState.isFinished(status) else { return nil }
-            if let checkpoints {
-                guard let end = checkpoints.resting, let date = end.date, let probability = end.probability
-                else { return nil }
-                return (date: date, probability: probability)
-            }
-            return Self.latestPrimaryPoint(in: dataPoints).map { (date: $0.date, probability: $0.probability) }
-        }()
+        let finishedEnd = liveSplit == nil
+            ? Self.finishedEnd9483(dataPoints: dataPoints, checkpoints: checkpoints,
+                                   finished: EventState.isFinished(status))
+            : nil
         let endLine = checkpoints?.survivors
             ?? dataPoints.filter { $0.source == Self.primarySource(in: dataPoints) }
 
@@ -2379,12 +2374,17 @@ struct OddsChartView: View {
                             sourcesOpen: Binding<Bool>, rail: Bool) -> some View {
         let hasBlend = dataPoints.contains { $0.source == "aggregate" }
         let revealable = Self.revealableSources9483(in: dataPoints, withheld: withheldSources9483)
+        // #11356 — a finished line's last recorded chance, named, on its own
+        // key: read off the plot so it stays readable when the end label's
+        // plate is left off a steep finish, and taken before the Sources
+        // branch so every state prints the same thing.
+        let endReading = finishedEndKeyReading9483(dataPoints: dataPoints)
         if hasBlend {
             let open = sourcesOpen.wrappedValue && !revealable.isEmpty
             if rail {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
-                        legendKey("aggregate", sources: sources, isPrimary: true)
+                        legendKey("aggregate", sources: sources, isPrimary: true, reading: endReading)
                         if open {
                             sourcesHideButton(sourcesOpen)
                             ForEach(revealable, id: \.self) { source in
@@ -2398,7 +2398,7 @@ struct OddsChartView: View {
                 }
             } else {
                 FlowLayout(spacing: 8) {
-                    legendKey("aggregate", sources: sources, isPrimary: true)
+                    legendKey("aggregate", sources: sources, isPrimary: true, reading: endReading)
                     if open {
                         ForEach(revealable, id: \.self) { source in
                             legendKey(source, sources: sources, isPrimary: false)
@@ -2419,7 +2419,8 @@ struct OddsChartView: View {
             }
             FlowLayout(spacing: 8) {
                 ForEach(ordered, id: \.self) { source in
-                    legendKey(source, sources: sources, isPrimary: source == "consensus")
+                    legendKey(source, sources: sources, isPrimary: source == "consensus",
+                              reading: source == Self.primarySource(in: dataPoints) ? endReading : nil)
                 }
             }
         }
@@ -2427,8 +2428,11 @@ struct OddsChartView: View {
 
     /// One line's key: a swatch drawn in the line's own colour AND stroke (a
     /// model's dashes included), so a name can only describe the line beside
-    /// it, then its name.
-    private func legendKey(_ source: String, sources: [String: WinProbSourceInfo], isPrimary: Bool) -> some View {
+    /// it, then its name. #11356 — the primary line of a finished game also
+    /// names its last recorded chance after it ("last GB 97%"): whose chance it
+    /// was, in the end label's own words and ink.
+    private func legendKey(_ source: String, sources: [String: WinProbSourceInfo], isPrimary: Bool,
+                           reading: (text: String, ink: Color)? = nil) -> some View {
         let stroke = strokeStyleForSource(source, sources: sources)
         return HStack(spacing: 4) {
             Path { path in
@@ -2443,6 +2447,19 @@ struct OddsChartView: View {
                 .foregroundStyle(isPrimary ? .primary : .secondary)
                 .lineLimit(1)
                 .fixedSize()
+            if let reading {
+                HStack(spacing: 3) {
+                    Text("last")
+                        .foregroundStyle(.secondary)
+                    Text(reading.text)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(reading.ink)
+                }
+                .font(.caption2)
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.leading, 2)
+            }
         }
         .accessibilityElement(children: .combine)
     }
@@ -4617,6 +4634,49 @@ extension OddsChartView {
         return "\(homeShort) \(printed.home)"
     }
 
+    /// The end of a finished game's line: the resting checkpoint endpoint
+    /// under a mount, else the primary line's last reading. Nil before the
+    /// game is over (a live page's end is its edge marker's).
+    static func finishedEnd9483(dataPoints: [ChartDataPoint], checkpoints: PublicationCheckpointMount4974?,
+                                finished: Bool) -> (date: Date, probability: Double)? {
+        guard finished else { return nil }
+        if let checkpoints {
+            guard let end = checkpoints.resting, let date = end.date, let probability = end.probability
+            else { return nil }
+            return (date: date, probability: probability)
+        }
+        return latestPrimaryPoint(in: dataPoints).map { (date: $0.date, probability: $0.probability) }
+    }
+
+    /// What the primary key prints for a finished line: the end label's own
+    /// words for its end — whose chance, with its rounding — but only when
+    /// that end is one of the marks the line draws, the one place its dot
+    /// sits. A reading the line never drew is never printed, and nothing here
+    /// is the result: it is the last recorded chance.
+    static func endKeyReading9483(_ end: (date: Date, probability: Double), ink: PrimaryInk9483,
+                                  sides: ChartProbabilityAxis9483.Sides,
+                                  homeShort: String, awayShort: String) -> String? {
+        guard ink.draws(date: end.date, probability: end.probability) else { return nil }
+        return endLabelText9483(probability: end.probability, sides: sides,
+                                homeShort: homeShort, awayShort: awayShort)
+    }
+
+    /// This chart's key reading. A finished page has no live edge (the stream
+    /// is only for scheduled, live and suspended games), so its end is
+    /// `chartView`'s. Reads no Sources state and nothing from the plot's
+    /// geometry, so neither can move it.
+    private func finishedEndKeyReading9483(dataPoints: [ChartDataPoint]) -> (text: String, ink: Color)? {
+        let checkpoints = checkpointMount(for: dataPoints)
+        guard let end = Self.finishedEnd9483(dataPoints: dataPoints, checkpoints: checkpoints,
+                                             finished: EventState.isFinished(status)),
+              let text = Self.endKeyReading9483(
+                end, ink: Self.primaryInk9483(dataPoints: dataPoints, checkpoints: checkpoints,
+                                              gameStart: gameStartDate),
+                sides: pageAxisSides9483, homeShort: homeShort, awayShort: awayShort)
+        else { return nil }
+        return (text: text, ink: endLabelInk9483(probability: end.probability, sides: pageAxisSides9483))
+    }
+
     private func endLabelInk9483(probability: Double, sides: ChartProbabilityAxis9483.Sides) -> Color {
         guard sides == .homeAndAway, let teamColors else { return .primary }
         return probability < 0.5 ? teamColors.away : teamColors.home
@@ -4695,6 +4755,19 @@ extension OddsChartView {
         guard stepped >= lowest, stepped <= deepest, abs(stepped - y) <= maxStep
         else { return CGPoint(x: x, y: y) }
         return CGPoint(x: x, y: stepped)
+    }
+
+    /// Whether the end label's plate, centred at `center`, lies clear of the
+    /// primary line's drawn ink across its own x span. Asked of the final
+    /// placement wherever it landed, moved or not: a steep finish the bounded
+    /// step could not clear (.80 → .90 → .97 → 1.0 in the last 50pt) keeps
+    /// the frame's placement over the climb, and an in-bounds position is no
+    /// permission to paint over it. Not clear ⇒ the plate is left off; the end dot
+    /// stays, and the primary key carries the reading (`endKeyReading9483`).
+    static func endLabelPlateClears9483(center: CGPoint, size: CGSize,
+                                        ink: (ClosedRange<CGFloat>) -> ClosedRange<CGFloat>?) -> Bool {
+        guard let line = ink((center.x - size.width / 2)...(center.x + size.width / 2)) else { return true }
+        return center.y + size.height / 2 <= line.lowerBound || center.y - size.height / 2 >= line.upperBound
     }
 
     /// The primary line's marks exactly as `chartContent` draws them: its
@@ -4821,16 +4894,23 @@ extension OddsChartView {
                         Self.inkExtent9483(runs: runs, marks: marks, across: span,
                                            halfStroke: halfStroke, markRadius: Self.inkMarkRadius9483)
                     })
-                Text(text)
-                    .font(.system(size: axisFontSize, weight: .semibold))
-                    .foregroundStyle(endLabelInk9483(probability: end.probability, sides: sides))
-                    .lineLimit(1)
-                    .fixedSize()
-                    .padding(.horizontal, Self.endLabelPlatePadding9483)
-                    .background(Color.systemBackground.opacity(0.85), in: RoundedRectangle(cornerRadius: 3))
-                    .position(x: plotFrame.minX + center.x, y: plotFrame.minY + center.y)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+                // Design's steep-finish fallback: painted only where it hides
+                // none of the line; otherwise the key below names the reading.
+                if Self.endLabelPlateClears9483(center: center, size: size, ink: { span in
+                    Self.inkExtent9483(runs: runs, marks: marks, across: span,
+                                       halfStroke: halfStroke, markRadius: Self.inkMarkRadius9483)
+                }) {
+                    Text(text)
+                        .font(.system(size: axisFontSize, weight: .semibold))
+                        .foregroundStyle(endLabelInk9483(probability: end.probability, sides: sides))
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, Self.endLabelPlatePadding9483)
+                        .background(Color.systemBackground.opacity(0.85), in: RoundedRectangle(cornerRadius: 3))
+                        .position(x: plotFrame.minX + center.x, y: plotFrame.minY + center.y)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
         }
     }

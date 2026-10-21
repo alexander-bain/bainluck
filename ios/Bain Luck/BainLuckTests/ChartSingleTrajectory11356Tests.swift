@@ -512,6 +512,132 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
         XCTAssertTrue(lone.draws(date: blend[0].date, probability: 0.62))
     }
 
+    // MARK: - A steep finish leaves the plate off and the key names the reading
+
+    /// A gentle finish keeps its plate where it was placed: clear of the line,
+    /// above a gentle climb and below a gentle fall, unmoved by the frame.
+    func testAGentleFinishKeepsItsPlate() {
+        let climb = [(100, 0.55), (200, 0.60), (290, 0.66)]
+            .map { CGPoint(x: CGFloat($0.0), y: yOnTopWindow(CGFloat($0.1))) }
+        let up = Chart.endLabelCenter9483(end: climb[2], size: plate, lineYBeneath: yOnTopWindow(0.60),
+                                          plot: platePlot, topReserve: 20, ink: ink([climb]))
+        XCTAssertEqual(up.x, 259)
+        XCTAssertEqual(up.y, climb[2].y - 2 - plate.height / 2, accuracy: 0.001, "its preferred spot, above the dot")
+        XCTAssertTrue(Chart.endLabelPlateClears9483(center: up, size: plate, ink: ink([climb])))
+        let fall = [(100, 0.45), (200, 0.40), (290, 0.34)]
+            .map { CGPoint(x: CGFloat($0.0), y: yOnBottomWindow(CGFloat($0.1))) }
+        let down = Chart.endLabelCenter9483(end: fall[2], size: plate, lineYBeneath: yOnBottomWindow(0.40),
+                                            plot: platePlot, topReserve: 20, ink: ink([fall]))
+        XCTAssertEqual(down.y, fall[2].y + 2 + plate.height / 2, accuracy: 0.001, "below the dot")
+        XCTAssertTrue(Chart.endLabelPlateClears9483(center: down, size: plate, ink: ink([fall])))
+    }
+
+    /// A climb or collapse the accepted bounded step DOES clear keeps its
+    /// plate: the step lands it exactly on the ink's edge, which is clear.
+    func testAFinishTheBoundedStepClearsKeepsItsPlate() {
+        let climb = [(150, 0.80), (230, 0.92), (250, 0.96), (270, 0.99), (290, 1.0)]
+            .map { CGPoint(x: CGFloat($0.0), y: yOnTopWindow(CGFloat($0.1))) }
+        let up = Chart.endLabelCenter9483(end: CGPoint(x: 290, y: 0), size: plate, lineYBeneath: yOnTopWindow(0.96),
+                                          plot: platePlot, topReserve: 20, ink: ink([climb]))
+        XCTAssertEqual(up.y, 34.42, accuracy: 0.001, "control: C2's step")
+        XCTAssertTrue(Chart.endLabelPlateClears9483(center: up, size: plate, ink: ink([climb])))
+        let fall = [(150, 0.20), (230, 0.08), (250, 0.04), (270, 0.01), (290, 0.0)]
+            .map { CGPoint(x: CGFloat($0.0), y: yOnBottomWindow(CGFloat($0.1))) }
+        let down = Chart.endLabelCenter9483(end: CGPoint(x: 290, y: 270), size: plate,
+                                            lineYBeneath: yOnBottomWindow(0.04), plot: platePlot,
+                                            topReserve: 20, ink: ink([fall]))
+        XCTAssertEqual(down.y, 235.58, accuracy: 0.001, "control: C2's step")
+        XCTAssertTrue(Chart.endLabelPlateClears9483(center: down, size: plate, ink: ink([fall])))
+    }
+
+    /// The deciding case (Lane1b 2332Z, Design's STEEP-FINISH-LABEL-FALLBACK):
+    /// .80 → .90 → .97 → 1.0 over the last 50pt needs a 35.5pt step against a
+    /// 28pt bound, so the bounded placement stays on the climb — and the plate
+    /// is left off rather than painted over it.
+    func testASteepClimbTheBoundCannotClearLeavesThePlateOff() {
+        let steep = [(200, 0.75), (240, 0.80), (257, 0.90), (274, 0.97), (290, 1.0)]
+            .map { CGPoint(x: CGFloat($0.0), y: yOnTopWindow(CGFloat($0.1))) }
+        let placed = Chart.endLabelCenter9483(end: CGPoint(x: 290, y: 0), size: plate,
+                                              lineYBeneath: yOnTopWindow(0.90), plot: platePlot,
+                                              topReserve: 20, ink: ink([steep]))
+        XCTAssertEqual(placed, CGPoint(x: 259, y: 27), "the accepted bounded placement, unchanged")
+        XCTAssertTrue(plateCoversInk(placed, plate, ink([steep])), "control: painted there, it covers the climb")
+        XCTAssertFalse(Chart.endLabelPlateClears9483(center: placed, size: plate, ink: ink([steep])),
+                       "the plate is left off a climb it would cover")
+    }
+
+    /// Its mirror: a collapse to 0% too steep to step above.
+    func testASymmetricCollapseLeavesThePlateOff() {
+        let collapse = [(200, 0.25), (240, 0.20), (257, 0.10), (274, 0.03), (290, 0.0)]
+            .map { CGPoint(x: CGFloat($0.0), y: yOnBottomWindow(CGFloat($0.1))) }
+        let placed = Chart.endLabelCenter9483(end: CGPoint(x: 290, y: 270), size: plate,
+                                              lineYBeneath: yOnBottomWindow(0.10), plot: platePlot,
+                                              topReserve: 20, ink: ink([collapse]))
+        XCTAssertEqual(placed, CGPoint(x: 259, y: 261), "the accepted bounded placement, unchanged")
+        XCTAssertTrue(plateCoversInk(placed, plate, ink([collapse])), "control: the case bites")
+        XCTAssertFalse(Chart.endLabelPlateClears9483(center: placed, size: plate, ink: ink([collapse])))
+    }
+
+    /// The decision reads the final rectangle wherever it landed: a plate the
+    /// frame never moved is still left off the ink under it. Touching is clear;
+    /// a break in the line has no ink to cover.
+    func testThePlateDecisionReadsTheFinalRectangleMovedOrNot() {
+        let size = CGSize(width: 40, height: 16)
+        let unmoved = Chart.endLabelCenter9483(end: CGPoint(x: 250, y: 60), size: size, lineYBeneath: 120,
+                                               plot: CGSize(width: 300, height: 200), topReserve: 20,
+                                               ink: { _ in 52...70 })
+        XCTAssertEqual(unmoved, CGPoint(x: 224, y: 50), "control: the placement does not move for this ink")
+        XCTAssertFalse(Chart.endLabelPlateClears9483(center: unmoved, size: size, ink: { _ in 52...70 }))
+        XCTAssertTrue(Chart.endLabelPlateClears9483(center: unmoved, size: size, ink: { _ in 58...70 }),
+                      "an edge that only touches the plate is clear")
+        XCTAssertTrue(Chart.endLabelPlateClears9483(center: unmoved, size: size, ink: { _ in 10...42 }))
+        XCTAssertTrue(Chart.endLabelPlateClears9483(center: unmoved, size: size, ink: noInk))
+        let broken = [[CGPoint(x: 150, y: 50), CGPoint(x: 200, y: 50)], [CGPoint(x: 248, y: 50), CGPoint(x: 250, y: 60)]]
+        XCTAssertTrue(Chart.endLabelPlateClears9483(center: unmoved, size: size, ink: ink(broken)),
+                      "nothing is drawn across the break, so nothing is covered")
+        XCTAssertFalse(Chart.endLabelPlateClears9483(center: unmoved, size: size, ink: ink([broken.flatMap { $0 }])),
+                       "control: joined, the same points do lay ink under the plate")
+    }
+
+    /// What the primary key prints: the last DRAWN primary reading, named for
+    /// whose chance it is, in the end label's words — never a value the line
+    /// lacks, and the same whether Sources is open or not.
+    func testTheKeyNamesTheLastDrawnReadingWhoseChanceItWas() throws {
+        let climb = series([0.80, 0.90, 0.97], source: "aggregate")
+        let points = climb + series([0.78, 0.88, 0.95], source: "consensus") + series([0.7, 0.9], source: "kalshi")
+        let end = try XCTUnwrap(Chart.finishedEnd9483(dataPoints: points, checkpoints: nil, finished: true))
+        XCTAssertEqual(end.date, climb[2].date)
+        XCTAssertEqual(end.probability, 0.97, "the blend's last reading, not another source's")
+        let ink = Chart.primaryInk9483(dataPoints: points, checkpoints: nil, gameStart: nil)
+        XCTAssertEqual(Chart.endKeyReading9483(end, ink: ink, sides: .homeAndAway, homeShort: "GB", awayShort: "DAL"),
+                       "GB 97%")
+        XCTAssertEqual(Chart.endKeyReading9483(end, ink: ink, sides: .homeAndAway, homeShort: "GB", awayShort: "DAL"),
+                       Chart.endLabelText9483(probability: 0.97, sides: .homeAndAway, homeShort: "GB", awayShort: "DAL"),
+                       "the plate's own words and rounding")
+        // Sources open draws more lines from the SAME points; the key's inputs
+        // never include that state, and the blend alone gives the same reading.
+        let blendOnly = Chart.finishedEnd9483(dataPoints: climb, checkpoints: nil, finished: true)
+        XCTAssertEqual(blendOnly?.probability, end.probability)
+        XCTAssertEqual(blendOnly?.date, end.date)
+
+        let collapse = series([0.40, 0.12, 0.03], source: "aggregate")
+        let low = try XCTUnwrap(Chart.finishedEnd9483(dataPoints: collapse, checkpoints: nil, finished: true))
+        let lowInk = Chart.primaryInk9483(dataPoints: collapse, checkpoints: nil, gameStart: nil)
+        XCTAssertEqual(Chart.endKeyReading9483(low, ink: lowInk, sides: .homeAndAway, homeShort: "GB", awayShort: "DAL"),
+                       "DAL 97%", "a qualified two-outcome axis names the side the dot sits on")
+        XCTAssertEqual(Chart.endKeyReading9483(low, ink: lowInk, sides: .homeOnly, homeShort: "GB", awayShort: "DAL"),
+                       "GB 3%", "a home-only line never invents the away complement")
+
+        XCTAssertNil(Chart.endKeyReading9483((date: climb[2].date, probability: 1.0), ink: ink, sides: .homeAndAway,
+                                             homeShort: "GB", awayShort: "DAL"),
+                     "no terminal 100% the line never drew")
+        XCTAssertNil(Chart.finishedEnd9483(dataPoints: points, checkpoints: nil, finished: false),
+                     "an unfinished line has no end reading")
+        XCTAssertNil(Chart.finishedEnd9483(dataPoints: series([0.7, 0.9], source: "kalshi"), checkpoints: nil,
+                                           finished: true),
+                     "no primary line, no reading")
+    }
+
     // MARK: - The gutter
 
     func testThePolesArrowIsTakenOutOfTheNamesRunNotOutOfTheText() {
@@ -694,5 +820,41 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
         for animated in ["animation", "withAnimation", "repeatForever", "phaseAnimator", "LiveChartEndpointFeedback"] {
             XCTAssertFalse(label.contains(animated), "the finished end animates: \(animated)")
         }
+    }
+
+    /// The steep-finish fallback's wiring: the plate is painted only behind
+    /// the decision, the end dot never is, and every Sources state hands the
+    /// primary key the one reading, taken before it branches.
+    func testTheSteepFinishFallbackIsWiredAndTheKeyCarriesTheReading() throws {
+        let chart = try chartCode()
+        let start = try XCTUnwrap(chart.range(of: "privatefuncfinishedEndLabel9483("))
+        let end = try XCTUnwrap(chart.range(of: "staticfunclineY9483(", range: start.upperBound..<chart.endIndex))
+        let label = String(chart[start.lowerBound..<end.lowerBound])
+        let decision = try XCTUnwrap(label.range(of:
+            "ifSelf.endLabelPlateClears9483(center:center,size:size,ink:{spaninSelf.inkExtent9483(runs:runs,"
+            + "marks:marks,across:span,halfStroke:halfStroke,markRadius:Self.inkMarkRadius9483)}){Text(text)"),
+            "the plate is painted only where it clears the drawn primary ink")
+        XCTAssertEqual(count("Text(text)", in: label), 1, "no second, ungated plate")
+        let dot = try XCTUnwrap(label.range(of: "ifink.draws(date:end.date,probability:end.probability){Circle()"))
+        XCTAssertLessThan(dot.lowerBound, decision.lowerBound, "the end dot stands outside the plate's decision")
+
+        XCTAssertTrue(chart.contains("letfinishedEnd=liveSplit==nil?Self.finishedEnd9483(dataPoints:dataPoints,"
+                                     + "checkpoints:checkpoints,finished:EventState.isFinished(status)):nil"),
+                      "the plot's end and the key's are one function")
+        XCTAssertTrue(chart.contains("letendReading=finishedEndKeyReading9483(dataPoints:dataPoints)ifhasBlend{"),
+                      "the reading is taken once, before the Sources branch")
+        XCTAssertEqual(count("legendKey(\"aggregate\",sources:sources,isPrimary:true,reading:endReading)", in: chart), 2,
+                       "inline and full size, Sources open or closed")
+        XCTAssertTrue(chart.contains("reading:source==Self.primarySource(in:dataPoints)?endReading:nil)"),
+                      "without a blend, the primary line's key")
+        let readStart = try XCTUnwrap(chart.range(of: "privatefuncfinishedEndKeyReading9483("))
+        let readEnd = try XCTUnwrap(chart.range(of: "privatefuncendLabelInk9483(", range: readStart.upperBound..<chart.endIndex))
+        let reader = String(chart[readStart.lowerBound..<readEnd.lowerBound])
+        for state in ["sourcesOpen", "SourcesOpen", "plotFrame", "proxy", "revealed", "axisPlan9483"] {
+            XCTAssertFalse(reader.contains(state), "the key reading moves with \(state)")
+        }
+        XCTAssertTrue(reader.contains("Self.endKeyReading9483(end,ink:Self.primaryInk9483(dataPoints:dataPoints,"
+                                      + "checkpoints:checkpoints,gameStart:gameStartDate),"),
+                      "the same drawn primary ink the end dot sits on")
     }
 }
