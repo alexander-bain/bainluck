@@ -4388,6 +4388,7 @@ class LiveBlendRefresher:
         from app.tasks.base import get_task_session
         from app.utils.aggregation import _coerce_timestamp
         from app.utils.blend_preview import PREVIEW_STATUSES, registry
+        from app.utils.settledness import market_assigned_settled
         from app.utils.live_blend import compute_source_home_probability, has_proven_home_orientation
 
         try:
@@ -4411,8 +4412,9 @@ class LiveBlendRefresher:
                 relevant = [entry for entry in group
                             if any(row.id in snapshot for row in entry.outcomes)]
                 if any(entry.market.status != "open"
-                       or any(row.resolution_source is not None or row.is_winner is not None
-                              for row in entry.outcomes) for entry in relevant):
+                       or market_assigned_settled(entry.market, entry.outcomes)
+                       or any(row.resolution_source is not None for row in entry.outcomes)
+                       for entry in relevant):
                     refusals[eid] = "settled"
                     continue
                 reading = compute_source_home_probability(group, event.home_team_name, event.away_team_name)
@@ -4432,7 +4434,7 @@ class LiveBlendRefresher:
                     if (mark is None or getattr(mark, "probability", None) != value
                             or type(bound) not in (float, int) or not math.isfinite(bound)
                             or entry.market.status != "open" or row.resolution_source is not None
-                            or row.is_winner is not None or stored_at is None
+                            or row.is_winner is True or stored_at is None
                             or stored_at.timestamp() >= bound or bound > read_wall
                             or row.current_probability is None
                             or round(float(row.current_probability), 6) != round(float(value), 6)):

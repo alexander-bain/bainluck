@@ -183,7 +183,7 @@ def acknowledged_rig(monkeypatch):
         row.current_probability = .9 if index == 0 else .1
         row.last_updated = now - timedelta(seconds=3)
         row.resolution_source = None
-        row.is_winner = None
+        row.is_winner = False  # FuturesOutcome Python and server default; unresolved
     session._outcomes = rows
     observations = {1: {row.id: (row.current_probability, (now - timedelta(seconds=1)).timestamp(),
                                SimpleNamespace(probability=row.current_probability)) for row in rows}}
@@ -338,7 +338,7 @@ async def test_authoritative_invalidity_retires_existing_observation_preview(mon
     elif transition == 'settled':
         rows[1].resolution_source = 'polymarket'
     elif transition == 'winner':
-        rows[1].is_winner = False
+        rows[1].is_winner = True
     else:
         value, _, mark = observations[1][rows[1].id]
         observations[1][rows[1].id] = (value, None, mark)
@@ -363,3 +363,28 @@ async def test_settled_opposite_leg_retires_pending_singleton_winner_preview(mon
     await r.preview_accepted_observations(observations, validate)
     assert not blend_preview.registry().has_pending(1, 'polymarket')
     assert len(_revokes(frames)) == 1 and not session.updates
+
+
+async def test_model_default_false_is_unresolved_and_can_publish_observation(monkeypatch):
+    from app.models.models import FuturesOutcome
+    from app.utils.settledness import market_assigned_settled
+
+    r, session, frames, _, rows, _, observations, validate, _ = acknowledged_rig(monkeypatch)
+    column = FuturesOutcome.__table__.c.is_winner
+    assert column.default.arg is False
+    assert str(column.server_default.arg) == 'false'
+    for row in rows:
+        row.is_winner = column.default.arg
+    assert not market_assigned_settled(session._market_rows[0][0], rows)
+    await r.preview_accepted_observations(observations, validate)
+    assert len(_blends(frames)) == 1
+    assert blend_preview.registry().has_pending(1, 'polymarket')
+    assert not _revokes(frames) and not session.updates
+
+
+async def test_legacy_null_winner_also_remains_unresolved(monkeypatch):
+    r, session, frames, _, rows, _, observations, validate, _ = acknowledged_rig(monkeypatch)
+    for row in rows:
+        row.is_winner = None
+    await r.preview_accepted_observations(observations, validate)
+    assert len(_blends(frames)) == 1 and not session.updates
