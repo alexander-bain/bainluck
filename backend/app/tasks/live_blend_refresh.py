@@ -4578,11 +4578,13 @@ class LiveBlendRefresher:
             }
         return proof_kwargs
 
-    async def preview_accepted_observations(self, observations, validate) -> None:
+    async def preview_accepted_observations(self, observations, validate) -> bool | None:
         """Preview acknowledged unchanged venue observations without owning writes.
 
-        The serial game flush awaits this optional work while no same-event
-        stamp owns its snapshot. The graph and copied observation clocks are disposable: none
+        The consumer excludes same-event price/stamp ownership and holds its
+        scope guard until this work finishes. Graphs/sessions are call-local;
+        False asks the caller to retain frozen inputs after capacity/read failure.
+        The graph and copied observation clocks are disposable: none
         enters `held_quotes`, a stamp plan, a receipt or the history queue.
         `validate` rechecks immutable input identity and the flush's ownership
         under its buffer lock, including at the final Redis send boundary.
@@ -4602,9 +4604,9 @@ class LiveBlendRefresher:
                 return
             factory = self._session_factory or get_task_session
             # Optional display work must not queue the game loop behind a
-            # contended pool/read. It has no retry debt when this budget ends.
+            # contended pool/read. The caller may retain the SAME frozen input.
             if self._session_slots.locked():
-                return
+                return False
             async with asyncio.timeout(.25), self._session_slot(), factory() as session:
                 grouped = await self._read_groups(session, sorted(event_ids), overlay_held=False)
             plans = {}
@@ -4693,6 +4695,7 @@ class LiveBlendRefresher:
         except Exception:
             self.preview_stats["publish_errors"] += 1
             logger.warning("live_blend_refresh[%s]: optional observation preview unavailable", self.source, exc_info=True)
+            return False
 
     async def _preview_before_stamp(self, grouped, plans, published_seq, *, observation_only=()) -> None:
         """Publish every planned reading's preview, then let the UPDATEs run.

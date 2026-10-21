@@ -132,14 +132,15 @@ def consumer_rig(monkeypatch):
     signatures = {t: object() for t in tickers.values()}
     prices = NS(settled_market_ids=set(), stamping=None, flush_work=0,
                 held_events=lambda _: set())
-    ns = dict(ticker_to_ids={t: (10, oid) for oid, t in tickers.items()},
+    ns = dict(asyncio=asyncio, ticker_to_ids={t: (10, oid) for oid, t in tickers.items()},
               ticker_owner={t: client for t in tickers.values()},
               event_id_by_outcome={row.id: 1 for row in rows},
               market_id_by_outcome={row.id: 10 for row in rows},
               blend_refresher=r, live_event_ids={1}, non_blend_outcome_ids=set(),
               prices=prices, _kalshi_yes_probability=_kalshi_yes_probability,
               buffer_lock=asyncio.Lock(), observation_signature=signatures.get,
-              book_observation_pending={}, tail_receipts=TailReceipts("kalshi"),
+              book_observation_pending={}, book_observation_wake=asyncio.Event(),
+              tail_receipts=TailReceipts("kalshi"),
               flush_wake=asyncio.Event(), price_buffer={}, get_task_session=object())
     tree = ast.parse(Path(consumer.__file__).read_text())
     nodes = [n for n in ast.walk(tree) if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))
