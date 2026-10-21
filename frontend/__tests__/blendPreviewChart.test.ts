@@ -108,3 +108,10 @@ test('a real appended tail cannot use inherited server metadata as synthetic evi
     {timestamp: '2026-10-20T21:14:12Z', home_probability: .8}];
   expect(overlayBlendPreviewLine(event, held(), 500, plotted, served)).toBe(plotted);
 });
+
+
+test.each([{'1': 11}, {'2': 10}, undefined])('a newer or unproven pinned history refuses preview extension even at an earlier date: %j', revision => {
+  const served = {event_id: 1, aggregate_line: [...line], blend_edge_pinned: true,
+    blend_edge_observed_at: line[0].timestamp, blend_edge_fold_revision: revision};
+  expect(overlayBlendPreviewLine(event, held(), 500, served.aggregate_line, served)).toBe(served.aggregate_line);
+});
