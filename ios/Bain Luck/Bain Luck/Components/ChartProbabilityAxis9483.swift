@@ -20,12 +20,16 @@ import Foundation
 // This file only SIZES and LABELS what the caller already plots. The caller
 // supplies:
 //   - the readings of every line it actually draws (the primary line, plus the
-//     revealed source lines while Sources is open), already admitted, already
-//     cut to the chart's time window. Nothing here selects a source, decides
-//     freshness, kickoff, period or settlement, or re-times an observation.
+//     revealed source lines while Sources is open) and every drawn checkpoint,
+//     already admitted, already cut to the chart's time window. Checkpoints
+//     count toward the sample floor, the percentiles and the 50% test like any
+//     other reading. Nothing here selects a source, decides freshness,
+//     kickoff, period or settlement, or re-times an observation.
 //   - the values that must stay on the plot (`mustShow`): each drawn line's
-//     last reading, each revealed source's low and high, and any inked
-//     checkpoint or minute-range end — the same list the web call site builds.
+//     last reading, the LATEST checkpoint only (earlier checkpoints are
+//     readings, not must-show), each revealed source's low and high, and the
+//     primary line's minute-range ends — those only while the game is live and
+//     not closed (web `OddsChart.tsx`, `primaryMinuteRanges`).
 //   - whether the question is a qualified complementary two-outcome market
 //     (`.homeAndAway`) or a home-only line (`.homeOnly`, e.g. draw-priced,
 //     `DrawPricedWinner`). That is the caller's existing admission; a sport
