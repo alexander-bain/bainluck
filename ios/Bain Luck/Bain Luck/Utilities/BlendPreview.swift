@@ -21,6 +21,9 @@ import Foundation
 ///   higher epoch voids whatever the older one showed.
 /// - Within an epoch, previews order by `seq`: a lower seq never replaces a
 ///   higher one, and a `revoke` withdraws every preview up to `through_seq`.
+/// - Each origin row's ledger is its own `(epoch, seq)` domain. A folded frame
+///   orders only against frames of its own origin (a singleton's origin is
+///   the page's row): two rows' epochs are never compared.
 /// - It expires `ttl_ms` after arrival — a backstop for a revoke lost with a
 ///   stopped worker; the server revokes on its own clock as well.
 /// - A reconnect clears the held preview (previews are never replayed, so a
@@ -195,17 +198,31 @@ nonisolated struct BlendPreviewState: Sendable, Equatable {
 /// What one event's reader holds: its preview, and the highest epoch it has seen.
 nonisolated struct BlendPreviewReader: Sendable, Equatable {
     var held: BlendPreviewState?
-    /// The fence floor: frames from a lower epoch are refused. -1 before any.
+    /// The fence floor of the page's own row: its frames from a lower epoch
+    /// are refused. -1 before any. Another origin's epoch never moves it.
     var epoch: Int
     var floors: FoldRevision? = nil
-    /// Retained across expiry, revoke and reconnect; a replay cannot renew TTL.
-    var foldedSequence: FoldedSequence? = nil
+    /// The newest `(epoch, seq)` accepted from each origin row, the page's own
+    /// row included. Retained across expiry, revoke, reconnect AND membership
+    /// change — a row that leaves the fold and returns keeps its fence — so a
+    /// replay never renews TTL. Folded frames order strictly against it.
+    var originFences: [Int: OriginSequence] = [:]
+    /// Once this visit has seen folded authority, singleton frames also order
+    /// strictly against their row's fence.
+    var sawFolded = false
+    /// The rows of the page's adopted fold revision (`readerAfterMembership`),
+    /// or nil before any claim. A folded frame composed for other rows, and a
+    /// singleton frame on a multi-row page, never apply.
+    var members: Set<String>? = nil
 
-    struct FoldedSequence: Sendable, Equatable {
+    struct OriginSequence: Sendable, Equatable {
         let epoch: Int
         let seq: Int
-        let originEventId: Int
     }
+
+    /// A fold has a handful of rows. Past this many distinct origins a new one
+    /// is refused rather than any fence forgotten.
+    static let maxOrigins = 32
 
     static let empty = BlendPreviewReader(held: nil, epoch: -1)
 }
@@ -227,6 +244,35 @@ nonisolated enum BlendPreview {
         return FoldRevision(rows)
     }
 
+    /// #10090 — whether the page's adopted fold revision names different rows
+    /// than the membership the reader is bound to. The first claim and an
+    /// absent one are not a change.
+    static func membershipChanges(_ reader: BlendPreviewReader, _ revision: FoldRevision?) -> Bool {
+        guard let members = reader.members, let revision else { return false }
+        return Set(revision.rows.keys) != members
+    }
+
+    /// The reader once the page adopts `revision` as its authoritative fold.
+    /// A changed membership withdraws the held preview and binds the new rows;
+    /// every origin fence, commit floor and epoch is kept, so nothing the
+    /// visit already accepted or saw committed can be replayed with a new
+    /// lifetime — not even by a row that left and returned.
+    static func readerAfterMembership(_ reader: BlendPreviewReader, _ revision: FoldRevision?) -> BlendPreviewReader {
+        guard let revision else { return reader }
+        var next = reader
+        if membershipChanges(reader, revision) { next.held = nil }
+        next.members = Set(revision.rows.keys)
+        return next
+    }
+
+    /// The commit floors that apply to the bound membership. A floor of a row
+    /// that is not a member is kept for its return but cannot withhold a fold
+    /// that no longer contains it.
+    private static func memberFloors(_ reader: BlendPreviewReader) -> FoldRevision? {
+        guard let floors = reader.floors, let members = reader.members else { return reader.floors }
+        return FoldRevision(floors.rows.filter { members.contains($0.key) })
+    }
+
     /// Commit evidence withdraws an uncovered folded preview immediately; it
     /// never creates a probability, observation timestamp or renewed lifetime.
     static func readerAfterCommitFloor(_ reader: BlendPreviewReader, _ floor: FoldRevision?) -> BlendPreviewReader {
@@ -235,7 +281,7 @@ nonisolated enum BlendPreview {
         var rows = reader.floors?.rows ?? [:]
         for (id, rev) in floor.rows { rows[id] = max(rows[id] ?? 0, rev) }
         next.floors = FoldRevision(rows)
-        if let base = reader.held?.baseFoldRevision, let floors = next.floors, !base.covers(floors) {
+        if let base = reader.held?.baseFoldRevision, let floors = memberFloors(next), !base.covers(floors) {
             next.held = nil
         }
         return next
@@ -255,25 +301,39 @@ nonisolated enum BlendPreview {
         return readerAfterCommitFloor(reader, packet.floor.flatMap(validRevision))
     }
 
-    /// The reader after `frame` arrives at `now`. A lower epoch is fenced out; a
-    /// higher one raises the floor and voids the older epoch's preview first.
+    /// The reader after `frame` arrives at `now`. A lower epoch of the frame's
+    /// origin is fenced out; a higher one raises that origin's floor and voids
+    /// the preview its older epoch showed first.
     static func readerAfter(_ reader: BlendPreviewReader, _ frame: BlendPreviewFrame,
                             eventId: Int, now: TimeInterval) -> BlendPreviewReader {
-        guard frame.eventId == eventId, frame.epoch >= reader.epoch else { return reader }
-        if let order = reader.foldedSequence {
-            if frame.kind == .revoke, frame.originEventId != order.originEventId { return reader }
-            if frame.epoch == order.epoch, frame.seq <= order.seq { return reader }
-            // Once this visit has seen folded authority, unmarked singleton
-            // blends cannot re-enter its ordering domain after a reset.
-            if frame.kind == .blend, frame.baseFoldRevision == nil { return reader }
+        guard frame.eventId == eventId else { return reader }
+        if let members = reader.members {
+            if let base = frame.baseFoldRevision {
+                guard Set(base.rows.keys) == members else { return reader }
+            } else if frame.kind == .blend, members != [String(eventId)] {
+                return reader
+            }
         }
+        let origin = frame.originEventId ?? eventId
+        let fence = reader.originFences[origin]
+        guard frame.epoch >= (origin == eventId ? reader.epoch : -1),
+              frame.epoch >= fence?.epoch ?? -1 else { return reader }
+        if frame.originEventId != nil || reader.sawFolded, let fence,
+           frame.epoch == fence.epoch, frame.seq <= fence.seq { return reader }
+        // A folded withdrawal speaks only for an origin this visit accepted.
+        if frame.kind == .revoke, frame.originEventId != nil, fence == nil { return reader }
+        guard fence != nil || reader.originFences.count < BlendPreviewReader.maxOrigins else { return reader }
         var next = reader
-        next.epoch = frame.epoch
-        let held = frame.epoch > reader.epoch ? nil : reader.held
-        if let origin = frame.originEventId, frame.baseFoldRevision != nil || reader.foldedSequence != nil {
-            next.foldedSequence = .init(epoch: frame.epoch, seq: frame.seq, originEventId: origin)
+        if origin == eventId { next.epoch = frame.epoch }
+        let seq = max(frame.seq, frame.throughSeq ?? 0)
+        if fence.map({ frame.epoch > $0.epoch || seq > $0.seq }) ?? true {
+            next.originFences[origin] = .init(epoch: frame.epoch, seq: seq)
         }
-        if let base = frame.baseFoldRevision, let floors = reader.floors, !base.covers(floors) {
+        if frame.baseFoldRevision != nil { next.sawFolded = true }
+        let held = reader.held.flatMap { state in
+            (state.originEventId ?? eventId) == origin && frame.epoch > state.epoch ? nil : state
+        }
+        if let base = frame.baseFoldRevision, let floors = memberFloors(reader), !base.covers(floors) {
             next.held = nil
         } else {
             next.held = previewAfter(held, frame, eventId: eventId, now: now)
@@ -285,9 +345,12 @@ nonisolated enum BlendPreview {
     static func previewAfter(_ state: BlendPreviewState?, _ frame: BlendPreviewFrame,
                              eventId: Int, now: TimeInterval) -> BlendPreviewState? {
         guard frame.eventId == eventId else { return state }
-        let sameEpoch = state.map { $0.epoch == frame.epoch } ?? false
+        let sameOrigin = state.map { ($0.originEventId ?? eventId) == (frame.originEventId ?? eventId) } ?? false
+        let sameEpoch = sameOrigin && state?.epoch == frame.epoch
         switch frame.kind {
         case .revoke:
+            // Another origin's withdrawal says nothing about this preview.
+            if let state, !sameOrigin { return state }
             guard let state, sameEpoch, let through = frame.throughSeq else {
                 // A new epoch spoke; the old one's preview cannot be trusted.
                 return nil

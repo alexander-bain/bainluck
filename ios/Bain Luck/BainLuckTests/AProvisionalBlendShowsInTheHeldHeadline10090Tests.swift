@@ -146,7 +146,8 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
         XCTAssertEqual(reader.epoch, 5)
         XCTAssertEqual(BlendPreview.displayed(reader.held, held: try Self.detail(), now: 0), 0.66)
         let old = read(.empty, Self.blend(90, 0.7, epoch: 4))
-        XCTAssertEqual(read(old, Self.revoke(1, through: 0, epoch: 5)), BlendPreviewReader(held: nil, epoch: 5))
+        XCTAssertEqual(read(old, Self.revoke(1, through: 0, epoch: 5)),
+                       BlendPreviewReader(held: nil, epoch: 5, originFences: [Self.id: .init(epoch: 5, seq: 1)]))
     }
 
     func testAnOldEpochBlendArrivingAfterTheReplacementSpokeIsRefused() throws {
@@ -156,7 +157,7 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
         XCTAssertEqual(BlendPreview.displayed(after.held, held: try Self.detail(), now: 0), 0.66)
         // Even with nothing held (the replacement revoked its own), the floor stays.
         reader = read(reader, Self.revoke(2, through: 1, epoch: 5))
-        XCTAssertEqual(reader, BlendPreviewReader(held: nil, epoch: 5))
+        XCTAssertEqual(reader, BlendPreviewReader(held: nil, epoch: 5, originFences: [Self.id: .init(epoch: 5, seq: 2)]))
         XCTAssertEqual(read(reader, Self.blend(92, 0.71, epoch: 4)), reader)
     }
 

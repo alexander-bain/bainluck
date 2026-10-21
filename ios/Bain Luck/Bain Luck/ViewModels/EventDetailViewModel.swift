@@ -666,6 +666,18 @@ final class EventDetailViewModel: ObservableObject {
             recordPriceActivity(from: prior, to: fetched)
         }
         probabilityAtLastLoad = fetched.currentOdds?.homeProbability
+        // #10090 — the adopted fold is the preview membership authority. The
+        // server composes a connection's folded previews for the rows it opened
+        // with, so a changed membership withdraws the old fold's preview and
+        // closes that connection; every caller re-plans after `adopt`, which
+        // opens one on the new fold. Fences and floors are kept (`BlendPreview`).
+        let membership = LiveEventPriceReconciliation.pairedFoldRevision(in: fetched)
+        let membershipChanged = BlendPreview.membershipChanges(blendPreviewReader, membership)
+        blendPreviewReader = BlendPreview.readerAfterMembership(blendPreviewReader, membership)
+        if membershipChanged {
+            publishPreview(nil, at: now())
+            if stream != nil { stopStream() }
+        }
     }
 
     @MainActor

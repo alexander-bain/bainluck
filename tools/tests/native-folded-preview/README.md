@@ -6,4 +6,6 @@ Ship: the event-detail iPhone reader can show a folded DNPL probability, observa
 
 `bash tools/tests/native-folded-preview/run.sh --baseline abb1c06fe3a4b52d4a3f9af34183ec10c2ca62a2` runs a compatible regression probe against the original reader. Expected failure: valid folded display is withheld, unknown folded metadata is accepted, and a folded frame can masquerade as a singleton during membership transition. Preserve this failure.
 
+Authoritative membership changes (two rows to another two, to one, and back) are covered by the `testA…Membership…`/`…Origin…`/`…Collapsing…` methods: each origin row orders against its own `(epoch, seq)` fence, fences and commit floors survive every membership change, and floors of non-member rows cannot withhold the current fold. The page half — `EventDetailViewModel.adopt` closing the old connection so the re-plan opens one on the new fold — is `AMembershipChangeReopensTheFoldedPreview10090Tests`, which only Native's app build runs.
+
 Native's full app tests must run the XCTest files with real models and the controller/transport tests. Native retains Xcode, build/archive/upload and device ownership. The event-detail reader opts in with `preview_protocol=folded-v1`; other transport callers retain their existing URL.

@@ -13,6 +13,12 @@ do {
     try tests.testReconnectAndExpiryNeverRenewAReplayedSequence()
     try tests.testRevokeMustNameTheOriginAndReplayCannotResurrectIt()
     try tests.testSingletonContinuesToWorkButCannotMasqueradeAsFolded()
+    try tests.testAMembershipChangeRetiresTheRemovedRowsFloorWithoutForgettingIt()
+    try tests.testAnotherOriginsEpochNeverFencesTheReplacementOrigin()
+    try tests.testASingletonsAcceptedIdentityStillFencesTheFoldAfterAReset()
+    try tests.testARowThatLeavesAndReturnsKeepsItsFenceAndFloor()
+    try tests.testResetAndAnUnchangedMembershipRenewNothing()
+    try tests.testAFoldCollapsingToThePagesRowContinuesOnItsOwnLedger()
     try tests.testOnlyAProvenSyntheticPinCanYieldToTheActualObservation()
     try tests.testActualChartReplacesOnlyMatchingPinAndRestoresItWithoutPreview()
 } catch {
@@ -20,7 +26,7 @@ do {
     print("Unexpected error: \(error)")
 }
 print("Source reader checks: \(ReaderChecks.assertions) assertions, \(ReaderChecks.failures) failures")
-exit(ReaderChecks.failures == 0 && ReaderChecks.assertions >= 40 ? 0 : 1)
+exit(ReaderChecks.failures == 0 && ReaderChecks.assertions >= 100 ? 0 : 1)
 
 }
 }
