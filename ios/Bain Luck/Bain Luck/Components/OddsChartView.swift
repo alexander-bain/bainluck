@@ -2,6 +2,9 @@ import SwiftUI
 import Charts
 import Combine
 import os
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private let logger = Logger(subsystem: "com.bainluck", category: "oddsChart")
 
@@ -400,10 +403,16 @@ struct OddsChartView: View {
     /// each minute. False withholds every live treatment of the newest price:
     /// the marked edge and the arrival ring. The recorded line is unchanged.
     var quoteIsCurrent: Bool = true
+    /// RETIRED by #11356 — accepted and ignored. #9483 v476 printed it beside
+    /// the paired chart's away line; with one line between the two team poles
+    /// there is no away line to label. Kept so the page's call site compiles
+    /// unchanged; it draws nothing (the web twin's `pairedAwayLine` likewise).
     var pairedAwayLabel9483: String? = nil
     /// #10456 — the page's served winner pair (`current_odds`), both sides.
-    /// Admission evidence for the balance ink only: a two-outcome question the
-    /// page publishes. Never derived here, never `1 − home`.
+    /// Admission evidence only: a two-outcome question the page publishes.
+    /// #11356 — it now decides whether the axis is two-sided
+    /// (`axisSides9483`), the balance ink it once admitted being retired.
+    /// Never derived here, never `1 − home`.
     var servedHomeProbability: Double?
     var servedAwayProbability: Double?
     /// Shared domain from parent — ensures OddsChart and ScoreDiffChart have identical x-axes
@@ -470,6 +479,14 @@ struct OddsChartView: View {
     @State private var tennisPin = TennisReadingPin9483()
     @StateObject private var vm: OddsChartViewModel
     @State private var isFullscreen = false
+    /// #9483 / #11356 — whether Sources is open: the per-source lines drawn
+    /// beside the blend, over the same time window and plot box. Closed by
+    /// default, so the reader lands on the blend's own line. One per chart, as
+    /// the plot widths are; each way of opening full size sets the cover to the
+    /// inline chart's choice before it presents, as the web full-size reader
+    /// does, and the cover's own toggle never writes back.
+    @State private var inlineSourcesOpen = false
+    @State private var fullscreenSourcesOpen = false
     /// The drawn plot area's width, reported by each chart's own overlay. The
     /// x-axis needs it to know whether its labels clear each other (#3269); 0
     /// until the first layout pass, which is the documented fallback in
@@ -596,25 +613,6 @@ struct OddsChartView: View {
                                colors: teamColors, expanded: expanded)
     }
 
-    /// #9483 tennis (Design C1) — both competitors' lines: the paired drawing
-    /// the NFL/NBA/MLB-final pages use, in the two team colours, admitted by
-    /// the tennis panel's own source contract instead of the balance ink's
-    /// (`TennisChartReading9483.drawsBothCompetitors`). `supplied` is the
-    /// consensus's own away sides, empty over the blend, whose second line is
-    /// its complement. Nil off tennis and under a checkpoint mount (#4974),
-    /// whose layer replaces the blend's line.
-    private func tennisPairedLines(
-        for dataPoints: [ChartDataPoint],
-        checkpoints: PublicationCheckpointMount4974?
-    ) -> (colors: (home: Color, away: Color), supplied: [Date: Double])? {
-        guard TennisChartReading9483.applies(sportKey: sportKey), checkpoints == nil, let teamColors else { return nil }
-        let drawn = Self.defaultVisibleSources(in: dataPoints)
-        let supplied = drawn == ["consensus"] ? TennisChartReading9483.suppliedAways(in: vm.history) : [:]
-        guard TennisChartReading9483.drawsBothCompetitors(drawnSources: drawn, points: dataPoints,
-                                                          supplied: supplied) else { return nil }
-        return (colors: (home: teamColors.home, away: teamColors.away), supplied: supplied)
-    }
-
     /// #9483 tennis (Design C3) — the full-size header: the match, and once it
     /// is over, Final with the scoreboard's result in its own unit.
     private var tennisHeader: some View {
@@ -677,14 +675,33 @@ struct OddsChartView: View {
             servedURL: awayTeamLogo, teamName: awayTeamName, sportKey: sportKey) != nil
         let homeCrest = ChartGutterCrest.resolvedURL(
             servedURL: homeTeamLogo, teamName: homeTeamName, sportKey: sportKey) != nil
+        // #11356 — each pole also carries its direction arrow, so the name runs
+        // after it; and a home-only axis prints no away pole, so an away name
+        // that would not have fitted never shortens the home one.
+        let named = Self.gutterNameRun9483(run: run, fontSize: fontSize)
+        let awayPrinted = pageAxisSides9483 == .homeAndAway
         return ChartGutter.sideLabels(
             away: away, home: home,
             awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev,
             fontSize: fontSize,
-            awayRun: ChartGutter.nameRun(run: run, hasCrest: awayCrest),
-            homeRun: ChartGutter.nameRun(run: run, hasCrest: homeCrest),
+            awayRun: awayPrinted ? ChartGutter.nameRun(run: named, hasCrest: awayCrest) : .greatestFiniteMagnitude,
+            homeRun: ChartGutter.nameRun(run: named, hasCrest: homeCrest),
             sportKey: sportKey
         )
+    }
+
+    /// #11356 — the run left for a pole's name and crest once its direction
+    /// arrow (`ChartGutterDirection9483`, one font size square) and its spacing
+    /// are taken. The text is never shrunk to buy the room.
+    static func gutterNameRun9483(run: CGFloat, fontSize: CGFloat) -> CGFloat {
+        max(0, run - fontSize - ChartGutter.crestSpacing)
+    }
+
+    /// #11356 — what this page's axis means below 50%, from the page's own
+    /// admission inputs (`axisSides9483(sportKey:servedHome:servedAway:)`).
+    private var pageAxisSides9483: ChartProbabilityAxis9483.Sides {
+        Self.axisSides9483(sportKey: sportKey, servedHome: servedHomeProbability,
+                           servedAway: servedAwayProbability)
     }
 
     init(eventId: Int, teamColors: (away: Color, home: Color)? = nil,
@@ -891,7 +908,10 @@ struct OddsChartView: View {
             // retries that read on every load and poll.
             if preloadedHistoryGeneration == nil { await vm.load() }
             // #9185 — the LOOK rig's way into the cover it cannot tap open.
-            if LaunchRig.opensChartFullscreen() { isFullscreen = true }
+            if LaunchRig.opensChartFullscreen() {
+                fullscreenSourcesOpen = inlineSourcesOpen
+                isFullscreen = true
+            }
         }
         // #920. The page re-polls every 120 s and hands the result down; until
         // this existed, every one of those payloads was dropped on the floor by
@@ -975,6 +995,10 @@ struct OddsChartView: View {
                 let moments = checkpoints?.moments(from: history.moments)
                     ?? Self.chartMoments(from: history.moments, points: dataPoints)
                 let tennis = tennisSeries(enriched: enrichedPoints, checkpoints: checkpoints)
+                // #11356 — one axis plan per chart: the gutter's poles and the
+                // plot's window read the same answer.
+                let axis = axisPlan9483(dataPoints: dataPoints, checkpoints: checkpoints,
+                                        sourcesOpen: inlineSourcesOpen)
                 // #3278 — "drawable", not "non-empty". See `hasDrawableLine`: one
                 // snapshot in the window rendered the whole frame around no line.
                 if !Self.chartIsDrawable(dataPoints, mount: checkpoints) {
@@ -1001,7 +1025,10 @@ struct OddsChartView: View {
                             let run = ChartGutter.run(chartHeight: chartHeight, verticalPadding: 8)
                             let gutterFont = axisFontSize
                             let gutter = gutterLabels(run: run, fontSize: gutterFont)
-                            // Home team (top)
+                            // Home team (top). #11356 — each pole is a DIRECTION:
+                            // its arrow says which way the line moves for that
+                            // side, and its spoken sentence names the reading at
+                            // that edge of the window actually drawn.
                             ChartGutterLabel(run: run) {
                                 HStack(spacing: 3) {
                                     if let url = ChartGutterCrest.resolvedURL(
@@ -1012,35 +1039,41 @@ struct OddsChartView: View {
                                         .font(.system(size: gutterFont, weight: .bold))
                                         .foregroundStyle(teamColors?.home ?? .blue)
                                         .lineLimit(1)
+                                    ChartGutterDirection9483(rising: true, size: gutterFont,
+                                                             color: teamColors?.home ?? .blue)
                                 }
                             }
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(axis.homePoleSentence(homeName: homeShort, awayName: awayShort))
                             Spacer()
-                            // Away team (bottom)
-                            ChartGutterLabel(run: run) {
-                                HStack(spacing: 3) {
-                                    if let url = ChartGutterCrest.resolvedURL(
-                                        servedURL: awayTeamLogo, teamName: awayTeamName, sportKey: sportKey) {
-                                        ChartGutterCrest(url: url)
+                            // Away team (bottom) — only on a qualified two-outcome
+                            // question (#10318): on a draw-priced one the bottom is
+                            // "the home side does not win", never the away side.
+                            if axis.sides == .homeAndAway {
+                                ChartGutterLabel(run: run) {
+                                    HStack(spacing: 3) {
+                                        ChartGutterDirection9483(rising: false, size: gutterFont,
+                                                                 color: teamColors?.away ?? .red)
+                                        if let url = ChartGutterCrest.resolvedURL(
+                                            servedURL: awayTeamLogo, teamName: awayTeamName, sportKey: sportKey) {
+                                            ChartGutterCrest(url: url)
+                                        }
+                                        Text(gutter.away.uppercased())
+                                            .font(.system(size: gutterFont, weight: .bold))
+                                            .foregroundStyle(teamColors?.away ?? .red)
+                                            .lineLimit(1)
                                     }
-                                    Text(gutter.away.uppercased())
-                                        .font(.system(size: gutterFont, weight: .bold))
-                                        .foregroundStyle(teamColors?.away ?? .red)
-                                        .lineLimit(1)
                                 }
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel(axis.awayPoleSentence(homeName: homeShort, awayName: awayShort))
                             }
                         }
                         .frame(width: chartTeamGutterWidth)
                         .padding(.vertical, 8)
-                        // #9483 — "home above 50%, away below" is the single
-                        // line's reading. On a paired chart each line is its own
-                        // team's chance (the key below names them), so the side
-                        // labels would misread; the gutter keeps its width so the
-                        // page's shared time axis stays aligned.
-                        .pairedGutterHidden9483(checkpoints == nil && pairedLineColors(for: dataPoints) != nil)
 
                         chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                   periodMarkers: periodMarkers, moments: moments,
-                                  checkpoints: checkpoints,
+                                  checkpoints: checkpoints, axis: axis,
                                   plotWidth: $inlinePlotWidth, sharesPageAxis: true,
                                   pageGaveCard: readout != nil,
                                   floatingCard: Self.inlineScrubCard(
@@ -1058,7 +1091,8 @@ struct OddsChartView: View {
                     // width the chart row uses puts the legend under the plot area
                     // it labels; the 2pt lifts it off the x-axis tick labels, which
                     // sit flush against the bottom of the chart's own frame.
-                    legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
+                    legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
+                               sourcesOpen: $inlineSourcesOpen, rail: false)
                         .padding(.leading, chartTeamGutterWidth)
                         .padding(.top, 2)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1106,6 +1140,10 @@ struct OddsChartView: View {
                     let moments = checkpoints?.moments(from: history.moments)
                         ?? Self.chartMoments(from: history.moments, points: dataPoints)
                     let tennis = tennisSeries(enriched: enrichedPoints, checkpoints: checkpoints)
+                    // #11356 — the cover's own Sources choice, one plan for its
+                    // gutter and plot as inline.
+                    let axis = axisPlan9483(dataPoints: dataPoints, checkpoints: checkpoints,
+                                            sourcesOpen: fullscreenSourcesOpen)
                     // #3278 — the same drawability test the inline chart uses. This
                     // branch used to render literally nothing (a blank sheet under a
                     // nav bar) when there were no points, and the full frame around
@@ -1186,6 +1224,7 @@ struct OddsChartView: View {
                                         // fullscreen twin bare 120 lines below it, which
                                         // is the whole reason the crest is now shared
                                         // rather than written per call site.
+                                        // #11356 — the same poles as the inline gutter.
                                         ChartGutterLabel(run: run) {
                                             HStack(spacing: 3) {
                                                 if let url = ChartGutterCrest.resolvedURL(
@@ -1196,37 +1235,46 @@ struct OddsChartView: View {
                                                     .font(.system(size: gutterFont, weight: .bold))
                                                     .foregroundStyle(teamColors?.home ?? .blue)
                                                     .lineLimit(1)
+                                                ChartGutterDirection9483(rising: true, size: gutterFont,
+                                                                         color: teamColors?.home ?? .blue)
                                             }
                                         }
+                                        .accessibilityElement(children: .ignore)
+                                        .accessibilityLabel(axis.homePoleSentence(homeName: homeShort, awayName: awayShort))
                                         Spacer()
-                                        ChartGutterLabel(run: run) {
-                                            HStack(spacing: 3) {
-                                                if let url = ChartGutterCrest.resolvedURL(
-                                                    servedURL: awayTeamLogo, teamName: awayTeamName, sportKey: sportKey) {
-                                                    ChartGutterCrest(url: url)
+                                        if axis.sides == .homeAndAway {
+                                            ChartGutterLabel(run: run) {
+                                                HStack(spacing: 3) {
+                                                    ChartGutterDirection9483(rising: false, size: gutterFont,
+                                                                             color: teamColors?.away ?? .red)
+                                                    if let url = ChartGutterCrest.resolvedURL(
+                                                        servedURL: awayTeamLogo, teamName: awayTeamName, sportKey: sportKey) {
+                                                        ChartGutterCrest(url: url)
+                                                    }
+                                                    Text(gutter.away.uppercased())
+                                                        .font(.system(size: gutterFont, weight: .bold))
+                                                        .foregroundStyle(teamColors?.away ?? .red)
+                                                        .lineLimit(1)
                                                 }
-                                                Text(gutter.away.uppercased())
-                                                    .font(.system(size: gutterFont, weight: .bold))
-                                                    .foregroundStyle(teamColors?.away ?? .red)
-                                                    .lineLimit(1)
                                             }
+                                            .accessibilityElement(children: .ignore)
+                                            .accessibilityLabel(axis.awayPoleSentence(homeName: homeShort, awayName: awayShort))
                                         }
                                     }
                                 }
                                 .frame(width: chartTeamGutterWidth)
                                 .padding(.vertical, 12)
-                                // #9483 — as the inline gutter: no side labels on a paired chart.
-                                .pairedGutterHidden9483(checkpoints == nil && pairedLineColors(for: dataPoints) != nil)
 
                                 chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                           periodMarkers: periodMarkers, moments: moments,
-                                          checkpoints: checkpoints,
+                                          checkpoints: checkpoints, axis: axis,
                                           plotWidth: $fullscreenPlotWidth, sharesPageAxis: false,
                                           pageGaveCard: readout != nil, tennis: tennis)
                             }
                             // #10796 — nil leaves the row as flexible as it was.
                             .frame(height: enlargedPlotFloor)
-                            legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
+                            legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
+                                       sourcesOpen: $fullscreenSourcesOpen, rail: true)
                             momentCaption(moments)
                             if enlargedPlotFloor != nil, let tennis {
                                 TennisScrubbedReadingPanel9483(selection: selection,
@@ -1343,6 +1391,7 @@ struct OddsChartView: View {
     private var chartHeaderTrailingControls: some View {
         // #8320 — the refresh status lives once, in the page toolbar.
         Button {
+            fullscreenSourcesOpen = inlineSourcesOpen
             isFullscreen = true
         } label: {
             Image(systemName: "arrow.up.left.and.arrow.down.right")
@@ -1800,136 +1849,55 @@ struct OddsChartView: View {
         visibleMarkers: [PeriodMarker],
         moments: [ChartMoment],
         liveSplit: LiveEdgeSplit? = nil,
-        balanceSource: String? = nil,
         checkpoints: PublicationCheckpointMount4974? = nil,
-        paired: (home: Color, away: Color)? = nil,
-        tennisSupplied: [Date: Double]? = nil
+        axis: AxisPlan9483
     ) -> some ChartContent {
         let _ = vm.onPlotBuild?()
-        // 50% reference line (single 0–100 axis: even is 0.5)
-        RuleMark(y: .value("Even", 0.5))
-            .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
-            .foregroundStyle(.gray.opacity(0.4))
+        // 50% reference line (single 0–100 axis: even is 0.5) — only where the
+        // focused window reaches it (#11356). Outside it there is no even line
+        // to draw, and the plot is clipped to its window.
+        if axis.window.domain.contains(0.5) {
+            RuleMark(y: .value("Even", 0.5))
+                .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
+                .foregroundStyle(.gray.opacity(0.4))
+        }
+
+        // #11356 — Sources' lines first, so the primary line is drawn OVER
+        // them: open adds context, it never buries the line being followed.
+        // Empty while Sources is closed, and always empty without a blend
+        // (every line is then already drawn, see `revealableSources9483`).
+        ForEach(axis.revealed, id: \.self) { source in
+            sourceLines(source, points: dataPoints.filter { $0.source == source },
+                        sources: sources, liveSplit: nil)
+        }
 
         // Data lines. When the backend blend exists it is the ONLY default line
         // ("the blend is the product" — one number per question); source detail
-        // never competes with it here. Absent a blend we fail closed to the full
-        // set with the sportsbook consensus as primary (L2-216).
-        // #10456 — an admitted binary chart's primary line is drawn by the
-        // balance ink behind the plot (`chartBackground`), so its LineMarks and
-        // lone PointMarks are skipped here. Nothing else is.
+        // never competes with it unless the reader opens Sources. Absent a
+        // blend we fail closed to the full set with the sportsbook consensus as
+        // primary (L2-216).
+        //
+        // #11356 — ONE LINE, ONE IDENTITY. The primary line keeps its own
+        // colour, weight and orientation on both sides of 50%, closed or open.
+        // #10456's balance ink (the line re-coloured home above 50%, away
+        // below) and #9483's paired lines (a second, complementary copy in the
+        // away colour, NFL, final MLB and tennis) are retired with it: the
+        // team colours now name the two DIRECTIONS outside the plot (the
+        // gutter's poles and the axis ticks), never the line.
         //
         // #4974 — a mount exists only over a blend, and a blend is the ONLY
         // default line, so the accepted checkpoint layer replaces exactly that
         // series: its dots, and the blend's own runs with the recorded window
-        // cut out. No balance ink and no live split run beside it (`chartView`).
+        // cut out. No live split runs beside it (`chartView`).
         if let checkpoints {
             PublicationCheckpointLayer4974(
                 plan: checkpoints.plan,
                 color: colorForSource(PublicationCheckpointMount4974.blendSource, sources: sources),
                 stroke: strokeStyleForSource(PublicationCheckpointMount4974.blendSource, sources: sources))
         } else {
-            ForEach(Self.defaultVisibleSources(in: dataPoints).filter { $0 != balanceSource }, id: \.self) { source in
-                let points = dataPoints.filter { $0.source == source }
-                // #9483 — a paired NFL chart draws its one line in the home
-                // team's colour, with the away line beside it (below).
-                let color = paired?.home ?? colorForSource(source, sources: sources)
-                let stroke = strokeStyleForSource(source, sources: sources)
-                // One series per RUN of observations rather than per source (#7878).
-                // Swift Charts joins whatever shares a series value, so a single
-                // identifier per source drew one straight segment across a capture
-                // hole — a flat line and no line became the same picture. Splitting
-                // the identifier leaves the hole empty, which is what we actually
-                // know. This is the same no-invention rule as `.interpolationMethod`
-                // below, applied at the scale where it was still being broken.
-                // #9436 — on a live edge the newest vertex is drawn by the
-                // overlay (`LiveChartEdgeMarker`), so its dot can glide without
-                // animating this plot.
-                let split = liveSplit?.source == source ? liveSplit : nil
-                let segments = split?.segments ?? Self.observationSegments(points, gameStart: gameStartDate)
-                ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
-                    ForEach(segment) { point in
-                        LineMark(
-                            x: .value("Time", point.date),
-                            y: .value("Win probability", point.probability),
-                            series: .value("Source", "\(source)#\(index)")
-                        )
-                        .foregroundStyle(color)
-                        .lineStyle(stroke)
-                        // Observed journey only — connect real snapshots with straight
-                        // segments. Monotone/curve interpolation invented probability
-                        // movement between sparse samples that was never captured, violating
-                        // the settled no-smoothing ruling (C43 P1).
-                        .interpolationMethod(.linear)
-                    }
-                    // A run of one is a real observation that no `LineMark` can
-                    // draw (it needs two points to join), so it would silently
-                    // vanish — losing data to a fix meant to stop losing data.
-                    if segment.count == 1, index != split?.continuedRun, let only = segment.first {
-                        PointMark(
-                            x: .value("Time", only.date),
-                            y: .value("Win probability", only.probability)
-                        )
-                        .foregroundStyle(color)
-                        .symbolSize(18)
-                    }
-                    // #9483 — the away team's line over the same run, in its own
-                    // series so no run is ever joined to its neighbour (#7878).
-                    // Tennis (Design C1) takes it by source: the consensus line
-                    // breaks wherever it supplied no away side, and each piece
-                    // is its own series too.
-                    if let paired {
-                        let awayRuns = tennisSupplied.map {
-                            TennisChartReading9483.awayRuns(segment, source: source, supplied: $0)
-                        } ?? [PairedWinLines9483.awayRun(segment)]
-                        ForEach(Array(awayRuns.enumerated()), id: \.offset) { piece, awayRun in
-                            ForEach(Array(awayRun.enumerated()), id: \.offset) { _, vertex in
-                                LineMark(
-                                    x: .value("Time", vertex.date),
-                                    y: .value("Win probability", vertex.probability),
-                                    series: .value("Source", "\(source)#away#\(index)#\(piece)")
-                                )
-                                .foregroundStyle(paired.away)
-                                .lineStyle(stroke)
-                                .interpolationMethod(.linear)
-                            }
-                            if awayRun.count == 1, !(segment.count == 1 && index == split?.continuedRun),
-                               let only = awayRun.first {
-                                PointMark(
-                                    x: .value("Time", only.date),
-                                    y: .value("Win probability", only.probability)
-                                )
-                                .foregroundStyle(paired.away)
-                                .symbolSize(18)
-                            }
-                        }
-                    }
-                }
-                // #9483 — the live edge's last segment from the away side. The
-                // home tail is the overlay's (`LiveChartEdgeMarker`); this one is
-                // drawn in the plot, ending at the same instant.
-                if let paired, let split,
-                   tennisSupplied == nil || TennisChartReading9483.drawsAwayTail(source: source) {
-                    let tail = PairedWinLines9483.awayTail(split.tail)
-                    ForEach(Array(tail.enumerated()), id: \.offset) { _, vertex in
-                        LineMark(
-                            x: .value("Time", vertex.date),
-                            y: .value("Win probability", vertex.probability),
-                            series: .value("Source", "\(source)#away#tail")
-                        )
-                        .foregroundStyle(paired.away)
-                        .lineStyle(stroke)
-                        .interpolationMethod(.linear)
-                    }
-                    if tail.count == 1, let only = tail.first {
-                        PointMark(
-                            x: .value("Time", only.date),
-                            y: .value("Win probability", only.probability)
-                        )
-                        .foregroundStyle(paired.away)
-                        .symbolSize(18)
-                    }
-                }
+            ForEach(Self.defaultVisibleSources(in: dataPoints), id: \.self) { source in
+                sourceLines(source, points: dataPoints.filter { $0.source == source },
+                            sources: sources, liveSplit: liveSplit)
             }
         }
 
@@ -1953,8 +1921,7 @@ struct OddsChartView: View {
                 y: .value("Win probability", moment.probability)
             )
             .symbolSize(momentSymbolArea)
-            .foregroundStyle(paired?.home ?? momentColor(moment, inked: balanceSource != nil,
-                                                         dataPoints: dataPoints, sources: sources))
+            .foregroundStyle(colorForSource(Self.primarySource(in: dataPoints), sources: sources))
             .annotation(position: .overlay, spacing: 0) {
                 Circle()
                     .stroke(Color.systemBackground, lineWidth: 1.5)
@@ -1965,15 +1932,55 @@ struct OddsChartView: View {
         }
     }
 
-    /// A moment wears the color of the line it sits on: the primary line's, or —
-    /// on an inked binary chart (#10456) — the balance side it sits on.
-    private func momentColor(_ moment: ChartMoment, inked: Bool,
-                             dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo]) -> Color {
-        if inked, let colors = teamColors {
-            return BinaryWinBalanceMount.sideColor(probability: moment.probability,
-                                                   home: colors.home, away: colors.away)
+    /// One source's observed line, in its own colour and stroke: one series per
+    /// RUN of observations, a lone observation as a dot. Shared by the default
+    /// lines and Sources' lines, so a revealed line obeys the same no-invention
+    /// rules as the primary one.
+    @ChartContentBuilder
+    private func sourceLines(_ source: String, points: [ChartDataPoint],
+                             sources: [String: WinProbSourceInfo],
+                             liveSplit: LiveEdgeSplit?) -> some ChartContent {
+        let color = colorForSource(source, sources: sources)
+        let stroke = strokeStyleForSource(source, sources: sources)
+        // One series per RUN of observations rather than per source (#7878).
+        // Swift Charts joins whatever shares a series value, so a single
+        // identifier per source drew one straight segment across a capture
+        // hole — a flat line and no line became the same picture. Splitting
+        // the identifier leaves the hole empty, which is what we actually
+        // know. This is the same no-invention rule as `.interpolationMethod`
+        // below, applied at the scale where it was still being broken.
+        // #9436 — on a live edge the newest vertex is drawn by the
+        // overlay (`LiveChartEdgeMarker`), so its dot can glide without
+        // animating this plot.
+        let split = liveSplit?.source == source ? liveSplit : nil
+        let segments = split?.segments ?? Self.observationSegments(points, gameStart: gameStartDate)
+        ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+            ForEach(segment) { point in
+                LineMark(
+                    x: .value("Time", point.date),
+                    y: .value("Win probability", point.probability),
+                    series: .value("Source", "\(source)#\(index)")
+                )
+                .foregroundStyle(color)
+                .lineStyle(stroke)
+                // Observed journey only — connect real snapshots with straight
+                // segments. Monotone/curve interpolation invented probability
+                // movement between sparse samples that was never captured, violating
+                // the settled no-smoothing ruling (C43 P1).
+                .interpolationMethod(.linear)
+            }
+            // A run of one is a real observation that no `LineMark` can
+            // draw (it needs two points to join), so it would silently
+            // vanish — losing data to a fix meant to stop losing data.
+            if segment.count == 1, index != split?.continuedRun, let only = segment.first {
+                PointMark(
+                    x: .value("Time", only.date),
+                    y: .value("Win probability", only.probability)
+                )
+                .foregroundStyle(color)
+                .symbolSize(18)
+            }
         }
-        return colorForSource(Self.primarySource(in: dataPoints), sources: sources)
     }
 
     /// `symbolSize` is an AREA in square points, so the diameter has to be squared —
@@ -1996,6 +2003,7 @@ struct OddsChartView: View {
     private func chartView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo],
                            periodMarkers: [PeriodMarker], moments: [ChartMoment],
                            checkpoints: PublicationCheckpointMount4974? = nil,
+                           axis: AxisPlan9483,
                            plotWidth: Binding<CGFloat>, sharesPageAxis: Bool,
                            pageGaveCard: Bool, floatingCard: GamePlayCardView? = nil,
                            tennis: TennisChartReading9483.Series? = nil) -> some View {
@@ -2008,12 +2016,15 @@ struct OddsChartView: View {
             visibleMarkers = periodMarkers
         }
 
-        // Single 0–100 win-probability Y-axis (L2-216): the line is the HOME team's
+        // Single win-probability Y-axis (L2-216): the line is the HOME team's
         // win probability read straight up the scale. Replaces the old mirrored ±50
         // dual-axis where the same "80%" appeared both above and below center. Matches
         // the web chart (L2-131).
-        let yMin = 0.0
-        let yMax = 1.0
+        //
+        // #11356 — the scale is the window the drawn lines live in rather than
+        // the whole 0–1 range (`ChartProbabilityAxis9483.window`, the web's
+        // `computeWinProbYAxis`), sized in `axisPlan9483`. Only the zoom moves:
+        // the direction, the meaning of a number and the 50% mark do not.
 
         // One plan and one set of tick instants, read by the gridlines AND the
         // labels drawn in the overlay (#8481), so the two cannot disagree.
@@ -2035,46 +2046,39 @@ struct OddsChartView: View {
         // nothing recorded; the live split is a live page's, and a mount is a
         // finished page's.
         let liveSplit = checkpoints == nil ? liveEdgeSplit(dataPoints: dataPoints, domain: domain) : nil
-        let balance = checkpoints == nil
-            ? balancePlan(dataPoints: dataPoints, liveSplit: liveSplit, domain: domain) : nil
-        // #9483 — on an NFL page the admitted pair is drawn as two team lines
-        // instead of the balance ink: the same admission, the same number.
-        // #9483 tennis (Design C1) — the same two lines, by the tennis contract.
-        let tennisPaired = tennisPairedLines(for: dataPoints, checkpoints: checkpoints)
-        let paired = tennisPaired?.colors ?? pairedLineColors(admitted: balance)
-        let ink = paired == nil ? balance : nil
-        let balanceColors = ink == nil ? nil : teamColors
+        // #11356 — the end of a finished game's line, labelled once the game is
+        // over: the resting checkpoint endpoint, else the primary line's last
+        // reading. A live page keeps its edge marker's label; a page that is
+        // neither prints no number at the end (its newest price is the hero's,
+        // with its own currentness).
+        let finishedEnd: (date: Date, probability: Double)? = {
+            guard liveSplit == nil, EventState.isFinished(status) else { return nil }
+            if let checkpoints {
+                guard let end = checkpoints.resting, let date = end.date, let probability = end.probability
+                else { return nil }
+                return (date: date, probability: probability)
+            }
+            return Self.latestPrimaryPoint(in: dataPoints).map { (date: $0.date, probability: $0.probability) }
+        }()
+        let endLine = checkpoints?.survivors
+            ?? dataPoints.filter { $0.source == Self.primarySource(in: dataPoints) }
 
         return Chart {
             chartContent(dataPoints: dataPoints, sources: sources,
                          visibleMarkers: visibleMarkers, moments: moments,
                          liveSplit: liveSplit,
-                         balanceSource: ink == nil ? nil : Self.primarySource(in: dataPoints),
                          checkpoints: checkpoints,
-                         paired: paired,
-                         tennisSupplied: tennisPaired?.supplied)
+                         axis: axis)
         }
-        .chartYScale(domain: yMin...yMax)
+        .chartYScale(domain: axis.window.domain)
         .chartXScale(domain: domain)
-        // #10456 — the balance ink: the primary line and its fill in the home
-        // color above 50% and the away color below, BEHIND the marks so the
-        // even line, period rules and moments stay on top as they do today.
-        // Projected linearly over the chart's own two domains, in plot-local
-        // space, then placed on the plot frame.
-        .chartBackground { proxy in
-            GeometryReader { geo in
-                if let ink, let colors = balanceColors {
-                    let plotFrame = geo[proxy.plotAreaFrame]
-                    BinaryWinChartBalanceInkLayer(
-                        plan: ink,
-                        project: BinaryWinChartBalanceInk.linearProjector(
-                            xDomain: domain, yDomain: yMin...yMax,
-                            plotRect: CGRect(origin: .zero, size: plotFrame.size)),
-                        homeColor: colors.home, awayColor: colors.away)
-                        .frame(width: plotFrame.width, height: plotFrame.height)
-                        .offset(x: plotFrame.minX, y: plotFrame.minY)
-                }
-            }
+        // #11356 — the window is narrower than the data can be (rule 1 lets a
+        // lone early spike fall outside it), so the marks are clipped to the
+        // plot rather than painted over the axis and the card's chrome — the
+        // web axis's `allowDataOverflow`. Every line's end, the latest
+        // checkpoint and each revealed source's extremes are inside it.
+        .chartPlotStyle { plot in
+            plot.clipped()
         }
         // Period marker labels positioned inside chart via overlay.
         //
@@ -2117,33 +2121,16 @@ struct OddsChartView: View {
                         .position(x: plotFrame.minX + placement.centerX, y: 10)
                 }
                 if let liveSplit, let liveEdge {
+                    // #11356 — the tail wears the primary line's own colour:
+                    // one line, one identity, on both sides of 50%.
                     LiveChartEdgeMarker(
                         selection: selection, proxy: proxy, plotFrame: plotFrame,
                         tail: liveSplit.tail, label: "\(homeShort) \(liveEdge.homeLabel)",
                         rising: priceActivity?.homeDelta.map { $0 > 0 },
-                        lineColor: paired?.home ?? balanceColors.map {
-                            BinaryWinBalanceMount.sideColor(probability: liveSplit.tail.to.probability,
-                                                            home: $0.home, away: $0.away)
-                        } ?? colorForSource(liveSplit.source, sources: sources),
+                        lineColor: colorForSource(liveSplit.source, sources: sources),
                         lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
                         activity: priceActivity, pulseColor: teamColors?.home ?? .accentColor)
                         .accessibilityHidden(true)
-                    // #9483 v476 — name the other admitted line too, with the
-                    // hero's own formatter. A child that observes the selection
-                    // (a scrub hides it, as it hides the home number) and draws
-                    // only where it covers neither line's newest move nor the
-                    // home number; otherwise the named keys carry it.
-                    if let paired, let label = pairedAwayLabel9483, !label.isEmpty,
-                       tennisPaired == nil || TennisChartReading9483.drawsAwayTail(source: liveSplit.source) {
-                        let awayTail = PairedWinLines9483.awayTail(liveSplit.tail)
-                        if let tip = awayTail.last {
-                            PairedAwayEndpointLabel9483(
-                                selection: selection, proxy: proxy, plotFrame: plotFrame,
-                                tip: tip, from: awayTail.count > 1 ? awayTail.first : nil,
-                                homeTail: liveSplit.tail, text: "\(awayShort) \(label)",
-                                color: paired.away)
-                        }
-                    }
                 } else if let checkpoints {
                     // #4974 — the line's end is the resting endpoint the readout
                     // names: a drawn checkpoint at its own time and value, or the
@@ -2175,11 +2162,20 @@ struct OddsChartView: View {
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
+                // #11356 — a finished game's end, named once beside its dot and
+                // stepped off the line it ends: above it when the line climbed
+                // in, below it when it fell. Static (no finger state is read),
+                // so a scrub never rebuilds it; VoiceOver reads the resting
+                // readout instead.
+                if let finishedEnd {
+                    finishedEndLabel9483(finishedEnd, line: endLine, sides: axis.sides,
+                                         proxy: proxy, plotFrame: plotFrame)
+                }
                 if let tennis {
                     TennisHeldReadingMarker9483(pin: tennisPin, selection: selection, series: tennis,
                                                 proxy: proxy, plotFrame: plotFrame,
                                                 color: teamColors?.home ?? .accentColor,
-                                                awayColor: tennisPaired?.colors.away)
+                                                awayColor: nil)
                 }
                 OddsChartSelectionOverlay(selection: selection, proxy: proxy, plotFrame: plotFrame,
                                           dataPoints: dataPoints, homeShort: homeShort,
@@ -2237,14 +2233,29 @@ struct OddsChartView: View {
                 #endif
             }
         }
+        // #11356 — each tick prints the chance of the side it sits on
+        // (`ChartProbabilityAxis9483.tick`): on a qualified two-outcome question
+        // a tick below 50% is the away side's, in its team colour, and 50% is
+        // even; a home-only question prints the home side's chance at every
+        // tick, in neutral ink, and names no away side. Every label holds the
+        // width of "100%", the widest the axis can print, so the plot's left
+        // edge — and with it the page's shared time axis — never moves when the
+        // window does.
         .chartYAxis {
-            AxisMarks(position: .leading, values: Self.yAxisTicks) { value in
+            AxisMarks(position: .leading, values: axis.window.ticks) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
-                        Text(Self.axisLabel(for: v))
+                        let tick = ChartProbabilityAxis9483.tick(v, sides: axis.sides)
+                        Text(Self.widestTickLabel9483)
                             .font(.system(size: axisFontSize))
-                            .foregroundStyle(Color.primary)
+                            .hidden()
+                            .overlay(alignment: .trailing) {
+                                Text(tick.text)
+                                    .font(.system(size: axisFontSize))
+                                    .foregroundStyle(tickInk9483(tick, sides: axis.sides))
+                                    .fixedSize()
+                            }
                     }
                 }
             }
@@ -2265,54 +2276,6 @@ struct OddsChartView: View {
         // `ChartScrubSurface`), so the Mac keeps the built-in selection.
         .chartXSelection(value: Binding(get: { selection.date }, set: { selection.select($0) }))
         #endif
-    }
-
-    /// #10456 — the balance ink's plan for this chart, or `nil` (today's line).
-    /// Reads the primary series' runs the same way `chartContent` does — the
-    /// live-edge split when it is the primary's, else its observation runs.
-    private func balancePlan(dataPoints: [ChartDataPoint], liveSplit: LiveEdgeSplit?,
-                             domain: ClosedRange<Date>) -> BinaryWinBalancePlan? {
-        let primary = Self.primarySource(in: dataPoints)
-        let admission = BinaryWinBalanceMount.admission(
-            sportKey: sportKey, servedHome: servedHomeProbability, servedAway: servedAwayProbability,
-            hasTeamColors: teamColors != nil,
-            drawnSources: Self.defaultVisibleSources(in: dataPoints), primarySource: primary)
-        guard admission == .admittedBinary else { return nil }
-        let split = liveSplit?.source == primary ? liveSplit : nil
-        let segments = split?.segments
-            ?? Self.observationSegments(dataPoints.filter { $0.source == primary }, gameStart: gameStartDate)
-        return BinaryWinBalanceMount.plan(
-            admission: admission,
-            runs: BinaryWinBalanceMount.displayedRuns(segments: segments, continuedRun: split?.continuedRun),
-            servedHome: servedHomeProbability, servedAway: servedAwayProbability,
-            gameFinished: EventState.isFinished(status), xDomain: domain)
-    }
-
-    /// #9483 — the two team colours when this chart draws the paired NFL lines,
-    /// else nil. `admitted` is `balancePlan`'s answer, which exists only for an
-    /// admitted binary (`BinaryWinBalanceMount.admission`).
-    /// #11284 — the final MLB page draws the same pair, on this chart's own
-    /// status (`MLBFinalPage11284`), never its date.
-    private func pairedLineColors(admitted: BinaryWinBalancePlan?) -> (home: Color, away: Color)? {
-        guard admitted != nil, let teamColors,
-              PairedWinLines9483.admits(sportKey: sportKey, binaryAdmission: .admittedBinary)
-                || MLBFinalPage11284.applies(sportKey: sportKey, status: status)
-        else { return nil }
-        return (home: teamColors.home, away: teamColors.away)
-    }
-
-    /// #9483 — `pairedLineColors(admitted:)` for a whole point set, read the
-    /// way the legend reads it (no checkpoint mount).
-    private func pairedLineColors(for dataPoints: [ChartDataPoint]) -> (home: Color, away: Color)? {
-        if TennisChartReading9483.applies(sportKey: sportKey) {
-            return tennisPairedLines(for: dataPoints, checkpoints: checkpointMount(for: dataPoints))?.colors
-        }
-        guard MLBFinalPage11284.adoptsPairedPage(sportKey: sportKey, status: status) else { return nil }
-        let domain = xAxisDomain(for: dataPoints)
-        return pairedLineColors(admitted: balancePlan(
-            dataPoints: dataPoints,
-            liveSplit: liveEdgeSplit(dataPoints: dataPoints, domain: domain),
-            domain: domain))
     }
 
     /// #925 — the date under a finger at chart-space `x`, clamped to the plot
@@ -2385,73 +2348,130 @@ struct OddsChartView: View {
 
     // MARK: - Legend
 
-    private func legendView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo]) -> some View {
-        // Legend mirrors what is actually drawn: blend-only when a backend blend
-        // exists, else the fail-closed full set (L2-216).
-        let uniqueSources = Self.defaultVisibleSources(in: dataPoints)
-        let ordered = uniqueSources.sorted { a, b in
-            if a == "aggregate" { return true }
-            if b == "aggregate" { return false }
-            if a == "consensus" { return true }
-            if b == "consensus" { return false }
-            return a < b
-        }
-
-        // #10456 — an inked binary line is not the source color, so its swatch
-        // is the two team colors it is actually drawn in (home over away).
-        let domain = xAxisDomain(for: dataPoints)
-        let admitted = balancePlan(dataPoints: dataPoints,
-                                   liveSplit: liveEdgeSplit(dataPoints: dataPoints, domain: domain),
-                                   domain: domain)
-        // #9483 — a paired chart's key is its two teams, each in its line's colour.
-        let paired = (TennisChartReading9483.applies(sportKey: sportKey)
-            ? tennisPairedLines(for: dataPoints, checkpoints: checkpointMount(for: dataPoints))?.colors : nil)
-            ?? pairedLineColors(admitted: admitted)
-        let inkedColors = admitted == nil ? nil : teamColors
-        // (`pairedLineColors(for:)` is this same reading, for the gutter.)
-
-        return FlowLayout(spacing: 8) {
-            if let paired {
-                pairedLegendKey(awayShort, color: paired.away)
-                pairedLegendKey(homeShort, color: paired.home)
-            } else {
-            ForEach(ordered, id: \.self) { source in
-                let isPrimary = source == "aggregate" || (source == "consensus" && !ordered.contains("aggregate"))
-                HStack(spacing: 4) {
-                    if isPrimary, let inkedColors {
-                        VStack(spacing: 0) {
-                            Rectangle().fill(inkedColors.home).frame(width: 14, height: 1.5)
-                            Rectangle().fill(inkedColors.away).frame(width: 14, height: 1.5)
+    /// The chart's key, under the plot.
+    ///
+    /// #11356 — with a blend drawn: the blend's own name first, then one
+    /// disclosure — "+ N sources" while Sources is closed, the revealed lines'
+    /// names and Hide while it is open. N is the sources that actually have a
+    /// reading in this window (`revealableSources9483`), never a fixed count.
+    /// Without a blend every line is already drawn, so every line is named and
+    /// there is nothing to disclose (L2-216's fail-closed set, unchanged).
+    ///
+    /// `rail` is the full-size chart, whose plot takes whatever height its key
+    /// leaves: there the key stays ONE row and scrolls sideways, with Hide next
+    /// to the blend's name where it can be reached without scrolling, so
+    /// opening Sources never takes a row out of the plot. Inline the plot's
+    /// height is fixed and the key wraps below it.
+    @ViewBuilder
+    private func legendView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo],
+                            sourcesOpen: Binding<Bool>, rail: Bool) -> some View {
+        let hasBlend = dataPoints.contains { $0.source == "aggregate" }
+        let revealable = Self.revealableSources9483(in: dataPoints)
+        if hasBlend {
+            let open = sourcesOpen.wrappedValue && !revealable.isEmpty
+            if rail {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        legendKey("aggregate", sources: sources, isPrimary: true)
+                        if open {
+                            sourcesHideButton(sourcesOpen)
+                            ForEach(revealable, id: \.self) { source in
+                                legendKey(source, sources: sources, isPrimary: false)
+                            }
+                        } else if !revealable.isEmpty {
+                            sourcesShowButton(count: revealable.count, sourcesOpen)
                         }
-                        .clipShape(RoundedRectangle(cornerRadius: 1))
-                    } else if isPrimary {
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(colorForSource(source, sources: sources))
-                            .frame(width: 14, height: 3)
-                    } else {
-                        Circle()
-                            .fill(colorForSource(source, sources: sources))
-                            .frame(width: 6, height: 6)
                     }
-                    Text(displayNameForSource(source, sources: sources))
-                        .font(.caption2)
-                        .foregroundStyle(isPrimary ? .primary : .secondary)
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+            } else {
+                FlowLayout(spacing: 8) {
+                    legendKey("aggregate", sources: sources, isPrimary: true)
+                    if open {
+                        ForEach(revealable, id: \.self) { source in
+                            legendKey(source, sources: sources, isPrimary: false)
+                        }
+                        sourcesHideButton(sourcesOpen)
+                    } else if !revealable.isEmpty {
+                        sourcesShowButton(count: revealable.count, sourcesOpen)
+                    }
                 }
             }
+        } else {
+            // Legend mirrors what is actually drawn: the fail-closed full set
+            // (L2-216), with the sportsbook consensus first as the primary line.
+            let ordered = Self.defaultVisibleSources(in: dataPoints).sorted { a, b in
+                if a == "consensus" { return true }
+                if b == "consensus" { return false }
+                return a < b
+            }
+            FlowLayout(spacing: 8) {
+                ForEach(ordered, id: \.self) { source in
+                    legendKey(source, sources: sources, isPrimary: source == "consensus")
+                }
             }
         }
     }
 
-    /// #9483 — one team's key on a paired chart.
-    private func pairedLegendKey(_ name: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            RoundedRectangle(cornerRadius: 1)
-                .fill(color)
-                .frame(width: 14, height: 3)
-            Text(name)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(color)
+    /// One line's key: a swatch drawn in the line's own colour AND stroke (a
+    /// model's dashes included), so a name can only describe the line beside
+    /// it, then its name.
+    private func legendKey(_ source: String, sources: [String: WinProbSourceInfo], isPrimary: Bool) -> some View {
+        let stroke = strokeStyleForSource(source, sources: sources)
+        return HStack(spacing: 4) {
+            Path { path in
+                path.move(to: CGPoint(x: 0, y: 2))
+                path.addLine(to: CGPoint(x: 14, y: 2))
+            }
+            .stroke(colorForSource(source, sources: sources),
+                    style: StrokeStyle(lineWidth: min(stroke.lineWidth, 3), lineCap: .butt, dash: stroke.dash))
+            .frame(width: 14, height: 4)
+            Text(displayNameForSource(source, sources: sources))
+                .font(isPrimary ? .caption2.weight(.semibold) : .caption2)
+                .foregroundStyle(isPrimary ? .primary : .secondary)
+                .lineLimit(1)
+                .fixedSize()
         }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// #11356 — "+ N sources": adds each source's own line over the same plot.
+    private func sourcesShowButton(count: Int, _ sourcesOpen: Binding<Bool>) -> some View {
+        Button {
+            sourcesOpen.wrappedValue = true
+        } label: {
+            HStack(spacing: 3) {
+                Text("+ \(count) source\(count == 1 ? "" : "s")")
+                    .font(.caption2)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show \(count) source\(count == 1 ? "" : "s")")
+        .accessibilityHint("Adds each source's line to the chart")
+    }
+
+    /// #11356 — Hide: back to the blend's own line and its own window.
+    private func sourcesHideButton(_ sourcesOpen: Binding<Bool>) -> some View {
+        Button {
+            sourcesOpen.wrappedValue = false
+        } label: {
+            HStack(spacing: 3) {
+                Text("Hide")
+                    .font(.caption2)
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Hide sources")
     }
 
     // MARK: - Multi-Source Detection
@@ -3100,6 +3120,8 @@ struct OddsChartView: View {
     }
 
     /// Fixed 0–100 axis tick positions (probability basis, 0.0–1.0).
+    /// #11356 — the full axis only, `ChartProbabilityAxis9483.full.ticks`; the
+    /// plot now draws the focused window (`axisPlan9483`).
     static let yAxisTicks: [Double] = [0, 0.25, 0.5, 0.75, 1.0]
 
     /// UX-P090 — see `PeriodChipGeometry`. Held here so the dedup call site reads
@@ -3575,6 +3597,8 @@ struct OddsChartView: View {
         let baseColor: Color
 
         switch source {
+        // #11356 — the blend's one identity on every chart state: the existing
+        // emerald (#059669, web emerald-600), never a team colour.
         case "aggregate": return Color(hex: "#059669") // Emerald green, always full opacity
         case "consensus": baseColor = teamColors?.home ?? .blue
         default:
@@ -3594,8 +3618,11 @@ struct OddsChartView: View {
         }
 
         // When aggregate is present, secondary sources render at reduced opacity
-        // to match web behavior where non-primary lines are semi-transparent
-        return hasAggregate ? baseColor.opacity(0.5) : baseColor
+        // to match web behavior where non-primary lines are semi-transparent.
+        // #11356 — they are drawn only once the reader opens Sources, which is
+        // asking to see them, so they are legible there (web: 0.85) while the
+        // blend's full-opacity, heavier line stays the one being followed.
+        return hasAggregate ? baseColor.opacity(0.85) : baseColor
     }
 
     private func strokeStyleForSource(_ source: String, sources: [String: WinProbSourceInfo]) -> StrokeStyle {
@@ -4341,16 +4368,6 @@ struct PublicationCheckpointMount4974 {
     }
 }
 
-private extension View {
-    /// #9483 — a gutter's side labels step aside on a paired chart. ONE read of
-    /// the pairing per gutter: `pairedLineColors(for:)` segments every point,
-    /// and the opacity and the accessibility answer must agree.
-    func pairedGutterHidden9483(_ hidden: Bool) -> some View {
-        opacity(hidden ? 0 : 1)
-            .accessibilityHidden(hidden)
-    }
-}
-
 /// #10796 — the full-size chart's content, scrolled only where its plot has a
 /// floor (`OddsChartView.fullscreenEnlargedPlotFloor`); otherwise untouched.
 /// Done stays in the navigation bar above it either way.
@@ -4363,5 +4380,310 @@ private struct FullscreenOverflowScroll10796: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+// MARK: - One probability journey (#9483 / #11356)
+//
+// The native transfer of the web chart accepted at 89f9ba03a2 (live at
+// ba2d7db89c): one primary line with one identity, a vertical window focused
+// on the lines actually drawn, ticks and gutter poles that name whose chance
+// each edge is, and a Sources disclosure that adds the per-source lines over
+// the SAME time window and plot box. The range and label rules themselves are
+// `ChartProbabilityAxis9483` (a rule-for-rule transfer of the web helper);
+// this extension only decides what the chart hands it.
+
+extension OddsChartView {
+
+    /// What one chart's vertical axis is, for one Sources state. Read by the
+    /// gutter's poles and by the plot, so the two cannot disagree.
+    struct AxisPlan9483: Equatable {
+        /// What a coordinate below 50% means (`axisSides9483`).
+        let sides: ChartProbabilityAxis9483.Sides
+        /// The window the plot spans and its ticks.
+        let window: ChartProbabilityAxis9483.Window
+        /// The source lines drawn beside the primary one: empty while Sources
+        /// is closed, and always empty without a blend.
+        let revealed: [String]
+
+        /// The home pole's spoken sentence: its direction, then the reading at
+        /// the top edge of the window actually drawn — "100%" only where that
+        /// edge is the end of the scale. On a home-only axis there is no away
+        /// pole to say the bottom, so this one says it, as the home side's.
+        func homePoleSentence(homeName: String, awayName: String) -> String {
+            let edges = ChartProbabilityAxis9483.edges(of: window, sides: sides)
+            let top = ChartProbabilityAxis9483.edgeSentence(.top, edges.top, homeName: homeName, awayName: awayName)
+            var sentence = "The line rises towards \(homeName): \(top)"
+            if sides == .homeOnly {
+                let bottom = ChartProbabilityAxis9483.edgeSentence(.bottom, edges.bottom,
+                                                                    homeName: homeName, awayName: awayName)
+                sentence += " " + bottom.prefix(1).uppercased() + bottom.dropFirst()
+            }
+            return sentence
+        }
+
+        /// The away pole's spoken sentence (two-outcome axes only): its
+        /// direction, then the reading at the bottom edge — which names the
+        /// side its own tick names, so a window entirely above 50% says the
+        /// home side there.
+        func awayPoleSentence(homeName: String, awayName: String) -> String {
+            let edges = ChartProbabilityAxis9483.edges(of: window, sides: sides)
+            let bottom = ChartProbabilityAxis9483.edgeSentence(.bottom, edges.bottom,
+                                                                homeName: homeName, awayName: awayName)
+            return "The line falls towards \(awayName): \(bottom)"
+        }
+    }
+
+    /// This chart's axis plan for one Sources state, from the points it draws
+    /// (already admitted and cut to its window by `filterPoints`).
+    private func axisPlan9483(dataPoints: [ChartDataPoint], checkpoints: PublicationCheckpointMount4974?,
+                              sourcesOpen: Bool) -> AxisPlan9483 {
+        let revealed = sourcesOpen ? Self.revealableSources9483(in: dataPoints) : []
+        let window = Self.probabilityWindow9483(
+            points: dataPoints,
+            defaultSources: Self.defaultVisibleSources(in: dataPoints),
+            revealed: revealed,
+            checkpoints: checkpoints?.drawn ?? [],
+            blendSurvivors: checkpoints?.survivors,
+            liveAndOpen: status == "live" && !EventState.isFinished(status) && !venueSettled)
+        return AxisPlan9483(sides: pageAxisSides9483, window: window, revealed: revealed)
+    }
+
+    /// The source lines Sources can add: every source with a reading in this
+    /// window other than the blend, sportsbook consensus first, then by key —
+    /// the order the key lists them. Only behind a blend: without one every
+    /// line is already drawn (`defaultVisibleSources`), so there is nothing to
+    /// disclose. The count the key prints is this list's, never a constant.
+    static func revealableSources9483(in points: [ChartDataPoint]) -> [String] {
+        guard points.contains(where: { $0.source == "aggregate" }) else { return [] }
+        return Set(points.map(\.source)).subtracting(["aggregate"]).sorted { a, b in
+            if a == "consensus" { return true }
+            if b == "consensus" { return false }
+            return a < b
+        }
+    }
+
+    /// What this page's axis means below 50%: a qualified complementary
+    /// two-outcome question, or a home-only line.
+    ///
+    /// The existing admission (`BinaryWinBalanceMount.admission`) decides, on
+    /// its two clauses about MEANING — a sport whose winner market prices no
+    /// draw, and a page that serves BOTH sides of the winner pair. Its two
+    /// clauses about the retired ink's DRAWING (team colours to wear, exactly
+    /// one drawn line) say nothing about what a coordinate means, so they are
+    /// answered here as met: opening Sources must not change what the axis
+    /// says. A sport key alone, two team names or a crossing of 50% never makes
+    /// an axis two-sided; anything short of the admission is home-only, which
+    /// claims nothing about an away side.
+    static func axisSides9483(sportKey: String?, servedHome: Double?,
+                              servedAway: Double?) -> ChartProbabilityAxis9483.Sides {
+        let line = PublicationCheckpointMount4974.blendSource
+        let admission = BinaryWinBalanceMount.admission(
+            sportKey: sportKey, servedHome: servedHome, servedAway: servedAway,
+            hasTeamColors: true, drawnSources: [line], primarySource: line)
+        return admission == .admittedBinary ? .homeAndAway : .homeOnly
+    }
+
+    /// The window for the lines this chart draws — the web call site's inputs
+    /// (`OddsChart.tsx`, the `yDomain` memo), on native's 0...1 points.
+    ///
+    /// - readings: every point of every drawn line (the primary series — the
+    ///   blend's surviving points under a checkpoint mount — and each revealed
+    ///   source), and every drawn checkpoint.
+    /// - must show: each drawn line's last reading; the LATEST checkpoint only;
+    ///   each revealed source's low and high (a line the reader asked to see is
+    ///   never run off the frame); and, only while the game is live and not
+    ///   closed, the primary series' within-minute lows and highs.
+    ///
+    /// A source that is not drawn never sizes the window: that is how a hidden
+    /// line flattened the visible one (#11356). Nothing here edits, adds or
+    /// re-times a point.
+    static func probabilityWindow9483(
+        points: [ChartDataPoint],
+        defaultSources: [String],
+        revealed: [String],
+        checkpoints: [PublicationJourney4974.Checkpoint] = [],
+        blendSurvivors: [ChartDataPoint]? = nil,
+        liveAndOpen: Bool = false
+    ) -> ChartProbabilityAxis9483.Window {
+        var readings: [Double] = []
+        var mustShow: [Double] = []
+        for source in defaultSources + revealed {
+            let series = (source == PublicationCheckpointMount4974.blendSource ? blendSurvivors : nil)
+                ?? points.filter { $0.source == source }
+            let values = series.map(\.probability)
+            readings += values
+            if let last = latestPoint(in: series, source: source) { mustShow.append(last.probability) }
+            if revealed.contains(source) {
+                let finite = values.filter(\.isFinite)
+                if let lo = finite.min(), let hi = finite.max() { mustShow += [lo, hi] }
+            }
+        }
+        readings += checkpoints.map(\.vertex.p)
+        if let latest = checkpoints.max(by: { ($0.date, $0.vertex.rev) < ($1.date, $1.vertex.rev) }) {
+            mustShow.append(latest.vertex.p)
+        }
+        if liveAndOpen {
+            let primary = primarySource(in: points)
+            mustShow += liveMinuteRangeEnds9483(points.filter { $0.source == primary })
+        }
+        return ChartProbabilityAxis9483.window(readings: readings, mustShow: mustShow)
+    }
+
+    /// The low and high of every minute in which `series` was observed at two
+    /// or more DIFFERENT values (web `intraMinuteRanges`, #10093). Real
+    /// observations only: nothing carried in from the minute before.
+    static func liveMinuteRangeEnds9483(_ series: [ChartDataPoint]) -> [Double] {
+        var byMinute: [Int: (lo: Double, hi: Double)] = [:]
+        for point in series where point.probability.isFinite {
+            let minute = Int(floor(point.date.timeIntervalSince1970 / 60))
+            if let range = byMinute[minute] {
+                byMinute[minute] = (min(range.lo, point.probability), max(range.hi, point.probability))
+            } else {
+                byMinute[minute] = (point.probability, point.probability)
+            }
+        }
+        return byMinute.keys.sorted().flatMap { minute -> [Double] in
+            guard let range = byMinute[minute], range.hi > range.lo else { return [] }
+            return [range.lo, range.hi]
+        }
+    }
+
+    /// The widest label the axis can print; every tick label reserves it.
+    static let widestTickLabel9483 = "100%"
+
+    /// A tick's ink: its side's team colour on a qualified two-outcome axis,
+    /// neutral at 50%, and neutral at EVERY tick of a home-only axis — whose
+    /// ticks are the home side's chance but whose coordinates are not a side.
+    private func tickInk9483(_ tick: ChartProbabilityAxis9483.Tick, sides: ChartProbabilityAxis9483.Sides) -> Color {
+        guard sides == .homeAndAway, let teamColors else { return .primary }
+        switch tick.side {
+        case .home: return teamColors.home
+        case .away: return teamColors.away
+        case .even: return .primary
+        }
+    }
+
+    // MARK: Finished end label
+
+    /// What a finished line's end prints: the chance of the side its dot sits
+    /// on, as the tick beside it would name it, in the card's own format — the
+    /// away side's below 50% on a two-outcome axis, else the home side's. A
+    /// home-only line never names an away side (#10318, #5271). Nil for a value
+    /// off the scale: no label rather than a made-up one.
+    static func endLabelText9483(probability: Double, sides: ChartProbabilityAxis9483.Sides,
+                                 homeShort: String, awayShort: String) -> String? {
+        guard probability.isFinite, probability >= 0, probability <= 1 else { return nil }
+        let twoSided = sides == .homeAndAway
+        let printed = GamePlayCardView.printedLabels(home: probability, away: twoSided ? 1 - probability : nil,
+                                                     gameFinished: true)
+        if twoSided, probability < 0.5, let away = printed.away { return "\(awayShort) \(away)" }
+        return "\(homeShort) \(printed.home)"
+    }
+
+    private func endLabelInk9483(probability: Double, sides: ChartProbabilityAxis9483.Sides) -> Color {
+        guard sides == .homeAndAway, let teamColors else { return .primary }
+        return probability < 0.5 ? teamColors.away : teamColors.home
+    }
+
+    /// Room between the end dot and its label, and the band at the plot's top
+    /// that the period chips own (`chartView`'s overlay draws them at y = 10).
+    static let endLabelGap9483: CGFloat = 6
+    static let endLabelTopReserve9483: CGFloat = 20
+    static let endLabelPlatePadding9483: CGFloat = 3
+
+    /// The label's footprint, plate included — measured with the font it is
+    /// drawn in, so the placement below clears what is actually painted.
+    static func endLabelSize9483(_ text: String, fontSize: CGFloat) -> CGSize {
+        #if canImport(UIKit)
+        let font = UIFont.systemFont(ofSize: fontSize, weight: .semibold)
+        let width = (text as NSString).size(withAttributes: [.font: font]).width
+        let height = font.lineHeight
+        #else
+        let width = CGFloat(text.count) * ChartGutter.fallbackCharacterWidth * fontSize / 11
+        let height = fontSize * 1.2
+        #endif
+        return CGSize(width: ceil(width) + endLabelPlatePadding9483 * 2, height: ceil(height))
+    }
+
+    /// Where the label's centre goes, in plot-local points: to the LEFT of the
+    /// end dot (the line ends at the dot, so nothing of it lies to the right),
+    /// and stepped off the line it ends — above the dot when the line under the
+    /// label sits lower (it climbed in), below it when it sits higher (it fell
+    /// in). If that side has no room inside the plot (below the chips' band,
+    /// above the bottom), the other side; never outside the plot.
+    static func endLabelCenter9483(end: CGPoint, size: CGSize, lineYBeneath: CGFloat?,
+                                   plot: CGSize, topReserve: CGFloat) -> CGPoint {
+        let x = max(size.width / 2, end.x - endLabelGap9483 - size.width / 2)
+        let above = end.y - 2 - size.height / 2
+        let below = end.y + 2 + size.height / 2
+        // Screen y grows downward: a line lower on screen than the dot climbed in.
+        let prefersAbove = (lineYBeneath ?? end.y) >= end.y
+        func fits(_ y: CGFloat) -> Bool {
+            y - size.height / 2 >= topReserve && y + size.height / 2 <= plot.height
+        }
+        var y = prefersAbove ? above : below
+        if !fits(y) { y = prefersAbove ? below : above }
+        let lowest = max(topReserve + size.height / 2, size.height / 2)
+        y = min(max(y, lowest), max(lowest, plot.height - size.height / 2))
+        return CGPoint(x: x, y: y)
+    }
+
+    @ViewBuilder
+    private func finishedEndLabel9483(_ end: (date: Date, probability: Double), line: [ChartDataPoint],
+                                      sides: ChartProbabilityAxis9483.Sides,
+                                      proxy: ChartProxy, plotFrame: CGRect) -> some View {
+        if let text = Self.endLabelText9483(probability: end.probability, sides: sides,
+                                            homeShort: homeShort, awayShort: awayShort),
+           let x = proxy.position(forX: end.date),
+           let y = proxy.position(forY: end.probability),
+           x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
+            let size = Self.endLabelSize9483(text, fontSize: axisFontSize)
+            let center = Self.endLabelCenter9483(
+                end: CGPoint(x: x, y: y), size: size,
+                lineYBeneath: Self.lineY9483(atX: x - Self.endLabelGap9483 - size.width / 2,
+                                             on: line, proxy: proxy),
+                plot: plotFrame.size, topReserve: Self.endLabelTopReserve9483)
+            Text(text)
+                .font(.system(size: axisFontSize, weight: .semibold))
+                .foregroundStyle(endLabelInk9483(probability: end.probability, sides: sides))
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, Self.endLabelPlatePadding9483)
+                .background(Color.systemBackground.opacity(0.85), in: RoundedRectangle(cornerRadius: 3))
+                .position(x: plotFrame.minX + center.x, y: plotFrame.minY + center.y)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// The plot-local y of `line`'s observed point nearest plot-local `x` —
+    /// a real point, never an interpolation.
+    static func lineY9483(atX x: CGFloat, on line: [ChartDataPoint], proxy: ChartProxy) -> CGFloat? {
+        guard let date = proxy.value(atX: max(0, x), as: Date.self),
+              let point = line.min(by: {
+                  abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+              }) else { return nil }
+        return proxy.position(forY: point.probability)
+    }
+}
+
+/// #11356 — a gutter pole's direction: up for the home side, down for the
+/// away side. One font size square, which `OddsChartView.gutterNameRun9483`
+/// takes out of the name's run.
+struct ChartGutterDirection9483: View {
+    let rising: Bool
+    let size: CGFloat
+    let color: Color
+
+    var body: some View {
+        Image(systemName: rising ? "arrow.up" : "arrow.down")
+            .font(.system(size: size * 0.8, weight: .bold))
+            .foregroundStyle(color)
+            .frame(width: size, height: size)
+            // Undo the gutter's turn so the arrow points the way the line goes,
+            // as the crest stands up (#6612).
+            .rotationEffect(.degrees(ChartGutterCrest.counterRotationDegrees))
+            .accessibilityHidden(true)
     }
 }

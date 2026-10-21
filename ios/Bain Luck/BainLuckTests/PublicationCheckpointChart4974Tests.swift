@@ -675,13 +675,17 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         XCTAssertTrue(zip(today[0], today[0].dropFirst()).contains { $0.probability < 0.5 && $1.probability > 0.5 })
     }
 
-    /// The balance ink colors the line home above 50% and away below; under a
+    /// The balance ink colored the line home above 50% and away below; under a
     /// mount it would redraw the blend uncut and color a crossing nobody
-    /// recorded. The body is not rendered in tests, so this reads the source.
+    /// recorded. #11356 retired the ink on every chart (one line, one
+    /// identity), so no chart can run it, mounted or not; the live split still
+    /// stays off a mount. The body is not rendered in tests, so this reads the
+    /// source.
     func testTheMountedChartRunsNoBalanceInkAndNoLiveSplit() throws {
         let chart = try code("Bain Luck/Components/OddsChartView.swift")
         XCTAssertTrue(chart.contains("letliveSplit=checkpoints==nil?liveEdgeSplit(dataPoints:dataPoints,domain:domain):nil"))
-        XCTAssertTrue(chart.contains("letbalance=checkpoints==nil?balancePlan(dataPoints:dataPoints,liveSplit:liveSplit,domain:domain):nil"))
+        XCTAssertFalse(chart.contains("BinaryWinChartBalanceInkLayer("), "the balance ink is drawn again")
+        XCTAssertFalse(chart.contains("balancePlan("), "the balance ink is planned again")
         XCTAssertTrue(chart.contains("ifletcheckpoints{PublicationCheckpointLayer4974(plan:checkpoints.plan,"))
     }
 
