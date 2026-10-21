@@ -4377,17 +4377,16 @@ class LiveBlendRefresher:
     async def preview_accepted_observations(self, observations, validate) -> None:
         """Preview acknowledged unchanged PM observations without owning writes.
 
-        The serial game flush awaits this optional work while no stamp owner is
-        active. The graph and copied observation clocks are disposable: none
+        The serial game flush awaits this optional work while no same-event
+        stamp owns its snapshot. The graph and copied observation clocks are disposable: none
         enters `held_quotes`, a stamp plan, a receipt or the history queue.
         `validate` rechecks immutable input identity and the flush's ownership
         under its buffer lock, including at the final Redis send boundary.
         """
         if self.source != "polymarket" or not self.preview:
             return
-        from copy import copy
         from app.tasks.base import get_task_session
-        from app.utils.aggregation import _coerce_timestamp, observation_basis
+        from app.utils.aggregation import _coerce_timestamp
         from app.utils.blend_preview import PREVIEW_STATUSES, registry
         from app.utils.live_blend import compute_source_home_probability, has_proven_home_orientation
 
@@ -4402,21 +4401,29 @@ class LiveBlendRefresher:
             async with asyncio.timeout(.25), self._session_slot(), factory() as session:
                 grouped = await self._read_groups(session, sorted(event_ids), overlay_held=False)
             plans = {}
+            refusals = {}
             for eid, (event, group) in grouped.items():
                 if event.status not in PREVIEW_STATUSES or event.completed_at is not None:
+                    refusals[eid] = "ineligible"
+                    continue
+                rows = {row.id: (entry, row) for entry in group for row in entry.outcomes}
+                snapshot = observations[eid]
+                if any(oid in rows and (rows[oid][0].market.status != "open"
+                       or rows[oid][1].resolution_source is not None
+                       or rows[oid][1].is_winner is not None) for oid in snapshot):
+                    refusals[eid] = "settled"
                     continue
                 reading = compute_source_home_probability(group, event.home_team_name, event.away_team_name)
                 if reading is None or not has_proven_home_orientation(reading):
                     continue  # optional path never invokes repairing inversion fallback
                 contributors = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
                 ids = {getattr(row, "id", None) for row in contributors}
-                snapshot = observations[eid]
                 if not ids or not ids.issubset(snapshot):
                     continue
-                rows = {row.id: (entry, row) for entry in group for row in entry.outcomes}
                 if any(oid not in rows for oid in snapshot):
                     continue
                 valid = True
+                read_wall = datetime.now(timezone.utc).timestamp()
                 for oid, (value, bound, mark) in snapshot.items():
                     entry, row = rows[oid]
                     stored_at = _coerce_timestamp(row.last_updated)
@@ -4424,31 +4431,32 @@ class LiveBlendRefresher:
                             or type(bound) not in (float, int) or not math.isfinite(bound)
                             or entry.market.status != "open" or row.resolution_source is not None
                             or row.is_winner is not None or stored_at is None
-                            or stored_at.timestamp() >= bound
+                            or stored_at.timestamp() >= bound or bound > read_wall
                             or row.current_probability is None
                             or round(float(row.current_probability), 6) != round(float(value), 6)):
                         valid = False
                         break
                 if not valid:
                     continue
-                observed_rows = []
-                for row in contributors:
-                    observed = copy(row)
-                    observed.last_updated = datetime.fromtimestamp(snapshot[row.id][1], timezone.utc)
-                    observed_rows.append(observed)
-                basis = observation_basis(observed_rows)
+                # Keep the immutable DB-clock bounds exactly; the generic
+                # observation helper clamps future clocks to app-now. Such
+                # clamping would manufacture newer observations on retries.
+                basis = {str(row.id): float(snapshot[row.id][1]) for row in contributors}
                 if basis:
                     plans[eid] = (event, reading, basis)
-            if not plans:
+            if not plans and not refusals:
                 return
 
             async def prepare_frames():
-                allowed = await validate(set(plans))
+                allowed = await validate(set(plans) | set(refusals))
                 if not allowed:
                     return []  # rejection/cancellation must not mutate the registry
                 preview = registry()
                 frames = preview.expire()
                 for eid in allowed:
+                    if eid in refusals:
+                        frames.extend(preview.refused(eid, self.source, refusals[eid]))
+                        continue
                     event, reading, basis = plans[eid]
                     frames.extend(preview.propose(
                         eid, self.source, value=round(reading.home_probability, 4), event=event,

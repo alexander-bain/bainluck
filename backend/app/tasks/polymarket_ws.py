@@ -3327,6 +3327,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
     stats["history_pending_adopted"] = len(getattr(blend_refresher, "_history", ()))
     input_marks: dict = {}
+    # DNPL canary speaking outcomes only. Same-price successors retain their
+    # token; a move/withdrawal/routing change ends continuity, including A-B-A.
+    observation_continuity: dict[int, tuple[object, float]] = {}
 
     # #9484: filled IN PLACE by `admit_open_contracts`, which the handlers and
     # the flush read through these same objects. Separate from the game maps so
@@ -4445,9 +4448,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # Handlers update complementary legs under this same lock;
                     # newly buffered ids still belong to a successor flush.
                     held_quotes = getattr(blend_refresher, "held_quotes", None)
-                    preview_observations = getattr(blend_refresher, "preview_accepted_observations", None)
+                    preview_observations = (
+                        getattr(blend_refresher, "preview_accepted_observations", None)
+                        if getattr(blend_refresher, "preview_events", ()) else None
+                    )
                     async with buffer_lock:
                         observation_generation = routing_generation if callable(preview_observations) else None
+                        observation_tokens = (
+                            {oid: observation_continuity.get(oid) for oid in chunk_ids}
+                            if callable(preview_observations) else {}
+                        )
                         current_chunk = {oid: price_buffer[oid] for oid in chunk_ids}
                         for oid in chunk_ids:
                             if oid in input_marks:
@@ -4481,8 +4491,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # optional preview outside `owed` and HeldRowQuotes: putting
                     # it in either would force persistence on the next flush.
                     if (not final and callable(preview_observations)
-                            and getattr(wrote, "written_ids", None) is not None
-                            and (stamp_owner.task is None or stamp_owner.task.done())):
+                            and getattr(wrote, "written_ids", None) is not None):
                         observation_groups = {}
                         for oid, value in current_chunk.items():
                             eid = headline_event_ids.get(oid)
@@ -4493,20 +4502,34 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         written_events = event_ids_for_outcomes(headline_event_ids, wrote.written_ids)
                         for eid in written_events:
                             observation_groups.pop(eid, None)
+                        observation_window = getattr(blend_refresher, "_admission", None)
+                        observation_releases = {
+                            eid: observation_window.released.get(eid, 0)
+                            if observation_window is not None else 0
+                            for eid in observation_groups
+                        }
 
                         async def validate_observations(event_ids):
                             async with buffer_lock:
-                                if (routing_generation != observation_generation
-                                        or (stamp_owner.task is not None and not stamp_owner.task.done())):
+                                if routing_generation != observation_generation:
+                                    return set()
+                                held = (stamp_owner.held_events()
+                                        if stamp_owner.task is not None and not stamp_owner.task.done() else set())
+                                current_window = getattr(blend_refresher, "_admission", None)
+                                if held is None or (current_window is not None and current_window is not observation_window):
                                     return set()
                                 withdrawals = event_ids_for_outcomes(headline_event_ids, withdraw_buffer)
                                 return {
-                                    eid for eid in event_ids if eid not in withdrawals
+                                    eid for eid in event_ids if eid not in withdrawals and eid not in held
+                                    and (observation_window is None
+                                         or observation_window.released.get(eid, 0) == observation_releases[eid])
                                     and all(
-                                        mark is not None and input_marks.get(oid) is mark
+                                        mark is not None and input_marks.get(oid) is not None
                                         and getattr(mark, "probability", None) == value
-                                        and bound is not None and held_quotes is not None
-                                        and held_quotes.bound_for(mark) == bound
+                                        and round(float(input_marks[oid].probability), 6) == round(float(value), 6)
+                                        and getattr(input_marks[oid], "seq", -1) >= getattr(mark, "seq", 0)
+                                        and bound is not None and observation_tokens.get(oid) is not None
+                                        and observation_continuity.get(oid) == observation_tokens[oid]
                                         for oid, (value, bound, mark) in observation_groups[eid].items()
                                     )
                                 }
@@ -5195,6 +5218,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     return
                 for outcome_id, leg_bid, leg_ask in legs:
                     withdraw_buffer[outcome_id] = (leg_bid, leg_ask)
+                    if getattr(blend_refresher, "preview_events", ()):
+                        observation_continuity.pop(outcome_id, None)
                 # #11138: a held quote never outlives a book that withdraws it.
                 held_quotes = getattr(blend_refresher, "held_quotes", None)
                 if held_quotes is not None:
@@ -5292,6 +5317,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         except Exception:
             return
         if mark is not None:
+            if (event_id_by_outcome.get(outcome_id) in getattr(blend_refresher, "preview_events", ())
+                    and outcome_id not in non_blend_outcome_ids and outcome_id not in open_outcome_ids):
+                price = round(float(prob), 6)
+                previous = observation_continuity.get(outcome_id)
+                if previous is None or previous[1] != price:
+                    observation_continuity[outcome_id] = (object(), price)
+            elif getattr(blend_refresher, "preview_events", ()):
+                observation_continuity.pop(outcome_id, None)
             input_marks[outcome_id] = mark
             held = getattr(blend_refresher, "held_quotes", None)
             if held is not None:
@@ -5611,6 +5644,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             async with buffer_lock:
                 timing.enter("map")
                 routing_generation += 1
+                observation_continuity.clear()
                 # Keep accepted writes' ownership through their drain even if the
                 # token has left the catalog. New inputs use ONLY the fresh maps.
                 protected = set(price_buffer) | set(withdraw_buffer)

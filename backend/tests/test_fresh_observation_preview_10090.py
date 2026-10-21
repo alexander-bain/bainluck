@@ -297,3 +297,56 @@ async def test_send_time_validation_after_checkout_rejects_superseded_work_witho
         assert released == [connection]
     assert not commands and not session.updates
     assert not blend_preview.registry().has_pending(1)
+
+
+async def test_future_frozen_bound_never_becomes_a_new_app_clock_observation(monkeypatch):
+    r, session, frames, _, _, _, observations, validate, now = acknowledged_rig(monkeypatch)
+    for oid, (value, _, mark) in list(observations[1].items()):
+        observations[1][oid] = (value, (now + timedelta(seconds=5)).timestamp(), mark)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls.wall
+
+    Clock.wall = now
+    monkeypatch.setattr('app.tasks.live_blend_refresh.datetime', Clock)
+    await r.preview_accepted_observations(observations, validate)
+    Clock.wall += timedelta(seconds=2)
+    await r.preview_accepted_observations(observations, validate)
+    assert not frames and not blend_preview.registry().has_pending(1)
+    Clock.wall += timedelta(seconds=4)
+    await r.preview_accepted_observations(observations, validate)
+    assert _blends(frames)[0]['display_observed_at'] == (now + timedelta(seconds=5)).isoformat()
+    before = len(frames)
+    Clock.wall += timedelta(seconds=1)
+    await r.preview_accepted_observations(observations, validate)
+    assert len(frames) == before
+    assert not session.updates
+
+
+@pytest.mark.parametrize('transition', ['terminal', 'closed', 'settled', 'winner', 'missing-bound'])
+async def test_authoritative_invalidity_retires_existing_observation_preview(monkeypatch, transition):
+    r, session, frames, _, rows, _, observations, validate, _ = acknowledged_rig(monkeypatch)
+    await r.preview_accepted_observations(observations, validate)
+    assert blend_preview.registry().has_pending(1, 'polymarket')
+    frames.clear()
+    if transition == 'terminal':
+        session._market_rows[0][1].status = 'completed'
+    elif transition == 'closed':
+        session._market_rows[0][0].status = 'closed'
+    elif transition == 'settled':
+        rows[1].resolution_source = 'polymarket'
+    elif transition == 'winner':
+        rows[1].is_winner = False
+    else:
+        value, _, mark = observations[1][rows[1].id]
+        observations[1][rows[1].id] = (value, None, mark)
+    await r.preview_accepted_observations(observations, validate)
+    if transition == 'missing-bound':
+        assert blend_preview.registry().has_pending(1, 'polymarket')
+        assert not frames
+    else:
+        assert not blend_preview.registry().has_pending(1, 'polymarket')
+        assert len(_revokes(frames)) == 1
+    assert not session.updates
