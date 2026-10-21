@@ -16,6 +16,14 @@ from app.utils.proven_duplicates import (
 )
 
 
+def capable_request():
+    from tests.test_folded_event_stream_invalidation_837 import Request
+
+    request = Request()
+    request.query_params = {"preview_protocol": "folded-v1"}
+    return request
+
+
 def rig(sport="soccer_epl"):
     now = datetime.now(timezone.utc)
     event = SimpleNamespace(id=1, status="live", espn_win_prob_home=None,
@@ -138,10 +146,11 @@ def test_malformed_legacy_metadata_does_not_break_singleton_production():
     json.dumps(frame, allow_nan=False)
 
 
-async def test_route_keeps_reading_previews_and_terminal_while_projection_waits(monkeypatch):
+@pytest.mark.parametrize("capable", [False, True])
+async def test_route_keeps_reading_previews_and_terminal_while_projection_waits(monkeypatch, capable):
     from app.routes import event_stream as route
     from app.utils import live_fanout
-    from tests.test_folded_event_stream_invalidation_837 import Hub, Request
+    from tests.test_folded_event_stream_invalidation_837 import Hub
 
     _, _, _, base, preview, _, now = rig()
     hub = Hub()
@@ -163,7 +172,10 @@ async def test_route_keeps_reading_previews_and_terminal_while_projection_waits(
     monkeypatch.setattr(route, "preview_route_events", lambda: {1})
     monkeypatch.setattr(route, "latest_frames", lambda ids: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(route, "_current_reconcile", coverage)
-    stream = route._stream(1, Request(), [1, 2, 3])
+    request = capable_request()
+    if not capable:
+        request.query_params = {}
+    stream = route._stream(1, request, [1, 2, 3])
     task = None
     try:
         assert "retry:" in await anext(stream)
@@ -172,15 +184,17 @@ async def test_route_keeps_reading_previews_and_terminal_while_projection_waits(
         task = asyncio.create_task(anext(stream))
         await asyncio.wait_for(entered.wait(), 1)
         hub.subscriptions["live:event:2"].offer(json.dumps(preview))
-        chunk = await asyncio.wait_for(task, 1)
-        assert chunk.startswith("event: preview\n")
-        assert json.loads(chunk.split("data: ")[1])["p"] == project(base, preview)["p"]
+        if capable:
+            chunk = await asyncio.wait_for(task, 1)
+            assert chunk.startswith("event: preview\n")
+            assert json.loads(chunk.split("data: ")[1])["p"] == project(base, preview)["p"]
         # A canonical terminal commit remains reachable while the read hangs.
         hub.subscriptions["live:event:1"].offer(json.dumps({
             "event_id": 1, "p": 1., "status": "completed", "rev": {"1": 12},
             "updated_at": now.isoformat(),
         }))
-        assert "event: fold_preview_floor" in await asyncio.wait_for(anext(stream), 1)
+        floor = await asyncio.wait_for(anext(stream) if capable else task, 1)
+        assert "event: fold_preview_floor" in floor
         assert "event: probability" in await asyncio.wait_for(anext(stream), 1)
         assert "event: closed" in await asyncio.wait_for(anext(stream), 1)
     finally:
@@ -197,7 +211,7 @@ async def test_actual_mailbox_route_subtracts_age_and_refuses_expired_preview(mo
     from app.routes import event_stream as route
     from app.utils import live_fanout
     from app.utils.folded_live_quote import FoldedQuoteProjector
-    from tests.test_folded_event_stream_invalidation_837 import Hub, Request
+    from tests.test_folded_event_stream_invalidation_837 import Hub
 
     _, _, _, base, preview, _, _ = rig()
     hub = Hub()
@@ -212,7 +226,7 @@ async def test_actual_mailbox_route_subtracts_age_and_refuses_expired_preview(mo
     monkeypatch.setattr(route, "_current_reconcile", lambda *args: asyncio.sleep(0, result={
         "event_id": 1, "custody_id": "state:test", "removal_rev": base.revision,
     }))
-    stream = route._stream(1, Request(), [1, 2, 3])
+    stream = route._stream(1, capable_request(), [1, 2, 3])
     try:
         await anext(stream)
         await anext(stream)
@@ -239,7 +253,7 @@ async def test_actual_mailbox_route_subtracts_age_and_refuses_expired_preview(mo
 async def test_recovery_rewarms_same_revision_without_a_new_committed_frame(monkeypatch, confirmation_only):
     from app.routes import event_stream as route
     from app.utils import live_fanout
-    from tests.test_folded_event_stream_invalidation_837 import Hub, Request
+    from tests.test_folded_event_stream_invalidation_837 import Hub
 
     _, _, _, base, preview, _, _ = rig()
     hub = Hub()
@@ -261,7 +275,7 @@ async def test_recovery_rewarms_same_revision_without_a_new_committed_frame(monk
         "event_id": 1, "custody_id": "state:unchanged",
         "removal_rev": {str(member): base.revision[str(member)] for member in ids},
     }))
-    stream = route._stream(1, Request(), [1, 2, 3])
+    stream = route._stream(1, capable_request(), [1, 2, 3])
     try:
         await anext(stream)
         await anext(stream)
@@ -278,5 +292,46 @@ async def test_recovery_rewarms_same_revision_without_a_new_committed_frame(monk
         assert len(loads) == 2 and warm[0]
         hub.subscriptions["live:event:2"].offer(json.dumps(preview))
         assert "event: preview" in await asyncio.wait_for(anext(stream), 1)
+    finally:
+        await stream.aclose()
+
+
+@pytest.mark.parametrize("protocol", [None, "unknown", "folded-v1"])
+@pytest.mark.parametrize("folded", [False, True])
+async def test_preview_requires_capability_only_for_folded_pages(monkeypatch, protocol, folded):
+    from app.routes import event_stream as route
+    from app.utils import live_fanout
+    from tests.test_folded_event_stream_invalidation_837 import Hub, Request
+
+    _, _, _, base, preview, _, _ = rig()
+    hub = Hub()
+    projected = []
+
+    def project_preview(eid, frame, **kwargs):
+        projected.append(frame)
+        return base.project(frame, **kwargs)
+
+    hub.project_folded_preview = project_preview
+    monkeypatch.setattr(live_fanout, "fanout", lambda: hub)
+    monkeypatch.setattr(route, "preview_route_events", lambda: {1, 2})
+    monkeypatch.setattr(route, "latest_frames", lambda ids: asyncio.sleep(0, result=[]))
+    monkeypatch.setattr(route, "_current_reconcile", lambda *args: asyncio.sleep(0, result={"event_id": 1 if folded else 2, "custody_id": "state:test", "removal_rev": base.revision}))
+    request = Request()
+    request.query_params = {} if protocol is None else {"preview_protocol": protocol}
+    stream = route._stream(1 if folded else 2, request, [1, 2, 3] if folded else [2])
+    try:
+        assert "retry:" in await anext(stream)
+        assert "event: open" in await anext(stream)
+        assert "event: reconcile" in await asyncio.wait_for(anext(stream), 1)
+        sub = hub.subscriptions["live:event:2"]
+        sub.offer(json.dumps(preview))
+        sub.offer(live_fanout.CLOSED)
+        chunk = await asyncio.wait_for(anext(stream), 1)
+        if not folded or protocol == "folded-v1":
+            assert chunk.startswith("event: preview\n")
+            assert "event: reconnect" in await asyncio.wait_for(anext(stream), 1)
+        else:
+            assert "event: reconnect" in chunk
+            assert projected == []
     finally:
         await stream.aclose()
