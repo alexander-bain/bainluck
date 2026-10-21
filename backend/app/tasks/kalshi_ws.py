@@ -1416,8 +1416,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         ids = ticker_to_ids.get(ticker)
         if ids is None or ids[0] in prices.settled_market_ids:
             return None
+        # A foreign-SID excursion can restore legacy BBO/primary identity
+        # without a new snapshot. Queued observations must retain that proof.
         owners = tuple(
-            (id(client.sock), getattr(client.sock, "_primary_generation", None))
+            (id(client.sock), getattr(client.sock, "_primary_generation", None),
+             getattr(getattr(client.sock, "_book", None),
+                     "_observation_snapshot_sids", {}).get(ticker))
             for client in game_clients
             if ticker in client.tickers and client.task is not None and not client.task.done()
         )

@@ -233,3 +233,57 @@ async def test_consumer_revalidates_before_observation_publication(monkeypatch, 
         rig.r._publish_previews = replaced
     await rig.ns["flush_book_observations"]()
     assert not _blends(rig.frames) and not rig.session.updates and not rig.committed
+
+
+@pytest.mark.parametrize("during_publish", [None, False, True])
+async def test_queued_observation_refuses_sid_excursion_without_new_snapshot(monkeypatch, during_publish):
+    """Legacy BBO can return to the original SID; observation proof cannot."""
+    import app.tasks.kalshi_ws as consumer
+    from tests.test_blend_preview_display_before_persist_195 import _blends
+    rig = consumer_rig(monkeypatch)
+    fixture = retained()
+    book = KalshiOrderBook()
+    ticker = rig.payloads[0]["market_ticker"]
+    original_ticker = fixture["tail"][0]["msg"]["market_ticker"]
+    for frame in fixture["seed"]:
+        frame = deepcopy(frame)
+        if frame["msg"]["market_ticker"] == original_ticker:
+            frame["msg"]["market_ticker"] = ticker
+        book.apply(frame)
+    delta = deepcopy(fixture["tail"][0])
+    delta["msg"]["market_ticker"] = ticker
+    assert book.apply(delta, observe_unchanged=True)["_observation_only"]
+    rig.client.sock._book = book
+    rig.client.sock._primary_generation = object()
+    rig.client.tickers = {p["market_ticker"] for p in rig.payloads}
+    rig.client.task = NS(done=lambda: False)
+    rig.ns.update(game_clients=[rig.client], steady_book_signature=lambda _: "unchanged-legacy-bbo")
+    tree = ast.parse(Path(consumer.__file__).read_text())
+    node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
+                and n.name == "observation_signature")
+    exec(compile(ast.Module(body=[node], type_ignores=[]), consumer.__file__, "exec"), rig.ns)
+    for payload in rig.payloads:
+        await rig.ns["handle_book_observation"](payload, rig.client)
+    assert len(rig.ns["book_observation_pending"]) == 2
+
+    def excursion():
+        other = deepcopy(delta)
+        other.update(sid=99, seq=1)
+        other["msg"]["delta_fp"] = "1"
+        assert book.apply(other, observe_unchanged=True) is None
+        delta["seq"] += 1
+        assert book.apply(delta, observe_unchanged=True) is None
+        assert book._owners[ticker] == delta["sid"]
+        assert ticker not in book._observation_snapshot_sids
+
+    if during_publish:
+        original_publish = rig.r._publish_previews
+        async def after_read(initial, *, prepare_frames=None):
+            excursion()
+            return await original_publish(initial, prepare_frames=prepare_frames)
+        rig.r._publish_previews = after_read
+    elif during_publish is False:
+        excursion()
+    await rig.ns["flush_book_observations"]()
+    assert bool(_blends(rig.frames)) is (during_publish is None)
+    assert not rig.session.updates and not rig.committed
