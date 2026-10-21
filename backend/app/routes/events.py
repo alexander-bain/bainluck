@@ -91,6 +91,7 @@ from app.utils.card_projected_pair import (
     LIVE_PROJECTION_KEY,
     attach_card_projected_pair,
     event_live_projection,
+    own_event_rows,
 )
 from app.utils.pregame_projection import (
     attach_pregame_projection,
@@ -19958,14 +19959,14 @@ async def get_event(
 
     absorbed = await serve_fold_absorbed_rows(db, event)
     odds_event_ids = await folded_series_event_ids(db, event_id, absorbed)
-    latest_snapshots = latest_snapshot_for_each_bookmaker(
-        list(
-            (await db.execute(latest_odds_per_bookmaker_query(odds_event_ids)))
-            .scalars()
-            .all()
-        ),
-        event_id,
+    # #2920 C1 — the raw per-(event, sportsbook) rows are kept: the marked
+    # in-play pair reads only this event's own rows, exactly as its card does.
+    _latest_rows = list(
+        (await db.execute(latest_odds_per_bookmaker_query(odds_event_ids)))
+        .scalars()
+        .all()
     )
+    latest_snapshots = latest_snapshot_for_each_bookmaker(_latest_rows, event_id)
 
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
@@ -20200,15 +20201,16 @@ async def get_event(
             # feature to show, outside a short closed list of comparison surfaces
             # this payload is not on.
         }
-        # #2920 — the in-play pair, marked, by the cards' admission and from the
-        # rows read above, so the page and its card cannot print two finals.
+        # #2920 — the in-play pair, marked, by the cards' admission and from
+        # this event's OWN rows of the read above (never the folded twins the
+        # price table uses), so the page and its card cannot print two finals.
         # Asked by the status this page PRINTS. Optional: never the page.
         try:
             attach_card_projected_pair(
                 response["current_odds"],
                 {
                     LIVE_PROJECTION_KEY: event_live_projection(
-                        all_latest_snapshots,
+                        own_event_rows(_latest_rows, event.id),
                         event,
                         served_status=response.get("status"),
                         sport_key=event_sport_key,

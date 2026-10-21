@@ -185,6 +185,25 @@ def test_a_book_whose_pair_does_not_solve_its_own_lines_is_not_a_contributor():
     live = _live(snaps)
     assert live["bookmaker_count"] == 2
     assert (live["projected_home_score"], live["projected_away_score"]) == (29.5, 19.0)
+    # C3 — the stamps describe the contributors: caesars (+42) is the newest
+    # capture on the board and produced none of the number.
+    assert live["latest_captured_at"] == (_KICKOFF + timedelta(minutes=41)).isoformat()
+
+
+def test_an_unchanged_quote_first_made_before_kickoff_and_confirmed_in_play_is_admitted():
+    # C2 — write-time dedup: `captured_at` is when the value FIRST appeared,
+    # `valid_until` the last poll that confirmed it. Quoted at -20/-15, still the
+    # live price at +44/+42: in-play evidence, and the two clocks stay distinct.
+    snaps = [
+        _snap("draftkings", -10.5, 48.5, minutes=-20, valid_minutes=44),
+        _snap("fanduel", -10.5, 48.5, minutes=-15, valid_minutes=42),
+    ]
+    live = _live(snaps)
+    assert live is not None
+    assert live["bookmaker_count"] == 2
+    assert live["latest_captured_at"] == (_KICKOFF - timedelta(minutes=15)).isoformat()
+    assert live["earliest_confirmed_at"] == (_KICKOFF + timedelta(minutes=42)).isoformat()
+    assert live["latest_captured_at"] < live["boundary_at"] <= live["earliest_confirmed_at"]
 
 
 def test_no_book_with_its_own_pair_means_no_object():
@@ -303,6 +322,124 @@ def test_a_scheduled_card_gains_its_pair_and_no_marked_object():
     assert cpp.LIVE_PROJECTION_KEY not in brief["current_odds"]
 
 
+def _folded_board():
+    """Canonical draftkings + fanduel; its twin holds a FRESHER fanduel and an
+    extra betmgm (Authority's C1 probe, 2357Z)."""
+    twin = _EVENT_ID + 1
+    return [
+        *_in_game(),
+        _snap("fanduel", -7.5, 47.5, minutes=43, event_id=twin, home_prob=0.7),
+        _snap("betmgm", -7.5, 47.5, minutes=42, event_id=twin, home_prob=0.7),
+    ]
+
+
+def test_a_folded_game_detail_reads_the_same_rows_as_its_card():
+    from app.routes.feed import _attach_card_projected_pairs as feed_attach
+    from app.utils.proven_duplicates import latest_snapshot_for_each_bookmaker
+
+    rows = _folded_board()  # what detail's one folded read returns
+
+    # The card reads its own id; the fake hands back every row and the card
+    # read groups by event id, as the real statement does for one id.
+    item = {"type": "event", "data": _card()}
+    asyncio.run(feed_attach(_SavepointDB(rows), [item], [_event()]))
+    card = item["data"]["current_odds"][cpp.LIVE_PROJECTION_KEY]
+
+    detail = _live(cpp.own_event_rows(rows, _EVENT_ID))
+    assert detail == card
+    assert (detail["projected_home_score"], detail["bookmaker_count"]) == (29.5, 2)
+
+    # Control: the folded set the price table uses is a different board, so
+    # handing it to the marked pair would print a second final.
+    folded = _live(latest_snapshot_for_each_bookmaker(rows, _EVENT_ID))
+    assert folded is not None and folded["bookmaker_count"] == 3
+    assert folded["projected_home_score"] != card["projected_home_score"]
+
+
+def test_the_detail_route_on_a_folded_live_game_serves_its_cards_object(monkeypatch):
+    """C1 through `get_event` itself: the route reads canonical + twin in one
+    statement (the 6390 rig honours the id filter and returns the latest row per
+    (event, sportsbook)); the price table keeps all three sportsbooks, the marked
+    pair reads the canonical's two, exactly as the card does."""
+    from app.models.models import Event, OddsSnapshot, Sport
+    from app.routes import events as events_route
+    from app.routes.feed import _attach_card_projected_pairs as feed_attach
+    from tests.test_price_table_fold_6390 import (
+        ALIGNED_GHOST,
+        CANON_ID,
+        GHOST_ID,
+        _RouteSession,
+    )
+
+    async def _none(*_a, **_k):
+        return None
+
+    async def _empty(*_a, **_k):
+        return {}
+
+    monkeypatch.setattr(events_route, "_load_gei_percentiles", _empty)
+    monkeypatch.setattr(events_route, "_build_team_lookup", _empty)
+    monkeypatch.setattr(events_route, "resolve_market_born_duplicate", _none)
+
+    def _orm(row):
+        return OddsSnapshot(
+            id=row.id if row.event_id == _EVENT_ID else row.id + 50_000,
+            event_id=CANON_ID if row.event_id == _EVENT_ID else GHOST_ID,
+            bookmaker=row.bookmaker,
+            home_win_probability=row.home_win_probability,
+            away_win_probability=row.away_win_probability,
+            home_spread=row.home_spread,
+            over_under=row.over_under,
+            projected_home_score=row.projected_home_score,
+            projected_away_score=row.projected_away_score,
+            captured_at=row.captured_at,
+            valid_until=row.valid_until,
+        )
+
+    def _live_event():
+        event = Event(
+            id=CANON_ID,
+            sport_id=1,
+            home_team_name="Brest",
+            away_team_name="Paris Saint-Germain",
+            commence_time=_KICKOFF,
+            commence_time_source="espn",
+            status="live",
+            period="Q3",
+        )
+        event.sport = Sport(id=1, key="americanfootball_nfl", name="NFL")
+        return event
+
+    rows = [_orm(r) for r in _folded_board()]
+    events_route._event_detail_cache.clear()
+    session = _RouteSession(_live_event(), ALIGNED_GHOST, rows)
+    payload = asyncio.run(events_route.get_event(CANON_ID, db=session))
+    events_route._event_detail_cache.clear()
+
+    assert payload["status"] == "live"
+    assert session.odds_id_filters[0] == {CANON_ID, GHOST_ID}  # one folded read
+    assert sorted(b["bookmaker"] for b in payload["bookmaker_odds"]) == [
+        "betmgm", "draftkings", "fanduel",
+    ]
+    detail = payload["current_odds"][cpp.LIVE_PROJECTION_KEY]
+
+    card_event = _live_event()
+    item = {"type": "event", "data": {**_card(), "id": CANON_ID}}
+    asyncio.run(feed_attach(_SavepointDB(rows), [item], [card_event]))
+    card = item["data"]["current_odds"][cpp.LIVE_PROJECTION_KEY]
+
+    assert detail == card
+    assert (detail["projected_home_score"], detail["bookmaker_count"]) == (29.5, 2)
+
+
+def test_only_a_served_live_game_computes_the_card_pair(monkeypatch):
+    # Latency P3 — detail and search ask on every scheduled game; nothing runs.
+    calls = []
+    monkeypatch.setattr(cpp, "card_projected_pair", lambda *a, **k: calls.append(1))
+    assert _live(_in_game(), served="scheduled") is None
+    assert calls == []
+
+
 def test_attach_never_overwrites_and_never_writes_an_absent_object():
     odds = {"home_probability": 0.8}
     cpp.attach_card_projected_pair(odds, {cpp.LIVE_PROJECTION_KEY: None})
@@ -316,7 +453,12 @@ def test_detail_and_search_ask_with_the_status_they_serve_and_the_rows_they_read
     from app.routes import events
 
     detail = inspect.getsource(events.get_event)
-    assert "event_live_projection(\n                        all_latest_snapshots," in detail
+    assert (
+        "event_live_projection(\n                        own_event_rows(_latest_rows, event.id),"
+        in detail
+    )
+    assert "latest_snapshot_for_each_bookmaker(_latest_rows, event_id)" in detail
+    assert "event_live_projection(\n                        all_latest_snapshots," not in detail
     assert 'served_status=response.get("status")' in detail
 
     search = inspect.getsource(events.search_events)

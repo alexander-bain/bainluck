@@ -356,7 +356,15 @@ def event_live_projection(
     For `/api/events/{id}` and `/api/events/search`, which read each book's
     latest row themselves. The admission is the cards' (`card_projected_pair`),
     so all four routes answer one game the same way.
+
+    ``snapshots`` are the event's OWN rows (`own_event_rows`), never a folded
+    set: the cards read one id, so a page reading its twins too would print a
+    second final from a different set of sportsbooks.
     """
+    # Only a game served `live` can carry the key: skip the card pair entirely
+    # on every other status rather than compute it and throw it away.
+    if served_status != "live":
+        return None
     card = card_projection_card(event, served_status=served_status, sport_key=sport_key)
     pair = card_projected_pair(
         list(snapshots or ()),
@@ -368,6 +376,18 @@ def event_live_projection(
         period=card["period"],
     )
     return pair.get(LIVE_PROJECTION_KEY) if pair else None
+
+
+def own_event_rows(snapshots: Iterable, event_id: int) -> list:
+    """The rows of ``snapshots`` that belong to ``event_id`` itself.
+
+    `latest_odds_per_bookmaker_query` returns one latest row per (event,
+    sportsbook); filtered to one id this is exactly what the card read
+    (`read_card_projected_pairs`) groups for that card. Detail reads its folded
+    twins in the same statement for its own price table and blend; the marked
+    pair must not (#2920 C1).
+    """
+    return [s for s in snapshots if s.event_id == event_id]
 
 
 def attach_card_projected_pair(
