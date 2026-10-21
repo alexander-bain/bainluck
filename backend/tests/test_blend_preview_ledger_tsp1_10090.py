@@ -889,3 +889,28 @@ class TestRefresherBoundary:
             blend_preview.reset_registry_for_tests()
             for c in (listener, listener_client, client):
                 await (c.aclose() if hasattr(c, "aclose") else c.close())
+
+
+@pytest.mark.parametrize("column", ["opening_home_probability", "espn_win_prob_home"])
+async def test_postgres_decimal_context_publishes_real_ledger_preview(rig, column):
+    from decimal import Decimal
+    event = _ev()
+    setattr(event, column, Decimal("0.6000"))
+    ops = rig.k.propose(
+        EV, "kalshi", value=.7, event=event, row_sources=BASE10, row_rev=10,
+        observed_basis={"kalshi-1": NOW.timestamp() - 29}, stamped_at=_stamp(1),
+    )
+    assert ops[0]["base_rev"] == 10
+    assert json.loads(ops[0]["base"])[column] == .6
+    frames = _blends(await rig.run(rig.k, ops))
+    assert len(frames) == 1
+    assert frames[0]["preview"]["pending"]["kalshi"] == .7
+    assert rig.stats.get("ledger_refused", 0) == 0
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
+def test_nonfinite_decimal_context_remains_unpublishable(value):
+    from decimal import Decimal
+    event = _ev()
+    event.opening_home_probability = Decimal(value)
+    assert blend_preview.LedgerRegistry._base(BASE10, 10, event) == (None, None)
