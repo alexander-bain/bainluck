@@ -2121,15 +2121,16 @@ struct OddsChartView: View {
                         .position(x: plotFrame.minX + placement.centerX, y: 10)
                 }
                 if let liveSplit, let liveEdge {
-                    // #11356 — the tail wears the primary line's own colour:
-                    // one line, one identity, on both sides of 50%.
+                    // #11356 — the tail, and the arrival halo at its end, wear
+                    // the primary line's own colour: one line, one identity, on
+                    // both sides of 50%.
                     LiveChartEdgeMarker(
                         selection: selection, proxy: proxy, plotFrame: plotFrame,
                         tail: liveSplit.tail, label: "\(homeShort) \(liveEdge.homeLabel)",
                         rising: priceActivity?.homeDelta.map { $0 > 0 },
                         lineColor: colorForSource(liveSplit.source, sources: sources),
                         lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
-                        activity: priceActivity, pulseColor: teamColors?.home ?? .accentColor)
+                        activity: priceActivity, pulseColor: colorForSource(liveSplit.source, sources: sources))
                         .accessibilityHidden(true)
                 } else if let checkpoints {
                     // #4974 — the line's end is the resting endpoint the readout
@@ -2142,7 +2143,8 @@ struct OddsChartView: View {
                        x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
                         LiveChartEndpointFeedback(selection: selection, activity: nil,
                                                   probability: probability, isLive: false,
-                                                  color: teamColors?.home ?? .accentColor)
+                                                  color: colorForSource(PublicationCheckpointMount4974.blendSource,
+                                                                        sources: sources))
                             .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
@@ -2152,12 +2154,13 @@ struct OddsChartView: View {
                           let y = proxy.position(forY: latest.probability),
                           x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
                     // No line proven to carry the hero's number: the unlabelled
-                    // one-shot ring the chart had before #9436, unchanged.
+                    // one-shot ring the chart had before #9436, unchanged — in
+                    // the colour of the primary line it sits on (#11356).
                     LiveChartEndpointFeedback(selection: selection, activity: priceActivity,
                                               probability: latest.probability,
                                               isLive: EventPriceStreaming.isEligible(status) && liveUpdateStatus != .interrupted
                                                 && quoteIsCurrent,
-                                              color: teamColors?.home ?? .accentColor)
+                                              color: colorForSource(Self.primarySource(in: dataPoints), sources: sources))
                         .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)

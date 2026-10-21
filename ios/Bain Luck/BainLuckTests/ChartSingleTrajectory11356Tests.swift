@@ -366,6 +366,28 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
         XCTAssertTrue(chart.contains("case\"aggregate\":returnColor(hex:\"#059669\")"))
     }
 
+    /// The arrival halo is the end of the line it rides, so it wears that
+    /// line's colour — never the home team's over an emerald blend. Only the
+    /// colour moved: the finished page's resting dot stays still (`activity:
+    /// nil`, `isLive: false`) and the live gates are the ones it had.
+    func testTheArrivalHaloWearsThePrimaryLinesColour() throws {
+        let chart = try chartCode()
+        let start = try XCTUnwrap(chart.range(of: "LiveChartEdgeMarker(selection:selection,"))
+        let end = try XCTUnwrap(chart.range(of: "ifletfinishedEnd{", range: start.upperBound..<chart.endIndex))
+        let feedback = String(chart[start.lowerBound..<end.lowerBound])
+        XCTAssertFalse(feedback.contains("teamColors"), "a halo takes the home team's colour again")
+        XCTAssertTrue(feedback.contains("activity:priceActivity,pulseColor:colorForSource(liveSplit.source,sources:sources))"),
+                      "live: the halo and the tail share the line's colour")
+        XCTAssertTrue(feedback.contains("LiveChartEndpointFeedback(selection:selection,activity:nil,probability:probability,"
+                                        + "isLive:false,color:colorForSource(PublicationCheckpointMount4974.blendSource,"
+                                        + "sources:sources))"),
+                      "finished: the resting dot is the checkpoint layer's colour and never animates")
+        XCTAssertTrue(feedback.contains("isLive:EventPriceStreaming.isEligible(status)&&liveUpdateStatus!=.interrupted"
+                                        + "&&quoteIsCurrent,color:colorForSource(Self.primarySource(in:dataPoints),"
+                                        + "sources:sources))"),
+                      "fallback: the ring is the colour of the primary line its point is taken from")
+    }
+
     func testSourcesIsOneToggleThatAddsLinesUnderThePrimary() throws {
         let chart = try chartCode()
         XCTAssertTrue(chart.contains("sourcesOpen:$inlineSourcesOpen,rail:false)"))
