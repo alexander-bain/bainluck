@@ -29,6 +29,12 @@ import Foundation
 /// - It shows only for the same quote status the page holds, on a live blend
 ///   hero whose committed revision is this event's one row
 ///   (`LiveEventPriceReconciliation.pairedFoldRevision`).
+///
+/// The chart may end on the same provisional number, as a disposable
+/// projection dated by `display_observed_at` (`chartFrames`); with no usable
+/// observation clock, or one not newer than the drawn line, it keeps committed
+/// history. The probability's clock follows the same admission
+/// (`displayedObservedAt`).
 nonisolated struct BlendPreviewFrame: Decodable, Sendable, Equatable {
     enum Kind: String, Sendable { case blend, revoke }
 
@@ -47,9 +53,13 @@ nonisolated struct BlendPreviewFrame: Decodable, Sendable, Equatable {
     let ttlMs: Int?
     /// Present on every `revoke`.
     let throughSeq: Int?
+    /// When the contributing readings were observed (`display_observed_at`),
+    /// or nil when unknown. Never the legacy `observed_at`: that is the
+    /// producer's attempt time, which a persistence retry moves.
+    let displayObservedAt: Date?
 
     init(eventId: Int, p: Double?, status: String?, kind: Kind, epoch: Int, seq: Int,
-         baseRev: Int? = nil, ttlMs: Int? = nil, throughSeq: Int? = nil) {
+         baseRev: Int? = nil, ttlMs: Int? = nil, throughSeq: Int? = nil, displayObservedAt: Date? = nil) {
         self.eventId = eventId
         self.p = p
         self.status = status
@@ -59,10 +69,11 @@ nonisolated struct BlendPreviewFrame: Decodable, Sendable, Equatable {
         self.baseRev = baseRev
         self.ttlMs = ttlMs
         self.throughSeq = throughSeq
+        self.displayObservedAt = displayObservedAt
     }
 
     private enum CodingKeys: String, CodingKey {
-        case eventId, p, status, rev, preview
+        case eventId, p, status, rev, preview, displayObservedAt
     }
 
     private enum PreviewKeys: String, CodingKey {
@@ -95,6 +106,9 @@ nonisolated struct BlendPreviewFrame: Decodable, Sendable, Equatable {
         baseRev = try preview.decodeIfPresent(Int.self, forKey: .baseRev)
         ttlMs = try preview.decodeIfPresent(Int.self, forKey: .ttlMs)
         throughSeq = try preview.decodeIfPresent(Int.self, forKey: .throughSeq)
+        // Additive: a missing, null or unreadable clock leaves the time
+        // unknown and the frame itself still decodes, as on web.
+        displayObservedAt = (try? c.decodeIfPresent(String.self, forKey: .displayObservedAt))?.asDate
         guard Self.safe(epoch), Self.safe(seq) else { throw refuse("unordered preview") }
         switch kind {
         case .revoke:
@@ -126,6 +140,8 @@ nonisolated struct BlendPreviewState: Sendable, Equatable {
     let status: String?
     /// On the page's own `now()` clock: after this the preview is not shown.
     let expiresAt: TimeInterval
+    /// The frame's `displayObservedAt`; nil when unknown.
+    var observedAt: Date? = nil
 }
 
 /// What one event's reader holds: its preview, and the highest epoch it has seen.
@@ -164,7 +180,8 @@ nonisolated enum BlendPreview {
             if let state, sameEpoch, frame.seq <= state.seq { return state }
             guard let p = frame.p, let baseRev = frame.baseRev, let ttlMs = frame.ttlMs else { return state }
             return BlendPreviewState(eventId: eventId, epoch: frame.epoch, seq: frame.seq, baseRev: baseRev,
-                                     p: p, status: frame.status, expiresAt: now + Double(ttlMs) / 1000)
+                                     p: p, status: frame.status, expiresAt: now + Double(ttlMs) / 1000,
+                                     observedAt: frame.displayObservedAt)
         }
     }
 
@@ -179,6 +196,33 @@ nonisolated enum BlendPreview {
               let committed = LiveEventPriceReconciliation.pairedFoldRevision(in: held),
               committed.rows.count == 1, let rev = committed.rows[String(state.eventId)] else { return nil }
         return rev > state.baseRev ? nil : state.p
+    }
+
+    /// The observation clock of the probability actually displayed (web's
+    /// `displayedProbabilityObservedAt`): `committed` whenever the headline
+    /// shows committed truth; the preview's own observation time while it
+    /// shows one — nil when that is unknown, never the committed clock.
+    static func displayedObservedAt(_ state: BlendPreviewState?, held: EventDetail?, now: TimeInterval,
+                                    committed: Date?) -> Date? {
+        guard displayed(state, held: held, now: now) != nil else { return committed }
+        return state?.observedAt
+    }
+
+    /// The pushed frames the chart draws, plus the displayed preview at its
+    /// observation time (web's `overlayBlendPreviewLine`). A render projection
+    /// only: `frames` and the history are never written. The same admission as
+    /// the headline; a preview with no observation time, or one not strictly
+    /// newer than every committed blend point, leaves the line committed. The
+    /// point carries no venue reading, so a page with no served blend line
+    /// (`extendingServedSourceSeries`) never draws it.
+    static func chartFrames(_ frames: [LiveBlendPoint], history: EventHistoryResponse?,
+                            state: BlendPreviewState?, held: EventDetail?, now: TimeInterval) -> [LiveBlendPoint] {
+        guard let p = displayed(state, held: held, now: now), let at = state?.observedAt else { return frames }
+        for stamp in history?.aggregateLine ?? [] {
+            guard let committedAt = stamp.timestamp.asDate, committedAt < at else { return frames }
+        }
+        if let last = frames.last, last.date >= at { return frames }
+        return frames + [LiveBlendPoint(date: at, homeProbability: p)]
     }
 
     /// `event` with the provisional hero overlaid, or `event` itself when no

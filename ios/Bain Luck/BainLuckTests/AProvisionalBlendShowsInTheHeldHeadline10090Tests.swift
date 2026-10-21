@@ -6,8 +6,8 @@ import XCTest
 /// blend overlays the hero only while no newer committed revision exists, is
 /// fenced by a monotonic epoch floor, orders by seq within an epoch, is
 /// withdrawn by revoke, expires, is cleared on reconnect and at the end of the
-/// match, and never reaches `onFrame`, the committed `event`, the chart or the
-/// delivery clock.
+/// match, and never reaches `onFrame`, the committed `event`, the stored chart
+/// history or the delivery clock.
 @MainActor
 final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
     private static let id = 4242
@@ -423,8 +423,9 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
     }
 
     /// Every page test reads `vm.headline(...)` directly, so only the page's
-    /// source shows the hero, and the hero alone, is fed the headline.
-    func testTheHeroAndItsSlideReadTheHeadlineAndTheChartDoesNot() throws {
+    /// source shows the hero is fed the headline. The chart's projection of the
+    /// same preview is pinned in `TheHeldChartEndsOnThePreviewAtItsObservation10090Tests`.
+    func testTheHeroAndItsSlideReadTheHeadlineAndTheChartReadsOnlyItsProjection() throws {
         let page = try Self.source("Bain Luck/Views/EventDetailView.swift")
         XCTAssertEqual(page.components(separatedBy: "heroSection(vm.headline(event))").count - 1, 1,
                        "the hero is drawn from the headline")
@@ -436,7 +437,8 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
         XCTAssertTrue(rising.contains("guard vm.blendPreview == nil else { return nil }"))
         let chart = try Self.slice(page, from: "OddsChartView(eventId:",
                                   to: "vm.publicationJourney, key: publicationTaskKey))")
-        XCTAssertFalse(chart.contains("vm.headline("), "the chart keeps committed truth")
+        // No raw preview state: only the admitted projections reach the chart.
         XCTAssertFalse(chart.contains("blendPreview"))
+        XCTAssertFalse(chart.contains("liveFrames: vm.liveBlend"))
     }
 }

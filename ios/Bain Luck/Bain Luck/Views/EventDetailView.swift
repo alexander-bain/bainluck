@@ -393,9 +393,10 @@ struct EventDetailView: View {
             ScrollView {
                 VStack(spacing: 12) {
                     VStack(spacing: usesApprovedHeadlinePresentation9483(event) ? 0 : 12) {
-                    // #10090 — the hero alone may show a provisional blend;
-                    // with none held this is `event` itself. The chart and
-                    // every other section keep committed truth.
+                    // #10090 — the hero may show a provisional blend; with
+                    // none held this is `event` itself. The chart projects the
+                    // same one (`vm.chartFrames`); every other section keeps
+                    // committed truth.
                     heroSection(vm.headline(event))
                         .background(GeometryReader { proxy in
                             Color.clear.preference(
@@ -429,8 +430,9 @@ struct EventDetailView: View {
                                          liveUpdateStatus: vm.liveUpdateStatus,
                                          priceActivity: vm.priceActivity,
                                          // #9436 — the hero's own number, for the
-                                         // dot on the end of the line.
-                                         liveEdge: LiveEdgeReading.current(in: event),
+                                         // dot on the end of the line. #10090: the
+                                         // number the hero prints, preview included.
+                                         liveEdge: LiveEdgeReading.current(in: vm.headline(event)),
                                          // #9483 Argon P1 — the edge, its number and the ring
                                          // are live only while the headline calls this quote
                                          // current, on its own clock: the tick ages them out
@@ -441,13 +443,14 @@ struct EventDetailView: View {
                                              status: event.status, commenceTime: event.commenceTime?.asDate,
                                              isOpeningLine: event.currentOdds.map {
                                                  OpeningLineHero.resolve($0, for: event).isOpeningLine } ?? false,
-                                             observedAt: event.heroProbabilityObservedAt?.asDate,
+                                             // #10090 — the displayed number's own clock.
+                                             observedAt: vm.displayedProbabilityObservedAt(event),
                                              deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
                                              now: tick.date)
                                              && !EventState.showsVenueSettledVerdict(
                                                  event.status, venueSettled: event.venueSettled,
                                                  commenceTime: event.commenceTime?.asDate, now: tick.date),
-                                          pairedAwayLabel9483: LivePriceActivity.displayedLabels(in: event).away,
+                                          pairedAwayLabel9483: LivePriceActivity.displayedLabels(in: vm.headline(event)).away,
                                          // #10456 — the served winner pair, both
                                          // sides: admission for the balance ink.
                                          servedHomeProbability: event.currentOdds?.homeProbability,
@@ -465,7 +468,9 @@ struct EventDetailView: View {
                                          // #920 — the pushed blends the hero is
                                          // already showing, so the chart's right
                                          // edge reaches the same moment it does.
-                                         liveFrames: vm.liveBlend,
+                                         // #10090: plus a displayed preview, at its
+                                         // observation time, never stored.
+                                         liveFrames: vm.chartFrames(event),
                                          // #925 — the scrub readout rides INSIDE the
                                          // chart, above its plot, so the finger on
                                          // the chart and the text it rewrites are on
@@ -2503,7 +2508,8 @@ struct EventDetailView: View {
             if let phase = EventHeadlinePhase9483.resolve(
                 status: event.status, commenceTime: event.commenceTime?.asDate,
                 isOpeningLine: isOpeningLine,
-                observedAt: event.heroProbabilityObservedAt?.asDate,
+                // #10090 — a preview's own observation time; unknown is undated.
+                observedAt: vm.displayedProbabilityObservedAt(event),
                 deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
                 now: tick.date) {
                 EventHeadlinePhaseLabel9483(phase: phase, baseline: baseline, maxWidth: maxWidth)
