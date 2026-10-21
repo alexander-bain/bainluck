@@ -131,12 +131,18 @@ class FoldedQuoteProjector:
         self._last_success_at = None
         self._last_load_started_at = float("-inf")
 
-    def project_preview(self, event_id, frame, *, members, floors, elapsed_ms=0):
+    def preview_base(self, event_id, *, members):
         key = (event_id, frozenset(str(member) for member in members))
         base = self._preview_bases.get(key)
         if base is None:
             return None
         self._preview_bases.move_to_end(key)
+        return base
+
+    def project_preview(self, event_id, frame, *, members, floors, elapsed_ms=0):
+        base = self.preview_base(event_id, members=members)
+        if base is None:
+            return None
         return base.project(frame, members=members, floors=floors, elapsed_ms=elapsed_ms)
 
     def forget_preview_base(self, event_id):
