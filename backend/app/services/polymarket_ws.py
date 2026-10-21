@@ -13,6 +13,7 @@ import asyncio
 import inspect
 import json
 import logging
+import math
 import random
 import ssl
 from typing import Any, Callable, Optional
@@ -303,6 +304,60 @@ def _assets_in(message: Any) -> set[str]:
                 if isinstance(change, dict) and change.get("asset_id"):
                     found.add(change["asset_id"])
     return found
+
+
+def _price_change_quotes(message: dict) -> list[dict]:
+    """Forward timestamped current BBOs, never the changed depth-level price.
+
+    A depth change can freshly observe an unchanged top of book. Preserve its
+    venue timestamp so the consumer's existing clock/eligibility guards decide
+    whether it can advance an observation; missing clocks are not replaced.
+    """
+    timestamp = message.get("timestamp")
+    try:
+        stamp = float(timestamp)
+        if (
+            isinstance(timestamp, bool)
+            or not math.isfinite(stamp)
+            or stamp <= 0
+            or not stamp.is_integer()
+        ):
+            return []
+    except (TypeError, ValueError, OverflowError):
+        return []
+    changes = message.get("price_changes")
+    if not isinstance(changes, list):
+        return []
+    quotes = []
+    for change in changes:
+        if not isinstance(change, dict):
+            continue
+        asset = change.get("asset_id")
+        bid, ask = change.get("best_bid"), change.get("best_ask")
+        if (
+            not isinstance(asset, str)
+            or not asset
+            or isinstance(bid, bool)
+            or isinstance(ask, bool)
+        ):
+            continue
+        try:
+            b, a = float(bid), float(ask)
+            if not (math.isfinite(b) and math.isfinite(a) and 0 <= b <= a <= 1):
+                continue
+        except (TypeError, ValueError, OverflowError):
+            continue
+        quotes.append(
+            {
+                "event_type": "best_bid_ask",
+                "asset_id": asset,
+                "market": message.get("market"),
+                "timestamp": timestamp,
+                "best_bid": bid,
+                "best_ask": ask,
+            }
+        )
+    return quotes
 
 
 def _snapshot_quotes(message: Any) -> list[dict]:
@@ -887,6 +942,9 @@ class PolymarketWebSocket:
                     max_size=MAX_MESSAGE_BYTES,
                     max_queue=self._max_queue,
                 ) as ws:
+                    # Per-connection state: one last successful quote per
+                    # subscribed asset. A reconnect starts a new observation epoch.
+                    quote_versions = dict.fromkeys(asset_ids or ())
                     connected_at = loop.time()
                     self._shards_connected.add(shard)
                     self._shard_connected_at[shard] = connected_at
@@ -991,18 +1049,30 @@ class PolymarketWebSocket:
                                         await self._price_quotes(quotes, shard, failure)
                                     continue
 
+                                if event_type == "price_change" and self.on_price:
+                                    quotes = _price_change_quotes(data)
+                                    if asset_ids is not None:
+                                        quotes = [
+                                            q
+                                            for q in quotes
+                                            if q["asset_id"] in asset_ids
+                                        ]
+                                    await self._price_quotes(
+                                        quotes, shard, book_snapshot=False,
+                                        quote_versions=quote_versions,
+                                    )
+                                    continue
+
                                 if event_type in (
                                     "best_bid_ask", "last_trade_price"
                                 ) and not self._routes(shard, data):
                                     continue
 
                                 if event_type == "best_bid_ask" and self.on_price:
-                                    try:
-                                        result = self.on_price(data)
-                                        if asyncio.iscoroutine(result):
-                                            await result
-                                    except Exception:
-                                        logger.exception("Polymarket price handler error")
+                                    await self._price_quotes(
+                                        [data], shard, book_snapshot=False,
+                                        quote_versions=quote_versions,
+                                    )
 
                                 elif event_type == "last_trade_price" and self.on_trade:
                                     try:
@@ -1203,8 +1273,11 @@ class PolymarketWebSocket:
         quotes: list[dict],
         shard: Optional[int],
         failure: Optional[Exception] = None,
+        *,
+        book_snapshot: bool = True,
+        quote_versions: Optional[dict] = None,
     ) -> None:
-        """Hand a snapshot's extracted quotes to `on_price`, in order.
+        """Hand extracted current quotes to `on_price`, in order.
 
         Routing is read per quote, at hand-off, so a fence narrowed while an
         earlier quote's callback waited still applies. ``failure`` is the
@@ -1218,13 +1291,40 @@ class PolymarketWebSocket:
             for quote in quotes[start : start + batch_size]:
                 if shard is not None and not self._routes(shard, quote):
                     continue
-                self._book_snapshot_quotes += 1
+                asset = quote.get("asset_id")
+                identity = None
+                if quote_versions is not None and asset in quote_versions:
+                    # Validate identity without changing legacy top-level price
+                    # handling when the old protocol omitted its timestamp.
+                    normalized = _price_change_quotes({
+                        "timestamp": quote.get("timestamp"),
+                        "price_changes": [quote],
+                    })
+                    if normalized:
+                        identity = (
+                            int(float(quote["timestamp"])),
+                            float(quote["best_bid"]), float(quote["best_ask"]),
+                        )
+                        previous = quote_versions[asset]
+                        if previous is not None and (
+                            identity == previous or identity[0] < previous[0]
+                        ):
+                            continue
+                if book_snapshot:
+                    self._book_snapshot_quotes += 1
                 try:
                     result = self.on_price(quote)
                     if asyncio.iscoroutine(result):
                         await result
+                    if identity is not None:
+                        quote_versions[asset] = identity
                 except Exception:
-                    logger.exception("Polymarket book snapshot price handler error")
+                    # A failed callback leaves the identity retryable; failure
+                    # in one child must not hide healthy siblings.
+                    logger.exception(
+                        "Polymarket book snapshot price handler error"
+                        if book_snapshot else "Polymarket price handler error"
+                    )
                 result = None
             if start + batch_size < len(quotes):
                 await asyncio.sleep(0)
