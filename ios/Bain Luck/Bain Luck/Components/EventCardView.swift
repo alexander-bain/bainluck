@@ -451,7 +451,23 @@ struct EventCardView: View {
                     // Under the team names, past the 24pt crest and the row's 8pt gap.
                     .padding(.leading, 32)
             }
+
+            if let liveProjection = liveProjectedFinal2920 {
+                LiveProjectedFinalLine2920(
+                    printed: liveProjection, awayName: event.awayTeam, homeName: event.homeTeam)
+                    .padding(.leading, 32)
+            }
         }
+    }
+
+    /// #2920 — on a live game, the producer's marked in-play pair beneath the two
+    /// rows that print the score, and only that pair: never the bare
+    /// `projected_*` keys, which can still hold the pregame reading. Nil on every
+    /// other state and wherever the pair cannot be shown honestly; nil draws
+    /// nothing. Internal so the suite reaches the wiring.
+    var liveProjectedFinal2920: LiveProjectedFinalAdmission2920.Printed? {
+        guard isLive, !isSuspended else { return nil }
+        return LiveProjectedFinal2920.card(event)
     }
 
     /// #11296 — on a final, the sportsbooks' last pair before the scheduled
