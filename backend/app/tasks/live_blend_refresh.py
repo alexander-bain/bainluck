@@ -1344,10 +1344,15 @@ class HeldRowQuotes:
     """
 
     #: One optional DB round trip per nonempty game chunk. A sample that times
-    #: out backs every later sample off for this long, so a sick pool costs at
-    #: most one timeout per window however many chunks a flush plans.
+    #: out backs later samples off. Preview owners get one early recovery
+    #: opportunity; sustained failure then costs at most one timeout per long
+    #: window however many chunks a flush plans.
     SAMPLE_TIMEOUT_S = 0.15
     SAMPLE_BACKOFF_S = 5.0
+    #: One early recovery probe per preview-clock failure episode, then the
+    #: existing long backoff. A brief DB timeout must not freeze observations
+    #: for five seconds after reads recover. No accepted input is re-dated.
+    SAMPLE_RECOVERY_S = 0.25
     #: #10090 — `stored_at_or_after` waits at most this for a relation lock.
     AMBIGUITY_READ_LOCK_TIMEOUT_MS = 10
     #: #10090 IDLE BOUND (Root page max, run 20261021T111728). Samples run only
@@ -1375,6 +1380,8 @@ class HeldRowQuotes:
         self._input_bounds: dict[int, tuple[int, float, float | None]] = {}
         self._database_bound: float | None = None
         self._sample_backoff_until = 0.0
+        self._sample_failure_episode = False
+        self._sample_failure_ordinal = 0
         self.sample_failures = 0
         # Idle bound (class doc). The owning refresher installs its CURRENT
         # preview events; empty means no idle sampling at all.
@@ -1406,6 +1413,12 @@ class HeldRowQuotes:
 
         if self._now() < self._sample_backoff_until:
             return False
+        if self._sample_failure_episode:
+            if self._sampling:
+                return False
+            # Consume the recovery opportunity BEFORE the first await. A
+            # concurrent caller or cancellation cannot multiply early probes.
+            self._sample_backoff_until = self._now() + self.SAMPLE_BACKOFF_S
         self._sessions = sessions
         self._sample_started += 1
         ordinal = self._sample_started
@@ -1421,13 +1434,26 @@ class HeldRowQuotes:
                 if ordinal > self._sample_published:
                     self._sample_published = ordinal
                     self._database_bound = value.timestamp()
+                    if ordinal > self._sample_failure_ordinal:
+                        self._sample_failure_episode = False
+                        self._sample_backoff_until = 0.0
                 self._last_sample_done = self._now()
                 return True
         except Exception:
             # The ordinary price writer stays available when the optional fast
             # path cannot establish an order. Cancellation still propagates.
             self.sample_failures += 1
-            self._sample_backoff_until = self._now() + self.SAMPLE_BACKOFF_S
+            if ordinal > self._sample_published:
+                delay = (
+                    self.SAMPLE_RECOVERY_S
+                    if not self._sample_failure_episode and self.preview_events()
+                    else self.SAMPLE_BACKOFF_S
+                )
+                self._sample_failure_episode = True
+                self._sample_failure_ordinal = max(self._sample_failure_ordinal, ordinal)
+                self._sample_backoff_until = max(
+                    self._sample_backoff_until, self._now() + delay
+                )
             return False
         finally:
             self._sampling -= 1
@@ -1572,6 +1598,8 @@ class HeldRowQuotes:
             # Shares the sample's window: a sick pool still costs one timeout
             # per window, and later sample attempts back off behind this one.
             self.sample_failures += 1
+            self._sample_failure_episode = True
+            self._sample_failure_ordinal = self._sample_started
             self._sample_backoff_until = self._now() + self.SAMPLE_BACKOFF_S
             return None
         found = set()

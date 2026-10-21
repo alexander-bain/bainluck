@@ -236,7 +236,7 @@ class TestBoundsAndLifecycle:
         assert await held.sample_database_clock(db) is False
         assert held.sample_failures == 1 and db.calls == calls0 + 1
         until = held._sample_backoff_until
-        assert until == pytest.approx(clock.t + HeldRowQuotes.SAMPLE_BACKOFF_S)
+        assert until == pytest.approx(clock.t + HeldRowQuotes.SAMPLE_RECOVERY_S)
         calls = db.calls
         held.note_input(_mark())
         await held.sample_database_clock(db)  # inside backoff: no read
