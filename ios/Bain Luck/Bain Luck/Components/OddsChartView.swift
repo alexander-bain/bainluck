@@ -1156,8 +1156,8 @@ struct OddsChartView: View {
                             // #9483 tennis — the held reading above its dated
                             // baseline, in the card's place; opening holds the
                             // reading shown, so the return finds the same one.
+                            // #10796 — enlarged, it follows the plot instead.
                             if let tennis {
-                                // #10796 — enlarged, it follows the plot instead.
                                 if enlargedPlotFloor == nil {
                                     TennisScrubbedReadingPanel9483(selection: selection,
                                                                    panel: tennisPanel(tennis, expanded: true))

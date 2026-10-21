@@ -606,8 +606,16 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
     func testTheFullSizeChartShowsTheReadingAndTheLiftHoldsIt() throws {
         let chart = try stripped(chartPath)
         XCTAssertTrue(chart.contains(
-            "iflettennis{TennisScrubbedReadingPanel9483(selection:selection,panel:tennisPanel(tennis,expanded:true))}elseifletcard=Self.fullscreenReadout("),
+            "iflettennis{ifenlargedPlotFloor==nil{TennisScrubbedReadingPanel9483(selection:selection,panel:tennisPanel(tennis,expanded:true))}}elseifletcard=Self.fullscreenReadout("),
                       "the full-size chart lost the tennis reading, or it displaced other sports' card")
+        // #10796 — enlarged finished tennis reads it below the plot instead.
+        XCTAssertTrue(chart.contains(
+            "momentCaption(moments)ifenlargedPlotFloor!=nil,lettennis{TennisScrubbedReadingPanel9483(selection:selection,panel:tennisPanel(tennis,expanded:true))}}.padding()"),
+                      "an enlarged finished-tennis cover lost the reading below its plot")
+        XCTAssertTrue(chart.contains(".frame(height:enlargedPlotFloor)legendView("),
+                      "the enlarged plot no longer keeps the inline chart's height")
+        XCTAssertTrue(chart.contains(".modifier(FullscreenOverflowScroll10796(scrolls:enlargedPlotFloor!=nil))"),
+                      "the enlarged cover no longer scrolls")
         XCTAssertTrue(chart.contains("iflettennis,letdate=selection.date{tennisPin.hold(tennis.inspect(at:date))}selection.end()"),
                       "a lifted finger must hold its reading before the selection clears")
         XCTAssertTrue(chart.contains("tennisPanel(tennis,expanded:false)"), "the page lost the held reading")
