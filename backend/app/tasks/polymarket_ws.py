@@ -2753,7 +2753,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         FLUSH_CHUNK_ROWS, OPEN_CONTRACT_MAX_CONCURRENT_HANDSHAKES,
         book_snapshot_prices_enabled, open_contract_receiver_process_enabled,
         OPEN_CONTRACT_MAX_QUEUE, OPEN_FLUSH_CHUNKS_PER_FLUSH,
-        open_contract_asset_map, open_contract_event_candidates,
+        open_contract_asset_map_cooperatively,
+        open_contract_event_candidates_cooperatively,
         open_contract_markets_stmt, open_contract_outcome_stmts,
         open_contract_prices_enabled, plan_flush_chunks, tokens_by_contract,
     )
@@ -2829,7 +2830,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     r[0] for r in market_rows if r[0] not in excluded
                 ):
                     outcome_rows.extend((await session.execute(stmt)).all())
-            admission = open_contract_asset_map(
+            # #10090: this mapping shares the loop with every PM socket.
+            admission = await open_contract_asset_map_cooperatively(
                 market_rows, outcome_rows, taken_assets, excluded_market_ids,
                 taken_tokens_by_contract,
             )
@@ -2839,7 +2841,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 "streaming the linked slate only this run"
             )
             return None, True, {}, False
-        candidates = open_contract_event_candidates(market_rows, admission)
+        candidates = await open_contract_event_candidates_cooperatively(
+            market_rows, admission
+        )
         if not candidates:
             return admission, False, {}, False
         try:
