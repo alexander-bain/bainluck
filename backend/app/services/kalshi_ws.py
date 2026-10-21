@@ -100,7 +100,8 @@ class _KalshiCallbackDispatch:
         except Exception:
             logger.exception("%s handler error", label)
 
-    async def submit(self, callback, payload, label, *, lifecycle=False, prepare=None):
+    async def submit(self, callback, payload, label, *, lifecycle=False, prepare=None,
+                     discard_if_delayed=False):
         # Callbacks without the explicit preparation contract retain their
         # original synchronous ordering. Defer only opted-in, prepared work.
         if lifecycle and prepare is None:
@@ -114,11 +115,15 @@ class _KalshiCallbackDispatch:
         )
         parts = ticker.upper().rsplit("-", 1) if isinstance(ticker, str) else []
         if len(parts) != 2 or not all(parts):
+            if discard_if_delayed:
+                return
             await self.drain()
             await self._call(callback, payload, label, prepare)
             return
         key = parts[0]
         previous = self._tails.get(key)
+        if discard_if_delayed and (previous is not None or self._closing):
+            return  # optional observations never wait behind settlement work
         if not lifecycle and previous is None:
             await self._call(callback, payload, label)
             return
@@ -225,6 +230,7 @@ class KalshiWebSocket:
         self._reconnect_count = 0
 
         self.on_ticker: Optional[Callable] = None
+        self.on_book_observation: Optional[Callable] = None
         self.on_lifecycle: Optional[Callable] = None
         self.on_lifecycle_prepare: Optional[Callable] = None
         self.on_trade: Optional[Callable] = None
@@ -657,7 +663,7 @@ class KalshiWebSocket:
             type(sid) is int and sid >= 0 and type(seq) is int and seq >= 0
             and previous is not None and seq > previous + 1
         )
-        quote = self._book.apply(data)
+        quote = self._book.apply(data, observe_unchanged=self.on_book_observation is not None)
         # Normal frames inspect only their ticker. A real SID gap invalidates
         # its affected books; do wider work only then, never for the full slate
         # on every delta. Include this ticker even if this very frame rebuilt
@@ -682,6 +688,13 @@ class KalshiWebSocket:
                 self.exact_trace.derived(data, quote, "ORDERBOOK_DERIVED")
             except Exception:
                 pass
+        if quote is not None and quote.pop("_observation_only", False):
+            if self.on_book_observation is not None:
+                # No last trade or primary-input identity is minted, and the
+                # ordinary price callback/write path never sees this packet.
+                await dispatch.submit(self.on_book_observation, quote, "Book observation",
+                                      discard_if_delayed=True)
+            return
         if quote is None or not self.on_ticker:
             return
         last = self._last_trade.get(quote["market_ticker"])

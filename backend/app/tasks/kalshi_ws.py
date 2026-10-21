@@ -1324,6 +1324,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # Optional DNPL observations only: same quote retains continuity, while
     # changes/invalidity/reconnection end it. Never durable write debt.
     observation_continuity = {}
+    # One disposable same-BBO observation per eligible outcome. These never
+    # enter price_buffer, primary quote custody, held quotes or final-drain debt.
+    book_observation_pending = {}
     # #10090: the steady game clients (see "Connections" below), declared
     # here because the bundled-pair proof readers iterate them.
     game_clients: list[_KalshiClient] = []
@@ -1413,8 +1416,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         ids = ticker_to_ids.get(ticker)
         if ids is None or ids[0] in prices.settled_market_ids:
             return None
+        # A foreign-SID excursion can restore legacy BBO/primary identity
+        # without a new snapshot. Queued observations must retain that proof.
         owners = tuple(
-            (id(client.sock), getattr(client.sock, "_primary_generation", None))
+            (id(client.sock), getattr(client.sock, "_primary_generation", None),
+             getattr(getattr(client.sock, "_book", None),
+                     "_observation_snapshot_sids", {}).get(ticker))
             for client in game_clients
             if ticker in client.tickers and client.task is not None and not client.task.done()
         )
@@ -2692,6 +2699,82 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         event=event_id_by_outcome.get(outcome_id), probability=prob, mark=mark,
                     )
 
+    async def handle_book_observation(msg, client):
+        ticker = (msg.get("market_ticker") or "").upper()
+        ids = ticker_to_ids.get(ticker)
+        if ids is None or ticker_owner.get(ticker) is not client:
+            return
+        market_id, oid = ids
+        eid = event_id_by_outcome.get(oid)
+        if (eid not in blend_refresher.preview_events or eid not in live_event_ids
+                or oid in non_blend_outcome_ids or market_id in prices.settled_market_ids):
+            return
+        bid, ask = _parse_dollar(msg.get("yes_bid_dollars")), _parse_dollar(msg.get("yes_ask_dollars"))
+        value = _kalshi_yes_probability(bid, ask, None)
+        midpoint = client.sock.current_book_midpoint(ticker)
+        # Re-observe only a current tight midpoint; no last-trade/ask fallback.
+        if (value is None or not 0 < value < 1
+                or midpoint is None or round(float(midpoint), 6) != round(value, 6)):
+            return
+        held = getattr(blend_refresher, "held_quotes", None)
+        # Read-only freeze BEFORE the first await. Do not replace the bound of
+        # a pending price input by calling held.note_input for display work.
+        bound = getattr(held, "_database_bound", None)
+        signature = observation_signature(ticker)
+        async with buffer_lock:
+            if (signature is None or observation_signature(ticker) != signature
+                    or ticker_owner.get(ticker) is not client):
+                return
+            mark = tail_receipts.note_input(eid, oid, value, "book_observation", msg.get("ts_ms"))
+            if mark is not None:
+                book_observation_pending[oid] = (eid, value, bound, mark, ticker, signature)
+                flush_wake.set()
+
+    async def flush_book_observations():
+        async with buffer_lock:
+            if not book_observation_pending:
+                return
+            snapshot = dict(book_observation_pending)
+            book_observation_pending.clear()
+            window = getattr(blend_refresher, "_admission", None)
+            releases = {entry[0]: window.released.get(entry[0], 0) if window else 0
+                        for entry in snapshot.values()}
+        prices.flush_work += 1  # observation work also obeys the flush cadence
+        groups = {}
+        for oid, (eid, value, bound, mark, _ticker, _signature) in snapshot.items():
+            groups.setdefault(eid, {})[oid] = (value, bound, mark)
+
+        async def validate(event_ids):
+            async with buffer_lock:
+                owned = (prices.held_events(blend_refresher)
+                         if prices.stamping is not None and not prices.stamping.done() else set())
+                if owned is None or getattr(blend_refresher, "_admission", None) is not window:
+                    return set()
+                # A price change always wins; optional observation work never
+                # borrows or advances its pending stamp's snapshot.
+                busy = {event_id_by_outcome.get(oid) for oid in price_buffer}
+                allowed = set()
+                for eid in event_ids:
+                    if (eid in owned or eid in busy or eid not in live_event_ids
+                            or eid not in blend_refresher.preview_events
+                            or (window and window.released.get(eid, 0) != releases[eid])):
+                        continue
+                    if all(event_id_by_outcome.get(oid) == eid
+                           and oid not in non_blend_outcome_ids
+                           and market_id_by_outcome.get(oid) not in prices.settled_market_ids
+                           and observation_signature(entry[4]) == entry[5]
+                           for oid, entry in snapshot.items() if entry[0] == eid):
+                        allowed.add(eid)
+                return allowed
+
+        await blend_refresher.preview_accepted_observations(groups, validate)
+        held = getattr(blend_refresher, "held_quotes", None)
+        if held is not None and any(entry[2] == getattr(held, "_database_bound", None)
+                                    for entry in snapshot.values()):
+            # No price transaction may have sampled during a quiet period.
+            # This sample is for FUTURE input only, never the drained snapshot.
+            await held.sample_database_clock(get_task_session)
+
     # Shared by every auxiliary socket and the main/fallback open-leg route.
     # Wait before opening a session; unwind the transaction before the permit.
     open_grade_admission = asyncio.Semaphore(OPEN_CONTRACT_GRADE_CONCURRENCY)
@@ -2981,6 +3064,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         if kind == "game":
             sock.book_tickers = client.tickers & book_population()
         sock.on_ticker = functools.partial(handle_ticker, client=client)
+        if kind == "game" and getattr(blend_refresher, "preview_events", ()):
+            sock.on_book_observation = functools.partial(handle_book_observation, client=client)
         if kind == "game":
             sock.on_lifecycle = functools.partial(handle_lifecycle, client=client)
             sock.on_lifecycle_prepare = functools.partial(prepare_lifecycle, client=client)
@@ -3157,7 +3242,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         async with flush_gate:
             started = time.monotonic()
             try:
-                return await flush_prices(flush_started)
+                result = await flush_prices(flush_started)
+                await flush_book_observations()
+                return result
             finally:
                 flush_timings.flushed(time.monotonic() - started)
 

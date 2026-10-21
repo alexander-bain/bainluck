@@ -20,6 +20,7 @@ class KalshiOrderBook:
     def __init__(self):
         self._books: dict[str, dict[str, dict[Decimal, Decimal]]] = {}
         self._owners: dict[str, int] = {}
+        self._observation_snapshot_sids: dict[str, int] = {}
         self._sequences: dict[int, int] = {}
         self._last_quotes: dict[str, tuple] = {}
         self._awaiting: set[str] = set()
@@ -30,6 +31,7 @@ class KalshiOrderBook:
         for ticker in tickers:
             self._books.pop(ticker, None)
             self._owners.pop(ticker, None)
+            self._observation_snapshot_sids.pop(ticker, None)
             self._last_quotes.pop(ticker, None)
             self._awaiting.discard(ticker)
             for pending in self._resnapshots.values():
@@ -42,6 +44,7 @@ class KalshiOrderBook:
 
     def _invalidate(self, ticker: str, sid: int) -> None:
         self._books.pop(ticker, None)
+        self._observation_snapshot_sids.pop(ticker, None)
         self._last_quotes.pop(ticker, None)
         if ticker not in self._awaiting:
             self._resnapshots.setdefault(sid, set()).add(ticker)
@@ -69,7 +72,7 @@ class KalshiOrderBook:
             return payload
         return {**payload, **self._quote(ticker)}
 
-    def apply(self, frame: dict) -> dict | None:
+    def apply(self, frame: dict, *, observe_unchanged: bool = False) -> dict | None:
         """Return changed BBO fields only; never synthesize a last trade/price."""
         kind = frame.get("type")
         if kind not in {"orderbook_snapshot", "orderbook_delta"}:
@@ -97,6 +100,10 @@ class KalshiOrderBook:
             for other, owner in list(self._owners.items()):
                 if owner == sid:
                     self._invalidate(other, sid)
+        if self._owners.get(ticker) != sid:
+            # Preserve the existing price reconstruction contract, but never
+            # re-date it using a new subscription without that owner's snapshot.
+            self._observation_snapshot_sids.pop(ticker, None)
         self._owners[ticker] = sid
         try:
             if kind == "orderbook_snapshot":
@@ -138,9 +145,16 @@ class KalshiOrderBook:
         if kind == "orderbook_snapshot":
             self._awaiting.discard(ticker)
             self._resnapshots.get(sid, set()).discard(ticker)
+            self._observation_snapshot_sids[ticker] = sid
         value = (bid, ask)
         if self._last_quotes.get(ticker) == value:
-            return None
+            if (not observe_unchanged or kind != "orderbook_delta"
+                    or self._observation_snapshot_sids.get(ticker) != sid):
+                return None
+            # A genuine contiguous delta revalidates the book even when its
+            # best prices stay put. This marker routes ONLY to display work.
+            # Duplicate/late, invalid and gapped frames returned above.
+            quote["_observation_only"] = True
         self._last_quotes[ticker] = value
         # These are provider observation fields when present, never local time
         # dressed up as an exchange timestamp. Snapshot messages may omit them.
