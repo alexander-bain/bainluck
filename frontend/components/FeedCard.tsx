@@ -53,7 +53,7 @@ import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import TeamNameLink from "./TeamNameLink";
 import ProjectedFinalLine from "./ProjectedFinalLine";
 import { cardProjectedFinal, liveCardProjectedFinal, projectedFinalLabel } from "@/lib/projectedFinalPair";
-import { finalForecastComparison } from "@/lib/finalForecastComparison";
+import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
 
 interface FeedCardProps {
   item: FeedItem;
@@ -401,14 +401,14 @@ function EventFeedCard({
           })
         : null;
   // #11296 — on a final, the sportsbooks' last pair before the scheduled start,
-  // by the same rule as the league card and the headline. `/api/feed` does not
-  // send `pregame_projection` yet, so this stays empty until it does.
+  // by the same rule as the league card and the headline; empty while a row
+  // carries no `pregame_projection`. Soccer reads the row's served period.
   const finalForecast = finalForecastComparison({
     sportKey: data.sport,
     status: data.status,
     homeScore: data.home_score,
     awayScore: data.away_score,
-    actualPeriod: "full_game",
+    actualPeriod: finalScorePeriod(data.sport, data.final_score_period),
     projection: data.pregame_projection,
   });
   // #8635: the server's last-resort highlight for a live game is the word

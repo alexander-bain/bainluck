@@ -22,7 +22,7 @@ import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { matrixForStat, type DuringPlayerProps } from "@/lib/duringPlayerPropsMatrixSelection";
 import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { eventPageProjectedPair, projectedFinalLabel } from "@/lib/projectedFinalPair";
-import { finalForecastComparison } from "@/lib/finalForecastComparison";
+import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
 import FinalForecastDetails from "@/components/event/FinalForecastDetails";
 import ProjectedFinalLine from "@/components/ProjectedFinalLine";
 import { teamTextColor } from "@/lib/teamColors";
@@ -1837,9 +1837,9 @@ export default function EventPage({ params }: EventPageProps) {
   // #11296 — a FINISHED headline's forecast: the sportsbooks' last pair before
   // the scheduled start, under the actual score the columns print. Only where
   // that score is on screen (a stoppage filler prints no score to sit beside).
-  // A scoreboard final covers the full game, overtime included; soccer's
-  // forecasts are 90-minute ones, so they are refused here until a payload can
-  // say a match ended inside regulation.
+  // A football or basketball final covers the full game, overtime included;
+  // soccer's forecasts are 90-minute ones, compared only when the row serves
+  // `final_score_period: "regulation"` (a full-time finish, never extra time).
   const heroFinalForecast = useMemo(
     () =>
       isFinished && heroScorePairPresent && !heroScoreIsStoppageFiller
@@ -1848,11 +1848,11 @@ export default function EventPage({ params }: EventPageProps) {
             status: event?.status,
             homeScore: bestHomeScore,
             awayScore: bestAwayScore,
-            actualPeriod: "full_game",
+            actualPeriod: finalScorePeriod(event?.sport, event?.final_score_period),
             projection: event?.pregame_projection,
           })
         : null,
-    [isFinished, heroScorePairPresent, heroScoreIsStoppageFiller, event?.sport, event?.status, bestHomeScore, bestAwayScore, event?.pregame_projection]
+    [isFinished, heroScorePairPresent, heroScoreIsStoppageFiller, event?.sport, event?.status, bestHomeScore, bestAwayScore, event?.final_score_period, event?.pregame_projection]
   );
   // #11103 — the game-story cards print the hero's projected final, never a second one.
   const nflCardsShown = useMemo(() => withPageProjection(nflCards, heroProjectedFinal), [nflCards, heroProjectedFinal]);

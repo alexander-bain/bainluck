@@ -240,6 +240,14 @@ export interface Event {
   pregame_projection?: PregameProjection | null;
   pregame_projection_unavailable?: PregameProjectionUnavailable | null;
   /**
+   * #11296 — on a settled SOCCER row only, and only when the row's own stored
+   * period says the match ended at full time: the actual score is the
+   * 90-minute one. Absent for extra time, penalties, an unknown finish and
+   * every other sport. A fact about the score, served whether or not a
+   * forecast was found. Read only through `finalScorePeriod`.
+   */
+  final_score_period?: "regulation" | null;
+  /**
    * THE ONE BLEND (standing ruling #1) — the single probability every surface
    * shows for this event. The backend computes it with
    * `compute_aggregate_probability(event)`, the exact same call that produces
@@ -1738,9 +1746,10 @@ export interface FeedEventData {
    * (`{"polymarket": {"value": 0.5, ...}}`). `lib/probabilityEvidence.ts` reads both.
    */
   win_probability_sources?: Record<string, number | { value?: number | null }>;
-  /** #11296 — the same settled-row keys as `Event`; `/api/feed` does not send them yet. */
+  /** #11296 — the same settled-row keys as `Event`. */
   pregame_projection?: PregameProjection | null;
   pregame_projection_unavailable?: PregameProjectionUnavailable | null;
+  final_score_period?: "regulation" | null;
   opening_odds?: {
     home_probability: number;
     away_probability: number | null;
