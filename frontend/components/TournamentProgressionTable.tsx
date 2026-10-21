@@ -370,6 +370,12 @@ function cellDisplay(
  * A live cell also prints a visible "Unconfirmed" under its number: a phone
  * reader never sees the title, and a bare 100% under a Decided heading reads as
  * a result. Every live cell carries it — it marks the state, not a price level.
+ *
+ * Design (2026-10-21): it was 9px uppercase in the muted grey, ~2.5:1 on white
+ * — the label meant to be read was the hardest thing in the cell to read. A
+ * live cell's number and its "Unconfirmed" now share the secondary grey
+ * (~4.8:1) at 12px/16px medium; confirmed, eliminated and awaiting cells keep
+ * the muted grey.
  */
 export function decidedCellDisplay(
   probability: number | null,
@@ -1048,14 +1054,14 @@ export default function TournamentProgressionTable({
                         <div className="flex flex-col items-center relative">
                           {decided ? (
                             <span
-                              className="font-mono text-sm text-text-muted"
+                              className={`font-mono text-sm ${decided.state === "live" ? "text-text-secondary" : "text-text-muted"}`}
                               aria-label={decided.label}
                               data-decided-cell={decided.state}
                             >
                               {decided.text}
                               {decided.qualifier && (
                                 <span
-                                  className="block font-sans text-[9px] leading-none uppercase tracking-wide mt-0.5"
+                                  className="block font-sans text-xs font-medium mt-0.5"
                                   data-decided-qualifier
                                 >
                                   {decided.qualifier}
