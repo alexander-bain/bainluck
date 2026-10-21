@@ -32,7 +32,9 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import OddsChart from "@/components/OddsChart";
+import { Line } from "recharts";
+
+import OddsChart, { calloutLabelCenterY, lineYExtentBetween } from "@/components/OddsChart";
 import { AnalyticsProvider } from "@/components/Analytics";
 import { teamAxisEdges, teamAxisTick } from "@/lib/eventKeyStats";
 import { sourceHex } from "@/lib/sourceColors";
@@ -431,5 +433,126 @@ describe("the tooltip's hole notes describe drawn lines only", () => {
 
   it("returns no note while Sources is closed over the blend", () => {
     expect(body).toMatch(/if \(!sourceLinesShown\) return notes;\s*for \(const source of resolvedSources\)/);
+  });
+});
+
+describe("the end label does not paint out the line's last stretch at the frame", () => {
+  // Read on the candidate's own browser frames of /events/14780562 at 390px:
+  // the final climbs to 100% and runs along the top edge, the period strip sits
+  // at the bottom, so #5581 moved the label only clear of the edge — onto that
+  // stretch. Its white plate (#4338) erased the climb and the line read as
+  // ending short of the result. These finals end on the frame the same way.
+  const plate = (html: string) => {
+    const m = /<rect x="([\d.]+)" y="([\d.-]+)" width="([\d.]+)" height="([\d.]+)" rx="3" fill="#FFFFFF"><\/rect><text/.exec(html);
+    if (!m) throw new Error("no callout plate");
+    const [x, y, w, h] = m.slice(1).map(Number);
+    return { x0: x, x1: x + w, top: y, bottom: y + h };
+  };
+  /** The blend's ink across [x0, x1], interpolated at both edges. */
+  const inkBetween = (d: string, x0: number, x1: number) => {
+    const v = vertices(d);
+    const ys: number[] = [];
+    v.forEach(([x, y], i) => {
+      if (x >= x0 && x <= x1) ys.push(y);
+      const p = v[i - 1];
+      if (!p || p[0] === x) return;
+      for (const e of [x0, x1]) {
+        if (e > Math.min(p[0], x) && e < Math.max(p[0], x)) ys.push(p[1] + ((y - p[1]) * (e - p[0])) / (x - p[0]));
+      }
+    });
+    return { top: Math.min(...ys), bottom: Math.max(...ys) };
+  };
+  const clear = (html: string) => {
+    const box = plate(html);
+    const ink = inkBetween(blendCurve(html).d, box.x0, box.x1);
+    // 1.5 = half the blend's 3px stroke.
+    return ink.bottom + 1.5 <= box.top + 1e-6 || ink.top - 1.5 >= box.bottom - 1e-6;
+  };
+
+  it.each([
+    ["the final, Sources closed", () => chart(FINAL)],
+    ["the final, Sources open", () => chart(FINAL, { defaultSourcesExpanded: true })],
+    ["the one-sided window", () => chart(ONE_SIDE)],
+  ])("%s: the plate sits clear of the blend's ink", (_name, html) => {
+    expect(clear(html())).toBe(true);
+  });
+
+  it("CONTROL: off the frame the label still sits on the dot's row (#3561), so the rule did not move it", () => {
+    const html = chart(CLOSE);
+    const box = plate(html);
+    const dot = /<circle cx="[\d.]+" cy="([\d.]+)" r="5"/.exec(html);
+    expect(dot).not.toBeNull();
+    expect((box.top + box.bottom) / 2).toBeCloseTo(Number(dot![1]), 6);
+  });
+});
+
+describe("calloutLabelCenterY: stepping off the line is bounded", () => {
+  const frame = { plotTop: 15, plotHeight: 250, periodChipRows: 1 };
+  const half = (11 * 1.2) / 2 + 2; // the plate's half height
+  const atTop = calloutLabelCenterY({ ...frame, cy: 15, periodStripBand: "bottom" });
+
+  it("moved off the top frame onto the line: steps just below the line's ink", () => {
+    expect(atTop).toBeCloseTo(15 + half, 6);
+    expect(calloutLabelCenterY({ ...frame, cy: 15, periodStripBand: "bottom", avoid: { top: 13.5, bottom: 26 } })).toBeCloseTo(26 + half, 6);
+  });
+
+  it("not covering the line: the frame's own answer stands", () => {
+    expect(calloutLabelCenterY({ ...frame, cy: 15, periodStripBand: "bottom", avoid: { top: 60, bottom: 90 } })).toBe(atTop);
+  });
+
+  it("a step further than two plate heights keeps the frame's answer (the plate overprints, #4338)", () => {
+    expect(calloutLabelCenterY({ ...frame, cy: 15, periodStripBand: "bottom", avoid: { top: 13.5, bottom: 120 } })).toBe(atTop);
+  });
+
+  it("a taller plot (the full-size view) allows a tenth of its height, so the same climb is cleared there", () => {
+    const tall = { plotTop: 15, plotHeight: 626, periodChipRows: 1 };
+    const avoid = { top: 13.5, bottom: 61.5 };
+    // 46px past the frame's row: over two plate heights, under a tenth of 626.
+    expect(calloutLabelCenterY({ ...tall, cy: 15, periodStripBand: "bottom", avoid })).toBeCloseTo(61.5 + half, 6);
+    expect(calloutLabelCenterY({ ...frame, cy: 15, periodStripBand: "bottom", avoid })).toBe(atTop);
+  });
+
+  it("never steps into the bottom strip", () => {
+    const short = { plotTop: 15, plotHeight: 60, periodChipRows: 1 };
+    const placed = calloutLabelCenterY({ ...short, cy: 15, periodStripBand: "bottom" });
+    expect(calloutLabelCenterY({ ...short, cy: 15, periodStripBand: "bottom", avoid: { top: 13.5, bottom: 50 } })).toBe(placed);
+  });
+
+  it("a 0% finish moved up off the bottom frame steps ABOVE the line", () => {
+    const bottom = 15 + 250;
+    expect(
+      calloutLabelCenterY({ plotTop: 15, plotHeight: 250, periodChipRows: 0, cy: bottom, avoid: { top: 240, bottom: bottom + 1.5 } }),
+    ).toBeCloseTo(240 - half, 6);
+  });
+
+  it("a label already on the dot's row ignores the line entirely (#3561's halo rule)", () => {
+    expect(calloutLabelCenterY({ ...frame, cy: 120, periodStripBand: "bottom", avoid: { top: 100, bottom: 140 } })).toBe(120);
+  });
+});
+
+describe("lineYExtentBetween", () => {
+  const state = (dataKey: unknown, points: Array<{ x: number; y: number | null }>) => ({
+    formattedGraphicalItems: [{ item: { type: Line, props: { dataKey } }, props: { points } }],
+  });
+
+  it("reads the ink inside the span and interpolates the segments crossing its edges", () => {
+    const s = state("k", [
+      { x: 0, y: 100 },
+      { x: 10, y: 50 },
+      { x: 20, y: 20 },
+    ]);
+    // x=5 → 75; x=10 → 50; x=15 → 35.
+    expect(lineYExtentBetween(s, ["k"], 5, 15)).toEqual({ top: 35, bottom: 75 });
+  });
+
+  it("joins across a null vertex (connectNulls) and matches a function key by identity", () => {
+    const read = () => null;
+    const s = state(read, [
+      { x: 0, y: 40 },
+      { x: 10, y: null },
+      { x: 20, y: 20 },
+    ]);
+    expect(lineYExtentBetween(s, [read], 9, 11)).toEqual({ top: 29, bottom: 31 });
+    expect(lineYExtentBetween(s, [() => null], 9, 11)).toBeNull();
   });
 });

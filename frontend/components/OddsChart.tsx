@@ -212,6 +212,18 @@ const PERIOD_CHIP_BOTTOM_BAND_PX = 16;
  */
 const CALLOUT_PLATE_HALF_PX =
   (CALLOUT_FONT_PX * CALLOUT_GLYPH_BOX_EM) / 2 + CALLOUT_PLATE_PAD_Y;
+/** Half the primary line's 3px stroke — the ink `avoid` is widened by (#11356). */
+const CALLOUT_LINE_HALF_STROKE_PX = 1.5;
+/**
+ * #11356 — the furthest a frame-moved label may step past the primary line:
+ * two plate heights, or a tenth of the plot on a taller one. Further than that
+ * and the number reads as labelling some other level of the chart, so the plate
+ * keeps overprinting instead (#4338). The tenth exists for the full-size view:
+ * its plot is ~2.5× the card's, so the same last climb under the plate is ~2.5×
+ * as many pixels — on `/events/14780562` a 46px step that a fixed 34px refused.
+ */
+const CALLOUT_LINE_AVOID_MAX_PX = CALLOUT_PLATE_HALF_PX * 4;
+const CALLOUT_LINE_AVOID_MAX_PLOT_FRACTION = 0.1;
 
 /**
  * Where the trailing value label is painted, vertically (#5581).
@@ -310,8 +322,23 @@ export function calloutLabelCenterY(args: {
    * `/events/15323826` (Dodgers 2–3 Braves) printed `0%` over `B9`.
    */
   periodStripBand?: PeriodStripBand;
+  /**
+   * #11356 — the primary line's ink (pixel top/bottom, stroke included) across
+   * the label plate's own x span, or omitted when there is none to read.
+   *
+   * Only consulted once the frame has already moved the label off `cy`: there
+   * the row is #5581's choice, not #3561's, and on a game that finishes along
+   * the frame the row just inside it is exactly where the line's last stretch
+   * runs. With one line between the poles (#11356) the period strip of an NFL
+   * final drops to the bottom, the label clears only the edge, and its plate
+   * painted out the Packers' whole last climb to 100% on `/events/14780562` —
+   * the line read as stopping short of the result. The label steps just past the
+   * line (≤ `CALLOUT_LINE_AVOID_MAX_PX` or a tenth of the plot, inside the same
+   * limits), else stays.
+   */
+  avoid?: { top: number; bottom: number } | null;
 }): number {
-  const { cy, plotTop, plotHeight, periodChipRows, periodStripBand = "top" } = args;
+  const { cy, plotTop, plotHeight, periodChipRows, periodStripBand = "top", avoid } = args;
   if (!Number.isFinite(plotTop) || !Number.isFinite(plotHeight) || plotHeight <= 0) return cy;
 
   // A NaN or negative count is a caller bug, and the honest answer to one is the
@@ -332,14 +359,31 @@ export function calloutLabelCenterY(args: {
   // The strip takes `band` off whichever end it is drawn at. Too short to also
   // clear it: staying inside the frame is the half that must not be given up,
   // because outside it the label is not drawn at all.
+  let highest: number;
+  let lowest: number;
   if (periodStripBand === "bottom") {
     const clearOfChips = ceiling - band;
-    const lowest = clearOfChips < insideFrame ? ceiling : clearOfChips;
-    return Math.min(Math.max(cy, insideFrame), lowest);
+    highest = insideFrame;
+    lowest = clearOfChips < insideFrame ? ceiling : clearOfChips;
+  } else {
+    const clearOfChips = insideFrame + band;
+    highest = clearOfChips > ceiling ? insideFrame : clearOfChips;
+    lowest = ceiling;
   }
-  const clearOfChips = insideFrame + band;
-  const floor = clearOfChips > ceiling ? insideFrame : clearOfChips;
-  return Math.min(Math.max(cy, floor), ceiling);
+  const placed = Math.min(Math.max(cy, highest), lowest);
+
+  if (!avoid || placed === cy) return placed;
+  const coversLine = placed + CALLOUT_PLATE_HALF_PX > avoid.top && placed - CALLOUT_PLATE_HALF_PX < avoid.bottom;
+  if (!coversLine) return placed;
+  // Moved DOWN off the top frame: step below the line. Moved UP off the bottom
+  // frame (a 0% finish): step above it. Never back toward the frame it left.
+  const stepped = placed > cy
+    ? avoid.bottom + CALLOUT_PLATE_HALF_PX
+    : avoid.top - CALLOUT_PLATE_HALF_PX;
+  if (stepped < highest || stepped > lowest) return placed;
+  const maxStep = Math.max(CALLOUT_LINE_AVOID_MAX_PX, plotHeight * CALLOUT_LINE_AVOID_MAX_PLOT_FRACTION);
+  if (Math.abs(stepped - placed) > maxStep) return placed;
+  return stepped;
 }
 
 interface OddsChartProps {
@@ -565,8 +609,8 @@ export function intraMinuteRanges(
 /** What recharts hands a `<Customized>` child: its own render state, the bits read here. */
 interface ChartRenderState {
   formattedGraphicalItems?: Array<{
-    item?: { type?: unknown };
-    props?: { points?: Array<{ x?: number | null } | undefined> };
+    item?: { type?: unknown; props?: { dataKey?: unknown } };
+    props?: { points?: Array<{ x?: number | null; y?: number | null } | undefined> };
   }>;
   xAxisMap?: Record<string, { allowDataOverflow?: boolean }>;
   yAxisMap?: Record<string, { scale?: (v: number) => number; y?: number; height?: number; allowDataOverflow?: boolean }>;
@@ -602,6 +646,50 @@ export function chartRowX(state: ChartRenderState, index: number): number | null
     if (typeof x === "number" && Number.isFinite(x)) return x;
   }
   return null;
+}
+
+/**
+ * #11356 — the pixel top and bottom of the ink a drawn `<Line>` lays between
+ * `x0` and `x1`, read off the renderer's own vertices (the lines whose
+ * `dataKey` is one of `dataKeys`, compared by identity so a function key
+ * matches too). A segment crossing either edge counts at the edge, by
+ * straight-line interpolation — the lines are `type="linear"`. Consecutive
+ * drawn vertices are treated as joined, which is what `connectNulls` draws.
+ * `null` when no matching line has ink in the span.
+ *
+ * PURE: no I/O, no React.
+ */
+export function lineYExtentBetween(
+  state: ChartRenderState,
+  dataKeys: ReadonlyArray<unknown>,
+  x0: number,
+  x1: number,
+): { top: number; bottom: number } | null {
+  let top = Infinity;
+  let bottom = -Infinity;
+  const take = (y: number) => {
+    if (y < top) top = y;
+    if (y > bottom) bottom = y;
+  };
+  for (const formatted of state.formattedGraphicalItems ?? []) {
+    if (formatted.item?.type !== Line || !dataKeys.includes(formatted.item.props?.dataKey)) continue;
+    let prev: { x: number; y: number } | null = null;
+    for (const pt of formatted.props?.points ?? []) {
+      const x = pt?.x;
+      const y = pt?.y;
+      if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+      if (x >= x0 && x <= x1) take(y);
+      if (prev && prev.x !== x) {
+        const lo = Math.min(prev.x, x);
+        const hi = Math.max(prev.x, x);
+        for (const edge of [x0, x1]) {
+          if (edge > lo && edge < hi) take(prev.y + ((y - prev.y) * (edge - prev.x)) / (x - prev.x));
+        }
+      }
+      prev = { x, y };
+    }
+  }
+  return top <= bottom ? { top, bottom } : null;
 }
 
 /** `chartRowX` for every row, in one list (#4974 — `timeToChartX` reads neighbours). */
@@ -653,6 +741,8 @@ export function ChartRowMarks({
     cy: number;
     payload: Record<string, unknown>;
     yAxis: { scale?: (v: number) => number; y?: number; height?: number };
+    /** #11356 — `lineYExtentBetween` over this render's own lines. */
+    lineYExtent: (dataKeys: ReadonlyArray<unknown>, x0: number, x1: number) => { top: number; bottom: number } | null;
   }) => React.ReactNode;
 }) {
   const clipId = `odds-chart-marks-${useId().replace(/:/g, "")}`;
@@ -660,6 +750,8 @@ export function ChartRowMarks({
   const xAxis = Object.values(state.xAxisMap ?? {})[0];
   const scale = yAxis?.scale;
   if (!yAxis || typeof scale !== "function") return null;
+  const lineYExtent = (dataKeys: ReadonlyArray<unknown>, x0: number, x1: number) =>
+    lineYExtentBetween(state, dataKeys, x0, x1);
   const marks: React.ReactNode[] = [];
   let rowXs: Array<number | null> | null = null;
   for (const row of rows) {
@@ -674,7 +766,7 @@ export function ChartRowMarks({
     if (cx === null || !Number.isFinite(cy)) continue;
     marks.push(
       <Fragment key={row.atMs !== undefined ? `${row.index}:${row.atMs}:${marks.length}` : row.index}>
-        {shape({ cx, cy, payload: row.payload, yAxis })}
+        {shape({ cx, cy, payload: row.payload, yAxis, lineYExtent })}
       </Fragment>,
     );
   }
@@ -1978,6 +2070,14 @@ export default function OddsChart({
       side("blend-after-recorded-window", (ms) => ms > endMs),
     ];
   }, [checkpointWindow]);
+  // #11356 — the drawn line(s) the end callout labels, as the `dataKey`s the
+  // `<Line>`s below are given: the blend (or its two #4974 sides), else the
+  // primary series. The callout's label steps off this ink at the frame.
+  const calloutLineKeys: ReadonlyArray<unknown> = showBlendLine
+    ? legacyBlendSides
+      ? legacyBlendSides.map((side) => side.read)
+      : ["bainLuckDelta"]
+    : [primarySeriesKey];
 
   // #4974 slice 1 — each row's minute, and the checkpoints that land on the
   // drawn axis (inside this range's window and the rows' extent), each with the
@@ -3827,6 +3927,7 @@ export default function OddsChart({
                      behaviour, and `chartCalloutClearsTheTopStrip5581` goes red,
                      which is how anyone would find out. */
                   yAxis?: { y?: number; height?: number };
+                  lineYExtent?: (dataKeys: ReadonlyArray<unknown>, x0: number, x1: number) => { top: number; bottom: number } | null;
                 }) => {
                   if (props.payload?.calloutDelta == null) return <g />;
                   const { cx = 0, cy = 0 } = props;
@@ -3843,6 +3944,12 @@ export default function OddsChart({
                   const glyphWidth =
                     label.length * CALLOUT_FONT_PX * CALLOUT_MONO_ADVANCE_EM;
                   const glyphHeight = CALLOUT_FONT_PX * CALLOUT_GLYPH_BOX_EM;
+                  // #11356 — the labelled line's ink under the plate's own x span.
+                  const lineInk = props.lineYExtent?.(
+                    calloutLineKeys,
+                    textRight - glyphWidth - CALLOUT_PLATE_PAD_X,
+                    textRight + CALLOUT_PLATE_PAD_X,
+                  );
                   // #5581 — the label's row, which is the dot's row on every
                   // chart that does not finish against the frame. See
                   // `calloutLabelCenterY` for why the dot does NOT move with it.
@@ -3865,6 +3972,12 @@ export default function OddsChart({
                           // half of #7940's reasoning that was right.
                           periodChipRows: periodChipRowCount,
                           periodStripBand,
+                          avoid: lineInk
+                            ? {
+                                top: lineInk.top - CALLOUT_LINE_HALF_STROKE_PX,
+                                bottom: lineInk.bottom + CALLOUT_LINE_HALF_STROKE_PX,
+                              }
+                            : null,
                         })
                       : cy;
                   return (
