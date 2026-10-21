@@ -39,7 +39,7 @@ test('resync clears all three provisional surfaces through the actual hook befor
   const root = createRoot(host);
   try {
     await act(async () => { root.render(<Page />); });
-    expect(Source.current.url).toMatch(/\/api\/events\/1\/stream\?preview_protocol=folded-v1$/);
+    expect(Source.current.url).toMatch(/\/api\/events\/1\/stream\?preview_protocol=folded-v2$/);
     await act(async () => { Source.current.emit('open', {}); Source.current.emit('preview', preview); });
     expect(JSON.parse(host.textContent!)).toEqual({ headline: .48, observed,
       chart: [{ timestamp: observed, home_probability: .48 }] });

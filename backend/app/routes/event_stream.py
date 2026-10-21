@@ -457,7 +457,7 @@ async def _stream(
     # Old readers treat a folded frame as a singleton claim. Require explicit
     # vector-aware admission support before sending provisional folded values.
     folded_preview_capable = (
-        getattr(request, "query_params", {}).get("preview_protocol") == "folded-v1"
+        getattr(request, "query_params", {}).get("preview_protocol") in {"folded-v1", "folded-v2"}
     )
     started = asyncio.get_event_loop().time()
     _open_connections += 1

@@ -195,7 +195,7 @@ export function useLiveEventStream(
     const controller = createLiveStreamController({
       open: () =>
         new EventSource(
-          `${API_URL}/api/events/${eventId}/stream?preview_protocol=folded-v1`,
+          `${API_URL}/api/events/${eventId}/stream?preview_protocol=folded-v2`,
         ) as unknown as StreamHandle,
       now: () => Date.now(),
       onFrame: (next) => {
