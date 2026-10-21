@@ -208,6 +208,9 @@ def _summary_for(rows, *, redis_raises=False, query_raises=False,
         def __init__(self, payload):
             self._payload = payload
 
+        def first(self):
+            return None
+
         def all(self):
             if query_raises:
                 raise RuntimeError("boom")
@@ -224,6 +227,9 @@ def _summary_for(rows, *, redis_raises=False, query_raises=False,
             sql = str(statement)
             if "SET LOCAL statement_timeout" in sql:
                 return _Result([])
+            # #1479: the per-transaction session tag, not a chunk.
+            if "set_config('application_name'" in sql:
+                return _Result([])
             if "date_trunc('month'" in sql:
                 return _Result(list(grid))
             self.chunk_calls += 1
@@ -236,6 +242,9 @@ def _summary_for(rows, *, redis_raises=False, query_raises=False,
             return _Result(rows)
 
         async def rollback(self):
+            return None
+
+        async def commit(self):
             return None
 
         async def __aenter__(self):
