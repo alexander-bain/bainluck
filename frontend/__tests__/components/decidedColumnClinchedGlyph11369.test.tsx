@@ -286,3 +286,53 @@ describe("decidedCellDisplay", () => {
     }
   });
 });
+
+// Design (2026-10-21, confirmed-grid-reader-disposition): the qualifier was
+// 9px uppercase muted grey (~2.5:1 on white). A live decided cell's number and
+// its "Unconfirmed" now read in the secondary grey (~4.8:1) at 12px/16px
+// medium, title case, normal tracking, no opacity; every other decided cell
+// keeps the muted grey.
+describe("Design 2026-10-21: an unconfirmed decided cell is readable", () => {
+  /** Class lists of each decided cell's span and its qualifier, in column order. */
+  function decidedClassesFor(html: string, team: string) {
+    const body = html.split("<tbody>")[1] ?? "";
+    const row = body.split("<tr").find((r) => r.includes(team));
+    if (!row) throw new Error(`no row for ${team}`);
+    const cls = (tag: string) => (tag.match(/class="([^"]*)"/)?.[1] ?? "").split(/\s+/).filter(Boolean);
+    return Array.from(row.matchAll(/<span([^>]*data-decided-cell="([^"]*)"[^>]*)>([^<]*)(<span([^>]*data-decided-qualifier[^>]*)>([^<]*))?/g)).map(
+      (m) => ({ state: m[2], cell: cls(m[1]), qualifier: m[5] === undefined ? undefined : cls(m[5]), qualifierText: m[6] }),
+    );
+  }
+
+  const html = renderToStaticMarkup(<TournamentProgressionTable data={build()} pageType="playoff_grid" />);
+  const all = TEAMS.flatMap((t) => decidedClassesFor(html, t.name));
+
+  test("Tampa Bay's unconfirmed pennant: number and qualifier in the secondary grey, qualifier 12px medium title case", () => {
+    const [tampa] = decidedClassesFor(html, "Tampa Bay Rays").filter((c) => c.state === "live");
+    expect(tampa.cell).toContain("text-text-secondary");
+    expect(tampa.cell).not.toContain("text-text-muted");
+    expect(tampa.qualifierText).toBe("Unconfirmed");
+    expect(tampa.qualifier).toEqual(expect.arrayContaining(["text-xs", "font-medium"]));
+    // The qualifier inherits the number's colour: no colour, size, leading,
+    // case, tracking, opacity or clamp of its own to drift from it.
+    for (const c of tampa.qualifier ?? []) {
+      expect(c).not.toMatch(/^(text-text-|text-\[|leading-|uppercase$|tracking-|opacity-|truncate$|line-clamp-)/);
+    }
+  });
+
+  test("confirmed, eliminated and awaiting cells keep the muted grey and carry no qualifier", () => {
+    const unknown = renderToStaticMarkup(
+      <TournamentProgressionTable
+        data={build([{ name: "Unknown Club", cells: { make_playoffs: {}, division: {}, pennant: {}, championship: {} } }])}
+        pageType="playoff_grid"
+      />,
+    );
+    const others = [...all, ...decidedClassesFor(unknown, "Unknown Club")].filter((c) => c.state !== "live");
+    expect(new Set(others.map((c) => c.state))).toEqual(new Set(["clinched", "eliminated", "awaiting"]));
+    for (const c of others) {
+      expect(c.cell).toContain("text-text-muted");
+      expect(c.cell).not.toContain("text-text-secondary");
+      expect(c.qualifier).toBeUndefined();
+    }
+  });
+});
