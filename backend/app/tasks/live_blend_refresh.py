@@ -3567,6 +3567,14 @@ class LiveBlendRefresher:
                         ):
                             self.stats["unobserved_skipped"] += 1
                             self._dispositions[event_id] = ("unobserved", value)
+                            if phase == "compute":
+                                # A periodic durable read can predate an already
+                                # accepted observation preview. Let its registry
+                                # judge that basis without requesting persistence.
+                                preview_plans[event_id] = (
+                                    refused, proof_kwargs, reading, value, contributing,
+                                )
+                                preview_only.add(event_id)
                             continue
 
                         if not self._should_write(event_id, value, now):
@@ -4543,7 +4551,9 @@ class LiveBlendRefresher:
                     reason = (self._dispositions.get(event_id) or ("unknown",))[0]
                     if reason == "lock":
                         continue  # still owed; the retry republishes it
-                    if reason == "preview_only":
+                    if reason in ("preview_only", "unobserved"):
+                        # The optional proposal already judged this observation;
+                        # absence of a newer durable row is not a withdrawal.
                         # The event restamp was deliberately throttled. Retain
                         # the bounded display chain, including its expiry fence,
                         # without pretending a failed write needs retrying.

@@ -429,10 +429,26 @@ class PreviewRegistry:
                 observed_basis=observed_basis,
             )[source]
             if (observed is None or stored_at is None or stored_value is None
-                    or round(stored_value, 4) != value or observed <= stored_at
-                    or is_refused(entry)):
+                    or round(stored_value, 4) != value or is_refused(entry)):
                 return self.refused(event_id, source, "unobserved")
             prior = state.pending.get(source)
+            if observed <= stored_at:
+                # The periodic row clock can precede a newer accepted quote.
+                # It supplies no new observation, not a source withdrawal. In
+                # particular, do not clear an expired same-value chain here.
+                if prior is None:
+                    return []
+                previous = prior.observed_basis
+                previous_at = _basis_observation_time(previous)
+                if (prior.value == value and previous_at is not None
+                        and previous_at > stored_at
+                        and set(previous) == set(observed_basis)
+                        and all(observed_basis[key] <= seen for key, seen in previous.items())):
+                    expired = self.expire()
+                    if self._drop_regressed(state):
+                        expired.extend(self._after_drop(event_id, state, "stale", source))
+                    return expired
+                return self.refused(event_id, source, "unobserved")
             if prior is not None:
                 previous = prior.observed_basis
                 previous_at = _basis_observation_time(previous)

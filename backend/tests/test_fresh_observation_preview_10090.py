@@ -388,3 +388,55 @@ async def test_legacy_null_winner_also_remains_unresolved(monkeypatch):
         row.is_winner = None
     await r.preview_accepted_observations(observations, validate)
     assert len(_blends(frames)) == 1 and not session.updates
+
+
+async def test_periodic_unobserved_rows_do_not_revoke_newer_ack_preview(monkeypatch):
+    r, session, frames, _, rows, _, observations, validate, now = acknowledged_rig(monkeypatch)
+    clock = [0.]
+    blend_preview._REGISTRY = blend_preview.PreviewRegistry(clock=lambda: clock[0], epoch=7)
+    await r.preview_accepted_observations(observations, validate)
+    first = _blends(frames)[0]
+    pending = blend_preview.registry()._events[1].pending['polymarket']
+    original = (pending.since, pending.seq, dict(pending.observed_basis))
+    # Periodic row refresh sees the original durable observation older than
+    # the event's commit clock, while accepted observations already advanced.
+    for row in rows:
+        row.last_updated = now - timedelta(seconds=6)
+    clock[0] = 30.
+    await r._refresh_batch([1], 130.)
+    assert not _revokes(frames)
+    assert _blends(frames) == [first]
+    pending = blend_preview.registry()._events[1].pending['polymarket']
+    assert (pending.since, pending.seq, pending.observed_basis) == original
+    assert not session.updates
+
+
+async def test_periodic_stale_read_does_not_clear_expired_observation_chain(monkeypatch):
+    r, session, frames, _, rows, _, observations, validate, now = acknowledged_rig(monkeypatch)
+    clock = [0.]
+    blend_preview._REGISTRY = blend_preview.PreviewRegistry(
+        clock=lambda: clock[0], epoch=7, max_uncommitted_s=3.,
+    )
+    await r.preview_accepted_observations(observations, validate)
+    for row in rows:
+        row.last_updated = now - timedelta(seconds=6)
+    clock[0] = 3.
+    await r._refresh_batch([1], 103.)
+    assert [f['preview']['reason'] for f in _revokes(frames)] == ['expired']
+    assert blend_preview.registry()._events[1].expired == {'polymarket': .9}
+    for oid, (value, bound, mark) in list(observations[1].items()):
+        observations[1][oid] = value, bound + .1, mark
+    clock[0] = 4.
+    await r.preview_accepted_observations(observations, validate)
+    assert len(_blends(frames)) == 1
+    assert not blend_preview.registry().has_pending(1)
+    assert blend_preview.registry()._events[1].expired == {'polymarket': .9}
+    # A later genuine normal commit owns clearing the expired chain.
+    for row in rows:
+        row.last_updated = now
+    session.locked = False
+    session._returned = stamp_source_reading(session.stored, 'polymarket', .9)
+    session.returned_rev = 11
+    await r._refresh_batch([1], 100. + r.unchanged_restamp_interval_s)
+    assert len(session.updates) == 1
+    assert not blend_preview.registry()._events[1].expired
