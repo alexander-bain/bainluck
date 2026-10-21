@@ -606,7 +606,7 @@ export default function EventPage({ params }: EventPageProps) {
     chartPoints,
     status: reportedStreamStatus,
     recoveryGeneration,
-  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame, applyReconcileControl);
+  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame, applyReconcileControl, event?.blend_fold_revision);
   // #10200: the transport's own observation, for the chart status only — the
   // disconnect refetch below still keys on `streamConnected`. A stream that reports only
   // `connected` (an older hook, a test double) reads as open or idle.
