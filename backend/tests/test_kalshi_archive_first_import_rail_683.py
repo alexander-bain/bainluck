@@ -1239,6 +1239,20 @@ class _CommitSession:
         await self.on_commit()
 
 
+class _HeldClock:
+    """The wall's clock: real time until :meth:`hold`, then that instant for good."""
+
+    def __init__(self):
+        self.held_at = None
+
+    def __call__(self) -> float:
+        return time.monotonic() if self.held_at is None else self.held_at
+
+    def hold(self) -> None:
+        if self.held_at is None:
+            self.held_at = time.monotonic()
+
+
 class TestCommitAcknowledgement:
     async def test_a_lost_create_import_ack_stops_and_claims_nothing(self):
         report = await _a_plan()
@@ -1259,14 +1273,53 @@ class TestCommitAcknowledgement:
         assert result["readback_owed"]["durability"] == "unknown"
         assert result["import_key"] in result["readback_owed"]["commands"][0]
 
-    def test_import_cli_wall_during_a_commit_reports_it_in_flight(self, tmp_path, capsys):
+    @pytest.mark.parametrize("artifact_stall", [0.0, 0.1])
+    def test_import_cli_wall_during_a_commit_reports_it_in_flight(
+        self, tmp_path, capsys, monkeypatch, artifact_stall
+    ):
+        """The real 0.8 s wall expires while COMMIT is in flight; the receipt says so.
+
+        The wall's clock holds still from the instant the COMMIT is sent
+        (``_HeldClock``). The work still expires on real time: the event loop
+        waits out the real work slice, then cancels the hanging COMMIT. What the
+        hold removes is the race this case never meant to test. Without it the
+        receipt file had to be sealed in the 20-60 ms between the cancel
+        (0.72 s) and ``artifact_deadline`` (0.78 s), against a real alarm, and a
+        loaded runner sometimes lost that slice (#683, three master/PR reds,
+        missing R.json). Writing the receipt inside the wall on real time is
+        ``test_import_cli_timeout_receipt_is_written_inside_the_wall``'s job.
+        ``artifact_stall`` 0.1 stalls the artifact write past the old slice:
+        without the hold that always loses R.json, so it proves the race is gone.
+        """
         report = asyncio.run(_a_plan())
         plan = tmp_path / "P.json"
         plan.write_text(json.dumps(report))
         out = tmp_path / "R.json"
+        clock = _HeldClock()
+        walls = []
+        real_wall = bounds.OperationWall
+
+        def held_wall(seconds, **kw):
+            walls.append(real_wall(seconds, monotonic=clock, **kw))
+            return walls[-1]
+
+        monkeypatch.setattr(bounds, "OperationWall", held_wall)
+        real_fsync = bounds.os.fsync
+
+        def slow_fsync(fd):
+            time.sleep(artifact_stall)
+            return real_fsync(fd)
+
+        monkeypatch.setattr(bounds.os, "fsync", slow_fsync)
+        cancelled_at = []
 
         async def hang():
-            await asyncio.sleep(10)
+            clock.hold()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled_at.append(time.monotonic())
+                raise
 
         mod = _load_script("kalshi_archive_import.py")
         t0 = time.monotonic()
@@ -1279,6 +1332,12 @@ class TestCommitAcknowledgement:
             session_factory=_factory(_CommitSession(hang)),
         )
         assert time.monotonic() - t0 < 3.0 and code == 3
+        # Precondition: the COMMIT was in flight and the REAL work slice ran
+        # out before the wall cancelled it (1 ms: the loop's timer tolerance).
+        # The hold changed no expiry.
+        (wall,) = walls
+        assert wall.seconds == 0.8 and clock.held_at is not None
+        assert len(cancelled_at) == 1 and cancelled_at[0] >= wall.work_deadline - 1e-3
         receipt = json.loads(out.read_text())
         assert receipt["status"] == "incomplete"
         assert receipt["stopped"] == "wall_expired:create_import"
