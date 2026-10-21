@@ -84,7 +84,11 @@ script enforces it:
   missing hash after first use, a malformed field or an exhausted counter
   refuses every operation (previews stop; nothing is re-initialized from
   zero). Readers keep their existing ``(epoch, seq)`` rules: a frame's
-  ``epoch`` is the event's ledger generation, its ``seq`` the ledger sequence;
+  ``epoch`` is the event's ledger generation, its ``seq`` the ledger sequence.
+  A write whose event generation is not above the shared counter (any claim
+  since — a ledger owner, or the single-source fence after a mode switch —
+  may have raised a held reader's floor that high) takes a new generation
+  above it, keeping every pending entry and the sequence;
 * propose — fenced on the source's owner; ``continue`` needs this owner's
   chain and a newer local sequence and keeps its fixed Redis-clock deadline;
   ``open`` never renews an existing chain; a terminal tombstone refuses any
@@ -275,21 +279,27 @@ local function readset(status, gen, seq, extra)
   return out
 end
 local function admit(max_ev)
-  -- The new generation for an event this ledger has never held.
-  if st.gen ~= nil then return st.gen, st.seq end
-  local count = field('nevents')
+  -- The event's generation for this write. A shared counter above it means a
+  -- claim has been allocated since (a ledger owner, or the single-source fence
+  -- after a mode switch): a held reader's floor may be that high, so the write
+  -- takes a new generation above it. The sequence keeps rising across it.
   local shared = shared_floor()
-  if count == BAD or shared == BAD then return nil, 'malformed' end
-  if (count or 0) >= max_ev then return nil, 'full' end
+  if shared == BAD then return nil, 'malformed' end
+  if st.gen ~= nil and shared <= st.gen then return st.gen, st.seq end
+  if st.gen == nil then
+    local count = field('nevents')
+    if count == BAD then return nil, 'malformed' end
+    if (count or 0) >= max_ev then return nil, 'full' end
+  end
   local n = math.max(epoch, shared)
   if n >= MAX then return nil, 'exhausted' end
-  return n + 1, 0
+  return n + 1, st.seq or 0
 end
 local function advance(gen, seq)
-  if st.gen == nil then
+  if st.gen == nil then redis.call('HINCRBY', L, 'nevents', 1) end
+  if gen ~= st.gen then
     redis.call('HSET', L, P .. 'gen', decimal(gen), P .. 'seq', decimal(seq), 'epoch', decimal(gen))
     redis.call('SET', SHARED, decimal(gen))
-    redis.call('HINCRBY', L, 'nevents', 1)
   else
     redis.call('HSET', L, P .. 'seq', decimal(seq))
   end
@@ -365,14 +375,16 @@ if op == 'settle' then
     if adopt then redis.call('HSET', L, P .. 'base_rev', decimal(brev), P .. 'base', ARGV[9]) end
     return {'unchanged'}
   end
-  if st.seq >= MAX then return {'exhausted'} end
-  local seq = st.seq + 1
-  advance(st.gen, seq)
+  local gen, seq = admit(MAX)
+  if gen == nil then return {seq} end
+  if seq >= MAX then return {'exhausted'} end
+  seq = seq + 1
+  advance(gen, seq)
   -- @@FAULT:settle
   if adopt then redis.call('HSET', L, P .. 'base_rev', decimal(brev), P .. 'base', ARGV[9]) end
   if remove then redis.call('HDEL', L, P .. 'm:' .. src, P .. 'p:' .. src) end
   for _, s in ipairs(gone) do redis.call('HDEL', L, P .. 'm:' .. s, P .. 'p:' .. s) end
-  return readset('ok', st.gen, seq, remove and '1' or '0')
+  return readset('ok', gen, seq, remove and '1' or '0')
 end
 if op == 'terminal' then
   local ctx, max_ev = uint(ARGV[6]), uint(ARGV[7])

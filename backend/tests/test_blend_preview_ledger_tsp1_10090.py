@@ -85,6 +85,9 @@ MUTANTS = {
     "no_expiry_prune": (
         "local function stale(s, m) return m.owner ~= owners[s] or m.expires <= now end",
         "local function stale(s, m) return m.owner ~= owners[s] end"),
+    "no_regen_after_newer_claim": (
+        "  if st.gen ~= nil and shared <= st.gen then return st.gen, st.seq end\n",
+        "  if st.gen ~= nil then return st.gen, st.seq end\n"),
     "shared_counter_from_zero": (
         "  local n = math.max(epoch, shared)\n  if n >= MAX then return {'exhausted'} end\n  n = n + 1",
         "  local n = epoch\n  if n >= MAX then return {'exhausted'} end\n  n = n + 1"),
@@ -628,6 +631,92 @@ class TestFaults:
         assert await rig.drain() == []
 
 
+class TestModeReturn:
+    """Root's R1 countercase: ledger → single-source → ledger while a page stays open."""
+
+    async def _legacy_claim(self, rig, source="kalshi"):
+        # The existing single-source claim: INCR the shared counter + SET its owner.
+        return int(await rig.call("EVAL", blend_preview.FENCE_CLAIM_SCRIPT, 2,
+                                  blend_preview.FENCE_EPOCH_KEY,
+                                  blend_preview.fence_owner_key(source)))
+
+    async def test_a_ledger_frame_after_a_single_source_epoch_rises_above_it(self, rig):
+        [first] = _blends(await rig.run(rig.k, _propose(rig.k, "kalshi", 0.6)))
+        reader = Reader()
+        reader.after(first)
+        legacy = await self._legacy_claim(rig)
+        assert legacy > first["preview"]["epoch"]
+        # A held reader that received a single-source frame keeps floor `legacy`.
+        reader.after({"p": 0.55, "preview": {"kind": "blend", "epoch": legacy, "seq": 1,
+                                             "ttl_ms": 60000, "pending": {"kalshi": 0.55}}})
+        back = rig.registry()
+        claim = await back.claim(rig.call, "kalshi")
+        assert claim > legacy
+        [frame] = _blends(await rig.run(back, _propose(back, "kalshi", 0.62, basis_s=2)))
+        assert frame["preview"]["epoch"] > claim > legacy
+        assert int(await rig.hget(f"e:{EV}:gen")) == frame["preview"]["epoch"]
+        reader.after(frame)
+        assert reader.held is not None and reader.held["p"] == frame["p"]
+        # The sequence keeps rising across the new generation.
+        assert frame["preview"]["seq"] > first["preview"]["seq"]
+
+    async def test_the_new_generation_keeps_every_pending_entry_and_fences_older_work(self, rig):
+        await rig.run(rig.k, _propose(rig.k, "kalshi", 0.6))
+        [before] = _blends(await rig.run(rig.p, _propose(rig.p, "polymarket", 0.7, basis_s=2)))
+        # Prepared under the old generation, delivered late.
+        late = await rig.p.prepare(_propose(rig.p, "polymarket", 0.71, basis_s=3),
+                                   rig.call, rig.stats)
+        legacy = await self._legacy_claim(rig)
+        reader = Reader()
+        reader.after(before)
+        reader.after({"p": 0.5, "preview": {"kind": "blend", "epoch": legacy, "seq": 9,
+                                            "ttl_ms": 60000, "pending": {"kalshi": 0.5}}})
+        back = rig.registry()
+        await back.claim(rig.call, "kalshi")
+        [frame] = _blends(await rig.run(back, _propose(back, "kalshi", 0.63, basis_s=4)))
+        # Polymarket's process never restarted: its pending value composes in.
+        assert frame["preview"]["pending"] == {"kalshi": 0.63, "polymarket": 0.71}
+        reader.after(frame)
+        assert reader.held["p"] == frame["p"]
+        for old in late:
+            await rig.p._publish(old, rig.call, rig.channel, rig.stats)
+        assert await rig.drain() == []
+        # An old-generation revoke, delivered late, is below the new floor.
+        reader.after({"p": None, "preview": {"kind": "revoke", "epoch": before["preview"]["epoch"],
+                                             "seq": 99, "through_seq": 98}})
+        assert reader.held["p"] == frame["p"]
+
+    async def test_a_delayed_sibling_claim_moves_the_generation_again(self, rig):
+        await rig.run(rig.k, _propose(rig.k, "kalshi", 0.6))
+        [a] = _blends(await rig.run(rig.p, _propose(rig.p, "polymarket", 0.7, basis_s=2)))
+        # Polymarket restarts later: a new owner claim; its old entry is pruned.
+        restarted = rig.registry()
+        await restarted.claim(rig.call, "polymarket")
+        [b] = _blends(await rig.run(rig.k, _propose(rig.k, "kalshi", 0.61, basis_s=3)))
+        assert b["preview"]["epoch"] > a["preview"]["epoch"]
+        assert b["preview"]["pending"] == {"kalshi": 0.61}
+        [c] = _blends(await rig.run(restarted, _propose(restarted, "polymarket", 0.72, basis_s=4)))
+        assert c["preview"]["epoch"] == b["preview"]["epoch"]
+        assert c["preview"]["seq"] == b["preview"]["seq"] + 1
+        assert c["preview"]["pending"] == {"kalshi": 0.61, "polymarket": 0.72}
+        reader = Reader()
+        for f in rig.sent:
+            reader.after(f)
+        assert reader.held["seq"] == c["preview"]["seq"]
+
+    async def test_a_settle_after_a_newer_claim_revokes_in_the_new_generation(self, rig):
+        [a] = _blends(await rig.run(rig.k, _propose(rig.k, "kalshi", 0.6)))
+        legacy = await self._legacy_claim(rig, "polymarket")
+        [revoke] = await rig.run(rig.k, rig.k.refused(EV, "kalshi", "error"))
+        assert revoke["preview"]["kind"] == "revoke"
+        assert revoke["preview"]["epoch"] > legacy > a["preview"]["epoch"]
+        reader = Reader()
+        reader.after({"p": 0.5, "preview": {"kind": "blend", "epoch": legacy, "seq": 3,
+                                            "ttl_ms": 60000, "pending": {"polymarket": 0.5}}})
+        reader.after(revoke)
+        assert reader.epoch == revoke["preview"]["epoch"] and reader.held is None
+
+
 # ------------------------------------------------------------- off path (G4)
 
 
@@ -716,6 +805,86 @@ class TestRefresherBoundary:
             revoke = json.loads(message["data"])
             assert revoke["preview"]["epoch"] == frame["preview"]["epoch"]
             assert revoke["preview"]["through_seq"] == frame["preview"]["seq"]
+        finally:
+            blend_preview.reset_registry_for_tests()
+            for c in (listener, listener_client, client):
+                await (c.aclose() if hasattr(c, "aclose") else c.close())
+
+    async def test_a_page_stays_current_across_ledger_single_source_ledger_switches(
+        self, redis_kwargs, monkeypatch,
+    ):
+        """Root's R1 countercase through the real refresher, both modes, page held open."""
+        from redis.asyncio import Redis
+
+        from app.tasks.live_blend_refresh import LiveBlendRefresher
+        from app.utils.live_push import event_channel
+
+        client = Redis(**redis_kwargs)
+        listener_client = Redis(**redis_kwargs)
+        listener = listener_client.pubsub()
+
+        def mode(ledger: bool):
+            if ledger:
+                monkeypatch.setenv(blend_preview.LEDGER_SOURCES_ENV, "kalshi,polymarket")
+                monkeypatch.delenv(blend_preview.SOURCE_ENV, raising=False)
+            else:
+                monkeypatch.delenv(blend_preview.LEDGER_SOURCES_ENV, raising=False)
+                monkeypatch.setenv(blend_preview.SOURCE_ENV, "kalshi")
+            monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, str(EV))
+            blend_preview.reset_registry_for_tests()  # a restarted process
+            refresher = LiveBlendRefresher("kalshi")
+            assert refresher.preview
+            monkeypatch.setattr(refresher, "_client", lambda: client)
+            return refresher, blend_preview.registry()
+
+        async def received():
+            message = await listener.get_message(ignore_subscribe_messages=True, timeout=1)
+            assert message is not None, "nothing was published"
+            return json.loads(message["data"])
+
+        try:
+            await client.set(blend_preview.FENCE_EPOCH_KEY, "41")
+            await listener.subscribe(event_channel(EV))
+            await listener.get_message(timeout=0.2)
+            page = Reader()
+            # The Polymarket process stays on ledger mode throughout (claimed once).
+            pm = blend_preview.LedgerRegistry(sources=SOURCES)
+            pm_call = lambda *a: client.execute_command(*a)  # noqa: E731
+            await pm.claim(pm_call, "polymarket")
+
+            refresher, preview = mode(ledger=True)
+            await refresher._publish_previews(_propose(preview, "kalshi", 0.6))
+            first = await received()
+            page.after(first)
+            await pm.execute(_propose(pm, "polymarket", 0.7, basis_s=2), pm_call,
+                             event_channel, {})
+            page.after(await received())
+
+            refresher, preview = mode(ledger=False)
+            await refresher._publish_previews(_propose(preview, "kalshi", 0.61, basis_s=3))
+            legacy = await received()
+            assert legacy["preview"]["epoch"] > first["preview"]["epoch"]
+            page.after(legacy)
+            assert page.held["p"] == legacy["p"]
+
+            refresher, preview = mode(ledger=True)
+            await refresher._publish_previews(_propose(preview, "kalshi", 0.62, basis_s=4))
+            back = await received()
+            assert back["preview"]["kind"] == "blend"
+            assert back["preview"]["epoch"] > legacy["preview"]["epoch"]
+            assert back["preview"]["pending"] == {"kalshi": 0.62, "polymarket": 0.7}
+            page.after(back)
+            assert page.held is not None and page.held["p"] == back["p"]
+            # A reconnect keeps the floor and holds nothing until the next frame.
+            reconnected = Reader()
+            reconnected.epoch = page.epoch
+            await pm.execute(_propose(pm, "polymarket", 0.71, basis_s=5), pm_call,
+                             event_channel, {})
+            later = await received()
+            for reader in (page, reconnected):
+                reader.after(later)
+                assert reader.held is not None and reader.held["p"] == later["p"]
+            assert later["preview"]["pending"] == {"kalshi": 0.62, "polymarket": 0.71}
         finally:
             blend_preview.reset_registry_for_tests()
             for c in (listener, listener_client, client):
