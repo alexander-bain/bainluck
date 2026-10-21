@@ -51,6 +51,7 @@ class FakeDB:
         self.active = 0
         self.max_active = 0
         self.gates: list = []  # per-call asyncio.Event, consumed in call order
+        self.hold_exit: asyncio.Event | None = None  # session cleanup waits for it
         self.values: list = []  # per-call clock value; default 1000 + virtual t
 
     def __call__(self):
@@ -66,6 +67,8 @@ class FakeDB:
         try:
             yield SimpleNamespace(execute=lambda stmt: self._read(gate, value))
         finally:
+            if self.hold_exit is not None:
+                await self.hold_exit.wait()  # a slow session exit, even when cancelled
             self.active -= 1
 
     async def _read(self, gate, value):
@@ -438,3 +441,54 @@ class TestLifecycleWiring:
             hand_off = text.index("hand_off_pending(blend_refresher)")
             reap = text.index("await reap_stopped_loops(", hand_off)
             assert hand_off < reap, name
+
+
+class TestReapUnderCancellation:
+    """903 review: a cancellation on the reap while a sampler's session exit is pending."""
+
+    async def _unwinding(self, monkeypatch):
+        from app.tasks.live_blend_refresh import hand_off_pending
+
+        clock = Clock()
+        owner = _owner(monkeypatch)
+        held, db = await _active(owner, clock)
+        db.gates.append(asyncio.Event())  # the next idle read never answers
+        db.hold_exit = asyncio.Event()  # and its session cleanup is held open
+        calls = db.calls
+        for _ in range(200):
+            clock.t += 0.01
+            await _settle()
+            if db.calls > calls:
+                break
+        assert held._sampling == 1
+        task = held._idle_task
+        hand_off_pending(owner)  # teardown: close() cancels the in-flight read
+        await _settle()
+        assert not task.done()  # still unwinding its session exit
+        return owner, held, db, task
+
+    async def test_a_second_cancellation_waits_for_the_sampler_then_propagates(self, monkeypatch):
+        from app.tasks import live_blend_refresh as lbr
+
+        _owner_, held, db, task = await self._unwinding(monkeypatch)
+        reaper = asyncio.create_task(lbr.reap_stopped_loops("kalshi", ()))
+        await _settle()
+        reaper.cancel()  # the second cancellation, while the join is pending
+        await _settle()
+        assert not reaper.done() and not task.done()
+        assert task in lbr._closing_samplers.get("kalshi", ())  # still owned
+        db.hold_exit.set()  # the session exit completes
+        with pytest.raises(asyncio.CancelledError):
+            await reaper  # re-raised only after the join
+        assert task.done() and held._sampling == 0
+        assert "kalshi" not in lbr._closing_samplers
+
+    async def test_the_reap_budget_ends_the_wait_and_keeps_ownership(self, monkeypatch):
+        from app.tasks import live_blend_refresh as lbr
+
+        _owner_, held, db, task = await self._unwinding(monkeypatch)
+        assert await lbr.reap_stopped_loops("kalshi", (), timeout_s=0.05) == 1
+        assert not task.done() and task in lbr._closing_samplers["kalshi"]
+        db.hold_exit.set()
+        assert await lbr.reap_stopped_loops("kalshi", ()) == 0  # the next reap owns it
+        assert task.done() and "kalshi" not in lbr._closing_samplers

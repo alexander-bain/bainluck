@@ -1226,24 +1226,59 @@ async def reap_stopped_loops(source: str, tasks, *, timeout_s: float = LOOP_REAP
     error because that loop outlives its run (#10657)."""
     import asyncio
 
-    # The run's closed idle samplers (`hand_off_pending`, replacement) join here too.
-    tasks = (*tasks, *_closing_samplers.pop(source, ()))
-    pending = [t for t in tasks if t is not None and not t.done()]
-    if pending:
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    still: set = set()
+    try:
+        pending = [t for t in tasks if t is not None and not t.done()]
+        if pending:
+            try:
+                _done, still = await asyncio.wait(pending, timeout=timeout_s)
+            except Exception:
+                still = {t for t in pending if not t.done()}
+        if still:
+            logger.error(
+                "live_blend_refresh[%s]: %d consumer loop(s) still running %.0fs "
+                "after the run stopped them: %s",
+                source, len(still), timeout_s,
+                sorted(getattr(t, "get_name", lambda: "?")() for t in still),
+            )
+    finally:
+        # The run's closed idle samplers (`hand_off_pending`, replacement) join
+        # here even when a cancellation lands on this reap (812/903 review).
+        unreaped = await _join_closing_samplers(source, deadline)
+    return len(still) + unreaped
+
+
+async def _join_closing_samplers(source: Optional[str], deadline: float) -> int:
+    """Join `source`'s closed idle samplers by `deadline`; return how many still run.
+
+    A cancellation landing here is held until they finish or the budget ends,
+    then re-raised. A sampler still running stays registered (its next reap
+    owns it) and is logged; nothing is cancelled again.
+    """
+    loop = asyncio.get_running_loop()
+    interrupted: Optional[BaseException] = None
+    while True:
+        pending = {t for t in _closing_samplers.get(source, ()) if not t.done()}
+        if pending:
+            _closing_samplers[source] = pending
+        else:
+            _closing_samplers.pop(source, None)
+        remaining = deadline - loop.time()
+        if not pending or remaining <= 0:
+            break
         try:
-            _done, still = await asyncio.wait(pending, timeout=timeout_s)
-        except Exception:
-            still = {t for t in pending if not t.done()}
-    else:
-        still = set()
-    if still:
+            await asyncio.wait(pending, timeout=remaining)
+        except asyncio.CancelledError as exc:
+            interrupted = exc
+    if pending:
         logger.error(
-            "live_blend_refresh[%s]: %d consumer loop(s) still running %.0fs "
-            "after the run stopped them: %s",
-            source, len(still), timeout_s,
-            sorted(getattr(t, "get_name", lambda: "?")() for t in still),
+            "live_blend_refresh[%s]: %d idle bound sampler(s) still unwinding at the reap deadline",
+            source, len(pending),
         )
-    return len(still)
+    if interrupted is not None:
+        raise interrupted
+    return len(pending)
 
 
 # Event context needed by the prepared resolver/stamp, including aggregate
