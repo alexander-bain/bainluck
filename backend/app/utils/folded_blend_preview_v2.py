@@ -180,7 +180,8 @@ class FoldedPreviewSession:
                 "fold_session": self.session, "fold_seq": self.sequence,
                 "base_fold_revision": dict(self.vector),
                 "origin_authority": authority,
-                "ttl_ms": min((a["ttl_ms"] for a in authority.values()
-                               if a["state"] == "pending"), default=0),
+                "ttl_ms": (min((a["ttl_ms"] for a in authority.values()
+                                if a["state"] == "pending"), default=0)
+                           if body is not None else 0),
             },
         }

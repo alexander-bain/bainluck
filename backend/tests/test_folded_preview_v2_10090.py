@@ -470,3 +470,21 @@ async def test_argon_real_redis_newest_during_gap_and_unelected_successor(ledger
         'epoch': mixed['preview']['epoch'], 'seq': mixed['preview']['seq'], 'state': 'revoked'}
     assert withdrawn['preview']['kind'] == 'revoke'
     assert send(session, fresh, pm2, floors={'3': 11}, now=100.5) is None
+
+
+def test_warm_gap_withdrawal_has_zero_aggregate_ttl_but_preserves_pending_lease():
+    session, base, kalshi, pm, _ = setup()
+    send(session, base, kalshi)
+    send(session, base, pm, now=100.01)
+    deadline = session.origins['2'].deadline
+    withdrawn = send(session, base, floors={'3': 8}, now=100.1)
+    assert withdrawn['preview']['kind'] == 'revoke'
+    assert withdrawn['p'] is None
+    assert withdrawn['preview']['ttl_ms'] == 0
+    assert 0 < auth(withdrawn)['2']['ttl_ms'] <= (deadline - 100.1) * 1000
+    assert session.origins['2'].deadline == deadline
+    warm = replace(base, revision={**base.revision, '3': 8})
+    resumed = send(session, warm, floors={'3': 8}, now=100.2)
+    assert resumed['preview']['kind'] == 'blend'
+    assert 0 < resumed['preview']['ttl_ms'] < auth(withdrawn)['2']['ttl_ms']
+    assert session.origins['2'].deadline == deadline
