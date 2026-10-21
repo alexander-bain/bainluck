@@ -440,5 +440,11 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
         // No raw preview state: only the admitted projections reach the chart.
         XCTAssertFalse(chart.contains("blendPreview"))
         XCTAssertFalse(chart.contains("liveFrames: vm.liveBlend"))
+        // Only the edge reading and the paired away label read the headline;
+        // the balance ink's admission stays on the committed pair (#10456).
+        XCTAssertEqual(chart.components(separatedBy: "vm.headline(").count - 1, 2,
+                       "only the edge reading and the paired away label read the headline")
+        XCTAssertTrue(chart.contains("servedHomeProbability: event.currentOdds?.homeProbability"),
+                      "the balance ink is admitted on the committed pair")
     }
 }
