@@ -114,7 +114,7 @@ function liveRow(
     away_score: 13,
     win_probability_sources: {},
     pregame_projection: BASELINE,
-    current_odds: odds as Event["current_odds"],
+    current_odds: odds as unknown as Event["current_odds"],
     ...patch,
   } as Event;
 }
