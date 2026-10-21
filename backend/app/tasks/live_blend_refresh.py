@@ -3859,6 +3859,7 @@ class LiveBlendRefresher:
                 settled = self._preview_settlement(
                     event_ids, grouped, preview_seq, preview_failed, committed_bags,
                 )
+                settled = await self._prepare_ledger_previews(settled)
                 await self._publish_previews(
                     [f for f in settled if f["preview"]["kind"] == "blend"]
                 )
@@ -4594,14 +4595,25 @@ class LiveBlendRefresher:
             FENCE_CLAIM_SCRIPT, FENCE_EPOCH_KEY, fence_owner_key,
         )
 
-        await connection.send_command(
-            "EVAL", FENCE_CLAIM_SCRIPT, 2, FENCE_EPOCH_KEY, fence_owner_key(self.source),
-        )
-        preview.epoch = int(await connection.read_response())
+        if preview.ledger:
+            # TSP-1: this source's owner claim in the shared ledger.
+            await preview.claim(self._preview_call(connection), self.source)
+        else:
+            await connection.send_command(
+                "EVAL", FENCE_CLAIM_SCRIPT, 2, FENCE_EPOCH_KEY, fence_owner_key(self.source),
+            )
+            preview.epoch = int(await connection.read_response())
         logger.info(
             "live_blend_refresh[%s]: preview display claimed epoch=%s",
-            self.source, preview.epoch,
+            self.source, preview.claim_of(self.source),
         )
+
+    @staticmethod
+    def _preview_call(connection):
+        async def call(*args):
+            await connection.send_command(*args)
+            return await connection.read_response()
+        return call
 
     async def claim_preview_display(self) -> Optional[int]:
         """Claim this process's display epoch at startup, before any frame.
@@ -4624,7 +4636,7 @@ class LiveBlendRefresher:
                 if preview.claim_lock is None:
                     preview.claim_lock = asyncio.Lock()
                 async with preview.claim_lock:
-                    if preview.epoch is None:
+                    if preview.unclaimed(self.source):
                         pool = self._client().connection_pool
                         connection = await _checkout(pool)
                         try:
@@ -4635,7 +4647,7 @@ class LiveBlendRefresher:
                             raise
                         finally:
                             await pool.release(connection)
-            return preview.epoch
+            return preview.claim_of(self.source)
         except Exception:
             self.preview_stats["publish_errors"] += 1
             logger.warning(
@@ -4643,6 +4655,45 @@ class LiveBlendRefresher:
                 self.source, exc_info=True,
             )
             return None
+
+    async def _prepare_ledger_previews(self, items: list) -> list[dict]:
+        """TSP-1: run settlement operations now, so their frames can be ordered.
+
+        Single-source registries already return frames: unchanged. A failure
+        costs only the preview (the frames are dropped), never the commit.
+        """
+        if not items or not any("ledger_op" in item for item in items):
+            return items
+        try:
+            from app.utils.blend_preview import registry
+            from app.utils.market_quote_push import _checkout
+
+            preview = registry()
+            async with asyncio.timeout(1):
+                if preview.claim_lock is None:
+                    preview.claim_lock = asyncio.Lock()
+                pool = self._client().connection_pool
+                async with preview.claim_lock:
+                    connection = await _checkout(pool)
+                    try:
+                        if preview.unclaimed(self.source):
+                            await self._claim_preview_epoch(connection, preview)
+                        return await preview.prepare(
+                            items, self._preview_call(connection), self.preview_stats,
+                        )
+                    except BaseException:
+                        self._redis = None
+                        await connection.disconnect()
+                        raise
+                    finally:
+                        await pool.release(connection)
+        except Exception:
+            self.preview_stats["publish_errors"] += 1
+            logger.warning(
+                "live_blend_refresh[%s]: ledger preview settlement incomplete (%s operations)",
+                self.source, len(items), exc_info=True,
+            )
+            return []
 
     async def _publish_previews(self, frames: list[dict], *, prepare_frames=None) -> None:
         """Fenced PUBLISH of provisional frames. Never raises; never retained.
@@ -4678,12 +4729,20 @@ class LiveBlendRefresher:
                 async with preview.claim_lock:
                     connection = await _checkout(pool)
                     try:
-                        if preview.epoch is None:
+                        if preview.unclaimed(self.source):
                             await self._claim_preview_epoch(connection, preview)
                         if prepare_frames is not None:
                             frames = await prepare_frames()
                             if not frames:
                                 return
+                        if preview.ledger:
+                            # TSP-1: operations and prepared frames run through
+                            # the ledger CAS; nothing is relabeled here.
+                            await preview.execute(
+                                frames, self._preview_call(connection), event_channel,
+                                self.preview_stats,
+                            )
+                            return
                         argv: list = [preview.epoch]
                         for frame in frames:
                             frame["preview"]["epoch"] = preview.epoch
