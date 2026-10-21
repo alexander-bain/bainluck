@@ -4595,7 +4595,7 @@ jobs:
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           result=0
-          python -m pytest tests/test_ws_market_change_hooks_9484.py tests/test_ws_polymarket_open_contract_prices_9484.py tests/test_poly_ws_binary_complement_9733.py tests/test_poly_ws_book_snapshot_prices_9733.py tests/integration/test_pm_bulk_price_write_10664_pg.py tests/test_pm_standalone_flush_off_game_path_10090.py -v -rs > /tmp/pm10664.txt 2>&1 || result=$?
+          python -m pytest tests/test_ws_market_change_hooks_9484.py tests/test_ws_polymarket_open_contract_prices_9484.py tests/test_poly_ws_binary_complement_9733.py tests/test_poly_ws_book_snapshot_prices_9733.py tests/integration/test_pm_bulk_price_write_10664_pg.py tests/test_pm_standalone_flush_off_game_path_10090.py tests/integration/test_pm_rank_lock_holder_10090_pg.py tests/test_pm_lock_holder_trace_10090.py -v -rs > /tmp/pm10664.txt 2>&1 || result=$?
           cat /tmp/pm10664.txt
           if [ "$result" -ne 0 ]; then exit "$result"; fi
           if grep -qiE "[0-9]+ skipped" /tmp/pm10664.txt; then
