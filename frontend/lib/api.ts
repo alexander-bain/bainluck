@@ -1373,6 +1373,12 @@ export interface GameMarketsResponse {
     resolution_source?: string | null;
     /** #8596: the market id, so the page can tell which section already shows it. */
     _market_id?: number | null;
+    /**
+     * #1529: present only as `"moneyline"`, on a row of a market the server
+     * already classified as the full game's winner (never a player container).
+     * Absent means not established — the row stays an Other question.
+     */
+    market_type?: string | null;
   }[];
   pace: {
     total_scored: number;
