@@ -25,7 +25,11 @@ operator whose only egress is an HTTP proxy cannot use it.
 THE ENVELOPE (Root, 2026-10-20; revised under 035A). One 30 s deadline is
 shared by every stage from the top of ``main``: receipt creation, launcher and
 credential reads, TLS context, name resolution, connect, handshake, request,
-response, log stream and receipt serialization. One 65,536-byte cap is shared
+response, log stream, and the receipt's serialization, write, report and close.
+The clock is read again after each finalization step; a verdict whose step
+returns at or past the deadline is rewritten UNCERTAIN LATE_FINALIZATION, so
+when control returns the exit code and the receipt agree, and a payable
+receipt is never written once serialization returned late. One 65,536-byte cap is shared
 by every byte the reader takes in AND every byte it retains: the launcher
 file, the credential file, both responses' status lines, headers, chunk framing
 and bodies, error bodies, the log retained in the receipt (charged at its
@@ -40,7 +44,9 @@ store load inside the TLS context, the receipt write, and ``getaddrinfo`` (run
 on a daemon thread the reader abandons at the deadline) are operating-system
 waits no in-process timer can interrupt. A hard wall around the whole client
 needs an external bounded invocation at admission; this file does not prove
-the operator has one.
+the operator has one. That is why the plan gate is paid only by exit 0
+TOGETHER with a receipt that says so: a receipt alone, with no exit code (a
+write that never returned), never pays.
 
 THE CREDENTIAL. The ``api.heroku.com`` password from the operator's netrc file,
 read in-process (no ``heroku auth:token`` child, so nothing can outlive the
@@ -797,6 +803,115 @@ class _Parser(argparse.ArgumentParser):
         raise SystemExit(UNCERTAIN)
 
 
+def unpaid_receipt(receipt: dict, stage: str, budget: Budget, *, reason: str = "LATE_FINALIZATION") -> bytes:
+    """The receipt as it must read once a finalization step returned after the
+    deadline (or failed): UNCERTAIN, paying nothing, everything it retained kept,
+    and held to the same cap as any receipt."""
+    elapsed = budget.elapsed()
+    unpaid = dict(receipt)
+    unpaid.update(verdict=VERDICTS[UNCERTAIN], reason=reason, exit_code=UNCERTAIN,
+                  apply_authorized=False, pays_plan_gate=False,
+                  original_verdict=receipt.get("verdict"), finalize_stage=stage,
+                  finalized_elapsed_s=round(elapsed, 3),
+                  detail=(f"{stage} returned at {elapsed:.3f} s, past the shared {budget.deadline_s:g} s deadline"
+                          if reason == "LATE_FINALIZATION" else f"{stage} did not complete"))
+    return serialize_receipt(unpaid, budget)
+
+
+def _late(budget: Budget) -> bool:
+    return budget.elapsed() >= budget.deadline_s
+
+
+def _write_receipt(fd: int, body: bytes) -> None:
+    """The whole receipt at offset 0 of its own file, replacing whatever was there."""
+    os.ftruncate(fd, 0)
+    os.lseek(fd, 0, os.SEEK_SET)
+    view = memoryview(body)
+    while view:
+        view = view[os.write(fd, view):]
+
+
+def _report(body: bytes, budget: Budget, path: Path) -> None:
+    final = json.loads(body)
+    print(f"{final['verdict']} {final['reason']} exit={final['exit_code']} "
+          f"receipt_bytes={len(body)} elapsed_s={budget.elapsed():.3f} receipt={path}", flush=True)
+
+
+def _close(fd: int) -> bool:
+    try:
+        os.close(fd)
+    except OSError:
+        return False
+    return True
+
+
+def _rewrite_closed(path: Path, ident: os.stat_result, body: bytes) -> bool:
+    """Rewrite the receipt after its descriptor closed, only if the path still
+    names the very file this run created."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        now = os.fstat(fd)
+        if (now.st_dev, now.st_ino) != (ident.st_dev, ident.st_ino):
+            return False
+        _write_receipt(fd, body)
+        return True
+    except OSError:
+        return False
+    finally:
+        _close(fd)
+
+
+def finalize(fd: int, path: Path, receipt: dict, budget: Budget) -> int:
+    """Serialize, write, report and close the receipt; return its exit code.
+
+    A verdict stands only if every one of those steps returns inside the one
+    deadline. The clock is read after each, and the last read follows the last
+    wait, immediately before the return. When a step returns late, the receipt
+    is rewritten UNCERTAIN LATE_FINALIZATION in the same file and the exit says
+    the same, so whenever control returns the exit code and the receipt agree.
+    A payable receipt is never written when serialization itself returned late.
+    A step that never returns is the noninterruptible wait the module docstring
+    discloses; that is why the plan gate is paid by exit 0 TOGETHER with the
+    receipt, never by the receipt alone."""
+    ident = os.fstat(fd)
+    receipt = dict(receipt, elapsed_s=round(budget.elapsed(), 3))  # the stamp serialization starts at
+    body = serialize_receipt(receipt, budget)
+    stands = json.loads(body)["exit_code"] != UNCERTAIN  # a plan, stop or refusal verdict
+    try:
+        if stands and _late(budget):
+            body, stands = unpaid_receipt(receipt, "serialize", budget), False
+        _write_receipt(fd, body)
+        if stands and _late(budget):
+            body, stands = unpaid_receipt(receipt, "write", budget), False
+            _write_receipt(fd, body)
+        _report(body, budget, path)
+        if stands and _late(budget):
+            body, stands = unpaid_receipt(receipt, "report", budget), False
+            _write_receipt(fd, body)
+            _report(body, budget, path)
+    except BaseException:  # control leaves without the exit code a payable receipt claims
+        if stands:
+            try:
+                _write_receipt(fd, unpaid_receipt(receipt, "finalize", budget, reason="FINALIZATION_FAILED"))
+            except OSError:
+                pass
+        _close(fd)
+        raise
+    closed = _close(fd)
+    if stands and (not closed or _late(budget)):
+        body = unpaid_receipt(receipt, "close", budget,
+                              reason="LATE_FINALIZATION" if closed else "FINALIZATION_FAILED")
+        if not _rewrite_closed(path, ident, body):
+            print(f"UNCERTAIN {json.loads(body)['reason']} the receipt at {path} could not be "
+                  "rewritten: it pays nothing without exit 0", file=sys.stderr, flush=True)
+            return UNCERTAIN
+        _report(body, budget, path)
+    return json.loads(body)["exit_code"]
+
+
 def main(argv=None) -> int:
     budget = Budget()  # the ONE deadline starts before anything is created or read
     p = _Parser(description="Read one #1853 no-flag plan run's output (read-only).")
@@ -810,13 +925,7 @@ def main(argv=None) -> int:
         return UNCERTAIN
     netrc = Path(os.environ.get("HOME", "/nonexistent")) / ".netrc"
     receipt = read_plan(args.launcher, netrc, budget=budget)
-    body = serialize_receipt(receipt, budget)
-    with os.fdopen(fd, "wb") as fh:
-        fh.write(body)
-    final = json.loads(body)
-    print(f"{final['verdict']} {final['reason']} exit={final['exit_code']} "
-          f"receipt_bytes={len(body)} elapsed_s={budget.elapsed():.3f} receipt={args.receipt}")
-    return final["exit_code"]
+    return finalize(fd, args.receipt, receipt, budget)
 
 
 if __name__ == "__main__":

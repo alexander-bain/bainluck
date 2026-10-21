@@ -1021,6 +1021,7 @@ def test_a_handshake_that_returns_after_the_deadline_is_late_and_closed(
     ("missing", "launcher evidence unavailable (FileNotFoundError)"),
     ("directory", "launcher evidence is not a regular file"),
     ("latin1", "launcher evidence is not UTF-8"),
+    ("oversized", "launcher evidence exceeds 4096 bytes"),
 ])
 def test_launch_evidence_is_read_like_the_credential(reader, netrc, heroku, tmp_path, make, detail):
     path = tmp_path / "launch-input"
@@ -1033,6 +1034,8 @@ def test_launch_evidence_is_read_like_the_credential(reader, netrc, heroku, tmp_
         path.mkdir()
     elif make == "latin1":
         path.write_bytes(LAUNCH.replace("⬢".encode(), b"\xe2"))
+    elif make == "oversized":
+        path.write_bytes(LAUNCH + b"x" * 4096)
     fake = heroku(b"")
     t0 = time.monotonic()
     try:
@@ -1106,3 +1109,183 @@ def test_every_log_byte_taken_in_is_a_byte_handed_to_the_parser(
     assert raw == log
     framing = r["bytes"]["by_stage"]["log"] - len(raw)  # status line, header, chunk sizes
     assert 0 < framing < 300, framing  # the 3,000-byte chunk behind the evidence was never taken in
+
+
+# ── 12. 035B: a verdict whose finalization returns late never stands ────────
+
+
+def _finalize_run(reader, repair, monkeypatch, capsys, heroku, tmp_path, *, kind="plan", status=0,
+                  hooks=None, receipt_created_at=None):
+    """``main`` end to end on the real planner's print through the socketpair
+    Heroku, under one controlled clock. ``hooks`` maps a finalization step
+    (``serialize_receipt``, ``_write_receipt``, ``_report``, ``_close``) to a
+    function called with (clock, call number) AFTER the real step returns, so a
+    step can return late or fail. Returns (exit, receipt, stdout, stderr,
+    every body written, receipt path)."""
+    text, _ = real_print(kind, repair, monkeypatch, capsys)
+    fake = heroku(frame(text, status))
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    netrc_path = tmp_path / "netrc"
+    netrc_path.write_text(f"machine api.heroku.com\n  login operator@example.invalid\n  password {TOKEN}\n")
+    clock = [0.0]
+    monkeypatch.setattr(reader.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(reader.time, "time", lambda: clock[0])
+    monkeypatch.setattr(reader, "_continuous", lambda: clock[0])
+    original_read = reader.read_plan
+    monkeypatch.setattr(reader, "read_plan", lambda launcher, _netrc, **kw: original_read(
+        launcher, netrc_path, connector=fake.connect, **kw))
+    written: list[bytes] = []
+    for name, hook in (hooks or {}).items():
+        real, calls = getattr(reader, name), [0]
+
+        def wrapped(*a, _real=real, _calls=calls, _hook=hook, _name=name):
+            out = _real(*a)
+            if _name == "_write_receipt":
+                written.append(bytes(a[1]))
+            _calls[0] += 1
+            return _hook(clock, _calls[0], out, a)
+
+        monkeypatch.setattr(reader, name, wrapped)
+    if "_write_receipt" not in (hooks or {}):
+        real_write = reader._write_receipt
+        monkeypatch.setattr(reader, "_write_receipt",
+                            lambda fd, body: (written.append(bytes(body)), real_write(fd, body))[1])
+    if receipt_created_at is not None:  # creating the receipt itself returns at this clock
+        real_open = os.open
+
+        def timed_open(path, flags, *a):
+            fd = real_open(path, flags, *a)
+            if flags & os.O_EXCL:
+                clock[0] = receipt_created_at
+            return fd
+
+        monkeypatch.setattr(reader.os, "open", timed_open)
+    destination = tmp_path / "receipt.json"
+    capsys.readouterr()
+    code = reader.main(["--launcher", str(launch_file(tmp_path)), "--receipt", str(destination)])
+    out = capsys.readouterr()
+    return code, json.loads(destination.read_bytes()), out.out, out.err, written, destination
+
+
+def _late_at(stage_call=1, at=31.0):
+    def hook(clock, n, out, args):
+        if n == stage_call:
+            clock[0] = at
+        return out
+    return hook
+
+
+def test_a_timely_finalization_pays_and_its_receipt_agrees(
+    reader, repair, monkeypatch, capsys, heroku, tmp_path
+):
+    code, r, out, _, written, _ = _finalize_run(reader, repair, monkeypatch, capsys, heroku, tmp_path)
+    assert code == reader.ADMISSIBLE == r["exit_code"]
+    assert (r["verdict"], r["pays_plan_gate"], r["apply_authorized"]) == ("ADMISSIBLE_PLAN", True, False)
+    assert "finalize_stage" not in r and len(written) == 1
+    assert out.splitlines()[-1].startswith("ADMISSIBLE_PLAN ADMISSIBLE_PLAN exit=0 ")
+
+
+@pytest.mark.parametrize("step,call", [
+    ("serialize_receipt", 1), ("_write_receipt", 1), ("_report", 1), ("_close", 1),
+], ids=["serialize", "write", "report", "close-then-return"])
+def test_a_finalization_step_that_returns_past_the_deadline_never_pays(
+    reader, repair, monkeypatch, capsys, heroku, tmp_path, step, call
+):
+    """Root's 4f93 finding, on every step: the step returns, the clock says 31 s,
+    and neither the exit code nor the receipt may pay the plan gate."""
+    code, r, out, err, written, _ = _finalize_run(
+        reader, repair, monkeypatch, capsys, heroku, tmp_path, hooks={step: _late_at(call)})
+    text, _ = real_print("plan", repair, monkeypatch, capsys)
+    stage = {"serialize_receipt": "serialize", "_write_receipt": "write", "_report": "report",
+             "_close": "close"}[step]
+    assert code == reader.UNCERTAIN == r["exit_code"]
+    assert (r["verdict"], r["reason"], r["finalize_stage"]) == ("UNCERTAIN", "LATE_FINALIZATION", stage)
+    assert (r["pays_plan_gate"], r["apply_authorized"], r["original_verdict"]) == (False, False, "ADMISSIBLE_PLAN")
+    assert r["finalized_elapsed_s"] == 31.0 and "31.000 s, past the shared 30 s deadline" in r["detail"]
+    assert base64.b64decode(r["log"]["raw_b64"]) == frame(text, 0)  # the evidence is kept, never skipped
+    assert out.splitlines()[-1].startswith("UNCERTAIN LATE_FINALIZATION exit=30 ")
+    assert err == ""
+    if stage == "serialize":  # a payable receipt is never written once serialization returned late
+        assert written and not any(json.loads(b)["pays_plan_gate"] for b in written)
+
+
+def test_root_4f93_finalization_reproducer_now_refuses(reader, repair, monkeypatch, capsys, heroku, tmp_path):
+    """Root's inert reproducer (artifacts/calibration-1853-reader-review-20261020/
+    test_root_finalization_deadline.py): serialization returns at 31 s."""
+    def serialize(clock, n, out, args):
+        clock[0] = 31.0
+        return out
+    code, r, out, _, _, _ = _finalize_run(reader, repair, monkeypatch, capsys, heroku, tmp_path,
+                                          hooks={"serialize_receipt": serialize})
+    assert code == reader.UNCERTAIN and r["pays_plan_gate"] is False
+    assert "ADMISSIBLE_PLAN" not in out and "elapsed_s=31.000" in out
+
+
+@pytest.mark.parametrize("at,expect", [(29.999, 0), (30.0, 30)],
+                         ids=["just-inside", "at-the-deadline"])
+def test_the_deadline_itself_is_late(reader, repair, monkeypatch, capsys, heroku, tmp_path, at, expect):
+    code, r, _, _, _, _ = _finalize_run(reader, repair, monkeypatch, capsys, heroku, tmp_path,
+                                        hooks={"_close": _late_at(1, at)})
+    assert code == r["exit_code"] == expect
+    assert r["pays_plan_gate"] is (expect == 0)
+
+
+def test_a_stop_verdict_whose_finalization_is_late_is_not_a_stop(
+    reader, repair, monkeypatch, capsys, heroku, tmp_path
+):
+    code, r, out, _, _, _ = _finalize_run(reader, repair, monkeypatch, capsys, heroku, tmp_path,
+                                          kind="stop", status=1, hooks={"_write_receipt": _late_at()})
+    assert code == reader.UNCERTAIN == r["exit_code"]
+    assert (r["reason"], r["original_verdict"], r["pays_plan_gate"]) == ("LATE_FINALIZATION", "STOP_RESULT", False)
+    assert out.splitlines()[-1].startswith("UNCERTAIN LATE_FINALIZATION exit=30 ")
+
+
+def test_a_report_that_fails_after_the_write_leaves_a_receipt_that_pays_nothing(
+    reader, repair, monkeypatch, capsys, heroku, tmp_path
+):
+    def broken(clock, n, out, args):
+        raise BrokenPipeError("inert: the terminal went away")
+    with pytest.raises(BrokenPipeError):
+        _finalize_run(reader, repair, monkeypatch, capsys, heroku, tmp_path, hooks={"_report": broken})
+    r = json.loads((tmp_path / "receipt.json").read_bytes())
+    assert (r["verdict"], r["reason"], r["finalize_stage"]) == ("UNCERTAIN", "FINALIZATION_FAILED", "finalize")
+    assert (r["exit_code"], r["pays_plan_gate"], r["original_verdict"]) == (30, False, "ADMISSIBLE_PLAN")
+
+
+def test_a_close_that_fails_unpays_the_receipt_by_its_own_path(
+    reader, repair, monkeypatch, capsys, heroku, tmp_path
+):
+    def failed(clock, n, out, args):
+        return False if n == 1 else out
+    code, r, out, _, _, _ = _finalize_run(reader, repair, monkeypatch, capsys, heroku, tmp_path,
+                                          hooks={"_close": failed})
+    assert code == reader.UNCERTAIN == r["exit_code"]
+    assert (r["reason"], r["finalize_stage"], r["pays_plan_gate"]) == ("FINALIZATION_FAILED", "close", False)
+
+
+def test_a_late_close_never_rewrites_a_file_that_replaced_the_receipt(
+    reader, repair, monkeypatch, capsys, heroku, tmp_path
+):
+    """The path is rewritten only while it names the file this run created; a
+    replaced path is left alone and the exit pays nothing."""
+    def swap(clock, n, out, args):
+        if n == 1:
+            clock[0] = 31.0
+            other = tmp_path / "other.json"
+            other.write_text('{"not": "ours"}')
+            os.replace(other, tmp_path / "receipt.json")
+        return out
+    code, r, _, err, _, _ = _finalize_run(reader, repair, monkeypatch, capsys, heroku, tmp_path,
+                                          hooks={"_close": swap})
+    assert code == reader.UNCERTAIN
+    assert r == {"not": "ours"}
+    assert "UNCERTAIN LATE_FINALIZATION" in err and "pays nothing" in err
+
+
+def test_the_deadline_starts_before_the_receipt_is_created(reader, repair, monkeypatch, capsys, heroku, tmp_path):
+    """Creating the receipt is the first wait ``main`` makes; it counts."""
+    code, r, out, _, _, _ = _finalize_run(reader, repair, monkeypatch, capsys, heroku, tmp_path,
+                                          receipt_created_at=31.0)
+    assert code == reader.UNCERTAIN == r["exit_code"]
+    assert (r["reason"], r["pays_plan_gate"]) == ("DEADLINE", False)
+    assert out.splitlines()[-1].startswith("UNCERTAIN DEADLINE exit=30 ")
