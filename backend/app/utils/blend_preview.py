@@ -402,6 +402,7 @@ class PreviewRegistry:
         self, event_id: int, source: str, *, value: float, event: Any,
         row_sources: Any, row_rev: Any, eligibility: Any = None,
         observed_basis: Optional[dict] = None, stamped_at: Optional[datetime] = None,
+        observation_only: bool = False,
     ) -> list[dict]:
         """A reading passed every check and is about to be persisted.
 
@@ -417,6 +418,33 @@ class PreviewRegistry:
             frame = self._revoke_frame(event_id, state, "terminal")
             return [] if frame is None else [frame]
         value = float(value)
+        if observation_only:
+            from app.utils.aggregation import parse_source_entry, stamp_source_reading
+            from app.utils.probability_eligibility import is_refused
+
+            observed = _basis_observation_time(observed_basis)
+            stored_value, stored_at = parse_source_entry((state.base_sources or {}).get(source))
+            entry = stamp_source_reading(
+                state.base_sources or {}, source, value, eligibility=eligibility,
+                observed_basis=observed_basis,
+            )[source]
+            if (observed is None or stored_at is None or stored_value is None
+                    or round(stored_value, 4) != value or observed <= stored_at
+                    or is_refused(entry)):
+                return self.refused(event_id, source, "unobserved")
+            prior = state.pending.get(source)
+            if prior is not None:
+                previous = prior.observed_basis
+                previous_at = _basis_observation_time(previous)
+                # A duplicate/frozen leg or regressed sibling may not fabricate
+                # a newer whole reading. The existing display keeps its original
+                # deadline; a fresh proof never reopens an expired value below.
+                if (previous_at is None or set(previous) != set(observed_basis)
+                        or any(observed_basis[key] < seen for key, seen in previous.items())
+                        or observed <= previous_at):
+                    if self._drop_regressed(state):
+                        return self._after_drop(event_id, state, "stale", source)
+                    return []
         if source in state.expired:
             if state.expired[source] == value:
                 # The same value outlived the limit and is still uncommitted:

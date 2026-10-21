@@ -73,7 +73,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass, replace as _replace
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Awaitable, Callable, Iterable, Optional
 
 logger = logging.getLogger(__name__)
@@ -321,7 +321,7 @@ class TailReceipts:
     """
 
     COALESCIBLE = frozenset(
-        {"stamped", "unchanged", "unobserved", "no_reading", "no_row", "no_market"}
+        {"stamped", "unchanged", "preview_only", "unobserved", "no_reading", "no_row", "no_market"}
     )
 
     def __init__(self, source: str, *, coalesce_s: float = TAIL_RECEIPT_COALESCE_S) -> None:
@@ -676,7 +676,7 @@ class TailReceipts:
         value = previous = stamped_at = None
         if result == "stamped":
             _, value, stamped_at, previous = disposition[:4]
-        elif result in ("unchanged", "unobserved", "stale"):
+        elif result in ("unchanged", "preview_only", "unobserved", "stale"):
             value = disposition[1]
         moved = result == "stamped" and (previous is None or previous != value)
 
@@ -2946,7 +2946,7 @@ class LiveBlendRefresher:
         if interrupted is not None:
             raise interrupted
 
-    async def _read_groups(self, session, event_ids: list[int]) -> dict[int, tuple]:
+    async def _read_groups(self, session, event_ids: list[int], *, overlay_held=True) -> dict[int, tuple]:
         from types import SimpleNamespace
         from sqlalchemy import and_, func, literal, or_, select
         from app.models.models import Event, FuturesMarket, FuturesOutcome
@@ -3036,7 +3036,7 @@ class LiveBlendRefresher:
         ).all()
         grouped: dict[int, tuple] = {}
         entries: dict[int, MarketOutcomes] = {}
-        held = self.held_quotes
+        held = self.held_quotes if overlay_held else None
         for row in rows:
             market_id = row[0]
             entry = entries.get(market_id)
@@ -3479,6 +3479,7 @@ class LiveBlendRefresher:
             # UPDATE, the preview seq each published, and canary events whose
             # attempt failed.
             preview_plans: dict[int, tuple] = {}
+            preview_only: set[int] = set()
             preview_seq: dict[int, int] = {}
             preview_failed: set[int] = set()
             # #10090: every CANARY event's reading is computed and its preview
@@ -3497,9 +3498,11 @@ class LiveBlendRefresher:
                 work = [("both", eid) for eid in ordered]
             for phase, event_id in work:
                 if phase == "preview":
-                    await self._preview_before_stamp(grouped, preview_plans, preview_seq)
+                    await self._preview_before_stamp(
+                        grouped, preview_plans, preview_seq, observation_only=preview_only,
+                    )
                     continue
-                if phase == "stamp" and event_id not in preview_plans:
+                if phase == "stamp" and (event_id not in preview_plans or event_id in preview_only):
                     continue
                 event, group = grouped[event_id]
                 try:
@@ -3569,6 +3572,17 @@ class LiveBlendRefresher:
                         if not self._should_write(event_id, value, now):
                             self.stats["unchanged_skipped"] += 1
                             self._dispositions[event_id] = ("unchanged", value)
+                            # Persistence cadence does not own display admission.
+                            # Only a complete contributing observation can try
+                            # this route; the registry proves it newer than the
+                            # stored reading and its pending observation. There
+                            # is no event UPDATE or lock/retry debt for this arm.
+                            if phase == "compute" and observation_basis(contributing):
+                                preview_plans[event_id] = (
+                                    refused, proof_kwargs, reading, value, contributing,
+                                )
+                                preview_only.add(event_id)
+                                self._dispositions[event_id] = ("preview_only", value)
                             continue
 
                         if phase == "compute":
@@ -4360,7 +4374,96 @@ class LiveBlendRefresher:
 
     # ── #10090: provisional preview (off by default; canary events only) ──
 
-    async def _preview_before_stamp(self, grouped, plans, published_seq) -> None:
+    async def preview_accepted_observations(self, observations, validate) -> None:
+        """Preview acknowledged unchanged PM observations without owning writes.
+
+        The serial game flush awaits this optional work while no stamp owner is
+        active. The graph and copied observation clocks are disposable: none
+        enters `held_quotes`, a stamp plan, a receipt or the history queue.
+        `validate` rechecks immutable input identity and the flush's ownership
+        under its buffer lock, including at the final Redis send boundary.
+        """
+        if self.source != "polymarket" or not self.preview:
+            return
+        from copy import copy
+        from app.tasks.base import get_task_session
+        from app.utils.aggregation import _coerce_timestamp, observation_basis
+        from app.utils.blend_preview import PREVIEW_STATUSES, registry
+        from app.utils.live_blend import compute_source_home_probability, has_proven_home_orientation
+
+        try:
+            event_ids = set(observations).intersection(self.preview_events)
+            event_ids.intersection_update(await validate(event_ids))
+            if not event_ids:
+                return
+            factory = self._session_factory or get_task_session
+            # Optional display work must not queue the game loop behind a
+            # contended pool/read. It has no retry debt when this budget ends.
+            async with asyncio.timeout(.25), self._session_slot(), factory() as session:
+                grouped = await self._read_groups(session, sorted(event_ids), overlay_held=False)
+            plans = {}
+            for eid, (event, group) in grouped.items():
+                if event.status not in PREVIEW_STATUSES or event.completed_at is not None:
+                    continue
+                reading = compute_source_home_probability(group, event.home_team_name, event.away_team_name)
+                if reading is None or not has_proven_home_orientation(reading):
+                    continue  # optional path never invokes repairing inversion fallback
+                contributors = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
+                ids = {getattr(row, "id", None) for row in contributors}
+                snapshot = observations[eid]
+                if not ids or not ids.issubset(snapshot):
+                    continue
+                rows = {row.id: (entry, row) for entry in group for row in entry.outcomes}
+                if any(oid not in rows for oid in snapshot):
+                    continue
+                valid = True
+                for oid, (value, bound, mark) in snapshot.items():
+                    entry, row = rows[oid]
+                    stored_at = _coerce_timestamp(row.last_updated)
+                    if (mark is None or getattr(mark, "probability", None) != value
+                            or type(bound) not in (float, int) or not math.isfinite(bound)
+                            or entry.market.status != "open" or row.resolution_source is not None
+                            or row.is_winner is not None or stored_at is None
+                            or stored_at.timestamp() >= bound
+                            or row.current_probability is None
+                            or round(float(row.current_probability), 6) != round(float(value), 6)):
+                        valid = False
+                        break
+                if not valid:
+                    continue
+                observed_rows = []
+                for row in contributors:
+                    observed = copy(row)
+                    observed.last_updated = datetime.fromtimestamp(snapshot[row.id][1], timezone.utc)
+                    observed_rows.append(observed)
+                basis = observation_basis(observed_rows)
+                if basis:
+                    plans[eid] = (event, reading, basis)
+            if not plans:
+                return
+
+            async def prepare_frames():
+                allowed = await validate(set(plans))
+                if not allowed:
+                    return []  # rejection/cancellation must not mutate the registry
+                preview = registry()
+                frames = preview.expire()
+                for eid in allowed:
+                    event, reading, basis = plans[eid]
+                    frames.extend(preview.propose(
+                        eid, self.source, value=round(reading.home_probability, 4), event=event,
+                        row_sources=event.preview_sources, row_rev=event.preview_rev,
+                        eligibility=getattr(reading, "eligibility", None), observed_basis=basis,
+                        observation_only=True,
+                    ))
+                return frames
+
+            await self._publish_previews([], prepare_frames=prepare_frames)
+        except Exception:
+            self.preview_stats["publish_errors"] += 1
+            logger.warning("live_blend_refresh[%s]: optional observation preview unavailable", self.source, exc_info=True)
+
+    async def _preview_before_stamp(self, grouped, plans, published_seq, *, observation_only=()) -> None:
         """Publish every planned reading's preview, then let the UPDATEs run.
 
         Called once per attempt after all readings were computed and before
@@ -4381,6 +4484,7 @@ class LiveBlendRefresher:
                     row_rev=getattr(event, "preview_rev", None),
                     eligibility=getattr(reading, "eligibility", None),
                     observed_basis=observation_basis(contributing),
+                    observation_only=event_id in observation_only,
                 ))
             except Exception:
                 self.preview_stats["publish_errors"] += 1
@@ -4427,6 +4531,11 @@ class LiveBlendRefresher:
                     reason = (self._dispositions.get(event_id) or ("unknown",))[0]
                     if reason == "lock":
                         continue  # still owed; the retry republishes it
+                    if reason == "preview_only":
+                        # The event restamp was deliberately throttled. Retain
+                        # the bounded display chain, including its expiry fence,
+                        # without pretending a failed write needs retrying.
+                        continue
                 # Also ends an expired chain with nothing pending (R4).
                 frames.extend(preview.refused(event_id, self.source, reason))
             except Exception:
@@ -4493,7 +4602,7 @@ class LiveBlendRefresher:
             )
             return None
 
-    async def _publish_previews(self, frames: list[dict]) -> None:
+    async def _publish_previews(self, frames: list[dict], *, prepare_frames=None) -> None:
         """Fenced PUBLISH of provisional frames. Never raises; never retained.
 
         Not `_publish`: a preview has no revision, owes no recovery intent and
@@ -4507,7 +4616,7 @@ class LiveBlendRefresher:
         drops the blends of a process another worker has superseded. No
         epoch, no blend.
         """
-        if not frames:
+        if not frames and prepare_frames is None:
             return
         try:
             import json
@@ -4529,6 +4638,10 @@ class LiveBlendRefresher:
                     try:
                         if preview.epoch is None:
                             await self._claim_preview_epoch(connection, preview)
+                        if prepare_frames is not None:
+                            frames = await prepare_frames()
+                            if not frames:
+                                return
                         argv: list = [preview.epoch]
                         for frame in frames:
                             frame["preview"]["epoch"] = preview.epoch

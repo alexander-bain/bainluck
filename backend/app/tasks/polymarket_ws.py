@@ -4445,7 +4445,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # Handlers update complementary legs under this same lock;
                     # newly buffered ids still belong to a successor flush.
                     held_quotes = getattr(blend_refresher, "held_quotes", None)
+                    preview_observations = getattr(blend_refresher, "preview_accepted_observations", None)
                     async with buffer_lock:
+                        observation_generation = routing_generation if callable(preview_observations) else None
                         current_chunk = {oid: price_buffer[oid] for oid in chunk_ids}
                         for oid in chunk_ids:
                             if oid in input_marks:
@@ -4474,6 +4476,43 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # AFTER it, for FUTURE inputs, never to re-date this batch.
                     if held_quotes is not None and not final:
                         await held_quotes.sample_database_clock(get_task_session)
+                    # An acknowledged same-price input is a real observation,
+                    # but deliberately not a durable stamp/receipt. Keep its
+                    # optional preview outside `owed` and HeldRowQuotes: putting
+                    # it in either would force persistence on the next flush.
+                    if (not final and callable(preview_observations)
+                            and getattr(wrote, "written_ids", None) is not None
+                            and (stamp_owner.task is None or stamp_owner.task.done())):
+                        observation_groups = {}
+                        for oid, value in current_chunk.items():
+                            eid = headline_event_ids.get(oid)
+                            if eid in getattr(blend_refresher, "preview_events", ()):
+                                observation_groups.setdefault(eid, {})[oid] = (
+                                    value, chunk_bounds.get(oid), batch_marks.get(oid),
+                                )
+                        written_events = event_ids_for_outcomes(headline_event_ids, wrote.written_ids)
+                        for eid in written_events:
+                            observation_groups.pop(eid, None)
+
+                        async def validate_observations(event_ids):
+                            async with buffer_lock:
+                                if (routing_generation != observation_generation
+                                        or (stamp_owner.task is not None and not stamp_owner.task.done())):
+                                    return set()
+                                withdrawals = event_ids_for_outcomes(headline_event_ids, withdraw_buffer)
+                                return {
+                                    eid for eid in event_ids if eid not in withdrawals
+                                    and all(
+                                        mark is not None and input_marks.get(oid) is mark
+                                        and getattr(mark, "probability", None) == value
+                                        and bound is not None and held_quotes is not None
+                                        and held_quotes.bound_for(mark) == bound
+                                        for oid, (value, bound, mark) in observation_groups[eid].items()
+                                    )
+                                }
+
+                        if observation_groups:
+                            await preview_observations(observation_groups, validate_observations)
                     # #11138: None is a price row a lock holds (refused, timed
                     # out or cooling down). Each event whose speaking legs here
                     # all carry their received quote is stamped from
