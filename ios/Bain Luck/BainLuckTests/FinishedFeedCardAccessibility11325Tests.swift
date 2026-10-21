@@ -183,6 +183,97 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
                       "\(name): a live card took the finished layout — \(all)")
     }
 
+    // MARK: - #9483 — the finished single row names its pre-game number
+
+    /// At default size the finished row printed a bare "32%" beside
+    /// Stuttgart's actual "1", and nothing on the card said the percent was
+    /// from before the game. Now the word "Pregame" prints immediately before
+    /// each pre-game number, on its own team's row, after that team's score —
+    /// and whole, at both widths. At 320pt the word must not cost a name: the
+    /// name wraps rather than truncating. A copy that drops the word, puts it
+    /// on the other row, or cuts the word or a name has no such row.
+    func testTheFinishedSportsCardAtLargeNamesEachPreGameProbability() throws {
+        let odds = try served(14780563, editing: #""ended_at": "#,
+                              to: Self.constructedOpeningOdds + #", "ended_at": "#)
+        for width: CGFloat in [320, 393] {
+            let name = "sports-nfl-\(Int(width))-large-constructed-odds"
+            let read = try sportsLines(odds, width: width, size: .large, name: name)
+            let all = describe(read)
+            for (team, score, percent) in [("WashingtonCommanders", "17", "24%"), ("SanFrancisco49ers", "23", "76%")] {
+                let row = try XCTUnwrap(qualifiedRow(percent, in: read),
+                                        "\(name): \(percent) is not printed exactly once — \(all)")
+                XCTAssertEqual(row.firstIndex(of: percent).map { row[row.index(before: $0)] }, "Pregame",
+                               "\(name): \(percent) is not directly after a whole 'Pregame' — \(row)")
+                let at = try XCTUnwrap(row.firstIndex(of: score), "\(name): \(score) left \(percent)'s row — \(row)")
+                XCTAssertLessThan(at, row.index(before: row.firstIndex(of: percent)!),
+                                  "\(name): 'Pregame \(percent)' is not after the actual \(score) — \(row)")
+                // The complete name, before the score (a crest Vision fuses on
+                // — "®San" — only adds a leading mark), whole at both widths.
+                XCTAssertTrue(normalized(row[..<at].joined()).hasSuffix(team),
+                              "\(name): \(team) is not complete before \(score) on \(percent)'s row — \(row)")
+            }
+            XCTAssertEqual(read.filter { tokens($0.text).contains("Pregame") }.count, 2,
+                           "\(name): not one 'Pregame' per number — \(all)")
+            for line in read where tokens(line.text).contains("Pregame") || line.text.contains("%") {
+                XCTAssertFalse(isElided(line.text), "\(name): '\(line.text)' is cut short — \(all)")
+            }
+        }
+    }
+
+    /// The case Design read: Stuttgart 1, Atlético Madrid 1, a board that prices
+    /// a draw, so only the home number prints (#5363). Its row reads
+    /// "VfB Stuttgart 1 Pregame 32%"; Atlético's row carries no word and no
+    /// percent, and the card prints the word exactly once.
+    func testTheStuttgartFinalAtLargeReadsPregameBeforeItsOnlyNumber() throws {
+        let card = try leagueFeedEvent(Self.stuttgartLeagueRow)
+        for width: CGFloat in [320, 393] {
+            let name = "sports-soccer-15330334-\(Int(width))-large"
+            let read = try sportsLines(card, width: width, size: .large, name: name)
+            let all = describe(read)
+            let row = try XCTUnwrap(qualifiedRow("32%", in: read), "\(name): 32% is not printed exactly once — \(all)")
+            XCTAssertEqual(Array(row.suffix(4)), ["Stuttgart", "1", "Pregame", "32%"],
+                           "\(name): Stuttgart's row does not end '1 Pregame 32%' — \(row)")
+            let atletico = try XCTUnwrap(read.first { normalized($0.text).contains("AtleticoMadrid") },
+                                         "\(name): no Atlético Madrid row — \(all)")
+            let other = rowTokens(atletico, in: read)
+            XCTAssertFalse(other.contains("Pregame") || other.contains { $0.hasSuffix("%") },
+                           "\(name): Atlético's row carries a pre-game word or number — \(other)")
+            XCTAssertEqual(read.filter { tokens($0.text).contains("Pregame") }.count, 1,
+                           "\(name): 'Pregame' is not printed exactly once — \(all)")
+        }
+    }
+
+    /// Controls: the word belongs to a FINISHED row's pre-game number only.
+    /// No number — no word. A live or scheduled card holding the same pair
+    /// prints no word. A suspended row still prints its bare pre-match number
+    /// under "No result reported", with no word: nothing on it is final.
+    func testOnlyAFinishedRowWithAPreGameNumberPrintsTheWord() throws {
+        let bare = try served(14780563)
+        XCTAssertNil(bare.openingOdds, "precondition: the served final carries no pre-game probability")
+        let read = try sportsLines(bare, width: 393, size: .large, name: "sports-nfl-393-large-no-baseline")
+        XCTAssertFalse(read.contains { tokens($0.text).contains("Pregame") || $0.text.contains("%") },
+                       "no-baseline: a pre-game word or number printed with no pre-game probability — \(describe(read))")
+        for status in ["live", "scheduled", "suspended"] {
+            let e = try served(14780563, edits: [
+                (#""ended_at": "#, Self.constructedOpeningOdds + #", "ended_at": "#),
+                (#""status": "completed""#, #""status": "\#(status)""#),
+            ])
+            XCTAssertEqual(e.status, status)
+            XCTAssertEqual(e.openingOdds?.homeProbability, 0.7619)
+            let name = "sports-nfl-393-large-\(status)-constructed-odds"
+            let lines = try sportsLines(e, width: 393, size: .large, name: name)
+            let all = describe(lines)
+            XCTAssertFalse(lines.contains { tokens($0.text).contains("Pregame") },
+                           "\(name): a \(status) card printed 'Pregame' — \(all)")
+            if status == "suspended" {
+                for percent in ["24%", "76%"] {
+                    XCTAssertTrue(lines.contains { valueTokens($0.text).contains(percent) },
+                                  "\(name): the suspended row lost its bare pre-match \(percent) — \(all)")
+                }
+            }
+        }
+    }
+
     // MARK: - Discover card, finished, AX5
 
     func testTheFinishedDiscoverTitlePrintsBothCompleteNamesBeforeTheForecast() throws {
@@ -379,6 +470,25 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         return nil
     }
 
+    /// #9483 — every token on `line`'s row, left to right, across however many
+    /// lines Vision split the row into: each line whose box overlaps `line`'s
+    /// vertically, so a name wrapped onto two lines beside a centred score
+    /// still counts as that row's.
+    private func rowTokens(_ line: Line, in read: [Line]) -> [String] {
+        read.filter { $0.box.minY < line.box.maxY && line.box.minY < $0.box.maxY }
+            // Left to right; lines starting in one column (a wrapped name), top down.
+            .sorted { abs($0.box.minX - $1.box.minX) < 8 ? $0.box.minY < $1.box.minY : $0.box.minX < $1.box.minX }
+            .flatMap { valueTokens($0.text) }
+    }
+
+    /// #9483 — the row of the ONE line printing `percent`; nil if it prints on
+    /// none, or on more than one.
+    private func qualifiedRow(_ percent: String, in read: [Line]) -> [String]? {
+        let holding = read.filter { valueTokens($0.text).contains(percent) }
+        guard holding.count == 1 else { return nil }
+        return rowTokens(holding[0], in: read)
+    }
+
     private func sameRow(_ a: Line, _ b: Line) -> Bool {
         a.box.midY >= b.box.minY - 2 && a.box.midY <= b.box.maxY + 2
     }
@@ -439,8 +549,14 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     // MARK: - Fixture
 
     private func served(_ id: Int, editing old: String? = nil, to new: String? = nil) throws -> FeedEventData {
+        if let old, let new { return try served(id, edits: [(old, new)]) }
+        return try served(id, edits: [])
+    }
+
+    /// `served`, applying each edit in turn to the requested item only.
+    private func served(_ id: Int, edits: [(String, String)]) throws -> FeedEventData {
         var json = Self.servedItems
-        if let old, let new {
+        for (old, new) in edits {
             // Edit the requested item only: the first match after its id.
             let marker = #""id": \#(id),"#
             let head = try XCTUnwrap(json.range(of: marker))
@@ -459,6 +575,25 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     /// decodes; the pair rounds to 24/76, digits no score or forecast uses.
     private static let constructedOpeningOdds =
         #""opening_odds": {"home_probability": 0.7619, "away_probability": 0.2381, "favorite": "home"}"#
+
+    /// #9483 — a `/api/leagues` row in a CONSTRUCTED one-item feed envelope.
+    private func leagueFeedEvent(_ data: String) throws -> FeedEventData {
+        let json = #"[{"type":"event","score":40,"data":"# + data + "}]"
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        let items = try d.decode([FeedItem].self, from: Data(json.utf8))
+        return try XCTUnwrap(items.first?.event, "the league row did not decode")
+    }
+
+    /// #9483 — event 15330334 (VfB Stuttgart 1–1 Atlético Madrid, Champions
+    /// League), its row in `/api/leagues/soccer_uefa_champs_league`
+    /// `recent_results`, every key verbatim: the `leagueRow` of
+    /// `FinalComparisonSoccerPeriod11296Tests` (PR #11390), which authority
+    /// checked dict-equal to Design's retained `league.json`. Its
+    /// `opening_odds` home 0.3169 is the "32%" Design read at 393pt/default.
+    private static let stuttgartLeagueRow = ##"""
+    {"id":15330334,"external_id":"56989e10c299aba1a0fce210bb214775","sport":"soccer_uefa_champs_league","home_team":"VfB Stuttgart","away_team":"Atlético Madrid","commence_time":"2026-10-20T19:00:00+00:00","completed_at":"2026-10-20T20:52:00.499184+00:00","status":"completed","home_score":1,"away_score":1,"home_win_probability":0.0558,"current_odds":{"home_probability":0.0558,"away_probability":0.9442},"opening_odds":{"home_probability":0.3169,"away_probability":0.4339},"home_team_data":{"team_id":18819,"slug":"vfb-stuttgart-ucl","primary_color":"#ffffff","secondary_color":"#DA0308","logo_small":"https://a.espncdn.com/i/teamlogos/soccer/500/134.png","logo_large":"https://a.espncdn.com/i/teamlogos/soccer/500/134.png","record":"2-1-0","abbreviation":"VFB"},"away_team_data":{"team_id":2293,"slug":"atltico-madrid-league","primary_color":"#ca3624","secondary_color":"#000000","logo_small":"https://a.espncdn.com/i/teamlogos/soccer/500/1068.png","logo_large":"https://a.espncdn.com/i/teamlogos/soccer/500/1068.png","record":"1-1-1","abbreviation":"ATM"},"espn":{"period":"FT","game_clock":"90'+4'","broadcast":"Paramount+"},"pregame_projection":{"projected_home_score":1.5,"projected_away_score":1.9,"kind":"last_before_scheduled_start","earliest_captured_at":"2026-10-20T18:37:57.209904+00:00","latest_captured_at":"2026-10-20T18:56:23.853083+00:00","boundary":"scheduled_start","boundary_at":"2026-10-20T19:00:00+00:00","source":"sportsbooks","basis":"consensus_spread_total","bookmaker_count":4,"unit":"goals","period":"regulation"},"final_score_period":"regulation"}
+    """##
 
     /// Trimmed from `FinalForecastComparison11296Tests.servedItems` (same
     /// served capture), keeping its two finals verbatim.
