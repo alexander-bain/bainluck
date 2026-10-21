@@ -115,7 +115,10 @@ async def test_the_loop_gets_a_turn_every_n_rows(monkeypatch):
     # Pauses come before row 7, 14, ... of each pass, so a pass of n rows
     # pauses (n - 1) // 7 times. The ticker runs once per pause.
     assert mapped >= (len(outcome_rows) - 1) // 7 + (len(market_rows) - 1) // 7
-    assert candidates >= (len(market_rows) - 1) // 7
+    assert admission.asset_to_outcome
+    assert candidates >= (len(market_rows) - 1) // 7 + (
+        len(admission.asset_to_outcome) - 1
+    ) // 7
 
 
 class _BulkRig(CatalogRig):
