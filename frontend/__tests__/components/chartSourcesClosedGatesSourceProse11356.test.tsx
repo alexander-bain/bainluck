@@ -75,11 +75,11 @@ afterAll(() => {
   console.error = realConsoleError;
 });
 
-const cardText = (html: string) =>
-  html
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+// The text nodes of a static-markup fragment, in order (nothing is stripped, so
+// nothing here claims to sanitise markup).
+const textOf = (html: string) =>
+  [...html.matchAll(/>([^<]*)</g)].map((m) => m[1]).join(" ");
+const cardText = (html: string) => textOf(html).replace(/\s+/g, " ").trim();
 
 describe("sportsbooks-only: a hole in the one drawn line keeps its note", () => {
   // The #7878 specimen with its one series fed as SPORTSBOOK history: no
@@ -205,9 +205,11 @@ describe("the stale-edge caption names only a drawn line", () => {
       </AnalyticsProvider>,
     );
   const caption = (html: string) =>
-    (
-      /data-testid="chart-stale-edges">([\s\S]*?)<\/div>/.exec(html)?.[1] ?? ""
-    ).replace(/<[^>]+>/g, "");
+    textOf(
+      `>${/data-testid="chart-stale-edges">([\s\S]*?)<\/div>/.exec(html)?.[1] ?? ""}<`,
+    )
+      .replace(/\s+/g, " ")
+      .trim();
   const curves = (html: string) =>
     (html.match(/recharts-line-curve/g) ?? []).length;
 
