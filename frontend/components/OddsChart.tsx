@@ -27,6 +27,8 @@ import {
   chartAxisToHomeProb,
   chartAxisPercents,
   computeWinProbYAxis,
+  teamAxisEdges,
+  teamAxisTick,
 } from "@/lib/eventKeyStats";
 import { chartTooltipCells, chartTooltipPair } from "@/lib/drawPricedWinner";
 import {
@@ -39,7 +41,6 @@ import { teamShortNames } from "@/lib/teamShortName";
 import { useAxisPoleFit } from "@/hooks/useAxisPoleFit";
 import { axisPoleStyle, axisLabelStyle } from "@/lib/axisPoleFit";
 import { teamTextColor } from "@/lib/teamColors";
-import { projectedTeamStrokes } from "@/lib/teamLineStrokes";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
   OddsHistoryPoint,
@@ -105,12 +106,6 @@ import {
  * excluded from the tooltip, the legend, the y-domain and the forward-fill.
  */
 const gapConnectorKey = (dataKey: string): string => `${dataKey}__gap`;
-
-/** #9483 — the away team's value on the 0–100 home axis: the blend row read from the other side. */
-function pairedAwayAxisValue(point: Record<string, unknown>): number | null {
-  const v = point.bainLuckDelta;
-  return typeof v === "number" && Number.isFinite(v) ? 100 - v : null;
-}
 
 const isGapConnectorKey = (dataKey: string): boolean => dataKey.endsWith("__gap");
 
@@ -451,15 +446,20 @@ interface OddsChartProps {
    */
   awayWithheld?: boolean;
   /**
-   * #9483 — draw the away team's line beside the home line (NFL web adoption,
-   * design freeze v328). It is the blend read from the other side, not a
-   * second source: drawn only where the backend blend is the line on the plot,
-   * and the winner market prices no draw (`awayWithheld` false). Colours are
-   * the page's team-line pair (`projectedTeamStrokes`). A source comparison (sources expanded)
-   * or a recorded-checkpoint window keeps today's single line. Absent keeps
-   * today's chart.
+   * RETIRED by #11356 — accepted and ignored. #9483 drew the away team's line
+   * as a second, complementary copy of the blend on NFL pages; Alex's approved
+   * direction is ONE line between the two team poles on every chart, so there
+   * is no second line to ask for. Kept on the props only so the page that
+   * still passes it compiles unchanged; it draws nothing.
    */
   pairedAwayLine?: boolean;
+  /**
+   * #11356 — whether Sources starts open. Absent (the default) starts on the
+   * blend's own line, which is the chart a reader lands on; the reader's own
+   * toggle takes over from there. A caller opening a second view of the same
+   * chart (the full-size reader) can carry the reader's choice across.
+   */
+  defaultSourcesExpanded?: boolean;
   /**
    * #5634 — the event's sport key, read to name the teams on the axis: a
    * football club keeps its whole name ("UNION BERLIN", never "BERLIN"). Absent
@@ -935,7 +935,7 @@ export default function OddsChart({
   onTimeRangeChange,
   completedAt,
   awayWithheld = false,
-  pairedAwayLine = false,
+  defaultSourcesExpanded = false,
   publications,
 }: OddsChartProps) {
   // #3419: the axis is categorical on this label, so it must be spelled the
@@ -990,7 +990,7 @@ export default function OddsChart({
   // Source legend collapses to "Bain Luck + N sources" by default (L2-163 Item 1,
   // Ruling 1/4): the blend is labeled and dominant; the faint source lines stay
   // unlabeled until the reader expands the legend (or isolates one via hover).
-  const [legendExpanded, setLegendExpanded] = useState(false);
+  const [legendExpanded, setLegendExpanded] = useState(defaultSourcesExpanded);
 
   // #10249 — true from the moment a finger lifts until the next inspection
   // begins. The ref mirrors it for the Recharts callbacks, which must not wait
@@ -2001,14 +2001,35 @@ export default function OddsChart({
     return out;
   }, [checkpoints, rowStartMs, inChartRange]);
 
-  // #9483 — the paired team lines' ink, or null for today's single line (see
-  // `pairedAwayLine`). The away line reads the same `bainLuckDelta` rows, so it
-  // has the blend's observations, gaps and instants and nothing else.
-  const pairedInk = useMemo(() => {
-    if (!pairedAwayLine || awayWithheld || !showBlendLine || legacyBlendSides || legendExpanded) return null;
-    // The page's one team-line pair (#10547): too-close crests get a rescue colour.
-    return projectedTeamStrokes(homeTeamColor, awayTeamColor);
-  }, [pairedAwayLine, awayWithheld, showBlendLine, legacyBlendSides, legendExpanded, homeTeamColor, awayTeamColor]);
+  // ═══ #11356 — ONE LINE BETWEEN THE TWO TEAM POLES ═══
+  //
+  // Where the backend blend is drawn, it is the only line on the plot until
+  // the reader opens Sources. The per-source lines used to be painted faint
+  // underneath it (and #9483 added a second, complementary copy of the blend
+  // on NFL pages), and the axis was sized to all of them — so a hidden or
+  // near-invisible vendor line, or the blend read upside down, set the zoom
+  // for the one line a reader came to follow. Alex (#11356, /events/14780562):
+  // opening Sources swapped one chart for another.
+  //
+  // Now the blend's line keeps its colour, weight and orientation in every
+  // state; Sources adds the vendor lines over the SAME time window, plot box
+  // and gutter, and re-fits the vertical window to what it added; Hide returns
+  // to the blend's own window. With no blend drawn (one source, sportsbooks
+  // only) nothing here changes: every line is still drawn and still sized.
+  const sourceLinesShown = isMultiSource && (!showBlendLine || legendExpanded);
+
+  /**
+   * #11356 — the keys whose INK sizes the vertical window, which is the set of
+   * lines actually drawn. The blend collapsed: the blend alone. Sources open:
+   * the blend and each admitted source line now visible. No blend: today's
+   * list, unchanged. A key the chart does not draw never widens the axis —
+   * that was how a hidden line flattened the visible one.
+   */
+  const axisProbKeys = useMemo(() => {
+    if (!showBlendLine) return plottedProbKeys;
+    if (!legendExpanded) return ["bainLuckDelta"];
+    return ["bainLuckDelta", ...resolvedSources.map((s) => s.dataKey)];
+  }, [showBlendLine, legendExpanded, plottedProbKeys, resolvedSources]);
 
 
 
@@ -2206,10 +2227,12 @@ export default function OddsChart({
   // numbers and the 50% mark are unchanged; only the zoom moves. The rules and
   // the production measurement behind them are in `computeWinProbYAxis`.
   //
-  // Fed from `plottedProbKeys` — the same one list the forward-fill and
-  // `filteredPeriodBoundaries` read (see its docstring). That is deliberate: a
-  // series the chart draws but the axis did not size would be the one that runs
-  // off the plot, which is the exact class of bug this is fixing.
+  // Fed from `axisProbKeys` — the lines actually DRAWN, which is
+  // `plottedProbKeys` wherever no blend is drawn (see its docstring). That is
+  // deliberate in both directions: a series the chart draws but the axis did
+  // not size would be the one that runs off the plot, which is the exact class
+  // of bug this is fixing; and a series the axis sizes but the chart does not
+  // draw flattens the one it does (#11356).
   //
   // #9906: each series' LAST value is passed as `mustShow`, so the end of every
   // drawn line — the callout's number, and a settled chart's result — is inside
@@ -2233,7 +2256,7 @@ export default function OddsChart({
   // series, so the line is drawn there: #7878 withdraws only unobserved
   // minutes, and the inputs are already cut to the chart window.
   const primaryLineColor = primarySeriesKey === "bainLuckDelta"
-    ? pairedInk?.home ?? BAIN_LUCK_CONFIG.color
+    ? BAIN_LUCK_CONFIG.color
     : resolvedSources.find((s) => s.dataKey === primarySeriesKey)?.color ?? sourceHex("betting");
 
   const drawnMinuteRanges = useMemo(() => {
@@ -2253,24 +2276,28 @@ export default function OddsChart({
   const { domain: yDomain, ticks: yTicks } = useMemo(() => {
     const values: number[] = [];
     const lastByKey = new Map<string, number>();
-    for (const point of chartData) {
-      for (const key of plottedProbKeys) {
+    // #11356 — a revealed source line is a comparison the reader asked for, so
+    // its own high and low are on the plot: the percentile zoom (rule 1) may
+    // treat a source's swing as an outlier, and a line run off the frame under
+    // a window that claims to fit it is the clipping this disclosure exists to
+    // avoid. The blend keeps today's rule; only revealed sources add extremes.
+    const revealedExtremes: number[] = [];
+    const revealed = new Set(
+      showBlendLine && legendExpanded ? resolvedSources.map((s) => s.dataKey) : [],
+    );
+    for (const key of axisProbKeys) {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const point of chartData) {
         const v = point[key];
         if (typeof v === "number") {
           values.push(v);
           lastByKey.set(key, v);
+          if (v < lo) lo = v;
+          if (v > hi) hi = v;
         }
       }
-    }
-    // #9483 — the away line is inked, so its values are inside the axis too.
-    if (pairedInk) {
-      for (const point of chartData) {
-        const v = pairedAwayAxisValue(point);
-        if (v !== null) {
-          values.push(v);
-          lastByKey.set("pairedAway", v);
-        }
-      }
+      if (revealed.has(key) && hi >= lo) revealedExtremes.push(lo, hi);
     }
     // #10093 — a live minute's high and low are inked, so they are inside the
     // axis too: a spike the zoom treated as an outlier would run off the frame.
@@ -2280,8 +2307,8 @@ export default function OddsChart({
     for (const v of drawableCheckpoints) values.push(homeProbToChartAxis(v.p));
     const lastCheckpoint = latestCheckpoint(drawableCheckpoints);
     if (lastCheckpoint) lastByKey.set("publicationCheckpoint", homeProbToChartAxis(lastCheckpoint.p));
-    return computeWinProbYAxis(values, [...lastByKey.values(), ...rangeEnds]);
-  }, [chartData, plottedProbKeys, drawnMinuteRanges, drawableCheckpoints, pairedInk]);
+    return computeWinProbYAxis(values, [...lastByKey.values(), ...rangeEnds, ...revealedExtremes]);
+  }, [chartData, axisProbKeys, showBlendLine, legendExpanded, resolvedSources, drawnMinuteRanges, drawableCheckpoints]);
 
   /**
    * #7940 — which end of the plot the period-label strip is painted at.
@@ -2297,17 +2324,15 @@ export default function OddsChart({
    * plot on its own range and hard against the frame on the axis actually drawn,
    * and the frame is what a label collides with.
    *
-   * Fed from `plottedProbKeys` — the same one list the forward-fill, the axis and
-   * `filteredPeriodBoundaries` read. A series this chart draws but the strip did
-   * not consider would be the one that runs through a label.
+   * Fed from `axisProbKeys` — the same drawn lines the axis is sized to
+   * (#11356). A series this chart draws but the strip did not consider would be
+   * the one that runs through a label; one it does not draw collides with
+   * nothing.
    */
   const periodStripBand = useMemo(
     () =>
       choosePeriodStripBand(
-        chartData.map((point) => [
-          ...plottedProbKeys.map((key) => point[key] as number | null | undefined),
-          ...(pairedInk ? [pairedAwayAxisValue(point)] : []),
-        ]),
+        chartData.map((point) => axisProbKeys.map((key) => point[key] as number | null | undefined)),
         yDomain as [number, number],
         {
           // The window is the labels' own x span, and it is read from the SAME
@@ -2319,7 +2344,7 @@ export default function OddsChart({
           boundaries: filteredPeriodBoundaries,
         },
       ),
-    [chartData, plottedProbKeys, yDomain, filteredPeriodBoundaries, pairedInk],
+    [chartData, axisProbKeys, yDomain, filteredPeriodBoundaries],
   );
 
   // ── Count the primary series' crossings of the 50% line ──
@@ -2474,11 +2499,20 @@ export default function OddsChart({
           // the pair. The integer above stays for anything that measures (the
           // plate is sized off the label's own length, so `<1%` widens it).
           homeLabel: percents.homeLabel,
+          // #11356 — what the dot's label prints: the chance of the side the
+          // dot sits on, the same reading the tick beside it prints
+          // (`teamAxisTick`). Both ends come from the one resolved pair, so it
+          // is still the hero's number for that side. A draw-priced market has
+          // no away side to name (#10318) and keeps the home side's.
+          label:
+            awayWithheld || delta >= 50 || percents.awayLabel === null
+              ? percents.homeLabel
+              : percents.awayLabel,
         };
       }
     }
     return null;
-  }, [chartData, primarySeriesKey, drawableCheckpoints, rowStartMs]);
+  }, [chartData, primarySeriesKey, drawableCheckpoints, rowStartMs, awayWithheld]);
 
   // #8392 — the axis gutter gives each team name the room the other does not
   // need. A hook, so it sits above the empty-chart return below; the raw names
@@ -2566,8 +2600,47 @@ export default function OddsChart({
     sportKey,
   );
 
-  // Y-axis tick formatter: the value is already the home win probability (0–100).
-  const formatYTick = (value: number): string => `${value}%`;
+  // #11356 — the team-to-team frame. The axis value is still the home side's
+  // chance (0–100); each tick prints the chance of the side it sits on, in that
+  // side's own colour (the gutter's), so the top of a full axis is the home
+  // side at 100% and the bottom the away side at 100%. A draw-priced market
+  // has no away side to print (#10318), so it keeps the home side's chance.
+  const twoSidedAxis = !awayWithheld;
+  const axisEdges = teamAxisEdges(yDomain as [number, number], twoSidedAxis);
+  const sideName = (side: "home" | "away" | "even") =>
+    side === "home" ? homeShort : side === "away" ? awayShort : "";
+  const axisEdgeSentence = (
+    where: "top" | "bottom",
+    edge: (typeof axisEdges)["top"],
+  ): string => {
+    const noun = edge.isPole ? "axis" : "view";
+    if (edge.side === "even") return `the ${where} of this ${noun} is 50/50.`;
+    return `the ${where} of this ${noun} is ${sideName(edge.side)} at ${edge.percent}%.`;
+  };
+  const tickInk = {
+    home: teamTextColor(homeTeamColor) || "#16a34a",
+    away: teamTextColor(awayTeamColor) || "#2563eb",
+    even: "#4B5563",
+  } as const;
+  const renderYTick = (props: { x?: number; y?: number; payload?: { value?: number } }) => {
+    const value = props.payload?.value;
+    if (typeof value !== "number") return <g />;
+    const tick = teamAxisTick(value, twoSidedAxis);
+    return (
+      <text
+        x={props.x}
+        y={props.y}
+        className="recharts-text recharts-cartesian-axis-tick-value"
+        textAnchor="end"
+        fontSize={13}
+        fill={twoSidedAxis ? tickInk[tick.side] : tickInk.even}
+        data-axis-tick-side={tick.side}
+        data-axis-value={value}
+      >
+        <tspan x={props.x} dy="0.355em">{tick.text}</tspan>
+      </text>
+    );
+  };
 
   // Custom tooltip showing actual probabilities
   /**
@@ -2611,6 +2684,9 @@ export default function OddsChart({
   const gapNotesAt = (bucketTimestamp: string): Array<{ key: string; displayName: string; color: string; text: string }> => {
     const ms = parseISO(bucketTimestamp).getTime();
     const notes: Array<{ key: string; displayName: string; color: string; text: string }> = [];
+    // #11356 — a note about a line describes a DRAWN line: with Sources closed
+    // over the blend, no source line is on the plot to have a hole in it.
+    if (!sourceLinesShown) return notes;
     for (const source of resolvedSources) {
       const support = observationSupport[source.dataKey];
       if (!support) continue;
@@ -3053,8 +3129,15 @@ export default function OddsChart({
          which renders nothing without a viewport, so a guard reading the markup
          for "100%" would find nothing on either arm. This is the exact text a
          reader sees beside the dot, not a re-derivation of it: the empty string
-         means no callout is drawn at all. */
+         means no callout is drawn at all.
+         #11356 — on the team-to-team axis the dot prints the chance of the side
+         it sits on, so below 50/50 the printed text is the AWAY side's. This
+         attribute stays the HOME side's printable reading — the contract the
+         headline-agreement guards and probes compare against the hero — and
+         `data-callout-text` carries the exact printed string. Both come from one
+         resolved pair, so they always sum to 100. */
       data-callout-label={currentCallout?.homeLabel ?? ""}
+      data-callout-text={currentCallout?.label ?? ""}
       /* #6987: the timestamp the callout is anchored to. The defect was never a
          rounding rule — "Since Start" and "All" were labelling two points ten
          minutes apart — so a guard needs to see WHICH point, not only what it
@@ -3178,11 +3261,17 @@ export default function OddsChart({
             `aria-hidden` on the caret and a real sentence in `sr-only`: a
             screen reader cannot see which end of a gutter a label is at, so the
             glyph carries nothing for it and the sentence carries everything. */}
-        {/* #9483 — with both teams drawn, each line is its own team's chance and
-            the poles' "up is the home side" no longer describes the plot; the
-            legend below names each line instead. */}
-        <div ref={axisGutterRef} className={`${pairedInk ? "hidden" : "flex"} flex-col items-center justify-between py-3 shrink-0`} style={{ width: 28 }}>
-          {!pairedInk && (<>
+        {/* #11356 — the gutter is drawn in every state: one line, two poles.
+            Each pole is a DIRECTION, and its spoken sentence names the reading
+            at that edge of the window actually drawn — "100%" only where the
+            edge is the end of the scale, never at a zoomed crop. */}
+        <div
+          ref={axisGutterRef}
+          className="flex flex-col items-center justify-between py-3 shrink-0"
+          style={{ width: 28 }}
+          data-axis-top={`${axisEdges.top.side}:${axisEdges.top.percent}`}
+          data-axis-bottom={`${axisEdges.bottom.side}:${axisEdges.bottom.percent}`}
+        >
           <div
             className="flex items-center gap-1"
             style={axisPoleStyle(axisPoleCaps.home)}
@@ -3192,7 +3281,7 @@ export default function OddsChart({
             title={axisPoleCaps.home !== null ? homeShort : undefined}
           >
             <span className="sr-only">
-              The line rises towards {homeShort}: the top of this axis is {homeShort} at 100%.
+              The line rises towards {homeShort}: {axisEdgeSentence("top", axisEdges.top)}
             </span>
             {homeTeamLogo && (
               <img src={homeTeamLogo} alt="" width={12} height={12} className="object-contain shrink-0" style={{ transform: "rotate(90deg)" }} />
@@ -3221,7 +3310,7 @@ export default function OddsChart({
               title={axisPoleCaps.away !== null ? awayShort : undefined}
             >
               <span className="sr-only">
-                The line falls towards {awayShort}: the bottom of this axis is {awayShort} at 100%.
+                The line falls towards {awayShort}: {axisEdgeSentence("bottom", axisEdges.bottom)}
               </span>
               {awayTeamLogo && (
                 <img src={awayTeamLogo} alt="" width={12} height={12} className="object-contain shrink-0" style={{ transform: "rotate(90deg)" }} />
@@ -3236,7 +3325,6 @@ export default function OddsChart({
               </span>
             </div>
           )}
-          </>)}
         </div>
 
         {/* Chart area. #10249: Recharts' own touch handling never ends an
@@ -3384,10 +3472,9 @@ export default function OddsChart({
               // its true height: outside the plot, over the card's chrome.
               allowDataOverflow
               width={44}
-              tick={{ fontSize: 13, fill: "#4B5563" }}
+              tick={renderYTick}
               tickLine={false}
               axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
-              tickFormatter={formatYTick}
             />
             {/* 50% reference line.
 
@@ -3480,10 +3567,10 @@ export default function OddsChart({
 
             {/* ── MODE A: Multi-source — individual source lines (near-invisible so
                 the one blended Bain Luck line clearly dominates, per L2-131) ── */}
-            {/* #9483 — with both team lines drawn, the faint source lines would
-                hug the home line alone; they wait behind "+ N sources", which
-                returns the chart to its single-line comparison. */}
-            {isMultiSource && !pairedInk && resolvedSources.map((source) => {
+            {/* #11356 — with the blend drawn, the source lines wait behind
+                "+ N sources" (`sourceLinesShown`): collapsed is one line, and a
+                line the axis is not sized to is not painted under it. */}
+            {sourceLinesShown && resolvedSources.map((source) => {
               const isPrimarySource = source.dataKey === primarySeriesKey;
               return (
               <Line
@@ -3528,7 +3615,7 @@ export default function OddsChart({
               />
               );
             })}
-            {isMultiSource && !pairedInk && resolvedSources.map((source) => {
+            {sourceLinesShown && resolvedSources.map((source) => {
               const isPrimarySource = source.dataKey === primarySeriesKey;
               return gapConnector(
                 source.dataKey,
@@ -3572,31 +3659,12 @@ export default function OddsChart({
                 type="linear"
                 dataKey="bainLuckDelta"
                 name={BAIN_LUCK_CONFIG.displayName}
-                stroke={pairedInk?.home ?? BAIN_LUCK_CONFIG.color}
+                stroke={BAIN_LUCK_CONFIG.color}
                 strokeWidth={3}
                 dot={false}
                 isAnimationActive={false}
-                activeDot={{ r: 5, fill: pairedInk?.home ?? BAIN_LUCK_CONFIG.color }}
+                activeDot={{ r: 5, fill: BAIN_LUCK_CONFIG.color }}
                 connectNulls
-              />
-            )}
-            {/* #9483 — the away team's line: the same blend rows read from the
-                other side (`pairedAwayLine`). Out of the tooltip, which already
-                prints both teams for the row. */}
-            {pairedInk && (
-              <Line
-                type="linear"
-                dataKey={pairedAwayAxisValue}
-                name={awayTeam}
-                stroke={pairedInk.away}
-                strokeWidth={3}
-                dot={false}
-                isAnimationActive={false}
-                activeDot={{ r: 5, fill: pairedInk.away }}
-                connectNulls
-                tooltipType="none"
-                legendType="none"
-                className="paired-away-line"
               />
             )}
             {/* #4974 slice 1 — with checkpoints shown, the legacy blend is two
@@ -3763,14 +3831,14 @@ export default function OddsChart({
                   if (props.payload?.calloutDelta == null) return <g />;
                   const { cx = 0, cy = 0 } = props;
                   const fillColor = showBlendLine
-                    ? pairedInk?.home ?? BAIN_LUCK_CONFIG.color
+                    ? BAIN_LUCK_CONFIG.color
                     : sourceHex("betting");
                   // #4338 — the plate under the number. Anchored `end` at
                   // `cx - CALLOUT_GAP_PX`, so the glyphs run LEFT from there.
                   // #6858 — the boundary rule's answer, not the bare integer:
                   // `0.001` prints `<1%` here exactly as it does in the hero
                   // directly above. `label.length` still sizes the plate below.
-                  const label = currentCallout.homeLabel;
+                  const label = currentCallout.label;
                   const textRight = cx - CALLOUT_GAP_PX;
                   const glyphWidth =
                     label.length * CALLOUT_FONT_PX * CALLOUT_MONO_ADVANCE_EM;
@@ -4007,33 +4075,26 @@ export default function OddsChart({
         </div>
       </div>
 
-      {/* Source legend */}
-      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 shrink-0">
+      {/* Source legend.
+          #11356 — in the full-size view the plot is the flex remainder, so a
+          legend that wrapped onto a second row when Sources opened took that
+          row's height out of the plot. There it stays one row and scrolls
+          sideways instead; the card's plot has a fixed height and keeps its
+          wrapping legend below it. */}
+      <div
+        className={
+          fillContainer
+            ? "flex flex-nowrap items-center justify-start gap-x-4 shrink-0 overflow-x-auto whitespace-nowrap"
+            : "flex flex-wrap items-center justify-center gap-x-4 gap-y-1 shrink-0"
+        }
+        style={fillContainer ? { justifyContent: "safe center" } : undefined}
+        data-testid="chart-source-legend"
+      >
         {/* Multi-source mode: Bain Luck aggregated line first (always labeled).
             #1003: gated on showBlendLine, not isMultiSource — a legend entry for a
             line the chart did not draw is the same false claim as the line. */}
         {showBlendLine && (
-          /* #9483 — paired (only ever on a drawn blend): one swatch per team
-             line, then the blend's name as their source — still one number
-             per question. */
-          pairedInk ? (
-            <>
-              <span className="sr-only">Each line is that team&apos;s chance to win.</span>
-              {[
-                { team: homeShort, ink: pairedInk.home },
-                { team: awayShort, ink: pairedInk.away },
-              ].map(({ team, ink }) => (
-                <div key={team} className="flex items-center gap-1.5" data-testid="paired-team-key">
-                  <svg width="20" height="4" className="shrink-0" aria-hidden="true">
-                    <line x1="0" y1="2" x2="20" y2="2" stroke={ink} strokeWidth="3" />
-                  </svg>
-                  <span className="text-xs font-semibold" style={{ color: ink }}>{team}</span>
-                </div>
-              ))}
-              <span className="text-xs text-text-secondary">{BAIN_LUCK_CONFIG.displayName}</span>
-            </>
-          ) : (
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5" style={fillContainer ? { order: -2 } : undefined}>
             <svg width="20" height="4" className="shrink-0">
               <line
                 x1="0" y1="2" x2="20" y2="2"
@@ -4045,7 +4106,6 @@ export default function OddsChart({
               {BAIN_LUCK_CONFIG.displayName}
             </span>
           </div>
-          )
         )}
 
         {/* Multi-source: the individual source lines stay collapsed behind an
@@ -4123,6 +4183,10 @@ export default function OddsChart({
             onClick={() => setLegendExpanded(false)}
             className="flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
             aria-expanded={true}
+            // #11356 — on the full-size view's one-row legend, Hide sits next to
+            // the blend's name, where the reader who opened Sources can reach it
+            // without scrolling the row.
+            style={fillContainer ? { order: -1 } : undefined}
           >
             Hide
             <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} className="shrink-0 rotate-180">

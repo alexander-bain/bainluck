@@ -1983,6 +1983,60 @@ export function computeWinProbYAxis(values: number[], mustShow: number[] = []): 
   return { domain: [snappedLo, snappedHi], ticks };
 }
 
+/**
+ * #11356 — what one tick on a TEAM-TO-TEAM axis prints.
+ *
+ * The chart still plots one number, the home side's chance on 0–100, and
+ * every reader of the plot (tooltip, hero, scrub) keeps reading it that way.
+ * What changes is the frame a fan reads: at full scale the top is the home
+ * side at 100%, the middle is 50/50 and the bottom is the AWAY side at 100%.
+ * So a tick below the middle prints the away side's chance (axis 20 → "80%",
+ * on the away side), and the bottom of a full axis says 100%, which is what
+ * the away pole beside it means. A tick printing the home side's `0%` beside
+ * the away team's name was a label claiming the opposite of its pole.
+ *
+ * A cropped edge prints its own number (axis 80 at the top → "80%"), never
+ * `100%`: only the true end of the scale is a team at 100%.
+ *
+ * `twoSided` false is a market that prices a draw (#10318): its bottom is
+ * "the home side does not win", not the away side, so every tick keeps the
+ * home side's chance and no tick claims an away side at all.
+ */
+export function teamAxisTick(
+  axisValue: number,
+  twoSided: boolean,
+): { text: string; side: "home" | "away" | "even" } {
+  if (!twoSided) return { text: `${axisValue}%`, side: "home" };
+  if (axisValue === 50) return { text: "50%", side: "even" };
+  return axisValue > 50
+    ? { text: `${axisValue}%`, side: "home" }
+    : { text: `${100 - axisValue}%`, side: "away" };
+}
+
+/**
+ * #11356 — the reading at each EDGE of the drawn window, for the axis's
+ * spoken description. The edges are the domain, not the data: a zoomed axis
+ * whose top is 80 has "the home side at 80%" at its top, and saying "100%"
+ * there would be the crop passing itself off as the team's pole.
+ *
+ * Each edge names the side its own tick names (`teamAxisTick`), so a window
+ * that lives entirely on the home side has the home side at both edges.
+ */
+export function teamAxisEdges(
+  domain: [number, number],
+  twoSided: boolean,
+): {
+  top: { side: "home" | "away" | "even"; percent: number; isPole: boolean };
+  bottom: { side: "home" | "away" | "even"; percent: number; isPole: boolean };
+} {
+  const edge = (v: number) => {
+    const tick = teamAxisTick(v, twoSided);
+    const percent = tick.side === "away" ? 100 - v : v;
+    return { side: tick.side, percent, isPole: v === 100 || (v === 0 && twoSided) };
+  };
+  return { top: edge(domain[1]), bottom: edge(domain[0]) };
+}
+
 // ---------------------------------------------------------------------------
 // Shared chart time range
 // ---------------------------------------------------------------------------
