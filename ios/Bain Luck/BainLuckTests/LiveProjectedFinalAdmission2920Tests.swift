@@ -180,8 +180,6 @@ final class LiveProjectedFinalAdmission2920Tests: XCTestCase {
         sport: String? = "americanfootball_nfl",
         status: String? = "live",
         start: String? = LiveProjectedFinalAdmission2920Tests.producerStart,
-        isTBD: Bool? = false,
-        isFromSchedule: Bool? = true,
         home: Int? = 14,
         away: Int? = 10,
         phase: LiveProjectedFinalAdmission2920.Phase? = nil,
@@ -189,7 +187,7 @@ final class LiveProjectedFinalAdmission2920Tests: XCTestCase {
     ) throws -> LiveProjectedFinalAdmission2920.Outcome {
         A.resolve(
             projection: projection, sport: sport, status: status,
-            rowStart: .init(commenceTime: start, isTBD: isTBD, isFromSchedule: isFromSchedule),
+            rowStart: .init(commenceTime: start),
             homeScore: home, awayScore: away, phase: phase, now: try date(now))
     }
 
@@ -250,7 +248,7 @@ final class LiveProjectedFinalAdmission2920Tests: XCTestCase {
         // Web: EventCard "37-11 home-away", FeedCard "37-11 away-home", page {36.9, 10.7}.
         let co = try odds(liveProjection: Self.ugaInPlay)
         let o = try resolve(co.liveProjection, sport: "americanfootball_ncaaf",
-                            start: "2026-09-26T19:30:00+00:00", isFromSchedule: nil, home: 21, away: 0,
+                            start: "2026-09-26T19:30:00+00:00", home: 21, away: 0,
                             now: "2026-09-26T20:40:00+00:00")
         try assertPair(o, home: 37, away: 11, "Georgia 21 – 0 must print 37 – 11, home 37")
         XCTAssertEqual(o.printed?.admitted.provenance.bookmakerCount, 3)
@@ -269,7 +267,7 @@ final class LiveProjectedFinalAdmission2920Tests: XCTestCase {
     func testTheServedKLeagueRowPrintsTwoOne() throws {
         let co = try odds(Self.servedKLeague, liveProjection: Self.kLeagueInPlay)
         let o = try resolve(co.liveProjection, sport: "soccer_korea_kleague1",
-                            start: "2026-09-13T07:31:00+00:00", isTBD: nil, isFromSchedule: nil,
+                            start: "2026-09-13T07:31:00+00:00",
                             home: 1, away: 0, phase: A.soccerPhase(servedPeriod: "31'"),
                             now: "2026-09-13T08:05:00+00:00")
         try assertPair(o, home: 2, away: 1, "Sangju 1 – 0 at 31' must print 2 – 1")
@@ -309,10 +307,10 @@ final class LiveProjectedFinalAdmission2920Tests: XCTestCase {
         // 29.6 / 22.3 rounds to 30 – 22, reachable from 20 – 3: only the marker refuses it.
         let row = (start: "2026-10-20T00:15:00+00:00", now: "2026-10-20T01:40:00+00:00")
         let bare = try odds(Self.served49ers, liveProjection: nil)
-        assertWithheld(try resolve(bare.liveProjection, start: row.start, isFromSchedule: nil, home: 20, away: 3, now: row.now),
+        assertWithheld(try resolve(bare.liveProjection, start: row.start, home: 20, away: 3, now: row.now),
                        .absent, "a bare pregame pair with no object never becomes the live forecast")
         let seeded = try odds(Self.served49ers, liveProjection: Self.fortyNinersSeeded)
-        assertWithheld(try resolve(seeded.liveProjection, start: row.start, isFromSchedule: nil, home: 20, away: 3, now: row.now),
+        assertWithheld(try resolve(seeded.liveProjection, start: row.start, home: 20, away: 3, now: row.now),
                        .confirmedBeforeBoundary, "an object confirmed before the start is pregame, whatever its kind says")
     }
 
@@ -323,7 +321,7 @@ final class LiveProjectedFinalAdmission2920Tests: XCTestCase {
             let co = try odds(liveProjection: member)
             XCTAssertNotNil(co.projectedHomeScore, "the bare pair is right there")
             assertWithheld(try resolve(co.liveProjection, sport: "americanfootball_ncaaf",
-                                       start: "2026-09-26T19:30:00+00:00", isFromSchedule: nil, home: 21, away: 0,
+                                       start: "2026-09-26T19:30:00+00:00", home: 21, away: 0,
                                        now: "2026-09-26T20:40:00+00:00"),
                            .absent, "absent (\(member ?? "no key")) must not fall back to 36.9 / 10.7")
         }
@@ -334,7 +332,7 @@ final class LiveProjectedFinalAdmission2920Tests: XCTestCase {
             let co = try odds(liveProjection: member)
             XCTAssertNotNil(co.liveProjection, "present-but-malformed stays present (decoder contract)")
             let o = try resolve(co.liveProjection, sport: "americanfootball_ncaaf",
-                                start: "2026-09-26T19:30:00+00:00", isFromSchedule: nil, home: 21, away: 0,
+                                start: "2026-09-26T19:30:00+00:00", home: 21, away: 0,
                                 now: "2026-09-26T20:40:00+00:00")
             XCTAssertNil(o.printed, "\(member) must print nothing — not the bare 37 – 11")
             XCTAssertNotEqual(o.refusal, .absent, "\(member) is refused, not mistaken for absent")
@@ -403,7 +401,7 @@ final class LiveProjectedFinalAdmission2920Tests: XCTestCase {
         var json = try edited(Self.ugaInPlay, "boundary_at", "\"2026-09-26T18:30:00+00:00\"")
         json = try edited(json, "earliest_confirmed_at", "\"2026-09-26T19:00:00+00:00\"")
         let o = try resolve(try object(json), sport: "americanfootball_ncaaf",
-                            start: "2026-09-26T19:30:00+00:00", isFromSchedule: nil, home: 21, away: 0,
+                            start: "2026-09-26T19:30:00+00:00", home: 21, away: 0,
                             now: "2026-09-26T20:40:00+00:00")
         assertWithheld(o, .boundaryBeforeRowStart, "pregame quotes measured from an earlier start")
     }
@@ -420,15 +418,10 @@ final class LiveProjectedFinalAdmission2920Tests: XCTestCase {
         assertWithheld(oneSecondLater, .boundaryBeforeRowStart, "a row start one second after the boundary")
     }
 
-    func testTheRowsOwnStartMustBeReadableAndAScheduledOne() throws {
+    func testTheRowsOwnStartMustBeReadable() throws {
         let o = try object(Self.nflObject)
         assertWithheld(try resolve(o, start: nil), .rowStartUnreadable, "no row start")
         assertWithheld(try resolve(o, start: "soon"), .rowStartUnreadable, "an unreadable row start")
-        assertWithheld(try resolve(o, isTBD: true), .rowStartPlaceholder, "a placeholder start")
-        assertWithheld(try resolve(o, isFromSchedule: false), .rowStartNotFromSchedule, "a market's time")
-        // Controls: an absent flag leaves the producer's check to stand.
-        try assertPair(try resolve(o, isTBD: nil, isFromSchedule: nil), home: 30, away: 19, "flags absent")
-        try assertPair(try resolve(o, isTBD: false, isFromSchedule: true), home: 30, away: 19, "flags affirmative")
     }
 
     // MARK: - Lifecycle

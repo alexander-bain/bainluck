@@ -40,13 +40,8 @@ import Foundation
 ///   - ROW START   this row's start parses, and the object's boundary is not
 ///                 before it: an object measured from an earlier start (cached,
 ///                 or the start moved later) could pass pregame quotes off as
-///                 in play. A start the row itself calls a placeholder
-///                 (`startIsTbd == true`) or not a schedule's
-///                 (`startIsFromSchedule == false`) refuses, as the producer
-///                 refuses those starts; absent flags (an older server or a card
-///                 built from another route) leave the producer's own check to
-///                 stand. The boundary is the SCHEDULED start, never an observed
-///                 kickoff.
+///                 in play. The boundary is the SCHEDULED start, never an
+///                 observed kickoff.
 ///   - CLOCKS      the earliest confirmation is not before the boundary. The
 ///                 latest capture must be present and is compared with nothing:
 ///                 a quote first captured before the start and reconfirmed after
@@ -171,10 +166,6 @@ enum LiveProjectedFinalAdmission2920 {
     nonisolated struct RowStart: Equatable, Sendable {
         /// The row's `commenceTime`.
         let commenceTime: String?
-        /// `startIsTbd`. `true` refuses; nil and `false` do not.
-        var isTBD: Bool? = nil
-        /// `startIsFromSchedule`. `false` refuses; nil and `true` do not.
-        var isFromSchedule: Bool? = nil
     }
 
     /// Where the admitted pair came from, for the details surface. Every time
@@ -215,8 +206,6 @@ enum LiveProjectedFinalAdmission2920 {
         case notStarted
         case absent
         case rowStartUnreadable
-        case rowStartPlaceholder
-        case rowStartNotFromSchedule
         case kind
         case boundary
         case source
@@ -258,14 +247,11 @@ enum LiveProjectedFinalAdmission2920 {
     }
 
     /// The object alone against this row's sport and start, with no lifecycle,
-    /// score or phase — web's `admittedLiveProjection`, plus the row-start
-    /// flags above.
+    /// score or phase — web's `admittedLiveProjection`.
     static func admit(_ projection: LiveProjection?, sport: String?, rowStart: RowStart) -> Admission {
         guard let p = projection else { return .refused(.absent) }
 
         guard let rowStartAt = rowStart.commenceTime?.asDate else { return .refused(.rowStartUnreadable) }
-        guard rowStart.isTBD != true else { return .refused(.rowStartPlaceholder) }
-        guard rowStart.isFromSchedule != false else { return .refused(.rowStartNotFromSchedule) }
 
         guard p.kind == kindInPlay else { return .refused(.kind) }
         guard p.boundary == boundaryCommenceTime else { return .refused(.boundary) }
