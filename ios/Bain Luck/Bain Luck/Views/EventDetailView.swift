@@ -1211,15 +1211,39 @@ struct EventDetailView: View {
     /// The projected final as the page prints it, or nil where #5697's gate
     /// withholds it. One spelling for the two places that can print it: the
     /// hero before the off, Game Info while live (#8320).
+    ///
+    /// #2920 — once the game is live, the pair is the producer's marked in-play
+    /// one (`LiveProjectedFinal2920.page`, web's `eventPageProjectedPair`), so
+    /// this slot and the live card one tap back print the same final or none:
+    /// admitted, it prints under the gates below; served and refused, nothing;
+    /// not served, the ladders' in-game pair as web keeps it. The bare
+    /// `projected_*` keys are read only before the game, where they are the
+    /// sportsbooks' pregame pair the search card prints (#9034).
     private func projectionText(_ event: EventDetail, hasScore: Bool) -> String? {
-        EventDetailView.projectionText(
+        let live = LiveProjectedFinal2920.page(event)
+        var projected = (home: event.currentOdds?.projectedHomeScore,
+                         away: event.currentOdds?.projectedAwayScore)
+        switch live {
+        case .notLive: break
+        case .admitted(let printed): projected = (printed.admitted.home, printed.admitted.away)
+        case .withheld: return nil
+        case .absent: projected = (nil, nil)
+        }
+        let text = EventDetailView.projectionText(
             sport: event.sport, status: event.status,
             commenceTime: event.commenceTime?.asDate,
-            projectedHome: event.currentOdds?.projectedHomeScore,
-            projectedAway: event.currentOdds?.projectedAwayScore,
+            projectedHome: projected.home,
+            projectedAway: projected.away,
             ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
             ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
+            ladderWhileLive: live == .absent,
             hasScore: hasScore)
+        // Soccer's lines settle on 90 minutes; the line says so, as web's
+        // label does.
+        if case .admitted(let printed) = live, printed.admitted.provenance.period == .regulation {
+            return text.map { "\($0) (90 min)" }
+        }
+        return text
     }
 
     /// #8617 — the projected final is withheld where the sportsbooks' spread is
@@ -1240,8 +1264,9 @@ struct EventDetailView: View {
     /// card prints (#9034) — and the ladders' pair is used only where it is not.
     /// A ladder margin is read off six thresholds either side of even, not one
     /// pinned ±1.5 point, so #8617's run-line objection does not reach it; web
-    /// already prints it on baseball. Once the game is underway this stays the
-    /// sportsbooks' pair, as before.
+    /// already prints it on baseball. Once the game is underway the caller
+    /// chooses (#2920): the admitted in-play pair as `projectedHome/Away`, or —
+    /// with no in-play object served — `ladderWhileLive` and no sportsbook pair.
     ///
     /// Whichever pair is chosen then passes web's hero gates: the sport must
     /// score in the unit the pair is in (tennis quotes games, not sets), both
@@ -1252,6 +1277,7 @@ struct EventDetailView: View {
         sport: String?, status: String?, commenceTime: Date?,
         projectedHome: Double?, projectedAway: Double?,
         ladderHome: Double? = nil, ladderAway: Double? = nil,
+        ladderWhileLive: Bool = false,
         hasScore: Bool,
         now: Date = Date()
     ) -> String? {
@@ -1265,7 +1291,7 @@ struct EventDetailView: View {
         if vocab.sportsbookSpreadIsAMargin,
            let phs = projectedHome, let pas = projectedAway, phs >= 0, pas >= 0 {
             pair = (phs, pas)
-        } else if !underway,
+        } else if !underway || ladderWhileLive,
                   // web's `hasDerivedSpread`: declared, and scored in its unit
                   vocab.scoreboardCountsTheUnit, !vocab.unit.isEmpty,
                   let lhs = ladderHome, let las = ladderAway {

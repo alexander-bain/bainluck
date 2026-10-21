@@ -447,7 +447,7 @@ final class FinalForecastComparison11296Tests: XCTestCase {
         for (name, code) in [("EventCardView", sports), ("DiscoverEventCard", discover)] {
             XCTAssertEqual(occurrences("FinalForecastLine11296(", in: code), 1, name)
             XCTAssertEqual(occurrences("ifletfinalForecast=finalForecast11296{", in: code), 1, name)
-            XCTAssertEqual(occurrences("awayName:event.awayTeam,homeName:event.homeTeam", in: code), 1, name)
+            XCTAssertEqual(occurrences("FinalForecastLine11296(comparison:finalForecast,awayName:event.awayTeam,homeName:event.homeTeam)", in: code), 1, name)
             XCTAssertTrue(code.contains("actualPeriod:.fullGame,projection:event.pregameProjection)"), name)
             XCTAssertFalse(code.contains("Projectionbeforescheduledstart"), "\(name): the label is the helper's one spelling")
             XCTAssertFalse(code.contains("pregameProjectionUnavailable"), "\(name): the refusal reason renders nowhere")

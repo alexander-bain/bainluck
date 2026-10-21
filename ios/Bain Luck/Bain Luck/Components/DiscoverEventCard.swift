@@ -102,6 +102,14 @@ struct NativeEventDiscoverCard: View {
             actualPeriod: .fullGame, projection: event.pregameProjection)
     }
 
+    /// #2920 — on a live game, the producer's marked in-play pair, by the same
+    /// rule as the Sports card (`EventCardView`). Nil draws nothing. Internal so
+    /// the suite reaches the wiring.
+    var liveProjectedFinal2920: LiveProjectedFinalAdmission2920.Printed? {
+        guard isLive, !isSuspended else { return nil }
+        return LiveProjectedFinal2920.card(event)
+    }
+
     /// The card's team line, for every state of the game (#5538).
     ///
     /// This used to read `"\(away) \(isDone ? "" : "@") \(home)"`. Dropping the
@@ -285,6 +293,13 @@ struct NativeEventDiscoverCard: View {
                 if let finalForecast = finalForecast11296 {
                     FinalForecastLine11296(
                         comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
+                }
+
+                // #2920 — live: the marked in-play projected final, in the same
+                // quiet slot and the title's team order. The score is the hero.
+                if let liveProjection = liveProjectedFinal2920 {
+                    LiveProjectedFinalLine2920(
+                        printed: liveProjection, awayName: event.awayTeam, homeName: event.homeTeam)
                 }
 
                 // live/048 — the shared summary, in the slot the settled card
