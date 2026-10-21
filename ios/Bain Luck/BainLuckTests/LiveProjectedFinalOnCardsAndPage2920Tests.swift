@@ -278,6 +278,7 @@ final class LiveProjectedFinalOnCardsAndPage2920Tests: XCTestCase {
         XCTAssertEqual(try pageText(rowJSON(liveProjection: nil), ladder: ladder), "Proj. 20-27", "absent: ladders")
         XCTAssertNil(try pageText(rowJSON(home: 31, away: 10, liveProjection: nil), ladder: ladder),
                      "absent: ladders below the printed score")
+        XCTAssertNil(try pageText(rowJSON(home: 10, away: 22, liveProjection: nil), ladder: ladder), "absent: away passed")
         // Admitted: the object's pair, home and away where they belong, over the bare 37 – 11.
         XCTAssertEqual(try pageText(rowJSON(liveProjection: Self.nflObject), ladder: ladder), "Proj. 19-30")
         // Soccer admitted at 67', 0 – 1 to the home side: away first, and 90 minutes said.
