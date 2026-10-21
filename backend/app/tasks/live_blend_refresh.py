@@ -3510,29 +3510,7 @@ class LiveBlendRefresher:
                         refused, proof_kwargs, reading, value, contributing = preview_plans[event_id]
                     else:
                         refused = []
-                        proof_kwargs = {}
-                        if (getattr(self, "require_current_book_proof", False)
-                                and any(getattr(entry.market, "source", None) == "kalshi"
-                                        and (getattr(entry.market, "external_id", None) or "").upper().startswith("KXATPCHALLENGERMATCH-")
-                                        for entry in group)):
-                            proof_kwargs = {
-                                "require_current_book_midpoint": True,
-                                "current_book_midpoint": getattr(self, "current_book_midpoint", None),
-                                "current_book_primary_price": getattr(self, "current_book_primary_price", None),
-                                "current_primary_input": (
-                                    lambda row: self.current_primary_input(
-                                        row, self.held_quotes,
-                                        overlaid=getattr(row, "_primary_quote_overlaid", False),
-                                    )
-                                ) if getattr(self, "current_primary_input", None) is not None else None,
-                                # Bound now: with a canary in the batch this
-                                # callback is stored in `preview_plans` and
-                                # called again by the stamp-time recheck.
-                                "current_book_refused": lambda refused=refused, event_id=event_id, group=group: (
-                                    refused.append(True)
-                                    or self._park_book_refused(event_id, group)
-                                ),
-                            }
+                        proof_kwargs = self._current_reading_proof(event_id, group, refused)
                         reading = compute_source_home_probability(
                             group, event.home_team_name, event.away_team_name,
                             **proof_kwargs,
@@ -4382,8 +4360,35 @@ class LiveBlendRefresher:
 
     # ── #10090: provisional preview (off by default; canary events only) ──
 
+    def _current_reading_proof(self, event_id, group, refused, *, park_refused=True):
+        """Keep optional observation previews on the ordinary Kalshi proof path."""
+        proof_kwargs = {}
+        if (getattr(self, "require_current_book_proof", False)
+                and any(getattr(entry.market, "source", None) == "kalshi"
+                        and (getattr(entry.market, "external_id", None) or "").upper().startswith("KXATPCHALLENGERMATCH-")
+                        for entry in group)):
+            proof_kwargs = {
+                "require_current_book_midpoint": True,
+                "current_book_midpoint": getattr(self, "current_book_midpoint", None),
+                "current_book_primary_price": getattr(self, "current_book_primary_price", None),
+                "current_primary_input": (
+                    lambda row: self.current_primary_input(
+                        row, self.held_quotes,
+                        overlaid=getattr(row, "_primary_quote_overlaid", False),
+                    )
+                ) if getattr(self, "current_primary_input", None) is not None else None,
+                # Bound now: with a canary in the batch this
+                # callback is stored in `preview_plans` and
+                # called again by the stamp-time recheck.
+                "current_book_refused": lambda refused=refused, event_id=event_id, group=group: (
+                    refused.append(True)
+                    or (self._park_book_refused(event_id, group) if park_refused else None)
+                ),
+            }
+        return proof_kwargs
+
     async def preview_accepted_observations(self, observations, validate) -> None:
-        """Preview acknowledged unchanged PM observations without owning writes.
+        """Preview acknowledged unchanged venue observations without owning writes.
 
         The serial game flush awaits this optional work while no same-event
         stamp owns its snapshot. The graph and copied observation clocks are disposable: none
@@ -4391,7 +4396,7 @@ class LiveBlendRefresher:
         `validate` rechecks immutable input identity and the flush's ownership
         under its buffer lock, including at the final Redis send boundary.
         """
-        if self.source != "polymarket" or not self.preview:
+        if self.source not in ("polymarket", "kalshi") or not self.preview:
             return
         from app.tasks.base import get_task_session
         from app.utils.aggregation import _coerce_timestamp
@@ -4427,7 +4432,10 @@ class LiveBlendRefresher:
                        for entry in relevant):
                     refusals[eid] = "settled"
                     continue
-                reading = compute_source_home_probability(group, event.home_team_name, event.away_team_name)
+                proof_kwargs = self._current_reading_proof(eid, group, [], park_refused=False)
+                reading = compute_source_home_probability(
+                    group, event.home_team_name, event.away_team_name, **proof_kwargs,
+                )
                 if reading is None or not has_proven_home_orientation(reading):
                     continue  # optional path never invokes repairing inversion fallback
                 contributors = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
@@ -4457,7 +4465,7 @@ class LiveBlendRefresher:
                 # clamping would manufacture newer observations on retries.
                 basis = {str(row.id): float(snapshot[row.id][1]) for row in contributors}
                 if basis:
-                    plans[eid] = (event, reading, basis)
+                    plans[eid] = (event, reading, basis, group, proof_kwargs)
             if not plans and not refusals:
                 return
 
@@ -4471,7 +4479,17 @@ class LiveBlendRefresher:
                     if eid in refusals:
                         frames.extend(preview.refused(eid, self.source, refusals[eid]))
                         continue
-                    event, reading, basis = plans[eid]
+                    event, reading, basis, group, proof_kwargs = plans[eid]
+                    if proof_kwargs:
+                        # Current book/custody proof may change during Redis checkout.
+                        current = compute_source_home_probability(
+                            group, event.home_team_name, event.away_team_name, **proof_kwargs,
+                        )
+                        if (current is None or not has_proven_home_orientation(current)
+                                or round(current.home_probability, 4) != round(reading.home_probability, 4)
+                                or {str(row.id) for row in (getattr(current, "contributing_outcomes", None)
+                                                            or (current.outcome,))} != set(basis)):
+                            continue
                     frames.extend(preview.propose(
                         eid, self.source, value=round(reading.home_probability, 4), event=event,
                         row_sources=event.preview_sources, row_rev=event.preview_rev,
