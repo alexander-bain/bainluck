@@ -89,6 +89,32 @@ and a fight has no points (#9006). Those and any undeclared sport serve
 ``format_unsupported``. The table is the web's ``PROJECTED_FINAL_FORMATS``, so
 producer and card admit the same sports.
 
+── WHAT THE ACTUAL SCORE COVERS (soccer) ───────────────────────────────────────
+
+A forecast settles on a period, and so does a scoreboard. Football and
+basketball are simple: the final is ``full_game``, overtime included, which is
+what their lines settle on. A soccer final is not: a knockout level after 90
+minutes goes to extra time and maybe penalties, and the stored score is then
+NOT the 90-minute score the forecast is about. The forecast's own ``period`` is
+no evidence of what the scoreboard covers.
+
+So a settled soccer row also carries ``final_score_period: "regulation"`` when,
+and only when, its own stored ``period`` says the match ENDED at full time. That
+is the contract the three-way accuracy curve already grades on
+(``soccer_three_way.regulation_finish_proven``, CERT-4066): the ESPN sync writes
+``status.type.detail`` into ``period``, ``"FT"`` on a full-time finish, and the
+extra-time and shootout finishes carry other details, refused by exact
+equality. A period left at a live token, an absent period, ``AET`` or a shootout
+detail serves NO key, so the comparison is withheld rather than set against an
+extra-time total or a shootout tally. Nothing is inferred from the score, the
+clock, the competition or the forecast.
+
+The box-score status the curve also accepts is not used here: list routes do not
+load ``box_score_data``, so using it would let the event page compare a game its
+own card refuses. The key is a sibling of the forecast and is set whether or
+not a forecast was found: it is a fact about the score, not about the reading.
+Football and basketball rows serve no key; their callers pass ``full_game``.
+
 ── PROVENANCE IS ITS OWN ───────────────────────────────────────────────────────
 
 ``prematch_odds.source`` names the VENUE of the settled probability prior
@@ -111,6 +137,7 @@ from app.utils.odds_math import (
 )
 from app.utils.prematch_reading import SETTLED_STATUSES
 from app.utils.scheduled_start import loaded_commence_time_source, start_is_from_schedule
+from app.utils.soccer_three_way import is_soccer_key, regulation_finish_proven
 from app.utils.start_placeholder import (
     espn_start_placeholder_tag,
     espn_start_placeholder_tags,
@@ -121,6 +148,11 @@ from app.utils.start_placeholder import (
 #: The served object's key and its refusal's key. Siblings of ``prematch_odds``.
 PROJECTION_KEY = "pregame_projection"
 UNAVAILABLE_KEY = "pregame_projection_unavailable"
+#: What a settled row's ACTUAL score covers, when its own row proves it. A
+#: sibling of the forecast, never inside it (see "WHAT THE ACTUAL SCORE COVERS").
+SCORE_PERIOD_KEY = "final_score_period"
+#: The one value served: a soccer match that ended at full time.
+SCORE_PERIOD_REGULATION = "regulation"
 
 #: The only kind produced, named for the boundary it actually used: each book's
 #: last reading before the PUBLISHED start. It is not ``"latest_before_play"``:
@@ -393,6 +425,19 @@ PREGAME_PROJECTION_SQL = """
 """
 
 
+def final_score_period(event: Any, sport_key: Optional[str], status: Any) -> Optional[str]:
+    """``"regulation"`` when a settled soccer row's own ``period`` proves a full-time finish, else ``None``.
+
+    ``status`` is the status the card prints. Only the loaded column is read
+    (``_loaded``): a row that did not load ``period`` refuses, it never lazy-loads.
+    """
+    if status not in SETTLED_STATUSES or not is_soccer_key(sport_key):
+        return None
+    if not regulation_finish_proven(_loaded(event, "period")):
+        return None
+    return SCORE_PERIOD_REGULATION
+
+
 def plan_pregame_projections(
     events: Iterable[Any], sport_key_of, status_of=None
 ) -> tuple[Optional[dict], dict[int, dict]]:
@@ -481,13 +526,29 @@ async def read_pregame_projections(
 
     from sqlalchemy import text
 
-    plan, answers = plan_pregame_projections(list(events), sport_key_of, status_of)
-    if plan is None:
+    events = list(events)
+    plan, answers = plan_pregame_projections(events, sport_key_of, status_of)
+    # What each settled row's actual score covers: decided from the row alone,
+    # so it is served whatever the read below answers.
+    score_periods: dict[int, str] = {}
+    for event in events:
+        status = status_of(event) if status_of is not None else _loaded(event, "status")
+        event_id = _loaded(event, "id")
+        period = final_score_period(event, sport_key_of(event), status)
+        if event_id is not None and period is not None:
+            score_periods[event_id] = period
+
+    def _answered() -> dict[int, dict]:
+        for event_id, period in score_periods.items():
+            answers.setdefault(event_id, {})[SCORE_PERIOD_KEY] = period
         return answers
+
+    if plan is None:
+        return _answered()
     failed = {event_id: {UNAVAILABLE_KEY: REASON_READ_FAILED} for event_id in plan["ids"]}
     if timeout_ms is not None and timeout_ms <= 0:
         answers.update(failed)
-        return answers
+        return _answered()
     try:
         nested = await db.begin_nested()
         try:
@@ -513,16 +574,19 @@ async def read_pregame_projections(
             exc_info=True,
         )
         answers.update(failed)
-        return answers
+        return _answered()
     answers.update(answers_from_rows(plan, rows))
-    return answers
+    return _answered()
 
 
 def attach_pregame_projection(payload: dict, answer: Optional[Mapping[str, Any]]) -> None:
-    """Put one row's answer on its served dict: one of the two keys, or neither."""
+    """Put one row's answer on its served dict: one of the two forecast keys, or
+    neither, plus the actual score's period when the row proved one."""
     if not answer:
         return
     if answer.get(PROJECTION_KEY) is not None:
         payload[PROJECTION_KEY] = dict(answer[PROJECTION_KEY])
     elif answer.get(UNAVAILABLE_KEY):
         payload[UNAVAILABLE_KEY] = answer[UNAVAILABLE_KEY]
+    if answer.get(SCORE_PERIOD_KEY) == SCORE_PERIOD_REGULATION:
+        payload[SCORE_PERIOD_KEY] = SCORE_PERIOD_REGULATION
