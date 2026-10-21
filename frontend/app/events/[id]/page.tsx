@@ -61,7 +61,7 @@ import {
   pageLiveClaimIsUnbacked,
 } from "@/lib/eventLivePush";
 import { frameFoldOrder } from "@/lib/foldRevision";
-import { overlayBlendPreview, overlayBlendPreviewLine } from "@/lib/blendPreview";
+import { displayedPreview, displayedProbabilityObservedAt, overlayBlendPreview, overlayBlendPreviewLine } from "@/lib/blendPreview";
 import { frameCarriesUnpricedSnapshot, snapshotRailPaysPricelessTrigger } from "@/lib/sourceSnapshot";
 import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
@@ -2335,9 +2335,20 @@ export default function EventPage({ params }: EventPageProps) {
   const connectionTerminalLabel = isFinished || venueSettledSentence
     ? "Finished"
     : stoppageLabel;
-  // The ACCEPTED price clock: the held result's own observation stamp, which a
-  // refused frame never moves and a heartbeat, reconnect or mount never touches.
-  const acceptedPriceClock = event.hero_probability_observed_at ?? freshestSourceStamp;
+  // The exact displayed probability owns this clock, including an admitted
+  // preview. An unknown preview time stays unknown until committed truth returns.
+  const acceptedPriceClock = displayedProbabilityObservedAt(
+    event, blendPreview, blendPreviewNow,
+    event.hero_probability_observed_at ?? freshestSourceStamp,
+  );
+  // These details compare the two clocks actually printed below. Keep the
+  // source-staleness warning policy above unchanged; an unknown preview or
+  // score clock cannot support an "oldest" claim.
+  const displayedOldestFact = displayedPreview(blendPreview, event, blendPreviewNow) === null
+    ? heroStamp.fact
+    : acceptedPriceClock && heroStampInputs.scoreStamp && Number.isFinite(Date.parse(heroStampInputs.scoreStamp))
+      ? heroFreshness({ priceStamp: acceptedPriceClock, scoreStamp: heroStampInputs.scoreStamp }).fact
+      : null;
   connectionTrackerRef.current = stepConnectionTracker(
     connectionTrackerRef.current,
     {
@@ -2380,7 +2391,7 @@ export default function EventPage({ params }: EventPageProps) {
       priceObservedAt={acceptedPriceClock}
       scoreShown={Boolean(liveGamesLine) || heroScorePairPresent}
       scoreConfirmedAt={heroStampInputs.scoreStamp}
-      oldestFact={heroStamp.fact}
+      oldestFact={displayedOldestFact}
       announces={announces}
     />
   );

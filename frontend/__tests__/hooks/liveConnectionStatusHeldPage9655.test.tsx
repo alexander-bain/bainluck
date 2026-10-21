@@ -33,6 +33,7 @@ import fs from "fs";
 import path from "path";
 import useSWR, { SWRConfig } from "swr";
 
+import { displayedProbabilityObservedAt, overlayBlendPreview } from "../../lib/blendPreview";
 import { heldFrameAfter, useLiveEventStream, type LiveFrame } from "../../hooks/useLiveEventStream";
 import { applyLiveFrame, frameInvalidatesFoldedBlend } from "../../lib/eventLivePush";
 import { frameFoldOrder } from "../../lib/foldRevision";
@@ -201,6 +202,8 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   const {
     connected: streamConnected,
     status: reportedStreamStatus,
+    blendPreview,
+    blendPreviewNow,
   } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame);
   const streamStatus = reportedStreamStatus ?? (streamConnected ? "open" : "idle");
 
@@ -209,10 +212,13 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
 
   // ── app/events/[id]/page.tsx — the status wiring, as the page writes it ────
   const freshestSourceStamp = Object.values(event.win_probability_sources)[0]?.updated_at ?? null;
-  const homePct = Math.round(event.hero_probability * 100);
+  const homePct = Math.round(overlayBlendPreview(event, blendPreview, blendPreviewNow).hero_probability * 100);
   const awayPct = 100 - homePct;
   const connectionTerminalLabel = isFinishedStatus(event.status) ? "Finished" : null;
-  const acceptedPriceClock = event.hero_probability_observed_at ?? freshestSourceStamp;
+  const acceptedPriceClock = displayedProbabilityObservedAt(
+    event, blendPreview, blendPreviewNow,
+    event.hero_probability_observed_at ?? freshestSourceStamp,
+  );
   connectionTrackerRef.current = stepConnectionTracker(
     connectionTrackerRef.current,
     {
@@ -324,7 +330,7 @@ describe("structural pin: the harness carries the page's own wiring", () => {
     // #10090 G1: plus its journal entry while a paired read is in flight — a replay, not a write.
     expect(PAGE.match(/pairJournalRef\.current\?\.record\(\(prev\) => applyLiveFrame\(prev, frame\)\);/g)).toHaveLength(1);
     // The status wiring: the ACCEPTED clock, and one step per render from the held result.
-    expect(PAGE).toMatch(/const acceptedPriceClock = event\.hero_probability_observed_at \?\? freshestSourceStamp;/);
+    expect(PAGE).toMatch(/const acceptedPriceClock = displayedProbabilityObservedAt\(\s*event, blendPreview, blendPreviewNow,\s*event\.hero_probability_observed_at \?\? freshestSourceStamp,\s*\);/);
     expect(PAGE).toMatch(/connectionTrackerRef\.current = stepConnectionTracker\(\s*connectionTrackerRef\.current,\s*\{\s*eventId,\s*status: streamStatus,\s*priceObservedAt: acceptedPriceClock,/);
     expect(PAGE).toMatch(/valueKey: homePct === null \? null : `\$\{homePct\}\/\$\{awayPct \?\? ""\}`,\s*terminal: Boolean\(connectionTerminalLabel\),\s*\},\s*Date\.now\(\),/);
     expect(PAGE).toMatch(/const connectionPresentation = presentConnectionStatus\(\s*connectionTrackerRef\.current,\s*\{\s*status: streamStatus,\s*terminalLabel: connectionTerminalLabel,/);
@@ -507,5 +513,52 @@ describe("#10200 navigation resets", () => {
     await page.emit("probability", frame({ id: B, p: 0.31, at: T(3) }));
     expect(page.read()).toMatchObject({ pct: "31", label: "Updated" });
     page.unmount();
+  });
+});
+
+
+describe("#10090 preview readout follows actual transport admission", () => {
+  const previewFrame = (clock: string | null = T(5), p = .601) => JSON.stringify({
+    event_id: A, p, status: "live", observed_at: T(99), display_observed_at: clock,
+    preview: { kind: "blend", epoch: 1, seq: 1, base_rev: 10, ttl_ms: 1000 },
+  });
+  it.each(["expiry", "revoke", "reconnect", "commit", "terminal"])("restores committed clock after %s", async reason => {
+    const initial = { ...held({ p: .6, at: T(0) }), blend_fold_revision: { [A]: 10 } };
+    const page = await mountHeldPage(initial);
+    try {
+      await page.emit("open");
+      await page.emit("preview", previewFrame());
+      expect(page.read()).toMatchObject({ pct: "60", clock: T(5) });
+      // The hook schedules its expiry render at expiresAt + 1 ms.
+      if (reason === "expiry") await page.advance(1001);
+      if (reason === "revoke") await page.emit("preview", JSON.stringify({
+        event_id: A, p: null, preview: {kind: "revoke", epoch: 1, seq: 2, through_seq: 1},
+      }));
+      if (reason === "reconnect") {
+        // Native EventSource retries reopen this same handle; open clears the
+        // held preview before the replacement worker publishes anything.
+        page.stream().readyState = 0;
+        await page.emit("error");
+        await page.emit("open");
+      }
+      if (reason === "commit" || reason === "terminal") {
+        await page.poll();
+        await page.resolveLast({
+          ...initial, hero_probability: .65, hero_probability_away: .35,
+          hero_probability_observed_at: T(8), blend_fold_revision: { [A]: 11 },
+          status: reason === "terminal" ? "completed" : "live",
+        });
+      }
+      expect(page.read().clock).toBe(reason === "commit" || reason === "terminal" ? T(8) : T(0));
+    } finally { page.unmount(); }
+  });
+
+  it("does not give an unknown-clock preview the producer attempt or committed time", async () => {
+    const page = await mountHeldPage({ ...held({p: .6, at: T(0)}), blend_fold_revision: {[A]: 10} });
+    try {
+      await page.emit("open");
+      await page.emit("preview", previewFrame(null, .7));
+      expect(page.read()).toMatchObject({pct: "70", clock: "null", label: "Connected · waiting"});
+    } finally { page.unmount(); }
   });
 });
