@@ -4040,7 +4040,20 @@ class LiveBlendRefresher:
             # a canary whose group left beside a non-canary sibling still owes
             # its `no_group` revoke (R3).
             if not self.preview_events.isdisjoint(event_ids):
-                # After COMMIT, BEFORE the committed frames: a sibling still
+                # Only canary frames depend on preview recomposition. Release
+                # independent committed events through the existing sender
+                # before optional ledger/publication I/O can hold them up.
+                independent = [
+                    frame for frame in pending
+                    if frame["event_id"] not in self.preview_events
+                ]
+                pending = [
+                    frame for frame in pending
+                    if frame["event_id"] in self.preview_events
+                ]
+                if independent:
+                    await publish_committed(independent)
+                # After COMMIT, BEFORE the committed canary frames: a sibling still
                 # pending is recomposed on the new base and goes out first, so
                 # the committed frame (rev == that base) cannot briefly put the
                 # sibling's older stored value back on the page. Revokes go
