@@ -303,7 +303,9 @@ class TestComposition:
         assert (a["preview"]["seq"], b["preview"]["seq"]) == (1, 2)
         assert b["p"] == pytest.approx(_expected(BASE10, {"kalshi": (0.6, _stamp(1)),
                                                           "polymarket": (0.7, _stamp(2))}))
-        assert b["preview"]["pending_entries"] is None  # folded readers refuse (limit 7)
+        assert set(b["preview"]["pending_entries"]) == SOURCES
+        assert b["preview"]["pending_entries_version"] == 2
+        assert b["preview"]["pending_entries_authority"] == "event-ledger-v1"
         assert b["preview"]["ttl_ms"] > 0 and isinstance(b["preview"]["ttl_ms"], int)
 
     async def test_a_composition_overtaken_by_a_newer_write_is_never_sent(self, rig):
@@ -318,7 +320,7 @@ class TestComposition:
             reader.after(frame)
         assert reader.held["pending"] == {"kalshi": 0.6, "polymarket": 0.7}
 
-    async def test_folded_projection_refuses_ledger_frames(self, rig):
+    async def test_folded_projection_requires_one_elected_origin(self, rig):
         from app.utils.folded_blend_preview import FoldedPreviewBase
 
         [frame] = _blends(await rig.run(rig.k, _propose(rig.k, "kalshi", 0.6)))
@@ -328,7 +330,7 @@ class TestComposition:
                                   "opening_home_probability": None,
                                   "opening_away_probability": None, "commence_time": None},
                                  "baseball_mlb")
-        assert base.project(frame, members={EV, 8}, floors={}) is None
+        assert base.project(frame, members={EV, 8}, floors={}) is not None
         frame2 = _blends(await rig.run(rig.p, _propose(rig.p, "polymarket", 0.7, basis_s=2)))[0]
         assert set(frame2["preview"]["pending"]) == SOURCES
         assert base.project(frame2, members={EV, 8}, floors={}) is None
