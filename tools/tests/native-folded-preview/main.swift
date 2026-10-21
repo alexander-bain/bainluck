@@ -26,6 +26,9 @@ do {
     try tests.testV2UpgradeRetainsPriorV1OriginFence()
     try tests.testV2AuthoritativeMembershipChangeAdmitsTheNewFoldAndRefusesTheOld()
     try tests.testMembershipChangeCarriesTheSingletonFenceAndPrunesLegacyFloors()
+    try tests.testTheRemovedOriginsScalarEpochLeavesWithItAndTheSurvivorsStays()
+    try tests.testSingletonAuthorityOutlivesTheDisplayAndFencesTheFoldItJoins()
+    try tests.testARowThatReturnsAfterAMembershipFlapGetsItsEvidenceBack()
 } catch {
     ReaderChecks.failures += 1
     print("Unexpected error: \(error)")

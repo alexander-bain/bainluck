@@ -471,12 +471,159 @@ final class FoldedBlendPreview10090Tests: XCTestCase {
         let pruned = BlendPreview.readerAfterMembership(v1, members: ["4242", "4244"])
         XCTAssertNil(pruned.floors)
         XCTAssertNil(pruned.foldedSequence, "the removed origin's v1 order is dropped")
-        XCTAssertEqual(pruned.epoch, 5, "the legacy epoch floor stays")
+        XCTAssertEqual(pruned.epoch, -1, "with the scalar epoch that was its domain")
         let admitted = BlendPreview.readerAfter(pruned, v1New, eventId: id, now: 100.2)
         XCTAssertEqual(admitted.held?.p, 0.6)
         XCTAssertEqual(BlendPreview.displayed(admitted.held, held: try detail(revision: ["4242": 10, "4244": 30]), now: 100.2), 0.6)
         XCTAssertEqual(BlendPreview.readerAfter(pruned, try frame(seq: 3), eventId: id, now: 100.2), pruned,
                        "the old fold's v1 frame (4242/4243) is refused outright")
+    }
+
+    /// Review blocker 1 (64a095c4): on the v1 path the scalar epoch is the
+    /// origin's own domain. A removed origin's epoch (900) used to keep fencing
+    /// the replacement origin's independent epoch (12) after the boundary; the
+    /// boundary now takes the removed origin's epoch with its order, and keeps
+    /// it when the order's origin survives.
+    func testTheRemovedOriginsScalarEpochLeavesWithItAndTheSurvivorsStays() throws {
+        func folded(origin: Int, epoch: Int, seq: Int, baseRev: Int, base: [String: Int]) throws -> BlendPreviewFrame {
+            var w = wire(seq: seq, epoch: epoch), meta = w["preview"] as! [String: Any]
+            meta["origin_event_id"] = origin; meta["base_rev"] = baseRev; meta["base_fold_revision"] = base
+            w["preview"] = meta
+            return try XCTUnwrap(BlendPreviewFrame.decode(raw(w)))
+        }
+        let old = BlendPreview.readerAfterMembership(.empty, members: ["4242", "4243"])
+        let fold2 = BlendPreview.readerAfter(
+            old, try folded(origin: 4243, epoch: 900, seq: 2, baseRev: 20, base: ["4242": 10, "4243": 20]), eventId: id, now: 100)
+        XCTAssertEqual(fold2.epoch, 900)
+        XCTAssertEqual(fold2.held?.p, 0.6)
+        let origin3 = try folded(origin: 4244, epoch: 12, seq: 81, baseRev: 30, base: ["4242": 10, "4244": 30])
+        let reset = BlendPreview.readerReset(fold2)
+        XCTAssertEqual(BlendPreview.readerAfter(reset, origin3, eventId: id, now: 100.2), reset,
+                       "reset is not a boundary: the removed origin's epoch 900 still fences origin 4244's epoch 12")
+        let pruned = BlendPreview.readerAfterMembership(fold2, members: ["4242", "4244"])
+        XCTAssertEqual(pruned.epoch, -1)
+        XCTAssertNil(pruned.foldedSequence)
+        let admitted = BlendPreview.readerAfter(pruned, origin3, eventId: id, now: 100.2)
+        XCTAssertEqual(admitted.epoch, 12, "the replacement origin's own epoch is the fence now")
+        XCTAssertEqual(admitted.foldedSequence, BlendPreviewReader.FoldedSequence(epoch: 12, seq: 81, originEventId: 4244))
+        XCTAssertEqual(BlendPreview.displayed(admitted.held, held: try detail(revision: ["4242": 10, "4244": 30]), now: 100.2), 0.6)
+        XCTAssertEqual(BlendPreview.readerAfter(
+            admitted, try folded(origin: 4244, epoch: 12, seq: 80, baseRev: 30, base: ["4242": 10, "4244": 30]),
+            eventId: id, now: 100.3), admitted, "and it orders against itself")
+        XCTAssertEqual(BlendPreview.readerAfter(
+            admitted, try folded(origin: 4244, epoch: 12, seq: 82, baseRev: 30, base: ["4242": 10, "4244": 30]),
+            eventId: id, now: 100.3).held?.seq, 82)
+
+        // The order's origin survives the change: its epoch is still the fence.
+        let own = BlendPreview.readerAfter(
+            old, try folded(origin: 4242, epoch: 900, seq: 2, baseRev: 10, base: ["4242": 10, "4243": 20]), eventId: id, now: 100)
+        let kept = BlendPreview.readerAfterMembership(own, members: ["4242", "4244"])
+        XCTAssertEqual(kept.epoch, 900)
+        XCTAssertEqual(kept.foldedSequence, BlendPreviewReader.FoldedSequence(epoch: 900, seq: 2, originEventId: 4242))
+        XCTAssertEqual(BlendPreview.readerAfter(
+            kept, try folded(origin: 4242, epoch: 12, seq: 81, baseRev: 10, base: ["4242": 10, "4244": 30]),
+            eventId: id, now: 100.2), kept, "an older epoch of the surviving origin stays fenced")
+    }
+
+    /// Review blocker 2 (64a095c4): the page row's singleton authority is
+    /// recorded at acceptance, not read off the display, so a disconnect
+    /// before the membership change cannot forget it. The legacy singleton
+    /// display rules are unchanged; the record only moves forward, keeps a
+    /// same tuple's first-seen deadline and its retirement, and fences the
+    /// fold the row later joins: older identity refused, same identity capped
+    /// and then expired, revoked identity never pending again.
+    func testSingletonAuthorityOutlivesTheDisplayAndFencesTheFoldItJoins() throws {
+        func single(_ p: Double, epoch: Int, seq: Int) -> BlendPreviewFrame {
+            BlendPreviewFrame(eventId: id, p: p, status: "live", kind: .blend, epoch: epoch, seq: seq, baseRev: 10, ttlMs: 1_000)
+        }
+        let bound = BlendPreview.readerAfterMembership(.empty, members: ["4242"])
+        let accepted = BlendPreview.readerAfter(bound, single(0.7, epoch: 100, seq: 2), eventId: id, now: 100)
+        XCTAssertEqual(accepted.originFences["4242"],
+                       BlendPreviewReader.OriginFence(epoch: 100, seq: 2, retired: false, deadline: 101))
+        XCTAssertEqual(BlendPreview.displayed(accepted.held, held: try detail(revision: ["4242": 10]), now: 100), 0.7)
+        let reset = BlendPreview.readerReset(accepted)
+        XCTAssertNil(reset.held)
+        XCTAssertEqual(reset.originFences["4242"]?.seq, 2, "the record outlives the display")
+        let replay = BlendPreview.readerAfter(reset, single(0.69, epoch: 100, seq: 1), eventId: id, now: 100.2)
+        XCTAssertEqual(replay.held?.seq, 1, "the legacy singleton display rules are unchanged")
+        XCTAssertEqual(replay.originFences["4242"]?.seq, 2, "but the recorded identity does not move back")
+        XCTAssertEqual(BlendPreview.readerAfter(reset, single(0.7, epoch: 100, seq: 2), eventId: id, now: 100.5)
+                           .originFences["4242"]?.deadline, 101, "a same tuple keeps its first-seen deadline")
+        XCTAssertEqual(BlendPreview.readerAfter(reset, single(0.71, epoch: 101, seq: 1), eventId: id, now: 100.5)
+                           .originFences["4242"], BlendPreviewReader.OriginFence(epoch: 101, seq: 1, retired: false, deadline: 101.5))
+
+        // Disconnected, then the authoritative detail folds 4242 with 4244.
+        let folded = try opened(BlendPreview.readerAfterMembership(reset, members: ["4242", "4244"]), session: "s2")
+        XCTAssertEqual(folded.originFences["4242"],
+                       BlendPreviewReader.OriginFence(epoch: 100, seq: 2, retired: false, deadline: 101))
+        let base = ["4242": 10, "4244": 30]
+        let older = v2Wire(session: "s2", authority: ["4242": origin(100, 1), "4244": origin(7, 1)], base: base)
+        XCTAssertEqual(try applyV2(folded, older, now: 100.5), folded, "an older own tuple cannot enter the fold")
+        let same = v2Wire(session: "s2", authority: ["4242": origin(100, 2), "4244": origin(7, 1)], base: base)
+        XCTAssertEqual(try applyV2(folded, same, now: 100.5).held?.expiresAt, 101, "the same tuple keeps its first-seen deadline")
+        XCTAssertEqual(try applyV2(folded, same, now: 101), folded, "and stays expired past it")
+        let newer = v2Wire(session: "s2", authority: ["4242": origin(100, 3), "4244": origin(7, 1)], base: base)
+        XCTAssertEqual(try applyV2(folded, newer, now: 100.5).held?.expiresAt, 101.5)
+
+        // A revoked singleton identity cannot become pending again in the fold.
+        let revoked = BlendPreview.readerAfter(
+            accepted, BlendPreviewFrame(eventId: id, p: nil, status: "live", kind: .revoke, epoch: 100, seq: 3, throughSeq: 2),
+            eventId: id, now: 100.3)
+        XCTAssertNil(revoked.held)
+        XCTAssertEqual(revoked.originFences["4242"],
+                       BlendPreviewReader.OriginFence(epoch: 100, seq: 2, retired: true, deadline: 101))
+        let revokedFold = try opened(
+            BlendPreview.readerAfterMembership(BlendPreview.readerReset(revoked), members: ["4242", "4244"]), session: "s2")
+        XCTAssertEqual(try applyV2(revokedFold, same, now: 100.5), revokedFold, "the revoked tuple cannot return as pending")
+        XCTAssertEqual(try applyV2(revokedFold, newer, now: 100.5).held?.p, 0.65, "a newer own tuple can")
+        // A revoke of older sequences only does not retire the recorded identity.
+        let partial = BlendPreview.readerAfter(
+            accepted, BlendPreviewFrame(eventId: id, p: nil, status: "live", kind: .revoke, epoch: 100, seq: 3, throughSeq: 1),
+            eventId: id, now: 100.3)
+        XCTAssertEqual(partial.held?.seq, 2)
+        XCTAssertEqual(partial.originFences["4242"]?.retired, false)
+    }
+
+    /// Review qualification (64a095c4): a cached detail can flap the
+    /// membership back for up to a cache window. A row the page stopped folding
+    /// leaves bounded evidence behind, and gets it back when it returns, so the
+    /// flap cannot resurrect its identity, renew its lease or admit a base its
+    /// commit floor had already refused.
+    func testARowThatReturnsAfterAMembershipFlapGetsItsEvidenceBack() throws {
+        var both = try applyV2(BlendPreview.readerAfterMembership(try opened(), members: ["4242", "4243"]), v2Wire())
+        both = BlendPreview.readerAfterCommitFloor(both, FoldRevision(["4242": 10, "4243": 20]))
+        let away = BlendPreview.readerAfterMembership(both, members: ["4242", "4244"])
+        XCTAssertEqual(away.retiredMembers,
+                       [BlendPreviewReader.RetiredMember(row: "4243", fence: both.originFences["4243"], floor: 20)])
+        XCTAssertNil(away.originFences["4243"])
+        XCTAssertEqual(away.floors?.rows, ["4242": 10])
+        XCTAssertEqual(BlendPreview.readerReset(away).retiredMembers, away.retiredMembers, "a reset keeps the evidence")
+
+        // The flap back: 4243's fence and floor return with it; nothing is renewed.
+        let back = try opened(BlendPreview.readerAfterMembership(away, members: ["4242", "4243"]), session: "s2")
+        XCTAssertEqual(back.retiredMembers, [])
+        XCTAssertEqual(back.originFences["4243"], both.originFences["4243"])
+        XCTAssertEqual(back.floors?.rows, ["4242": 10, "4243": 20])
+        XCTAssertEqual(try applyV2(back, v2Wire(session: "s2", authority: ["4242": origin(100, 2), "4243": origin(2, 0)]), now: 100.4),
+                       back, "an older 4243 tuple is still fenced")
+        XCTAssertEqual(try applyV2(back, v2Wire(session: "s2", base: ["4242": 10, "4243": 19]), now: 100.4),
+                       back, "an uncovered 4243 base is still refused")
+        XCTAssertEqual(try applyV2(back, v2Wire(session: "s2"), now: 100.4).held?.expiresAt, 101,
+                       "the same tuples keep their first-seen deadlines")
+        XCTAssertEqual(try applyV2(back, v2Wire(session: "s2", authority: ["4242": origin(100, 2), "4243": origin(2, 2)]), now: 100.4)
+                           .held?.expiresAt, 101)
+
+        // The evidence is bounded: the row that left longest ago is forgotten first.
+        var churn = back
+        for row in ["4245", "4246", "4247", "4248", "4249"] {
+            churn = BlendPreview.readerAfterMembership(churn, members: ["4242", row])
+            churn = try applyV2(try opened(churn, session: "s-\(row)"),
+                                v2Wire(session: "s-\(row)", authority: ["4242": origin(100, 2), row: origin(1, 1)],
+                                       base: ["4242": 10, row: 5]), now: 100.4)
+            XCTAssertEqual(churn.held?.p, 0.65, row)
+        }
+        XCTAssertEqual(churn.retiredMembers.map(\.row), ["4245", "4246", "4247", "4248"], "4243 aged out")
+        XCTAssertEqual(churn.retiredMembers.count, BlendPreviewReader.maxRetiredMembers)
     }
 
 }

@@ -23,6 +23,11 @@ execution and installed-phone validation still belong to Native's real build.
 boundary (the adopted detail calls it): a changed fold prunes removed members'
 fences and floors, keeps survivors' identity/deadline fences, withdraws the
 display, drops the session and refuses old-membership packets, and the page
-reopens its stream on the new fold. The harness runs the reader half (both
+reopens its stream on the new fold. A removed origin takes the legacy scalar
+epoch that was its domain with it; the page's own row records its singleton
+authority at acceptance (identity, first-seen deadline, retirement), so a
+disconnect before the change cannot forget it; rows that leave keep bounded
+retired evidence (`retiredMembers`, fence + commit floor) that returns with
+them across a cached-detail flap. The harness runs the reader half (both
 v2 and v1 paths); `AMembershipChangeReopensTheFoldedPreview10090Tests` covers
 the page's stream reopen and runs only in Native's real build.

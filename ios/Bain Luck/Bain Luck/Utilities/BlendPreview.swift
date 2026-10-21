@@ -284,6 +284,13 @@ nonisolated struct BlendPreviewReader: Sendable, Equatable {
     /// The page's authoritative fold membership, from its adopted detail
     /// (`readerAfterMembership`). A change of it is a different fold.
     var authorityMembers: Set<String>? = nil
+    /// Rows the page stopped folding, with the fence and commit floor they
+    /// left behind, oldest first and bounded (`maxRetiredMembers`): a row that
+    /// returns in a later membership — a cached detail flapping back, or a
+    /// duplicate rejoining — gets its evidence back, so it cannot resurrect an
+    /// identity or an uncovered base across the flap.
+    var retiredMembers: [RetiredMember] = []
+    static let maxRetiredMembers = 4
 
     struct OriginFence: Sendable, Equatable {
         let epoch: Int
@@ -296,6 +303,12 @@ nonisolated struct BlendPreviewReader: Sendable, Equatable {
         let epoch: Int
         let seq: Int
         let originEventId: Int
+    }
+
+    struct RetiredMember: Sendable, Equatable {
+        let row: String
+        let fence: OriginFence?
+        let floor: Int?
     }
 
     static let empty = BlendPreviewReader(held: nil, epoch: -1)
@@ -348,11 +361,14 @@ nonisolated enum BlendPreview {
     /// nor get back in: the held preview is withdrawn and the session dropped
     /// (the owner reopens the stream, whose server-side composition is bound
     /// to the membership it opened with); members the page no longer folds
-    /// lose their fences and commit floors; surviving members keep theirs —
-    /// identity, retirement and first-seen deadline — so the new fold cannot
-    /// renew or resurrect them. Snapshots of the old membership are refused
-    /// (`foldMembers`). A singleton visit's own row carries its held identity
-    /// and deadline into the fold. Ordinary disconnect and resync are not
+    /// lose their fences and commit floors — into bounded retired evidence
+    /// (`retiredMembers`) that a returning row gets back — and a removed
+    /// origin takes its legacy order AND the scalar epoch that was its domain
+    /// with it; surviving members keep theirs — identity, retirement and
+    /// first-seen deadline — so the new fold cannot renew or resurrect them.
+    /// Snapshots of the old membership are refused (`foldMembers`). The page's
+    /// own row carries its singleton authority, recorded at acceptance
+    /// (`readerAfter`), into the fold. Ordinary disconnect and resync are not
     /// membership changes and go through `readerReset` as before.
     static func readerAfterMembership(_ reader: BlendPreviewReader, members: Set<String>) -> BlendPreviewReader {
         guard !members.isEmpty else { return reader }
@@ -361,19 +377,46 @@ nonisolated enum BlendPreview {
         guard membershipChanges(reader, members: members) else { return next }
         next = readerReset(next)
         next.foldMembers = members
-        next.originFences = reader.originFences.filter { members.contains($0.key) }
-        next.floors = reader.floors.flatMap { floors in
-            FoldRevision(floors.rows.filter { members.contains($0.key) })
+        var fences = reader.originFences.filter { members.contains($0.key) }
+        var floors = (reader.floors?.rows ?? [:]).filter { members.contains($0.key) }
+        var retired = reader.retiredMembers.filter { !members.contains($0.row) }
+        for row in Set(reader.originFences.keys).union(reader.floors.map { Set($0.rows.keys) } ?? [])
+        where !members.contains(row) {
+            retired.removeAll { $0.row == row }
+            retired.append(.init(row: row, fence: reader.originFences[row], floor: reader.floors?.rows[row]))
         }
+        if retired.count > BlendPreviewReader.maxRetiredMembers {
+            retired.removeFirst(retired.count - BlendPreviewReader.maxRetiredMembers)
+        }
+        for entry in reader.retiredMembers where members.contains(entry.row) {
+            if fences[entry.row] == nil, let fence = entry.fence { fences[entry.row] = fence }
+            if let floor = entry.floor { floors[entry.row] = max(floors[entry.row] ?? 0, floor) }
+        }
+        next.originFences = fences
+        next.floors = FoldRevision(floors)
+        next.retiredMembers = retired
         if let order = reader.foldedSequence, !members.contains(String(order.originEventId)) {
+            // The legacy scalar fence was the removed origin's: it orders nothing here.
             next.foldedSequence = nil
-        }
-        if let held = reader.held, held.baseFoldRevision == nil, members.contains(String(held.eventId)),
-           next.originFences[String(held.eventId)] == nil {
-            next.originFences[String(held.eventId)] = BlendPreviewReader.OriginFence(
-                epoch: held.epoch, seq: held.seq, retired: false, deadline: held.expiresAt)
+            next.epoch = -1
         }
         return next
+    }
+
+    /// The page row's recorded singleton authority after a legacy frame:
+    /// identity only moves forward, a same tuple keeps its first-seen deadline
+    /// and its retirement, a newer tuple replaces it.
+    private static func ownFence(_ old: BlendPreviewReader.OriginFence?, epoch: Int, seq: Int,
+                                 retired: Bool, deadline: TimeInterval?) -> BlendPreviewReader.OriginFence {
+        guard let old, epoch <= old.epoch else {
+            return .init(epoch: epoch, seq: seq, retired: retired, deadline: deadline)
+        }
+        if epoch < old.epoch || seq < old.seq { return old }
+        if seq == old.seq {
+            return .init(epoch: epoch, seq: seq, retired: old.retired || retired,
+                         deadline: [old.deadline, deadline].compactMap { $0 }.min())
+        }
+        return .init(epoch: epoch, seq: seq, retired: retired, deadline: deadline)
     }
 
     /// All validation precedes fence mutation. A bad snapshot cannot poison
@@ -499,6 +542,26 @@ nonisolated enum BlendPreview {
             next.held = nil
         } else {
             next.held = previewAfter(held, frame, eventId: eventId, now: now)
+        }
+        // The page's own row records its singleton authority at acceptance,
+        // not off the display: a reset clears the display, and the identity,
+        // first-seen deadline and retirement must survive it for the fold this
+        // row may later join to compare against (`readerAfterV2`). The legacy
+        // display rules above are unchanged by this record.
+        if frame.baseFoldRevision == nil, frame.originEventId == nil {
+            let own = String(eventId)
+            switch frame.kind {
+            case .blend:
+                if let state = next.held, state.epoch == frame.epoch, state.seq == frame.seq {
+                    next.originFences[own] = ownFence(reader.originFences[own], epoch: state.epoch, seq: state.seq,
+                                                      retired: false, deadline: state.expiresAt)
+                }
+            case .revoke:
+                if let through = frame.throughSeq {
+                    next.originFences[own] = ownFence(reader.originFences[own], epoch: frame.epoch, seq: through,
+                                                      retired: true, deadline: nil)
+                }
+            }
         }
         return next
     }
