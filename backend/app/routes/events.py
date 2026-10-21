@@ -90,6 +90,7 @@ from app.utils.futures_market_snapshot import (
 from app.utils.card_projected_pair import (
     LIVE_PROJECTION_KEY,
     attach_card_projected_pair,
+    card_projection_read_timeout_ms,
     event_live_projection,
     own_event_rows,
 )
@@ -18725,6 +18726,24 @@ async def list_events(
     # still ahead of its kickoff is refused before a statement is issued, so
     # the ordinary page pays nothing at all.
     await attach_venue_settlement(db, events, formatted, now)
+
+    # #11296: a final row's pregame projected score and its score's period, the
+    # same object search and the event page serve. `/sports/{key}` reads this
+    # route, not `/api/leagues/{sport_key}`, so without it the league page's
+    # finished cards could never print the band their own event page prints.
+    # Asked by the status the card PRINTS, after the venue pass, exactly as
+    # search does. One statement for the page; unsettled rows and unsupported
+    # sports are refused before it. This route has no request deadline and
+    # serves up to 500 rows, so the read carries the feed's server-side cap: a
+    # read that reaches it answers `read_failed` and costs the page nothing else.
+    _served_status = {f.get("id"): f.get("status") for f in formatted}
+    _projections = await read_pregame_projections(
+        db, events, loaded_sport_key,
+        status_of=lambda e: _served_status.get(e.id),
+        timeout_ms=card_projection_read_timeout_ms(None),
+    )
+    for _formatted in formatted:
+        attach_pregame_projection(_formatted, _projections.get(_formatted.get("id")))
 
     return {
         "events": formatted,
