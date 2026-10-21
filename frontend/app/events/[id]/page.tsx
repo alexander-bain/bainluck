@@ -1756,6 +1756,7 @@ export default function EventPage({ params }: EventPageProps) {
   const projectedFinalPair = eventPageProjectedPair({
     odds: event?.current_odds,
     sportKey: event?.sport,
+    commenceTime: event?.commence_time,
     isLive,
     ladderPair: historyData?.pm_spread_data?.projected_final,
   });
