@@ -1,12 +1,11 @@
 /**
  * #9483 — the NFL web slice's ink (design freeze v328): the game-story deck
- * under the chart, the full-size reader, a line's exact details, and the
- * chart's second team line. The decisions are pinned in
+ * under the chart, the full-size reader and a line's exact details. The
+ * chart's second team line was retired by #11356 (one line, two poles). The decisions are pinned in
  * `__tests__/nflEventCardDeck9483.test.ts`; this file reads the markup.
  *
- * Controls: a chart without `pairedAwayLine` is byte-identical to today's, and
- * the pair is refused on a draw-priced winner and where no backend blend is the
- * line on the plot (a single source, or sportsbooks only).
+ * Control: `pairedAwayLine` is inert since #11356 — a chart with it is
+ * byte-identical to one without.
  *
  * 🪤 recharts draws nothing inside a `ResponsiveContainer` without a viewport,
  * so it is mocked to 390×300, as in `oddsChartDrawsRecordedCheckpoints4974`.
@@ -315,54 +314,27 @@ function chart(over: ChartProps = {}): string {
     .replace(/recharts-(line|scatter)-\d+/g, "recharts-$1-#");
 }
 
-describe("#9483 the chart draws both teams' lines on an admitted NFL blend", () => {
-  it("adds the away line in its team colour, keys both lines, and drops the up/down poles", () => {
+// #11356 RETIRED the second team line this block used to pin: Alex's approved
+// direction is one line between the two team poles, and the decisions live in
+// `chartSingleTrajectory11356.test.tsx`. What remains here is that the prop
+// the page still passes asks for nothing.
+describe("#11356 the NFL chart draws one line; the #9483 paired-line prop is inert", () => {
+  it("with the prop: one blend line, both poles, no away copy, no team keys", () => {
     const html = chart({ pairedAwayLine: true });
-    expect(html).toContain("paired-away-line");
-    expect(html).toMatch(new RegExp(`class="recharts-curve recharts-line-curve"[^>]*stroke="${strokes.away}"|stroke="${strokes.away}"[^>]*class="recharts-curve`));
-    expect(html).toMatch(new RegExp(`stroke="${strokes.home}"`));
-    expect((html.match(/data-testid="paired-team-key"/g) ?? []).length).toBe(2);
-    expect(html).toContain("Each line is that team&#x27;s chance to win.");
-    expect(html).not.toContain("The line rises towards");
-    // Two navies are not drawn as one line (#10547's rescue).
-    expect(strokes.home).not.toBe(HOME_HEX);
-    // The faint per-source lines wait behind "+ N sources" while both teams are drawn.
-    expect(html).not.toContain('name="Kalshi"');
-    expect(chart()).toMatch(/stroke-opacity="0.28"/);
-    expect(html).not.toMatch(/stroke-opacity="0.28"/);
+    expect(html).not.toContain("paired-away-line");
+    expect(html).not.toContain('data-testid="paired-team-key"');
+    expect(html).not.toMatch(new RegExp(`stroke="${strokes.away}"`));
+    expect(html).toContain("The line rises towards");
     expect(html).toContain("+ 3 sources");
   });
 
-  it("the away line is the blend read from the other side, vertex for vertex", () => {
-    const html = chart({ pairedAwayLine: true });
-    const paths = [...html.matchAll(/<path[^>]*class="recharts-curve recharts-line-curve"[^>]*d="([^"]+)"/g)].map((m) => m[1]);
-    expect(paths.length).toBeGreaterThanOrEqual(2);
-    const points = (d: string) => (d.match(/-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?/g) ?? []).map((p) => p.split(",").map(Number));
-    const byLen = paths.map(points).filter((p) => p.length > 100);
-    const [home, away] = [byLen[byLen.length - 2], byLen[byLen.length - 1]];
-    expect(home.length).toBe(away.length);
-    // Same x for every vertex; the two y's sit symmetric about the 50% line.
-    const mid = (home[0][1] + away[0][1]) / 2;
-    for (let i = 0; i < home.length; i += 17) {
-      expect(home[i][0]).toBeCloseTo(away[i][0], 3);
-      expect((home[i][1] + away[i][1]) / 2).toBeCloseTo(mid, 0);
-    }
+  it("CONTROL: with or without the prop the chart is byte-identical", () => {
+    expect(chart({ pairedAwayLine: true })).toBe(chart());
   });
 
-  it("CONTROL: without the prop the chart is byte-identical to today's", () => {
-    expect(chart({ pairedAwayLine: false })).toBe(chart());
-  });
-
-  it("CONTROL: a draw-priced winner keeps one line", () => {
-    const html = chart({ pairedAwayLine: true, awayWithheld: true });
-    expect(html).not.toContain("paired-away-line");
-    expect(html).toBe(chart({ awayWithheld: true }));
-  });
-
-  it("CONTROL: no backend blend on the plot keeps one line", () => {
-    const html = chart({ pairedAwayLine: true, backendBlendServed: false });
-    expect(html).not.toContain("paired-away-line");
-    expect(html).toBe(chart({ backendBlendServed: false }));
+  it("CONTROL: a draw-priced winner and a chart with no backend blend are unchanged by it", () => {
+    expect(chart({ pairedAwayLine: true, awayWithheld: true })).toBe(chart({ awayWithheld: true }));
+    expect(chart({ pairedAwayLine: true, backendBlendServed: false })).toBe(chart({ backendBlendServed: false }));
   });
 });
 
