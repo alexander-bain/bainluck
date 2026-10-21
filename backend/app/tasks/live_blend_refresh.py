@@ -1209,6 +1209,15 @@ async def run_flush_cadence(
 #: after this is reported by name, never waited on forever.
 LOOP_REAP_TIMEOUT_S = 15.0
 
+#: #10090 idle bound: closed `HeldRowQuotes` samplers still unwinding their
+#: cancellation, by source, until that source's run reaps its loops.
+_closing_samplers: dict[Optional[str], set] = {}
+
+
+def _park_closing_sampler(source: Optional[str], task) -> None:
+    if task is not None and not task.done():
+        _closing_samplers.setdefault(source, set()).add(task)
+
 
 async def reap_stopped_loops(source: str, tasks, *, timeout_s: float = LOOP_REAP_TIMEOUT_S) -> int:
     """Wait (bounded) for a consumer run's stopped loops; return how many are
@@ -1217,6 +1226,8 @@ async def reap_stopped_loops(source: str, tasks, *, timeout_s: float = LOOP_REAP
     error because that loop outlives its run (#10657)."""
     import asyncio
 
+    # The run's closed idle samplers (`hand_off_pending`, replacement) join here too.
+    tasks = (*tasks, *_closing_samplers.pop(source, ()))
     pending = [t for t in tasks if t is not None and not t.done()]
     if pending:
         try:
@@ -1309,10 +1320,15 @@ class HeldRowQuotes:
     #: as old as the source's previous phase, and the first input after it
     #: previews THAT time (PM venue 11:18:01.262 printed 11:17:59.866). While
     #: an input for one of the owner's preview events arrived within
-    #: IDLE_ACTIVE_S, ONE task per process keeps the newest completed sample
-    #: at most IDLE_SAMPLE_S old: the same read, timeout and backoff, one at a
-    #: time, on the same pool. The semantics are unchanged: a sample that
-    #: completed before acceptance, frozen at `note_input`.
+    #: IDLE_ACTIVE_S, ONE task per instance re-reads the same sample about
+    #: every IDLE_SAMPLE_S (plus read time; grace and backoff stretch it — a
+    #: period, not a latency guarantee), with the same timeout and backoff, on
+    #: the same pool. It never starts a read while one is in flight; a phase
+    #: may still start beside an idle read, and the ordinal keeps the newer.
+    #: The semantics are unchanged: a sample that completed before
+    #: acceptance, frozen at `note_input`. Lifecycle: `close()` latches; the
+    #: owner's teardown (`hand_off_pending`) or replacement (the refresher's
+    #: `held_quotes` setter) closes it and `reap_stopped_loops` joins it.
     IDLE_SAMPLE_S = 0.25
     IDLE_ACTIVE_S = 30.0
     #: An input noted after the last sample STARTED is owed its phase's own
@@ -1330,6 +1346,7 @@ class HeldRowQuotes:
         self.preview_events: Callable[[], Iterable[int]] = frozenset
         self._sessions = None
         self._idle_task: Optional[asyncio.Task] = None
+        self._closed = False
         self._sample_started = 0  # ordinal of the newest sample started
         self._sample_published = 0  # ordinal of the sample `_database_bound` holds
         self._sampling = 0
@@ -1392,7 +1409,8 @@ class HeldRowQuotes:
             self._start_idle_sampler()
 
     def _start_idle_sampler(self) -> None:
-        if self._sessions is None or (self._idle_task is not None and not self._idle_task.done()):
+        if self._closed or self._sessions is None or (
+                self._idle_task is not None and not self._idle_task.done()):
             return
         try:
             loop = asyncio.get_running_loop()
@@ -1403,7 +1421,7 @@ class HeldRowQuotes:
     async def _idle_sampler(self) -> None:
         """Keep the bound fresh while preview inputs arrive; exits by itself."""
         try:
-            while True:
+            while not self._closed:
                 now = self._now()
                 if (now - self._last_preview_input_at >= self.IDLE_ACTIVE_S
                         or not self.preview_events()):
@@ -1423,10 +1441,17 @@ class HeldRowQuotes:
         except Exception:
             logger.warning("held quotes: idle bound sampler stopped", exc_info=True)
 
-    def close(self) -> None:
-        """Cancel the idle sampler (it also exits by itself once inputs stop)."""
-        if self._idle_task is not None and not self._idle_task.done():
-            self._idle_task.cancel()
+    def close(self) -> Optional[asyncio.Task]:
+        """Latch closed and cancel the idle sampler; it never starts again.
+
+        Returns the still-running task for the owner to join (or None).
+        """
+        self._closed = True
+        task, self._idle_task = self._idle_task, None
+        if task is None or task.done():
+            return None
+        task.cancel()
+        return task
 
     def bound_for(self, mark) -> float | None:
         """This exact input's frozen bound, or None (another input, or none yet).
@@ -1738,7 +1763,11 @@ class LiveBlendRefresher:
 
     @held_quotes.setter
     def held_quotes(self, quotes: Optional[HeldRowQuotes]) -> None:
+        previous = self.__dict__.get("_held_quotes")
         self.__dict__["_held_quotes"] = quotes
+        if isinstance(previous, HeldRowQuotes) and previous is not quotes:
+            # A replaced instance's idle sampler must not outlive it.
+            _park_closing_sampler(getattr(self, "source", None), previous.close())
         if isinstance(quotes, HeldRowQuotes):
             # #10090 idle bound: this refresher's CURRENT preview events gate
             # the owner's idle sampler (legacy single-source and ledger alike).
@@ -4953,7 +4982,12 @@ def hand_off_pending(refresher) -> int:
     Returns how many blend events were handed off. Committed history scalars
     travel separately, without the blend handoff's age cutoff. Its owner must
     already be joined; a legacy/test refresher without that owner is supported.
+    Both consumers call this in their teardown `finally`, so it also closes the
+    run's idle bound sampler; their `reap_stopped_loops` then joins it.
     """
+    held = getattr(refresher, "held_quotes", None)
+    if isinstance(held, HeldRowQuotes):
+        _park_closing_sampler(getattr(refresher, "source", None), held.close())
     try:
         if refresher._history_task is not None and not refresher._history_task.done():
             raise RuntimeError("history owner must join before handing off its debt")
