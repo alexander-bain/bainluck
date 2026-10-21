@@ -455,8 +455,8 @@ interface OddsChartProps {
    * design freeze v328). It is the blend read from the other side, not a
    * second source: drawn only where the backend blend is the line on the plot,
    * and the winner market prices no draw (`awayWithheld` false). Colours are
-   * the page's team-line pair (`projectedTeamStrokes`). A source comparison (sources expanded)
-   * or a recorded-checkpoint window keeps today's single line. Absent keeps
+   * the page's team-line pair (`projectedTeamStrokes`). Expanding sources keeps
+   * the pair; a recorded-checkpoint window keeps today's single line. Absent keeps
    * today's chart.
    */
   pairedAwayLine?: boolean;
@@ -2005,10 +2005,10 @@ export default function OddsChart({
   // `pairedAwayLine`). The away line reads the same `bainLuckDelta` rows, so it
   // has the blend's observations, gaps and instants and nothing else.
   const pairedInk = useMemo(() => {
-    if (!pairedAwayLine || awayWithheld || !showBlendLine || legacyBlendSides || legendExpanded) return null;
+    if (!pairedAwayLine || awayWithheld || !showBlendLine || legacyBlendSides) return null;
     // The page's one team-line pair (#10547): too-close crests get a rescue colour.
     return projectedTeamStrokes(homeTeamColor, awayTeamColor);
-  }, [pairedAwayLine, awayWithheld, showBlendLine, legacyBlendSides, legendExpanded, homeTeamColor, awayTeamColor]);
+  }, [pairedAwayLine, awayWithheld, showBlendLine, legacyBlendSides, homeTeamColor, awayTeamColor]);
 
 
 
@@ -3481,9 +3481,9 @@ export default function OddsChart({
             {/* ── MODE A: Multi-source — individual source lines (near-invisible so
                 the one blended Bain Luck line clearly dominates, per L2-131) ── */}
             {/* #9483 — with both team lines drawn, the faint source lines would
-                hug the home line alone; they wait behind "+ N sources", which
-                returns the chart to its single-line comparison. */}
-            {isMultiSource && !pairedInk && resolvedSources.map((source) => {
+                hug the home line alone; they wait behind "+ N sources".
+                Expanding reveals them without replacing the team pair. */}
+            {isMultiSource && (!pairedInk || legendExpanded) && resolvedSources.map((source) => {
               const isPrimarySource = source.dataKey === primarySeriesKey;
               return (
               <Line
@@ -3528,7 +3528,7 @@ export default function OddsChart({
               />
               );
             })}
-            {isMultiSource && !pairedInk && resolvedSources.map((source) => {
+            {isMultiSource && (!pairedInk || legendExpanded) && resolvedSources.map((source) => {
               const isPrimarySource = source.dataKey === primarySeriesKey;
               return gapConnector(
                 source.dataKey,
