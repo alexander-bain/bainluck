@@ -176,6 +176,17 @@ function relate(members: CollectionMember[]): Record<string, CollectionMember[]>
   return related;
 }
 
+// #5342: a game's attached markets keep their own served routes on the hub. The
+// game page does not draw every one (Week 5's Polymarket "O/U 47.5" is reachable
+// only from here), so a game with a short served list names each as a plain
+// link, in served order, with no number, count or ranking. A longer list stays
+// behind "More on this game": hundreds of rungs never go inline (#10146).
+export const RELATED_LINK_LIMIT = 12;
+export function relatedMarketLinks(hub: CollectionHub, gameKey: string): CollectionMember[] {
+  const related = hub.related[gameKey] ?? [];
+  return related.length <= RELATED_LINK_LIMIT ? related : [];
+}
+
 export interface CollectionPageRequest { revision: number; cursor: string }
 export async function fetchCollection(slug: string, signal?: AbortSignal, page?: CollectionPageRequest): Promise<CollectionHub> {
   if (!safeCollectionSlug(slug)) throw new Error("This collection isn't available right now.");
