@@ -118,6 +118,7 @@ export interface BlendPreviewReader {
   /** The fence floor: frames from a lower epoch are refused. -1 before any. */
   epoch: number;
   floors?: Record<string, number>;
+  foldedSequence?: { epoch: number; seq: number };
 }
 
 export const EMPTY_BLEND_PREVIEW_READER: BlendPreviewReader = { held: null, epoch: -1 };
@@ -133,13 +134,19 @@ export function readerAfter(
   const epoch = frame.preview.epoch;
   if (epoch < reader.epoch) return reader;
   const held = epoch > reader.epoch ? null : reader.held;
+  if (reader.foldedSequence?.epoch === epoch
+      && frame.preview.seq <= reader.foldedSequence.seq) return reader;
   if (frame.preview.base_fold_revision && reader.floors
       && !coversPreviewFloors(frame.preview.base_fold_revision, reader.floors)) {
     return { ...reader, held: null, epoch };
   }
   if (frame.preview.kind === "revoke" && held?.originEventId !== undefined
       && frame.preview.origin_event_id !== held.originEventId) return reader;
-  return { ...reader, held: previewAfter(held, frame, eventId, now), epoch };
+  return { ...reader, held: previewAfter(held, frame, eventId, now), epoch,
+    ...((frame.preview.base_fold_revision || reader.foldedSequence) ? {
+      foldedSequence: { epoch, seq: frame.preview.seq },
+    } : {}),
+  };
 }
 
 function coversPreviewFloors(base: Record<string, number>, floors: Record<string, number>): boolean {

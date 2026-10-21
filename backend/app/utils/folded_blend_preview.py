@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
 import json
 import math
 from types import SimpleNamespace
@@ -94,6 +95,11 @@ class FoldedPreviewBase:
         observed = _basis_observation_time(basis)
         if (observed is None or not isinstance(entry.get("updated_at"), str)
                 or reading_regresses_stored_observation(self.sources, source, basis)):
+            return None
+        try:
+            if datetime.fromisoformat(entry["updated_at"]).utcoffset() is None:
+                return None
+        except ValueError:
             return None
         try:
             # Refuse malformed legacy metadata, without repairing the evidence.

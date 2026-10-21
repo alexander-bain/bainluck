@@ -24,6 +24,7 @@ from app.utils.price_evidence import load_price_evidence
 from app.utils.probability_source_format import format_probability_sources
 from app.utils.proven_duplicates import FoldedBlendView, folded_probability_state
 from app.utils.folded_blend_preview import FoldedPreviewBase, QuoteWithPreviewBase
+from app.utils.blend_preview import preview_route_events
 from app.utils.serve_fold_absorbed import serve_fold_absorbed_rows
 
 logger = logging.getLogger(__name__)
@@ -92,7 +93,8 @@ async def load_folded_quote(event_id: int, origin_id: int, origin_rev: int):
         # additionally needs valid JSON numbers, without changing detail policy.
         json.dumps(quote, allow_nan=False)
         return QuoteWithPreviewBase(
-            quote, FoldedPreviewBase.capture(event, sources, owners, revision, sport),
+            quote, (FoldedPreviewBase.capture(event, sources, owners, revision, sport)
+                    if event_id in preview_route_events() else None),
         )
 
 

@@ -56,6 +56,18 @@ test('a source-origin revoke cannot withdraw another source origin', () => {
   expect(readerAfter(reader, revoke, 1, 1).held).toBeNull();
 });
 
+test('a reordered preview cannot return after revoke or reconnect cleared the display', () => {
+  let reader = readerAfter(EMPTY_BLEND_PREVIEW_READER, packet(), 1, 0);
+  reader = readerAfter(reader, { event_id: 1, p: null,
+    preview: { kind: 'revoke', epoch: 8, seq: 13, through_seq: 12, origin_event_id: 2 } }, 1, 1);
+  expect(readerAfter(reader, packet(), 1, 2).held).toBeNull();
+  const newer = packet(); newer.preview.seq = 14;
+  reader = readerAfter(reader, newer, 1, 3);
+  expect(reader.held).not.toBeNull();
+  reader = { ...reader, held: null };
+  expect(readerAfter(reader, newer, 1, 4).held).toBeNull();
+});
+
 test.each(['base', 'origin', 'away', 'version'])('malformed folded authority is rejected: %s', kind => {
   const p = packet();
   if (kind === 'base') p.preview.base_fold_revision = { '1': 11 };

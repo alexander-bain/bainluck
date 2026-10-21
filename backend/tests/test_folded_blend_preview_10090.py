@@ -86,6 +86,8 @@ def test_membership_changes_refuse(members):
     lambda f: f["preview"]["pending_entries"]["polymarket"].update(observed_basis={}),
     lambda f: f["preview"]["pending_entries"]["polymarket"].update(observed_basis={"101": float("nan")}),
     lambda f: f["preview"]["pending_entries"]["polymarket"].update(observed_value=.81),
+    lambda f: f["preview"]["pending_entries"]["polymarket"].update(updated_at="invalid"),
+    lambda f: f["preview"]["pending_entries"]["polymarket"].update(updated_at="2026-10-21T00:00:00"),
     lambda f: f["preview"].update(ttl_ms=0),
     lambda f: f.update(status="completed"),
     lambda f: f.update(rev={"2": 22}),
