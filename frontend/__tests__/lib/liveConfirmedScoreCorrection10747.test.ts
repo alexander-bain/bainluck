@@ -249,7 +249,7 @@ describe("#10747 through the page's production chain", () => {
       .map((line) => line.replace(/(^|\s)\/\/.*$/, "$1"))
       .join("\n");
     expect(code).toMatch(
-      /computeLastChartPoint\(\s*historyData,\s*servedScore\.home_score,\s*servedScore\.away_score,\s*servedScore\.score_observed_at,\s*event\?\.status === "live" \? event\?\.espn \?\? null : null,\s*event\?\.status,?\s*\)/,
+      /computeLastChartPoint\(\s*previewChartHistory,\s*servedScore\.home_score,\s*servedScore\.away_score,\s*servedScore\.score_observed_at,\s*event\?\.status === "live" \? event\?\.espn \?\? null : null,\s*event\?\.status,?\s*\)/,
     );
   });
 });

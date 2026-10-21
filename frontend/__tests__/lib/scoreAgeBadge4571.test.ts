@@ -629,10 +629,10 @@ describe("#4571 the page hands the badge the score it actually rendered", () => 
       // newer of the page's two reads of that row (`newestServedScore`); the
       // fourth argument is still that row's clock, never a neighbour's.
       // #10747 added a sixth (the event's own status); the fourth is unchanged.
-      /computeLastChartPoint\(\s*historyData,\s*servedScore\.home_score,\s*servedScore\.away_score,\s*servedScore\.score_observed_at,\s*(?:event\?\.status === "live" \? event\?\.espn \?\? null : null,?\s*(?:event\?\.status,?\s*)?)?\)/,
+      /computeLastChartPoint\(\s*previewChartHistory,\s*servedScore\.home_score,\s*servedScore\.away_score,\s*servedScore\.score_observed_at,\s*(?:event\?\.status === "live" \? event\?\.espn \?\? null : null,?\s*(?:event\?\.status,?\s*)?)?\)/,
     );
     // And it is a dependency of the memo, or the badge freezes at the first
     // stamp the page ever saw.
-    expect(code).toMatch(/\[\s*historyData,\s*servedScore,[^\]]*\]/);
+    expect(code).toMatch(/\[\s*previewChartHistory,\s*servedScore,[^\]]*\]/);
   });
 });

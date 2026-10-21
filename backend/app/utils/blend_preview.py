@@ -77,6 +77,7 @@ the freshly read row. No pending state is shared between processes.
 from __future__ import annotations
 
 import itertools
+import math
 import os
 import time
 from collections import OrderedDict
@@ -164,6 +165,23 @@ def _max_uncommitted_s() -> float:
 
 def _revision(value: Any) -> Optional[int]:
     return value if type(value) is int and value >= 0 else None
+
+
+def _basis_observation_time(basis: Any) -> Optional[datetime]:
+    """Date a complete contributing reading, never a persistence retry.
+
+    The minimum is the existing oldest_observation_time contract. Reject an
+    incomplete vector in full; filtering bad legs would overstate freshness.
+    """
+    if not isinstance(basis, dict) or not basis:
+        return None
+    if any(type(value) not in (int, float) or not math.isfinite(value)
+           for value in basis.values()):
+        return None
+    try:
+        return datetime.fromtimestamp(min(basis.values()), timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 @dataclass
@@ -295,13 +313,31 @@ class PreviewRegistry:
         seq = next(self._seq)
         state.last_seq = seq
         mover = state.pending.get(source) or next(iter(state.pending.values()))
+        # A separate clock-only view preserves the probability/weighting bag
+        # exactly. Pending stamps above are attempt times, not observations.
+        # Committed siblings retain the clocks of this exact base revision.
+        from app.utils.aggregation import newest_source_reading_time
+
+        clock_bag = dict(bag)
+        for name, entry in state.pending.items():
+            observed = _basis_observation_time(entry.observed_basis)
+            clock_bag[name] = {
+                **bag[name],
+                "updated_at": observed.isoformat() if observed is not None else None,
+            }
+        display_time = newest_source_reading_time(
+            SimpleNamespace(win_probability_sources=clock_bag, status=state.status),
+            state.status, require_complete=True,
+        )
         return {
             "event_id": int(event_id),
             "p": float(probability),
             "status": state.status,
             "source": source,
             "source_value": float(mover.value),
-            "observed_at": mover.stamped_at.isoformat(),
+            "observed_at": mover.stamped_at.isoformat(),  # legacy attempt clock
+            # Additive contract: readers must not fall back to observed_at.
+            "display_observed_at": display_time.isoformat() if display_time else None,
             "provisional": True,
             "preview": {
                 "kind": "blend",
