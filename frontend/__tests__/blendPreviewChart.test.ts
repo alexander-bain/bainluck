@@ -98,3 +98,13 @@ test('a real later observation before a synthetic edge still prevents an older p
     blend_edge_fold_revision: {'1': 10}};
   expect(overlayBlendPreviewLine(event, held(), 500, served.aggregate_line, served)).toBe(served.aggregate_line);
 });
+
+test('a real appended tail cannot use inherited server metadata as synthetic evidence', () => {
+  const served = {event_id: 1, aggregate_line: [
+    {timestamp: '2026-10-20T21:14:09Z', home_probability: .6}],
+    blend_edge_pinned: true, blend_edge_observed_at: '2026-10-20T21:14:08Z',
+    blend_edge_fold_revision: {'1': 10}};
+  const plotted = [...served.aggregate_line,
+    {timestamp: '2026-10-20T21:14:12Z', home_probability: .8}];
+  expect(overlayBlendPreviewLine(event, held(), 500, plotted, served)).toBe(plotted);
+});
