@@ -95,6 +95,19 @@ interface DecidedCell {
   state: string | undefined;
 }
 
+/** Tags stripped by a character scan, not a regex replace (CodeQL's
+ * incomplete-sanitization rule — same helper as futuresVerifiedTitleDetail10224.test). */
+function stripTags(html: string): string {
+  let out = "";
+  let inTag = false;
+  for (const ch of html) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) out += ch;
+  }
+  return out;
+}
+
 /** The decided-column cells of one team's row, in column order. */
 function decidedCellsFor(html: string, team: string): DecidedCell[] {
   const body = html.split("<tbody>")[1] ?? "";
@@ -107,7 +120,7 @@ function decidedCellsFor(html: string, team: string): DecidedCell[] {
     return [
       {
         text: span[2],
-        visible: m[2].replace(/<[^>]*>/g, ""),
+        visible: stripTags(m[2]),
         title: attr(m[1], "title")?.replace(/&#x27;/g, "'"),
         spoken: attr(span[1], "aria-label"),
         state: attr(span[1], "data-decided-cell"),
