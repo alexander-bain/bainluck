@@ -18,6 +18,7 @@ import websockets
 from app.tasks import live_blend_refresh as blend
 from app.tasks import polymarket_open_contracts as open_mod
 from app.tasks import polymarket_ws as task
+from app.utils import live_blend
 from tests.test_pm_open_cycle_lifetime_10090 import CatalogRig, _Result, until
 from tests.test_ws_consumer_session_lifetime_2471 import _install
 from tests.test_ws_flush_retry_q491 import POLY_SLATE_LIVE
@@ -123,7 +124,8 @@ class _BulkRig(CatalogRig):
     def __init__(self, n):
         super().__init__()
         self.markets = [
-            (900 + i, [f"tok{i}a", f"tok{i}b"], None, None, None, "Independent", f"0xbulk{i}")
+            (900 + i, [f"tok{i}a", f"tok{i}b"], None, None, 15195694, "Independent",
+             f"0xbulk{i}")
             for i in range(n)
         ]
         self.legs = [
@@ -162,8 +164,9 @@ class _BulkRig(CatalogRig):
 @pytest.mark.asyncio
 async def test_the_real_consumer_maps_its_open_read_between_socket_turns(monkeypatch):
     """Through `_run_polymarket_ws_consumer`: with one row per turn, a task
-    on the same loop runs between successive open markets' pairings. The
-    plain map pairs every market inside one turn."""
+    on the same loop runs between successive open markets' pairings, and
+    between successive markets' game-winner checks in the candidates pass.
+    The plain passes do every market inside one turn."""
     n = 40
     rig, stop = _BulkRig(n), asyncio.Event()
     rig.slate = POLY_SLATE_LIVE
@@ -194,13 +197,22 @@ async def test_the_real_consumer_maps_its_open_read_between_socket_turns(monkeyp
         async def refresh_pending(self, **kwargs):
             return None
 
-    ticks, seen = [0], []
+    game_winner = live_blend._class_says_game_winner
+    ticks, seen, classed = [0], [], []
     pair = task.legs_in_token_order
 
     def observed(legs):
         if legs and str(legs[0][1]).startswith("0xbulk"):
             seen.append(ticks[0])
         return pair(legs)
+
+    def winner(market):
+        # The candidates pass imports the class rule at call time. Every bulk
+        # row is refused, so the consumer's path after the pass is unchanged.
+        if str(market.external_id).startswith("0xbulk"):
+            classed.append(ticks[0])
+            return False
+        return game_winner(market)
 
     async def ticker():
         while True:
@@ -211,6 +223,7 @@ async def test_the_real_consumer_maps_its_open_read_between_socket_turns(monkeyp
     monkeypatch.setattr(websockets, "connect", lambda *args, **kwargs: Socket())
     monkeypatch.setattr(blend, "LiveBlendRefresher", Refresher)
     monkeypatch.setattr(task, "legs_in_token_order", observed)
+    monkeypatch.setattr(live_blend, "_class_says_game_winner", winner)
     monkeypatch.setattr(open_mod, "OPEN_MAP_ROWS_PER_TURN", 1)
     monkeypatch.setattr(task, "PRICE_FLUSH_SECONDS", 10)
     monkeypatch.delenv("PM_WS_PRICE_FLUSH_SECONDS", raising=False)
@@ -220,7 +233,7 @@ async def test_the_real_consumer_maps_its_open_read_between_socket_turns(monkeyp
     probe = asyncio.create_task(ticker())
 
     async def stop_after_the_first_open_map():
-        await until(lambda: len(seen) >= n)
+        await until(lambda: len(seen) >= n and len(classed) >= n)
         stop.set()
 
     stopper = asyncio.create_task(stop_after_the_first_open_map())
@@ -229,3 +242,5 @@ async def test_the_real_consumer_maps_its_open_read_between_socket_turns(monkeyp
     probe.cancel()
     first = seen[:n]
     assert len(set(first)) == n, first
+    checked = classed[:n]
+    assert len(set(checked)) == n, checked
