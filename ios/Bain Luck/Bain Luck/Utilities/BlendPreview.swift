@@ -27,8 +27,8 @@ import Foundation
 ///   missed revoke cannot be ruled out across a reconnect); the epoch floor is
 ///   kept, because epochs only rise.
 /// - It shows only for the same quote status the page holds, on a live blend
-///   hero whose committed revision is this event's one row
-///   (`LiveEventPriceReconciliation.pairedFoldRevision`).
+///   hero. A singleton orders against its one row; a folded preview must cover
+///   the page's exact complete membership and match its sport.
 ///
 /// The chart may end on the same provisional number, as a disposable
 /// projection dated by `display_observed_at` (`chartFrames`); with no usable
@@ -57,9 +57,16 @@ nonisolated struct BlendPreviewFrame: Decodable, Sendable, Equatable {
     /// or nil when unknown. Never the legacy `observed_at`: that is the
     /// producer's attempt time, which a persistence retry moves.
     let displayObservedAt: Date?
+    /// Folded wire v1: the complete base and its one ledger origin.
+    let baseFoldRevision: FoldRevision?
+    let originEventId: Int?
+    let pAway: Double?
+    let sport: String?
 
     init(eventId: Int, p: Double?, status: String?, kind: Kind, epoch: Int, seq: Int,
-         baseRev: Int? = nil, ttlMs: Int? = nil, throughSeq: Int? = nil, displayObservedAt: Date? = nil) {
+         baseRev: Int? = nil, ttlMs: Int? = nil, throughSeq: Int? = nil, displayObservedAt: Date? = nil,
+         baseFoldRevision: FoldRevision? = nil, originEventId: Int? = nil,
+         pAway: Double? = nil, sport: String? = nil) {
         self.eventId = eventId
         self.p = p
         self.status = status
@@ -70,14 +77,18 @@ nonisolated struct BlendPreviewFrame: Decodable, Sendable, Equatable {
         self.ttlMs = ttlMs
         self.throughSeq = throughSeq
         self.displayObservedAt = displayObservedAt
+        self.baseFoldRevision = baseFoldRevision
+        self.originEventId = originEventId
+        self.pAway = pAway
+        self.sport = sport
     }
 
     private enum CodingKeys: String, CodingKey {
-        case eventId, p, status, rev, preview, displayObservedAt
+        case eventId, p, pAway, sport, status, rev, preview, displayObservedAt
     }
 
     private enum PreviewKeys: String, CodingKey {
-        case kind, epoch, seq, baseRev, ttlMs, throughSeq
+        case kind, epoch, seq, baseRev, ttlMs, throughSeq, foldedVersion, originEventId, baseFoldRevision
     }
 
     /// Web's `safeInt`: a non-negative integer a JSON number carries exactly.
@@ -110,6 +121,39 @@ nonisolated struct BlendPreviewFrame: Decodable, Sendable, Equatable {
         // unknown and the frame itself still decodes, as on web.
         displayObservedAt = (try? c.decodeIfPresent(String.self, forKey: .displayObservedAt))?.asDate
         guard Self.safe(epoch), Self.safe(seq) else { throw refuse("unordered preview") }
+        originEventId = try preview.decodeIfPresent(Int.self, forKey: .originEventId)
+        if preview.contains(.originEventId) {
+            guard let originEventId, Self.safe(originEventId), originEventId > 0 else {
+                throw refuse("invalid preview origin")
+            }
+        }
+        let folded = preview.contains(.foldedVersion) || preview.contains(.baseFoldRevision)
+        if folded {
+            guard kind == .blend, try preview.decode(Int.self, forKey: .foldedVersion) == 1,
+                  let originEventId, Self.safe(eventId), eventId > 0,
+                  let vector = BlendPreview.validRevision(
+                    try preview.decode([String: Int].self, forKey: .baseFoldRevision)),
+                  vector.rows.count >= 2, vector.rows[String(eventId)] != nil,
+                  vector.rows[String(originEventId)] == baseRev,
+                  c.contains(.pAway), c.contains(.sport) else {
+                throw refuse("invalid folded preview authority")
+            }
+            baseFoldRevision = vector
+            pAway = try c.decodeIfPresent(Double.self, forKey: .pAway)
+            sport = try c.decodeIfPresent(String.self, forKey: .sport)
+            if let pAway, !pAway.isFinite || !(0...1).contains(pAway) {
+                throw refuse("unprintable folded away probability")
+            }
+        } else {
+            // An origin-only revoke is the server's folded withdrawal shape.
+            // An origin-only blend must never fall back to singleton admission.
+            guard kind == .revoke || !preview.contains(.originEventId) else {
+                throw refuse("folded blend without full authority")
+            }
+            baseFoldRevision = nil
+            pAway = nil
+            sport = nil
+        }
         switch kind {
         case .revoke:
             guard Self.safe(throughSeq) else { throw refuse("revoke without through_seq") }
@@ -142,6 +186,10 @@ nonisolated struct BlendPreviewState: Sendable, Equatable {
     let expiresAt: TimeInterval
     /// The frame's `displayObservedAt`; nil when unknown.
     var observedAt: Date? = nil
+    var baseFoldRevision: FoldRevision? = nil
+    var originEventId: Int? = nil
+    var pAway: Double? = nil
+    var sport: String? = nil
 }
 
 /// What one event's reader holds: its preview, and the highest epoch it has seen.
@@ -149,19 +197,88 @@ nonisolated struct BlendPreviewReader: Sendable, Equatable {
     var held: BlendPreviewState?
     /// The fence floor: frames from a lower epoch are refused. -1 before any.
     var epoch: Int
+    var floors: FoldRevision? = nil
+    /// Retained across expiry, revoke and reconnect; a replay cannot renew TTL.
+    var foldedSequence: FoldedSequence? = nil
+
+    struct FoldedSequence: Sendable, Equatable {
+        let epoch: Int
+        let seq: Int
+        let originEventId: Int
+    }
 
     static let empty = BlendPreviewReader(held: nil, epoch: -1)
 }
 
+/// Proof attached only to the disposable folded chart endpoint. The chart
+/// checks it against its own served history before removing a synthetic pin.
+nonisolated struct BlendPreviewChartAuthority: Sendable, Equatable {
+    let eventId: Int
+    let base: FoldRevision
+}
+
 nonisolated enum BlendPreview {
+    /// Canonical positive row identifiers and safe integer revisions only.
+    static func validRevision(_ rows: [String: Int]) -> FoldRevision? {
+        guard rows.keys.allSatisfy({ key in
+            guard let id = Int(key), id > 0, id <= FoldRevision.maxSafeInteger else { return false }
+            return String(id) == key
+        }) else { return nil }
+        return FoldRevision(rows)
+    }
+
+    /// Commit evidence withdraws an uncovered folded preview immediately; it
+    /// never creates a probability, observation timestamp or renewed lifetime.
+    static func readerAfterCommitFloor(_ reader: BlendPreviewReader, _ floor: FoldRevision?) -> BlendPreviewReader {
+        var next = reader
+        guard let floor else { next.held = nil; return next }
+        var rows = reader.floors?.rows ?? [:]
+        for (id, rev) in floor.rows { rows[id] = max(rows[id] ?? 0, rev) }
+        next.floors = FoldRevision(rows)
+        if let base = reader.held?.baseFoldRevision, let floors = next.floors, !base.covers(floors) {
+            next.held = nil
+        }
+        return next
+    }
+
+    /// Wrong-page controls are ignored; malformed controls for this stream
+    /// conservatively withdraw without forgetting any accumulated fences.
+    static func readerAfterCommitFloor(_ reader: BlendPreviewReader, raw: String, eventId: Int) -> BlendPreviewReader {
+        struct Packet: Decodable { let eventId: Int; let floor: [String: Int]? }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard raw.utf8.count <= BlendPreviewFrame.maxFrameBytes,
+              let data = raw.data(using: .utf8), let packet = try? decoder.decode(Packet.self, from: data) else {
+            return readerAfterCommitFloor(reader, nil)
+        }
+        guard packet.eventId == eventId else { return reader }
+        return readerAfterCommitFloor(reader, packet.floor.flatMap(validRevision))
+    }
+
     /// The reader after `frame` arrives at `now`. A lower epoch is fenced out; a
     /// higher one raises the floor and voids the older epoch's preview first.
     static func readerAfter(_ reader: BlendPreviewReader, _ frame: BlendPreviewFrame,
                             eventId: Int, now: TimeInterval) -> BlendPreviewReader {
         guard frame.eventId == eventId, frame.epoch >= reader.epoch else { return reader }
+        if let order = reader.foldedSequence {
+            if frame.kind == .revoke, frame.originEventId != order.originEventId { return reader }
+            if frame.epoch == order.epoch, frame.seq <= order.seq { return reader }
+            // Once this visit has seen folded authority, unmarked singleton
+            // blends cannot re-enter its ordering domain after a reset.
+            if frame.kind == .blend, frame.baseFoldRevision == nil { return reader }
+        }
+        var next = reader
+        next.epoch = frame.epoch
         let held = frame.epoch > reader.epoch ? nil : reader.held
-        return BlendPreviewReader(held: previewAfter(held, frame, eventId: eventId, now: now),
-                                  epoch: frame.epoch)
+        if let origin = frame.originEventId, frame.baseFoldRevision != nil || reader.foldedSequence != nil {
+            next.foldedSequence = .init(epoch: frame.epoch, seq: frame.seq, originEventId: origin)
+        }
+        if let base = frame.baseFoldRevision, let floors = reader.floors, !base.covers(floors) {
+            next.held = nil
+        } else {
+            next.held = previewAfter(held, frame, eventId: eventId, now: now)
+        }
+        return next
     }
 
     /// Within one epoch: the preview to hold after `frame` arrives at `now`.
@@ -181,7 +298,9 @@ nonisolated enum BlendPreview {
             guard let p = frame.p, let baseRev = frame.baseRev, let ttlMs = frame.ttlMs else { return state }
             return BlendPreviewState(eventId: eventId, epoch: frame.epoch, seq: frame.seq, baseRev: baseRev,
                                      p: p, status: frame.status, expiresAt: now + Double(ttlMs) / 1000,
-                                     observedAt: frame.displayObservedAt)
+                                     observedAt: frame.displayObservedAt,
+                                     baseFoldRevision: frame.baseFoldRevision,
+                                     originEventId: frame.originEventId, pAway: frame.pAway, sport: frame.sport)
         }
     }
 
@@ -189,12 +308,14 @@ nonisolated enum BlendPreview {
     static func displayed(_ state: BlendPreviewState?, held: EventDetail?, now: TimeInterval) -> Double? {
         guard let state, let held, now < state.expiresAt, held.id == state.eventId,
               let status = held.status, EventPriceStreaming.isEligible(status), status == state.status,
-              // Only a singleton revision of this very row, dating the number on
-              // screen, can be ordered against `base_rev`; a folded hero (several
-              // rows), no revision, or a hero that is not the blend shows
-              // committed truth.
-              let committed = LiveEventPriceReconciliation.pairedFoldRevision(in: held),
-              committed.rows.count == 1, let rev = committed.rows[String(state.eventId)] else { return nil }
+              let committed = LiveEventPriceReconciliation.pairedFoldRevision(in: held) else { return nil }
+        if let base = state.baseFoldRevision {
+            guard held.sport == state.sport, base.rows.count == committed.rows.count,
+                  base.covers(committed) else { return nil }
+            return state.p
+        }
+        // A singleton frame cannot stand in for a folded page during transition.
+        guard committed.rows.count == 1, let rev = committed.rows[String(state.eventId)] else { return nil }
         return rev > state.baseRev ? nil : state.p
     }
 
@@ -218,11 +339,53 @@ nonisolated enum BlendPreview {
     static func chartFrames(_ frames: [LiveBlendPoint], history: EventHistoryResponse?,
                             state: BlendPreviewState?, held: EventDetail?, now: TimeInterval) -> [LiveBlendPoint] {
         guard let p = displayed(state, held: held, now: now), let at = state?.observedAt else { return frames }
-        for stamp in history?.aggregateLine ?? [] {
+        let authority = state.flatMap { state in
+            state.baseFoldRevision.map { BlendPreviewChartAuthority(eventId: state.eventId, base: $0) }
+        }
+        if let authority, let history, !chartCoversAuthority(history, authority: authority) { return frames }
+        let line = history?.aggregateLine ?? []
+        let replacing = history.flatMap { history in
+            authority.flatMap { syntheticEdgeToReplace(history, authority: $0, at: at) }
+        } != nil
+        for stamp in replacing ? Array(line.dropLast()) : line {
             guard let committedAt = stamp.timestamp.asDate, committedAt < at else { return frames }
         }
         if let last = frames.last, last.date >= at { return frames }
-        return frames + [LiveBlendPoint(date: at, homeProbability: p)]
+        return frames + [LiveBlendPoint(date: at, homeProbability: p, previewAuthority: authority)]
+    }
+
+    /// Revision authority wins even if a newer committed pin has an OLDER
+    /// observation timestamp. Apply before extension as well as replacement.
+    static func chartCoversAuthority(_ history: EventHistoryResponse,
+                                     authority: BlendPreviewChartAuthority) -> Bool {
+        guard history.eventId == authority.eventId else { return false }
+        if let floor = history.historyFoldRevision {
+            guard let revision = floor.revision, revision.rows.count == authority.base.rows.count,
+                  authority.base.covers(revision) else { return false }
+        }
+        if history.blendEdgePinned == true {
+            guard let revision = history.blendEdgeFoldRevision?.revision,
+                  revision.rows.count == authority.base.rows.count,
+                  authority.base.covers(revision) else { return false }
+        }
+        return true
+    }
+
+    /// A history read can pin an older observed value at its later read time.
+    /// Remove only that proven presentation point, from a render copy; every
+    /// real historical point and every venue series remains untouched.
+    static func syntheticEdgeToReplace(_ history: EventHistoryResponse,
+                                       authority: BlendPreviewChartAuthority, at: Date) -> AggregateLinePoint? {
+        guard chartCoversAuthority(history, authority: authority), history.blendEdgePinned == true,
+              let observed = history.blendEdgeObservedAt?.asDate, observed < at,
+              let revision = history.blendEdgeFoldRevision?.revision,
+              revision.rows.count == authority.base.rows.count, authority.base.covers(revision),
+              let edge = history.aggregateLine?.last, let edgeAt = edge.timestamp.asDate,
+              edgeAt >= at else { return nil }
+        for point in (history.aggregateLine ?? []).dropLast() {
+            guard let date = point.timestamp.asDate, date < at else { return nil }
+        }
+        return edge
     }
 
     /// `event` with the provisional hero overlaid, or `event` itself when no
@@ -232,15 +395,18 @@ nonisolated enum BlendPreview {
         guard let p = displayed(state, held: event, now: now), var odds = event.currentOdds else { return event }
         var shown = event
         odds.homeProbability = p
-        // A withheld away side (#6238, draw-priced sports) stays withheld.
-        odds.awayProbability = odds.awayProbability == nil ? nil : 1 - p
+        // Folded authority supplies its own away value, including null. The
+        // singleton path retains its existing withheld-away behavior.
+        odds.awayProbability = state?.baseFoldRevision != nil
+            ? state?.pAway : (odds.awayProbability == nil ? nil : 1 - p)
         // The served whole percents describe the committed pair, not this one;
         // both nil means every reader rounds this pair WHOLE (`duelPercents`).
         odds.homeRenderedPercent = nil
         odds.awayRenderedPercent = nil
         shown.currentOdds = odds
         shown.heroProbability = p
-        shown.heroProbabilityAway = event.heroProbabilityAway == nil ? nil : 1 - p
+        shown.heroProbabilityAway = state?.baseFoldRevision != nil
+            ? state?.pAway : (event.heroProbabilityAway == nil ? nil : 1 - p)
         return shown
     }
 }

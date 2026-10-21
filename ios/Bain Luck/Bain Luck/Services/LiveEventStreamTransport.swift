@@ -123,12 +123,14 @@ final class LiveEventStreamTransport: LiveStreamHandle {
 
     convenience init(
         eventId: Int,
+        foldedPreviews: Bool = false,
         baseURL: String = "https://api.bainluck.com",
         session: URLSession? = nil,
         retryDelay: TimeInterval = LiveEventStreamTransport.defaultRetryDelay,
         firstRetryDelay: TimeInterval = LiveEventStreamTransport.defaultFirstRetryDelay
     ) throws {
-        guard let url = URL(string: "\(baseURL)/api/events/\(eventId)/stream") else {
+        let capability = foldedPreviews ? "?preview_protocol=folded-v1" : ""
+        guard let url = URL(string: "\(baseURL)/api/events/\(eventId)/stream\(capability)") else {
             throw URLError(.badURL)
         }
         self.init(url: url, session: session, retryDelay: retryDelay, firstRetryDelay: firstRetryDelay)
