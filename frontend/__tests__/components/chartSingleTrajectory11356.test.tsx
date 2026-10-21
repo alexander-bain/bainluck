@@ -432,7 +432,11 @@ describe("the tooltip's hole notes describe drawn lines only", () => {
   const body = src.slice(src.indexOf("const gapNotesAt = "), src.indexOf("const CustomTooltip = "));
 
   it("returns no note while Sources is closed over the blend", () => {
-    expect(body).toMatch(/if \(!sourceLinesShown\) return notes;\s*for \(const source of resolvedSources\)/);
+    // Gated on "hidden behind the blend", never on "source lines drawn": with
+    // no blend the one Sportsbooks line is drawn and keeps its hole notes
+    // (#7878; behaviour in chartSourcesClosedGatesSourceProse11356).
+    expect(body).toMatch(/if \(sourcesHiddenBehindBlend\) return notes;\s*for \(const source of resolvedSources\)/);
+    expect(src).toMatch(/const sourcesHiddenBehindBlend = showBlendLine && !legendExpanded;/);
   });
 });
 

@@ -1723,16 +1723,21 @@ export default function OddsChart({
     return out;
   }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, filteredScoreHistory, useNewWinProbData, commenceTime, chartEndTime, isClosed, evidenceContract]);
 
+  // #11356 — with Sources closed over the blend no source line is drawn, so
+  // nothing may describe one (the tooltip's hole notes, the stale caption).
+  const sourcesHiddenBehindBlend = showBlendLine && !legendExpanded;
+
   /** Series whose line ends before the chart does, with nothing observed since. */
   const staleTrailingEdges = useMemo(() => {
     const out: Array<{ key: string; displayName: string; color: string; interval: UnsupportedInterval }> = [];
+    if (sourcesHiddenBehindBlend) return out;
     for (const source of resolvedSources) {
       const support = observationSupport[source.dataKey];
       const trailing = support?.unsupported.find((iv) => iv.kind === "trailing");
       if (trailing) out.push({ key: source.key, displayName: source.displayName, color: source.color, interval: trailing });
     }
     return out;
-  }, [resolvedSources, observationSupport]);
+  }, [resolvedSources, observationSupport, sourcesHiddenBehindBlend]);
 
   // Transform data: convert probabilities to delta from 50%
   // Bucket by minute so each category label is unique (see `labelFormat`,
@@ -2785,8 +2790,10 @@ export default function OddsChart({
     const ms = parseISO(bucketTimestamp).getTime();
     const notes: Array<{ key: string; displayName: string; color: string; text: string }> = [];
     // #11356 — a note about a line describes a DRAWN line: with Sources closed
-    // over the blend, no source line is on the plot to have a hole in it.
-    if (!sourceLinesShown) return notes;
+    // over the blend, no source line is on the plot to have a hole in it. The
+    // gate is "sources hidden behind the blend", not "source lines drawn": with
+    // no blend the one Sportsbooks line is drawn and its holes keep their note.
+    if (sourcesHiddenBehindBlend) return notes;
     for (const source of resolvedSources) {
       const support = observationSupport[source.dataKey];
       if (!support) continue;
