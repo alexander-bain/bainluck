@@ -5276,8 +5276,8 @@ jobs:
             echo "::error::#10090 normal-publication recovery gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]59 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
-            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 59 cases"
+          grep -qE "[^0-9]64 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
+            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 64 cases"
             exit 1
           }
 
