@@ -257,6 +257,14 @@ export function displayedProbabilityObservedAt(
   return timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : null;
 }
 
+interface PreviewChartHistory {
+  event_id: number;
+  aggregate_line?: PreviewChartPoint[] | null;
+  blend_edge_pinned?: boolean | null;
+  blend_edge_observed_at?: string | null;
+  blend_edge_fold_revision?: unknown;
+}
+
 interface PreviewChartPoint {
   timestamp: string;
   home_probability: number;
@@ -273,15 +281,35 @@ export function overlayBlendPreviewLine(
   state: BlendPreviewState | null,
   now: number,
   line: PreviewChartPoint[] | undefined,
+  served?: PreviewChartHistory | null,
 ): PreviewChartPoint[] | undefined {
   const p = displayedPreview(state, event, now);
   const timestamp = state?.observedAt;
   if (p === null || !timestamp) return line;
   const at = Date.parse(timestamp);
   if (!Number.isFinite(at)) return line;
-  for (const point of line ?? []) {
+  // A refreshed history may pin its old committed value at the READ time,
+  // after this preview's actual observation. That synthetic edge is not a
+  // newer quote. Remove only that proven presentation point from this render
+  // copy; leave the cached history and all real observations untouched.
+  const edge = line?.[line.length - 1];
+  const servedEdge = served?.aggregate_line?.[served.aggregate_line.length - 1];
+  const edgeRevision = parseFoldRevision(served?.blend_edge_fold_revision);
+  const base = state?.baseFoldRevision ?? (state ? { [String(state.eventId)]: state.baseRev } : null);
+  const edgeObserved = Date.parse(served?.blend_edge_observed_at ?? "");
+  const replaceSyntheticEdge = edge !== undefined && servedEdge !== undefined
+    && served?.event_id === state?.eventId && served.blend_edge_pinned === true
+    && Number.isFinite(edgeObserved) && edgeObserved < at
+    && Date.parse(edge.timestamp) >= at
+    && Date.parse(servedEdge.timestamp) === Date.parse(edge.timestamp)
+    && servedEdge.home_probability === edge.home_probability
+    && edgeRevision !== null && base !== null
+    && Object.keys(edgeRevision).length === Object.keys(base).length
+    && coversPreviewFloors(base, edgeRevision);
+  const historical = replaceSyntheticEdge ? line!.slice(0, -1) : line ?? [];
+  for (const point of historical) {
     const committedAt = Date.parse(point.timestamp);
     if (!Number.isFinite(committedAt) || committedAt >= at) return line;
   }
-  return [...(line ?? []), { timestamp, home_probability: p }];
+  return [...historical, { timestamp, home_probability: p }];
 }

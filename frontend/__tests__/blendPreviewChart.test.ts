@@ -57,3 +57,44 @@ test('newer retry sequence with identical observation leaves endpoint time uncha
   expect(overlayBlendPreviewLine(event, retry, 500, line))
     .toEqual(overlayBlendPreviewLine(event, first, 500, line));
 });
+
+
+test('a same-revision history refresh cannot erase a newer preview with its synthetic read-time edge', () => {
+  const committed = {timestamp: '2026-10-20T21:14:08Z', home_probability: .6};
+  const before = {event_id: 1, aggregate_line: [committed, ...line],
+    blend_edge_pinned: true, blend_edge_observed_at: committed.timestamp,
+    blend_edge_fold_revision: {'1': 10}};
+  const refreshed = {...before, aggregate_line: [committed,
+    {timestamp: '2026-10-20T21:14:10.400Z', home_probability: .6}]};
+  const snapshot = JSON.stringify(refreshed);
+  const first = held();
+  expect(overlayBlendPreviewLine(event, first, 100, before.aggregate_line, before)?.at(-1))
+    .toEqual({timestamp: at, home_probability: .75});
+  const projected = overlayBlendPreviewLine({...event}, first, 400, refreshed.aggregate_line, refreshed);
+  expect(projected).toEqual([committed, {timestamp: at, home_probability: .75}]);
+  const renewal = previewAfter(first, {...frame(2), observed_at: '2026-10-20T21:14:11Z'}, 1, 500);
+  expect(overlayBlendPreviewLine({...event}, renewal, 600, refreshed.aggregate_line, refreshed)).toEqual(projected);
+  expect(JSON.stringify(refreshed)).toBe(snapshot);
+  expect(overlayBlendPreviewLine(event, null, 600, refreshed.aggregate_line, refreshed)).toBe(refreshed.aggregate_line);
+});
+
+test.each([
+  {blend_edge_pinned: false}, {event_id: 2}, {blend_edge_observed_at: null},
+  {blend_edge_observed_at: at}, {blend_edge_fold_revision: undefined},
+  {blend_edge_fold_revision: {'1': 11}}, {blend_edge_fold_revision: {'2': 10}},
+])('a synthetic-edge claim without current authority cannot replace history: %j', delta => {
+  const served = {event_id: 1, aggregate_line: [
+    {timestamp: '2026-10-20T21:14:10.400Z', home_probability: .6}],
+    blend_edge_pinned: true, blend_edge_observed_at: '2026-10-20T21:14:08Z',
+    blend_edge_fold_revision: {'1': 10}, ...delta};
+  expect(overlayBlendPreviewLine(event, held(), 500, served.aggregate_line, served)).toBe(served.aggregate_line);
+});
+
+test('a real later observation before a synthetic edge still prevents an older preview', () => {
+  const served = {event_id: 1, aggregate_line: [
+    {timestamp: '2026-10-20T21:14:10.200Z', home_probability: .8},
+    {timestamp: '2026-10-20T21:14:10.400Z', home_probability: .6}],
+    blend_edge_pinned: true, blend_edge_observed_at: '2026-10-20T21:14:08Z',
+    blend_edge_fold_revision: {'1': 10}};
+  expect(overlayBlendPreviewLine(event, held(), 500, served.aggregate_line, served)).toBe(served.aggregate_line);
+});
