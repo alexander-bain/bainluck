@@ -95,6 +95,16 @@ class TestTheGuardOnTheSpecimen:
             incoming_away_score=1,
         )
 
+    def test_a_placeable_reading_over_an_unplaceable_row_is_covered(self):
+        """Only the STORED side unplaceable: the incoming clock is readable but
+        there is nothing to compare it with, so it proves nothing is later."""
+        stored = ("2nd Quarter", None)
+        incoming = ("7:59 - 2nd Quarter", "7:59")
+        assert live_write_would_revert(
+            *stored, *incoming, stored_authority_score_age_seconds=SPECIMEN_AGE, **SPECIMEN
+        )
+        assert not live_write_would_revert(*stored, *incoming, **SPECIMEN)
+
     def test_an_authority_read_after_this_board_is_fresh(self):
         assert live_write_would_revert(
             *ROW, None, None, stored_authority_score_age_seconds=-4.0, **SPECIMEN
