@@ -57,6 +57,13 @@ describe("Week 5 (saved revision 34): the attached O/U 47.5 is one tap from the 
     expect(bucs).toContain("Buccaneers vs. Cowboys: O/U 47.5");
     expect(routes(bucs!)).toHaveLength(9);
   });
+  test("the links keep the order the week served them in", () => {
+    const { hub, html } = draw(week5(), W5);
+    const drawn = [...(list(html, BUCS) ?? "").matchAll(/data-related-market="(market:\d+)"/g)].map((m) => m[1]);
+    expect(drawn).toHaveLength(9);
+    expect(drawn).toEqual(hub.related[BUCS].map((m) => m.key));
+    expect(new Set(drawn).size).toBe(9);
+  });
   test("every one of the 38 attached markets is drawn once, under the game it was served with", () => {
     const { hub, html } = draw(week5(), W5);
     const drawn = html.match(/data-related-market="market:\d+"/g) ?? [];
@@ -114,15 +121,20 @@ describe("the inline list is bounded; a long list stays behind the game page (#1
     raw.member_count = 3 + n + 1;
     return raw;
   };
-  test(`exactly ${RELATED_LINK_LIMIT} attached markets are all linked`, () => {
-    const { hub, html } = draw(withRelated(RELATED_LINK_LIMIT), "nfl-2026-week-4");
-    expect(relatedMarketLinks(hub, "event:7")).toHaveLength(RELATED_LINK_LIMIT);
-    expect(routes(list(html, "event:7") ?? "")).toHaveLength(RELATED_LINK_LIMIT);
+  // The bound is the number 12, written as literals: a test that reads the
+  // constant follows it to 400 and still passes (lane1 review of 31fe423227).
+  test("the limit is 12", () => {
+    expect(RELATED_LINK_LIMIT).toBe(12);
+  });
+  test("exactly 12 attached markets are all linked", () => {
+    const { hub, html } = draw(withRelated(12), "nfl-2026-week-4");
+    expect(relatedMarketLinks(hub, "event:7")).toHaveLength(12);
+    expect(routes(list(html, "event:7") ?? "")).toHaveLength(12);
     expect(html).toContain('data-more-on-game="event:7"');
   });
-  test(`${RELATED_LINK_LIMIT + 1} attached markets draw no inline list, only More on this game`, () => {
-    const { hub, html } = draw(withRelated(RELATED_LINK_LIMIT + 1), "nfl-2026-week-4");
-    expect(hub.related["event:7"]).toHaveLength(RELATED_LINK_LIMIT + 1);
+  test("13 attached markets draw no inline list, only More on this game", () => {
+    const { hub, html } = draw(withRelated(13), "nfl-2026-week-4");
+    expect(hub.related["event:7"]).toHaveLength(13);
     expect(relatedMarketLinks(hub, "event:7")).toEqual([]);
     expect(html).not.toContain("data-related-market=");
     expect(html).not.toContain('href="/futures/700"');
