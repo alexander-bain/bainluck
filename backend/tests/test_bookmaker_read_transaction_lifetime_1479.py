@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time as _time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -109,6 +110,13 @@ def _model_curve():
     return {k: tuple(v) for k, v in out.items()}
 
 
+#: What a statement runs under when no ``SET LOCAL`` is live in its transaction:
+#: the connection's resting ``statement_timeout`` (``build_connect_args``).
+RESTING = "CONNECTION_DEFAULT"
+CHUNK_BOUND = f"{bw._CHUNK_TIMEOUT_S}s"
+_SET_LOCAL = re.compile(r"SET LOCAL statement_timeout = '([^']+)'")
+
+
 class QueryCanceledError(Exception):
     """Named like asyncpg's, which is what ``_is_statement_timeout`` keys on."""
 
@@ -116,9 +124,16 @@ class QueryCanceledError(Exception):
 class _Rail:
     """A real SQLAlchemy Session plus the record of what it did."""
 
-    def __init__(self, *, chunk_fault=None, commit_fault=None):
+    def __init__(self, *, chunk_fault=None, commit_fault=None,
+                 grid_cells=None):
         self.engine = create_engine("sqlite://")
         self.txn = 0
+        # PostgreSQL's ``SET LOCAL`` lifetime: the value belongs to the
+        # transaction that set it, so a transaction this rail has never seen
+        # armed runs at RESTING. Keyed by SQLAlchemy's own BEGIN count, so it
+        # ends exactly where the real COMMIT/ROLLBACK ends it.
+        self.armed: dict[int, str] = {}
+        self.grid_cells = TWO_WAY_CELLS if grid_cells is None else grid_cells
         self.log: list[tuple[str, int]] = []
         self.statements: list[dict] = []
         self.chunk_fault = chunk_fault
@@ -171,7 +186,11 @@ class _Shim:
             kind = "two"
         # The real statement: this is what makes the transaction real.
         self._s.execute(text("SELECT 1"))
-        rec = {"kind": kind, "txn": self.rail.txn, "params": params}
+        txn = self.rail.txn
+        if kind == "set_local":
+            self.rail.armed[txn] = _SET_LOCAL.search(sql).group(1)
+        rec = {"kind": kind, "txn": txn, "params": params,
+               "timeout": self.rail.armed.get(txn, RESTING)}
         self.rail.statements.append(rec)
 
         if kind == "tag":
@@ -180,7 +199,7 @@ class _Shim:
             return _Result([])
         if kind == "grid":
             return _Result([SimpleNamespace(category=c, bucket_start=lo)
-                            for c, lo in TWO_WAY_CELLS])
+                            for c, lo in self.rail.grid_cells])
         if kind == "soccer_grid":
             return _Result([SimpleNamespace(category=c, bucket_start=lo)
                             for c, lo in THREE_WAY_CELLS])
@@ -238,13 +257,14 @@ class _Redis:
         return None
 
 
-def _run(monkeypatch, rail: _Rail):
+def _run(monkeypatch, rail: _Rail, banked=(CARRIED,)):
     """One real writer run. Returns (summary, redis, durable payloads)."""
     redis = _Redis(rail)
-    key = bw._bookmaker_cell_key(*CARRIED)
-    redis.hashes[bw._BOOKMAKER_BANK_KEY] = {key: json.dumps({
-        "banked_at": _time.time() - 30 * 3600,
-        "rows": _cell_rows("two", *CARRIED)})}
+    redis.hashes[bw._BOOKMAKER_BANK_KEY] = {
+        bw._bookmaker_cell_key(*cell): json.dumps({
+            "banked_at": _time.time() - 30 * 3600,
+            "rows": _cell_rows("two", *cell)})
+        for cell in banked}
     durable: list = []
 
     @asynccontextmanager
@@ -346,17 +366,21 @@ def test_no_transaction_is_open_while_banking_or_publishing(monkeypatch):
 
 
 def test_every_transaction_opens_with_one_bounded_task_identity(monkeypatch):
-    """`set_config(..., is_local)` dies with its transaction, so the tag is the
-    first statement of EVERY transaction, and it is the same tag each time."""
+    """`set_config(..., is_local)` dies with its transaction, so EVERY
+    transaction is tagged before its read, and it is the same tag each time.
+    Only the transaction's own statement bound may come first (see below)."""
     rail = _Rail()
     _run(monkeypatch, rail)
 
-    first_by_txn: dict[int, dict] = {}
+    opening_by_txn: dict[int, list] = {}
     for s in rail.statements:
-        first_by_txn.setdefault(s["txn"], s)
+        opening_by_txn.setdefault(s["txn"], []).append(s["kind"])
     reads_txns = {r["txn"] for r in rail.reads()}
-    assert reads_txns <= set(first_by_txn)
-    assert {first_by_txn[t]["kind"] for t in reads_txns} == {"tag"}
+    assert reads_txns <= set(opening_by_txn)
+    assert {tuple(k for k in opening_by_txn[t] if k != "set_local")[0]
+            for t in reads_txns} == {"tag"}
+    assert {tuple(opening_by_txn[t][:2]) for t in reads_txns} == {
+        ("tag", "grid"), ("set_local", "tag")}
 
     tags = {s["params"]["tag"] for s in rail.statements if s["kind"] == "tag"}
     assert len(tags) == 1, tags
@@ -514,3 +538,148 @@ def test_a_hard_interruption_mid_walk_publishes_nothing_and_ends_its_read(
     assert not rail.in_txn()
     assert [w for w, _ in rail.side_effects] == ["bank", "bank"]
     assert all(not open_ for _, open_ in rail.side_effects)
+
+
+# ---------------------------------------------------------------------------
+# The statement bound across every boundary
+#
+# `SET LOCAL statement_timeout` ends at COMMIT and at ROLLBACK, exactly like the
+# tag. In the one shared transaction the soccer grid inherited the 45 s bound
+# the last landed chunk armed; once that chunk commits, a read that does not arm
+# its own runs at the connection's resting bound (30 minutes) and nothing says
+# so. These assert the bound each statement ACTUALLY ran under, from the rail's
+# transaction-local model — not that some SET LOCAL was issued somewhere.
+# ---------------------------------------------------------------------------
+
+
+def _txn_of(rail, kind):
+    (txn,) = {s["txn"] for s in rail.statements if s["kind"] == kind}
+    return txn
+
+
+def _assert_bounds(rail):
+    """Every chunk and the soccer grid — and the tag in their transactions —
+    run under the 45 s chunk bound, armed first; the grid and its tag keep the
+    resting bound they always had (no wall added to it, none taken away)."""
+    grid_txn = _txn_of(rail, "grid")
+    for s in rail.statements:
+        if s["txn"] == grid_txn:
+            assert s["timeout"] == RESTING, s
+        else:
+            assert s["timeout"] == CHUNK_BOUND, s
+    by_txn: dict[int, list] = {}
+    for s in rail.statements:
+        by_txn.setdefault(s["txn"], []).append(s["kind"])
+    for txn, kinds in by_txn.items():
+        if txn != grid_txn:
+            assert kinds[0] == "set_local", (txn, kinds)
+            assert kinds.count("set_local") == 1, (txn, kinds)
+
+
+def test_the_bound_model_ends_with_commit_and_with_rollback():
+    """The control for everything below: the rail's model is PostgreSQL's
+    transaction-local lifetime, so a model that never reset could not make
+    the other tests pass vacuously."""
+    rail = _Rail()
+    shim = _Shim(rail)
+
+    async def _drive():
+        out = []
+        for end in ("commit", "rollback"):
+            await shim.execute(text("SET LOCAL statement_timeout = '45s'"))
+            await shim.execute(text(bw._BOOKMAKER_SOCCER_THREE_WAY_GRID_SQL),
+                               bw.SOCCER_THREE_WAY_PARAMS)
+            out.append(rail.statements[-1]["timeout"])
+            await getattr(shim, end)()
+            await shim.execute(text(bw._BOOKMAKER_SOCCER_THREE_WAY_GRID_SQL),
+                               bw.SOCCER_THREE_WAY_PARAMS)
+            out.append(rail.statements[-1]["timeout"])
+            await shim.commit()
+        return out
+
+    assert asyncio.run(_drive()) == ["45s", RESTING, "45s", RESTING]
+    assert [n for n, _ in rail.log] == [
+        "begin", "commit", "begin", "commit",
+        "begin", "rollback", "begin", "commit"]
+
+
+def test_every_bounded_read_and_its_tag_run_under_the_chunk_bound(monkeypatch):
+    """THE REGRESSION: on a healthy walk the soccer grid ran at 45 s (inherited
+    from the last landed chunk) before these commits and at the resting bound
+    after. Every chunk, split half and refresh re-read keeps 45 s too."""
+    rail = _Rail()
+    summary, redis, _ = _run(monkeypatch, rail)
+
+    assert summary["terminal"] == "complete", summary
+    assert _published(redis) == _model_curve()
+    soccer_txn = _txn_of(rail, "soccer_grid")
+    # It opens straight after a landed chunk's COMMIT: the inherited case.
+    assert ("commit", soccer_txn - 1) in rail.log
+    assert rail.statements[[s["txn"] for s in rail.statements].index(
+        soccer_txn) - 1]["kind"] in ("two", "three")
+    _assert_bounds(rail)
+
+
+def test_the_soccer_grid_after_a_rolled_back_chunk_keeps_the_bound(
+        monkeypatch):
+    """The last two-way chunk times out and is irreducible, so the walk's last
+    boundary before the soccer grid is a ROLLBACK; the split halves after the
+    first rollback re-arm as well."""
+    last = TWO_WAY_CELLS[-1]
+
+    def _fault(rec, _n):
+        p = rec["params"]
+        if rec["kind"] == "two" and p["category"] == last[0] and \
+                last[1] <= p["lo"] < bw._add_month(last[1]):
+            return QueryCanceledError("canceling statement due to statement timeout")
+        return None
+
+    monkeypatch.setattr(bw, "_CHUNK_MAX_DEPTH", 1)
+    rail = _Rail(chunk_fault=_fault)
+    summary, redis, _ = _run(monkeypatch, rail)
+
+    assert summary["terminal"] == "failed" and redis.curve is None
+    assert summary["chunks_failed"], summary
+    soccer_txn = _txn_of(rail, "soccer_grid")
+    assert ("rollback", soccer_txn - 1) in rail.log, rail.log
+    rolled = [t for n, t in rail.log if n == "rollback"]
+    assert len(rolled) == 3, rolled  # the whole cell, then both halves
+    _assert_bounds(rail)
+
+
+def test_an_all_carried_walk_reads_the_soccer_grid_under_the_bound(
+        monkeypatch):
+    """No two-way chunk runs at all — every cell is carried from the bank — so
+    there was never a bound to inherit, even before these commits."""
+    settled = [c for c in TWO_WAY_CELLS if c[1] != OPEN]
+    rail = _Rail(grid_cells=settled)
+    summary, redis, _ = _run(monkeypatch, rail, banked=settled)
+
+    assert summary["terminal"] == "complete", summary
+    assert summary["bank"]["carried"] == len(settled)
+    assert {c["kind"] for c in rail.chunks()
+            if c["txn"] < _txn_of(rail, "soccer_grid")} == set()
+    soccer_txn = _txn_of(rail, "soccer_grid")
+    assert soccer_txn == _txn_of(rail, "grid") + 1
+    _assert_bounds(rail)
+
+
+def test_an_empty_grid_reads_the_soccer_grid_under_the_bound(monkeypatch):
+    rail = _Rail(grid_cells=[])
+    summary, _, _ = _run(monkeypatch, rail, banked=())
+
+    assert {c["kind"] for c in rail.chunks()} == {"three"}
+    assert _txn_of(rail, "soccer_grid") == _txn_of(rail, "grid") + 1
+    _assert_bounds(rail)
+
+
+def test_a_walk_out_of_wall_still_bounds_the_soccer_grid(monkeypatch):
+    """Every slice refuses at the wall check before opening a transaction."""
+    monkeypatch.setattr(bw, "_TRAVERSAL_BUDGET_S", 0.0)
+    rail = _Rail()
+    summary, redis, _ = _run(monkeypatch, rail)
+
+    assert summary["terminal"] == "failed" and redis.curve is None
+    assert summary["chunks_unrun"] and rail.chunks() == []
+    assert _txn_of(rail, "soccer_grid") == _txn_of(rail, "grid") + 1
+    _assert_bounds(rail)
