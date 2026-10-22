@@ -85,6 +85,27 @@ export function resolveScope(auth: AuthSnapshot): ClientScope {
   return { kind: "principal", principal };
 }
 
+/**
+ * The owner token for state an anonymous visitor legitimately owns, or `null`
+ * while the scope is `pending`.
+ *
+ * It slots into `principalKey` / `bindToPrincipal` / `dataForPrincipal` exactly
+ * where a principal would, so a surface showing device-owned state (pins) keeps
+ * both guards: the anonymous bucket and each account get different keys, and a
+ * body fetched under one never renders under another. `anon:` is the native
+ * anonymous principal prefix and can never equal a `user:` principal.
+ *
+ * #5593: `/preferences` keyed its pinned-card fetch on `resolvePrincipal`, so a
+ * signed-out reader's own pins showed the PINNED heading and never fetched.
+ */
+export const ANONYMOUS_OWNER = "anon:device";
+
+export function scopeOwner(scope: ClientScope): string | null {
+  if (scope.kind === "pending") return null;
+  if (scope.kind === "anonymous") return ANONYMOUS_OWNER;
+  return scope.principal;
+}
+
 /** True when two scopes address the same bucket — a same-user re-mount. */
 export function sameScope(a: ClientScope, b: ClientScope): boolean {
   if (a.kind !== b.kind) return false;
