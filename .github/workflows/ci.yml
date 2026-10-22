@@ -5261,6 +5261,8 @@ jobs:
           # and FLUSHES db 11 around each case. 12 and 13 are the reconcile-route
           # and peer-publication gates'.
           PM_WITHDRAWAL_REDIS_URL: redis://localhost:56379/11
+          # F3 capacity case: own random schema, dropped after.
+          BLEND_DEADLOCK_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
         run: |
           if python -m pytest tests/integration/test_live_normal_publication_recovery_10090_pg.py \
             tests/test_blend_preview_ledger_tsp1_10090.py \
@@ -5276,8 +5278,8 @@ jobs:
             echo "::error::#10090 normal-publication recovery gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]69 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
-            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 69 cases"
+          grep -qE "[^0-9]82 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
+            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 82 cases"
             exit 1
           }
 

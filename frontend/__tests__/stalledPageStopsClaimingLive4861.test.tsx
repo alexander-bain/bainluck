@@ -62,6 +62,11 @@ const EVENT = {
   away_score: 27,
   status: "live",
   commence_time: "2026-09-11T00:35:00+00:00",
+  // The served hero and its clock describe the same stale Kalshi observation.
+  hero_probability: 0.48,
+  hero_probability_away: 0.52,
+  hero_probability_source: "blend",
+  hero_probability_observed_at: "2026-09-11T02:16:00+00:00",
   win_probability_sources: {
     kalshi: {
       value: 0.48,
@@ -159,6 +164,22 @@ describe("#4861 a page that stopped being fed stops claiming to be live", () => 
     expect(html).not.toContain("live ·");
   });
 
+  it("keeps the stall warning without inventing an age for a missing probability", () => {
+    eventPayload = {
+      ...EVENT,
+      hero_probability: undefined, hero_probability_away: undefined,
+      hero_probability_source: undefined, hero_probability_observed_at: undefined,
+    };
+    eventFailure = new Error("Rate limit exceeded: 60/minute");
+    const html = draw();
+    expect(html).not.toContain(PROMISE);
+    expect(html).toContain("Rams");
+    expect(html).toContain("Price may be old");
+    expect(html).toContain("Probability observed</dt><dd><span>Time unavailable</span>");
+    expect(html).toContain('data-observation-at=""');
+    expect(html).toContain('data-observation-count="0"');
+  });
+
   it("CONTROL: keeps the countdown on a live page whose fetches are landing", () => {
     // #5459 — THE STAMP IS FRESH HERE, AND THAT IS THE CONTROL GETTING STRONGER.
     //
@@ -174,12 +195,14 @@ describe("#4861 a page that stopped being fed stops claiming to be live", () => 
     // So the control now says what it always meant: a live page, fed, showing a
     // CURRENT number, keeps its countdown. Nothing is weakened — the two
     // assertions above still run on the original stamp.
+    const observedAt = new Date(Date.now() - 20_000).toISOString();
     eventPayload = {
       ...EVENT,
+      hero_probability_observed_at: observedAt,
       win_probability_sources: {
         kalshi: {
           ...EVENT.win_probability_sources.kalshi,
-          updated_at: new Date(Date.now() - 20_000).toISOString(),
+          updated_at: observedAt,
         },
       },
     };

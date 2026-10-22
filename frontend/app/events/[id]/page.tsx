@@ -69,6 +69,7 @@ import { heroFreshness } from "@/lib/event/heroFreshness";
 import { newestServedScore } from "@/lib/event/newestServedScore";
 import LiveSparkline from "@/components/event/LiveSparkline";
 import LiveConnectionStatus from "@/components/event/LiveConnectionStatus";
+import { useObservationCount } from "@/hooks/useObservationCount";
 import ChartFullscreenDialog from "@/components/event/ChartFullscreenDialog";
 import {
   EMPTY_CONNECTION_TRACKER,
@@ -1895,6 +1896,53 @@ export default function EventPage({ params }: EventPageProps) {
       ? servedScore.score_observed_at
       : null;
 
+  const resolvedProbability = !eventLoading && event ? resolveProbability(
+    // #10090: the hero alone may show a provisional blend; with none held
+    // this is `event` itself.
+    overlayBlendPreview(event, blendPreview, blendPreviewNow),
+    historyData,
+    lastChartPoint,
+    isLive,
+    isFinished,
+    isSuspended,
+    // #5069 — the caption must not say "Live" over a number that stopped
+    // moving. Fed from `freshestSourceStamp` and NOT from `heroStamp`, and the
+    // difference is deliberate: `heroStamp` is the age of the whole GLANCE
+    // (min across price and score, #4469), while this caption is a claim about
+    // the BLEND alone, whose age is the max across its own sources. Using the
+    // glance's age here would strip "Live" off a ten-second-old probability
+    // whenever a score on a ten-minute beat happened to be the older fact —
+    // the mirror image of the bug #4469 fixed, and just as untrue.
+    //
+    // `heroStampIsStale` is the badge's own predicate, so the caption and the
+    // grey age badge above it cross the same boundary at the same instant.
+    //
+    // #2800 — OR'd with `liveClaimUnbacked`, because the age is only one of the
+    // two ways this number stops being current. A PINNED price is rewritten on
+    // schedule with an identical value, so it is permanently fresh to the stamp
+    // and permanently frozen in fact (Peliwo v Ziegann, 84 reads over 87
+    // minutes, all 0.99, badge reading `1m ago`). This is the same OR the age
+    // badge itself already takes through `claimWithdrawn` one line below, and
+    // the rule `effectivelyLive` states at :356 — everything that ASSERTS
+    // motion reads the withdrawal, and "Live · Bain Luck blend" asserts motion.
+    blendCaptionIsStale(
+      heroStampIsStale(freshestSourceStamp, "price"),
+      liveClaimUnbacked,
+    ),
+    true,
+  ) : null;
+  // Only the selected hero blend owns this observation clock. A history or
+  // opening fallback cannot borrow a timestamp from an unrelated source.
+  // Keep this owner above loading/error returns and outside both disclosures.
+  const acceptedPriceClock = resolvedProbability?.selectedProbabilitySource === "hero-blend"
+    && typeof resolvedProbability.homeProb === "number" && Number.isFinite(resolvedProbability.homeProb)
+      ? displayedProbabilityObservedAt(
+        event, blendPreview, blendPreviewNow,
+        event?.hero_probability_observed_at ?? freshestSourceStamp,
+      )
+      : null;
+  const observationCount = useObservationCount(eventId, acceptedPriceClock);
+
   // #5607 — a slow load is a slow load, not a failure.
   //
   // This timer used to flip the whole page to a terminal "Loading timed out"
@@ -2003,40 +2051,7 @@ export default function EventPage({ params }: EventPageProps) {
     awayPct: servedAwayPct,
     openingHomePct,
     openingAwayPct: servedOpeningAwayPct,
-  } = resolveProbability(
-    // #10090: the hero alone may show a provisional blend; with none held
-    // this is `event` itself.
-    overlayBlendPreview(event, blendPreview, blendPreviewNow),
-    historyData,
-    lastChartPoint,
-    isLive,
-    isFinished,
-    isSuspended,
-    // #5069 — the caption must not say "Live" over a number that stopped
-    // moving. Fed from `freshestSourceStamp` and NOT from `heroStamp`, and the
-    // difference is deliberate: `heroStamp` is the age of the whole GLANCE
-    // (min across price and score, #4469), while this caption is a claim about
-    // the BLEND alone, whose age is the max across its own sources. Using the
-    // glance's age here would strip "Live" off a ten-second-old probability
-    // whenever a score on a ten-minute beat happened to be the older fact —
-    // the mirror image of the bug #4469 fixed, and just as untrue.
-    //
-    // `heroStampIsStale` is the badge's own predicate, so the caption and the
-    // grey age badge above it cross the same boundary at the same instant.
-    //
-    // #2800 — OR'd with `liveClaimUnbacked`, because the age is only one of the
-    // two ways this number stops being current. A PINNED price is rewritten on
-    // schedule with an identical value, so it is permanently fresh to the stamp
-    // and permanently frozen in fact (Peliwo v Ziegann, 84 reads over 87
-    // minutes, all 0.99, badge reading `1m ago`). This is the same OR the age
-    // badge itself already takes through `claimWithdrawn` one line below, and
-    // the rule `effectivelyLive` states at :356 — everything that ASSERTS
-    // motion reads the withdrawal, and "Live · Bain Luck blend" asserts motion.
-    blendCaptionIsStale(
-      heroStampIsStale(freshestSourceStamp, "price"),
-      liveClaimUnbacked,
-    ),
-  );
+  } = resolvedProbability!;
 
   // ═══ #6238 — THE AWAY NUMBER THIS PAGE IS ALLOWED TO PRINT ═══
   //
@@ -2357,16 +2372,12 @@ export default function EventPage({ params }: EventPageProps) {
     : stoppageLabel;
   // The exact displayed probability owns this clock, including an admitted
   // preview. An unknown preview time stays unknown until committed truth returns.
-  const acceptedPriceClock = displayedProbabilityObservedAt(
-    event, blendPreview, blendPreviewNow,
-    event.hero_probability_observed_at ?? freshestSourceStamp,
-  );
+
   // These details compare the two clocks actually printed below. Keep the
   // source-staleness warning policy above unchanged; an unknown preview or
   // score clock cannot support an "oldest" claim.
-  const displayedOldestFact = displayedPreview(blendPreview, event, blendPreviewNow) === null
-    ? heroStamp.fact
-    : acceptedPriceClock && heroStampInputs.scoreStamp && Number.isFinite(Date.parse(heroStampInputs.scoreStamp))
+  const displayedOldestFact = acceptedPriceClock && heroStampInputs.scoreStamp
+    && Number.isFinite(Date.parse(heroStampInputs.scoreStamp))
       ? heroFreshness({ priceStamp: acceptedPriceClock, scoreStamp: heroStampInputs.scoreStamp }).fact
       : null;
   connectionTrackerRef.current = stepConnectionTracker(
@@ -2405,9 +2416,14 @@ export default function EventPage({ params }: EventPageProps) {
   const connectionStatusVisible = connectionTerminalLabel
     ? connectionTrackerRef.current.sawUnfinished || showsAge
     : quoteEligible || showsAge;
+  const admittedPreviewProbability = displayedPreview(blendPreview, event, blendPreviewNow);
+  const observationDelivery = resolvedProbability?.selectedProbabilitySource === "hero-blend"
+    ? admittedPreviewProbability !== null ? "dnpl" as const : "committed" as const
+    : "unknown" as const;
   const connectionStatus = (announces: boolean) => (
     <LiveConnectionStatus
       presentation={connectionPresentation}
+      observation={{ eventId, count: observationCount, delivery: observationDelivery }}
       priceObservedAt={acceptedPriceClock}
       scoreShown={Boolean(liveGamesLine) || heroScorePairPresent}
       scoreConfirmedAt={heroStampInputs.scoreStamp}
