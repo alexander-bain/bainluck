@@ -291,17 +291,24 @@ nonisolated struct BlendPreviewReader: Sendable, Equatable {
     /// admit an uncovered base across the flap. NEVER evicted: safety evidence
     /// that is forgotten is safety that is gone (a returning row would read as
     /// unseen). Past `maxRetiredMembers` distinct rows the reader saturates
-    /// instead (`evidenceSaturated`).
+    /// instead (`evidenceSaturated`). There is no fixed count this list stays
+    /// under: every row leaving in one transition is retired before the
+    /// capacity check, so at saturation it holds at most `maxRetiredMembers`
+    /// previously retired rows PLUS every row that left together in that
+    /// transition — `maxRetiredMembers + 1` only when one row left — and then
+    /// freezes. The rows that can leave at once are the distinct rows this
+    /// visit recorded a fence or a commit floor for, which nothing here caps.
     var retiredMembers: [RetiredMember] = []
-    /// How many distinct retired rows one visit keeps evidence for. A page's
-    /// fold is a few duplicate rows of one game; a visit that retires more
-    /// than this many distinct rows is churn this reader does not follow.
+    /// How many distinct retired rows one visit follows before saturating. A
+    /// page's fold is a few duplicate rows of one game; a visit that retires
+    /// more than this many distinct rows is churn this reader does not follow.
     static let maxRetiredMembers = 8
-    /// COVERAGE LIMIT, not continuity. Set when retiring one more distinct row
-    /// would exceed `maxRetiredMembers`: no evidence is dropped, and the
-    /// reader admits no further preview — v1 or v2 — until navigation starts a
-    /// new visit. The page shows committed truth meanwhile. Reset, resync and
-    /// later membership changes keep it.
+    /// COVERAGE LIMIT, not continuity. Set when a membership change leaves
+    /// more than `maxRetiredMembers` distinct retired rows: no evidence is
+    /// dropped, and the reader admits no further preview — v1 or v2 — until
+    /// navigation starts a new visit. The page shows committed truth
+    /// meanwhile; DNPL coverage is lost for the rest of the visit. Reset,
+    /// resync and later membership changes keep it, and move no evidence.
     var evidenceSaturated = false
     /// Whether this visit has folded: an authoritative membership of two or
     /// more rows, or folded authority accepted. After a fold, the page row's
@@ -440,7 +447,10 @@ nonisolated enum BlendPreview {
         }
         if retired.count > BlendPreviewReader.maxRetiredMembers {
             // Never forget safety evidence. COVERAGE LIMIT: this visit admits
-            // no further preview (`readerAfter`); committed truth shows.
+            // no further preview (`readerAfter`); committed truth shows. Every
+            // row that left in this transition is already in `retired`, so
+            // the list can hold more than `maxRetiredMembers + 1` entries here
+            // (see `retiredMembers`); it does not grow again after this.
             next.evidenceSaturated = true
         }
         for entry in reader.retiredMembers where members.contains(entry.row) {
@@ -462,9 +472,11 @@ nonisolated enum BlendPreview {
                                  originEventId: state.originEventId, pAway: state.pAway, sport: state.sport)
     }
 
-    /// The page row's recorded singleton authority after a legacy frame:
-    /// identity only moves forward, a same tuple keeps its first-seen deadline
-    /// and its retirement, a newer tuple replaces it.
+    /// A row's recorded fence merged with one more piece of legacy evidence —
+    /// the page row's singleton frame, or an origin's v1 order at a membership
+    /// boundary or the v1→v2 bridge: identity only moves forward, a same tuple
+    /// keeps its first-seen deadline and its retirement, a newer tuple
+    /// replaces it, and older evidence never overwrites a newer fence.
     private static func ownFence(_ old: BlendPreviewReader.OriginFence?, epoch: Int, seq: Int,
                                  retired: Bool, deadline: TimeInterval?) -> BlendPreviewReader.OriginFence {
         guard let old, epoch <= old.epoch else {
@@ -499,13 +511,23 @@ nonisolated enum BlendPreview {
         var fences = reader.originFences
         // Upgrading this visit from v1 must not forget its origin's accepted
         // authority, even though v2 never uses the old global epoch ordering.
-        if let prior = reader.foldedSequence, fences[String(prior.originEventId)] == nil {
+        // The v1 order is MERGED into the row's existing fence, never imported
+        // only when none exists: the fence a returning origin gets back
+        // (`readerAfterMembership`) can be older than the v1 order accepted
+        // since, or than that order's revocation, and a snapshot validated
+        // against the stale fence alone would admit an identity the v1 path
+        // had already moved past. `ownFence` keeps the merge monotonic:
+        // identity only moves forward, a same tuple keeps its first-seen
+        // deadline and stays retired once retired, and a newer fence is never
+        // overwritten by older evidence.
+        if let prior = reader.foldedSequence {
+            let origin = String(prior.originEventId)
             let held = reader.held.flatMap { value -> BlendPreviewState? in
                 value.originEventId == prior.originEventId && value.epoch == prior.epoch
                     && value.seq == prior.seq ? value : nil
             }
-            fences[String(prior.originEventId)] = .init(epoch: prior.epoch, seq: prior.seq,
-                                                       retired: held == nil, deadline: held?.expiresAt)
+            fences[origin] = ownFence(fences[origin], epoch: prior.epoch, seq: prior.seq,
+                                      retired: held == nil, deadline: held?.expiresAt)
         }
         guard Set(fences.keys).isSubset(of: members) else { return reader }
         var deadline = now + Double(frame.ttlMs ?? 0) / 1000

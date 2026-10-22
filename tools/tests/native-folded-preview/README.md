@@ -31,7 +31,21 @@ evidence (`retiredMembers`: fence, commit floor, and a removed origin's v1
 order) that returns with them across a cached-detail flap. That evidence is
 never evicted: past `maxRetiredMembers` distinct retired rows the reader
 saturates (`evidenceSaturated`) and admits no further preview until navigation
-— a coverage limit, not continuity. A fold-down to the page row alone resumes
+— a loss of DNPL coverage for the rest of that visit, not continuity. The
+retired list has no fixed ceiling: rows can leave a fold together and every
+one of them is retired before the capacity check, so at saturation the list
+holds up to `maxRetiredMembers` previously retired rows plus every row that
+left in that transition (`maxRetiredMembers + 1` only for a single departure),
+then freezes; the rows that can leave at once are the distinct rows the visit
+recorded a fence or commit floor for, which the reader does not cap
+(`testRowsThatLeaveTogetherAreAllRetainedAndCanExceedCapacityPlusOne`). At the
+v1→v2 bridge the v1 order is merged monotonically into any existing fence of
+its origin — a returning origin's restored fence can be older than the order
+accepted since, or than its revocation — so an older v2 tuple is refused, a
+same tuple keeps its first-seen deadline, retirement stays sticky and a newer
+fence is never lowered
+(`testNewerV1AuthorityMergesIntoARestoredFenceBeforeV2Validation`). A fold-down
+to the page row alone resumes
 that row's singleton frames under its own recorded fence (older/equal identity
 refused, same tuple capped at its first-seen deadline, retired stays retired,
 a commit floor still withdraws), while any other legacy frame after v2 stays a

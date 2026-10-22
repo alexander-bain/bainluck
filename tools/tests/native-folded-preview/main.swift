@@ -33,6 +33,8 @@ do {
     try tests.testAFoldDownToThePageRowResumesItsSingletonUnderItsOwnFence()
     try tests.testAV1OriginThatLeavesAndReturnsKeepsItsOrderAsAFence()
     try tests.testAnElectionChangeInsideAnUnchangedMembershipResumesOnTheFreshStream()
+    try tests.testNewerV1AuthorityMergesIntoARestoredFenceBeforeV2Validation()
+    try tests.testRowsThatLeaveTogetherAreAllRetainedAndCanExceedCapacityPlusOne()
 } catch {
     ReaderChecks.failures += 1
     print("Unexpected error: \(error)")
