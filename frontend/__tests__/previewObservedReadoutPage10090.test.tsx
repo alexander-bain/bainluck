@@ -65,6 +65,9 @@ function draw() {
 function priceDetails(html: string) {
   return html.match(/Probability observed<\/dt><dd>(.*?)<\/dd>/)![1];
 }
+function deliveryWords(html: string) {
+  return html.match(/Current probability delivery<\/dt><dd>(.*?)<\/dd>/)?.[1];
+}
 function scoreDetails(html: string) {
   return html.match(/Score confirmed<\/dt><dd>(.*?)<\/dd>/)?.[1];
 }
@@ -82,9 +85,11 @@ test("the real page reports the displayed preview observation before any commit,
   expect(before).toContain('data-probability="0.6"');
   expect(before).toContain('data-observation-delivery="committed"');
   expect(before).toContain('data-observation-count="1"');
+  expect(deliveryWords(before)).toBe("Published update");
   expect(after).toContain('data-probability="0.601"');
   expect(after).toContain('data-observation-delivery="dnpl"');
   expect(after).toContain(`data-observation-at="${OBSERVED}"`);
+  expect(deliveryWords(after)).toBe("Live preview");
   expect(after).toContain(`data-observation-event-id="${ID}"`);
   expect(before.match(/data-hero-digits="">([^<]+)/g)).toEqual(after.match(/data-hero-digits="">([^<]+)/g));
   expect(after).toContain('data-hero-digits="">60</span>');
@@ -163,5 +168,25 @@ test("unchanged history selection never borrows advancing source clocks or count
     expect(html).toContain('data-observation-count="0"');
     expect(html).toContain('data-observation-delivery="unknown"');
     expect(html).not.toContain("Oldest on screen");
+  }
+});
+
+// Reader words only; the typed state, its data attribute and the capture tool
+// that reads it are unchanged. Receipts recorded before the wording change
+// printed "DNPL active" / "Committed delivery" for these same two states.
+test("the delivery row names each unchanged state in reader words", () => {
+  const committed = draw();
+  blendPreview = preview();
+  const dnpl = draw();
+  eventPayload.hero_probability_source = "opening"; blendPreview = null;
+  const unknown = draw();
+  expect(committed).toContain('data-observation-delivery="committed"');
+  expect(deliveryWords(committed)).toBe("Published update");
+  expect(dnpl).toContain('data-observation-delivery="dnpl"');
+  expect(deliveryWords(dnpl)).toBe("Live preview");
+  expect(unknown).toContain('data-observation-delivery="unknown"');
+  expect(deliveryWords(unknown)).toBe("Delivery unknown");
+  for (const html of [committed, dnpl, unknown]) {
+    expect(html).not.toMatch(/DNPL|Committed delivery/);
   }
 });

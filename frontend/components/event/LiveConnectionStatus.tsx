@@ -178,7 +178,7 @@ export default function LiveConnectionStatus({
               </div>
               <div>
                 <dt className="font-medium text-text-primary">Current probability delivery</dt>
-                <dd>{observation.delivery === 'dnpl' ? 'DNPL active' : observation.delivery === 'committed' ? 'Committed delivery' : 'Delivery unknown'}</dd>
+                <dd>{observation.delivery === 'dnpl' ? 'Live preview' : observation.delivery === 'committed' ? 'Published update' : 'Delivery unknown'}</dd>
               </div>
             </>
           ) : null}
