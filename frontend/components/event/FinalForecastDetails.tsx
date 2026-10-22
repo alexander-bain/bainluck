@@ -43,14 +43,17 @@ export function recordedRange(earliestIso: string, latestIso: string): string {
 
 export default function FinalForecastDetails({
   details,
+  testId = "event-hero-final-forecast-details",
 }: {
   details: FinalForecastComparison["details"];
+  /** #11296 — the live headline's retained pregame pair reuses this disclosure. */
+  testId?: string;
 }) {
   const { bookmakerCount, earliestCapturedAt, latestCapturedAt, boundaryAt } = details;
   return (
     <details
       className="group mt-1 self-stretch text-center text-[11px] text-text-muted"
-      data-testid="event-hero-final-forecast-details"
+      data-testid={testId}
       data-forecast-earliest={earliestCapturedAt}
       data-forecast-latest={latestCapturedAt}
       data-forecast-boundary={boundaryAt}
