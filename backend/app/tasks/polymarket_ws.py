@@ -4672,9 +4672,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             observation_tokens = {
                                 oid: observation_continuity.get(oid) for oid in chunk_ids
                             }
-                            catalog_boundary.observation_writing = event_ids_for_outcomes(
-                                headline_event_ids, chunk_ids,
-                            ).intersection(blend_refresher.preview_events)
+                            catalog_boundary.observation_writing = {
+                                eid for eid in event_ids_for_outcomes(headline_event_ids, chunk_ids)
+                                if eid in blend_refresher.preview_events
+                            }
                             for eid in catalog_boundary.observation_writing:
                                 catalog_boundary.observation_write_epoch[eid] = (
                                     catalog_boundary.observation_write_epoch.get(eid, 0) + 1

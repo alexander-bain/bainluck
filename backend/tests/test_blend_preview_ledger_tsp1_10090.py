@@ -722,45 +722,7 @@ class TestModeReturn:
         assert reader.epoch == revoke["preview"]["epoch"] and reader.held is None
 
 
-# ------------------------------------------------------------- off path (G4)
-
-
-class TestSwitch:
-    def test_unset_leaves_the_single_source_path(self, monkeypatch):
-        monkeypatch.delenv(blend_preview.LEDGER_SOURCES_ENV, raising=False)
-        monkeypatch.setenv(blend_preview.SOURCE_ENV, "polymarket")
-        monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, "7")
-        blend_preview.reset_registry_for_tests()
-        try:
-            assert type(blend_preview.registry()) is blend_preview.PreviewRegistry
-            assert blend_preview.preview_events_for("polymarket") == frozenset({7})
-            assert blend_preview.preview_events_for("kalshi") == frozenset()
-        finally:
-            blend_preview.reset_registry_for_tests()
-
-    def test_set_names_both_sources_and_ignores_the_single_switch(self, monkeypatch):
-        monkeypatch.setenv(blend_preview.LEDGER_SOURCES_ENV, "kalshi, polymarket")
-        monkeypatch.setenv(blend_preview.SOURCE_ENV, "polymarket")
-        monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, "7")
-        blend_preview.reset_registry_for_tests()
-        try:
-            assert blend_preview.preview_source() is None
-            assert isinstance(blend_preview.registry(), blend_preview.LedgerRegistry)
-            assert blend_preview.preview_events_for("kalshi") == frozenset({7})
-            assert blend_preview.preview_events_for("polymarket") == frozenset({7})
-            assert blend_preview.preview_route_events() == frozenset({7})
-        finally:
-            blend_preview.reset_registry_for_tests()
-
-    @pytest.mark.parametrize("raw", ["kalshi,", "kalshi,espn", "Kalshi", ","])
-    def test_a_malformed_list_turns_every_preview_off(self, monkeypatch, raw):
-        monkeypatch.setenv(blend_preview.LEDGER_SOURCES_ENV, raw)
-        monkeypatch.setenv(blend_preview.SOURCE_ENV, "polymarket")
-        monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, "7")
-        assert blend_preview.preview_events_for("kalshi") == frozenset()
-        assert blend_preview.preview_events_for("polymarket") == frozenset()
-        assert blend_preview.preview_route_events() == frozenset()
-
+# Default-delivery configuration is covered by test_dnpl_default_delivery_10090.py.
 
 # ---------------------------------------------------- the refresher boundary
 
@@ -787,7 +749,7 @@ class TestRefresherBoundary:
             await listener.subscribe(event_channel(EV))
             await listener.get_message(timeout=0.2)
             refresher = LiveBlendRefresher("kalshi")
-            assert refresher.preview and refresher.preview_events == frozenset({EV})
+            assert refresher.preview and EV in refresher.preview_events
             monkeypatch.setattr(refresher, "_client", lambda: client)
             # Another process claims polymarket first, so claims and generations differ.
             other = blend_preview.LedgerRegistry(sources=SOURCES)
@@ -829,14 +791,11 @@ class TestRefresherBoundary:
         listener = listener_client.pubsub()
 
         def mode(ledger: bool):
-            if ledger:
-                monkeypatch.setenv(blend_preview.LEDGER_SOURCES_ENV, "kalshi,polymarket")
-                monkeypatch.delenv(blend_preview.SOURCE_ENV, raising=False)
-            else:
-                monkeypatch.delenv(blend_preview.LEDGER_SOURCES_ENV, raising=False)
-                monkeypatch.setenv(blend_preview.SOURCE_ENV, "kalshi")
-            monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, str(EV))
-            blend_preview.reset_registry_for_tests()  # a restarted process
+            # Explicit mixed-version rollout control, not a runtime toggle.
+            blend_preview.reset_registry_for_tests()
+            monkeypatch.setattr(blend_preview, "_REGISTRY",
+                                blend_preview.LedgerRegistry(sources=SOURCES) if ledger
+                                else blend_preview.PreviewRegistry())
             refresher = LiveBlendRefresher("kalshi")
             assert refresher.preview
             monkeypatch.setattr(refresher, "_client", lambda: client)

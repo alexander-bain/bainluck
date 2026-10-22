@@ -244,6 +244,9 @@ async def test_folded_stream_yields_raw_immediately_then_explicit_authority(monk
         await anext(stream)
         frame = trigger()
         hub.subscriptions["live:event:2"].offer(json.dumps(frame))
+        floor = await asyncio.wait_for(anext(stream), 1)
+        assert floor.startswith("event: fold_preview_floor\n")
+        assert json.loads(floor.split("data: ")[1]) == {"event_id": 1, "floor": {"2": 22}}
         raw = json.loads((await asyncio.wait_for(anext(stream), 1)).split("data: ")[1])
         assert raw["invalidation"] and raw["p"] is None and not calls
         assert raw["folded_quote_pending"] is True

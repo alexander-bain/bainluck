@@ -1188,6 +1188,11 @@ class TestSingleEventStampTransaction:
         })
         session.returned_rev = 42
         r, _ = _one_event_refresher(monkeypatch, session)
+        # This chart-transaction control has no Redis. Fail that dependency
+        # deterministically rather than introducing network retry scheduling.
+        def unavailable_preview_client():
+            raise ConnectionError("offline chart transaction control")
+        monkeypatch.setattr(r, "_client", unavailable_preview_client)
         monkeypatch.setattr("app.tasks.live_blend_refresh.time.monotonic", lambda: 1000.0)
         if not snapshot_due:
             r._last_snapshot_at = {event_id: 999.0 for event_id in range(1, count + 1)}

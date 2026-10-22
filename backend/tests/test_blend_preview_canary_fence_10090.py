@@ -43,8 +43,10 @@ FRESH = datetime.now(timezone.utc).isoformat()
 @pytest.fixture(autouse=True)
 def _canary(monkeypatch):
     blend_preview.reset_registry_for_tests()
-    monkeypatch.setenv(blend_preview.SOURCE_ENV, "polymarket")
-    monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, "2")
+    # Explicit legacy subject: its ordering/fencing regressions remain covered.
+    monkeypatch.setattr(blend_preview, "_REGISTRY", blend_preview.PreviewRegistry())
+    monkeypatch.setattr(blend_preview, "preview_events_for",
+                        lambda source: frozenset({2}) if source == "polymarket" else frozenset())
     yield
     blend_preview.reset_registry_for_tests()
 
@@ -60,25 +62,7 @@ def _updated_event_id(statement) -> int:
     return eid
 
 
-class TestTheSwitch:
-    def test_parsing(self, monkeypatch):
-        monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, " 3, 11 ,3 ")
-        assert blend_preview.preview_event_ids() == frozenset({3, 11})
-        assert blend_preview.preview_events_for("polymarket") == frozenset({3, 11})
-        assert blend_preview.preview_events_for("kalshi") == frozenset()
-        assert blend_preview.preview_route_events() == frozenset({3, 11})
-        for bad in ("3,", "3;4", "-3", "3.0", "abc"):
-            monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, bad)
-            assert blend_preview.preview_event_ids() == frozenset(), bad
-        monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, "3")
-        monkeypatch.setenv(blend_preview.SOURCE_ENV, "Polymarket")
-        assert blend_preview.preview_route_events() == frozenset(), "an exact source name only"
-
-    def test_only_the_named_arm_previews(self):
-        assert LiveBlendRefresher("polymarket").preview_events == frozenset({2})
-        kalshi = LiveBlendRefresher("kalshi")
-        assert kalshi.preview is False and kalshi.preview_events == frozenset()
-
+class TestExplicitLegacyScope:
     async def test_a_mixed_batch_previews_only_the_canary_and_keeps_one_sorted_lock_order(self, monkeypatch):
         rows = [_event(eid) for eid in (1, 2, 3)]
         session = _PreviewSession([(m, e) for e, m in rows], None, stored=STORED, rev=10)

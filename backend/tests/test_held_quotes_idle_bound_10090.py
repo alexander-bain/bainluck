@@ -305,20 +305,16 @@ class TestOwnerWiring:
         from app.tasks.live_blend_refresh import LiveBlendRefresher
         from app.utils import blend_preview
 
-        monkeypatch.delenv("LIVE_BLEND_PREVIEW_SOURCES", raising=False)
-        monkeypatch.setenv(blend_preview.SOURCE_ENV, "kalshi")
-        monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, str(EV))
-        refresher = LiveBlendRefresher("kalshi")
-        refresher.held_quotes = HeldRowQuotes()
-        assert set(refresher.held_quotes.preview_events()) == {EV}
-        off = LiveBlendRefresher("polymarket")  # not the preview source
-        off.held_quotes = HeldRowQuotes()
-        assert set(off.held_quotes.preview_events()) == set()
-        monkeypatch.delenv(blend_preview.SOURCE_ENV)
-        unset = LiveBlendRefresher("kalshi")  # default off
-        unset.held_quotes = HeldRowQuotes()
-        assert set(unset.held_quotes.preview_events()) == set()
-        assert unset.held_quotes is not None and LiveBlendRefresher("kalshi").held_quotes is None
+        for source in ("kalshi", "polymarket"):
+            refresher = LiveBlendRefresher(source)
+            refresher.held_quotes = HeldRowQuotes()
+            assert EV in refresher.held_quotes.preview_events()
+            assert EV + 1 in refresher.held_quotes.preview_events()
+            # The callback follows the actual worker scope, not a stale copy.
+            refresher.preview_events = frozenset({EV})
+            assert EV in refresher.held_quotes.preview_events()
+            assert EV + 1 not in refresher.held_quotes.preview_events()
+        assert LiveBlendRefresher("kalshi").held_quotes is None
 
 
 # ------------------------------------------------- lifecycle (812 review REVISE)

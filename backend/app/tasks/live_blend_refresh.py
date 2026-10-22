@@ -74,7 +74,7 @@ import math
 import time
 from dataclasses import dataclass, replace as _replace
 from datetime import datetime, timezone
-from typing import Awaitable, Callable, Iterable, Optional
+from typing import Awaitable, Callable, Container, Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -1385,7 +1385,7 @@ class HeldRowQuotes:
         self.sample_failures = 0
         # Idle bound (class doc). The owning refresher installs its CURRENT
         # preview events; empty means no idle sampling at all.
-        self.preview_events: Callable[[], Iterable[int]] = frozenset
+        self.preview_events: Callable[[], Container[int]] = frozenset
         self._sessions = None
         self._idle_task: Optional[asyncio.Task] = None
         self._closed = False
@@ -2036,12 +2036,11 @@ class LiveBlendRefresher:
         #: socket flush loop that fenced a newer quote on those events wakes.
         self.release_wake: Optional[Callable[[Iterable[int]], None]] = None
         #: #10090 — provisional preview (`app.utils.blend_preview`): the
-        #: canary's events when THIS source is the one named to preview, else
-        #: empty. Empty (the default), every preview branch below is skipped
-        #: and the committed path runs exactly as before.
-        from app.utils.blend_preview import preview_events_for
+        #: supported sources validate every arriving event. The scope is
+        #: stateless: events arriving after startup need no enrollment.
+        from app.utils.blend_preview import PreviewEventScope, preview_events_for
 
-        self.preview_events: frozenset = preview_events_for(self.source)
+        self.preview_events: PreviewEventScope | frozenset = preview_events_for(self.source)
         self.preview = bool(self.preview_events)
         self.preview_stats: dict[str, int] = {
             "published": 0, "revoked": 0, "fenced": 0, "publish_errors": 0,
@@ -3681,16 +3680,13 @@ class LiveBlendRefresher:
             preview_only: set[int] = set()
             preview_seq: dict[int, int] = {}
             preview_failed: set[int] = set()
-            # #10090: every CANARY event's reading is computed and its preview
-            # published BEFORE any event's UPDATE, so one event's row-lock wait
-            # cannot hold back a canary preview. The UPDATEs keep the one
-            # sorted lock order (#837). With no canary event in the batch, the
-            # work list is one "both" step per event: the same statements in
-            # the same order as before.
+            # #10090: compute and publish eligible previews before any event's
+            # UPDATE so one row-lock wait cannot hold back a sibling display.
+            # Persistence retains the same sorted lock order (#837).
             ordered = sorted(grouped)
-            canary = [eid for eid in ordered if eid in self.preview_events]
-            if canary:
-                work = ([("compute", eid) for eid in canary] + [("preview", None)]
+            preview_ids = [eid for eid in ordered if eid in self.preview_events]
+            if preview_ids:
+                work = ([("compute", eid) for eid in preview_ids] + [("preview", None)]
                         + [("stamp" if eid in self.preview_events else "both", eid)
                            for eid in ordered])
             else:
@@ -4620,7 +4616,7 @@ class LiveBlendRefresher:
         from app.utils.live_blend import compute_source_home_probability, has_proven_home_orientation
 
         try:
-            event_ids = set(observations).intersection(self.preview_events)
+            event_ids = {eid for eid in observations if eid in self.preview_events}
             event_ids.intersection_update(await validate(event_ids))
             if not event_ids:
                 return

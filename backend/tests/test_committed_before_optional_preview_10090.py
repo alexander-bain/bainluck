@@ -16,9 +16,9 @@ from tests.test_live_blend_refresh import _one_event_refresher
 
 def rig(monkeypatch, *, revoke=False, fail_commit=False):
     blend_preview.reset_registry_for_tests()
-    monkeypatch.setenv(blend_preview.SOURCE_ENV, "polymarket")
-    monkeypatch.delenv("LIVE_BLEND_PREVIEW_SOURCES", raising=False)
-    monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, "1")
+    # Explicit mixed-scope legacy ordering control, independent of defaults.
+    monkeypatch.setattr(blend_preview, "_REGISTRY", blend_preview.PreviewRegistry())
+    monkeypatch.setattr(blend_preview, "preview_events_for", lambda source: frozenset({1}))
     events = [_event(1), _event(2)]
     reg = blend_preview.registry()
     reg.propose(
