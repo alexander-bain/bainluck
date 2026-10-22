@@ -28,6 +28,7 @@ from app.utils.exclusive_field_cell import (
     cell_at,
     cell_spread_seconds,
     field_cell_squeeze_moves,
+    field_cell_leg_ids,
     field_cells,
     verify_field_cells,
 )
@@ -288,6 +289,65 @@ def test_no_cell_ever_exceeds_the_ceiling_on_random_fields():
         for c in field_cells(legs, list(legs)).cells:
             assert len(c) == n
             assert cell_spread_seconds(legs, c) <= 30.0
+
+
+# ---------------------------------------------------------------- identity
+
+
+def _kalshi_contracts():
+    return {
+        int(oid): {"venue": "kalshi", "ticker": ext, "outcome_external_id": ext}
+        for oid, ext in DIRECTOR["member_external_ids"].items()
+    }
+
+
+def _makeup_contracts():
+    return {
+        int(oid): {
+            "venue": "polymarket", "condition_id": ext, "token_id": tok,
+            "outcome_external_id": ext, "resolved_via": "gamma_condition_by_name",
+        }
+        for oid, ext in MAKEUP["member_external_ids"].items()
+        if (tok := MAKEUP["yes_token_ids"].get(oid))
+    }
+
+
+def test_identity_admits_the_real_director_event_family():
+    members = DIRECTOR["members"]
+    assert field_cell_leg_ids("kalshi", DIRECTOR["market_external_id"], members, _kalshi_contracts()) == sorted(members)
+
+
+def test_identity_refuses_a_ticker_from_another_event_and_a_missing_contract():
+    members = DIRECTOR["members"]
+    contracts = _kalshi_contracts()
+    stray = dict(contracts)
+    stray[members[0]] = {"venue": "kalshi", "ticker": "KXOSCARPIC-27-ODY", "outcome_external_id": "KXOSCARPIC-27-ODY"}
+    assert field_cell_leg_ids("kalshi", "KXOSCARDIR-27", members, stray) is None
+    gap = dict(contracts)
+    gap.pop(members[-1])
+    assert field_cell_leg_ids("kalshi", "KXOSCARDIR-27", members, gap) is None
+
+
+def test_identity_never_takes_a_two_leg_board_off_the_11157_pair_rule():
+    members = DIRECTOR["members"][:2]
+    assert field_cell_leg_ids("kalshi", "KXOSCARDIR-27", members, _kalshi_contracts()) is None
+
+
+def test_identity_admits_ten_real_makeup_yes_tokens_and_refuses_a_no_leg_or_repeat():
+    contracts = _makeup_contracts()
+    members = sorted(contracts)
+    assert len(members) == 10
+    assert field_cell_leg_ids("polymarket", "805186", members, contracts) == members
+    no_leg = dict(contracts)
+    c = dict(no_leg[members[0]])
+    c["outcome_external_id"] = c["condition_id"] + "_no"
+    no_leg[members[0]] = c
+    assert field_cell_leg_ids("polymarket", "805186", members, no_leg) is None
+    twice = dict(contracts)
+    twice[members[1]] = dict(contracts[members[0]], token_id="other")
+    assert field_cell_leg_ids("polymarket", "805186", members, twice) is None
+    # the real 13-member field: three members hold no contract here → None
+    assert field_cell_leg_ids("polymarket", "805186", MAKEUP["members"], contracts) is None
 
 
 # ---------------------------------------------------------------- reader verification

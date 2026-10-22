@@ -63,6 +63,11 @@ from app.utils.async_binary_pair import PAIR_SKEW_MAX_SECONDS, pair_skew_bound_s
 #: `(observed_at, tier_label)` — what the fill holds per point (as #11157).
 Observation = tuple[datetime, str]
 
+#: Two legs are #11157's question, and it demands Yes/No identity of ONE
+#: condition. A two-leg board is never a field cell: it stays the pair rule's
+#: (admitted only as an identity-bound pair) so no binary behaviour moves.
+FIELD_CELL_MIN_MEMBERS = 3
+
 #: Why a raw sample joined no cell. Counted per sample, never a series verdict.
 MEMBER_UNBANKED = "member_has_no_observations"
 PEER_ABSENT = "member_has_no_compatible_sample"
@@ -83,6 +88,58 @@ class FieldCells:
 
     def admitted_samples(self) -> int:
         return sum(len(cell) for cell in self.cells)
+
+
+def field_cell_leg_ids(
+    market_source: str | None,
+    market_external_id: str | None,
+    members: Collection[int],
+    contracts: Mapping[int, Mapping | None],
+) -> list[int] | None:
+    """The members, sorted, only when EVERY one is an identity-bound leg of ONE venue event; else None.
+
+    The field-cell counterpart of `paired_binary_leg_ids`, and like it asked of
+    the contracts the bank was built from, never of names or prices:
+      * Kalshi — each member's contract is a ticker of the market's OWN event
+        (`{event}-…`), the ticker IS the outcome's external id, all distinct;
+      * Polymarket — each member is the YES side of its own condition (bare
+        `0x…` or `0x…_yes`, never `_no`), conditions and tokens all distinct.
+    Fewer than `FIELD_CELL_MIN_MEMBERS`, a member without a contract, or any other
+    venue → None. Mutual exclusivity itself stays the board's flag, exactly the
+    premise the squeeze already runs on; this adds no new source of truth.
+    """
+    ids = sorted({int(m) for m in members})
+    if len(ids) < FIELD_CELL_MIN_MEMBERS:
+        return None
+    found = [contracts.get(m) for m in ids]
+    if any(not isinstance(c, Mapping) for c in found):
+        return None
+    if market_source == "kalshi":
+        prefix = f"{(market_external_id or '').strip()}-"
+        tickers = [c.get("ticker") for c in found]
+        if (
+            prefix == "-"
+            or any(c.get("venue") != "kalshi" for c in found)
+            or any(not isinstance(t, str) or not t.startswith(prefix) for t in tickers)
+            or any(c.get("outcome_external_id") != c.get("ticker") for c in found)
+            or len(set(tickers)) != len(tickers)
+        ):
+            return None
+        return ids
+    if market_source == "polymarket":
+        conditions = [c.get("condition_id") for c in found]
+        tokens = [c.get("token_id") for c in found]
+        if (
+            any(c.get("venue") != "polymarket" for c in found)
+            or any(not isinstance(k, str) or not k.startswith("0x") for k in conditions)
+            or any(c.get("outcome_external_id") not in (k, f"{k}_yes") for c, k in zip(found, conditions))
+            or any(not t for t in tokens)
+            or len(set(conditions)) != len(conditions)
+            or len(set(tokens)) != len(tokens)
+        ):
+            return None
+        return ids
+    return None
 
 
 def _local_spacing(leg: Sequence[Observation]) -> list[float]:
