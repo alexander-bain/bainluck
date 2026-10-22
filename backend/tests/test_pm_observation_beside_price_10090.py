@@ -31,7 +31,11 @@ def consumer_rig(monkeypatch):
     entered, release = asyncio.Event(), asyncio.Event()
     values = {row.id: row.current_probability for row in rows}
     bound = [(now - timedelta(seconds=1)).timestamp()]
-    held = NS(bound_for=lambda mark: bound[0] if mark else None,
+    class Bounds(NS):
+        def __contains__(self, oid):
+            return False
+
+    held = Bounds(bound_for=lambda mark: bound[0] if mark else None,
               note_input=lambda mark: None, sample_database_clock=AsyncMock(),
               release=lambda ids: None)
     refresher.held_quotes = held

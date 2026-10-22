@@ -1958,7 +1958,10 @@ def _pm_lock_isolated_chunks(
     complement_of: dict[int, int],
     chunk_rows: int,
 ) -> list[list[int]]:
-    """Isolate admitted event cohorts only after their ordinary lock failure.
+    """Isolate selected admitted event cohorts without splitting questions.
+
+    Callers select lock retries or acknowledged optional observation cohorts;
+    selection only schedules the ordinary writer, never bypasses it.
 
     The caller passes separately planned headline and prop transactions. Never
     admit another buffered row or change the open cap here. Within the admitted
@@ -4273,8 +4276,45 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # A typed rollback may have coupled unrelated events in one
                 # ordinary chunk. Retry only its admitted event/question units;
                 # fresh siblings then retain their own cooldown eligibility.
+                isolated_events = set(lock_retry_events)
+                if getattr(blend_refresher, "preview_events", ()):
+                    async with buffer_lock:
+                        held_events = (
+                            stamp_owner.held_events()
+                            if stamp_owner.task is not None and not stamp_owner.task.done()
+                            else set()
+                        )
+                        if held_events is not None:
+                            pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+                            blocked = (
+                                held_events | lock_retry_events
+                                | catalog_boundary.bridges.reserved
+                                | catalog_boundary.bridges.unstamped
+                                | event_ids_for_outcomes(event_id_by_outcome, withdraw_buffer)
+                                | (set(pending_reader()) if callable(pending_reader) else set())
+                            )
+                            held_quotes = getattr(blend_refresher, "held_quotes", None)
+                            event_legs = {}
+                            for oid, value in price_buffer.items():
+                                eid = headline_event_ids.get(oid)
+                                if eid in blend_refresher.preview_events and eid not in blocked:
+                                    event_legs.setdefault(eid, []).append((oid, value))
+                            for eid, legs in event_legs.items():
+                                if all(
+                                    oid not in open_outcome_ids
+                                    and observation_continuity.get(oid) is not None
+                                    and catalog_boundary.observation_ack.get(oid) == observation_continuity[oid]
+                                    and observation_continuity[oid][1] == round(float(value), 6)
+                                    and (held_quotes is None or oid not in held_quotes)
+                                    for oid, value in legs
+                                ):
+                                    isolated_events.add(eid)
+                # A known unchanged cohort need not share an unrelated SQL
+                # wait. This is a scheduling hint only: every admitted row still
+                # reaches write_chunk, including heartbeat/held-return forcing.
+                # Market/complement units remain indivisible across events.
                 chunks = _pm_lock_isolated_chunks(
-                    chunks, lock_retry_events, event_id_by_outcome,
+                    chunks, isolated_events, event_id_by_outcome,
                     market_by_outcome, open_complement_of, FLUSH_CHUNK_ROWS,
                 )
             stats["open_contract_flush_deferred"] += len(batch) - sum(
