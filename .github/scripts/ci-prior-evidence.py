@@ -34,6 +34,8 @@ SARIF_MAX_BYTES = 8_000_000  # >2x the observed 3.54 MB Python snapshot; SARIF O
 # Pending analysis-step rereads: 1/2/4 s, then every 4 s. The sleeps total the
 # 75 s API deadline, so that deadline (request time included), never this
 # count, ends a pending wait; the count only keeps the reads finite (#11445).
+# A run-level `queued` read of the producer's own attempt rereads on the same
+# schedule against the same deadline.
 ANALYSIS_READINESS_DELAYS = (1, 2, 4) + (4,) * 17
 SECURITY_RECORD_STEP = "Record CodeQL checkout provenance"
 SECURITY_QUALIFY_STEP = "Qualify compose security or record master baseline"
@@ -709,7 +711,9 @@ def security_record(env, language):
     return {**proof, "tree": tree, "base": base}
 
 
-def _validate_codeql_run(run, head, branch, repo_id, *, attempt=None, successful=True):
+def _validate_codeql_run(
+    run, head, branch, repo_id, *, attempt=None, successful=True, queued=False
+):
     require(
         run["path"] == CODEQL_WORKFLOW
         and run["event"] == "push"
@@ -735,6 +739,7 @@ def _validate_codeql_run(run, head, branch, repo_id, *, attempt=None, successful
     else:
         require(
             run["status"] == "in_progress"
+            or (queued and run["status"] == "queued" and run["conclusion"] is None)
             or (run["status"] == "completed" and run["conclusion"] == "success"),
             "CodeQL producer attempt unpaid",
         )
@@ -791,6 +796,7 @@ def _security_diagnostic(checkpoint, **fields):
         "provenance",
         "run-lookup",
         "run-validation",
+        "run-readiness-wait",
         "repository-binding",
         "jobs-lookup",
         "matrix-membership",
@@ -868,6 +874,50 @@ def _security_diagnostic(checkpoint, **fields):
             continue
         values.append(f"{key}={safe}")
     print("SECURITY CHECKPOINT " + label + (" " + " ".join(values) if values else ""))
+
+
+def _producer_run(api, expected, branch):
+    """Bounded rereads of only a run-level queued read of the producer's attempt.
+
+    The runs API can report the exact attempt queued while its own job is
+    running (#11445, 39793061366 attempt 1). Each read passes the full run
+    identity validation before queued counts as pending; queued never pays,
+    every other state refuses at once, and waits share the original deadline.
+    """
+    for read_index in range(len(ANALYSIS_READINESS_DELAYS) + 1):
+        require(time.monotonic() < api.deadline, "evidence decision deadline")
+        run = api.get(f"actions/runs/{expected['run_id']}")
+        require(time.monotonic() < api.deadline, "evidence decision deadline")
+        _security_diagnostic(
+            "run-validation",
+            run_id=run.get("id"),
+            attempt=run.get("run_attempt"),
+            expected_attempt=expected["attempt"],
+            status=run.get("status"),
+            conclusion=run.get("conclusion"),
+        )
+        _validate_codeql_run(
+            run,
+            expected["head"],
+            branch,
+            expected["repository_id"],
+            attempt=expected["attempt"],
+            successful=False,
+            queued=True,
+        )
+        if run["status"] != "queued":
+            return run
+        require(
+            read_index < len(ANALYSIS_READINESS_DELAYS),
+            "CodeQL producer attempt unpaid",
+        )
+        delay = ANALYSIS_READINESS_DELAYS[read_index]
+        require(time.monotonic() + delay < api.deadline, "evidence decision deadline")
+        _security_diagnostic(
+            "run-readiness-wait", read_count=read_index + 1, wait_seconds=delay
+        )
+        time.sleep(delay)
+    raise ValueError("CodeQL producer attempt unpaid")
 
 
 def _producer_analysis_step(api, run, language, *, diagnostic=False):
@@ -1579,24 +1629,8 @@ def qualify_security(api, env, provenance, sarif_id, language):
     _security_diagnostic(
         "run-lookup", run_id=expected["run_id"], expected_attempt=expected["attempt"]
     )
-    run = api.get(f"actions/runs/{expected['run_id']}")
-    _security_diagnostic(
-        "run-validation",
-        run_id=run.get("id"),
-        attempt=run.get("run_attempt"),
-        expected_attempt=expected["attempt"],
-        status=run.get("status"),
-        conclusion=run.get("conclusion"),
-    )
     branch = expected["ref"].removeprefix("refs/heads/")
-    _validate_codeql_run(
-        run,
-        expected["head"],
-        branch,
-        expected["repository_id"],
-        attempt=expected["attempt"],
-        successful=False,
-    )
+    run = _producer_run(api, expected, branch)
     _security_diagnostic("repository-binding")
     if isinstance(api, API):
         api.bind_repository(run["repository"])
