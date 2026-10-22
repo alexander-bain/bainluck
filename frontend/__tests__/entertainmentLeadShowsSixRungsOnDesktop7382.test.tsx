@@ -191,20 +191,23 @@ const leadRows = (cell: Node) =>
 const sideRows = (cell: Node) =>
   walk(cell).filter((n) => styleOf(n)["grid-template-columns"] === "auto 1fr auto");
 
-/** The text of a node's subtree, from the raw markup the parser skipped. */
-function textOf(html: string): string {
-  return html.replace(/<[^>]*>/g, "");
-}
-
 describe("#7382 — the desktop lead shows more of its own field", () => {
   it("ARM 1: the lead renders six of eight `lead_outcomes`, in served order", () => {
     const lead = renderHero().children[0];
     expect(leadRows(lead)).toHaveLength(6);
     // Each row's own markup, in document order: row i names served rung i.
     const html = renderToStaticMarkup(React.createElement(EntertainmentPage));
-    const segments = html.split('data-testid="ent-lead-row"').slice(1).map(textOf);
+    // Each row's raw markup; a rung name is plain text inside one span.
+    const segments = html.split('data-testid="ent-lead-row"').slice(1);
     expect(segments).toHaveLength(6);
     OSCAR.slice(0, 6).forEach((o, i) => expect(segments[i]).toContain(o.name));
+    // The rows consume the scale the stylesheet sets per breakpoint (ARM 5);
+    // a fixed number or bar size here would ignore both the desktop and the
+    // narrow values.
+    for (const seg of segments) {
+      expect(seg).toContain("font-size:var(--ent-lead-pct, 12px)");
+      expect(seg).toContain("height:var(--ent-lead-bar, 4px)");
+    }
     expect(html).not.toContain("Seventh Rung");
     expect(html).not.toContain("Eighth Rung");
   });
