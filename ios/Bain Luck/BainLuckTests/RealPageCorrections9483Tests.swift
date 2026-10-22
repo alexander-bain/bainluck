@@ -273,7 +273,7 @@ final class RealPageCorrections9483Tests: XCTestCase {
             let view = FlowLayout(spacing: 8) {
                 Text(long).font(.caption2).fixedSize(horizontal: false, vertical: true)
             }
-            let host = UIHostingController(rootView: view.frame(width: width))
+            let host = hostForMeasurement(view.frame(width: width))
             return host.sizeThatFits(in: CGSize(width: width, height: 10_000)).height
         }
         let oneLine = height(2_000)
