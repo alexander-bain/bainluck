@@ -218,3 +218,111 @@ struct LivePregameBaselineLine11296: View {
         .accessibilityIdentifier(Self.accessibilityIdentifier)
     }
 }
+
+/// #11296 — WHERE THE LIVE HEADLINE'S FORECASTS CAME FROM, in the page's
+/// existing information popover (`FreshnessRevealView`, opened by the same
+/// control that reports delivery and confidence). Not a headline row, badge,
+/// button or fetch: it prints what `EventDetailView.liveForecast11296` already
+/// admitted for the pair the headline prints, and decides nothing.
+///
+/// Each forecast keeps its own facts, never the other's and never the phone's:
+///
+///   - CURRENT    its own sportsbook count and its EARLIEST confirmation — the
+///                oldest of the contributing quotes' confirmations, so the
+///                stalest line in the pair. Its latest capture is NOT printed:
+///                a quote first seen before the start and reconfirmed after it
+///                carries an old capture time, which is not a last update, a
+///                confirmation or a kickoff.
+///   - RETAINED   its own count, the RANGE its lines were recorded in (each
+///                sportsbook's last line before the start was taken at its own
+///                time; there is no single "recorded at"), and the scheduled
+///                start they were taken before — listed, never observed.
+///   - BASIS      one sentence: both are worked out from the sportsbooks'
+///                spread and total, over the period the label already names.
+///
+/// No app receipt time appears here: that clock describes delivery to this
+/// phone and stays in the delivery details above the divider. A forecast with
+/// no retained pair prints no retained section — nothing is reconstructed.
+/// Local dates and times, the date always said.
+struct LiveForecastDetails11296: View {
+    let forecast: LivePregameComparison11296.Headline
+
+    static let accessibilityIdentifier = "live-forecast-details-11296"
+
+    /// One forecast's facts: its own label, then its lines.
+    nonisolated struct Section: Equatable, Sendable {
+        let title: String
+        let lines: [String]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(Self.sections(forecast).enumerated()), id: \.offset) { _, section in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(section.title).fontWeight(.semibold)
+                    ForEach(Array(section.lines.enumerated()), id: \.offset) { _, line in
+                        Text(line).foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+            Text(Self.basis(forecast.current.admitted.provenance.period))
+                .foregroundStyle(.secondary)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier(Self.accessibilityIdentifier)
+    }
+
+    /// The current forecast first, then the retained one when it prints.
+    nonisolated static func sections(
+        _ h: LivePregameComparison11296.Headline,
+        calendar: Calendar = .current, locale: Locale = .current
+    ) -> [Section] {
+        let now = h.current.admitted.provenance
+        var sections = [Section(title: h.current.label, lines: [
+            from(now.bookmakerCount),
+            "Oldest confirmation \(clock(now.earliestConfirmedAt, calendar: calendar, locale: locale))",
+        ])]
+        if let b = h.baseline {
+            sections.append(Section(title: b.label, lines: [
+                from(b.bookmakerCount),
+                "Lines recorded \(recordedRange(b.earliestCapturedAt, b.latestCapturedAt, calendar: calendar, locale: locale))",
+                "Scheduled start \(clock(b.scheduledStart, calendar: calendar, locale: locale))",
+            ]))
+        }
+        return sections
+    }
+
+    nonisolated static func from(_ count: Int) -> String {
+        "From \(count) \(count == 1 ? "sportsbook" : "sportsbooks")"
+    }
+
+    /// The method, with the period each pair settles on.
+    nonisolated static func basis(_ period: LiveProjectedFinalAdmission2920.ScorePeriod) -> String {
+        switch period {
+        case .fullGame:
+            return "Worked out from the sportsbooks' spread and total for the full game, overtime included."
+        case .regulation:
+            return "Worked out from the sportsbooks' spread and total for 90 minutes plus stoppage time, not extra time."
+        }
+    }
+
+    /// A local date and time: "Oct 21 at 7:42 PM" in US English.
+    nonisolated static func clock(_ date: Date, calendar: Calendar, locale: Locale) -> String {
+        date.formatted(Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+            .month(.abbreviated).day().hour().minute())
+    }
+
+    /// "Oct 18 at 9:29 AM – 9:59 AM"; the date repeats only when the local day
+    /// changes, and one instant prints once.
+    nonisolated static func recordedRange(_ earliest: Date, _ latest: Date,
+                                          calendar: Calendar, locale: Locale) -> String {
+        let first = clock(earliest, calendar: calendar, locale: locale)
+        guard earliest != latest else { return first }
+        let second = calendar.isDate(earliest, inSameDayAs: latest)
+            ? latest.formatted(Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+                .hour().minute())
+            : clock(latest, calendar: calendar, locale: locale)
+        return "\(first) – \(second)"
+    }
+}

@@ -445,6 +445,110 @@ final class LivePregameComparison11296Tests: XCTestCase {
                        "Oklahoma\u{00A0}21 · Georgia\u{00A0}24", "away first, as the current figure reads")
     }
 
+    // MARK: - Where each forecast came from (the existing information popover)
+
+    private typealias D = LiveForecastDetails11296
+
+    /// A reader in Pacific time with US English, so the clocks are fixed.
+    private static let pacific: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        return c
+    }()
+    private static let usEnglish = Locale(identifier: "en_US")
+
+    private func details(_ h: C.Headline, calendar: Calendar = LivePregameComparison11296Tests.pacific) -> [D.Section] {
+        D.sections(h, calendar: calendar, locale: Self.usEnglish)
+    }
+
+    func testTheDetailsCarryEachForecastsOwnCountAndClocks() throws {
+        // The current object's newest capture (19:40Z, 12:40 PM PT) precedes the
+        // start: an unchanged quote reconfirmed after it. Admitted, never printed.
+        let object = Self.nflObject.replacingOccurrences(
+            of: #""latest_captured_at": "2026-10-19T21:06:00+00:00""#,
+            with: #""latest_captured_at": "2026-10-19T19:40:00+00:00""#)
+        XCTAssertNotEqual(object, Self.nflObject, "anti-vacuity: the capture moved")
+        let e = try detail(rowJSON(liveProjection: object, pregameProjection: Self.baselineNFL))
+        let h = try XCTUnwrap(forecast(e))
+        let sections = details(h)
+        XCTAssertEqual(sections.map(\.title), ["Projected final", "Projection before scheduled start"])
+
+        let now = try XCTUnwrap(sections.first)
+        guard now.lines.count == 2 else { return XCTFail("count and earliest confirmation only: \(now.lines)") }
+        XCTAssertEqual(now.lines.first, "From 2 sportsbooks", "the current object's own count, not the baseline's")
+        XCTAssertTrue(now.lines[1].hasPrefix("Oldest confirmation Oct 19"), now.lines[1])
+        XCTAssertTrue(now.lines[1].contains("2:06"), "21:06Z, the oldest contributing confirmation: \(now.lines[1])")
+        XCTAssertFalse(now.lines.joined().contains("12:40"), "the latest capture is not an update time")
+        XCTAssertFalse(now.lines.joined().contains("1:25"), "the scheduled start is not a confirmation")
+
+        let before = try XCTUnwrap(sections.last)
+        guard sections.count == 2, before.lines.count == 3 else {
+            return XCTFail("count, recorded range, scheduled start: \(before.lines)")
+        }
+        XCTAssertEqual(before.lines[0], "From 4 sportsbooks", "the baseline's own count reaches the details")
+        XCTAssertTrue(before.lines[1].hasPrefix("Lines recorded Oct 19"), before.lines[1])
+        XCTAssertTrue(before.lines[1].contains("11:02") && before.lines[1].contains("1:21")
+                      && before.lines[1].contains(" – "), "18:02Z to 20:21Z, local: \(before.lines[1])")
+        XCTAssertEqual(before.lines[1].components(separatedBy: "Oct").count - 1, 1, "one local day, its date once")
+        XCTAssertTrue(before.lines[2].hasPrefix("Scheduled start Oct 19"), before.lines[2])
+        XCTAssertTrue(before.lines[2].contains("1:25"), "20:25Z, the listed start: \(before.lines[2])")
+    }
+
+    func testWithNoBaselineTheDetailsReconstructNothing() throws {
+        for bad in [nil, "{}", Self.baselineSoccer] as [String?] {
+            let e = try detail(rowJSON(liveProjection: Self.nflObject, pregameProjection: bad))
+            let h = try XCTUnwrap(forecast(e), bad ?? "absent")
+            let sections = details(h)
+            XCTAssertEqual(sections.map(\.title), ["Projected final"], bad ?? "absent")
+            let lines = sections.flatMap(\.lines)
+            XCTAssertFalse(lines.contains { $0.hasPrefix("Lines recorded") || $0.hasPrefix("Scheduled start") },
+                           "no baseline, no baseline facts: \(lines)")
+        }
+        // No admitted pair, no forecast: the popover keeps only delivery and confidence.
+        let refused = try detail(rowJSON(liveProjection: nil, pregameProjection: Self.baselineNFL))
+        XCTAssertNil(forecast(refused))
+    }
+
+    func testSoccerDetailsKeepTheNinetyMinuteBasis() throws {
+        let e = try detail(rowJSON(sport: "soccer_epl", home: 1, away: 0, period: "67'",
+                                   liveProjection: Self.soccerObject, pregameProjection: Self.baselineSoccer))
+        let h = try XCTUnwrap(forecast(e))
+        XCTAssertEqual(details(h).map(\.title),
+                       ["Projected final (90 min)", "Projection (90 min) before scheduled start"])
+        XCTAssertEqual(details(h).last?.lines.first, "From 3 sportsbooks")
+        XCTAssertEqual(h.current.admitted.provenance.period, .regulation)
+        let basis = D.basis(h.current.admitted.provenance.period)
+        XCTAssertTrue(basis.contains("spread and total") && basis.contains("90 minutes") && basis.contains("not extra time"), basis)
+        let nfl = D.basis(.fullGame)
+        XCTAssertTrue(nfl.contains("spread and total") && nfl.contains("full game") && nfl.contains("overtime included"), nfl)
+    }
+
+    func testTheRecordedRangeIsLocalAndDatesOnlyWhenTheDayChanges() throws {
+        let iso = ISO8601DateFormatter()
+        let lateNight = try XCTUnwrap(iso.date(from: "2026-10-19T06:30:00Z"))   // Oct 18, 11:30 PM PT
+        let pastMidnight = try XCTUnwrap(iso.date(from: "2026-10-19T07:30:00Z")) // Oct 19, 12:30 AM PT
+        let pacific = D.recordedRange(lateNight, pastMidnight, calendar: Self.pacific, locale: Self.usEnglish)
+        XCTAssertTrue(pacific.contains("Oct 18") && pacific.contains("Oct 19"), pacific)
+        var eastern = Calendar(identifier: .gregorian)
+        eastern.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let sameDay = D.recordedRange(lateNight, pastMidnight, calendar: eastern, locale: Self.usEnglish)
+        XCTAssertEqual(sameDay.components(separatedBy: "Oct").count - 1, 1, "one local day in New York: \(sameDay)")
+        XCTAssertFalse(D.recordedRange(lateNight, lateNight, calendar: Self.pacific, locale: Self.usEnglish).contains("–"),
+                       "one instant prints once")
+        XCTAssertEqual(D.from(1), "From 1 sportsbook")
+    }
+
+    func testTheDetailsUseNoDeliveryWords() throws {
+        let e = try detail(rowJSON(liveProjection: Self.nflObject, pregameProjection: Self.baselineNFL))
+        let h = try XCTUnwrap(forecast(e))
+        let text = details(h).flatMap { [$0.title] + $0.lines } + [D.basis(.fullGame), D.basis(.regulation)]
+        for line in text {
+            for word in ["eceived", "update", "published", "bookmaker", "books "] {
+                XCTAssertFalse(line.contains(word), "'\(word)' in: \(line)")
+            }
+        }
+    }
+
     // MARK: - Wiring (source guards)
 
     private func source(_ path: String) throws -> String {
@@ -534,5 +638,55 @@ final class LivePregameComparison11296Tests: XCTestCase {
         XCTAssertFalse(helper.contains("projectedHomeScore:"), "no score is manufactured")
         XCTAssertFalse(helper.contains("hasPrefix"), "no period read from the sport's name here")
         XCTAssertFalse(helper.contains("homeScore"), "the actual score does not bound a pregame forecast")
+    }
+
+    func testTheInformationPopoverDescribesTheForecastTheHeadlinePrints() throws {
+        let page = try source("Views/EventDetailView.swift")
+        // The page's one existing information surface gains the forecast; no new
+        // control, no second popover.
+        XCTAssertEqual(occurrences("FreshnessRevealView(", in: page), 1)
+        XCTAssertTrue(page.contains(
+            "FreshnessRevealView(status:vm.liveUpdateStatus,lastReceivedAt:vm.priceActivity?.receivedAt,confidenceTier:confidenceTier,forecast:revealForecast11296)"))
+        XCTAssertEqual(occurrences("LiveForecastDetails11296(", in: page), 0, "only inside the popover")
+        XCTAssertEqual(occurrences("showProbabilityDetails", in: page), 3, "the one existing open/close state")
+        // The same decision, on the same headline row, both hosts mount from.
+        let reveal = try XCTUnwrap(page.range(of: "privatevarrevealForecast11296:LivePregameComparison11296.Headline?{"))
+        XCTAssertTrue(page[reveal.upperBound...].hasPrefix(
+            "guardletserved=vm.eventelse{returnnil}letevent=vm.headline(served)"
+            + "returnliveForecast11296(event,hasScore:EventDetailView.showsScore(status:event.status,away:event.awayScore,home:event.homeScore))}"))
+        XCTAssertTrue(page.contains("heroSection(vm.headline(event))"), "the hero reads the same headline row")
+    }
+
+    func testThePopoverSetsTheForecastApartFromDeliveryAndPrintsItsSections() throws {
+        let feedback = try source("Components/LivePriceChangeFeedback.swift")
+        let start = try XCTUnwrap(feedback.range(of: "structFreshnessRevealView:View{"))
+        let reveal = String(feedback[start.upperBound...])
+        XCTAssertTrue(reveal.contains("varforecast:LivePregameComparison11296.Headline?=nil"))
+        let receipt = try XCTUnwrap(reveal.range(of: "Text(\"Receivedonthisdeviceat"))
+        let tier = try XCTUnwrap(reveal.range(of: "Text(Confidence.heroBasis)"))
+        let mount = try XCTUnwrap(reveal.range(of: "ifletforecast{Divider()LiveForecastDetails11296(forecast:forecast)}"))
+        XCTAssertTrue(receipt.upperBound < mount.lowerBound && tier.upperBound < mount.lowerBound,
+                      "below delivery and confidence, behind its own divider")
+        XCTAssertEqual(occurrences("LiveForecastDetails11296(", in: feedback), 1)
+
+        let helper = try source("Utilities/LivePregameComparison11296.swift")
+        let viewStart = try XCTUnwrap(helper.range(of: "structLiveForecastDetails11296:View{"))
+        let view = String(helper[viewStart.upperBound...])
+        // The body prints exactly what `sections` and `basis` say, so the tests
+        // above decide what the reader sees.
+        XCTAssertTrue(view.contains("ForEach(Array(Self.sections(forecast).enumerated()),id:\\.offset)"))
+        XCTAssertTrue(view.contains("Text(section.title)"))
+        XCTAssertTrue(view.contains("Text(line)"))
+        XCTAssertTrue(view.contains("Text(Self.basis(forecast.current.admitted.provenance.period))"))
+        XCTAssertFalse(view.contains("lineLimit"), "wraps, never truncates")
+        XCTAssertFalse(view.contains("minimumScaleFactor"), "wraps, never shrinks")
+        // Each forecast's own clocks; never the receipt's, never the newest capture of the current pair.
+        XCTAssertFalse(view.contains("receivedAt"), "a delivery clock never stands in for a source clock")
+        XCTAssertFalse(view.contains("now.latestCapturedAt"), "the current pair's newest capture is not an update time")
+        XCTAssertTrue(view.contains("now.earliestConfirmedAt"))
+        XCTAssertTrue(view.contains("b.earliestCapturedAt,b.latestCapturedAt"))
+        XCTAssertTrue(view.contains("b.scheduledStart"))
+        XCTAssertFalse(view.contains("Button("), "no new control")
+        XCTAssertFalse(view.contains("URLSession") || view.contains(".task"), "no fetch")
     }
 }

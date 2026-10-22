@@ -1047,7 +1047,8 @@ struct EventDetailView: View {
         // scrolls if even the lower space runs out.
         .popover(isPresented: $showProbabilityDetails, arrowEdge: .top) {
             FreshnessRevealView(status: vm.liveUpdateStatus,
-                lastReceivedAt: vm.priceActivity?.receivedAt, confidenceTier: confidenceTier)
+                lastReceivedAt: vm.priceActivity?.receivedAt, confidenceTier: confidenceTier,
+                forecast: revealForecast11296)
                 // idealWidth: the popover sizes from the IDEAL size; with only a
                 // max it measured the text unwrapped and came out 144pt tall.
                 .frame(idealWidth: 300, maxWidth: 300)
@@ -2100,6 +2101,16 @@ struct EventDetailView: View {
             ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
             ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
             hasScore: hasScore)
+    }
+
+    /// #11296 — the forecast the information popover describes: the same
+    /// decision, on the same headline row, that both hosts mount from — so it
+    /// opens on the pair the page prints and is nil wherever none prints.
+    private var revealForecast11296: LivePregameComparison11296.Headline? {
+        guard let served = vm.event else { return nil }
+        let event = vm.headline(served)
+        return liveForecast11296(event, hasScore: EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore))
     }
 
     /// #11296 — the same forecast on a live page the paired headline does not
