@@ -23,10 +23,12 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import func, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models.models import Event, FuturesOutcome, OwedChartPoint, WinProbSnapshot
+from app.models.models import (
+    Event, FuturesMarket, FuturesOutcome, OwedChartPoint, WinProbSnapshot,
+)
 from app.services.database import Base
 from app.tasks.live_blend_refresh import LiveBlendRefresher, OwedChartCustody
 from tests.integration.test_live_blend_grouped_commit_8129_pg import DB_URL, seed
@@ -459,3 +461,160 @@ async def test_two_drains_overlapping_on_the_same_rows_pay_each_once(rig):
             select(func.count(OwedChartPoint.id))
             .where(OwedChartPoint.source == "polymarket")
         )).scalar() == 0
+
+
+# ── #10090: a deleted event does not owe a chart write forever ───────────────
+
+
+async def _dead_run_owes_two_events(rig):
+    """Events 1 and 2, each with a prior point; a run killed while its chart
+    writer was held leaves one custody row per event."""
+    await seed(rig, 2)
+    async with rig.maker() as session:
+        for eid in (1, 2):
+            session.add(WinProbSnapshot(
+                event_id=eid, source="polymarket",
+                captured_at=datetime.now(timezone.utc) - timedelta(seconds=60),
+                home_win_probability=0.30, away_win_probability=0.70,
+                reading_count=1,
+            ))
+        await session.commit()
+    dead, frames = _refresher(rig)
+    holder = rig.maker()
+    await holder.execute(select(WinProbSnapshot).with_for_update())
+    try:
+        await asyncio.wait_for(dead.refresh([1, 2], flush_started=1000), 1)
+        if dead._history_task is not None:
+            dead._history_task.cancel()
+            await asyncio.gather(dead._history_task, return_exceptions=True)
+    finally:
+        await holder.rollback()
+        await holder.close()
+    assert sorted(row.event_id for row in await _owed(rig)) == [1, 2]
+    return {f["event_id"]: f for f in frames}
+
+
+async def _delete_event(rig, eid):
+    async with rig.maker() as session:
+        await session.execute(delete(WinProbSnapshot).where(WinProbSnapshot.event_id == eid))
+        await session.execute(delete(FuturesOutcome).where(FuturesOutcome.market_id == eid))
+        await session.execute(delete(FuturesMarket).where(FuturesMarket.id == eid))
+        await session.execute(delete(Event).where(Event.id == eid))
+        await session.commit()
+
+
+async def _event_points(rig, eid):
+    async with rig.maker() as session:
+        rows = (await session.execute(
+            select(WinProbSnapshot.home_win_probability, WinProbSnapshot.captured_at)
+            .where(WinProbSnapshot.event_id == eid)
+            .order_by(WinProbSnapshot.captured_at)
+        )).all()
+    return [(float(v), at) for v, at in rows]
+
+
+def _spy_attempts(r, rig):
+    """(event, verify_event, committed, events still owed after) per attempt."""
+    attempts = []
+    real = r._write_owed_snapshots
+
+    async def spy(owed, now, factory, **kwargs):
+        ok = await real(owed, now, factory, **kwargs)
+        attempts.append((
+            owed[0][0], kwargs.get("verify_event", False), ok,
+            sorted(row.event_id for row in await _owed(rig)),
+        ))
+        return ok
+
+    r._write_owed_snapshots = spy
+    return attempts
+
+
+async def test_a_deleted_events_point_fails_once_on_the_real_fk_then_retires(rig, caplog):
+    """The event row is deleted after its stamp committed the custody row. The
+    fresh run's first attempt raises the REAL FK and keeps the row; its retry
+    finds the row gone and retires the point. The sibling is paid throughout."""
+    frames = await _dead_run_owes_two_events(rig)
+    await _delete_event(rig, 1)
+    fresh, _ = _refresher(rig)
+    attempts = _spy_attempts(fresh, rig)
+    await _drain(fresh)
+    assert attempts == [
+        (1, False, False, [1, 2]),
+        (2, False, True, [1]),
+        (1, True, True, []),
+    ]
+    assert "win_prob_snapshots_event_id_fkey" in caplog.text, "the real FK failed attempt 1"
+    assert fresh.stats["history_event_gone"] == 1
+    assert await _owed(rig) == []
+    assert await _event_points(rig, 1) == []
+    assert (await _event_points(rig, 2))[-1] == (0.7, _at(frames[2]))
+
+
+async def test_a_present_events_failed_point_is_written_on_its_retry(rig):
+    """Legitimate debt: attempt 1 times out on a held chart row of a PRESENT
+    event; the retry looks the row up, finds it and writes normally."""
+    frames = await _dead_run_owes_two_events(rig)
+    fresh, _ = _refresher(rig)
+    attempts = _spy_attempts(fresh, rig)
+    holder = rig.maker()
+    await holder.execute(
+        select(WinProbSnapshot).where(WinProbSnapshot.event_id == 1).with_for_update()
+    )
+    try:
+        await fresh.refresh_pending(flush_started=time.monotonic() + 10_000)
+        await asyncio.wait_for(fresh._history_task, 5)
+    finally:
+        await holder.rollback()
+        await holder.close()
+    assert attempts[:2] == [(1, False, False, [1, 2]), (2, False, True, [1])]
+    await _drain(fresh)
+    assert attempts[2:] == [(1, True, True, [])]
+    assert fresh.stats["history_event_gone"] == 0
+    assert (await _event_points(rig, 1))[-1] == (0.7, _at(frames[1]))
+    assert await _owed(rig) == []
+
+
+async def test_a_failed_commit_of_a_retirement_keeps_the_row_and_counts_nothing(rig):
+    frames = await _dead_run_owes_two_events(rig)
+    await _delete_event(rig, 1)
+    failing = [True]
+
+    @contextlib.asynccontextmanager
+    async def factory():
+        async with rig.maker() as session:
+            try:
+                yield session
+                if failing[0] and session.info.get("retire"):
+                    failing[0] = False
+                    raise ConnectionError("COMMIT failed before reaching the server")
+                await session.commit()
+            except BaseException:
+                await session.rollback()
+                raise
+
+    fresh, _ = _refresher(rig, factory=factory)
+    real = fresh._write_owed_snapshots
+
+    async def marked(owed, now, factory_, **kwargs):
+        @contextlib.asynccontextmanager
+        async def tagged():
+            async with factory_() as session:
+                session.info["retire"] = kwargs.get("verify_event", False)
+                yield session
+
+        return await real(owed, now, tagged, **kwargs)
+
+    fresh._write_owed_snapshots = marked
+    attempts = _spy_attempts(fresh, rig)
+    await _drain(fresh)
+    assert not failing[0], "the retirement's COMMIT failed once"
+    assert attempts == [
+        (1, False, False, [1, 2]),
+        (2, False, True, [1]),
+        (1, True, False, [1]),
+        (1, True, True, []),
+    ]
+    assert fresh.stats["history_event_gone"] == 1
+    assert await _owed(rig) == []
+    assert (await _event_points(rig, 2))[-1] == (0.7, _at(frames[2]))
