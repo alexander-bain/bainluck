@@ -9,7 +9,7 @@ class Source {
   static current: Source;
   readyState = 1;
   listeners = new Map<string, (event: unknown) => void>();
-  constructor() { Source.current = this; }
+  constructor(readonly url: string) { Source.current = this; }
   close() { this.readyState = 2; }
   addEventListener(name: string, fn: (event: unknown) => void) { this.listeners.set(name, fn); }
   emit(name: string, payload: unknown) { this.listeners.get(name)?.({ data: JSON.stringify(payload) }); }
@@ -38,6 +38,7 @@ test('resync clears all three provisional surfaces through the actual hook befor
   const root = createRoot(host);
   try {
     await act(async () => { root.render(<Page />); });
+    expect(Source.current.url).toMatch(/\/api\/events\/1\/stream\?preview_protocol=folded-v1$/);
     await act(async () => { Source.current.emit('open', {}); Source.current.emit('preview', preview); });
     expect(JSON.parse(host.textContent!)).toEqual({ headline: .48, observed,
       chart: [{ timestamp: observed, home_probability: .48 }] });

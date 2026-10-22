@@ -454,6 +454,11 @@ async def _stream(
     hub = fanout()
     subscription = _FoldSubscription(hub)
     preview_on = event_id in preview_route_events()
+    # Old readers treat a folded frame as a singleton claim. Require explicit
+    # vector-aware admission support before sending provisional folded values.
+    folded_preview_capable = (
+        getattr(request, "query_params", {}).get("preview_protocol") == "folded-v1"
+    )
     started = asyncio.get_event_loop().time()
     _open_connections += 1
     initial_coverage = None
@@ -703,7 +708,8 @@ async def _stream(
                             and frame.get("event_id") == event_id
                             and len(subscription.subscriptions) == 1):
                         yield sse_encode(json.dumps(frame), event="preview")
-                    elif (preview_on and frame.get("event_id") == origin_id
+                    elif (preview_on and folded_preview_capable
+                          and frame.get("event_id") == origin_id
                           and len(subscription.subscriptions) > 1):
                         meta = frame.get("preview", {})
                         if meta.get("kind") == "revoke" and active_preview_origin == origin_id:
