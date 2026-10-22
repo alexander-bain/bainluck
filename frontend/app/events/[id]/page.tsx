@@ -106,6 +106,9 @@ const SpecialEventMarkets = dynamic(() => import("@/components/SpecialEventMarke
 const MarketBrowser = dynamic(() => import("@/components/event/MarketBrowser"), { ssr: false });
 const GameLineBrowser = dynamic(() => import("@/components/event/GameLineBrowser"), { ssr: false });
 const QuestionCatalog = dynamic(() => import("@/components/event/QuestionCatalog"), { ssr: false });
+// #10346 pilot: three supported takeaways, only with ?highlights=preview on an event we hold evidence for.
+const EventHighlightsPreview = dynamic(() => import("@/components/event/EventHighlightsPreview"), { ssr: false });
+import { ALL_MARKETS_ANCHOR_ID, HIGHLIGHTS_PREVIEW_PARAM, highlightsPreviewFor } from "@/lib/eventHighlightsPreview";
 const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), { ssr: false, loading: ChartSkeleton });
 // UX-P152: the tournament's sections OF this page. Dynamic and below the fold —
 // 94 events on the whole site render it and none of them should pay for it in
@@ -1556,6 +1559,7 @@ export default function EventPage({ params }: EventPageProps) {
   // being observed lose its number on the page too.
   // #9483 NBA slice: NBA pages carry the same deck shape — winning margin and
   // scoring expectations from the served question matrix, then the projected finish.
+  const highlightsPreview = highlightsPreviewFor(event?.id, event?.status, searchParams.get(HIGHLIGHTS_PREVIEW_PARAM));
   const nflCardsOn = nflCardsApply(event?.sport);
   const storyCardsOn = storyCardsApply(event?.sport);
   const [nflCardClock, setNflCardClock] = useState(() => Date.now());
@@ -3707,6 +3711,12 @@ export default function EventPage({ params }: EventPageProps) {
       </SectionErrorBoundary>
       )}
 
+      {highlightsPreview && !venueVoided && (
+        <SectionErrorBoundary label="Three takeaways" resetKey={event.id}>
+          <EventHighlightsPreview preview={highlightsPreview} catalogueAvailable={!!gameMarkets} />
+        </SectionErrorBoundary>
+      )}
+
       {/* #9483 — the NFL game stories, each openable full size. */}
       {nflCards.length > 0 && !venueVoided && (
         <SectionErrorBoundary label="Game stories" resetKey={event.id}>
@@ -4003,7 +4013,9 @@ export default function EventPage({ params }: EventPageProps) {
           (#9798), the same rule as the maps and quoted lines. */}
       {gameMarkets && !venueVoided && (
         <SectionErrorBoundary label="All markets" resetKey={gameMarkets}>
-          <QuestionCatalog data={gameMarkets} status={event.status} />
+          <div id={ALL_MARKETS_ANCHOR_ID} className="scroll-mt-20 empty:hidden">
+            <QuestionCatalog data={gameMarkets} status={event.status} />
+          </div>
         </SectionErrorBoundary>
       )}
 

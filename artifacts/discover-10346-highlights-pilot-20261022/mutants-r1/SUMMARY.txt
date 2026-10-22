@@ -1,0 +1,11 @@
+M1-when-not-Pregame: EXIT 1 · 1 failed, 13 passed, 14 total · #10346 fixture against its receipts › labels phases, never clocks, and the recorded instants agree with them
+M10-whole-ignored: EXIT 1 · 2 failed, 12 passed, 14 total · #10346 render › prints the three cards and the catalogue button;#10346 render › formats quotes with a decimal only when they carry one
+M11-recorded-time-dropped: EXIT 1 · 1 failed, 13 passed, 14 total · #10346 render › prints the three cards and the catalogue button
+M2-min-before-first-pitch: EXIT 1 · 1 failed, 13 passed, 14 total · #10346 fixture against its receipts › never makes a claim the evidence does not support
+M3-final-out: EXIT 1 · 1 failed, 13 passed, 14 total · #10346 fixture against its receipts › never makes a claim the evidence does not support
+M4-present-tense-lead: EXIT 1 · 2 failed, 12 passed, 14 total · #10346 fixture against its receipts › states the official facts;#10346 fixture against its receipts › never makes a claim the evidence does not support
+M5-bid-asking-caveat: EXIT 1 · 1 failed, 13 passed, 14 total · #10346 fixture against its receipts › never makes a claim the evidence does not support
+M6-rice-raw-row-not-admitted: EXIT 1 · 1 failed, 13 passed, 14 total · #10346 fixture against its receipts › prints the chance the page already serves for each question
+M7-schlittler-not-served: EXIT 1 · 2 failed, 12 passed, 14 total · #10346 fixture against its receipts › prints the chance the page already serves for each question;#10346 render › prints the three cards and the catalogue button
+M8-grey-panel-back: EXIT 1 · 1 failed, 13 passed, 14 total · #10346 render › prints the three cards and the catalogue button
+M9-count-visual-dropped: EXIT 1 · 1 failed, 13 passed, 14 total · #10346 render › prints the three cards and the catalogue button
