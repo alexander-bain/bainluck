@@ -2004,6 +2004,9 @@ class LiveBlendRefresher:
             # #11181 — custody rows already settled when their point came up
             # (a commit whose acknowledgement was lost, or another drain).
             "history_already_paid": 0,
+            # #10090 — owed points retired because their event row was deleted
+            # after the stamp committed (seen on a retry only; ids never reuse).
+            "history_event_gone": 0,
             # #9484 — committed market invalidations (`live:market:{id}`) this
             # consumer's writers published through the same client. Counted
             # for the same reason as `published`: a quiet market and a dead
@@ -3414,6 +3417,7 @@ class LiveBlendRefresher:
                         [(eid, value, reading)],
                         observed_clock,
                         factory,
+                        verify_event=eid in self._history_retry_at,
                     ):
                         failed.add(eid)
                         self._history_retry_at[eid] = (
@@ -4094,6 +4098,7 @@ class LiveBlendRefresher:
 
     async def _write_owed_snapshots(
         self, owed: list[tuple], now: float, get_task_session,
+        *, verify_event: bool = False,
     ) -> bool:
         """#10090 — report whether the owed points' transaction committed.
 
@@ -4112,12 +4117,21 @@ class LiveBlendRefresher:
         UPDATE queued behind another holder of the latest snapshot row waits
         out the resting statement timeout while the history slot stays taken. `stamp_lock_timeout_ms` falsy keeps it off, as
         it does for the stamp.
+
+        `verify_event` (a retry of a point that already failed once): a point
+        whose event row is gone is retired with its custody row instead of
+        written, so a deleted event does not owe a chart write forever. The
+        check runs after the settle, inside the point's savepoint; a lookup
+        error or a failed COMMIT keeps the debt, as for any failed point.
         """
         from app.utils.repair_lock_budget import (
             SET_LOCK_TIMEOUT_SQL, lock_timeout_value,
         )
 
-        counts = {key: self.stats[key] for key in ("snapshots_written", "snapshots_deduped")}
+        counts = {
+            key: self.stats[key]
+            for key in ("snapshots_written", "snapshots_deduped", "history_event_gone")
+        }
         try:
             async with (
                 self._snapshot_slots_follow_the_commit(
@@ -4140,6 +4154,23 @@ class LiveBlendRefresher:
                         if custody_id is not None and self._chart_custody is not None:
                             if not await self._chart_custody.settle(session, custody_id):
                                 self.stats["history_already_paid"] += 1
+                                continue
+                        if verify_event:
+                            from sqlalchemy import select
+
+                            from app.models.models import Event
+
+                            if (await session.execute(
+                                select(Event.id).where(Event.id == event_id)
+                            )).first() is None:
+                                # The stamp committed against a row that has since
+                                # been deleted, and ids are never reused: nothing is
+                                # owed. The settle above commits with this savepoint.
+                                self.stats["history_event_gone"] += 1
+                                logger.warning(
+                                    "live_blend_refresh[%s]: owed chart point retired, event %s gone",
+                                    self.source, event_id,
+                                )
                                 continue
                         await self._maybe_snapshot(session, event_id, value, reading, now)
                         await session.flush()

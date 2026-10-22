@@ -875,7 +875,7 @@ async def test_real_consumer_joins_history_before_engine_disposal_under_repeated
     async def quote(self, ids, now, **kwargs):
         pass
 
-    async def history(self, owed, now, factory):
+    async def history(self, owed, now, factory, *, verify_event=False):
         async with self._session_slot(), factory():
             entered.set()
             await release.wait()
