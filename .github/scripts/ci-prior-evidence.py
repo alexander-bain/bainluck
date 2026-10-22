@@ -31,6 +31,10 @@ CODEQL_WORKFLOW = ".github/workflows/codeql.yml"
 CODEQL_ANALYSIS_KEY = CODEQL_WORKFLOW + ":analyze"
 SECURITY_LANGUAGES = ("python", "javascript-typescript")
 SARIF_MAX_BYTES = 8_000_000  # >2x the observed 3.54 MB Python snapshot; SARIF ONLY.
+# Pending analysis-step rereads: 1/2/4 s, then every 4 s. The sleeps total the
+# 75 s API deadline, so that deadline (request time included), never this
+# count, ends a pending wait; the count only keeps the reads finite (#11445).
+ANALYSIS_READINESS_DELAYS = (1, 2, 4) + (4,) * 17
 SECURITY_RECORD_STEP = "Record CodeQL checkout provenance"
 SECURITY_QUALIFY_STEP = "Qualify compose security or record master baseline"
 SECURITY_PUBLISH_STEP = "Publish CodeQL security receipt"
@@ -871,9 +875,11 @@ def _producer_analysis_step(api, run, language, *, diagnostic=False):
 
     All other states/errors refuse immediately. Identity pins and the original
     API deadline survive every read; the selected step must still finish green.
+    The jobs API can lag the finished step by more than 7 s (#11445), so a
+    pending read waits on until the next wait would reach that same deadline.
     """
     pinned = None
-    for read_index in range(4):
+    for read_index in range(len(ANALYSIS_READINESS_DELAYS) + 1):
         require(time.monotonic() < api.deadline, "evidence decision deadline")
         if diagnostic:
             _security_diagnostic("jobs-lookup")
@@ -972,8 +978,11 @@ def _producer_analysis_step(api, run, language, *, diagnostic=False):
             and step["conclusion"] is None
             and step["completed_at"] is None
         )
-        require(pending and read_index < 3, "producer analysis step is unpaid")
-        delay = (1, 2, 4)[read_index]
+        require(
+            pending and read_index < len(ANALYSIS_READINESS_DELAYS),
+            "producer analysis step is unpaid",
+        )
+        delay = ANALYSIS_READINESS_DELAYS[read_index]
         require(time.monotonic() + delay < api.deadline, "evidence decision deadline")
         if diagnostic:
             _security_diagnostic(

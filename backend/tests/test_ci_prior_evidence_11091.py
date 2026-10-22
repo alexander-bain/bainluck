@@ -677,15 +677,13 @@ def test_push_security_preserves_original_pr_and_scheduled_analysis_behavior():
     )
     for key in ("name", "runs-on", "permissions", "strategy"):
         assert old_job[key] == new_job[key]
+
     def assert_original_steps(steps):
         kept = [
             s
             for s in steps
             if s["name"] not in SECURITY_STEPS
-            and not (
-                s["name"] == READINESS_STEP
-                and s.get("if") == READINESS_CONDITION
-            )
+            and not (s["name"] == READINESS_STEP and s.get("if") == READINESS_CONDITION)
         ]
         assert len(kept) == len(old_job["steps"])
         for old, new in zip(old_job["steps"], kept):
@@ -1849,7 +1847,7 @@ class ReadinessClock:
         self.now += delay
 
 
-def readiness_api(monkeypatch, *, pending_reads=1):
+def readiness_api(monkeypatch, *, pending_reads=1, latency=0):
     clock = ReadinessClock()
     monkeypatch.setattr(evidence.time, "monotonic", clock.monotonic)
     monkeypatch.setattr(evidence.time, "sleep", clock.sleep)
@@ -1862,6 +1860,7 @@ def readiness_api(monkeypatch, *, pending_reads=1):
         jobs = original(path, key)
         if path.startswith("actions/runs/110/") and key == "jobs":
             api.job_reads += 1
+            clock.now += latency
             if api.job_reads <= pending_reads:
                 jobs[0].update(status="in_progress", conclusion=None)
                 jobs[0]["steps"][0].update(
@@ -1887,14 +1886,125 @@ def test_only_observed_analysis_readiness_can_wait_then_qualify(
     assert api.deadline == 175.0
 
 
-def test_four_pending_snapshots_fail_without_a_fifth_read_or_deadline_reset(
+@pytest.mark.parametrize(
+    "pending_reads,waits", [(4, [1, 2, 4, 4]), (8, [1, 2, 4] + [4] * 5)]
+)
+def test_analysis_completing_after_the_old_seven_second_window_qualifies(
+    monkeypatch, pending_reads, waits
+):
+    """#11445: master 25cf8271d9 CodeQL 39784328013 refused twice with the
+    analysis step still in_progress/null after the 1/2/4 s rereads. A valid
+    pending step that turns completed/success later, inside the original
+    deadline, is the same paid analysis and qualifies."""
+    api, clock = readiness_api(monkeypatch, pending_reads=pending_reads)
+    receipt = api.qualify()
+    assert receipt["qualified"] is True and receipt["qualification"] == "PASS"
+    assert clock.waits == waits and api.job_reads == pending_reads + 1
+    assert sum(clock.waits) > 7 and clock.now < api.deadline == 175.0
+
+
+@pytest.mark.parametrize("pending_reads", [20, 99])
+def test_endless_pending_refuses_at_the_original_deadline_without_reset(
+    monkeypatch, pending_reads
+):
+    api, clock = readiness_api(monkeypatch, pending_reads=pending_reads)
+    with pytest.raises(ValueError, match="decision deadline"):
+        api.qualify()
+    # Reads at 100, 101, 103, then every 4 s to 171; 171 + 4 reaches 175.
+    assert clock.waits == [1, 2, 4] + [4] * 16 and api.job_reads == 20
+    assert clock.now == 171.0 and api.deadline == 175.0
+
+
+def test_request_time_counts_toward_the_readiness_deadline(monkeypatch):
+    api, clock = readiness_api(monkeypatch, pending_reads=99, latency=3)
+    with pytest.raises(ValueError, match="decision deadline"):
+        api.qualify()
+    # Each jobs read costs 3 s: reads end at 103, 107, 112, then every 7 s
+    # to 168; the read started at 172 ends at the deadline and is refused.
+    assert clock.waits == [1, 2, 4] + [4] * 8 and api.job_reads == 12
+    assert clock.now == 175.0 and api.deadline == 175.0
+
+
+def test_a_wait_never_starts_when_the_read_itself_used_the_remaining_budget(
     monkeypatch,
 ):
+    api, clock = readiness_api(monkeypatch, pending_reads=99, latency=3)
+    api.deadline = clock.now + 3.5
+    with pytest.raises(ValueError, match="decision deadline"):
+        api.qualify()
+    # The 3 s read leaves 0.5 s: a 1 s wait measured from the read's start
+    # would fit, but measured from its return it would cross the deadline.
+    assert clock.waits == [] and api.job_reads == 1 and clock.now == 103.0
+
+
+def test_slow_reads_still_qualify_a_late_completion_inside_the_deadline(monkeypatch):
+    api, clock = readiness_api(monkeypatch, pending_reads=8, latency=3)
+    receipt = api.qualify()
+    assert receipt["qualified"] is True
+    assert clock.waits == [1, 2, 4] + [4] * 5 and api.job_reads == 9
+    assert clock.now == 154.0  # 9 reads x 3 s + 27 s of waits
+
+
+def test_pending_rereads_stay_finite_when_the_clock_does_not_advance(monkeypatch):
     api, clock = readiness_api(monkeypatch, pending_reads=99)
+    monkeypatch.setattr(evidence.time, "sleep", clock.waits.append)
     with pytest.raises(ValueError, match="analysis step is unpaid"):
         api.qualify()
-    assert clock.waits == [1, 2, 4] and api.job_reads == 4
-    assert api.deadline == 175.0
+    assert clock.waits == [1, 2, 4] + [4] * 17 and api.job_reads == 21
+    assert clock.now == 100.0 and api.deadline == 175.0
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "job-failed",
+        "step-failed",
+        "step-cancelled",
+        "step-null-success",
+        "step-queued",
+        "duplicate-step",
+        "missing-step",
+        "job-id",
+        "step-start",
+        "attempt",
+    ],
+)
+def test_late_reads_refuse_every_unpaid_or_moved_state_without_waiting_on(
+    monkeypatch, fault
+):
+    api, clock = readiness_api(monkeypatch, pending_reads=99)
+
+    def mutate(jobs, index):
+        if index != 6:
+            return
+        job, step = jobs[0], jobs[0]["steps"][0]
+        if fault == "job-failed":
+            job.update(status="completed", conclusion="failure")
+            step.update(status="completed", conclusion="success")
+            step["completed_at"] = "2026-10-15T22:40:00Z"
+        elif fault == "step-failed":
+            step.update(status="completed", conclusion="failure")
+        elif fault == "step-cancelled":
+            step.update(status="completed", conclusion="cancelled")
+        elif fault == "step-null-success":
+            step["conclusion"] = "success"
+        elif fault == "step-queued":
+            step["status"] = "queued"
+        elif fault == "duplicate-step":
+            job["steps"].append(copy.deepcopy(step))
+        elif fault == "missing-step":
+            job["steps"] = [s for s in job["steps"] if s is not step]
+        elif fault == "job-id":
+            job["id"] += 1
+        elif fault == "step-start":
+            step["started_at"] = "2026-10-15T22:31:00Z"
+        else:
+            jobs[1]["run_attempt"] += 1
+
+    api.mutate_snapshot = mutate
+    with pytest.raises(ValueError):
+        api.qualify()
+    assert clock.waits == [1, 2, 4, 4, 4] and api.job_reads == 6
 
 
 @pytest.mark.parametrize(
@@ -1972,7 +2082,13 @@ def test_unobserved_or_malformed_pending_states_never_wait(monkeypatch, fault):
 
 @pytest.mark.parametrize(
     "remaining,expected_reads,waits",
-    [(0, 0, []), (1, 1, []), (2.5, 2, [1]), (6, 3, [1, 2])],
+    [
+        (0, 0, []),
+        (1, 1, []),
+        (2.5, 2, [1]),
+        (6, 3, [1, 2]),
+        (20, 7, [1, 2, 4, 4, 4, 4]),
+    ],
 )
 def test_readiness_waits_share_the_original_deadline(
     monkeypatch, remaining, expected_reads, waits
