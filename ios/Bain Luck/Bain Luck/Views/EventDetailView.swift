@@ -2034,6 +2034,13 @@ struct EventDetailView: View {
                 FinalForecastLine11296(
                     comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
             }
+            // #11296 — live, on a page the paired headline does not adopt: the
+            // admitted in-play pair under the arm that printed the score, and
+            // the retained pregame pair under it. Game Info no longer repeats it.
+            if let liveForecast = genericLiveForecast11296(event, hasScore: hasScore) {
+                LiveHeadlineForecast11296(
+                    forecast: liveForecast, awayName: event.awayTeam, homeName: event.homeTeam)
+            }
         }
         // #9483 v476 — on the adopted pair the hero is the top of ONE card with
         // the chart (see the page body): no own backdrop or corners, a short
@@ -2064,34 +2071,44 @@ struct EventDetailView: View {
             projection: event.pregameProjection)
     }
 
-    /// #11296 — a LIVE headline's retained forecast: the pair served from
-    /// before the scheduled start, beneath the current projected final it can
-    /// be compared with. Only when the page prints the producer's admitted
-    /// in-play pair (`projectionText` answered, through
-    /// `LiveProjectedFinal2920.page`'s admitted arm); the ladders' pair and a
-    /// refused object add nothing. Nil leaves the current forecast exactly as it
-    /// was. Static so the suite reaches it.
-    static func liveBaseline11296(
+    /// #11296 — a LIVE headline's forecast: the producer's admitted in-play
+    /// pair, and the pair served from before the scheduled start when it can be
+    /// compared with it. Only when the page prints that admitted pair
+    /// (`projectionText` answered, through `LiveProjectedFinal2920.page`'s
+    /// admitted arm); the ladders' untyped pair and a refused object answer nil,
+    /// and keep printing where they print today. Static so the suite reaches it.
+    static func liveForecast11296(
         _ event: EventDetail,
         ladderHome: Double?, ladderAway: Double?,
         hasScore: Bool,
         now: Date = Date()
-    ) -> LivePregameComparison11296.Comparison? {
+    ) -> LivePregameComparison11296.Headline? {
         guard case .admitted(let printed) = LiveProjectedFinal2920.page(event, now: now),
               projectionText(event, ladderHome: ladderHome, ladderAway: ladderAway,
                              hasScore: hasScore, now: now) != nil
         else { return nil }
-        return LivePregameComparison11296.resolve(
-            status: event.status, sport: event.sport, commenceTime: event.commenceTime,
-            current: printed, projection: event.pregameProjection)
+        return LivePregameComparison11296.Headline(
+            current: printed,
+            baseline: LivePregameComparison11296.resolve(
+                status: event.status, sport: event.sport, commenceTime: event.commenceTime,
+                current: printed, projection: event.pregameProjection))
     }
 
-    private func liveBaseline11296(_ event: EventDetail, hasScore: Bool) -> LivePregameComparison11296.Comparison? {
-        EventDetailView.liveBaseline11296(
+    private func liveForecast11296(_ event: EventDetail, hasScore: Bool) -> LivePregameComparison11296.Headline? {
+        EventDetailView.liveForecast11296(
             event,
             ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
             ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
             hasScore: hasScore)
+    }
+
+    /// #11296 — the same forecast on a live page the paired headline does not
+    /// adopt (soccer, college football, the other basketball leagues): the
+    /// generic hero prints it, and Game Info stops repeating it. Nil wherever
+    /// the paired headline prints its own, or no admitted pair prints.
+    private func genericLiveForecast11296(_ event: EventDetail, hasScore: Bool) -> LivePregameComparison11296.Headline? {
+        guard nflPairedHeadline(event, hasScore: hasScore) == nil else { return nil }
+        return liveForecast11296(event, hasScore: hasScore)
     }
 
     /// #11296 — the current group's one spoken sentence: the current pair, then
@@ -2411,7 +2428,7 @@ struct EventDetailView: View {
                             // Figure over caption in the score's own style, on its baseline.
                             // #11296 — live, the retained pregame pair sits under
                             // them in this same group, never a third column.
-                            let liveBaseline = liveBaseline11296(event, hasScore: hasScore)
+                            let liveBaseline = liveForecast11296(event, hasScore: hasScore)?.baseline
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(figure)
                                     .font(.system(size: eventHeadlineScoreSize9483, weight: .bold, design: .rounded).monospacedDigit())
@@ -2959,6 +2976,8 @@ struct EventDetailView: View {
         // in any state, so Game Info holds them; it carries the projection, so
         // Game Info does not repeat it.
         let nflHeadline = nflPairedHeadline(event, hasScore: gameInfoHasScore) != nil
+        // #11296 — nor when the generic hero printed the admitted live pair.
+        let heroLiveForecast = genericLiveForecast11296(event, hasScore: gameInfoHasScore) != nil
         let nflHandedOver: [(icon: String, text: String)] = nflHeadline ? [
             recordsText(event).map { ("list.number", $0) },
             openedText(event).map { ("flag", $0) },
@@ -2967,7 +2986,7 @@ struct EventDetailView: View {
             EventDetailView.heroCarriesGameContext(status: event.status) ? [] : [
                 recordsText(event).map { ("list.number", $0) },
                 openedText(event).map { ("flag", $0) },
-                nflHeadline ? nil : projectionText(
+                nflHeadline || heroLiveForecast ? nil : projectionText(
                     event,
                     hasScore: gameInfoHasScore
                 ).map { ("chart.line.uptrend.xyaxis", $0) },

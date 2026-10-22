@@ -3,7 +3,8 @@ import SwiftUI
 @testable import Bain_Luck
 
 /// #11296 / #9483 — the live headline's retained pregame projected final
-/// (`LivePregameComparison11296`, `EventDetailView.liveBaseline11296`).
+/// (`LivePregameComparison11296`, `EventDetailView.liveForecast11296`), in both
+/// hosts: the adopted NFL/NBA row and the generic hero every other live page uses.
 ///
 /// The first half decides the comparator's gates with constructed inputs; the
 /// second decides the page's path through decoded rows, so the current pair
@@ -130,6 +131,14 @@ final class LivePregameComparison11296Tests: XCTestCase {
         }
     }
 
+    /// The headline forecast for a row, with the page's own `hasScore`.
+    private func forecast(_ e: EventDetail, ladder: (home: Double, away: Double)? = nil) -> C.Headline? {
+        EventDetailView.liveForecast11296(
+            e, ladderHome: ladder?.home, ladderAway: ladder?.away,
+            hasScore: EventDetailView.showsScore(status: e.status, away: e.awayScore, home: e.homeScore),
+            now: Self.pageNow)
+    }
+
     /// What the page prints for a row: its current slot and the baseline under it.
     private func page(_ json: String, ladder: (home: Double, away: Double)? = nil,
                       file: StaticString = #filePath, line: UInt = #line)
@@ -139,8 +148,7 @@ final class LivePregameComparison11296Tests: XCTestCase {
         return (
             EventDetailView.projectionText(e, ladderHome: ladder?.home, ladderAway: ladder?.away,
                                            hasScore: hasScore, now: Self.pageNow),
-            EventDetailView.liveBaseline11296(e, ladderHome: ladder?.home, ladderAway: ladder?.away,
-                                              hasScore: hasScore, now: Self.pageNow))
+            forecast(e, ladder: ladder)?.baseline)
     }
 
     // MARK: - Comparator: the compatible pair
@@ -173,8 +181,7 @@ final class LivePregameComparison11296Tests: XCTestCase {
         let e = try detail(rowJSON(home: 31, away: 14,
                                    liveProjection: #"{"projected_home_score": 38.5, "projected_away_score": 17.0, "kind": "in_play", "boundary": "commence_time", "boundary_at": "2026-10-19T20:25:00+00:00", "earliest_confirmed_at": "2026-10-19T21:06:00+00:00", "latest_captured_at": "2026-10-19T21:06:00+00:00", "source": "sportsbooks", "basis": "consensus_spread_total", "bookmaker_count": 2, "unit": "points", "period": "full_game"}"#,
                                    pregameProjection: Self.baselineNFL))
-        let c = try XCTUnwrap(EventDetailView.liveBaseline11296(e, ladderHome: nil, ladderAway: nil,
-                                                                hasScore: true, now: Self.pageNow))
+        let c = try XCTUnwrap(forecast(e)?.baseline)
         XCTAssertLessThan(c.home, try XCTUnwrap(e.homeScore), "anti-vacuity: the baseline really is below the score")
         XCTAssertEqual([c.home, c.away], [24, 21])
     }
@@ -356,11 +363,69 @@ final class LivePregameComparison11296Tests: XCTestCase {
         let line = try XCTUnwrap(EventDetailView.finalForecast11296(final))
         XCTAssertEqual(line, FinalForecastComparison11296.Comparison(
             label: "Projection before scheduled start", away: 21, home: 24, bookmakerCount: 4))
-        XCTAssertNil(EventDetailView.liveBaseline11296(final, ladderHome: nil, ladderAway: nil,
-                                                       hasScore: true, now: Self.pageNow))
+        XCTAssertNil(forecast(final))
         // And a live row never reaches the final line.
         let live = try detail(rowJSON(liveProjection: Self.nflObject, pregameProjection: Self.baselineNFL))
         XCTAssertNil(EventDetailView.finalForecast11296(live))
+    }
+
+    // MARK: - The generic host: pages the paired headline does not adopt
+
+    func testALiveSoccerPageIsNotAdoptedAndItsHeadlineCarriesBothForecasts() throws {
+        // The host: neither adoption rule takes a live soccer page, so the
+        // generic hero is the headline that prints this.
+        XCTAssertFalse(NFLRecognizablePage9483.applies(sportKey: "soccer_epl"))
+        XCTAssertFalse(MLBFinalPage11284.adoptsPairedPage(sportKey: "soccer_epl", status: "live"))
+        let e = try detail(rowJSON(sport: "soccer_epl", home: 1, away: 0, period: "67'",
+                                   liveProjection: Self.soccerObject, pregameProjection: Self.baselineSoccer))
+        let h = try XCTUnwrap(forecast(e))
+        XCTAssertEqual(h.current.label, "Projected final (90 min)", "the current pair keeps its 90-minute basis")
+        XCTAssertEqual([h.current.away, h.current.home], [1, 2])
+        let b = try XCTUnwrap(h.baseline)
+        XCTAssertEqual(b.label, "Projection (90 min) before scheduled start")
+        XCTAssertEqual([b.away, b.home], [1, 2], "equal pairs are honest")
+        XCTAssertEqual(C.spokenText(h, awayName: "Oklahoma Sooners", homeName: "Georgia Bulldogs"),
+                       "Projected final (90 min): Oklahoma Sooners 1, Georgia Bulldogs 2. "
+                       + "Projection (90 min) before scheduled start: Oklahoma Sooners 1, Georgia Bulldogs 2")
+    }
+
+    func testALiveCollegeFootballPageIsNotAdoptedAndItsHeadlineCarriesBothForecasts() throws {
+        XCTAssertFalse(NFLRecognizablePage9483.applies(sportKey: "americanfootball_ncaaf"))
+        XCTAssertFalse(MLBFinalPage11284.adoptsPairedPage(sportKey: "americanfootball_ncaaf", status: "live"))
+        let e = try detail(rowJSON(sport: "americanfootball_ncaaf",
+                                   liveProjection: Self.nflObject, pregameProjection: Self.baselineNFL))
+        let h = try XCTUnwrap(forecast(e))
+        XCTAssertEqual(h.current.label, "Projected final")
+        XCTAssertEqual([h.current.away, h.current.home], [19, 30])
+        XCTAssertEqual(h.baseline.map { [$0.away, $0.home] }, [21, 24])
+    }
+
+    func testTheCurrentForecastStaysInTheHeadlineWithoutABaseline() throws {
+        for bad in [nil, "{}", Self.baselineSoccer] as [String?] {
+            let e = try detail(rowJSON(sport: "americanfootball_ncaaf",
+                                       liveProjection: Self.nflObject, pregameProjection: bad))
+            let h = try XCTUnwrap(forecast(e), bad ?? "absent")
+            XCTAssertEqual([h.current.away, h.current.home], [19, 30], bad ?? "absent")
+            XCTAssertNil(h.baseline, bad ?? "absent")
+            XCTAssertEqual(C.spokenText(h, awayName: "A", homeName: "H"), "Projected final: A 19, H 30")
+        }
+    }
+
+    func testAnUntypedOrRefusedCurrentPairIsNotTakenIntoTheHeadline() throws {
+        let ladder = (home: 27.2, away: 20.4)
+        // The ladders' untyped pair keeps printing where it prints today (Game Info).
+        let untyped = try detail(rowJSON(sport: "americanfootball_ncaaf", liveProjection: nil,
+                                         pregameProjection: Self.baselineNFL))
+        XCTAssertNotNil(EventDetailView.projectionText(untyped, ladderHome: ladder.home, ladderAway: ladder.away,
+                                                       hasScore: true, now: Self.pageNow), "anti-vacuity")
+        XCTAssertNil(forecast(untyped, ladder: ladder))
+        let refused = try detail(rowJSON(sport: "americanfootball_ncaaf", liveProjection: "{}",
+                                         pregameProjection: Self.baselineNFL))
+        XCTAssertNil(forecast(refused, ladder: ladder))
+        // Extra time: no current pair in any host.
+        let et = try detail(rowJSON(sport: "soccer_epl", home: 1, away: 1, period: "ET",
+                                    liveProjection: Self.soccerObject, pregameProjection: Self.baselineSoccer))
+        XCTAssertNil(forecast(et))
     }
 
     // MARK: - Words
@@ -418,9 +483,46 @@ final class LivePregameComparison11296Tests: XCTestCase {
         XCTAssertTrue(caption.upperBound < line.lowerBound && line.upperBound < close.lowerBound,
                       "the baseline left the current projection's group")
         XCTAssertFalse(page[caption.upperBound..<line.lowerBound].contains("resultLayout"), "never a third column")
-        XCTAssertTrue(page.contains("letliveBaseline=liveBaseline11296(event,hasScore:hasScore)"))
+        XCTAssertTrue(page.contains("letliveBaseline=liveForecast11296(event,hasScore:hasScore)?.baseline"))
         XCTAssertEqual(occurrences("LivePregameComparison11296.resolve(", in: page), 1)
         XCTAssertEqual(occurrences("liveProjection", in: page), 0, "the page never reads the object's fields itself")
+    }
+
+    func testTheGenericHeroPrintsTheLiveForecastAndGameInfoStopsRepeatingIt() throws {
+        let page = try source("Views/EventDetailView.swift")
+        let mount = "ifletliveForecast=genericLiveForecast11296(event,hasScore:hasScore){LiveHeadlineForecast11296(forecast:liveForecast,awayName:event.awayTeam,homeName:event.homeTeam)}"
+        XCTAssertEqual(occurrences("LiveHeadlineForecast11296(", in: page), 1, "drawn once")
+        XCTAssertEqual(occurrences(mount, in: page), 1, "each name beside its own number")
+        // In the hero, after its arms (the final line's slot), before its padding.
+        let hero = try XCTUnwrap(page.range(of: "privatefuncheroSection(_event:EventDetail)->someView{"))
+        let arms = try XCTUnwrap(page.range(of: "ifletpaired=nflPairedHeadline(event,hasScore:hasScore){", range: hero.upperBound..<page.endIndex))
+        let final = try XCTUnwrap(page.range(of: "ifletfinalForecast=Self.finalForecast11296(event){"))
+        let line = try XCTUnwrap(page.range(of: mount))
+        let heroEnd = try XCTUnwrap(page.range(of: ".padding(approvedPair?.horizontal:.all)", range: hero.upperBound..<page.endIndex))
+        XCTAssertTrue(arms.upperBound < final.lowerBound && final.upperBound < line.lowerBound && line.upperBound < heroEnd.lowerBound,
+                      "the live forecast left the hero's shared slot under the arms")
+        // Only where the paired headline does not print its own.
+        let body = try XCTUnwrap(page.range(of: "privatefuncgenericLiveForecast11296(_event:EventDetail,hasScore:Bool)->LivePregameComparison11296.Headline?{"))
+        XCTAssertTrue(page[body.upperBound...].hasPrefix(
+            "guardnflPairedHeadline(event,hasScore:hasScore)==nilelse{returnnil}returnliveForecast11296(event,hasScore:hasScore)}"))
+        // Game Info drops its copy exactly when the hero printed it, by the same call.
+        XCTAssertTrue(page.contains("letheroLiveForecast=genericLiveForecast11296(event,hasScore:gameInfoHasScore)!=nil"))
+        XCTAssertTrue(page.contains("nflHeadline||heroLiveForecast?nil:projectionText(event,hasScore:gameInfoHasScore).map{(\"chart.line.uptrend.xyaxis\",$0)}"))
+    }
+
+    func testTheGenericHeadlineLeadsWithTheCurrentLabelAndNamesEachTeam() throws {
+        let helper = try source("Utilities/LivePregameComparison11296.swift")
+        let start = try XCTUnwrap(helper.range(of: "structLiveHeadlineForecast11296:View{"))
+        let view = String(helper[start.upperBound...])
+        let label = try XCTUnwrap(view.range(of: "Text(forecast.current.label)"))
+        let pair = try XCTUnwrap(view.range(of: "Text(LiveProjectedFinal2920.pairText(forecast.current,awayName:awayName,homeName:homeName))"))
+        let baseline = try XCTUnwrap(view.range(of: "LivePregameBaselineLine11296(comparison:baseline,awayName:awayName,homeName:homeName)"))
+        XCTAssertTrue(label.upperBound < pair.lowerBound && pair.upperBound < baseline.lowerBound,
+                      "current label, current pair, then the retained pair beneath")
+        XCTAssertFalse(view.contains("minimumScaleFactor"), "wraps, never shrinks")
+        XCTAssertFalse(view.contains("lineLimit"), "wraps, never truncates")
+        XCTAssertEqual(occurrences("awayName:homeName", in: helper), 0, "no name handed to the other side")
+        XCTAssertEqual(occurrences("homeName:awayName", in: helper), 0, "no name handed to the other side")
     }
 
     func testTheComparatorReadsTheAdmittedPairAndNeverTheFinalResolver() throws {

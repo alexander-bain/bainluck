@@ -48,6 +48,12 @@ import SwiftUI
 /// printed: a missing or incompatible baseline never removes a valid current
 /// forecast. No grading, no difference row, no colour. Keyed home/away, never
 /// sorted by value; rounded the way the cards round.
+///
+/// Two hosts print it (`EventDetailView.liveForecast11296` decides for both):
+/// the adopted NFL/NBA row, under its current figure and caption; and the
+/// generic hero every other live page uses (soccer, college football, the
+/// other basketball leagues), as `LiveHeadlineForecast11296` — the current
+/// pair under its own label, the retained pair beneath it.
 enum LivePregameComparison11296 {
 
     /// What the line prints, and where it came from for a details surface.
@@ -62,6 +68,14 @@ enum LivePregameComparison11296 {
         let earliestCapturedAt: Date
         let latestCapturedAt: Date
         let scheduledStart: Date
+    }
+
+    /// A live headline's forecast: the admitted in-play pair the page prints,
+    /// and the retained pair beneath it when it compares. A nil baseline still
+    /// prints the current pair.
+    nonisolated struct Headline: Equatable, Sendable {
+        let current: LiveProjectedFinalAdmission2920.Printed
+        let baseline: Comparison?
     }
 
     /// The retained pregame pair to print beneath a live game's current
@@ -130,6 +144,50 @@ enum LivePregameComparison11296 {
     /// One sentence for assistive tech that names both teams and the phase.
     nonisolated static func spokenText(_ c: Comparison, awayName: String, homeName: String) -> String {
         "\(c.label): \(awayName) \(c.away), \(homeName) \(c.home)"
+    }
+
+    /// The generic headline's one spoken label: the current pair under its own
+    /// label (soccer's says "(90 min)"), then the retained one when it prints.
+    nonisolated static func spokenText(_ h: Headline, awayName: String, homeName: String) -> String {
+        let current = LiveProjectedFinal2920.spokenText(h.current, awayName: awayName, homeName: homeName)
+        guard let baseline = h.baseline else { return current }
+        return "\(current). " + spokenText(baseline, awayName: awayName, homeName: homeName)
+    }
+}
+
+/// The live forecast in the generic hero (a page the paired headline does not
+/// adopt): the admitted pair's own label and both named teams' numbers, the
+/// pair in the primary colour so it leads, then the retained pair beneath it.
+/// The actual score stays in the arm above; nothing here is a score. Wraps at
+/// any text size and is never scaled down.
+struct LiveHeadlineForecast11296: View {
+    let forecast: LivePregameComparison11296.Headline
+    let awayName: String
+    let homeName: String
+
+    static let accessibilityIdentifier = "live-headline-forecast-11296"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(forecast.current.label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(LiveProjectedFinal2920.pairText(forecast.current, awayName: awayName, homeName: homeName))
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(Color.primary)
+            }
+            if let baseline = forecast.baseline {
+                LivePregameBaselineLine11296(comparison: baseline, awayName: awayName, homeName: homeName)
+            }
+        }
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            LivePregameComparison11296.spokenText(forecast, awayName: awayName, homeName: homeName))
+        .accessibilityIdentifier(Self.accessibilityIdentifier)
     }
 }
 
