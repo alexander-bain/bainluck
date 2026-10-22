@@ -1720,7 +1720,11 @@ async def withdraw_attributed_event_sources(session, withdrawn_rows):
         return []
     # Re-read the whole source population in the removal transaction, after
     # the independent price withdrawal committed. A newly stored quote wins.
-    groups = await LiveBlendRefresher('polymarket')._read_groups(session, sorted(event_ids))
+    # This transaction helper has no consumer shutdown/drain lifecycle.
+    # It reads ordinary DNPL context but cannot own background maintenance.
+    groups = await LiveBlendRefresher(
+        'polymarket', owns_preview_maintenance=False,
+    )._read_groups(session, sorted(event_ids))
     frames = []
     for event_id, (event, group) in groups.items():
         if event.status != 'live' or event.completed_at is not None:

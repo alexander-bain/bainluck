@@ -16,6 +16,7 @@ from app.tasks import polymarket_ws as task
 from app.tasks import polymarket_open_contracts as admission
 from app.tasks import live_blend_refresh as blend
 from app.tasks import ws_admission
+from app.utils.repair_lock_budget import SET_STATEMENT_TIMEOUT_SQL
 from tests.test_pm_open_cycle_lifetime_10090 import CatalogRig, until
 from tests.test_ws_consumer_session_lifetime_2471 import (
     _install, _assert_one_lent_engine, _assert_disposed_once_after_last_session,
@@ -85,6 +86,12 @@ class Rig(CatalogRig):
                 session = await original.__aenter__()
                 execute = session.execute
                 async def route(stmt, params=None):
+                    if stmt is task.ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL:
+                        # The recording session's writes are immediate; model
+                        # its default timeout for the writer's restore step.
+                        return SimpleNamespace(scalar_one=lambda: "0")
+                    if stmt is SET_STATEMENT_TIMEOUT_SQL:
+                        return _Result([])
                     sql, bound = str(stmt), stmt.compile().params
                     if isinstance(stmt, Update):
                         values = statement_params(stmt, params)

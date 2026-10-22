@@ -17,7 +17,9 @@ from types import SimpleNamespace
 import pytest
 
 from app.tasks import live_blend_refresh as blend
-from app.tasks.polymarket_ws import _PMPriceWriteResult
+from app.tasks.polymarket_ws import (
+    ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL, _PMPriceWriteResult,
+)
 from app.utils.pm_stage_trace import PMStageTrace
 from tests.test_polymarket_withdrawal_speed_10651 import ROOT, compile_functions
 from tests.test_polymarket_withdrawal_speed_10651 import rig as pm_rig
@@ -64,6 +66,10 @@ def trace_rig(monkeypatch, *, slow_write=0.0, slow_stamp=0.0, block=False,
         info: dict = {}
 
         async def execute(self, statement, params=None):
+            if statement is ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL:
+                # The recording transaction starts with the default timeout;
+                # let the real writer arm it and restore that prior setting.
+                return SimpleNamespace(scalar_one=lambda: "0")
             if isinstance(statement, tuple) and statement[0] == "prices":
                 if slow_write:
                     clock[0] += slow_write  # e.g. a row-lock wait inside the UPDATE

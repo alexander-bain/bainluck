@@ -982,7 +982,7 @@ class TestBoundedLifecycle:
     async def test_full_ledger_offers_only_bounded_ids_for_authoritative_terminal_read(self, rig):
         for eid in range(1, 513):
             await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid), rig.call, rig.stats)
-        ticket, ids = await rig.p.read_ticket(rig.call, 'polymarket')
+        ticket, ids = await rig.p.read_ticket(rig.call, 'polymarket', include_candidates=True)
         assert sorted(ids) == list(range(1, 513))
         assert len(ids) == 512
         assert await rig.p.prepare(await _fresh_ops(rig, rig.p, 'polymarket', event_id=513), rig.call, rig.stats) == []
@@ -1069,13 +1069,13 @@ class TestLifecycleCaller:
         try:
             await control.execute(f'CREATE SCHEMA {schema}')
             await control.execute(f'''CREATE TABLE {schema}.events
-                (id integer primary key, status text, completed_at timestamptz,
+                (id integer primary key, status text, completed_at timestamptz, commence_time timestamptz,
                  win_probability_sources_rev bigint, win_probability_sources jsonb NOT NULL DEFAULT '{{}}')''')
             from app.utils.wps_revision import CREATE_FUNCTION_SQL, CREATE_TRIGGER_SQL
             await control.execute(f'SET search_path TO {schema}')
             await control.execute(CREATE_FUNCTION_SQL)
             await control.execute(CREATE_TRIGGER_SQL)
-            await control.execute(f"INSERT INTO {schema}.events (id, status, completed_at, win_probability_sources_rev) VALUES (1, 'live', NULL, 10)")
+            await control.execute(f"INSERT INTO {schema}.events (id, status, completed_at, win_probability_sources_rev) SELECT id, 'live', NULL, 10 FROM generate_series(1,512) id")
             engine = create_async_engine(url.replace('postgresql://', 'postgresql+asyncpg://'),
                 connect_args={'server_settings': {'search_path': schema}}, pool_size=2, max_overflow=0)
             maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -1094,11 +1094,17 @@ class TestLifecycleCaller:
             await writer.execute(f"UPDATE {schema}.events SET status='final', win_probability_sources_rev=11 WHERE id=1")
             # While final is UNCOMMITTED, fresh reads see live: no deletion.
             before = await refresher._preview_admission_read()
+            await refresher._preview_maintenance_task
             assert before == 0
             assert await rig.hget('nevents') == '512'
             assert await rig.hget('e:1:gen') is not None
             delayed = await _fresh_ops(rig, rig.p, 'polymarket', event_id=1)
             await tx.commit()
+            # Production runs capacity maintenance outside quote admission.
+            # Advance the test's maintenance opportunity after COMMIT.
+            refresher._preview_maintenance_after = 0
+            await refresher._preview_admission_read()
+            await refresher._preview_maintenance_task
             after = await refresher._preview_admission_read()
             assert after == 1
             assert await rig.hget('nevents') == '511'
@@ -1116,8 +1122,8 @@ class TestLifecycleCaller:
             # preview/settlement phases, through 600 sequential final events.
             refresher.preview_events = frozenset(range(1, 603))
             for eid in range(2, 602):
-                await control.execute(f"INSERT INTO {schema}.events (id, status, completed_at, win_probability_sources_rev) VALUES ($1, 'live', NULL, 10)", eid)
                 if eid > 512:
+                    await control.execute(f"INSERT INTO {schema}.events (id, status, completed_at, win_probability_sources_rev) VALUES ($1, 'live', NULL, 10)", eid)
                     opened = await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid)
                     await refresher._publish_previews(opened)
                     assert await rig.hget(f'e:{eid}:gen') is not None

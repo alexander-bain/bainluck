@@ -5288,6 +5288,8 @@ jobs:
         run: |
           if python -m pytest tests/integration/test_pm_held_price_row_stamps_received_quote_11138_pg.py \
             tests/integration/test_pm_price_statement_deadline_10090_pg.py \
+            tests/integration/test_dnpl_default_committed_fallback_10090_pg.py \
+            tests/integration/test_dnpl_capacity_lifecycle_10090_pg.py \
             -v -rs > /tmp/held-row11138.txt 2>&1; then
             gate_status=0
           else
@@ -5300,8 +5302,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]20 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row gate did not run all twenty cases"
+          grep -qE "[^0-9]29 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row/default-DNPL gate did not run all 29 cases"
             exit 1
           }
 

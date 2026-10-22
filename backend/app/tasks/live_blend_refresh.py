@@ -1840,6 +1840,7 @@ class LiveBlendRefresher:
         self,
         source: str,
         *,
+        owns_preview_maintenance: bool = True,
         min_refresh_interval_s: float = DEFAULT_MIN_REFRESH_INTERVAL_S,
         failed_retry_interval_s: float = DEFAULT_FAILED_RETRY_INTERVAL_S,
         inversion_ttl_s: float = DEFAULT_INVERSION_TTL_S,
@@ -2042,6 +2043,12 @@ class LiveBlendRefresher:
 
         self.preview_events: PreviewEventScope | frozenset = preview_events_for(self.source)
         self.preview = bool(self.preview_events)
+        # Short-lived transaction helpers have no task lifecycle to drain.
+        # This ownership argument does not change DNPL eligibility or reads.
+        self._owns_preview_maintenance = owns_preview_maintenance
+        self._preview_maintenance_task = None
+        self._preview_maintenance_after = 0.0
+        self._preview_maintenance_closed = False
         self.preview_stats: dict[str, int] = {
             "published": 0, "revoked": 0, "fenced": 0, "publish_errors": 0,
         }
@@ -3496,6 +3503,10 @@ class LiveBlendRefresher:
         """
         interrupted = None
         try:
+            await self._close_preview_maintenance()
+        except asyncio.CancelledError as exc:
+            interrupted = exc
+        try:
             await self._close_normal_recovery()
         except asyncio.CancelledError as exc:
             interrupted = exc
@@ -4867,62 +4878,127 @@ class LiveBlendRefresher:
             )
             return None
 
-    async def _preview_admission_read(self) -> Optional[int]:
-        """Ticket for the NEXT fresh graph read, never for an existing plan.
-
-        One Redis round trip normally. Only at capacity, a separate fresh DB
-        statement may find one finished event to retire. That optional read
-        cannot abort the writer's session. No active or merely expired event
-        is evicted to make room.
-        """
-        from app.utils.blend_preview import PREVIEW_STATUSES, registry
+    async def _preview_ticket(self, *, include_candidates=False):
+        from app.utils.blend_preview import registry
         from app.utils.market_quote_push import _checkout
 
         preview = registry()
-        if not preview.ledger:
-            return None
+        if preview.claim_lock is None:
+            preview.claim_lock = asyncio.Lock()
+        pool = self._client().connection_pool
+        async with preview.claim_lock:
+            connection = await _checkout(pool)
+            try:
+                if preview.unclaimed(self.source):
+                    await self._claim_preview_epoch(connection, preview)
+                return await preview.read_ticket(self._preview_call(connection), self.source,
+                                                 include_candidates=include_candidates)
+            except BaseException:
+                self._redis = None
+                await connection.disconnect()
+                raise
+            finally:
+                await pool.release(connection)
 
-        async def ticket():
-            if preview.claim_lock is None:
-                preview.claim_lock = asyncio.Lock()
-            pool = self._client().connection_pool
-            async with preview.claim_lock:
-                connection = await _checkout(pool)
-                try:
-                    if preview.unclaimed(self.source):
-                        await self._claim_preview_epoch(connection, preview)
-                    return await preview.read_ticket(self._preview_call(connection), self.source)
-                except BaseException:
-                    self._redis = None
-                    await connection.disconnect()
-                    raise
-                finally:
-                    await pool.release(connection)
+    def _start_preview_maintenance(self):
+        # One bounded pass per source per 30 seconds, independent of flush
+        # cadence. No DB candidate scan or HKEYS on the admission path.
+        if (not self._owns_preview_maintenance or self._preview_maintenance_closed or
+                time.monotonic() < self._preview_maintenance_after or
+                (self._preview_maintenance_task is not None and
+                 not self._preview_maintenance_task.done())):
+            return
+        self._preview_maintenance_after = time.monotonic() + 30.0
+        self._preview_maintenance_task = asyncio.create_task(self._maintain_preview_capacity())
+
+    @staticmethod
+    def _preview_retirable_row():
+        from sqlalchemy import and_, or_, text
+        from app.models.models import Event
+        from app.tasks.ws_slate import SUSPENDED_SLATE_MAX_AGE_HOURS
+        from app.utils.blend_preview import PREVIEW_STATUSES
+
+        return or_(Event.status.not_in(PREVIEW_STATUSES), Event.completed_at.is_not(None),
+                   and_(Event.status.in_(("scheduled", "suspended")),
+                        Event.commence_time < text(
+                            f"NOW() - INTERVAL '{int(SUSPENDED_SLATE_MAX_AGE_HOURS)} hours'")))
+
+    async def _maintain_preview_capacity(self):
+        from sqlalchemy import select
+        from app.models.models import Event
+        from app.tasks.base import get_task_session
+        from app.utils.blend_preview import registry
 
         try:
-            async with asyncio.timeout(.25):
-                before, candidates = await ticket()
-                if before is None or not candidates:
-                    return before
-                from sqlalchemy import or_, select
-                from app.models.models import Event
-                from app.tasks.base import get_task_session
-
-                # A NEW transaction: no repeatable-read/cached snapshot can
-                # launder an old terminal observation through a new ticket.
+            async with asyncio.timeout(1):
+                ticket, candidates = await self._preview_ticket(include_candidates=True)
+                if ticket is None or not candidates:
+                    return
                 factory = self._session_factory or get_task_session
-                async with factory() as session:
-                    ended = (await session.execute(select(
+                # Fetch existence and retirement eligibility together. This is
+                # a fresh statement after the ticket, never cached slate data.
+                async with self._session_slot(), factory() as session:
+                    rows = (await session.execute(select(
                         Event.id, Event.win_probability_sources_rev,
-                    ).where(
-                        Event.id.in_(candidates),
-                        or_(Event.status.not_in(PREVIEW_STATUSES), Event.completed_at.is_not(None)),
-                    ).order_by(Event.id).limit(1))).first()
-                if ended is not None:
-                    await self._retire_preview_event(ended[0], ended[1], before)
-                    # This new ticket is used ONLY by the graph statement
-                    # that follows this method. Never reuse the sweep rows.
-                    before, _ = await ticket()
+                        self._preview_retirable_row().label("retirable"),
+                    ).where(Event.id.in_(candidates)))).all()
+                present = {row[0]: row for row in rows}
+                targets = [eid for eid in sorted(candidates)
+                           if eid not in present or present[eid][2]][:32]
+                # Reclaim a bounded batch rather than allowing just one new
+                # event per cadence. Every deletion advances the barrier;
+                # each next proof therefore needs a new ticket AND DB read.
+                for index, eid in enumerate(targets):
+                    row = present.get(eid)
+                    if index:
+                        ticket, _ = await self._preview_ticket()
+                        if ticket is None:
+                            return
+                        async with self._session_slot(), factory() as session:
+                            row = (await session.execute(select(
+                                Event.id, Event.win_probability_sources_rev,
+                                self._preview_retirable_row().label("retirable"),
+                            ).where(Event.id == eid))).first()
+                    if row is None:
+                        await self._publish_previews([registry().retire_missing(eid, self.source, ticket)])
+                    elif row[2]:
+                        # The background UPDATE shares the same three DB
+                        # slots as quote reads, stamps and chart custody.
+                        # Inline terminal callers already own their slot.
+                        async with self._session_slot():
+                            await self._retire_preview_event(eid, row[1], ticket)
+        except Exception:
+            self.preview_stats["publish_errors"] += 1
+            logger.warning("live_blend_refresh[%s]: preview capacity maintenance incomplete",
+                           self.source, exc_info=True)
+
+    async def _close_preview_maintenance(self):
+        self._preview_maintenance_closed = True
+        task = self._preview_maintenance_task
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        interrupted = None
+        while not task.done():
+            try:
+                await asyncio.wait({task})
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+        if not task.cancelled():
+            task.exception()
+        if interrupted is not None:
+            raise interrupted
+
+    async def _preview_admission_read(self) -> Optional[int]:
+        """Read-before-admit ticket, without capacity scans on the flush path."""
+        from app.utils.blend_preview import registry
+        if not registry().ledger:
+            return None
+        self._start_preview_maintenance()
+        try:
+            async with asyncio.timeout(.25):
+                before, _ = await self._preview_ticket()
                 return before
         except Exception:
             self.preview_stats["publish_errors"] += 1
@@ -4946,18 +5022,18 @@ class LiveBlendRefresher:
                     return
 
     async def _retire_preview_event(self, event_id: int, read_rev: int, ticket: int) -> None:
-        """Preserve the terminal floor durably before forgetting Redis state.
+        """Preserve an ineligible row's floor before forgetting Redis state.
 
         A fresh read alone is insufficient: source revisions do not change on
-        status-only updates. Under the event row lock, this terminal-only SQL
+        status-only updates. Under the event row lock, this conditional SQL
         increment leaves every future read strictly above the retired floor.
         It changes neither source values nor observation timestamps. A failed
         or timed-out transaction leaves the existing Redis guard in place.
         """
-        from sqlalchemy import or_, update
+        from sqlalchemy import update
         from app.models.models import Event
         from app.tasks.base import get_task_session
-        from app.utils.blend_preview import PREVIEW_STATUSES, registry
+        from app.utils.blend_preview import registry
 
         preview = registry()
         try:
@@ -4973,7 +5049,7 @@ class LiveBlendRefresher:
                 async with factory() as session:
                     durable = (await session.execute(update(Event).where(
                         Event.id == event_id,
-                        or_(Event.status.not_in(PREVIEW_STATUSES), Event.completed_at.is_not(None)),
+                        self._preview_retirable_row(),
                         Event.win_probability_sources_rev >= read_rev,
                         Event.win_probability_sources_rev < 9007199254740991,
                     ).values(win_probability_sources_rev=Event.win_probability_sources_rev + 1)

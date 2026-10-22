@@ -295,7 +295,7 @@ if op == 'read_ticket' then
   local out = {'ok', decimal(barrier)}
   local count = field('nevents')
   if count == BAD then return {'malformed'} end
-  if (count or 0) >= 512 and compatible then
+  if ARGV[6] == '1' and (count or 0) >= 512 and compatible then
     -- At capacity only: at most 512 event ids, never base/payload values.
     -- The caller rereads their authoritative DB status before retiring any.
     for _, f in ipairs(redis.call('HKEYS', L)) do
@@ -458,9 +458,19 @@ if op == 'terminal' then
   for _, s in ipairs(sources) do redis.call('HDEL', L, P .. 'm:' .. s, P .. 'p:' .. s) end
   return {'ok', decimal(gen), decimal(seq)}
 end
-if op == 'retire' then
-  local ctx, ticket, durable = uint(ARGV[6]), uint(ARGV[7]), uint(ARGV[8])
-  if not ctx or not ticket or not durable or durable ~= ctx + 1 then return {'malformed'} end
+if op == 'retire' or op == 'retire_missing' then
+  local ctx, ticket, durable
+  if op == 'retire_missing' then
+    -- The caller proved absence in a fresh DB statement AFTER this ticket.
+    -- No durable row remains to increment. The global barrier invalidates
+    -- every prepared open from before deletion, including other producers.
+    ticket = uint(ARGV[6])
+    ctx = math.max(st.live or 0, st.term or 0, st.base_rev or 0)
+    if not ticket then return {'malformed'} end
+  else
+    ctx, ticket, durable = uint(ARGV[6]), uint(ARGV[7]), uint(ARGV[8])
+    if not ctx or not ticket or not durable or durable ~= ctx + 1 then return {'malformed'} end
+  end
   if not compatible then return {'legacy_owner'} end
   if ticket ~= barrier then return {'read_required'} end
   if st.live ~= nil and ctx < st.live then return {'stale_terminal'} end
@@ -1070,7 +1080,7 @@ class LedgerRegistry(PreviewRegistry):
     def claim_of(self, source: str) -> Optional[int]:
         return self.claims.get(source)
 
-    async def read_ticket(self, call, source: str) -> tuple[Optional[int], list[int]]:
+    async def read_ticket(self, call, source: str, *, include_candidates: bool = False) -> tuple[Optional[int], list[int]]:
         """Capture before the caller's fresh READ COMMITTED statement.
 
         Never call this around an already prepared/cached graph. A refused
@@ -1079,7 +1089,8 @@ class LedgerRegistry(PreviewRegistry):
         claim = self.claims.get(source)
         if claim is None:
             return None, []
-        reply = await self._eval(call, "read_ticket", source, claim, "", " ".join(self.sources))
+        reply = await self._eval(call, "read_ticket", source, claim, "", " ".join(self.sources),
+                                 int(include_candidates))
         if reply[0] != "ok":
             return None, []
         return int(reply[1]), [int(eid) for eid in reply[2:]]
@@ -1109,6 +1120,11 @@ class LedgerRegistry(PreviewRegistry):
         """
         return {"ledger_op": "retire", "event_id": int(event_id), "source": source,
                 "ctx_rev": rev, "read_ticket": ticket, "committed_rev": committed_rev}
+
+    def retire_missing(self, event_id: int, source: str, ticket: int) -> dict:
+        """Only after a fresh authoritative DB statement proved row absence."""
+        return {"ledger_op": "retire_missing", "event_id": int(event_id),
+                "source": source, "read_ticket": ticket}
 
     # ── local bookkeeping → operations ──────────────────────────────────
     @staticmethod
@@ -1374,6 +1390,8 @@ class LedgerRegistry(PreviewRegistry):
         elif kind == "settle":
             reply = await self._eval(call, "settle", *common, op["mode"], op["through"],
                                      op["base_rev"], op["base"])
+        elif kind == "retire_missing":
+            reply = await self._eval(call, "retire_missing", *common, op["read_ticket"])
         elif kind == "retire":
             reply = await self._eval(call, "retire", *common, op["ctx_rev"], op["read_ticket"],
                                      op["committed_rev"])
@@ -1381,7 +1399,7 @@ class LedgerRegistry(PreviewRegistry):
             reply = await self._eval(call, "terminal", *common, op["ctx_rev"],
                                      LEDGER_MAX_EVENTS, op.get("read_ticket"))
         status = reply[0]
-        if kind in ("terminal", "retire"):
+        if kind in ("terminal", "retire", "retire_missing"):
             if status != "ok":
                 self._refusal(stats, status, kind, source, event_id)
                 return []

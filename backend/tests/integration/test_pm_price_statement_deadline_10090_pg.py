@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from pathlib import Path
@@ -18,6 +19,7 @@ from tests.integration.test_pm_stamp_release_wake_10090_pg import (
 )
 from tests.integration.test_pm_held_price_row_stamps_received_quote_11138_pg import wire_held_quotes
 from tests.test_polymarket_withdrawal_speed_10651 import compile_functions
+from tests.test_event_frame_batching_10659 import private_redis_socket  # noqa: F401
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.skipif(
     not DB_URL, reason='requires disposable SEARCH_TEST_DATABASE_URL',
@@ -25,13 +27,41 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.skipif(
 
 
 @pytest.fixture(autouse=True)
-def preview(monkeypatch):
+async def preview(monkeypatch, private_redis_socket):
+    """Default ledger runs real Lua; the existing sink still verifies commits.
+
+    Record actual Redis subscriber receipts, not pre-CAS composed frames.
+    Only the preview socket transport is injected; production admission,
+    composition, publication and committed readback assertions remain intact.
+    """
+    from redis.asyncio import Redis
+    from app.utils.live_push import event_channel
+
     blend_preview.reset_registry_for_tests()
-    monkeypatch.setenv(blend_preview.SOURCE_ENV, 'polymarket')
-    monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, '1,2')
-    monkeypatch.delenv(blend_preview.LEDGER_SOURCES_ENV, raising=False)
-    yield
-    blend_preview.reset_registry_for_tests()
+    client = Redis(unix_socket_path=str(private_redis_socket))
+    subscriber = client.pubsub()
+    await subscriber.subscribe(*(event_channel(eid) for eid in (1, 2, 3)))
+    for _ in range(3):
+        await subscriber.get_message(timeout=1)
+
+    async def call(*args):
+        result = await client.execute_command(*args)
+        if (args[0] == 'EVAL' and args[3 + int(args[2])] in ('publish', 'revoke')
+                and result and result[0] == b'published'):
+            message = await subscriber.get_message(ignore_subscribe_messages=True, timeout=1)
+            assert message is not None, 'successful DNPL PUBLISH must reach subscriber'
+            call.frames.append((time.monotonic(), json.loads(message['data'])))
+        return result
+
+    call.frames = []
+    monkeypatch.setattr(blend.LiveBlendRefresher, '_preview_call', staticmethod(lambda connection: call))
+    try:
+        assert isinstance(blend_preview.registry(), blend_preview.LedgerRegistry)
+        yield
+    finally:
+        await subscriber.aclose()
+        await client.aclose()
+        blend_preview.reset_registry_for_tests()
 
 
 async def prepared(rig, consumer, monkeypatch, *, warm=True, initialize=True):
@@ -65,14 +95,7 @@ async def prepared(rig, consumer, monkeypatch, *, warm=True, initialize=True):
     t.boundary.game_price_lock_timeout_ms = 1
     t.r.min_refresh_interval_s = .025
     await wire_held_quotes(t, consumer)
-    frames = []
-
-    async def preview_frames(initial, *, prepare_frames=None):
-        frames.extend((time.monotonic(), frame) for frame in (
-            await prepare_frames() if prepare_frames is not None else initial
-        ))
-
-    monkeypatch.setattr(t.r, '_publish_previews', preview_frames)
+    frames = t.r._preview_call(None).frames
     if not initialize:
         return t, frames
     try:
@@ -218,14 +241,20 @@ async def test_real_statement_budget_scope_and_pooled_restoration(
     async with rig.engine.connect() as conn:
         schema = await conn.scalar(text('SELECT current_schema()'))
     pool = create_async_engine(DB_URL, pool_size=1, max_overflow=0, connect_args={
-        'server_settings': {'search_path': schema, 'statement_timeout': prior,
-                            'lock_timeout': '333ms'},
+        'server_settings': {'search_path': schema, 'lock_timeout': '333ms'},
     })
-    # Prime this new single connection before timing its price-only budget.
+    # Prime the new connection/type cache BEFORE installing the budget under
+    # test. Otherwise an 80ms case can fail in asyncpg type introspection,
+    # before the price-only budget action this warm-pool control exercises.
+    # The separate cold-pool control below still does no preparation.
     async with pool.connect() as conn:
         tx = await conn.begin()
         await conn.execute(pm.chunk_price_update_stmt({1: .6}, force_ids={1}))
         await tx.rollback()
+        await conn.execute(text("SELECT set_config('statement_timeout', :prior, false)"),
+                           {'prior': prior})
+        await conn.commit()
+        assert await conn.scalar(text("SELECT current_setting('statement_timeout')")) == prior
     during, after, pids, price_errors = [], [], [], []
     settings_sql = text("SELECT current_setting('statement_timeout'), current_setting('lock_timeout')")
 

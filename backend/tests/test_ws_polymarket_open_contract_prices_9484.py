@@ -67,6 +67,7 @@ import app.tasks.polymarket_open_contracts as open_mod
 import app.tasks.polymarket_ws as poly_task
 from app.models.models import FuturesOutcome
 from app.utils.market_quote_push import market_channel, parse_market_frame
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, SET_STATEMENT_TIMEOUT_SQL
 from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 pytestmark = pytest.mark.asyncio
@@ -729,6 +730,14 @@ class _Session:
         return self.sync_session.info
 
     async def execute(self, stmt, *_a, **_kw):
+        # Keep DNPL's arm/restore on the same real price transaction; routing
+        # these through the slate replay loses both the timeout and a batch.
+        if any(stmt is control for control in (
+            poly_task.ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+            SET_STATEMENT_TIMEOUT_SQL,
+            SET_LOCK_TIMEOUT_SQL,
+        )):
+            return self.sync_session.execute(stmt, *_a, **_kw)
         sql = str(stmt)
         if sql == str(open_mod.open_contract_markets_stmt()):
             return self._rig.open_read(0)
