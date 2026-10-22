@@ -477,8 +477,13 @@ nonisolated enum BlendPreview {
         var retired = reader.retiredMembers.filter { !members.contains($0.row) }
         for row in Set(leaving.keys).union(reader.floors.map { Set($0.rows.keys) } ?? [])
         where !members.contains(row) {
+            let prior = retired.first { $0.row == row }
             retired.removeAll { $0.row == row }
-            retired.append(.init(row: row, fence: leaving[row], floor: reader.floors?.rows[row]))
+            let fence = leaving[row].map {
+                ownFence(prior?.fence, epoch: $0.epoch, seq: $0.seq, retired: $0.retired, deadline: $0.deadline)
+            } ?? prior?.fence
+            let floor = [prior?.floor, reader.floors?.rows[row]].compactMap { $0 }.max()
+            retired.append(.init(row: row, fence: fence, floor: floor))
         }
         if retired.count > BlendPreviewReader.maxRetiredMembers {
             // Never forget safety evidence. COVERAGE LIMIT: this visit admits

@@ -42,6 +42,8 @@ do {
     try tests.testNewerV1AuthorityMergesIntoARestoredFenceBeforeV2Validation()
     try tests.testRowsThatLeaveTogetherAreAllRetainedAndCanExceedCapacityPlusOne()
     try tests.testASuccessfulV2MigrationConsumesTheLegacyOrderAndKeepsTheOriginPending()
+    try tests.testANonMemberFloorMergesIntoRetiredEvidenceAndNeverRegresses()
+    try tests.testTheLegacyLedgerRefusesANewOriginPastItsBoundAndKeepsServingHeldOnes()
 } catch {
     ReaderChecks.failures += 1
     print("Unexpected error: \(error)")

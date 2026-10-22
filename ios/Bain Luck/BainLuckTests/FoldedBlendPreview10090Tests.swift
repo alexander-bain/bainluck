@@ -1359,4 +1359,71 @@ final class FoldedBlendPreview10090Tests: XCTestCase {
                            .held?.expiresAt, 101.4)
     }
 
+    /// lane1b's exact-delta review of d915700df1 (R1, G1, G2): a floor for a
+    /// row the page no longer folds is that row's retired evidence. It merges
+    /// by max with what the row already left — the boundary that retires the
+    /// row never replaces a newer floor with one taken before the first
+    /// membership — and each new row counts toward the coverage limit.
+    func testANonMemberFloorMergesIntoRetiredEvidenceAndNeverRegresses() throws {
+        func retiredFloor(_ reader: BlendPreviewReader, _ row: String) -> Int? {
+            reader.retiredMembers.first { $0.row == row }?.floor
+        }
+        // G1: floor 10 before any membership; the first membership is not a
+        // change, so it stays in `floors`. Floor 21 arrives while 4243 is out.
+        var r = BlendPreview.readerAfterCommitFloor(.empty, FoldRevision(["4243": 10]))
+        r = BlendPreview.readerAfterMembership(r, members: ["4242", "4244"])
+        r = BlendPreview.readerAfterCommitFloor(r, FoldRevision(["4243": 21]))
+        XCTAssertEqual(retiredFloor(r, "4243"), 21)
+        r = BlendPreview.readerAfterMembership(r, members: ["4242", "4245"])
+        XCTAssertEqual(retiredFloor(r, "4243"), 21, "the pre-membership floor 10 never overwrites the newer 21")
+        r = BlendPreview.readerAfterMembership(r, members: ["4242", "4243"])
+        XCTAssertEqual(r.floors?.rows["4243"], 21, "4243 returns with its newest floor")
+        let base15: [String: Int] = ["4242": 10, "4243": 15]
+        XCTAssertNil(read(r, try foldedFrame(origin: 4243, epoch: 1, seq: 1, baseRev: 15, base: base15), at: 100).held,
+                     "a preview composed on 4243@15, below the committed 21, is refused")
+        let base21: [String: Int] = ["4242": 10, "4243": 21]
+        XCTAssertEqual(read(r, try foldedFrame(origin: 4243, epoch: 1, seq: 1, baseRev: 21, base: base21), at: 100).held?.p, 0.6,
+                       "one covering 21 is admitted")
+
+        // G2: a non-member floor max-merges; it never enters the fold's floors.
+        var m = BlendPreview.readerAfterMembership(.empty, members: ["4242", "4243"])
+        m = BlendPreview.readerAfterCommitFloor(m, FoldRevision(["4250": 5]))
+        m = BlendPreview.readerAfterCommitFloor(m, FoldRevision(["4250": 3]))
+        XCTAssertEqual(retiredFloor(m, "4250"), 5, "5 is kept over a later 3")
+        XCTAssertNil(m.floors?.rows["4250"])
+        // Eight distinct non-member rows is at capacity; a ninth saturates.
+        for row in ["4251", "4252", "4253", "4254", "4255", "4256"] {
+            m = BlendPreview.readerAfterCommitFloor(m, FoldRevision([row: 1]))
+        }
+        XCTAssertEqual(m.retiredMembers.count, BlendPreviewReader.maxRetiredMembers - 1)
+        m = BlendPreview.readerAfterCommitFloor(m, FoldRevision(["4257": 1]))
+        XCTAssertEqual(m.retiredMembers.count, BlendPreviewReader.maxRetiredMembers)
+        XCTAssertEqual(m.evidenceSaturated, false, "at capacity is not past it")
+        m = BlendPreview.readerAfterCommitFloor(m, FoldRevision(["4258": 1]))
+        XCTAssertEqual(m.retiredMembers.count, BlendPreviewReader.maxRetiredMembers + 1, "kept, not forgotten")
+        XCTAssertEqual(m.evidenceSaturated, true, "a ninth row saturates")
+    }
+
+    /// lane1b's exact-delta review of d915700df1 (G3): the legacy ledger holds
+    /// at most `maxOrigins` distinct origins (f211). Past that a new origin is
+    /// refused rather than any order forgotten; an origin already held still
+    /// moves forward.
+    func testTheLegacyLedgerRefusesANewOriginPastItsBoundAndKeepsServingHeldOnes() throws {
+        func frame(_ origin: Int, seq: Int) throws -> BlendPreviewFrame {
+            try foldedFrame(origin: origin, epoch: 1, seq: seq, baseRev: 20, base: ["4242": 10, String(origin): 20])
+        }
+        var r = BlendPreviewReader.empty
+        for origin in 5000..<(5000 + BlendPreviewReader.maxOrigins) {
+            r = read(r, try frame(origin, seq: 1), at: 100)
+        }
+        XCTAssertEqual(r.legacyOrders.count, BlendPreviewReader.maxOrigins)
+        XCTAssertEqual(read(r, try frame(5000 + BlendPreviewReader.maxOrigins, seq: 1), at: 100.1), r,
+                       "a new origin past the bound is refused")
+        let held = read(r, try frame(5000, seq: 2), at: 100.1)
+        XCTAssertEqual(held.legacyOrders["5000"], BlendPreviewReader.FoldedSequence(epoch: 1, seq: 2, originEventId: 5000),
+                       "an origin already held is still admitted")
+        XCTAssertEqual(held.held?.originEventId, 5000)
+        XCTAssertEqual(held.held?.seq, 2)
+    }
+
 }
