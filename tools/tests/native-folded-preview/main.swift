@@ -29,6 +29,10 @@ do {
     try tests.testTheRemovedOriginsScalarEpochLeavesWithItAndTheSurvivorsStays()
     try tests.testSingletonAuthorityOutlivesTheDisplayAndFencesTheFoldItJoins()
     try tests.testARowThatReturnsAfterAMembershipFlapGetsItsEvidenceBack()
+    try tests.testRetiredEvidenceIsNeverEvictedAndCapacityRefusesInsteadOfForgetting()
+    try tests.testAFoldDownToThePageRowResumesItsSingletonUnderItsOwnFence()
+    try tests.testAV1OriginThatLeavesAndReturnsKeepsItsOrderAsAFence()
+    try tests.testAnElectionChangeInsideAnUnchangedMembershipResumesOnTheFreshStream()
 } catch {
     ReaderChecks.failures += 1
     print("Unexpected error: \(error)")

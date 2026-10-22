@@ -26,8 +26,18 @@ display, drops the session and refuses old-membership packets, and the page
 reopens its stream on the new fold. A removed origin takes the legacy scalar
 epoch that was its domain with it; the page's own row records its singleton
 authority at acceptance (identity, first-seen deadline, retirement), so a
-disconnect before the change cannot forget it; rows that leave keep bounded
-retired evidence (`retiredMembers`, fence + commit floor) that returns with
-them across a cached-detail flap. The harness runs the reader half (both
-v2 and v1 paths); `AMembershipChangeReopensTheFoldedPreview10090Tests` covers
-the page's stream reopen and runs only in Native's real build.
+disconnect before the change cannot forget it; rows that leave keep retired
+evidence (`retiredMembers`: fence, commit floor, and a removed origin's v1
+order) that returns with them across a cached-detail flap. That evidence is
+never evicted: past `maxRetiredMembers` distinct retired rows the reader
+saturates (`evidenceSaturated`) and admits no further preview until navigation
+— a coverage limit, not continuity. A fold-down to the page row alone resumes
+that row's singleton frames under its own recorded fence (older/equal identity
+refused, same tuple capped at its first-seen deadline, retired stays retired,
+a commit floor still withdraws), while any other legacy frame after v2 stays a
+refused downgrade; a never-folded singleton visit keeps the legacy display
+rules unchanged. Fences are bounded by the membership, not by the two elected
+origins, so an election change inside an unchanged membership of three or more
+rows resumes on the fresh stream the server opens. The harness runs the reader
+half (both v2 and v1 paths); `AMembershipChangeReopensTheFoldedPreview10090Tests`
+covers the page's stream reopen and runs only in Native's real build.
