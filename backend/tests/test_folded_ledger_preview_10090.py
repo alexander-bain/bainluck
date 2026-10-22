@@ -168,7 +168,9 @@ async def test_actual_folded_route_forwards_both_entries_then_terminal_floor(rig
     monkeypatch.setattr(route, "_current_reconcile", lambda *args: asyncio.sleep(0, result={
         "event_id": 8, "custody_id": "state:test", "removal_rev": base.revision,
     }))
-    stream = route._stream(8, Request(), [8, EV])
+    request = Request()
+    request.query_params = {"preview_protocol": "folded-v1"}
+    stream = route._stream(8, request, [8, EV])
     task = None
     try:
         await anext(stream)
