@@ -513,6 +513,15 @@ async def _event_points(rig, eid):
     return [(float(v), at) for v, at in rows]
 
 
+def _by_event(attempts):
+    """Per event, in order: (verify_event, committed, still owed after). The two
+    events' rows load in their commit order, which the dead run does not fix."""
+    out = {}
+    for eid, verify, ok, owed in attempts:
+        out.setdefault(eid, []).append((verify, ok, eid in owed))
+    return out
+
+
 def _spy_attempts(r, rig):
     """(event, verify_event, committed, events still owed after) per attempt."""
     attempts = []
@@ -539,11 +548,10 @@ async def test_a_deleted_events_point_fails_once_on_the_real_fk_then_retires(rig
     fresh, _ = _refresher(rig)
     attempts = _spy_attempts(fresh, rig)
     await _drain(fresh)
-    assert attempts == [
-        (1, False, False, [1, 2]),
-        (2, False, True, [1]),
-        (1, True, True, []),
-    ]
+    assert _by_event(attempts) == {
+        1: [(False, False, True), (True, True, False)],
+        2: [(False, True, False)],
+    }
     assert "win_prob_snapshots_event_id_fkey" in caplog.text, "the real FK failed attempt 1"
     assert fresh.stats.get("history_event_gone", 0) == 1
     assert await _owed(rig) == []
@@ -567,9 +575,9 @@ async def test_a_present_events_failed_point_is_written_on_its_retry(rig):
     finally:
         await holder.rollback()
         await holder.close()
-    assert attempts[:2] == [(1, False, False, [1, 2]), (2, False, True, [1])]
+    assert _by_event(attempts) == {1: [(False, False, True)], 2: [(False, True, False)]}
     await _drain(fresh)
-    assert attempts[2:] == [(1, True, True, [])]
+    assert _by_event(attempts)[1][1:] == [(True, True, False)]
     assert fresh.stats.get("history_event_gone", 0) == 0
     assert (await _event_points(rig, 1))[-1] == (0.7, _at(frames[1]))
     assert await _owed(rig) == []
@@ -609,12 +617,10 @@ async def test_a_failed_commit_of_a_retirement_keeps_the_row_and_counts_nothing(
     attempts = _spy_attempts(fresh, rig)
     await _drain(fresh)
     assert not failing[0], "the retirement's COMMIT failed once"
-    assert attempts == [
-        (1, False, False, [1, 2]),
-        (2, False, True, [1]),
-        (1, True, False, [1]),
-        (1, True, True, []),
-    ]
+    assert _by_event(attempts) == {
+        1: [(False, False, True), (True, False, True), (True, True, False)],
+        2: [(False, True, False)],
+    }
     assert fresh.stats.get("history_event_gone", 0) == 1
     assert await _owed(rig) == []
     assert (await _event_points(rig, 2))[-1] == (0.7, _at(frames[2]))
