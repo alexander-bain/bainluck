@@ -163,7 +163,8 @@ describe("C the chart legend's Lost reads at secondary-text contrast, chart-loca
     expect(LOST_LEGEND_WORD_CLASS).toBe("[&>span]:text-text-secondary");
     const m = wrapper("lost")!;
     expect(m).not.toBeNull();
-    expect(m[1]).toContain(`class="${LOST_LEGEND_WORD_CLASS.replace("&", "&amp;").replace(">", "&gt;")}"`);
+    // React escapes the attribute: `[&>span]` is served as `[&amp;&gt;span]`.
+    expect(m[1]).toContain('class="[&amp;&gt;span]:text-text-secondary"');
     expect(m[3]).toBe("Lost");
     expect(m[1]).not.toMatch(/#[0-9a-f]{3,6}|rgb\(/i);
   });
