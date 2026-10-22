@@ -302,6 +302,12 @@ class LiveFanout:
             event_id, frame, members=members, floors=floors, elapsed_ms=elapsed_ms,
         )
 
+    def folded_preview_base(self, event_id, *, members):
+        """Borrow the existing bounded warm base; never read or cache anew."""
+        if self._quote_projector is None:
+            return None
+        return self._quote_projector.preview_base(event_id, members=members)
+
     def forget_folded_preview(self, event_id):
         if self._quote_projector is not None:
             self._quote_projector.forget_preview_base(event_id)

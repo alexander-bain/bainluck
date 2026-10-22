@@ -457,7 +457,7 @@ async def _stream(
     # Old readers treat a folded frame as a singleton claim. Require explicit
     # vector-aware admission support before sending provisional folded values.
     folded_preview_capable = (
-        getattr(request, "query_params", {}).get("preview_protocol") == "folded-v1"
+        getattr(request, "query_params", {}).get("preview_protocol") in {"folded-v1", "folded-v2"}
     )
     started = asyncio.get_event_loop().time()
     _open_connections += 1
@@ -476,6 +476,18 @@ async def _stream(
     pending_projection = None
     preview_floors = {}
     active_preview_origin = None
+    preview_session = None
+
+    def update_preview_session(frame=None, elapsed_ms=0):
+        if preview_session is None:
+            return None
+        get_base = getattr(hub, "folded_preview_base", None)
+        base = (get_base(event_id, members=list(subscription.subscriptions))
+                if callable(get_base) else None)
+        return preview_session.update(
+            base, floors=preview_floors, now=asyncio.get_event_loop().time(),
+            frame=frame, elapsed_ms=elapsed_ms,
+        )
 
     def note_floors(vector):
         if not isinstance(vector, dict):
@@ -501,8 +513,16 @@ async def _stream(
 
     try:
         await subscription.subscribe([event_id, *(contributor_ids or [])])
+        if (preview_on and len(subscription.subscriptions) > 1
+                and getattr(request, "query_params", {}).get("preview_protocol") == "folded-v2"):
+            from app.utils.folded_blend_preview_v2 import FoldedPreviewSession
+
+            preview_session = FoldedPreviewSession(event_id, list(subscription.subscriptions))
         yield f"retry: {RETRY_MS}\n\n"
-        yield sse_encode(json.dumps({"event_id": event_id}), event="open")
+        yield sse_encode(json.dumps({
+            "event_id": event_id,
+            **({"fold_session": preview_session.session} if preview_session else {}),
+        }), event="open")
         recovery_ids = list(subscription.subscriptions)
         # One owned read may finish after replay or live prices. Reconciliation
         # is an obligation, not permission to hold already committed prices.
@@ -543,6 +563,18 @@ async def _stream(
             if loop_now - started >= MAX_CONNECTION_S:
                 yield sse_encode(
                     json.dumps({"reason": "max_age"}), event="reconnect"
+                )
+                return
+
+            projected_preview = update_preview_session()
+            if projected_preview is not None:
+                yield sse_encode(json.dumps(projected_preview), event="preview")
+            if preview_session is not None and preview_session.reconnect_required:
+                # Withdraw the previous election before rolling over through
+                # the existing client reconnect path. Keeping this disabled
+                # session open would strand eligible previews until max-age.
+                yield sse_encode(
+                    json.dumps({"reason": "preview_election_changed"}), event="reconnect"
                 )
                 return
 
@@ -635,6 +667,8 @@ async def _stream(
             # `/api/feed`.
             quote_wait = (min(FRAME_WAIT_S, max(0.001, quote_retry_at - loop_now))
                           if pending_quote_control is not None and recovery_quote is None else FRAME_WAIT_S)
+            if preview_session is not None:
+                quote_wait = preview_session.wait_seconds(loop_now, quote_wait)
             from_replay = bool(replay)
             if from_replay:
                 origin_id, payload = replay.popleft()
@@ -659,7 +693,8 @@ async def _stream(
                                if task is not None)
                 done, _ = await _await_honouring_cancel(asyncio.wait(
                     waiting, return_when=asyncio.FIRST_COMPLETED,
-                    timeout=quote_wait if pending_quote_control is not None and recovery_quote is None else None
+                    timeout=quote_wait if (preview_session is not None or
+                        (pending_quote_control is not None and recovery_quote is None)) else None
                 ))
                 if next_frame not in done:
                     continue
@@ -676,6 +711,11 @@ async def _stream(
                     if callable(forget):
                         forget(event_id)
                     active_preview_origin = None
+                    if preview_session is not None:
+                        preview_session.reset()
+                        projected_preview = update_preview_session()
+                        if projected_preview is not None:
+                            yield sse_encode(json.dumps(projected_preview), event="preview")
                     yield sse_encode(
                         json.dumps({"generation": recovery_generation}), event="resync"
                     )
@@ -711,6 +751,11 @@ async def _stream(
                     elif (preview_on and folded_preview_capable
                           and frame.get("event_id") == origin_id
                           and len(subscription.subscriptions) > 1):
+                        if preview_session is not None:
+                            projected_preview = update_preview_session(frame, elapsed_ms)
+                            if projected_preview is not None:
+                                yield sse_encode(json.dumps(projected_preview), event="preview")
+                            continue
                         meta = frame.get("preview", {})
                         if meta.get("kind") == "revoke" and active_preview_origin == origin_id:
                             yield sse_encode(json.dumps({
@@ -736,6 +781,12 @@ async def _stream(
                         yield sse_encode(json.dumps({
                             "event_id": event_id, "floor": preview_floors,
                         }), event="fold_preview_floor")
+                        if preview_session is not None:
+                            if origin_id == event_id and frame.get("status") not in QUOTE_STATUSES:
+                                preview_session.reset()
+                            projected_preview = update_preview_session()
+                            if projected_preview is not None:
+                                yield sse_encode(json.dumps(projected_preview), event="preview")
                     control = _withdrawal_reconcile(frame, event_id, origin_id)
                     if control is not None:
                         note_floors(control.get("removal_rev"))

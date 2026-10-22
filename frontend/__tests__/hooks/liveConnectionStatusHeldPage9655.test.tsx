@@ -205,7 +205,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
     status: reportedStreamStatus,
     blendPreview,
     blendPreviewNow,
-  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame);
+  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame, undefined, event?.blend_fold_revision);
   const streamStatus = reportedStreamStatus ?? (streamConnected ? "open" : "idle");
 
   // The page returns its loading view here; the status is drawn only below.
@@ -329,7 +329,7 @@ describe("structural pin: the harness carries the page's own wiring", () => {
     // The scheduler and its two branches.
     expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(read\) => \{\s*(?:\/\/[^\n]*\n\s*)*const reconcile = reconcileIntentRef\.current \|\| \(read\.backoff && reconcileLedger\.owed\(\)\);\s*reconcileIntentRef\.current = false;\s*if \(\(quoteTriggerRef\.current \|\| recoveryIntentRef\.current \|\| reconcile\) && pairedQuoteReadRef\.current\) return pairedQuoteReadRef\.current\(\);\s*freshNextEventReadRef\.current = true;\s*return refreshEventRef\.current\(\);\s*\}, FOLDED_FRAME_REFETCH_MS,/);
     // The hook, its status, and the fallback for a stream that reports only `connected`.
-    expect(PAGE).toMatch(/status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl\);/);
+    expect(PAGE).toMatch(/status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl, event\?\.blend_fold_revision\);/);
     expect(PAGE).toMatch(/const streamStatus = reportedStreamStatus \?\? \(streamConnected \? "open" : "idle"\);/);
     // The push effect: refuse-and-refetch first, then the one guarded write.
     expect(PAGE).toMatch(/if \(held && canSubscribeEventQuotes\(held\) && \(\s*liveFrame\.p === null \|\| held\.hero_probability_source !== "blend" \|\|\s*\(liveFrame\.status && liveFrame\.status !== held\.status\) \|\|\s*\(held\.status !== "live" && frameInvalidatesFoldedBlend\(held, liveFrame\)\) \|\|\s*(?:\/\/[^\n]*\n\s*)*\(frameCarriesUnpricedSnapshot\(liveFrame\) &&\s*frameFoldOrder\(held\.blend_fold_revision, liveFrame\.rev\) === "newer"\)\s*\)\) \{\s*quoteTriggerRef\.current = liveFrame;\s*sourceAddedHistoryRef\.current = null;\s*foldedRefetch\.request\(\);\s*return;\s*\}/);

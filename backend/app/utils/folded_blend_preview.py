@@ -53,7 +53,7 @@ class FoldedPreviewBase:
                 and all(key in keys and _revision(value) and self.revision[key] >= value
                         for key, value in floors.items()))
 
-    def project(self, frame, *, members, floors, elapsed_ms=0):
+    def pending_entries(self, frame, *, members, floors, elapsed_ms=0, split_origins=False):
         """Project exact pending entries from one already elected origin event.
 
         The route supplies observed commit floors and elapsed time since receipt.
@@ -90,8 +90,9 @@ class FoldedPreviewBase:
                 return None
         elif version == 2:
             if (preview.get("pending_entries_authority") != "event-ledger-v1"
-                    or any(owner != origin for name, owner in self.owners.items()
-                           if name in PREVIEW_SOURCES)):
+                    or (not split_origins and any(
+                        owner != origin for name, owner in self.owners.items()
+                        if name in PREVIEW_SOURCES))):
                 # Even a one-entry frame must refuse a split-origin page:
                 # otherwise alternating one-entry frames would mix independent
                 # event generations in the reader's single ordering domain.
@@ -124,6 +125,10 @@ class FoldedPreviewBase:
             except (TypeError, ValueError):
                 return None
             observed_times[name] = observed
+        return copied_entries, observed_times, ttl
+
+    def compose(self, copied_entries, observed_times):
+        """Resolve a validated complete pending set against this committed fold."""
         sources = {**self.sources, **copied_entries}
         context = SimpleNamespace(**self.context)
         hero = resolve_hero(FoldedBlendView(context, sources))
@@ -137,21 +142,33 @@ class FoldedPreviewBase:
             FoldedBlendView(context, clock_sources), require_complete=True,
         )
         result = {
-            **frame, "event_id": self.event_id,
+            "event_id": self.event_id, "status": self.context["status"],
             "p": hero.home_probability,
             "p_away": printable_away(hero.away_probability, hero.home_probability, self.sport),
             "sport": self.sport,
             "display_observed_at": clock.isoformat() if clock else None,
-            "preview": {
-                **preview, "origin_event_id": origin, "folded_version": 1,
-                "base_fold_revision": dict(self.revision), "ttl_ms": ttl,
-            },
         }
         try:
             json.dumps(result, allow_nan=False)
         except (TypeError, ValueError):
             return None
         return result
+
+    def project(self, frame, *, members, floors, elapsed_ms=0):
+        entries = self.pending_entries(frame, members=members, floors=floors,
+                                       elapsed_ms=elapsed_ms)
+        if entries is None:
+            return None
+        copied, observed, ttl = entries
+        result = self.compose(copied, observed)
+        if result is None:
+            return None
+        return {**frame, **result, "preview": {
+            **frame["preview"], "origin_event_id": frame["event_id"],
+            "folded_version": 1, "base_fold_revision": dict(self.revision),
+            "ttl_ms": ttl,
+        }}
+
 
 
 class QuoteWithPreviewBase(dict):

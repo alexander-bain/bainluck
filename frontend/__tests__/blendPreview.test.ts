@@ -107,7 +107,9 @@ describe('epoch fence: an earlier worker never regains the display', () => {
     expect(reader.epoch).toBe(5);
     expect(displayedPreview(reader.held, held(10), 0)).toBe(0.66);
     const old = read(EMPTY_BLEND_PREVIEW_READER, blend(90, 0.7, { epoch: 4 }));
-    expect(read(old, revoke(1, 0, 5))).toEqual({ held: null, epoch: 5 });
+    expect(read(old, revoke(1, 0, 5))).toEqual({ held: null, epoch: 5,
+      multiOrigin: { session: null, sequence: -1, entered: false, seen: [],
+        authorities: { '1': { epoch: 5, seq: 1, state: 'revoked' } } } });
   });
 
   test('an old-epoch blend arriving after the replacement spoke is refused (no latest-arrival selection)', () => {
@@ -117,7 +119,9 @@ describe('epoch fence: an earlier worker never regains the display', () => {
     expect(displayedPreview(after.held, held(10), 0)).toBe(0.66);
     // Even with nothing held (the replacement revoked its own), the floor stays.
     reader = read(reader, revoke(2, 1, 5));
-    expect(reader).toEqual({ held: null, epoch: 5 });
+    expect(reader).toEqual({ held: null, epoch: 5,
+      multiOrigin: { session: null, sequence: -1, entered: false, seen: [],
+        authorities: { '1': { epoch: 5, seq: 2, state: 'revoked' } } } });
     expect(read(reader, blend(92, 0.71, { epoch: 4 }))).toBe(reader);
   });
 
