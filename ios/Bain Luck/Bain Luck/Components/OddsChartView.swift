@@ -361,6 +361,9 @@ final class OddsChartViewModel: ObservableObject {
 
 struct OddsChartView: View {
     @ScaledMetric(relativeTo: .caption2) private var scaledAxisFontSize: CGFloat = 12
+    /// #9483 R4 V2 — the full-size key's names rail is never chosen narrower
+    /// than one readable source key, scaled with the key's text.
+    @ScaledMetric(relativeTo: .caption2) private var railReadableWidth9483: CGFloat = OddsChartView.railReadableKeyWidth9483
     private var axisFontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledAxisFontSize) }
     let eventId: Int
     var teamColors: (away: Color, home: Color)?
@@ -2379,6 +2382,8 @@ struct OddsChartView: View {
     /// fit one row, the control and the rail move to a second row. The choice
     /// measures the control's wider state and none of the rail, so it is the
     /// same with Sources open or closed and the plot never changes size.
+    /// (V2: the rail counts as one readable key's width in that choice — see
+    /// `railRow9483`.)
     @ViewBuilder
     private func legendView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo],
                             sourcesOpen: Binding<Bool>, rail: Bool) -> some View {
@@ -2404,15 +2409,8 @@ struct OddsChartView: View {
                     }
                     .fixedSize(horizontal: true, vertical: false)
                 }
-                // The rail fills what is left and never decides the row.
-                .frame(idealWidth: 0, maxWidth: .infinity, alignment: .leading)
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) { primaryKey; control; names }
-                    VStack(alignment: .leading, spacing: 0) {
-                        primaryKey
-                        HStack(spacing: 12) { control; names }
-                    }
-                }
+                Self.railRow9483(primaryKey: primaryKey, control: control, names: names,
+                                 readableWidth: railReadableWidth9483)
             } else {
                 FlowLayout(spacing: 8) {
                     legendKey("aggregate", sources: sources, isPrimary: true, reading: endReading)
@@ -2488,6 +2486,29 @@ struct OddsChartView: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    /// #9483 R4 V2 — swatch, gap and about nine caption characters ("Polymarke"):
+    /// one source key a reader can name, at the default text size.
+    static let railReadableKeyWidth9483: CGFloat = 72
+
+    /// #9483 R4 — the full-size key's row: the blend's name, the control, then
+    /// the names rail filling what is left. V2 (Lane1b on eae3): the rail
+    /// counts as `readableWidth` — never 0 — when the row is chosen, so where
+    /// the name, the control and one readable key do not fit, the control and
+    /// rail take the second row instead of the open rail shrinking to a
+    /// swatch. The width is a constant, never read from Sources open or
+    /// closed, so the choice is the same in both.
+    static func railRow9483<Primary: View, Control: View, Names: View>(
+        primaryKey: Primary, control: Control, names: Names, readableWidth: CGFloat) -> some View {
+        let rail = names.frame(idealWidth: readableWidth, maxWidth: .infinity, alignment: .leading)
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) { primaryKey; control; rail }
+            VStack(alignment: .leading, spacing: 0) {
+                primaryKey
+                HStack(spacing: 12) { control; rail }
+            }
+        }
     }
 
     /// #9483 R4 — the full-size key's Show or Hide, holding the width of the

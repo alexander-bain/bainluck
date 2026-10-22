@@ -15,6 +15,8 @@ import XCTest
 ///   projected" from a GB 27.5–DAL 26.5 history point) →
 ///   `testAFinishedCardComparesWithTheHeadlinesQualifiedForecast`,
 ///   `testWithoutTheHeadlinesForecastTheCardNamesItsOtherBasis`,
+///   `testTheHistoryFallbackClaimsNoTimeItsEvidenceCannotProve` (Design on eae3:
+///   the fallback's floor is the first OBSERVED game state, not kickoff),
 ///   `testTheBaselineChangesNothingBeforeTheFinal`,
 ///   `testTheQualifiedHalvesAreTheServedOnes`, `testThePageWiresOneBaselineToEveryComparison`
 /// - R3 two bare "Sources" controls with different counts →
@@ -22,7 +24,9 @@ import XCTest
 /// - R4 Show/Hide stranded past the right edge at AX3, long key names cut off,
 ///   a 26×25pt full-size entry (and, found on the successor's own AX3 frame,
 ///   "Bain / Luck" broken across lines beside its reading) → `testTheFullSizeKeysControlIsOutsideTheScrollingRail`,
-///   `testAKeyItemWiderThanItsRowWrapsInsideIt`, `testTheFullSizeEntryIsA44PointTarget`
+///   `testAKeyItemWiderThanItsRowWrapsInsideIt`, `testTheFullSizeEntryIsA44PointTarget`; V2 (Lane1b on
+///   eae3: the open names rail could be chosen a few letters wide) →
+///   `testTheOpenRailIsNeverChosenNarrowerThanOneReadableKey`
 @MainActor
 final class RealPageCorrections9483Tests: XCTestCase {
 
@@ -164,7 +168,7 @@ final class RealPageCorrections9483Tests: XCTestCase {
             XCTAssertEqual(card.pregameBasis, .history)
             XCTAssertEqual(card.pregame.home, 27.5, "the history point is kept, never zero or a current number")
             XCTAssertTrue(card.namesDistinctBasis)
-            XCTAssertEqual(card.pregameLabel, "last before play", "it does not borrow \"pregame projection\"")
+            XCTAssertEqual(card.pregameLabel, "earlier forecast", "it does not borrow \"pregame projection\"")
             XCTAssertNil(card.ladderPregame, "no unqualified history pair reaches the ladders' \"Pregame projection\"")
         }
         // The baseline never creates a card the history refuses.
@@ -175,6 +179,29 @@ final class RealPageCorrections9483Tests: XCTestCase {
             kickoffAt: nil, scoreObservationStartAt: Self.start, finalAt: Self.start.addingTimeInterval(200 * 60),
             asOf: Self.start.addingTimeInterval(200 * 60), windowStartAt: nil, requestCutoffAt: nil)
         XCTAssertNil(NFLFinishCard9483.build(noHistory, finalBaseline: headlineHalves))
+    }
+
+    /// The history point is the last one before the instrument's first
+    /// observed game state; production passes `kickoffAt: nil`, so nothing
+    /// proves it preceded the start. Its caption, legend clause and spoken
+    /// intro say "Earlier forecast" and claim no time; the qualified
+    /// scheduled-start comparison keeps its words.
+    func testTheHistoryFallbackClaimsNoTimeItsEvidenceCannotProve() throws {
+        let fallback = try XCTUnwrap(NFLFinishCard9483.build(packersInput()))
+        XCTAssertTrue(fallback.namesDistinctBasis, "control: the history fallback")
+        XCTAssertEqual(NFLFinishCard9483.earlierForecast, "Earlier forecast")
+        XCTAssertEqual(fallback.pregameLabel, "earlier forecast")
+        let qualified = try XCTUnwrap(NFLFinishCard9483.build(packersInput(), finalBaseline: headlineHalves))
+        XCTAssertEqual(qualified.pregameLabel, "pregame projection", "the qualified comparison is unchanged")
+        let view = try code("Components", "NFLEventCards9483.swift")
+        XCTAssertTrue(view.contains("Text(card.namesDistinctBasis?\"Points·outline=\\(NFLFinishCard9483.earlierForecast.lowercased())·cross=final\""),
+                      "the legend clause names the earlier forecast")
+        XCTAssertTrue(view.contains("\"\\(card.namesDistinctBasis?NFLFinishCard9483.earlierForecast:\"Pregameprojection\")\""),
+                      "the spoken intro names the earlier forecast; the qualified one still says pregame")
+        // The ladders' own "Before kickoff" (a different basis) is not this claim.
+        for claim in ["beforeplay", "projectionbefore"] {
+            XCTAssertFalse(view.lowercased().contains(claim), "the card view claims \"\(claim)\" again")
+        }
     }
 
     func testTheBaselineChangesNothingBeforeTheFinal() throws {
@@ -248,15 +275,19 @@ final class RealPageCorrections9483Tests: XCTestCase {
         let end = try XCTUnwrap(chart.range(of: "}else{FlowLayout(", range: start.upperBound..<chart.endIndex))
         let rail = String(chart[start.lowerBound..<end.lowerBound])
         let scroll = try XCTUnwrap(rail.range(of: "letnames=ScrollView(.horizontal"))
-        let railEnd = try XCTUnwrap(rail.range(of: ".frame(idealWidth:0", range: scroll.upperBound..<rail.endIndex))
+        let railEnd = try XCTUnwrap(rail.range(of: "Self.railRow9483(", range: scroll.upperBound..<rail.endIndex))
         let scrolled = String(rail[scroll.lowerBound..<railEnd.lowerBound])
         XCTAssertFalse(scrolled.contains("sourcesShowButton("), "Show is back inside the rail")
         XCTAssertFalse(scrolled.contains("sourcesHideButton("), "Hide is back inside the rail")
         XCTAssertFalse(scrolled.contains("primaryKey"), "the blend's name is back inside the rail")
-        XCTAssertTrue(rail.contains(".frame(idealWidth:0,maxWidth:.infinity,alignment:.leading)"),
-                      "the rail never decides the row")
-        XCTAssertTrue(rail.contains("ViewThatFits(in:.horizontal){HStack(spacing:12){primaryKey;control;names}"
-                                    + "VStack(alignment:.leading,spacing:0){primaryKeyHStack(spacing:12){control;names}}}"),
+        XCTAssertTrue(rail.contains("Self.railRow9483(primaryKey:primaryKey,control:control,names:names,"
+                                    + "readableWidth:railReadableWidth9483)"),
+                      "the full-size key lays out through the one row chooser")
+        let row = try XCTUnwrap(chart.range(of: "staticfuncrailRow9483<"))
+        let rowEnd = try XCTUnwrap(chart.range(of: "privatefuncrailControl9483(", range: row.upperBound..<chart.endIndex))
+        let chooser = String(chart[row.lowerBound..<rowEnd.lowerBound])
+        XCTAssertTrue(chooser.contains("ViewThatFits(in:.horizontal){HStack(spacing:12){primaryKey;control;rail}"
+                                       + "VStack(alignment:.leading,spacing:0){primaryKeyHStack(spacing:12){control;rail}}}"),
                       "one row when it fits, the control and rail on a second row when not")
         let control = try XCTUnwrap(chart.range(of: "privatefuncrailControl9483("))
         let controlEnd = try XCTUnwrap(chart.range(of: "privatefuncsourcesShowButton(", range: control.upperBound..<chart.endIndex))
@@ -286,6 +317,45 @@ final class RealPageCorrections9483Tests: XCTestCase {
         XCTAssertTrue(chart.contains("ViewThatFits(in:.horizontal){HStack(spacing:4){name;last.padding(.leading,2)}"
                                      + "VStack(alignment:.leading,spacing:1){name;last}}"),
                       "a key too wide for its row stacks its reading under the name, never breaking the name first")
+    }
+
+    /// Lane1b on eae3: with an ideal width of 0 the one-row arm won whenever
+    /// the name and the control fit, so the opened names got whatever was
+    /// left — about 40pt at xxxLarge, a swatch and a few letters. The rail
+    /// now counts as one readable key, so the second row wins first, open or
+    /// closed alike.
+    func testTheOpenRailIsNeverChosenNarrowerThanOneReadableKey() throws {
+        func height(name: CGFloat, open: Bool, readable: CGFloat) -> CGFloat {
+            let names = ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    if open { Color.clear.frame(width: 300, height: 14) }
+                }
+                .fixedSize(horizontal: true, vertical: false)
+            }
+            let row = Chart.railRow9483(primaryKey: Color.clear.frame(width: name, height: 20),
+                                        control: Color.clear.frame(width: 90, height: 44),
+                                        names: names, readableWidth: readable)
+            let host = hostForMeasurement(row.frame(width: 337))
+            return host.sizeThatFits(in: CGSize(width: 337, height: 10_000)).height
+        }
+        let readable = Chart.railReadableKeyWidth9483
+        XCTAssertGreaterThanOrEqual(readable, 14 + 4 + 40, "a swatch and a name, never a sliver")
+        // xxxLarge: a 180pt name and a 90pt control leave 43pt beside them.
+        let sliver = height(name: 180, open: true, readable: 0)
+        XCTAssertGreaterThan(sliver, 0, "control: the row draws")
+        let opened = height(name: 180, open: true, readable: readable)
+        XCTAssertGreaterThan(opened, sliver + 10, "the control and rail take the second row instead of a 43pt rail")
+        XCTAssertEqual(height(name: 180, open: false, readable: readable), opened, accuracy: 0.5,
+                       "closed chooses the same row: Sources never moves the plot")
+        // Normal text: the blend's name is about 123pt at 393, and one row still fits.
+        let normal = height(name: 123, open: true, readable: readable)
+        XCTAssertEqual(normal, height(name: 123, open: true, readable: 0), accuracy: 0.5, "normal size keeps one row")
+        XCTAssertEqual(height(name: 123, open: false, readable: readable), normal, accuracy: 0.5)
+        let chart = try code("Components", "OddsChartView.swift")
+        XCTAssertTrue(chart.contains("@ScaledMetric(relativeTo:.caption2)privatevarrailReadableWidth9483:CGFloat="
+                                     + "OddsChartView.railReadableKeyWidth9483"),
+                      "the readable width scales with the key's text")
+        XCTAssertFalse(chart.contains("names.frame(idealWidth:0"), "the rail is back to an ideal width of 0")
     }
 
     func testTheFullSizeEntryIsA44PointTarget() throws {

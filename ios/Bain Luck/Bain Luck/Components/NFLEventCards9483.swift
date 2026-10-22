@@ -330,7 +330,7 @@ struct NFLFinishCardView9483: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            Text(card.namesDistinctBasis ? "Points · outline = last projection before play · cross = final"
+            Text(card.namesDistinctBasis ? "Points · outline = \(NFLFinishCard9483.earlierForecast.lowercased()) · cross = final"
                  : card.final != nil ? "Points · outline = pregame · cross = final"
                  : card.projectedNow != nil ? "Points · outline = pregame · filled = projected now"
                  : "Projected points")
@@ -390,7 +390,7 @@ struct NFLFinishCardView9483: View {
 
     private var accessibilityText: String {
         var parts = [card.kicker, card.headline(awayName: awayName, homeName: homeName),
-                     "\(card.namesDistinctBasis ? "Last projection before play" : "Pregame projection") "
+                     "\(card.namesDistinctBasis ? NFLFinishCard9483.earlierForecast : "Pregame projection") "
                      + "\(awayName) \(Self.points(card.pregame.away)), \(homeName) \(Self.points(card.pregame.home))"]
         if let later, let laterLabel {
             parts.append("\(laterLabel) \(awayName) \(Self.points(later.away)), \(homeName) \(Self.points(later.home))")

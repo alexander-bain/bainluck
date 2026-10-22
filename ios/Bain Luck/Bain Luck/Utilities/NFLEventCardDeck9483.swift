@@ -139,8 +139,16 @@ nonisolated struct NFLFinishCard9483: Equatable {
     /// the headline's, and says so instead of borrowing "pregame projection".
     var namesDistinctBasis: Bool { phase == .after && pregameBasis == .history }
 
-    /// The label under each pregame number.
-    var pregameLabel: String { namesDistinctBasis ? "last before play" : "pregame projection" }
+    /// The label under each pregame number. #9483 (Design, eae3) — the history
+    /// point is the last one before the instrument's first OBSERVED game state
+    /// (`ProjectedFinalPointsMount`: the floor is not kickoff, and production
+    /// passes `kickoffAt: nil`), so it can follow the start: "earlier
+    /// forecast", never "pregame" or "before play".
+    var pregameLabel: String { namesDistinctBasis ? Self.earlierForecast.lowercased() : "pregame projection" }
+
+    /// The distinct history basis's name, in the caption, the legend and the
+    /// spoken card alike.
+    static let earlierForecast = "Earlier forecast"
 
     /// The pregame pair the NBA margin and total cards print as their
     /// "Pregame projection": the same pair this card compares with, and none
