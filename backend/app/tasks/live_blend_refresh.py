@@ -3208,6 +3208,11 @@ class LiveBlendRefresher:
             if not getattr(self, "preview_events", frozenset()).isdisjoint(event_ids)
             else ()
         )
+        # Capture BEFORE the statement, not when a prepared plan is later
+        # published. Retirement invalidates this proof without renewing it.
+        preview_ticket = (
+            await self._preview_admission_read() if preview_columns else None
+        )
         rows = (
             await session.execute(
                 select(*(
@@ -3251,6 +3256,7 @@ class LiveBlendRefresher:
                         # field name, so they never reach an outcome row.
                         context["preview_sources"] = row[-2]
                         context["preview_rev"] = row[-1]
+                        context["preview_read_ticket"] = preview_ticket
                     grouped[event_id] = (
                         SimpleNamespace(**context),
                         [],
@@ -3286,6 +3292,8 @@ class LiveBlendRefresher:
                 for entry in group:
                     for row in entry.outcomes:
                         row._primary_quote_overlaid = id(row) not in original_rows
+        if preview_ticket is not None:
+            await self._retire_terminal_preview_read(grouped, preview_ticket)
         return grouped
 
     async def _prepare_groups(self, event_ids: list[int]) -> dict[int, tuple]:
@@ -4862,6 +4870,131 @@ class LiveBlendRefresher:
                 self.source, exc_info=True,
             )
             return None
+
+    async def _preview_admission_read(self) -> Optional[int]:
+        """Ticket for the NEXT fresh graph read, never for an existing plan.
+
+        One Redis round trip normally. Only at capacity, a separate fresh DB
+        statement may find one finished event to retire. That optional read
+        cannot abort the writer's session. No active or merely expired event
+        is evicted to make room.
+        """
+        from app.utils.blend_preview import PREVIEW_STATUSES, registry
+        from app.utils.market_quote_push import _checkout
+
+        preview = registry()
+        if not preview.ledger:
+            return None
+
+        async def ticket():
+            if preview.claim_lock is None:
+                preview.claim_lock = asyncio.Lock()
+            pool = self._client().connection_pool
+            async with preview.claim_lock:
+                connection = await _checkout(pool)
+                try:
+                    if preview.unclaimed(self.source):
+                        await self._claim_preview_epoch(connection, preview)
+                    return await preview.read_ticket(self._preview_call(connection), self.source)
+                except BaseException:
+                    self._redis = None
+                    await connection.disconnect()
+                    raise
+                finally:
+                    await pool.release(connection)
+
+        try:
+            async with asyncio.timeout(.25):
+                before, candidates = await ticket()
+                if before is None or not candidates:
+                    return before
+                from sqlalchemy import or_, select
+                from app.models.models import Event
+                from app.tasks.base import get_task_session
+
+                # A NEW transaction: no repeatable-read/cached snapshot can
+                # launder an old terminal observation through a new ticket.
+                factory = self._session_factory or get_task_session
+                async with factory() as session:
+                    ended = (await session.execute(select(
+                        Event.id, Event.win_probability_sources_rev,
+                    ).where(
+                        Event.id.in_(candidates),
+                        or_(Event.status.not_in(PREVIEW_STATUSES), Event.completed_at.is_not(None)),
+                    ).order_by(Event.id).limit(1))).first()
+                if ended is not None:
+                    await self._retire_preview_event(ended[0], ended[1], before)
+                    # This new ticket is used ONLY by the graph statement
+                    # that follows this method. Never reuse the sweep rows.
+                    before, _ = await ticket()
+                return before
+        except Exception:
+            self.preview_stats["publish_errors"] += 1
+            logger.warning("live_blend_refresh[%s]: preview admission read unavailable", self.source,
+                           exc_info=True)
+            return None
+
+    async def _retire_terminal_preview_read(self, grouped, ticket: int) -> None:
+        from app.utils.blend_preview import PREVIEW_STATUSES, registry
+
+        preview = registry()
+        for event_id, (event, _group) in grouped.items():
+            if event_id not in self.preview_events:
+                continue
+            if event.status not in PREVIEW_STATUSES or event.completed_at is not None:
+                rev = getattr(event, "preview_rev", None)
+                if type(rev) is int and rev >= 0:
+                    # One retirement per statement ticket. A racing retirement
+                    # refuses this one; it must wait for another real read.
+                    await self._retire_preview_event(event_id, rev, ticket)
+                    return
+
+    async def _retire_preview_event(self, event_id: int, read_rev: int, ticket: int) -> None:
+        """Preserve the terminal floor durably before forgetting Redis state.
+
+        A fresh read alone is insufficient: source revisions do not change on
+        status-only updates. Under the event row lock, this terminal-only SQL
+        increment leaves every future read strictly above the retired floor.
+        It changes neither source values nor observation timestamps. A failed
+        or timed-out transaction leaves the existing Redis guard in place.
+        """
+        from sqlalchemy import or_, update
+        from app.models.models import Event
+        from app.tasks.base import get_task_session
+        from app.utils.blend_preview import PREVIEW_STATUSES, registry
+
+        preview = registry()
+        try:
+            async with asyncio.timeout(.25):
+                # Close the preview first, including if the durable advance
+                # cannot acquire its row. Later duplicate terminal operations
+                # carry the old ticket and cannot recreate retired state.
+                await self._publish_previews([{
+                    "ledger_op": "terminal", "event_id": event_id, "source": self.source,
+                    "ctx_rev": read_rev, "read_ticket": ticket,
+                }])
+                factory = self._session_factory or get_task_session
+                async with factory() as session:
+                    durable = (await session.execute(update(Event).where(
+                        Event.id == event_id,
+                        or_(Event.status.not_in(PREVIEW_STATUSES), Event.completed_at.is_not(None)),
+                        Event.win_probability_sources_rev >= read_rev,
+                        Event.win_probability_sources_rev < 9007199254740991,
+                    ).values(win_probability_sources_rev=Event.win_probability_sources_rev + 1)
+                      .returning(Event.win_probability_sources_rev))).scalar_one_or_none()
+                    if durable is None:
+                        return
+                    await session.commit()
+                # Only a successful COMMIT can authorize deletion. Redis
+                # still checks ticket, owners, and all event-local floors.
+                await self._publish_previews([
+                    preview.retire_read(event_id, self.source, durable - 1, ticket,
+                                        committed_rev=durable),
+                ])
+        except Exception:
+            self.preview_stats["publish_errors"] += 1
+            logger.warning("live_blend_refresh[%s]: preview retirement incomplete", self.source,
+                           exc_info=True)
 
     async def _prepare_ledger_previews(self, items: list) -> list[dict]:
         """TSP-1: run settlement operations now, so their frames can be ordered.

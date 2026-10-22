@@ -96,7 +96,18 @@ script enforces it:
 * settle — deletes only an entry this owner wrote, through the local sequence
   the stamp carried; a newer committed base is adopted as the event's floor,
   so a sibling never composes on an older committed bag;
-* terminal — a revision-checked tombstone plus one ordered revoke, never DEL;
+* terminal — a revision-checked tombstone plus one ordered revoke;
+* bounded lifecycle — every new-chain admission carries the retirement barrier
+  captured BEFORE its authoritative DB graph read. Retirement first commits a
+  terminal-only increment of that event's database revision, then atomically
+  increments the Redis barrier before deleting event fields. Any fresh future
+  context is above the discarded floor; an older prepared context has an old
+  barrier and cannot open or recreate a tombstone. The database increment is
+  lifecycle ordering only: source values and observation timestamps do not
+  change. Active continuations retain their original deadlines. Mixed-version
+  owners cannot retire. At 512 events the caller may reread a bounded set of
+  ids and retire one authoritatively finished event; active/expired-but-live
+  events are never evicted for capacity. A missing barrier fails closed;
 * publish — generation, sequence, tombstone and EVERY contributor's owner and
   original deadline are rechecked at the send; the reader's ``ttl_ms`` is
   computed there, last. Revokes keep the generation and ``through_seq`` they
@@ -175,11 +186,17 @@ LEDGER_MAX_BASE_BYTES = 262144
 #: not supersession (`stale`, `terminal`) or expiry. Each is logged in the
 #: fixed `LEDGER_ALARM_FORMAT` so the operator can stop on the first one
 #: (#11388 admission review, item 4); the counters alone are never logged.
-LEDGER_ALARM_STATUSES = frozenset({"fenced", "lost", "malformed", "exhausted", "full", "no_base"})
+#: `lost_admission` is a ledger whose retirement barrier is gone or unreadable
+#: while it still has owners: every operation then refuses. `read_required`
+#: (a retirement elsewhere moved the barrier) and `legacy_owner` (a venue not
+#: yet claimed under read-before-admit, so retirement waits) are normal.
+LEDGER_ALARM_STATUSES = frozenset(
+    {"fenced", "lost", "malformed", "exhausted", "full", "no_base", "lost_admission"})
 #: The operator's matcher keys on this shape; change it only with that matcher.
-#: phase = claim, propose, settle, terminal or publish. One line per (status,
-#: phase, source) per batch; `count` includes refusals held back since that
-#: key's previous line, and `event_id` is the first of them (`-` for a claim).
+#: phase = claim, read_ticket, propose, settle, terminal, retire or publish.
+#: One line per (status, phase, source) per batch; `count` includes refusals
+#: held back since that key's previous line, and `event_id` is the first of
+#: them (`-` for a claim or a read_ticket).
 LEDGER_ALARM_FORMAT = "blend_preview ledger ALARM status=%s phase=%s source=%s count=%d event_id=%s"
 #: A persisting refusal repeats its line at most this often per key.
 LEDGER_ALARM_INTERVAL_S = 10.0
@@ -239,7 +256,10 @@ local src = ARGV[2]
 local epoch = field('epoch')
 if op == 'claim' then
   local shared = shared_floor()
-  if epoch == BAD or shared == BAD then return {'malformed'} end
+  local retired = field('retired')
+  if epoch == BAD or shared == BAD or retired == BAD then return {'malformed'} end
+  if retired == nil and (redis.call('HEXISTS', L, 'read_owner:kalshi') == 1
+      or redis.call('HEXISTS', L, 'read_owner:polymarket') == 1) then return {'lost_admission'} end
   if epoch == nil then
     if redis.call('EXISTS', MARK) == 1 then return {'lost'} end
     if redis.call('EXISTS', SHARED) == 0 then
@@ -252,7 +272,9 @@ if op == 'claim' then
   local n = math.max(epoch, shared)
   if n >= MAX then return {'exhausted'} end
   n = n + 1
-  redis.call('HSET', L, 'epoch', decimal(n), 'owner:' .. src, decimal(n))
+  redis.call('HSET', L, 'epoch', decimal(n), 'owner:' .. src, decimal(n),
+    'read_owner:' .. src, decimal(n))
+  if field('retired') == nil then redis.call('HSET', L, 'retired', '0') end
   redis.call('SET', MARK, '1')
   redis.call('SET', SHARED, decimal(n))
   return {'ok', decimal(n)}
@@ -268,6 +290,28 @@ for s in string.gmatch(ARGV[5], '%S+') do
   owners[s] = o
 end
 if owners[src] ~= claim then return {'fenced'} end
+-- This barrier is bounded, monotonic authority, not an event tombstone cache.
+-- Only sources that implement read-before-admit may participate in retirement.
+local barrier = field('retired')
+if barrier == nil or barrier == BAD then return {'lost_admission'} end
+local compatible = true
+for _, s in ipairs(sources) do
+  if owners[s] == nil or field('read_owner:' .. s) ~= owners[s] then compatible = false end
+end
+if op == 'read_ticket' then
+  local out = {'ok', decimal(barrier)}
+  local count = field('nevents')
+  if count == BAD then return {'malformed'} end
+  if (count or 0) >= 512 and compatible then
+    -- At capacity only: at most 512 event ids, never base/payload values.
+    -- The caller rereads their authoritative DB status before retiring any.
+    for _, f in ipairs(redis.call('HKEYS', L)) do
+      local id = string.match(f, '^e:(%d+):gen$')
+      if id then out[#out + 1] = id end
+    end
+  end
+  return out
+end
 local P = 'e:' .. ARGV[4] .. ':'
 local st = {gen = field(P .. 'gen'), seq = field(P .. 'seq'), term = field(P .. 'term'),
   live = field(P .. 'live'), base_rev = field(P .. 'base_rev'), metas = {}}
@@ -330,6 +374,7 @@ if op == 'propose' then
   if ARGV[13] ~= '' then brev = uint(ARGV[13]); if brev == nil then return {'malformed'} end end
   if not (chain and lseq and ctx and max_ms and max_ev) or ARGV[12] == ''
       or (mode ~= 'open' and mode ~= 'continue') then return {'malformed'} end
+  if mode == 'open' and uint(ARGV[15]) ~= barrier then return {'read_required'} end
   if st.gen == nil and mode == 'continue' then return {'missing_chain'} end
   if st.term ~= nil and ctx <= st.term then return {'terminal'} end
   local mine = st.metas[src]
@@ -405,6 +450,7 @@ if op == 'settle' then
   return readset('ok', gen, seq, remove and '1' or '0')
 end
 if op == 'terminal' then
+  if compatible and uint(ARGV[8]) ~= barrier then return {'read_required'} end
   local ctx, max_ev = uint(ARGV[6]), uint(ARGV[7])
   if not (ctx and max_ev) then return {'malformed'} end
   if st.term ~= nil and st.term >= ctx then return {'unchanged'} end
@@ -417,6 +463,41 @@ if op == 'terminal' then
   -- @@FAULT:terminal
   redis.call('HSET', L, P .. 'term', decimal(ctx))
   for _, s in ipairs(sources) do redis.call('HDEL', L, P .. 'm:' .. s, P .. 'p:' .. s) end
+  return {'ok', decimal(gen), decimal(seq)}
+end
+if op == 'retire' then
+  local ctx, ticket, durable = uint(ARGV[6]), uint(ARGV[7]), uint(ARGV[8])
+  if not ctx or not ticket or not durable or durable ~= ctx + 1 then return {'malformed'} end
+  if not compatible then return {'legacy_owner'} end
+  if ticket ~= barrier then return {'read_required'} end
+  if st.live ~= nil and ctx < st.live then return {'stale_terminal'} end
+  if st.term ~= nil and ctx < st.term then return {'stale_terminal'} end
+  if st.base_rev ~= nil and ctx < st.base_rev then return {'stale_terminal'} end
+  if barrier >= MAX then return {'exhausted'} end
+  local count = field('nevents')
+  if count == BAD or (st.gen ~= nil and (count == nil or count < 1)) then
+    return {'malformed'}
+  end
+  local gen, seq = nil, nil
+  if st.gen ~= nil then
+    gen, seq = admit(MAX)
+    if gen == nil then return {seq} end
+    if seq >= MAX then return {'exhausted'} end
+    seq = seq + 1
+  end
+  -- Invalidate every old open BEFORE removing its last event-local guard.
+  -- Active continuations are unchanged; absent chains cannot continue.
+  redis.call('HSET', L, 'retired', decimal(barrier + 1))
+  if gen == nil then return {'none'} end
+  advance(gen, seq)
+  redis.call('HSET', L, P .. 'term', decimal(ctx))
+  -- @@FAULT:retire
+  redis.call('HDEL', L, P .. 'gen', P .. 'seq', P .. 'term', P .. 'live',
+    P .. 'base_rev', P .. 'base')
+  for _, s in ipairs(sources) do
+    redis.call('HDEL', L, P .. 'm:' .. s, P .. 'p:' .. s)
+  end
+  redis.call('HINCRBY', L, 'nevents', -1)
   return {'ok', decimal(gen), decimal(seq)}
 end
 if op == 'publish' then
@@ -989,6 +1070,46 @@ class LedgerRegistry(PreviewRegistry):
     def claim_of(self, source: str) -> Optional[int]:
         return self.claims.get(source)
 
+    async def read_ticket(self, call, source: str) -> tuple[Optional[int], list[int]]:
+        """Capture before the caller's fresh READ COMMITTED statement.
+
+        Never call this around an already prepared/cached graph. A refused
+        ticket does not prevent committed delivery or active continuations.
+        """
+        claim = self.claims.get(source)
+        if claim is None:
+            return None, []
+        reply = await self._eval(call, "read_ticket", source, claim, "", " ".join(self.sources))
+        if reply[0] != "ok":
+            # With no chain in flight this is the only ledger call, so a lost
+            # barrier would otherwise stop every new preview without a line.
+            self._alarm(reply[0], "read_ticket", source, None)
+            return None, []
+        return int(reply[1]), [int(eid) for eid in reply[2:]]
+
+    def propose(self, event_id: int, source: str, **kwargs: Any) -> list[dict]:
+        ticket = getattr(kwargs["event"], "preview_read_ticket", None)
+        state = self._events.get(event_id)
+        # No fresh ticket: do not start a local chain we could never admit.
+        if ticket is None and (state is None or source not in state.pending):
+            return []
+        ops = super().propose(event_id, source, **kwargs)
+        for op in ops:
+            if op.get("ledger_op") in ("propose", "terminal"):
+                op["read_ticket"] = ticket
+        return ops
+
+    def retire_read(self, event_id: int, source: str, rev: int, ticket: int, *,
+                    committed_rev: int) -> dict:
+        """After terminal-only DB revision advance COMMITTED (rev -> rev+1).
+
+        The next authoritative reader must therefore read above the deleted
+        floor even if status later reopens without changing the source bag.
+        Ticket precedes the proof transaction, never wraps old cached state.
+        """
+        return {"ledger_op": "retire", "event_id": int(event_id), "source": source,
+                "ctx_rev": rev, "read_ticket": ticket, "committed_rev": committed_rev}
+
     # ── local bookkeeping → operations ──────────────────────────────────
     @staticmethod
     def _base(sources: Any, rev: Any, state: _EventState) -> tuple:
@@ -1245,16 +1366,19 @@ class LedgerRegistry(PreviewRegistry):
             reply = await self._eval(
                 call, "propose", *common, op["mode"], op["chain"], op["local_seq"],
                 op["ctx_rev"], int(self.max_uncommitted_s * 1000), LEDGER_MAX_EVENTS,
-                op["payload"], op["base_rev"], op["base"],
+                op["payload"], op["base_rev"], op["base"], op.get("read_ticket"),
             )
         elif kind == "settle":
             reply = await self._eval(call, "settle", *common, op["mode"], op["through"],
                                      op["base_rev"], op["base"])
+        elif kind == "retire":
+            reply = await self._eval(call, "retire", *common, op["ctx_rev"], op["read_ticket"],
+                                     op["committed_rev"])
         else:
             reply = await self._eval(call, "terminal", *common, op["ctx_rev"],
-                                     LEDGER_MAX_EVENTS)
+                                     LEDGER_MAX_EVENTS, op.get("read_ticket"))
         status = reply[0]
-        if kind == "terminal":
+        if kind in ("terminal", "retire"):
             if status != "ok":
                 self._refusal(stats, status, kind, source, event_id)
                 return []
@@ -1266,6 +1390,11 @@ class LedgerRegistry(PreviewRegistry):
                      "preview": {"kind": "revoke", "epoch": gen, "seq": seq,
                                  "through_seq": seq - 1, "reason": "terminal"},
                      "_ledger": {"gen": gen, "seq": seq}}]
+        if kind == "propose" and status in ("read_required", "full"):
+            state = self._events.get(event_id)
+            entry = None if state is None else state.pending.get(source)
+            if entry is not None and entry.seq == op["local_seq"]:
+                self._forget(event_id, source)
         if kind == "propose" and status in ("expired", "missing_chain"):
             self._local_expired(op)
         if kind == "propose" and status == "terminal":
