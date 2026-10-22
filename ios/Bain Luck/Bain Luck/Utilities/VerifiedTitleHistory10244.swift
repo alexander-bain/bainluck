@@ -72,6 +72,10 @@ nonisolated struct SettlementResult: Equatable, Sendable {
     let probability: Double
     let timestamp: String
     let basis: String?
+    /// Whether the line has a real price anywhere in the served history — not
+    /// just inside the range on screen. A line with none (a winner the server
+    /// synthesised) is the only one whose result is placed without a price.
+    let hasPrices: Bool
 }
 
 nonisolated enum VerifiedTitleHistory {
@@ -146,20 +150,28 @@ nonisolated enum VerifiedTitleHistory {
     /// #10955 — every settlement point `drawing` set aside, one per line (the
     /// last served wins), keyed by the same name its line is drawn under. The
     /// admission is a price's: a value and a readable stamp, nothing wider.
+    /// `hasPrices` is read off the whole served history, before any range
+    /// cutoff, with `drawing`'s admission for a price.
     static func settlementResults(_ history: FuturesHistoryResponse,
                                   over response: ProbabilityTimelineResponse) -> [SettlementResult] {
         let nameById = Self.nameById(response)
+        var priced: Set<String> = []
         var results: [SettlementResult] = []
         for line in history.outcomes {
             let name = line.outcomeId.flatMap { nameById[$0] } ?? line.name
-            for point in line.history where point.isSettlement {
+            for point in line.history {
                 guard let probability = point.probability, point.timestamp.asDate != nil else { continue }
+                guard point.isSettlement else { priced.insert(name); continue }
                 results.removeAll { $0.name == name }
                 results.append(SettlementResult(name: name, probability: probability,
-                                                timestamp: point.timestamp, basis: point.settlementBasis))
+                                                timestamp: point.timestamp, basis: point.settlementBasis,
+                                                hasPrices: false))
             }
         }
-        return results
+        return results.map {
+            SettlementResult(name: $0.name, probability: $0.probability, timestamp: $0.timestamp,
+                             basis: $0.basis, hasPrices: priced.contains($0.name))
+        }
     }
 
     private static func nameById(_ response: ProbabilityTimelineResponse) -> [Int: String] {

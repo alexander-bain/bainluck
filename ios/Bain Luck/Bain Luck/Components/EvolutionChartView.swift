@@ -159,8 +159,12 @@ enum EvolutionSeriesGaps {
 ///
 /// - on a line with prices in the window, at that line's own last price (its
 ///   x and y), so nothing is drawn between that price and the result;
-/// - on a line with none (a winner the server synthesised), at the last instant
-///   any drawn line was priced — inside the axis, never past it;
+/// - on a line with no price anywhere in the served history (a winner the
+///   server synthesised), as words at the last instant any drawn line was
+///   priced — with no y: nothing was observed, so it is no value on the
+///   probability axis and never stretches it;
+/// - on a line whose prices all fall outside the range, nowhere: it draws no
+///   line there either, and its grade stays in the carrier;
 /// - on a chart with no prices at all, nowhere: the card is already sparse.
 ///
 /// The mark claims no time and prints no 0%/100%; it says Won or Lost.
@@ -190,8 +194,9 @@ enum EvolutionResultMarks {
     struct Placement: Equatable, Identifiable {
         let name: String
         let date: Date
-        /// Percent, on the chart's own scale.
-        let y: Double
+        /// Percent, on the chart's own scale: the line's own last price. Nil for
+        /// a line with no price at all, which has no value to plot.
+        let y: Double?
         let outcome: Outcome
         var id: String { "result:\(name)" }
     }
@@ -223,7 +228,9 @@ enum EvolutionResultMarks {
             if let own = last[result.name] {
                 return Placement(name: result.name, date: own.date, y: own.probability, outcome: grade)
             }
-            return Placement(name: result.name, date: edge, y: result.probability * 100, outcome: grade)
+            // Real prices, none in this range: not a line without history.
+            guard !result.hasPrices else { return nil }
+            return Placement(name: result.name, date: edge, y: nil, outcome: grade)
         }
     }
 }
@@ -1467,17 +1474,20 @@ struct EvolutionChartView: View {
 
             // #10955 — one result per settled line, on its own last price (see
             // `EvolutionResultMarks`). Not a line point: no stroke reaches it.
+            // A line with no price has no y and is labelled in the overlay.
             ForEach(results) { mark in
-                PointMark(
-                    x: .value("Time", mark.date),
-                    y: .value("Probability", mark.y)
-                )
-                // The line's own colour, from the same scale the line takes it from.
-                .foregroundStyle(by: .value("Participant", mark.name))
-                .symbol { Self.resultSymbol(mark.outcome) }
-                .opacity(lineOpacity(for: mark.name, isCombined: false))
-                .accessibilityLabel(mark.name)
-                .accessibilityValue(mark.outcome.spoken)
+                if let y = mark.y {
+                    PointMark(
+                        x: .value("Time", mark.date),
+                        y: .value("Probability", y)
+                    )
+                    // The line's own colour, from the same scale the line takes it from.
+                    .foregroundStyle(by: .value("Participant", mark.name))
+                    .symbol { Self.resultSymbol(mark.outcome) }
+                    .opacity(lineOpacity(for: mark.name, isCombined: false))
+                    .accessibilityLabel(mark.name)
+                    .accessibilityValue(mark.outcome.spoken)
+                }
             }
         }
         .chartForegroundStyleScale(mapping: { (name: String) -> Color in
@@ -1505,6 +1515,20 @@ struct EvolutionChartView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 4))
                             .position(x: xPos, y: 12)
                     }
+                }
+
+                // #10955 — a settled line with no price anywhere: its result in
+                // words, ending at the last priced instant, outside the plot's
+                // scale so it neither claims a value nor stretches the y axis.
+                let unpriced = results.filter { $0.y == nil }
+                if let edge = unpriced.first?.date, let xPos = proxy.position(forX: edge) {
+                    let plot = geo[proxy.plotAreaFrame]
+                    VStack(alignment: .trailing, spacing: 2) {
+                        ForEach(unpriced) { mark in unpricedResultLabel(mark) }
+                    }
+                    .frame(width: max(0, plot.minX + xPos), alignment: .trailing)
+                    .padding(.top, plot.minY + 22)
+                    .allowsHitTesting(false)
                 }
 
                 // Touch overlay for crosshair. #6705.
@@ -1628,6 +1652,27 @@ struct EvolutionChartView: View {
             results,
             drawn: entries.filter { !$0.isCombined }.map { ($0.name, $0.date, $0.probability) },
             names: names)
+    }
+
+    /// #10955 — a no-price line's result: the same glyph, its name and the word,
+    /// in the line's colour. Visible text, so the result is read, not only spoken.
+    private func unpricedResultLabel(_ mark: EvolutionResultMarks.Placement) -> some View {
+        let idx = displayedNames.firstIndex(of: mark.name) ?? 0
+        return HStack(spacing: 3) {
+            Image(systemName: mark.outcome.symbolName)
+            Text(mark.name).lineLimit(1)
+            Text(mark.outcome.spoken).layoutPriority(1)
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(colorForOutcome(name: mark.name, index: idx))
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .opacity(lineOpacity(for: mark.name, isCombined: false))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(mark.name)
+        .accessibilityValue(mark.outcome.spoken)
     }
 
     /// Won / Lost, tinted by the series scale like the line, on the card so the

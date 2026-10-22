@@ -9,7 +9,8 @@ import XCTest
 /// claim no time at all. None of them may become a run, a bridge, a crosshair
 /// stop, an axis bound, a Sum input or a price count. The line keeps its real
 /// prices; one Won/Lost mark sits on its own last price (or, for a winner with
-/// no prices, at the last instant any line was priced).
+/// no price anywhere, as words with no y at the last instant any line was
+/// priced). A leg whose prices all fall outside the range gets no mark.
 ///
 /// These run the chart's own stages in its own order — decode with the app's
 /// decoder, `VerifiedTitleHistory.drawing` / `settlementResults` (what `loadData`
@@ -64,13 +65,13 @@ final class SettlementResultMarks10955Tests: XCTestCase {
     }
 
     static func chart(_ history: FuturesHistoryResponse, names: [String] = allNames,
-                      selected: Set<String>? = nil) throws -> Chart {
+                      selected: Set<String>? = nil, cutoff: Date? = nil) throws -> Chart {
         let timeline = try G.timeline()
         let drawn = VerifiedTitleHistory.drawing(history, over: timeline)
         let results = VerifiedTitleHistory.settlementResults(history, over: timeline)
         let entries = EvolutionChartView.chartPoints(
             timeline: drawn.timeline, names: Set(names), selected: selected ?? Set(names),
-            cutoff: nil, showCombined: true, supportsCombined: true)
+            cutoff: cutoff, showCombined: true, supportsCombined: true)
         return Chart(drawn: drawn, results: results, entries: entries,
                      bridges: EvolutionChartView.gapBridges(entries),
                      marks: EvolutionChartView.resultMarks(results, entries: entries, names: names))
@@ -106,7 +107,8 @@ final class SettlementResultMarks10955Tests: XCTestCase {
 
             // The raw point is kept as served — value, stamp and basis — never moved.
             XCTAssertEqual(chart.results, [SettlementResult(
-                name: G.bills.name, probability: 0.0, timestamp: G.stamp(settledAt), basis: basis)],
+                name: G.bills.name, probability: 0.0, timestamp: G.stamp(settledAt), basis: basis,
+                hasPrices: true)],
                 "\(label)")
         }
     }
@@ -152,7 +154,7 @@ final class SettlementResultMarks10955Tests: XCTestCase {
 
     // MARK: - G4: a winner with no prices; a chart with none at all
 
-    func testASynthesisedWinnerIsMarkedAtTheLastPricedInstantAndMovesNothing() throws {
+    func testASynthesisedWinnerIsNamedAtTheLastPricedInstantWithNoValueAndMovesNothing() throws {
         for (basis, offset) in [("last_observation", 0.0), ("resolution_date", 5 * 86400.0),
                                 ("settled_at", 400 * 86400.0)] as [(String, TimeInterval)] {
             let settledAt = G.lastPrice.addingTimeInterval(offset)
@@ -163,14 +165,60 @@ final class SettlementResultMarks10955Tests: XCTestCase {
             ], coverageHours: offset / 3600 + 7, observationTimes: 9))
 
             XCTAssertTrue(chart.leg(Self.chiefs.name).isEmpty, "\(basis): the winner has no line")
+            XCTAssertEqual(chart.results.first { $0.name == Self.chiefs.name }?.hasPrices, false, basis)
             XCTAssertEqual(chart.marks, [EvolutionResultMarks.Placement(
-                name: Self.chiefs.name, date: G.lastPrice, y: 100, outcome: .won)],
-                "\(basis): one Won mark at the last priced instant, whatever its served x")
+                name: Self.chiefs.name, date: G.lastPrice, y: nil, outcome: .won)],
+                "\(basis): one Won result at the last priced instant, whatever its served x, with no value")
+            XCTAssertNil(chart.marks.first?.y, "\(basis): nothing was observed, so nothing is plotted at 100%")
             XCTAssertEqual(chart.domain?.upperBound, G.lastPrice, "\(basis): the axis is not extended")
+            // The y axis fits the marks it is given: the result adds no value to them.
+            let prices = chart.entries.map(\.probability)
+            XCTAssertEqual((prices + chart.marks.compactMap(\.y)).max(), prices.max(),
+                           "\(basis): the result does not stretch the y axis")
             let read = try XCTUnwrap(chart.crosshair(
                 at: settledAt, selected: [G.bills.name, Self.chiefs.name]))
             XCTAssertEqual(read.date, G.lastPrice, basis)
             XCTAssertEqual(read.entries.map(\.name), [G.bills.name], "\(basis): the winner is no crosshair stop")
+        }
+    }
+
+    // MARK: - A range that cuts a priced leg out is not a leg without prices
+
+    /// Bills' eight real prices end three days before the last price; on a
+    /// 24-hour range it draws no line. It is not a line with no history, so it
+    /// gets no edge mark (on 57926d8eb5 it got a Lost glyph at 0% at Rams' last
+    /// price). The settlement-only winner keeps its result on every range.
+    func testAGradedLegWhosePricesAreAllBeforeTheCutoffGetsNoEdgeMark() throws {
+        let old = (0..<8).map { i -> [String: Any] in
+            ["timestamp": G.stamp(G.lastPrice.addingTimeInterval(Double(i - 7) * 3600 - 3 * 86400)),
+             "probability": 0.10 + Double(i) * 0.002, "american_odds": NSNull(), "bookmaker": "consensus"]
+        }
+        let billsLast = G.lastPrice.addingTimeInterval(-3 * 86400)
+        let history = try G.history([
+            (G.bills.id, G.bills.name, old + [G.settlement(0.0, at: billsLast.addingTimeInterval(1),
+                                                           basis: "last_observation")]),
+            (G.rams.id, G.rams.name, G.hourly(0.09, step: 0.001)),
+            (Self.chiefs.id, Self.chiefs.name, [G.settlement(1.0, at: G.lastPrice, basis: "last_observation")]),
+        ], coverageHours: 79.0, observationTimes: 17)
+
+        let day = try Self.chart(history, cutoff: G.lastPrice.addingTimeInterval(-24 * 3600))
+        XCTAssertTrue(day.leg(G.bills.name).isEmpty, "Bills draws nothing in this range")
+        XCTAssertFalse(day.marks.contains { $0.name == G.bills.name },
+                       "a leg with real prices outside the range is not a no-history leg: no edge mark")
+        XCTAssertEqual(day.results.first { $0.name == G.bills.name }?.probability, 0.0,
+                       "the carrier still holds Bills' result")
+        XCTAssertEqual(day.results.first { $0.name == G.bills.name }?.hasPrices, true)
+
+        // Uncut, Bills' result sits on its own last price, three days back.
+        let all = try Self.chart(history)
+        XCTAssertEqual(all.marks.first { $0.name == G.bills.name }, EvolutionResultMarks.Placement(
+            name: G.bills.name, date: billsLast, y: (0.10 + 7 * 0.002) * 100, outcome: .lost))
+
+        // The settlement-only winner: words at the last priced instant, no value, on every range.
+        for cutoff in [nil, G.lastPrice.addingTimeInterval(-24 * 3600), G.lastPrice.addingTimeInterval(-3600)] {
+            let chart = try Self.chart(history, cutoff: cutoff)
+            XCTAssertEqual(chart.marks.filter { $0.name == Self.chiefs.name }, [EvolutionResultMarks.Placement(
+                name: Self.chiefs.name, date: G.lastPrice, y: nil, outcome: .won)], "\(String(describing: cutoff))")
         }
     }
 
@@ -307,9 +355,18 @@ final class SettlementResultMarks10955Tests: XCTestCase {
                       "chartEntries must be the stage these tests run")
         XCTAssertTrue(code.contains(
             "let results = Self.resultMarks(settlementResults, entries: entries, names: displayedNames)"))
-        XCTAssertTrue(code.contains("ForEach(results) { mark in\n                PointMark("))
-        XCTAssertTrue(code.contains(".accessibilityValue(mark.outcome.spoken)"))
+        XCTAssertTrue(code.contains(
+            "ForEach(results) { mark in\n                if let y = mark.y {\n                    PointMark("),
+            "only a result with a y is a point on the probability axis")
+        XCTAssertTrue(code.contains("y: .value(\"Probability\", y)"))
         XCTAssertEqual(code.components(separatedBy: "PointMark(").count - 1, 1,
                        "the result mark is the chart's only point mark")
+        // A no-price result is words in the overlay, read and spoken alike.
+        XCTAssertTrue(code.contains("let unpriced = results.filter { $0.y == nil }"))
+        XCTAssertTrue(code.contains("ForEach(unpriced) { mark in unpricedResultLabel(mark) }"))
+        XCTAssertTrue(code.contains("Text(mark.name).lineLimit(1)"))
+        XCTAssertTrue(code.contains("Text(mark.outcome.spoken).layoutPriority(1)"))
+        XCTAssertEqual(code.components(separatedBy: ".accessibilityValue(mark.outcome.spoken)").count - 1, 2,
+                       "both the point and the words are spoken as Won / Lost")
     }
 }
