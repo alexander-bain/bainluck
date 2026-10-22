@@ -80,6 +80,16 @@ STATS_SECONDS = 5.0
 #: the venue processes.
 HEAP_TRIM_SECONDS = 60.0
 
+#: #10663 — the child's per-socket TLS read buffer. asyncio's ``SSLProtocol``
+#: gives every connection a zero-filled ``bytearray(max_size)`` (256 KiB) for
+#: its whole life and reads each socket into it. ~136 open-contract sockets
+#: held 34 MiB of them (rig, 10/22: tracemalloc, ``sslproto.py`` buffer line).
+#: 32 KiB is two full TLS records (16 KiB plaintext each) per socket read; a
+#: larger message just takes more reads. It also bounds each plaintext
+#: ``read()`` to 32 KiB instead of a 256 KiB allocation per call. Set in this
+#: child only, which holds nothing but these sockets.
+TLS_READ_BUFFER_BYTES = 32 * 1024
+
 #: Shutdown bound for the child after its stdin closes; it has no drain.
 CHILD_EXIT_SECONDS = 5.0
 
@@ -332,6 +342,24 @@ async def _stop_child(child) -> None:
         await child.wait()
 
 
+def bound_tls_read_buffers(size: int = TLS_READ_BUFFER_BYTES) -> bool:
+    """Every TLS connection this process opens from now on reads into ``size``.
+
+    #10663. ``max_size`` is a class attribute of the stdlib's asyncio
+    ``SSLProtocol`` (Python 3.11+). Without it the sockets still run, on the
+    default buffer; that is logged as an error, never a silent no-op, and never
+    a reason to stop receiving prices.
+    """
+    from asyncio import sslproto
+
+    if not isinstance(getattr(sslproto.SSLProtocol, "max_size", None), int):
+        logger.error("Polymarket open receiver: asyncio SSLProtocol has no "
+                     "max_size; TLS read buffers left at the default")
+        return False
+    sslproto.SSLProtocol.max_size = size
+    return True
+
+
 def _kill(child) -> None:
     if child.returncode is None:
         try:
@@ -353,6 +381,7 @@ async def serve_receiver(
     """
     for signum in (signal.SIGTERM, signal.SIGINT):
         signal.signal(signum, signal.SIG_IGN)
+    bound_tls_read_buffers()
     loop = asyncio.get_running_loop()
     # Anything that prints to stdout must not corrupt the frame stream.
     out = os.dup(write_fd)
