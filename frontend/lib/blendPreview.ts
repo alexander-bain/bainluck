@@ -296,6 +296,13 @@ export function overlayBlendPreviewLine(
   const servedEdge = served?.aggregate_line?.[served.aggregate_line.length - 1];
   const edgeRevision = parseFoldRevision(served?.blend_edge_fold_revision);
   const base = state?.baseFoldRevision ?? (state ? { [String(state.eventId)]: state.baseRev } : null);
+  // History can advance ahead of detail while retaining an earlier observation
+  // time. Its revision wins before either extending or replacing the edge. An
+  // older membership (events.py serves one beside newly folded detail) may be
+  // extended when the base covers every member; replacement needs exact membership.
+  if (served && (served.event_id !== state?.eventId
+      || ((served.blend_edge_pinned === true || served.blend_edge_fold_revision != null)
+        && (!edgeRevision || !base || !coversPreviewFloors(base, edgeRevision))))) return line;
   const edgeObserved = Date.parse(served?.blend_edge_observed_at ?? "");
   const replaceSyntheticEdge = edge !== undefined && servedEdge !== undefined
     && served?.event_id === state?.eventId && served.blend_edge_pinned === true
