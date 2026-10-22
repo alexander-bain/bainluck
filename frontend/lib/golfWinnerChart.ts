@@ -10,6 +10,7 @@
  * the same tournament sat next in the list with a real curve.
  */
 import type { FuturesHistoryResponse } from "@/lib/types";
+import { isSettlementPoint } from "@/lib/chartSettlementPoints";
 
 /** The tournament Winner question — the same test the backend's sort uses
  *  ("winner" and not "round"). A Round Leader or Top-N curve may not be drawn
@@ -38,6 +39,9 @@ export function isDrawableHistory(data: Pick<FuturesHistoryResponse, "outcomes">
   for (const outcome of data.outcomes ?? []) {
     for (const point of outcome.history ?? []) {
       if (point.probability === null || point.probability === undefined) continue;
+      // #10955 (U1): the chart splits the result off before it counts, so this
+      // test must too — one reading plus a result is a sparse chart, not a curve.
+      if (isSettlementPoint(point)) continue;
       const t = new Date(point.timestamp).getTime();
       if (Number.isNaN(t)) continue;
       points += 1;

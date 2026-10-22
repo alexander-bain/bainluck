@@ -6,6 +6,7 @@
 // story; this module is the pure windowing logic behind them.
 
 import type { FuturesOutcomeHistory } from "@/lib/types";
+import { isSettlementPoint } from "@/lib/chartSettlementPoints";
 
 export type ChartRangeKey = "all" | "1M" | "1W" | "1D" | "since_start";
 
@@ -31,11 +32,19 @@ function tsMs(iso: string): number {
   return new Date(iso).getTime();
 }
 
-/** The last (max) snapshot time across every outcome, or null if none exist. */
+/**
+ * The last (max) snapshot time across every outcome, or null if none exist.
+ *
+ * #10955 (U1): a settlement point is the result, stamped when the market
+ * resolved, not a reading — it never anchors the window. Otherwise a 20-hour
+ * history with a result stamped 3 days later anchors "1D" on the result and
+ * opens it onto a day with no readings in it.
+ */
 export function latestSnapshotTime(outcomes: FuturesOutcomeHistory[]): number | null {
   let max = -Infinity;
   for (const o of outcomes) {
     for (const p of o.history) {
+      if (isSettlementPoint(p)) continue;
       const t = tsMs(p.timestamp);
       if (t > max) max = t;
     }
@@ -106,6 +115,8 @@ export function availableRanges(
   let minT = Infinity;
   for (const o of outcomes) {
     for (const p of o.history) {
+      // #10955 (U1): the result is not recorded history; it never widens the span.
+      if (isSettlementPoint(p)) continue;
       const t = tsMs(p.timestamp);
       if (t < minT) minT = t;
     }

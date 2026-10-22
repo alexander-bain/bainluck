@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FuturesHistoryPoint, FuturesOutcomeHistory } from "@/lib/types";
 import { archiveChartNote, archiveTooltipNote } from "@/lib/archiveHistory";
 import { PartialHistoryCaption } from "@/components/PartialHistoryCaption";
@@ -17,6 +17,7 @@ import {
   type SettlementResult,
 } from "@/lib/chartSettlementPoints";
 import { SettledMark } from "@/components/SettledOutcomeMark";
+import { placeChartTooltip, tooltipMaxWidth } from "@/lib/chartTooltipPlacement";
 import { combinedLinePoints } from "@/lib/combinedLinePolicy";
 import {
   inFixedSeriesOrder,
@@ -45,6 +46,71 @@ const FULL_CHART_WIDTH = 800;
 const MINI_CHART_WIDTH = 400;
 const FULL_PADDING = { top: 20, right: 20, bottom: 40, left: 50 };
 const MINI_PADDING = { top: 4, right: 4, bottom: 4, left: 4 };
+
+/** #10955 (327): the chart legend's "Lost" at the secondary-text contrast. */
+export const LOST_LEGEND_WORD_CLASS = "[&>span]:text-text-secondary";
+
+/**
+ * #10955 (327) — the hover callout, kept inside the visible chart card.
+ *
+ * Rendered only while the reader hovers, so its layout effect never runs on
+ * the server. It measures itself against the part of the plot that is on
+ * screen (`lib/chartTooltipPlacement.ts`) and writes the result straight onto
+ * the node before paint, the way `OddsChart`'s `ViewportFittedTooltipCard`
+ * does, so the reader never sees it flash at the wrong edge. Where there is no
+ * layout to measure, the old side rule in `style` stands. Every render, no
+ * dependency array: the callout's width changes with the rows it holds.
+ */
+function ContainedChartTooltip({
+  anchorFraction,
+  scrollRef,
+  svgRef,
+  children,
+}: {
+  /** The crosshair's x as a fraction of the plot's width. */
+  anchorFraction: number;
+  scrollRef: React.RefObject<HTMLDivElement>;
+  svgRef: React.RefObject<SVGSVGElement>;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const tip = ref.current;
+    const scroller = scrollRef.current;
+    const svg = svgRef.current;
+    if (!tip || !scroller || !svg) return;
+    const viewWidth = scroller.clientWidth;
+    if (!(viewWidth > 0)) return;
+    const svgWidth = svg.getBoundingClientRect().width;
+    if (!(svgWidth > 0)) return;
+    tip.style.maxWidth = `${tooltipMaxWidth(viewWidth)}px`;
+    const tooltipWidth = tip.offsetWidth;
+    if (!(tooltipWidth > 0)) return;
+    const left = placeChartTooltip({
+      anchorX: anchorFraction * svgWidth,
+      tooltipWidth,
+      viewLeft: scroller.scrollLeft,
+      viewWidth,
+    });
+    tip.style.left = `${left}px`;
+    tip.style.transform = "none";
+    tip.setAttribute("data-placed", "contained");
+  });
+  return (
+    <div
+      ref={ref}
+      data-testid="futures-chart-tooltip"
+      className="absolute pointer-events-none z-50 w-max"
+      style={{
+        left: `${anchorFraction * 100}%`,
+        top: 0,
+        transform: anchorFraction > 0.6 ? "translateX(-105%)" : "translateX(5%)",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
 
 interface FuturesChartProps {
   historyData: FuturesOutcomeHistory[];
@@ -295,6 +361,10 @@ export function FuturesChart({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [edgeOverflow, setEdgeOverflow] = useState({ left: false, right: false });
 
+  // #10955 (327): the hover callout measures itself against the plot's visible
+  // window — see `ContainedChartTooltip` above.
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
   const syncEdgeOverflow = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -499,11 +569,20 @@ export function FuturesChart({
   // name it belongs to. This is where the result is READ — the mark in the plot
   // only points at it — so overlapping end-marks never hide whose result is
   // whose. Nothing for a leg without a grade, or a grade we will not name.
+  // #10955 (327): `SettledMark` draws "Lost" in `text-text-muted`, too faint on
+  // the chart card's white to read as the result. Lifted to `text-text-secondary`
+  // HERE only — the shared mark and its other callers keep their colour (#4040
+  // owns that) — by a child selector, which outranks the mark's own class.
+  // "Won" already inherits the legend's primary text, so it is left alone.
   const legendResult = (outcome: FuturesOutcomeHistory) => {
     const result = settlementResults.get(outcome.outcome_id);
     if (!result || settlementResultWord(result) === null) return null;
     return (
-      <span data-testid="futures-chart-legend-result" data-result={result}>
+      <span
+        data-testid="futures-chart-legend-result"
+        data-result={result}
+        className={result === "lost" ? LOST_LEGEND_WORD_CLASS : undefined}
+      >
         <SettledMark won={result === "won"} />
       </span>
     );
@@ -603,6 +682,7 @@ export function FuturesChart({
             </button>
           )}
           <svg
+            ref={svgRef}
             viewBox={`0 0 ${chartWidth} ${effectiveHeight}`}
             className={mini ? "w-full" : "w-full min-w-[600px]"}
             style={{
@@ -961,18 +1041,12 @@ export function FuturesChart({
 
           {/* Hover tooltip */}
           {hoverInfo && !mini && (
-            <div
-              className="absolute pointer-events-none z-50"
-              style={{
-                left: `${(hoverInfo.svgX / chartWidth) * 100}%`,
-                top: 0,
-                transform:
-                  hoverInfo.svgX > chartWidth * 0.6
-                    ? "translateX(-105%)"
-                    : "translateX(5%)",
-              }}
+            <ContainedChartTooltip
+              anchorFraction={hoverInfo.svgX / chartWidth}
+              scrollRef={scrollRef}
+              svgRef={svgRef}
             >
-              <div className="bg-surface-deep/95 backdrop-blur-sm rounded-lg px-3 py-2 border border-surface-border shadow-lg min-w-[140px]">
+              <div className="bg-surface-deep/95 backdrop-blur-sm rounded-lg px-3 py-2 border border-surface-border shadow-lg min-w-[140px] max-w-full">
                 <div className="text-[10px] text-text-muted mb-1 font-mono">
                   {formatTooltipTime(hoverInfo.time)}
                 </div>
@@ -990,16 +1064,18 @@ export function FuturesChart({
                       className="w-2 h-2 rounded-full flex-shrink-0"
                       style={{ backgroundColor: v.color }}
                     />
-                    <span className="text-[11px] text-text-secondary truncate max-w-[120px]">
+                    {/* Wraps, never truncates: two names sharing a prefix
+                        must stay tellable apart (#10955, 327). */}
+                    <span className="text-[11px] text-text-secondary min-w-0 max-w-[180px] break-words">
                       {v.name}
                     </span>
-                    <span className="text-[11px] font-mono font-bold text-text-primary ml-auto pl-2">
+                    <span className="text-[11px] font-mono font-bold text-text-primary ml-auto pl-2 flex-shrink-0 whitespace-nowrap">
                       {Math.round(v.prob * 100)}%
                     </span>
                   </div>
                 ))}
               </div>
-            </div>
+            </ContainedChartTooltip>
           )}
         </div>
         {/* #3035: the scroll affordance. Rendered only for the edge that still

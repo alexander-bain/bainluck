@@ -371,7 +371,8 @@ describe("the result is readable in words, and only where there is one", () => {
   test("the static legend names Won and Lost beside their legs, nothing beside Draw", () => {
     const html = draw(field);
     const legend = html.slice(html.indexOf('aria-label="Chart legend"'));
-    expect(legend).toMatch(/>Yes<\/span><span data-testid="futures-chart-legend-result" data-result="lost"><span[^>]*>Lost</);
+    // 327: the Lost word's wrapper now also carries the chart-local contrast class.
+    expect(legend).toMatch(/>Yes<\/span><span data-testid="futures-chart-legend-result" data-result="lost" class="[^"]*"><span[^>]*>Lost</);
     expect(legend).toMatch(/>No<\/span><span data-testid="futures-chart-legend-result" data-result="won"><span[^>]*>Won</);
     expect(legend).toMatch(/>Draw<\/span><\/span>/);
   });
