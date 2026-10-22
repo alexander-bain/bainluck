@@ -192,13 +192,16 @@ struct LiveHeadlineForecast11296: View {
 }
 
 /// The retained pair drawn beneath the live headline's current projected
-/// final: the label, then both named teams. Caption size and secondary colour,
-/// so the current figure above stays the one that leads; wraps at any text
-/// size and is never scaled down.
+/// final: the label, then both named teams. Secondary colour, at the host's
+/// current-caption font so it never outgrows the label of the pair it sits
+/// under (Design, 2026-10-22); wraps at any text size and is never scaled down.
 struct LivePregameBaselineLine11296: View {
     let comparison: LivePregameComparison11296.Comparison
     let awayName: String
     let homeName: String
+    /// The host's current-caption font: the generic hero's `.caption`, the
+    /// paired row's `.caption2`.
+    var font: Font = .caption
 
     static let accessibilityIdentifier = "live-pregame-baseline-11296"
 
@@ -207,7 +210,7 @@ struct LivePregameBaselineLine11296: View {
             Text(comparison.label)
             Text(LivePregameComparison11296.pairText(comparison, awayName: awayName, homeName: homeName))
         }
-        .font(.caption)
+        .font(font)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.leading)
         .fixedSize(horizontal: false, vertical: true)

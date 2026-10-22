@@ -2119,6 +2119,21 @@ struct EventDetailView: View {
             status: event.status, away: event.awayScore, home: event.homeScore))
     }
 
+    /// #9483 A3 — the live card's pregame side: exactly when the live headline
+    /// prints its admitted retained pair (the same decision, on the same
+    /// headline row, as `revealForecast11296`), that pair's served halves
+    /// unrounded, as the finished card reads its qualified one. Nil otherwise,
+    /// and the card names its history point "Earlier forecast".
+    private func liveCardBaseline11296(_ served: EventDetail) -> (away: Double, home: Double)? {
+        let event = vm.headline(served)
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        guard liveForecast11296(event, hasScore: hasScore)?.baseline != nil,
+              let away = event.pregameProjection?.projectedAwayScore,
+              let home = event.pregameProjection?.projectedHomeScore else { return nil }
+        return (away: away, home: home)
+    }
+
     /// #11296 — the same forecast on a live page the paired headline does not
     /// adopt (soccer, college football, the other basketball leagues): the
     /// generic hero prints it, and Game Info stops repeating it. Nil wherever
@@ -2181,9 +2196,11 @@ struct EventDetailView: View {
         guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
         // #9483 R2 — a finished page's card compares the final with the
         // headline's own qualified forecast, not an earlier history point.
+        // A3 — a live one compares with the live headline's admitted pair.
         let finish = NFLFinishCard9483.build(
             projectedInput,
-            finalBaseline: Self.qualifiedFinalForecast11296(event).map { (away: $0.away, home: $0.home) })
+            finalBaseline: Self.qualifiedFinalForecast11296(event).map { (away: $0.away, home: $0.home) },
+            liveBaseline: liveCardBaseline11296(event))
         return NFLEventCardDeck9483.cards(
             sportKey: event.sport,
             finish: finish,
@@ -2462,8 +2479,14 @@ struct EventDetailView: View {
                                     .minimumScaleFactor(0.5)
                                     .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
                                 if let liveBaseline {
+                                    // Design 2026-10-22 — the retained pair is never
+                                    // larger than the current caption above it: the
+                                    // caption's own font and ceiling, still wrapping,
+                                    // never scaled down.
                                     LivePregameBaselineLine11296(
-                                        comparison: liveBaseline, awayName: names.away, homeName: names.home)
+                                        comparison: liveBaseline, awayName: names.away, homeName: names.home,
+                                        font: .caption2)
+                                        .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
                                         .padding(.top, 4)
                                 }
                             }

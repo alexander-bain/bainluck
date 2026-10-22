@@ -330,12 +330,17 @@ struct NFLFinishCardView9483: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            Text(card.namesDistinctBasis ? "Points · outline = \(NFLFinishCard9483.earlierForecast.lowercased()) · cross = final"
-                 : card.final != nil ? "Points · outline = pregame · cross = final"
-                 : card.projectedNow != nil ? "Points · outline = pregame · filled = projected now"
-                 : "Projected points")
+            Text(card.key)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+            // #9483 A3 — live with no current projection: said, so the earlier
+            // pair above is never read as the current one.
+            if let note = card.missingCurrentNote {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
@@ -390,11 +395,12 @@ struct NFLFinishCardView9483: View {
 
     private var accessibilityText: String {
         var parts = [card.kicker, card.headline(awayName: awayName, homeName: homeName),
-                     "\(card.namesDistinctBasis ? NFLFinishCard9483.earlierForecast : "Pregame projection") "
+                     "\(card.pregameName) "
                      + "\(awayName) \(Self.points(card.pregame.away)), \(homeName) \(Self.points(card.pregame.home))"]
         if let later, let laterLabel {
             parts.append("\(laterLabel) \(awayName) \(Self.points(later.away)), \(homeName) \(Self.points(later.home))")
         }
+        if let note = card.missingCurrentNote { parts.append(note) }
         return parts.joined(separator: ". ")
     }
 }

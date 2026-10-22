@@ -193,11 +193,14 @@ final class RealPageCorrections9483Tests: XCTestCase {
         XCTAssertEqual(fallback.pregameLabel, "earlier forecast")
         let qualified = try XCTUnwrap(NFLFinishCard9483.build(packersInput(), finalBaseline: headlineHalves))
         XCTAssertEqual(qualified.pregameLabel, "pregame projection", "the qualified comparison is unchanged")
+        XCTAssertEqual(fallback.key, "Points · outline = earlier forecast · cross = final",
+                       "the legend clause names the earlier forecast")
+        XCTAssertEqual(qualified.key, "Points · outline = pregame · cross = final", "the qualified legend is unchanged")
+        XCTAssertEqual(fallback.pregameName, "Earlier forecast", "the spoken intro names the earlier forecast")
+        XCTAssertEqual(qualified.pregameName, "Pregame projection", "the qualified one still says pregame")
         let view = try code("Components", "NFLEventCards9483.swift")
-        XCTAssertTrue(view.contains("Text(card.namesDistinctBasis?\"Points·outline=\\(NFLFinishCard9483.earlierForecast.lowercased())·cross=final\""),
-                      "the legend clause names the earlier forecast")
-        XCTAssertTrue(view.contains("\"\\(card.namesDistinctBasis?NFLFinishCard9483.earlierForecast:\"Pregameprojection\")\""),
-                      "the spoken intro names the earlier forecast; the qualified one still says pregame")
+        XCTAssertTrue(view.contains("Text(card.key)"), "the legend is the card's own key")
+        XCTAssertTrue(view.contains("\"\\(card.pregameName)\""), "the spoken intro is the card's own name")
         // The ladders' own "Before kickoff" (a different basis) is not this claim.
         for claim in ["beforeplay", "projectionbefore"] {
             XCTAssertFalse(view.lowercased().contains(claim), "the card view claims \"\(claim)\" again")
@@ -208,8 +211,10 @@ final class RealPageCorrections9483Tests: XCTestCase {
         let live = try XCTUnwrap(NFLFinishCard9483.build(packersInput(final: false), finalBaseline: headlineHalves))
         XCTAssertEqual(live.phase, .during, "control: live")
         XCTAssertEqual(live, try XCTUnwrap(NFLFinishCard9483.build(packersInput(final: false))))
-        XCTAssertEqual(live.pregameLabel, "pregame projection")
-        XCTAssertEqual(live.ladderPregame?.home, 27.5, "live ladders keep the card's pregame pair")
+        // #9483 A3 — live on the history point: named for what it is, and no
+        // unqualified pair reaches the ladders' "Pregame projection".
+        XCTAssertEqual(live.pregameLabel, "earlier forecast")
+        XCTAssertNil(live.ladderPregame)
     }
 
     private func projection(home: Double = 26.5, away: Double = 27.6, kind: String = "last_before_scheduled_start")
@@ -245,7 +250,8 @@ final class RealPageCorrections9483Tests: XCTestCase {
                                     + "qualifiedFinalForecast11296(event)?.comparison}"),
                       "the headline is the qualified forecast's own pair")
         XCTAssertTrue(page.contains("NFLFinishCard9483.build(projectedInput,finalBaseline:"
-                                    + "Self.qualifiedFinalForecast11296(event).map{(away:$0.away,home:$0.home)})"),
+                                    + "Self.qualifiedFinalForecast11296(event).map{(away:$0.away,home:$0.home)},"
+                                    + "liveBaseline:liveCardBaseline11296(event))"),
                       "the card compares with the same forecast")
         XCTAssertTrue(page.contains("pregameProjection:finish?.ladderPregame,"),
                       "the NBA margin and total read the card's pair")

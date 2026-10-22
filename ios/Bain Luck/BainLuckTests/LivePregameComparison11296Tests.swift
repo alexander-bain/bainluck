@@ -626,7 +626,7 @@ final class LivePregameComparison11296Tests: XCTestCase {
 
     func testTheBaselineSitsInsideTheCurrentProjectionGroupWithTheRightNames() throws {
         let page = try source("Views/EventDetailView.swift")
-        let mount = "LivePregameBaselineLine11296(comparison:liveBaseline,awayName:names.away,homeName:names.home)"
+        let mount = "LivePregameBaselineLine11296(comparison:liveBaseline,awayName:names.away,homeName:names.home,font:.caption2)"
         XCTAssertEqual(occurrences("LivePregameBaselineLine11296(", in: page), 1, "drawn once")
         XCTAssertEqual(occurrences(mount, in: page), 1, "each name beside its own number")
         // Inside the scored arm's figure-over-caption group: after the figure and
