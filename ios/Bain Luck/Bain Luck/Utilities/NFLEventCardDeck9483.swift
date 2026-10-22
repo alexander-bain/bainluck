@@ -90,6 +90,13 @@ enum NFLEventCardDeck9483 {
 ///   current capture (`latestIntervalUnavailable` false);
 /// - **final**: after the final, the final score, which is a result and never a
 ///   projection or a 100% quote.
+///
+/// #9483 R2 — after the final, the pregame side is the headline's qualified
+/// "Projection before scheduled start" whenever the page has one, so the
+/// headline, this card and the NBA ladders compare the final with ONE
+/// expectation (Packers 14780562 printed DAL 28–GB 27 above a card that said
+/// "Packers won as projected" from an earlier GB-favouring history point).
+/// Without it the card keeps the history point and names that different basis.
 nonisolated struct NFLFinishCard9483: Equatable {
     nonisolated struct Pair: Equatable {
         let away: Double
@@ -102,6 +109,17 @@ nonisolated struct NFLFinishCard9483: Equatable {
 
     nonisolated enum Phase: Equatable { case before, during, after }
 
+    /// Which expectation `pregame` is.
+    nonisolated enum PregameBasis: Equatable {
+        /// The last projection in the page's projected-points history before
+        /// the first observed game state.
+        case history
+        /// The headline's qualified projection before the scheduled start
+        /// (`FinalForecastComparison11296.Qualified`), served halves unrounded.
+        /// It is a capture range, so `pregame.at` is nil: no single clock is claimed.
+        case scheduledStart
+    }
+
     let phase: Phase
     let pregame: Pair
     /// The newest admitted projection while live.
@@ -113,14 +131,29 @@ nonisolated struct NFLFinishCard9483: Equatable {
     var tickStep: Double = 7
     /// What the sport calls the start: "kickoff", "tip-off".
     var startWord: String = "kickoff"
+    var pregameBasis: PregameBasis = .history
 
     var kicker: String { phase == .after ? "Final vs forecast" : "Projected finish" }
+
+    /// A finished card on the history point is a DIFFERENT expectation from
+    /// the headline's, and says so instead of borrowing "pregame projection".
+    var namesDistinctBasis: Bool { phase == .after && pregameBasis == .history }
+
+    /// The label under each pregame number.
+    var pregameLabel: String { namesDistinctBasis ? "last before play" : "pregame projection" }
+
+    /// The pregame pair the NBA margin and total cards print as their
+    /// "Pregame projection": the same pair this card compares with, and none
+    /// after the final unless it is the headline's qualified one.
+    var ladderPregame: (home: Double, away: Double)? {
+        namesDistinctBasis ? nil : (home: pregame.home, away: pregame.away)
+    }
 
     /// The same card with its live projection gone (v159: a projection past
     /// its validity leaves the held card).
     var withoutProjectedNow: NFLFinishCard9483 {
         NFLFinishCard9483(phase: phase, pregame: pregame, projectedNow: nil, final: final,
-                          tickStep: tickStep, startWord: startWord)
+                          tickStep: tickStep, startWord: startWord, pregameBasis: pregameBasis)
     }
 
     /// The card's one sentence. It names a flip only when the projected leader
@@ -148,8 +181,14 @@ nonisolated struct NFLFinishCard9483: Equatable {
 
     /// From the page's own projected-points input. Nil wherever that series
     /// is refused, or holds no projection before the game began.
+    ///
+    /// `finalBaseline` is the headline's qualified forecast halves
+    /// (`EventDetailView.qualifiedFinalForecast11296`), read only after the
+    /// final; before and during the game the card is unchanged. The history
+    /// series is never edited: its points, the final and the phase are its own.
     @MainActor
-    static func build(_ input: ProjectedFinalPointsSeries.Input?) -> NFLFinishCard9483? {
+    static func build(_ input: ProjectedFinalPointsSeries.Input?,
+                      finalBaseline: (away: Double, home: Double)? = nil) -> NFLFinishCard9483? {
         guard let input, NFLRecognizablePage9483.applies(sportKey: input.sportKey),
               let series = ProjectedFinalPointsSeries.build(input) else { return nil }
         let points = series.segments.flatMap { $0 }
@@ -159,8 +198,15 @@ nonisolated struct NFLFinishCard9483: Equatable {
         case .before: pregamePoint = series.latestIntervalUnavailable ? nil : series.latest
         case .during, .after: pregamePoint = floor.flatMap { f in points.last { $0.at < f } }
         }
+        // The card exists exactly where it did; the baseline only changes
+        // which pregame pair a finished one compares with.
         guard let pregamePoint else { return nil }
-        let pregame = Pair(away: pregamePoint.away, home: pregamePoint.home, at: pregamePoint.at)
+        let baseline = series.phase == .after ? finalBaseline.flatMap { b -> Pair? in
+            guard b.away.isFinite, b.home.isFinite else { return nil }
+            return Pair(away: b.away, home: b.home, at: nil)
+        } : nil
+        let pregame = baseline ?? Pair(away: pregamePoint.away, home: pregamePoint.home, at: pregamePoint.at)
+        let basis: PregameBasis = baseline != nil ? .scheduledStart : .history
         let tickStep = ProjectedFinalPointsSeries.leagues[input.sportKey]?.tickStep ?? 7
         let startWord = NBAEventCards9483.applies(sportKey: input.sportKey) ? "tip-off" : "kickoff"
         switch series.phase {
@@ -177,7 +223,7 @@ nonisolated struct NFLFinishCard9483: Equatable {
             guard let actual = series.latestActual else { return nil }
             return NFLFinishCard9483(phase: .after, pregame: pregame, projectedNow: nil,
                                      final: Pair(away: actual.away, home: actual.home, at: actual.at),
-                                     tickStep: tickStep, startWord: startWord)
+                                     tickStep: tickStep, startWord: startWord, pregameBasis: basis)
         }
     }
 }

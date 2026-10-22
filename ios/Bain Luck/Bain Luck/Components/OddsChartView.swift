@@ -1397,7 +1397,10 @@ struct OddsChartView: View {
             Image(systemName: "arrow.up.left.and.arrow.down.right")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-                .padding(6)
+                // #9483 R4 — the whole 44pt square is the target (it was the
+                // 12pt glyph plus 6pt padding, 26×25), inside the header row.
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
     }
 
@@ -2365,10 +2368,17 @@ struct OddsChartView: View {
     /// there is nothing to disclose (L2-216's fail-closed set, unchanged).
     ///
     /// `rail` is the full-size chart, whose plot takes whatever height its key
-    /// leaves: there the key stays ONE row and scrolls sideways, with Hide next
-    /// to the blend's name where it can be reached without scrolling, so
-    /// opening Sources never takes a row out of the plot. Inline the plot's
-    /// height is fixed and the key wraps below it.
+    /// leaves: there the revealed names scroll sideways, with Hide next to the
+    /// blend's name where it can be reached without scrolling, so opening
+    /// Sources never takes a row out of the plot. Inline the plot's height is
+    /// fixed and the key wraps below it.
+    ///
+    /// #9483 R4 (Design, AX3 at 393pt) — the blend's name and the Show/Hide
+    /// control sit OUTSIDE the scrolling rail: inside it, "Show 5 sources" ran
+    /// off the right edge (x350, w158). When the name and the control do not
+    /// fit one row, the control and the rail move to a second row. The choice
+    /// measures the control's wider state and none of the rail, so it is the
+    /// same with Sources open or closed and the plot never changes size.
     @ViewBuilder
     private func legendView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo],
                             sourcesOpen: Binding<Bool>, rail: Bool) -> some View {
@@ -2382,19 +2392,26 @@ struct OddsChartView: View {
         if hasBlend {
             let open = sourcesOpen.wrappedValue && !revealable.isEmpty
             if rail {
-                ScrollView(.horizontal, showsIndicators: false) {
+                let primaryKey = legendKey("aggregate", sources: sources, isPrimary: true, reading: endReading)
+                let control = railControl9483(open: open, count: revealable.count, sourcesOpen)
+                let names = ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
-                        legendKey("aggregate", sources: sources, isPrimary: true, reading: endReading)
                         if open {
-                            sourcesHideButton(sourcesOpen)
                             ForEach(revealable, id: \.self) { source in
                                 legendKey(source, sources: sources, isPrimary: false)
                             }
-                        } else if !revealable.isEmpty {
-                            sourcesShowButton(count: revealable.count, sourcesOpen)
                         }
                     }
                     .fixedSize(horizontal: true, vertical: false)
+                }
+                // The rail fills what is left and never decides the row.
+                .frame(idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) { primaryKey; control; names }
+                    VStack(alignment: .leading, spacing: 0) {
+                        primaryKey
+                        HStack(spacing: 12) { control; names }
+                    }
                 }
             } else {
                 FlowLayout(spacing: 8) {
@@ -2442,13 +2459,15 @@ struct OddsChartView: View {
             .stroke(colorForSource(source, sources: sources),
                     style: StrokeStyle(lineWidth: min(stroke.lineWidth, 3), lineCap: .butt, dash: stroke.dash))
             .frame(width: 14, height: 4)
-            Text(displayNameForSource(source, sources: sources))
+            // #9483 R4 — wraps when its row is narrower than the name (inline
+            // key at accessibility sizes), never cut at the edge; one line in
+            // the full-size rail, which lays it out at its own width.
+            let name = Text(displayNameForSource(source, sources: sources))
                 .font(isPrimary ? .caption2.weight(.semibold) : .caption2)
                 .foregroundStyle(isPrimary ? .primary : .secondary)
-                .lineLimit(1)
-                .fixedSize()
+                .fixedSize(horizontal: false, vertical: true)
             if let reading {
-                HStack(spacing: 3) {
+                let last = HStack(spacing: 3) {
                     Text("last")
                         .foregroundStyle(.secondary)
                     Text(reading.text)
@@ -2458,10 +2477,36 @@ struct OddsChartView: View {
                 .font(.caption2)
                 .lineLimit(1)
                 .fixedSize()
-                .padding(.leading, 2)
+                // Where name and reading do not fit one line, the reading
+                // goes under the name rather than breaking the name.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 4) { name; last.padding(.leading, 2) }
+                    VStack(alignment: .leading, spacing: 1) { name; last }
+                }
+            } else {
+                name
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    /// #9483 R4 — the full-size key's Show or Hide, holding the width of the
+    /// wider of the two so the key's layout cannot change when it is tapped.
+    /// None when there is nothing to reveal.
+    @ViewBuilder
+    private func railControl9483(open: Bool, count: Int, _ sourcesOpen: Binding<Bool>) -> some View {
+        if count > 0 {
+            ZStack(alignment: .leading) {
+                if open {
+                    sourcesShowButton(count: count, sourcesOpen).hidden().accessibilityHidden(true)
+                    sourcesHideButton(sourcesOpen)
+                } else {
+                    sourcesHideButton(sourcesOpen).hidden().accessibilityHidden(true)
+                    sourcesShowButton(count: count, sourcesOpen)
+                }
+            }
+            .fixedSize()
+        }
     }
 
     /// #11356 — "+ N sources": adds each source's own line over the same plot.
@@ -4477,7 +4522,8 @@ extension OddsChartView {
             revealed: revealed,
             checkpoints: checkpoints?.drawn ?? [],
             blendSurvivors: checkpoints?.survivors,
-            liveAndOpen: status == "live" && !EventState.isFinished(status) && !venueSettled)
+            liveAndOpen: status == "live" && !EventState.isFinished(status) && !venueSettled,
+            primaryClosed: EventState.isFinished(status))
         return AxisPlan9483(sides: pageAxisSides9483, window: window, revealed: revealed)
     }
 
@@ -4547,6 +4593,13 @@ extension OddsChartView {
     ///   each revealed source's low and high (a line the reader asked to see is
     ///   never run off the frame); and, only while the game is live and not
     ///   closed, the primary series' within-minute lows and highs.
+    /// - and, once the game is finished (`primaryClosed`), the primary
+    ///   journey's own low and high — its drawn line and its drawn checkpoints.
+    ///   Design R1 (real page, Jaguars 14639175): the percentiles cut a closed
+    ///   game's late 3.6% collapse below a 25% edge, so the finished line's
+    ///   true range must stay on the default plot without opening Sources.
+    ///   These are real readings of the drawn line, never a 0/100 settlement
+    ///   point; live and pre-game focus are unchanged.
     ///
     /// A source that is not drawn never sizes the window: that is how a hidden
     /// line flattened the visible one (#11356). Nothing here edits, adds or
@@ -4557,7 +4610,8 @@ extension OddsChartView {
         revealed: [String],
         checkpoints: [PublicationJourney4974.Checkpoint] = [],
         blendSurvivors: [ChartDataPoint]? = nil,
-        liveAndOpen: Bool = false
+        liveAndOpen: Bool = false,
+        primaryClosed: Bool = false
     ) -> ChartProbabilityAxis9483.Window {
         var readings: [Double] = []
         var mustShow: [Double] = []
@@ -4579,6 +4633,13 @@ extension OddsChartView {
         if liveAndOpen {
             let primary = primarySource(in: points)
             mustShow += liveMinuteRangeEnds9483(points.filter { $0.source == primary })
+        }
+        if primaryClosed {
+            let primary = primarySource(in: points)
+            let line = (primary == PublicationCheckpointMount4974.blendSource ? blendSurvivors : nil)
+                ?? points.filter { $0.source == primary }
+            let journey = (line.map(\.probability) + checkpoints.map(\.vertex.p)).filter(\.isFinite)
+            if let lo = journey.min(), let hi = journey.max() { mustShow += [lo, hi] }
         }
         return ChartProbabilityAxis9483.window(readings: readings, mustShow: mustShow)
     }

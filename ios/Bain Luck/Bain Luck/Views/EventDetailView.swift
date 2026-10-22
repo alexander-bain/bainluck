@@ -2055,8 +2055,14 @@ struct EventDetailView: View {
     /// `pregame_projection`, and the actual period from the served
     /// `final_score_period`. Nil draws nothing. Static so the suite reaches it.
     static func finalForecast11296(_ event: EventDetail) -> FinalForecastComparison11296.Comparison? {
+        qualifiedFinalForecast11296(event)?.comparison
+    }
+
+    /// #9483 R2 — the headline's forecast with its served halves: the one
+    /// pregame expectation the finished page's cards compare the final with.
+    static func qualifiedFinalForecast11296(_ event: EventDetail) -> FinalForecastComparison11296.Qualified? {
         guard EventState.isFinished(event.status) else { return nil }
-        return FinalForecastComparison11296.resolve(
+        return FinalForecastComparison11296.qualified(
             sport: event.sport, status: event.status,
             homeScore: event.homeScore, awayScore: event.awayScore,
             actualPeriod: FinalForecastComparison11296.actualPeriod(
@@ -2103,7 +2109,11 @@ struct EventDetailView: View {
             return mlbFinalCards(event).map { .mlb($0) }
         }
         guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
-        let finish = NFLFinishCard9483.build(projectedInput)
+        // #9483 R2 — a finished page's card compares the final with the
+        // headline's own qualified forecast, not an earlier history point.
+        let finish = NFLFinishCard9483.build(
+            projectedInput,
+            finalBaseline: Self.qualifiedFinalForecast11296(event).map { (away: $0.away, home: $0.home) })
         return NFLEventCardDeck9483.cards(
             sportKey: event.sport,
             finish: finish,
@@ -2142,7 +2152,7 @@ struct EventDetailView: View {
             matrix: gameMarkets.gameQuestionMatrix, status: event.status,
             commenceTime: event.commenceTime?.asDate,
             homeScore: hasScore ? event.homeScore : nil, awayScore: hasScore ? event.awayScore : nil,
-            pregameProjection: finish.map { (home: $0.pregame.home, away: $0.pregame.away) },
+            pregameProjection: finish?.ladderPregame,
             homeShort: names.home, awayShort: names.away, now: Date())
         return [NBALadderCard9483.margin(input), NBALadderCard9483.total(input)].compactMap { $0 }
     }
@@ -3076,7 +3086,7 @@ struct EventDetailView: View {
                     HStack {
                         Spacer()
                         HStack(spacing: 4) {
-                            Text(sourcesToggleLabel(sourceCount: sourceEntries.count))
+                            Text(Self.sourcesToggleLabel(sourceCount: sourceEntries.count))
                                 .font(.caption2)
                                 .fontWeight(.medium)
                                 .foregroundStyle(.secondary)
@@ -3133,8 +3143,14 @@ struct EventDetailView: View {
 
     /// The collapsed label names the count so the reader can tell there is more
     /// than a book list behind the chevron without opening it.
-    private func sourcesToggleLabel(sourceCount: Int) -> String {
-        sourceCount > 0 ? "Sources (\(sourceCount))" : "Individual Sportsbooks"
+    ///
+    /// #9483 R3 — and it names WHICH number those sources make: the latest one.
+    /// The chart's key above it has its own "+ N sources" for the lines drawn
+    /// over time, and the two counts are rightly different (Packers: +5 traced
+    /// histories, 3 inputs to the latest number), so two bare "Sources" read as
+    /// one control disagreeing with itself.
+    static func sourcesToggleLabel(sourceCount: Int) -> String {
+        sourceCount > 0 ? "Latest number's sources (\(sourceCount))" : "Individual Sportsbooks"
     }
 
     /// #4233 — one row of either sources list, in whichever shape the model chose.
