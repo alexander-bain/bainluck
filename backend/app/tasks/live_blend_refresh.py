@@ -5083,8 +5083,19 @@ class LiveBlendRefresher:
                                 self.preview_stats,
                             )
                             return
+                        # A blend composed before this lock may be older than a
+                        # revoke another batch sent while it waited (#10090).
+                        kept = [f for f in frames if not preview.withdrawn(f)]
+                        if len(kept) < len(frames):
+                            self.preview_stats["withdrawn"] = (
+                                self.preview_stats.get("withdrawn", 0) + len(frames) - len(kept)
+                            )
+                            frames = kept
+                            if not frames:
+                                return
                         argv: list = [preview.epoch]
                         for frame in frames:
+                            preview.sending(frame)
                             frame["preview"]["epoch"] = preview.epoch
                             argv.extend((
                                 frame["preview"]["kind"],

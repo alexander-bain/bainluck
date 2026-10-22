@@ -634,6 +634,8 @@ class _EventState:
     expired: dict = field(default_factory=dict)
     #: Highest seq this process published for the event (blend or revoke).
     last_seq: int = 0
+    #: Highest ``through_seq`` of a revoke this process has sent for the event.
+    revoked_through: int = 0
 
 
 class PreviewRegistry:
@@ -737,6 +739,26 @@ class PreviewRegistry:
 
     def claim_of(self, source: str) -> Optional[int]:
         return self.epoch
+
+    def withdrawn(self, frame: dict) -> bool:
+        """A queued blend that a revoke this process already sent withdrew.
+
+        Frames are composed before the publication lock and sent in lock
+        order, so a batch that waited can hold a blend older than a revoke
+        another batch sent meanwhile. A reader holding nothing keeps no
+        memory of the withdrawn sequence, so that blend would show again.
+        """
+        state = self._events.get(frame["event_id"])
+        preview = frame["preview"]
+        return (state is not None and preview["kind"] == "blend"
+                and preview["seq"] <= state.revoked_through)
+
+    def sending(self, frame: dict) -> None:
+        """Record a revoke before its send; an unknown outcome still withdrew."""
+        state = self._events.get(frame["event_id"])
+        preview = frame["preview"]
+        if state is not None and preview["kind"] == "revoke":
+            state.revoked_through = max(state.revoked_through, preview["through_seq"])
 
     def _revoke_frame(self, event_id: int, state: _EventState, reason: str) -> Optional[dict]:
         if state.last_seq == 0:
