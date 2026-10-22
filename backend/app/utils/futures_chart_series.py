@@ -606,6 +606,7 @@ def compact_series(
     points: Sequence[Point],
     *,
     target_points: int = TARGET_POINTS_PER_OUTCOME,
+    max_joint_s: Optional[float] = None,
 ) -> list[Point]:
     """Keep every move, a heartbeat while flat, and both endpoints.
 
@@ -618,6 +619,12 @@ def compact_series(
     `event_concept.downsample_points` does) is what turns a 164-change day into
     a 20-change staircase — it keeps points, which is not the same as keeping
     moves.
+
+    `max_joint_s` (#10955): when set, compaction never JOINS two kept points
+    further apart than this unless the input itself was that far apart there.
+    The budget gives way to it, not the other way round — see
+    :func:`_thin_by_smallest_move`. None, which every caller before #10955
+    passes, is the old behaviour unchanged.
     """
     pts = list(points)
     if len(pts) <= 2:
@@ -625,6 +632,10 @@ def compact_series(
 
     lifetime = (pts[-1][0] - pts[0][0]).total_seconds()
     heartbeat = heartbeat_seconds_for(lifetime, target_points=target_points)
+    if max_joint_s is not None:
+        # Otherwise a flat stretch is bridged by the heartbeat alone, which may
+        # be up to `MAX_HEARTBEAT_SECONDS` wide.
+        heartbeat = min(heartbeat, max_joint_s)
 
     kept: list[Point] = []
     last_value: Optional[float] = None
@@ -645,7 +656,7 @@ def compact_series(
     # Thin by DROPPING THE SMALLEST MOVES, not by stride — the biggest swings,
     # which are the story, survive to the end.
     if len(kept) > target_points:
-        kept = _thin_by_smallest_move(kept, target_points)
+        kept = _thin_by_smallest_move(kept, target_points, max_joint_s=max_joint_s)
     return kept
 
 
@@ -675,6 +686,7 @@ def compact_by_band(
     now: datetime,
     *,
     bands: Sequence[tuple[Optional[int], int]] = RANGE_BANDS,
+    max_joint_s: Optional[float] = None,
 ) -> list[Point]:
     """Compact each range band against its own budget, then concatenate.
 
@@ -686,6 +698,8 @@ def compact_by_band(
     The seam between two bands is two points a few minutes apart, which is a
     denser joint than either side — never a gap, and never a duplicate, because
     the bands partition the timeline.
+
+    `max_joint_s` is handed to every band's :func:`compact_series` (#10955).
     """
     pts = list(points)
     if len(pts) <= 2:
@@ -703,7 +717,7 @@ def compact_by_band(
         upper = lower
         if not band:
             continue
-        for ts, p in compact_series(band, target_points=budget):
+        for ts, p in compact_series(band, target_points=budget, max_joint_s=max_joint_s):
             if ts in seen:
                 continue
             seen.add(ts)
@@ -712,33 +726,78 @@ def compact_by_band(
     return out
 
 
-def _thin_by_smallest_move(points: list[Point], target: int) -> list[Point]:
+def _thin_by_smallest_move(
+    points: list[Point], target: int, *, max_joint_s: Optional[float] = None
+) -> list[Point]:
     """Drop interior points whose removal changes the drawn line least.
 
     Repeatedly removes the interior point with the smallest vertical deviation
     from the straight segment between its neighbours — the same idea as
     Douglas–Peucker, run to a point BUDGET instead of to a tolerance so the
     output size is predictable. Endpoints are never candidates.
+
+    🔴 #10955 — `max_joint_s`. Run to a budget alone, this is what opened the
+    holes on `/futures/109923` (Kalshi KXCAWEALTHTAX-26): the venue bank's band
+    older than 30 days was handed every daily candle since February and kept 80,
+    so July reached the reader as seven points up to twelve days apart — and both
+    readers draw a gap that wide as a dotted "no data here" bridge, over a month
+    the venue observed every day. A smallest-move cost cannot see that: the
+    flatter a stretch, the more of it goes. So with `max_joint_s` set, a point
+    whose removal would join its neighbours further apart than that is NOT A
+    CANDIDATE, and when no candidate is left the loop stops over budget. The
+    overshoot is bounded — every surviving interior point then has neighbours
+    more than `max_joint_s` apart, so a band of span S keeps at most
+    ``2 * S / max_joint_s + 2`` — and it is paid only where the venue really
+    observed: an input gap wider than the joint was already a gap and stays one.
+
+    Same answer as the scan it replaced (smallest cost, earliest on a tie;
+    `test_thinning_matches_the_quadratic_reference`), in O(n log n): a removal
+    changes only its two neighbours' costs, so they are re-queued and a stale
+    entry is skipped when popped. The scan was O(n²), and a whole-life hourly
+    tier is thousands of points per outcome.
     """
-    if target < 2 or len(points) <= target:
+    import heapq
+
+    n = len(points)
+    if target < 2 or n <= target:
         return points
-    work = list(points)
-    while len(work) > target:
-        best_index = 1
-        best_cost = None
-        for i in range(1, len(work) - 1):
-            (t0, p0), (t1, p1), (t2, p2) = work[i - 1], work[i], work[i + 1]
-            span = (t2 - t0).total_seconds()
-            if span <= 0:
-                cost = 0.0
-            else:
-                frac = (t1 - t0).total_seconds() / span
-                cost = abs(p1 - (p0 + (p2 - p0) * frac))
-            if best_cost is None or cost < best_cost:
-                best_cost = cost
-                best_index = i
-        work.pop(best_index)
-    return work
+    prev = list(range(-1, n - 1))
+    nxt = list(range(1, n + 1))
+    alive = [True] * n
+    version = [0] * n
+
+    def cost(i: int) -> Optional[float]:
+        (t0, p0), (t1, p1), (t2, p2) = points[prev[i]], points[i], points[nxt[i]]
+        span = (t2 - t0).total_seconds()
+        if max_joint_s is not None and span > max_joint_s:
+            return None
+        if span <= 0:
+            return 0.0
+        frac = (t1 - t0).total_seconds() / span
+        return abs(p1 - (p0 + (p2 - p0) * frac))
+
+    heap: list[tuple[float, int, int]] = []
+    for i in range(1, n - 1):
+        c = cost(i)
+        if c is not None:
+            heap.append((c, i, 0))
+    heapq.heapify(heap)
+    remaining = n
+    while remaining > target and heap:
+        _c, i, queued_at = heapq.heappop(heap)
+        if not alive[i] or queued_at != version[i]:
+            continue
+        alive[i] = False
+        remaining -= 1
+        before, after = prev[i], nxt[i]
+        nxt[before], prev[after] = after, before
+        for j in (before, after):
+            if 0 < j < n - 1:
+                version[j] += 1
+                c = cost(j)
+                if c is not None:
+                    heapq.heappush(heap, (c, j, version[j]))
+    return [points[i] for i in range(n) if alive[i]]
 
 
 # ---------------------------------------------------------------------------
@@ -843,7 +902,7 @@ def clob_calls(lifetime_hours: float) -> list[ClobCall]:
     return calls
 
 
-def candle_calls(lifetime_hours: float) -> list[CandleCall]:
+def candle_calls(lifetime_hours: float, *, hourly_whole_life: bool = False) -> list[CandleCall]:
     """The Kalshi candlestick calls for one outcome, FINEST FIRST.
 
     Mirrors :func:`clob_calls` on the venue that speaks a different dialect:
@@ -855,10 +914,27 @@ def candle_calls(lifetime_hours: float) -> list[CandleCall]:
     unsupported interval, it answers with junk, so an unlisted value is never
     sent. Measured on the specimen: ``period_interval=1440`` returns 87 points
     back to listing (2026-06-09) in ONE request.
+
+    `hourly_whole_life` (#10955; the single-market venue bank only): the hourly
+    tier reaches back over the market's whole life, up to
+    :data:`KALSHI_HOURLY_WHOLE_LIFE_MAX_HOURS`, instead of 31 days. Kalshi keeps
+    hourly candles past 31 days — measured 2026-10-22 on KXCAWEALTHTAX-26
+    (listed 2026-02-19): 5,377 hourly candles back to listing, 631–693 a month
+    through May–August, largest gap 7 h — and the daily tier that was left in
+    charge of everything older than a month can give one point a day at most.
+    The concept fill keeps the 31-day reach: it sweeps a population on a beat,
+    while the venue bank fills one market a reader opened, under its own hourly
+    budget.
     """
     calls = [CandleCall(KALSHI_FINE_INTERVAL, timedelta(hours=FINE_TIER_HOURS))]
     if lifetime_hours >= HOURLY_TIER_MIN_LIFETIME_HOURS:
-        calls.append(CandleCall(KALSHI_HOURLY_INTERVAL, timedelta(days=31)))
+        hourly_reach = timedelta(days=31)
+        if hourly_whole_life:
+            hourly_reach = max(
+                hourly_reach,
+                timedelta(hours=min(float(lifetime_hours), KALSHI_HOURLY_WHOLE_LIFE_MAX_HOURS)),
+            )
+        calls.append(CandleCall(KALSHI_HOURLY_INTERVAL, hourly_reach))
     calls.append(CandleCall(KALSHI_COARSE_INTERVAL, None))
     return calls
 
@@ -894,6 +970,14 @@ KALSHI_MAX_CANDLES_PER_REQUEST = 9000
 #:
 #: :data:`FINE_TIER_HOURS` is held under this by `test_fine_tier_fits_both_venues`.
 KALSHI_FINE_TIER_MAX_HOURS = KALSHI_MAX_CANDLES_PER_REQUEST // 60
+
+#: #10955 — the furthest :func:`candle_calls` reaches the HOURLY tier when asked
+#: for the whole life: 9,000 hours, about 375 days. One ticker's whole reach at
+#: 60-minute periods is then ONE window under the batch budget above, so a field
+#: costs at most one hourly request per ticker (`ticker_batches` sizes the groups
+#: from the window), and a market older than this keeps the daily tier for the
+#: remainder. Derived like the fine tier's, so lowering the budget lowers this.
+KALSHI_HOURLY_WHOLE_LIFE_MAX_HOURS = KALSHI_MAX_CANDLES_PER_REQUEST * KALSHI_HOURLY_INTERVAL // 60
 
 
 def ticker_batches(
