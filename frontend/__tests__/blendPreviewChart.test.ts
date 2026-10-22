@@ -130,7 +130,8 @@ test('an older covered subset of a folded base is extended', () => {
     .toEqual([...line, {timestamp: at, home_probability: .75}]);
 });
 
-test.each([{'1': 11}, {'2': 6}, {'3': 1}, {'1': 9, '3': 1}])('a newer or unknown history member refuses beside a folded base: %j', revision => {
+const newerOrUnknownHistoryRevisions: Record<string, number>[] = [{'1': 11}, {'2': 6}, {'3': 1}, {'1': 9, '3': 1}];
+test.each(newerOrUnknownHistoryRevisions)('a newer or unknown history member refuses beside a folded base: %j', revision => {
   const served = pinned(revision);
   expect(overlayBlendPreviewLine(folded, foldedHeld(), 500, served.aggregate_line, served)).toBe(served.aggregate_line);
 });
