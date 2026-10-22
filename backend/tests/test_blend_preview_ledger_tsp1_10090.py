@@ -237,7 +237,10 @@ async def rig(redis_kwargs, monkeypatch, request):
 
 
 def _ev(status="live"):
-    return SimpleNamespace(status=status, espn_win_prob_home=None, opening_home_probability=None)
+    # These original cases never retire state: ticket 0 is captured before
+    # their synthetic row contexts. Lifecycle cases below use real tickets.
+    return SimpleNamespace(status=status, espn_win_prob_home=None, opening_home_probability=None,
+                           preview_read_ticket=0)
 
 
 def _stamp(seconds=0):
@@ -916,3 +919,296 @@ def test_nonfinite_decimal_context_remains_unpublishable(value):
     event = _ev()
     event.opening_home_probability = Decimal(value)
     assert blend_preview.LedgerRegistry._base(BASE10, 10, event) == (None, None)
+
+
+# --------------------------------------------------------- bounded lifecycle F3
+
+async def _fresh_ops(rig, reg, source, value=.6, *, event_id=EV, rev=10):
+    # This represents a fresh authoritative row read AFTER the Redis ticket.
+    # Delayed-message tests keep the returned operation, never reticket it.
+    ticket, _ = await reg.read_ticket(rig.call, source)
+    event = _ev()
+    event.preview_read_ticket = ticket
+    return reg.propose(event_id, source, value=value, event=event,
+                       row_sources=BASE10, row_rev=rev, stamped_at=_stamp(1))
+
+
+class TestBoundedLifecycle:
+    async def test_600_sequential_finished_events_keep_new_admission_and_bounded_state(self, rig):
+        max_fields = 0
+        for eid in range(1, 601):
+            ops = await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid)
+            await rig.k.execute(ops, rig.call, rig.channel, rig.stats)
+            assert await rig.hget(f'e:{eid}:m:kalshi') is not None
+            max_fields = max(max_fields, await rig.client.hlen(blend_preview.LEDGER_KEY))
+            ticket, _ = await rig.k.read_ticket(rig.call, 'kalshi')
+            # The caller's following authoritative statement sees final rev 11.
+            retire = rig.k.retire_read(eid, 'kalshi', 11, ticket, committed_rev=12)
+            await rig.k.execute([retire], rig.call, rig.channel, rig.stats)
+            assert await rig.hget('nevents') == '0'
+            assert await rig.hget(f'e:{eid}:gen') is None
+        assert max_fields <= 15
+        assert await rig.client.hlen(blend_preview.LEDGER_KEY) <= 7
+        assert rig.stats['published'] == 600
+        assert rig.stats['revoked'] == 600
+        assert await rig.hget('retired') == '600'
+        assert await rig.client.exists(blend_preview.LEDGER_MARKER_KEY) == 1
+
+    async def test_delayed_open_and_readset_cannot_resurrect_after_retirement(self, rig):
+        delayed = await _fresh_ops(rig, rig.k, 'kalshi')
+        frames = await rig.k.prepare(delayed, rig.call, rig.stats)
+        ticket, _ = await rig.p.read_ticket(rig.call, 'polymarket')
+        await rig.run(rig.p, [rig.p.retire_read(EV, 'polymarket', 11, ticket, committed_rev=12)])
+        assert await rig.run(rig.k, delayed) == []
+        for frame in frames:
+            await rig.k._publish(frame, rig.call, rig.channel, rig.stats)
+        assert _blends(await rig.drain()) == []
+        assert await rig.hget(f'e:{EV}:gen') is None
+        assert await rig.hget('nevents') == '0'
+
+    async def test_retirement_before_first_open_also_invalidates_its_old_read(self, rig):
+        delayed = await _fresh_ops(rig, rig.k, 'kalshi')
+        ticket, _ = await rig.p.read_ticket(rig.call, 'polymarket')
+        await rig.run(rig.p, [rig.p.retire_read(EV, 'polymarket', 11, ticket, committed_rev=12)])
+        assert await rig.run(rig.k, delayed) == []
+        assert await rig.hget(f'e:{EV}:gen') is None
+
+    async def test_stale_terminal_proof_and_stale_ticket_cannot_retire_new_live_state(self, rig):
+        await rig.run(rig.k, await _fresh_ops(rig, rig.k, 'kalshi', rev=12))
+        ticket, _ = await rig.p.read_ticket(rig.call, 'polymarket')
+        assert await rig.run(rig.p, [rig.p.retire_read(EV, 'polymarket', 11, ticket, committed_rev=12)]) == []
+        assert await rig.hget(f'e:{EV}:gen') is not None
+        # A retirement elsewhere invalidates a prepared terminal statement too.
+        await rig.run(rig.k, [rig.k.retire_read(999, 'kalshi', 20, ticket, committed_rev=21)])
+        assert await rig.run(rig.p, [rig.p.retire_read(EV, 'polymarket', 13, ticket, committed_rev=14)]) == []
+        assert await rig.hget(f'e:{EV}:gen') is not None
+
+    @pytest.mark.parametrize('rig', ['fake_clock'], indirect=True)
+    async def test_other_event_retirement_does_not_renew_or_interrupt_active_chain(self, rig):
+        await rig.run(rig.k, await _fresh_ops(rig, rig.k, 'kalshi'))
+        deadline = (await rig.hget(f'e:{EV}:m:kalshi')).split()[3]
+        ticket, _ = await rig.p.read_ticket(rig.call, 'polymarket')
+        await rig.run(rig.p, [rig.p.retire_read(99, 'polymarket', 11, ticket, committed_rev=12)])
+        await rig.clock(1_030_000)
+        # Continuation uses the old read and keeps the original deadline.
+        await rig.run(rig.k, _propose(rig.k, 'kalshi', .62, basis_s=2))
+        assert (await rig.hget(f'e:{EV}:m:kalshi')).split()[3] == deadline
+        await rig.clock(1_060_000)
+        assert _blends(await rig.run(rig.k, _propose(rig.k, 'kalshi', .62, basis_s=3))) == []
+        assert await _fresh_ops(rig, rig.k, 'kalshi', .62) == []
+
+    async def test_replaced_owner_cannot_retire_or_reopen(self, rig):
+        delayed = await _fresh_ops(rig, rig.k, 'kalshi')
+        ticket, _ = await rig.k.read_ticket(rig.call, 'kalshi')
+        replacement = rig.registry()
+        await replacement.claim(rig.call, 'kalshi')
+        await rig.run(replacement, await _fresh_ops(rig, replacement, 'kalshi', .7))
+        assert await rig.run(rig.k, [rig.k.retire_read(EV, 'kalshi', 20, ticket, committed_rev=21)]) == []
+        assert await rig.run(rig.k, delayed) == []
+        assert (await rig.hget(f'e:{EV}:m:kalshi')).split()[0] == str(replacement.claim_of('kalshi'))
+
+    async def test_mixed_version_owner_prevents_retirement(self, rig):
+        await rig.run(rig.k, await _fresh_ops(rig, rig.k, 'kalshi'))
+        await rig.client.hdel(blend_preview.LEDGER_KEY, 'read_owner:polymarket')
+        ticket, _ = await rig.k.read_ticket(rig.call, 'kalshi')
+        assert await rig.run(rig.k, [rig.k.retire_read(EV, 'kalshi', 11, ticket, committed_rev=12)]) == []
+        assert await rig.hget(f'e:{EV}:gen') is not None
+
+    async def test_lost_barrier_cannot_be_reinitialized_by_new_claim(self, rig):
+        await rig.client.hdel(blend_preview.LEDGER_KEY, 'retired')
+        with pytest.raises(RuntimeError, match='lost_admission'):
+            await rig.registry().claim(rig.call, 'kalshi')
+        assert await rig.hget('retired') is None
+
+    async def test_full_ledger_offers_only_bounded_ids_for_authoritative_terminal_read(self, rig):
+        for eid in range(1, 513):
+            await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid), rig.call, rig.stats)
+        ticket, ids = await rig.p.read_ticket(rig.call, 'polymarket')
+        assert sorted(ids) == list(range(1, 513))
+        assert len(ids) == 512
+        assert await rig.p.prepare(await _fresh_ops(rig, rig.p, 'polymarket', event_id=513), rig.call, rig.stats) == []
+        # One candidate proven final by the fresh DB statement frees one slot.
+        await rig.run(rig.p, [rig.p.retire_read(1, 'polymarket', 11, ticket, committed_rev=12)])
+        frames = await rig.p.prepare(await _fresh_ops(rig, rig.p, 'polymarket', event_id=513), rig.call, rig.stats)
+        # A capacity refusal did not consume or expire the never-admitted value.
+        assert len(_blends(frames)) == 1
+        assert await rig.hget('nevents') == '512'
+
+    async def test_fault_after_barrier_keeps_terminal_guard_and_invalidates_old_readset(self, rig):
+        delayed = await _fresh_ops(rig, rig.k, 'kalshi')
+        frames = await rig.k.prepare(delayed, rig.call, rig.stats)
+        ticket, _ = await rig.p.read_ticket(rig.call, 'polymarket')
+        rig.use(fault='retire')
+        with pytest.raises(Exception, match='injected fault'):
+            await rig.p.execute([rig.p.retire_read(EV, 'polymarket', 11, ticket, committed_rev=12)], rig.call,
+                                rig.channel, rig.stats)
+        rig.use()
+        assert await rig.hget(f'e:{EV}:term') == '11'
+        assert await rig.hget('retired') == '1'
+        for frame in frames:
+            await rig.k._publish(frame, rig.call, rig.channel, rig.stats)
+        assert _blends(await rig.drain()) == []
+        assert await rig.run(rig.k, delayed) == []
+
+
+class TestLifecycleCaller:
+    async def test_ticket_precedes_statement_and_cached_graph_keeps_that_ticket(self, rig, monkeypatch):
+        from app.tasks.live_blend_refresh import (
+            LiveBlendRefresher, PREPARED_EVENT_FIELDS, PREPARED_MARKET_FIELDS,
+            PREPARED_OUTCOME_FIELDS,
+        )
+        refresher = LiveBlendRefresher('kalshi')
+        refresher.preview_events = frozenset({EV})
+        monkeypatch.setattr(blend_preview, 'registry', lambda: rig.k)
+        order = []
+        async def ticket():
+            order.append('ticket')
+            return 0
+        monkeypatch.setattr(refresher, '_preview_admission_read', ticket)
+        market = dict(id=1, source='kalshi', external_id='KXNBAGAME-X', event_id=EV,
+                      name='Winner', status='open', market_metadata={})
+        event = dict(id=EV, home_team_name='A', away_team_name='B', status='live',
+                     completed_at=None, commence_time=NOW, win_probability_sources=BASE10['kalshi'],
+                     espn_win_prob_home=None, opening_home_probability=None)
+        outcome = dict(id=10, market_id=1, name='A', rank=0, current_probability=.6,
+                       last_updated=NOW, is_winner=None, external_id='x', resolution_source=None)
+        row = tuple(market[k] for k in PREPARED_MARKET_FIELDS) + tuple(event[k] for k in PREPARED_EVENT_FIELDS)
+        row += tuple(outcome[k] for k in PREPARED_OUTCOME_FIELDS) + (BASE10, 10)
+        class Session:
+            async def execute(self, stmt):
+                order.append('statement')
+                return SimpleNamespace(all=lambda: [row])
+        grouped = await refresher._read_groups(Session(), [EV])
+        assert order == ['ticket', 'statement']
+        assert grouped[EV][0].preview_read_ticket == 0
+        async def forbidden_refresh():
+            raise AssertionError('cached context must never obtain a new ticket')
+        monkeypatch.setattr(refresher, '_preview_admission_read', forbidden_refresh)
+        sent = []
+        async def capture(frames):
+            sent.extend(frames)
+        monkeypatch.setattr(refresher, '_publish_previews', capture)
+        plans = {EV: (None, {}, SimpleNamespace(eligibility=None), .6, [])}
+        await refresher._preview_before_stamp(grouped, plans, {})
+        assert sent[0]['read_ticket'] == 0
+
+    @pytest.mark.skipif(not os.environ.get('BLEND_DEADLOCK_DATABASE_URL'),
+                        reason='real PostgreSQL lifecycle gate requires BLEND_DEADLOCK_DATABASE_URL')
+    async def test_capacity_cleanup_requires_committed_terminal_read(self, rig, monkeypatch):
+        import contextlib
+        import uuid
+        import asyncpg
+        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+        from app.tasks.live_blend_refresh import LiveBlendRefresher
+
+        url = os.environ['BLEND_DEADLOCK_DATABASE_URL']
+        pg_url = url.replace('postgresql+asyncpg://', 'postgresql://')
+        schema = 'dnpl_lifecycle_' + uuid.uuid4().hex
+        control = await asyncpg.connect(pg_url)
+        engine = None
+        writer = None
+        try:
+            await control.execute(f'CREATE SCHEMA {schema}')
+            await control.execute(f'''CREATE TABLE {schema}.events
+                (id integer primary key, status text, completed_at timestamptz,
+                 win_probability_sources_rev bigint, win_probability_sources jsonb NOT NULL DEFAULT '{{}}')''')
+            from app.utils.wps_revision import CREATE_FUNCTION_SQL, CREATE_TRIGGER_SQL
+            await control.execute(f'SET search_path TO {schema}')
+            await control.execute(CREATE_FUNCTION_SQL)
+            await control.execute(CREATE_TRIGGER_SQL)
+            await control.execute(f"INSERT INTO {schema}.events (id, status, completed_at, win_probability_sources_rev) VALUES (1, 'live', NULL, 10)")
+            engine = create_async_engine(url.replace('postgresql://', 'postgresql+asyncpg://'),
+                connect_args={'server_settings': {'search_path': schema}}, pool_size=2, max_overflow=0)
+            maker = async_sessionmaker(engine, expire_on_commit=False)
+            @contextlib.asynccontextmanager
+            async def factory():
+                async with maker() as session:
+                    yield session
+            refresher = LiveBlendRefresher('kalshi', session_factory=factory)
+            monkeypatch.setattr(refresher, '_client', lambda: rig.client)
+            monkeypatch.setattr(blend_preview, 'registry', lambda: rig.k)
+            for eid in range(1, 513):
+                await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid), rig.call, rig.stats)
+            writer = await asyncpg.connect(pg_url)
+            tx = writer.transaction()
+            await tx.start()
+            await writer.execute(f"UPDATE {schema}.events SET status='final', win_probability_sources_rev=11 WHERE id=1")
+            # While final is UNCOMMITTED, fresh reads see live: no deletion.
+            before = await refresher._preview_admission_read()
+            assert before == 0
+            assert await rig.hget('nevents') == '512'
+            assert await rig.hget('e:1:gen') is not None
+            delayed = await _fresh_ops(rig, rig.p, 'polymarket', event_id=1)
+            await tx.commit()
+            after = await refresher._preview_admission_read()
+            assert after == 1
+            assert await rig.hget('nevents') == '511'
+            assert await rig.hget('e:1:gen') is None
+            assert await control.fetchval(f'SELECT win_probability_sources_rev FROM {schema}.events WHERE id=1') == 12
+            assert await rig.run(rig.p, delayed) == []
+            # A status-only reopening cannot return to the forgotten floor 11.
+            await control.execute(f"UPDATE {schema}.events SET status='live' WHERE id=1")
+            reopened = await control.fetchval(f'SELECT win_probability_sources_rev FROM {schema}.events WHERE id=1')
+            assert reopened == 12
+            assert await control.fetchval(f'SELECT win_probability_sources::text FROM {schema}.events WHERE id=1') == '{}'
+            frames = await rig.p.prepare(await _fresh_ops(rig, rig.p, 'polymarket', event_id=1, rev=reopened), rig.call, rig.stats)
+            assert len(_blends(frames)) == 1
+            # Exercise the ACTUAL post-read retirement caller, then its later
+            # preview/settlement phases, through 600 sequential final events.
+            refresher.preview_events = frozenset(range(1, 603))
+            for eid in range(2, 602):
+                await control.execute(f"INSERT INTO {schema}.events (id, status, completed_at, win_probability_sources_rev) VALUES ($1, 'live', NULL, 10)", eid)
+                if eid > 512:
+                    opened = await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid)
+                    await refresher._publish_previews(opened)
+                    assert await rig.hget(f'e:{eid}:gen') is not None
+                await control.execute(f"UPDATE {schema}.events SET status='final', win_probability_sources_rev=11 WHERE id=$1", eid)
+                ticket, _ = await rig.k.read_ticket(rig.call, 'kalshi')
+                row = await control.fetchrow(f'SELECT status, completed_at, win_probability_sources_rev FROM {schema}.events WHERE id=$1', eid)
+                event = SimpleNamespace(status=row['status'], completed_at=row['completed_at'],
+                    preview_rev=row['win_probability_sources_rev'], preview_sources=BASE10,
+                    preview_read_ticket=ticket, espn_win_prob_home=None, opening_home_probability=None)
+                grouped = {eid: (event, [])}
+                await refresher._retire_terminal_preview_read(grouped, ticket)
+                assert await rig.hget(f'e:{eid}:gen') is None
+                # The cached final graph now passes through the ordinary
+                # later phases. Neither may recreate the retired tombstone.
+                plans = {eid: (None, {}, SimpleNamespace(eligibility=None), .6, [])}
+                await refresher._preview_before_stamp(grouped, plans, {})
+                refresher._dispositions[eid] = ('no_reading', None)
+                settled = refresher._preview_settlement([eid], grouped, {}, set(), {})
+                await refresher._publish_previews(settled)
+                assert await rig.hget(f'e:{eid}:gen') is None
+                assert await control.fetchval(f'SELECT win_probability_sources_rev FROM {schema}.events WHERE id=$1', eid) == 12
+            assert await rig.hget('nevents') == '1'  # the still-live reopened event 1 only
+            assert await rig.client.hlen(blend_preview.LEDGER_KEY) <= 15
+        finally:
+            if writer is not None:
+                await writer.close()
+            if engine is not None:
+                await engine.dispose()
+            await control.execute(f'DROP SCHEMA {schema} CASCADE')
+            await control.close()
+
+    async def test_failed_durable_commit_keeps_terminal_guard(self, rig, monkeypatch):
+        import contextlib
+        from app.tasks.live_blend_refresh import LiveBlendRefresher
+        await rig.run(rig.k, await _fresh_ops(rig, rig.k, 'kalshi'))
+        ticket, _ = await rig.k.read_ticket(rig.call, 'kalshi')
+        class Session:
+            async def execute(self, stmt):
+                return SimpleNamespace(scalar_one_or_none=lambda: 12)
+            async def commit(self):
+                raise RuntimeError('injected commit refusal')
+        @contextlib.asynccontextmanager
+        async def factory():
+            yield Session()
+        refresher = LiveBlendRefresher('kalshi', session_factory=factory)
+        monkeypatch.setattr(refresher, '_client', lambda: rig.client)
+        monkeypatch.setattr(blend_preview, 'registry', lambda: rig.k)
+        await refresher._retire_preview_event(EV, 11, ticket)
+        assert await rig.hget(f'e:{EV}:term') == '11'
+        assert await rig.hget(f'e:{EV}:gen') is not None
+        assert await rig.hget('nevents') == '1'
+        assert await rig.hget('retired') == '0'
+        assert refresher.preview_stats['publish_errors'] == 1
