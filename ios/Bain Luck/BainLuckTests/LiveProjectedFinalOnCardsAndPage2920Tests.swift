@@ -319,7 +319,7 @@ final class LiveProjectedFinalOnCardsAndPage2920Tests: XCTestCase {
         for (name, code) in [("EventCardView", sports), ("DiscoverEventCard", discover)] {
             XCTAssertEqual(occurrences("LiveProjectedFinalLine2920(", in: code), 1, name)
             // W3 — which team each number sits beside, pinned on the call itself.
-            XCTAssertEqual(occurrences("LiveProjectedFinalLine2920(printed:liveProjection,awayName:event.awayTeam,homeName:event.homeTeam)", in: code), 1, name)
+            XCTAssertEqual(occurrences("LiveProjectedFinalLine2920(printed:liveProjection,awayName:event.awayTeam,homeName:event.homeTeam,sportKey:event.sport)", in: code), 1, name)
             XCTAssertEqual(occurrences("ifletliveProjection=liveProjectedFinal2920{", in: code), 1, name)
             XCTAssertTrue(code.contains("guardisLive,!isSuspendedelse{returnnil}returnLiveProjectedFinal2920.card(event)"), name)
             XCTAssertFalse(code.contains("liveProjection?."), "\(name): the card never reads the object's fields itself")
@@ -330,7 +330,10 @@ final class LiveProjectedFinalOnCardsAndPage2920Tests: XCTestCase {
     func testTheLiveLinePrintsEachNameBesideItsOwnNumber() throws {
         let line = try source("Utilities/LiveProjectedFinal2920.swift")
         XCTAssertTrue(line.contains("structLiveProjectedFinalLine2920:View{"), "anti-vacuity")
-        XCTAssertEqual(occurrences("LiveProjectedFinal2920.pairText(printed,awayName:awayName,homeName:homeName)", in: line), 1)
+        // #11422 — the visible pair is the short-name pair, each short name from its own side.
+        XCTAssertEqual(occurrences("TeamShortName.shortPair(away:awayName,home:homeName,sportKey:sportKey)", in: line), 1)
+        XCTAssertEqual(occurrences("LiveProjectedFinal2920.pairText(printed,awayName:short.away,homeName:short.home)", in: line), 1)
+        XCTAssertEqual(occurrences("Self.visiblePair(printed,awayName:awayName,homeName:homeName,sportKey:sportKey)", in: line), 1)
         XCTAssertEqual(occurrences("LiveProjectedFinal2920.spokenText(printed,awayName:awayName,homeName:homeName)", in: line), 1)
         XCTAssertEqual(occurrences("awayName:homeName", in: line), 0, "no name handed to the other side")
         XCTAssertEqual(occurrences("homeName:awayName", in: line), 0, "no name handed to the other side")
