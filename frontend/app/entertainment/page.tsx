@@ -224,17 +224,22 @@ function ProbPct({
   value,
   size = 14,
   rendered,
+  sizeVar,
 }: {
   value: number;
   size?: number;
   /** A pair's jointly-rounded integer (#2831), so two halves of one question print 100, not 101. */
   rendered?: number | null;
+  /** #7382: a CSS custom property that overrides `size` where it is set, so a
+      stylesheet can scale the number per breakpoint. `size` is the fallback. */
+  sizeVar?: string;
 }) {
   const { marker, digits } = probabilityParts(value / 100, { rendered });
+  const fontSize = sizeVar ? `var(${sizeVar}, ${size}px)` : size;
   return (
     <span
       className={s.probNum}
-      style={{ fontSize: size, letterSpacing: size > 24 ? "-0.02em" : "-0.01em" }}
+      style={{ fontSize, letterSpacing: size > 24 ? "-0.02em" : "-0.01em" }}
     >
       {digits === NO_READING ? (
         NO_READING
@@ -242,7 +247,14 @@ function ProbPct({
         <>
           {marker}
           {digits}
-          <span style={{ fontSize: size * 0.65, opacity: 0.7 }}>%</span>
+          <span
+            style={{
+              fontSize: sizeVar ? `calc(var(${sizeVar}, ${size}px) * 0.65)` : size * 0.65,
+              opacity: 0.7,
+            }}
+          >
+            %
+          </span>
         </>
       )}
     </span>
@@ -304,7 +316,8 @@ function EntProbBar({
   color = "#10B981",
 }: {
   value: number;
-  height?: number;
+  /** A length; a string takes a CSS expression such as `var(--x, 4px)` (#7382). */
+  height?: number | string;
   color?: string;
 }) {
   return (
@@ -520,6 +533,41 @@ function HeroCardContent({
   return inner;
 }
 
+/* #7382 — THE DESKTOP LEAD SHOWS MORE OF ITS OWN FIELD.
+   Above 900px the lead spans both hero rows, so its height is the two side
+   cards stacked beside it (421px at 1280), not its content. With three rungs it
+   printed a 196px blank band between the title and the list (production
+   2026-10-22 03:52Z, "Oscar Winner: Best Picture", 41 outcomes). The trending
+   rows now carry up to six priced rungs, and the lead prints them at lead scale.
+   Six is a ceiling: a field with fewer priced rungs prints what it has and the
+   card keeps its band — no filler, no invented rung, no smaller type.
+
+   NARROW WIDTHS ARE UNCHANGED. At <=900px the lead sizes to its content, so
+   every extra rung would only make the card taller; `.leadRowExtra` hides rungs
+   4–6 there and the custom properties fall back to the side cards' 12px number,
+   4px bar and 6px gap — the exact phone card this replaced. Hiding rather than
+   slicing keeps one server render for every width. */
+const LEAD_ROWS_7382 = 6;
+const NARROW_ROWS_7382 = 3;
+
+function LeadOutcomeRows({ outcomes }: { outcomes: EntMarketRow["top_outcomes"] }) {
+  return (
+    <div className={s.leadRows} data-testid="ent-lead-rows">
+      {outcomes.slice(0, LEAD_ROWS_7382).map((o, i) => (
+        <div
+          key={i}
+          className={i < NARROW_ROWS_7382 ? s.leadRow : `${s.leadRow} ${s.leadRowExtra}`}
+          data-testid="ent-lead-row"
+        >
+          <span className={s.leadRowName}>{o.name}</span>
+          <EntProbBar value={o.prob} height="var(--ent-lead-bar, 4px)" />
+          <ProbPct value={o.prob} size={12} sizeVar="--ent-lead-pct" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function CardBodyByKind({
   market,
   isLead = false,
@@ -636,9 +684,10 @@ function CardBodyByKind({
       named !== null) &&
     outcomes.length >= 2
   ) {
+    if (isLead) return <LeadOutcomeRows outcomes={outcomes} />;
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {outcomes.slice(0, isLead ? 4 : 3).map((o, i) => (
+        {outcomes.slice(0, 3).map((o, i) => (
           <div
             key={i}
             style={{

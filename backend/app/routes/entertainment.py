@@ -1049,9 +1049,18 @@ async def get_entertainment(db: AsyncSession):
         )
 
     # Build all enriched rows for trending scoring
+    #
+    # #7382 — SIX RUNGS, BECAUSE THE LEAD CARD HAS ROOM FOR THEM. At 1280px the
+    # lead hero spans both grid rows (421px) and printed this list's default
+    # three rungs under a 196px blank band; the page already asked for a fourth
+    # and the payload never carried one. The slice only ever drops rungs from
+    # `top_outcomes` — the priced/withheld filter above it, `outcome_count`,
+    # `prob`, the headline and every field `_score_for_trending` reads are the
+    # same at any `max_outcomes`, so which markets trend is unchanged. Side
+    # cards and narrow widths still render three (the page decides that).
     all_rows = []
     for m in featured_eligible:
-        row = _market_row(m, withheld_ids=withheld_ids)
+        row = _market_row(m, max_outcomes=6, withheld_ids=withheld_ids)
         if row and _is_interesting(row):
             all_rows.append(row)
 

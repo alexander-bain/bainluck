@@ -290,6 +290,31 @@
   padding: 18px;
 }
 
+/* #7382 — the desktop lead's rungs (`LeadOutcomeRows` in page.tsx). Above
+   900px the card's height is the grid's, so up to six rungs print at lead scale
+   in space that was a blank band. The narrow values live in the <=900px block
+   below and restore the side cards' scale and three rungs exactly. */
+.leadRows {
+  --ent-lead-pct: 14px;
+  --ent-lead-bar: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.leadRow {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.leadRowName {
+  font-size: 14px;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
 /* ── Cover tile ── */
 .cover {
   border-radius: 6px;
@@ -692,6 +717,22 @@
   .heroLead {
     grid-row: auto;
     grid-column: span 2;
+  }
+
+  /* #7382 — the lead sizes to its content here, so it keeps three rungs at the
+     side cards' scale (12px, 4px bar, 6px gap): the card this width had before. */
+  .leadRows {
+    --ent-lead-pct: 12px;
+    --ent-lead-bar: 4px;
+    gap: 6px;
+  }
+
+  .leadRowName {
+    font-size: 12px;
+  }
+
+  .leadRowExtra {
+    display: none;
   }
 
   .grid3 {
