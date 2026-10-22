@@ -213,8 +213,8 @@ final class FoldedBlendPreview10090Tests: XCTestCase {
 
     private func v2Wire(_ sequence: Int = 1, session: String = "s1", kind: String = "blend",
                         authority: [String: Any]? = nil, ttl: Int = 1_000,
-                        base: [String: Int] = ["4242": 10, "4243": 20]) -> [String: Any] {
-        ["event_id": id, "p": kind == "blend" ? 0.65 : NSNull(), "p_away": 0.2,
+                        base: [String: Int] = ["4242": 10, "4243": 20], p: Double = 0.65) -> [String: Any] {
+        ["event_id": id, "p": kind == "blend" ? (p as Any) : (NSNull() as Any), "p_away": 0.2,
          "sport": "soccer_epl", "status": "live", "display_observed_at": observed,
          "preview": ["kind": kind, "folded_version": 2, "fold_session": session, "fold_seq": sequence,
                      "ttl_ms": kind == "blend" ? ttl : 0,
@@ -1083,6 +1083,97 @@ final class FoldedBlendPreview10090Tests: XCTestCase {
         XCTAssertEqual(BlendPreview.readerAfter(saturated, singletonFrame(0.7, epoch: 1, seq: 1), eventId: id, now: 100.4), saturated)
         XCTAssertNil(BlendPreview.displayed(saturated.held, held: try detail(revision: ["4242": 10, "4253": 5]), now: 100.4),
                      "the page shows committed truth")
+    }
+
+    /// Root's correction-delta review of d1bdda77 (P1): the bridge re-ran on
+    /// every v2 frame while the v1 order stayed in the reader. After the first
+    /// accepted v2 frame the display is a v2 composite with no legacy origin,
+    /// so the next frame's bridge read "no held v1 value" as the tuple having
+    /// retired, made that sticky, and refused the still-pending origin — and
+    /// the sibling's legitimate update with it. The first accepted v2 frame
+    /// now consumes the order: the fence is the record from then on, for every
+    /// later frame, reset, reconnect and membership boundary. Before a frame is
+    /// accepted the order stays and every attempt reads the current display.
+    func testASuccessfulV2MigrationConsumesTheLegacyOrderAndKeepsTheOriginPending() throws {
+        let base: [String: Int] = ["4242": 10, "4243": 20]
+        let fold = BlendPreview.readerAfter(BlendPreview.readerAfterMembership(.empty, members: ["4242", "4243"]),
+                                            try foldedFrame(origin: 4243, epoch: 900, seq: 2, baseRev: 20, base: base), eventId: id, now: 100)
+        let back = BlendPreview.readerAfterMembership(
+            BlendPreview.readerAfterMembership(fold, members: ["4242", "4244"]), members: ["4242", "4243"])
+        let newerV1 = BlendPreview.readerAfter(back, try foldedFrame(origin: 4243, epoch: 900, seq: 3, baseRev: 20, base: base), eventId: id, now: 100.3)
+        XCTAssertEqual(newerV1.held?.expiresAt, 101.3)
+
+        // Migration: the first accepted v2 frame merges and consumes the order.
+        let session = try opened(newerV1, session: "s2")
+        let migrated = try applyV2(session, v2Wire(session: "s2", authority: ["4243": origin(900, 3), "4242": origin(12, 2)], base: base), now: 100.4)
+        XCTAssertEqual(migrated.foldSeq, 1)
+        XCTAssertEqual(migrated.held?.p, 0.65)
+        XCTAssertEqual(migrated.held?.expiresAt, 101.3, "the bridged origin keeps the v1 order's first-seen deadline")
+        XCTAssertEqual(migrated.originFences["4243"], BlendPreviewReader.OriginFence(epoch: 900, seq: 3, retired: false, deadline: 101.3))
+        XCTAssertEqual(migrated.originFences["4242"], BlendPreviewReader.OriginFence(epoch: 12, seq: 2, retired: false, deadline: 101.4))
+        XCTAssertNil(migrated.foldedSequence, "the order is consumed")
+
+        // A sibling-only update while the bridged origin stays pending: admitted,
+        // the fold sequence advances, 4243's pending state and deadline are kept.
+        let siblingUpdate = v2Wire(2, session: "s2", authority: ["4243": origin(900, 3), "4242": origin(12, 3)], base: base, p: 0.66)
+        let updated = try applyV2(migrated, siblingUpdate, now: 100.5)
+        XCTAssertEqual(updated.foldSeq, 2)
+        XCTAssertEqual(updated.held?.p, 0.66)
+        XCTAssertEqual(updated.held?.expiresAt, 101.3)
+        XCTAssertEqual(updated.originFences["4243"], migrated.originFences["4243"], "still pending, same deadline")
+        XCTAssertEqual(updated.originFences["4242"], BlendPreviewReader.OriginFence(epoch: 12, seq: 3, retired: false, deadline: 101.5))
+        XCTAssertEqual(BlendPreview.displayed(updated.held, held: try detail(), now: 100.5), 0.66)
+
+        // The same tuple stays limited to its original deadline; a newer tuple resumes.
+        let sameAgain = v2Wire(3, session: "s2", authority: ["4243": origin(900, 3), "4242": origin(12, 3)], base: base)
+        XCTAssertEqual(try applyV2(updated, sameAgain, now: 101.35), updated, "(900,3) expired at 101.3")
+        XCTAssertEqual(try applyV2(updated, v2Wire(3, session: "s2", authority: ["4243": origin(900, 4), "4242": origin(12, 3)], base: base), now: 101.35)
+                           .held?.expiresAt, 101.5, "a newer 4243 tuple resumes; 4242 keeps its own deadline")
+
+        // An actual v2 revoke, then the same tuple pending again: refused — in
+        // the session and after a reconnect; a newer tuple is admitted.
+        let revoked = try applyV2(updated, v2Wire(3, session: "s2", kind: "revoke", authority: [
+            "4243": origin(900, 3, state: "revoked"), "4242": origin(12, 3, state: "revoked")], base: base), now: 100.6)
+        XCTAssertNil(revoked.held)
+        XCTAssertEqual(revoked.originFences["4243"], BlendPreviewReader.OriginFence(epoch: 900, seq: 3, retired: true, deadline: 101.3))
+        XCTAssertEqual(try applyV2(revoked, v2Wire(4, session: "s2", authority: ["4243": origin(900, 3), "4242": origin(12, 4)], base: base), now: 100.7),
+                       revoked, "the revoked tuple cannot become pending")
+        let afterRevoke = try opened(BlendPreview.readerReset(revoked), session: "s3")
+        XCTAssertEqual(try applyV2(afterRevoke, v2Wire(session: "s3", authority: ["4243": origin(900, 3), "4242": origin(12, 4)], base: base), now: 100.7),
+                       afterRevoke, "nor after a reconnect")
+        XCTAssertEqual(try applyV2(afterRevoke, v2Wire(session: "s3", authority: ["4243": origin(900, 4), "4242": origin(12, 4)], base: base), now: 100.7)
+                           .held?.expiresAt, 101.7)
+
+        // A reconnect after migration keeps the per-origin fences as they are:
+        // the same tuples are admitted up to their first-seen deadlines, older ones refused.
+        let reconnected = try opened(BlendPreview.readerReset(updated), session: "s3")
+        XCTAssertEqual(reconnected.originFences, updated.originFences)
+        XCTAssertNil(reconnected.foldedSequence)
+        let sameTuples = v2Wire(session: "s3", authority: ["4243": origin(900, 3), "4242": origin(12, 3)], base: base)
+        XCTAssertEqual(try applyV2(reconnected, sameTuples, now: 100.6).held?.expiresAt, 101.3)
+        XCTAssertEqual(try applyV2(reconnected, v2Wire(session: "s3", authority: ["4243": origin(900, 2), "4242": origin(12, 3)], base: base), now: 100.6),
+                       reconnected, "an older 4243 tuple is refused")
+        XCTAssertEqual(try applyV2(reconnected, v2Wire(session: "s3", authority: ["4243": origin(900, 3), "4242": origin(12, 2)], base: base), now: 100.6),
+                       reconnected, "an older 4242 tuple is refused")
+        XCTAssertEqual(try applyV2(reconnected, sameTuples, now: 101.35), reconnected, "and the expired tuple stays expired")
+
+        // Membership recovery after migration carries the fence as it is: pending, with its deadline.
+        let away = BlendPreview.readerAfterMembership(updated, members: ["4242", "4244"])
+        XCTAssertEqual(away.retiredMembers, [BlendPreviewReader.RetiredMember(row: "4243", fence: updated.originFences["4243"], floor: nil)])
+        let returned = try opened(BlendPreview.readerAfterMembership(away, members: ["4242", "4243"]), session: "s4")
+        XCTAssertEqual(returned.originFences["4243"], updated.originFences["4243"])
+        let onReturn = v2Wire(session: "s4", authority: ["4243": origin(900, 3), "4242": origin(12, 3)], base: base)
+        XCTAssertEqual(try applyV2(returned, onReturn, now: 100.9).held?.expiresAt, 101.3)
+        XCTAssertEqual(try applyV2(returned, onReturn, now: 101.35), returned)
+
+        // Before any frame is accepted the order stays, and every attempt reads
+        // the current display: a reset before migration still retires the tuple.
+        let resetFirst = try opened(BlendPreview.readerReset(newerV1), session: "s5")
+        XCTAssertEqual(resetFirst.foldedSequence, BlendPreviewReader.FoldedSequence(epoch: 900, seq: 3, originEventId: 4243))
+        XCTAssertEqual(try applyV2(resetFirst, v2Wire(session: "s5", authority: ["4243": origin(900, 3), "4242": origin(12, 2)], base: base), now: 100.4),
+                       resetFirst, "a tuple on display before the reset is not replayed into v2")
+        XCTAssertEqual(try applyV2(resetFirst, v2Wire(session: "s5", authority: ["4243": origin(900, 4), "4242": origin(12, 2)], base: base), now: 100.4)
+                           .held?.expiresAt, 101.4)
     }
 
 }

@@ -35,6 +35,7 @@ do {
     try tests.testAnElectionChangeInsideAnUnchangedMembershipResumesOnTheFreshStream()
     try tests.testNewerV1AuthorityMergesIntoARestoredFenceBeforeV2Validation()
     try tests.testRowsThatLeaveTogetherAreAllRetainedAndCanExceedCapacityPlusOne()
+    try tests.testASuccessfulV2MigrationConsumesTheLegacyOrderAndKeepsTheOriginPending()
 } catch {
     ReaderChecks.failures += 1
     print("Unexpected error: \(error)")

@@ -274,6 +274,8 @@ nonisolated struct BlendPreviewReader: Sendable, Equatable {
     var epoch: Int
     var floors: FoldRevision? = nil
     /// Retained across expiry, revoke and reconnect; a replay cannot renew TTL.
+    /// Consumed by the first ACCEPTED v2 frame (`readerAfterV2`), which merges
+    /// it into its origin's fence: after migration the fence is the record.
     var foldedSequence: FoldedSequence? = nil
     var enteredV2 = false
     var foldSession: String? = nil
@@ -519,7 +521,12 @@ nonisolated enum BlendPreview {
         // had already moved past. `ownFence` keeps the merge monotonic:
         // identity only moves forward, a same tuple keeps its first-seen
         // deadline and stays retired once retired, and a newer fence is never
-        // overwritten by older evidence.
+        // overwritten by older evidence. The merge is the migration: the first
+        // ACCEPTED v2 frame consumes the order (below), so it is read exactly
+        // once, against the display as it stood before v2 — never again
+        // against a v2 composite or a reset, which would be mistaken for the
+        // legacy tuple having retired. Until a frame is accepted the order
+        // stays, and every attempt reads the current display.
         if let prior = reader.foldedSequence {
             let origin = String(prior.originEventId)
             let held = reader.held.flatMap { value -> BlendPreviewState? in
@@ -556,6 +563,12 @@ nonisolated enum BlendPreview {
         next.foldSeq = sequence
         next.sessionOrigins.formUnion(authority.keys)
         next.originFences = fences
+        // The legacy order is consumed by the migration (an accepted frame —
+        // a refused blend below still returns `reader`, order intact): its
+        // identity, deadline and retirement now live in its origin's fence,
+        // which every later frame, reset, reconnect and membership boundary
+        // reads instead.
+        next.foldedSequence = nil
         if frame.kind == .revoke { next.held = nil; return next }
         guard let p = frame.p, let rev = base.rows[String(eventId)], deadline > now else { return reader }
         next.held = BlendPreviewState(eventId: eventId, epoch: 0, seq: sequence, baseRev: rev,

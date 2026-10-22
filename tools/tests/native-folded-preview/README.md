@@ -44,8 +44,13 @@ its origin — a returning origin's restored fence can be older than the order
 accepted since, or than its revocation — so an older v2 tuple is refused, a
 same tuple keeps its first-seen deadline, retirement stays sticky and a newer
 fence is never lowered
-(`testNewerV1AuthorityMergesIntoARestoredFenceBeforeV2Validation`). A fold-down
-to the page row alone resumes
+(`testNewerV1AuthorityMergesIntoARestoredFenceBeforeV2Validation`); the first
+ACCEPTED v2 frame consumes the order, so it is read once, against the display
+as it stood before v2 — a later v2 composite or reset is never mistaken for the
+legacy tuple having retired, and a sibling-only update, a reconnect and a
+membership flap after migration all read the fence instead
+(`testASuccessfulV2MigrationConsumesTheLegacyOrderAndKeepsTheOriginPending`).
+A fold-down to the page row alone resumes
 that row's singleton frames under its own recorded fence (older/equal identity
 refused, same tuple capped at its first-seen deadline, retired stays retired,
 a commit floor still withdraws), while any other legacy frame after v2 stays a
