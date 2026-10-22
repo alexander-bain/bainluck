@@ -190,3 +190,20 @@ test("the delivery row names each unchanged state in reader words", () => {
     expect(html).not.toMatch(/DNPL|Committed delivery/);
   }
 });
+
+// Reader words only: the count is the hook's unchanged visit count (first
+// displayed reading plus strictly newer clocks), not the plotted history, so
+// the label says "this visit". The data attribute and its value are unchanged.
+test("the counter row says its count covers this visit, beside the unchanged count", () => {
+  const counterRow = (html: string) => html.match(/Readings shown this visit<\/dt><dd>(.*?)<\/dd>/)?.[1];
+  const committed = draw();
+  blendPreview = preview(null, .7);
+  const unknownClock = draw();
+  expect(committed).toContain('data-observation-count="1"');
+  expect(counterRow(committed)).toBe("1 · first reading plus newer updates");
+  expect(unknownClock).toContain('data-observation-count="0"');
+  expect(counterRow(unknownClock)).toBe("0 · first reading plus newer updates");
+  for (const html of [committed, unknownClock]) {
+    expect(html).not.toMatch(/Observations shown|first \+ newer times/);
+  }
+});

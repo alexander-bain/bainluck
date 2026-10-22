@@ -173,8 +173,8 @@ export default function LiveConnectionStatus({
           {observation ? (
             <>
               <div>
-                <dt className="font-medium text-text-primary">Observations shown</dt>
-                <dd>{observation.count} · first + newer times</dd>
+                <dt className="font-medium text-text-primary">Readings shown this visit</dt>
+                <dd>{observation.count} · first reading plus newer updates</dd>
               </div>
               <div>
                 <dt className="font-medium text-text-primary">Current probability delivery</dt>
