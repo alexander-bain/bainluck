@@ -17,7 +17,7 @@ import useSWR from "swr";
 import { fetchFuturesHistory } from "@/lib/api";
 import { historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
 import type { FuturesOutcomeHistory } from "@/lib/types";
-import { isSettlementPoint } from "@/lib/chartSettlementPoints";
+import { isSettlementPoint, splitSettlementPoints } from "@/lib/chartSettlementPoints";
 import { FuturesChart } from "@/components/FuturesChart";
 import ChartRangeChips from "@/components/event/ChartRangeChips";
 import {
@@ -95,20 +95,38 @@ export default function SettledPathChart({
   // pick the visible set = champion + the next strongest lines. FuturesChart
   // filters by the selected ids preserving `plotted` order, so the winner leads
   // the legend and can never be pushed out by an arbitrary top-5 slice. When the
-  // winner can't be named/matched, plotted === windowed and the default applies.
+  // winner can't be named/matched and no served grade names one, plotted ===
+  // windowed and the default applies.
   const { plotted, selected } = useMemo(() => {
     const target = championName?.trim().toLowerCase();
     const champ = target
       ? windowed.find((o) => (o.name ?? "").trim().toLowerCase() === target)
       : undefined;
-    if (!champ) return { plotted: windowed, selected: undefined as Set<number> | undefined };
+    if (!champ) {
+      // #10955 (350): no name matched, but the served grade can still name the
+      // winner. The server appends the graded winner AFTER its top 8, so the
+      // default first-5 could leave it off. Evidenced winners lead, then the
+      // strongest real readings. The grade comes from the served legs (a range
+      // choice never changes who won). No evidenced win: the default applies.
+      const { results } = splitSettlementPoints(outcomes);
+      const won = (o: FuturesOutcomeHistory) => results.get(o.outcome_id) === "won";
+      const winners = windowed.filter(won);
+      if (winners.length === 0) {
+        return { plotted: windowed, selected: undefined as Set<number> | undefined };
+      }
+      const rest = windowed
+        .filter((o) => !won(o))
+        .sort((a, b) => lastProbOf(b) - lastProbOf(a));
+      const plotted = [...winners, ...rest];
+      return { plotted, selected: new Set(plotted.slice(0, 6).map((o) => o.outcome_id)) };
+    }
     const rest = windowed
       .filter((o) => o.outcome_id !== champ.outcome_id)
       .sort((a, b) => lastProbOf(b) - lastProbOf(a));
     const plotted = [champ, ...rest];
     const selected = new Set(plotted.slice(0, 6).map((o) => o.outcome_id));
     return { plotted, selected };
-  }, [windowed, championName]);
+  }, [outcomes, windowed, championName]);
 
   // #683: a full read that left older prices out still owes the reader that
   // sentence when too few remain to draw; the chart's sparse state carries it.
