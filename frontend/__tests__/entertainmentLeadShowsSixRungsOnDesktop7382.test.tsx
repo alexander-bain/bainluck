@@ -2,10 +2,12 @@
  * #7382 — the desktop lead hero prints up to six of its own priced rungs; side
  * cards and narrow widths keep three.
  *
- * At 1280px the lead spans both grid rows, so its height is the two side cards
- * stacked beside it (421px), not its content. With three rungs it carried a
- * 196px blank band (production 2026-10-22 03:52Z, "Oscar Winner: Best Picture",
- * 41 outcomes). The lead row now carries up to six in `lead_outcomes`, a field
+ * At 1280px the lead used to span both grid rows, so its height was the two
+ * side cards stacked beside it (421px), not its content. With three rungs it
+ * carried a 196px blank band (production 2026-10-22 03:52Z, "Oscar Winner: Best
+ * Picture", 41 outcomes). Now (Root 324, wide lead) it spans two columns of one
+ * content-sized row and its rungs flow in two columns, top-to-bottom then
+ * left-to-right. The lead row carries up to six in `lead_outcomes`, a field
  * only this page reads, while `top_outcomes` stays the shared three the app
  * prints (backend `test_entertainment_lead_outcomes_web_only_7382.py`). This
  * file pins the page half:
@@ -18,7 +20,10 @@
  *   ARM 6  a payload without `lead_outcomes` (older server, stale cache), or
  *          with one shorter than `top_outcomes`, prints the shared rungs;
  *   ARM 5  the stylesheet hides `leadRowExtra` at <=900px and restores the side
- *          cards' 12px / 4px / 6px scale there, so the phone card is unchanged.
+ *          cards' single column and 12px / 4px / 6px scale there, so the phone
+ *          card is unchanged; above it the rungs are two column-major columns;
+ *   ARM 7  `--ent-lead-rows` is half the printed count rounded up, so the two
+ *          columns stay balanced and DOM order is rank order.
  *
  * jest applies no media query, so ARM 5 reads the stylesheet text, the way
  * `entertainmentLeadReservesNothingItCannotFill7356.test.ts` does.
@@ -270,6 +275,23 @@ describe("#7382 — the desktop lead shows more of its own field", () => {
   });
 });
 
+describe("#7382 ARM 7 — the two desktop columns stay balanced", () => {
+  const rowsVar = (lead: EntMarketRow) => {
+    const cell = renderHero(lead).children[0];
+    const list = walk(cell).find((n) => /data-testid="ent-lead-rows"/.test(n.attrs)) as Node;
+    expect(list).toBeTruthy();
+    return styleOf(list)["--ent-lead-rows"];
+  };
+
+  it("sets half the printed rungs, rounded up", () => {
+    expect(rowsVar(market())).toBe("3"); // eight served, six printed
+    expect(rowsVar(market({ outcome_count: 5, lead_outcomes: OSCAR.slice(0, 5) }))).toBe("3");
+    expect(rowsVar(market({ outcome_count: 4, lead_outcomes: OSCAR.slice(0, 4) }))).toBe("2");
+    expect(rowsVar(market({ outcome_count: 3, lead_outcomes: OSCAR.slice(0, 3) }))).toBe("2");
+    expect(rowsVar(market({ lead_outcomes: undefined }))).toBe("2"); // shared three
+  });
+});
+
 describe("#7382 ARM 5 — narrow widths keep the card they had", () => {
   const CSS = fs
     .readFileSync(path.join(__dirname, "..", "app", "entertainment", "entertainment.module.css"), "utf8")
@@ -310,10 +332,26 @@ describe("#7382 ARM 5 — narrow widths keep the card they had", () => {
     expect(decl(body(".leadRowName", narrowBlock()), "font-size")).toBe("12px");
   });
 
-  it("the desktop rule is the lead scale, and is not itself inside a media block", () => {
-    const desk = body(".leadRows", CSS.slice(0, CSS.indexOf("@media")));
+  it("restores the single-column list and the side cards' row there", () => {
+    const rows = body(".leadRows", narrowBlock());
+    expect(decl(rows, "display")).toBe("flex");
+    expect(decl(rows, "flex-direction")).toBe("column");
+    expect(decl(body(".leadRow", narrowBlock()), "grid-template-columns")).toBe("auto 1fr auto");
+  });
+
+  it("the desktop rule is the lead scale in two column-major columns, outside any media block", () => {
+    const top = CSS.slice(0, CSS.indexOf("@media"));
+    const desk = body(".leadRows", top);
     expect(decl(desk, "--ent-lead-pct")).toBe("14px");
     expect(decl(desk, "--ent-lead-bar")).toBe("6px");
-    expect(decl(desk, "gap")).toBe("10px");
+    expect(decl(desk, "display")).toBe("grid");
+    expect(decl(desk, "grid-template-columns")).toBe("repeat(2, minmax(0, 1fr))");
+    expect(decl(desk, "grid-template-rows")).toBe("repeat(var(--ent-lead-rows, 3), auto)");
+    expect(decl(desk, "grid-auto-flow")).toBe("column");
+    expect(decl(desk, "row-gap")).toBe("10px");
+    // A long name may wrap, but never squeezes its bar below 56px.
+    expect(decl(body(".leadRow", top), "grid-template-columns")).toBe(
+      "minmax(0, max-content) minmax(56px, 1fr) auto",
+    );
   });
 });

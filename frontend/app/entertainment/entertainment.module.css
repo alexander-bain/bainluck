@@ -239,16 +239,25 @@
 }
 
 /* ── Hero grid ── */
+/* #7382 — THE DESKTOP LEAD IS WIDE, NOT TALL. Above 900px the lead used to span
+   both rows of a `min-height: 420px` grid, so its height was the two side cards
+   stacked beside it (433px) and whatever its own content did not fill printed
+   as one blank band between title and rungs: 98px for a six-rung field, 160px
+   for four, 191px for three and 232px for a one-leg contract (local rig,
+   retained payloads). Now the grid has three equal columns and rows that are as
+   tall as their content: the lead takes two columns of the first row beside one
+   side card, and the other three side cards make the second row. No row height
+   is reserved anywhere, so there is no band left for the content to fail to fill.
+   This retires #7356's desktop control (the floor it pinned is gone on purpose);
+   the <=900px block below is unchanged. */
 .heroGrid {
   display: grid;
-  grid-template-columns: 1.4fr 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  min-height: 420px;
 }
 
 .heroLead {
-  grid-row: 1 / -1;
+  grid-column: span 2;
 }
 
 .heroCard {
@@ -291,20 +300,30 @@
 }
 
 /* #7382 — the desktop lead's rungs (`LeadOutcomeRows` in page.tsx). Above
-   900px the card's height is the grid's, so up to six rungs print at lead scale
-   in space that was a blank band. The narrow values live in the <=900px block
-   below and restore the side cards' scale and three rungs exactly. */
+   900px the lead is two columns wide, so up to six rungs print at lead scale in
+   two columns, filled top-to-bottom then left-to-right: rank order reads down
+   the first column and on into the second, which is also the DOM order a screen
+   reader and the Tab key follow. `--ent-lead-rows` (set on the element) is half
+   the rung count rounded up, so four rungs are two-by-two rather than three and
+   one. Each rung is the side cards' own name / bar / number row, except that the
+   bar keeps at least 56px: a long name takes the width it needs and wraps only
+   past that, rather than squeezing its bar to nothing. The narrow values
+   live in the <=900px block below and restore the side cards' single column,
+   scale and three rungs exactly. */
 .leadRows {
   --ent-lead-pct: 14px;
   --ent-lead-bar: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(var(--ent-lead-rows, 3), auto);
+  grid-auto-flow: column;
+  column-gap: 24px;
+  row-gap: 10px;
 }
 
 .leadRow {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: minmax(0, max-content) minmax(56px, 1fr) auto;
   gap: 8px;
   align-items: center;
 }
@@ -719,12 +738,19 @@
     grid-column: span 2;
   }
 
-  /* #7382 — the lead sizes to its content here, so it keeps three rungs at the
-     side cards' scale (12px, 4px bar, 6px gap): the card this width had before. */
+  /* #7382 — the lead is one column here, so it keeps three rungs in a single
+     list at the side cards' scale (12px, 4px bar, 6px gap): the card this width
+     had before. */
   .leadRows {
     --ent-lead-pct: 12px;
     --ent-lead-bar: 4px;
+    display: flex;
+    flex-direction: column;
     gap: 6px;
+  }
+
+  .leadRow {
+    grid-template-columns: auto 1fr auto;
   }
 
   .leadRowName {

@@ -50,6 +50,19 @@
 // content and quietly retires #5953's spacer. Nothing else in the repo would
 // notice. So the floor is pinned here beside the removal it paid for.
 //
+// ── AMENDED BY #7382 (2026-10-22): THE DESKTOP FLOOR IS GONE ON PURPOSE ────────
+//
+// The floor pinned above held the lead open at 1280px, and what the lead could
+// not fill there printed as one blank band: 98px for a six-rung field, 160 for
+// four, 191 for three, 232 for a one-leg contract (local rig, retained
+// payloads). #7382 replaces the topology rather than the floor: above 900px the
+// grid is three equal columns with content-sized rows, and the lead spans two
+// columns of the first row, so its card is as tall as its content (lead band 0px
+// in all four, same rig). The CONTROL below now pins THAT shape: no grid height
+// is reserved, no row is a fraction, the lead spans columns and not rows. The
+// phone half of this file — no reservation on the card or below 900px — is
+// unchanged.
+//
 // Every parser asserts what it FOUND before it asserts anything about it: a
 // source-scanning guard that quietly matches nothing is worse than no guard.
 //
@@ -152,8 +165,10 @@ describe("#7356 — the /entertainment lead card reserves nothing it cannot fill
     expect(CSS).toContain("min-height: 280px");
     expect(BARE).not.toContain("min-height: 280px");
 
-    // And the value reader finds values where they exist.
-    expect(minHeights(ruleBody(".heroGrid"))).toEqual(["420px"]);
+    // And the value reader finds values where they exist — the release block's
+    // grid declares one — and nothing where there is none.
+    expect(minHeights(ruleBody(".heroGrid", releaseBlock()))).toEqual(["auto"]);
+    expect(minHeights("gap: 4px; min-height: 7px")).toEqual(["7px"]);
     expect(minHeights("padding: 4px")).toEqual([]);
   });
 
@@ -186,20 +201,26 @@ describe("#7356 — the /entertainment lead card reserves nothing it cannot fill
     expect(minHeights(ruleBody(".card"))).toEqual([]);
   });
 
-  it("THE CONTROL: the desktop grid still holds the lead card open", () => {
-    // This is what makes the removal free at 1280px (421px, unmoved). Delete any
-    // one of these three and the desktop lead collapses to its content, which is
-    // #5953 all over again with no `min-height` left to mask it.
+  it("THE CONTROL (#7382): the desktop lead is wide and content-sized, not held open", () => {
+    // Above 900px: three equal columns, rows as tall as their content, the lead
+    // across two columns of one row. Re-adding any of the old floor — a grid
+    // min-height, fraction rows, or a lead spanning rows — brings back the band
+    // the lead cannot fill, so each is refused here.
     const grid = ruleBody(".heroGrid");
-    expect(minHeights(grid)).toEqual(["420px"]);
-    expect(grid).toContain("grid-template-rows: 1fr 1fr");
-    expect(ruleBody(".heroLead")).toContain("grid-row: 1 / -1");
+    expect(grid).toContain("display: grid");
+    expect(grid).toContain("grid-template-columns: repeat(3, minmax(0, 1fr))");
+    expect(minHeights(grid)).toEqual([]);
+    expect(grid).not.toMatch(/(?:^|;)\s*grid-template-rows\s*:/);
+    expect(grid).not.toMatch(/(?:^|;)\s*grid-auto-rows\s*:[^;]*fr/);
+    expect(grid).not.toMatch(/(?:^|;)\s*height\s*:/);
 
-    // 420px over two rows leaves each sibling row ~204px, so a lead spanning
-    // both clears the 280px the reservation used to ask for — the arithmetic
-    // that says the removal cannot change the desktop card.
-    const floor = parseInt(minHeights(grid)[0], 10);
-    const gap = parseInt(/(?:^|;)\s*gap\s*:\s*(\d+)/.exec(grid)![1], 10);
-    expect(floor - gap).toBeGreaterThan(280);
+    const lead = ruleBody(".heroLead");
+    expect(lead).toContain("grid-column: span 2");
+    expect(lead).not.toMatch(/grid-row/);
+
+    // The narrow block still owns the phone shape on its own terms.
+    const block = releaseBlock();
+    expect(ruleBody(".heroLead", block)).toContain("grid-column: span 2");
+    expect(ruleBody(".heroLead", block)).toContain("grid-row: auto");
   });
 });

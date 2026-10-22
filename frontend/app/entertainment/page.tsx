@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, type CSSProperties } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import useSWR from "swr";
 import Link from "next/link";
@@ -533,29 +533,38 @@ function HeroCardContent({
   return inner;
 }
 
-/* #7382 — THE DESKTOP LEAD SHOWS MORE OF ITS OWN FIELD.
-   Above 900px the lead spans both hero rows, so its height is the two side
-   cards stacked beside it (421px at 1280), not its content. With three rungs it
-   printed a 196px blank band between the title and the list (production
-   2026-10-22 03:52Z, "Oscar Winner: Best Picture", 41 outcomes). The lead row
-   now carries up to six priced rungs in `lead_outcomes` — a field only this
-   page reads, so the app's lead (which prints `top_outcomes`) is untouched —
-   and the lead prints them at lead scale.
+/* #7382 — THE DESKTOP LEAD SHOWS MORE OF ITS OWN FIELD, AND IS WIDE.
+   Above 900px the lead used to span both hero rows, so its height was the two
+   side cards stacked beside it, not its content; with three rungs it carried a
+   196px blank band between the title and the list (production 2026-10-22
+   03:52Z, "Oscar Winner: Best Picture", 41 outcomes). Now the lead spans two
+   columns of one content-sized row (`.heroGrid` in the stylesheet) and prints up
+   to six priced rungs from `lead_outcomes` — a field only this page reads, so
+   the app's lead (which prints `top_outcomes`) is untouched — in two columns at
+   lead scale.
    Six is a ceiling: a field with fewer priced rungs prints what it has and the
-   card keeps its band — no filler, no invented rung, no smaller type.
+   card is as tall as that — no filler, no invented rung, no smaller type.
+   `--ent-lead-rows` is half the count rounded up, so the two columns stay
+   balanced (four rungs are two-by-two) and the rows fill top-to-bottom in rank
+   order, the same order the markup reads in.
 
-   NARROW WIDTHS ARE UNCHANGED. At <=900px the lead sizes to its content, so
-   every extra rung would only make the card taller; `.leadRowExtra` hides rungs
-   4–6 there and the custom properties fall back to the side cards' 12px number,
+   NARROW WIDTHS ARE UNCHANGED. At <=900px the lead is one column, so every
+   extra rung would only make the card taller; `.leadRowExtra` hides rungs 4–6
+   there and the custom properties fall back to the side cards' 12px number,
    4px bar and 6px gap — the exact phone card this replaced. Hiding rather than
    slicing keeps one server render for every width. */
 const LEAD_ROWS_7382 = 6;
 const NARROW_ROWS_7382 = 3;
 
 function LeadOutcomeRows({ outcomes }: { outcomes: EntMarketRow["top_outcomes"] }) {
+  const shown = outcomes.slice(0, LEAD_ROWS_7382);
   return (
-    <div className={s.leadRows} data-testid="ent-lead-rows">
-      {outcomes.slice(0, LEAD_ROWS_7382).map((o, i) => (
+    <div
+      className={s.leadRows}
+      data-testid="ent-lead-rows"
+      style={{ "--ent-lead-rows": Math.ceil(shown.length / 2) } as CSSProperties}
+    >
+      {shown.map((o, i) => (
         <div
           key={i}
           className={i < NARROW_ROWS_7382 ? s.leadRow : `${s.leadRow} ${s.leadRowExtra}`}
