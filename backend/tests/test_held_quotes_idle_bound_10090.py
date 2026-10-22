@@ -167,6 +167,34 @@ class TestIdleBound:
 
 
 class TestNoDuplicateReads:
+    async def test_continuous_inputs_cannot_extend_one_phase_grace_forever(self):
+        clock = Clock()
+        db = FakeDB(clock)
+        held = _held(clock)
+        await held.sample_database_clock(db)
+        first = None
+        bounds = []
+        try:
+            # Price work has not completed its post-commit sample, while the
+            # independent clock read remains healthy. New inputs cannot renew
+            # that phase's grace forever. No accepted input is re-dated.
+            for n in range(1, 36):
+                await _run_until(clock, n * 0.1)
+                mark = _mark(oid=100 + n)
+                held.note_input(mark)
+                if first is None:
+                    first = mark
+                bounds.append(held.bound_for(mark))
+                await _settle()
+            assert bounds[-1] > bounds[0] + 2.0
+            assert held.bound_for(first) == bounds[0]
+            assert 2 <= held.idle_samples <= 4
+            assert db.max_active == 1
+        finally:
+            task = held.close()
+            if task is not None:
+                await asyncio.gather(task, return_exceptions=True)
+
     async def test_no_idle_read_while_a_phase_read_is_in_flight(self):
         clock = Clock()
         db = FakeDB(clock)
