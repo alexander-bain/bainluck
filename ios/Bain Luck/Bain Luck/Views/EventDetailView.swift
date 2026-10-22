@@ -1023,7 +1023,11 @@ struct EventDetailView: View {
     /// #11285 — `statusInDetails` (the adopted headline's top-row control):
     /// every state, waiting included, is said in the details and the label.
     private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false) -> some View {
-        Button { showProbabilityDetails.toggle() } label: {
+        // #10090 — read on every hero render, popover open or not, so the
+        // count follows the headline rather than the reveal.
+        let observation = vm.displayedObservation(
+            printsPrice: vm.event.map { Self.heroPrintsPrice(vm.headline($0)) } ?? false)
+        return Button { showProbabilityDetails.toggle() } label: {
             CompactEventPriceStatusView(status: vm.liveUpdateStatus,
                 sequence: vm.priceActivity?.sequence ?? 0,
                 receivedAt: vm.priceActivity?.receivedAt,
@@ -1051,6 +1055,7 @@ struct EventDetailView: View {
                 // idealWidth: the popover sizes from the IDEAL size; with only a
                 // max it measured the text unwrapped and came out 144pt tall.
                 .frame(idealWidth: 300, maxWidth: 300)
+                .environment(\.observationReadout10090, observation)
                 #if os(iOS)
                 .presentationCompactAdaptation(.popover)
                 #endif
