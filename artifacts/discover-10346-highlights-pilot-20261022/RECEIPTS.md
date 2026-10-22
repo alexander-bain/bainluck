@@ -1,4 +1,4 @@
-# #10346 pilot — evidence receipts (discover, Wed 10/21 06:59 PM PT / 2026-10-22T01:59:44Z; correction R1–R4 + Design revision Wed 10/21 07:50 PM PT)
+# #10346 pilot — evidence receipts (discover, Wed 10/21 06:59 PM PT / 2026-10-22T01:59:44Z; correction R1–R4 + Design revision Wed 10/21 07:35 PM PT / 2026-10-22T02:35Z)
 
 Event 15319563, Boston Red Sox @ New York Yankees. One completed MLB game, three hand-selected supported takeaways. No ranker, no general lift claim.
 
@@ -32,7 +32,7 @@ Any clock interval on the card ("23 min before first pitch", "39 min after the f
 ## Local preview (not production) — first render; see the correction section below for the current one
 `/events/15319563?highlights=preview` on next dev, production read APIs via curl cache, streams aborted (`shoot.mjs`). `shots/census.json`: phone 390 — 3 cards in a swipe row (scrollWidth 908 / client 366); desktop 1280 — 3 equal columns, same top; tap "See every prop and market" opens the catalogue fold (open false→true) and lands it 80 px from the top at both widths; control without the parameter — 0 highlights, catalogue unchanged. Cookie banner in shots is the fresh-profile consent prompt.
 
-## Correction R1–R4 + Design first-render revision (Wed 10/21 07:50 PM PT)
+## Correction R1–R4 + Design first-render revision (Wed 10/21 07:35 PM PT / 2026-10-22T02:35Z)
 - R1: reader phases "Pregame" / "After Game 1" + recorded time in ballpark time ("Sep 29, 7:52 PM ET"); no intervals anywhere a reader sees.
 - R2: Rice prints the served typed expectation (blend 0.0155 → 2%), observedAt = the admitted pin; the "no one was bidding" caveat is gone; the false "midpoint" comment is fixed (0.02 was Kalshi's stored pregame value; bid/ask stay in this file only).
 - R3: series detail "Yankees led the best-of-three 1–0 after Game 1"; no series result shown.
