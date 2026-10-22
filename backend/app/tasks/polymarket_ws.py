@@ -1957,11 +1957,13 @@ def _pm_lock_isolated_chunks(
     market_by_outcome: dict[int, int],
     complement_of: dict[int, int],
     chunk_rows: int,
+    *, first_events: Iterable[int] = (),
 ) -> list[list[int]]:
     """Isolate selected admitted event cohorts without splitting questions.
 
-    Callers select lock retries or acknowledged optional observation cohorts;
-    selection only schedules the ordinary writer, never bypasses it.
+    Callers select lock retries or acknowledged optional observation cohorts.
+    Changed preview events may go first only when none of their indivisible
+    units shares an outside event. Selection never bypasses the ordinary writer.
 
     The caller passes separately planned headline and prop transactions. Never
     admit another buffered row or change the open cap here. Within the admitted
@@ -1970,7 +1972,8 @@ def _pm_lock_isolated_chunks(
     Unaffected rows retain their original chunks and order, ahead of the
     retried cohorts they share no event with.
     """
-    if not retry_events:
+    first_events = set(first_events).difference(retry_events)
+    if not retry_events and not first_events:
         return chunks
     admitted = [oid for chunk in chunks for oid in chunk]
     parents = {oid: oid for oid in admitted}
@@ -1998,13 +2001,29 @@ def _pm_lock_isolated_chunks(
     units = {}
     for oid in admitted:
         units.setdefault(root(oid), []).append(oid)
+    if first_events:
+        # Only promote complete events whose indivisible units share no outside
+        # event. Propagate exclusion through shared units so no sibling of a
+        # promoted event remains behind the unrelated transaction.
+        unit_events = [
+            {event_by_outcome[oid] for oid in unit if oid in event_by_outcome}
+            for unit in units.values()
+        ]
+        while True:
+            blocked = set().union(*(events for events in unit_events
+                                    if not events.issubset(first_events)))
+            kept = first_events.difference(blocked)
+            if kept == first_events:
+                break
+            first_events = kept
+    selected_events = set(retry_events) | first_events
     groups = {}
     group_by_outcome = {}
     for unit in units.values():
         events = frozenset(
             event_by_outcome[oid] for oid in unit if oid in event_by_outcome
         )
-        if events.isdisjoint(retry_events):
+        if events.isdisjoint(selected_events):
             continue
         groups.setdefault(events, []).append(unit)
         group_by_outcome.update(dict.fromkeys(unit, events))
@@ -2055,6 +2074,12 @@ def _pm_lock_isolated_chunks(
                 emitted.add(events)
     for cohort in held:
         result.extend(packed[cohort])
+    if first_events:
+        first, rest = [], []
+        for chunk in result:
+            events = {event_by_outcome[oid] for oid in chunk if oid in event_by_outcome}
+            (first if events.intersection(first_events) else rest).append(chunk)
+        result = first + rest
     return result
 
 
@@ -4277,6 +4302,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # ordinary chunk. Retry only its admitted event/question units;
                 # fresh siblings then retain their own cooldown eligibility.
                 isolated_events = set(lock_retry_events)
+                changed_events = set()
                 if getattr(blend_refresher, "preview_events", ()):
                     async with buffer_lock:
                         held_events = (
@@ -4303,19 +4329,28 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                 if all(
                                     oid not in open_outcome_ids
                                     and observation_continuity.get(oid) is not None
-                                    and catalog_boundary.observation_ack.get(oid) == observation_continuity[oid]
+                                    and catalog_boundary.observation_ack.get(oid) is not None
                                     and observation_continuity[oid][1] == round(float(value), 6)
                                     and (held_quotes is None or oid not in held_quotes)
                                     for oid, value in legs
                                 ):
-                                    isolated_events.add(eid)
+                                    if all(catalog_boundary.observation_ack[oid] == observation_continuity[oid]
+                                           for oid, _ in legs):
+                                        isolated_events.add(eid)
+                                    elif any(catalog_boundary.observation_ack[oid][1] != observation_continuity[oid][1]
+                                             for oid, _ in legs):
+                                        changed_events.add(eid)
                 # A known unchanged cohort need not share an unrelated SQL
                 # wait. This is a scheduling hint only: every admitted row still
                 # reaches write_chunk, including heartbeat/held-return forcing.
+                # A changed preview cohort needs its ordinary price authority
+                # first, so schedule it before unrelated waits. Its existing
+                # ready/stamp path then publishes DNPL; no preview bypass.
                 # Market/complement units remain indivisible across events.
                 chunks = _pm_lock_isolated_chunks(
                     chunks, isolated_events, event_id_by_outcome,
                     market_by_outcome, open_complement_of, FLUSH_CHUNK_ROWS,
+                    first_events=changed_events,
                 )
             stats["open_contract_flush_deferred"] += len(batch) - sum(
                 len(c) for c in chunks
