@@ -226,8 +226,20 @@ async def test_folded_stream_yields_raw_immediately_then_explicit_authority(monk
     from tests.test_folded_event_stream_invalidation_837 import Hub, Request
 
     hub, release, calls = Hub(), asyncio.Event(), []
+    coverage_started, coverage_cancelled = asyncio.Event(), asyncio.Event()
     quote = ({"event_id": 1, "hero_probability": 0.4,
               "blend_fold_revision": {"1": 11, "2": 22}} if available else None)
+
+    async def pending_coverage(event_id, ids):
+        # This unit test owns no PostgreSQL. Hold the independent startup read
+        # so both raw delivery and projection must proceed while it is pending.
+        # Coverage success/failure is exercised by the dedicated route controls.
+        assert event_id == 1 and ids == [1, 2]
+        coverage_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            coverage_cancelled.set()
 
     async def project(event_id, frame):
         calls.append((event_id, frame))
@@ -237,6 +249,7 @@ async def test_folded_stream_yields_raw_immediately_then_explicit_authority(monk
     hub.project_folded_quote = project
     monkeypatch.setattr(live_fanout, "fanout", lambda: hub)
     monkeypatch.setattr(route, "latest_frames", lambda ids: asyncio.sleep(0, result=[]))
+    monkeypatch.setattr(route, "_current_reconcile", pending_coverage)
     stream = route._stream(1, Request(), [1, 2])
     task = None
     try:
@@ -248,6 +261,7 @@ async def test_folded_stream_yields_raw_immediately_then_explicit_authority(monk
         assert floor.startswith("event: fold_preview_floor\n")
         assert json.loads(floor.split("data: ")[1]) == {"event_id": 1, "floor": {"2": 22}}
         raw = json.loads((await asyncio.wait_for(anext(stream), 1)).split("data: ")[1])
+        assert coverage_started.is_set() and not coverage_cancelled.is_set()
         assert raw["invalidation"] and raw["p"] is None and not calls
         assert raw["folded_quote_pending"] is True
         task = asyncio.create_task(anext(stream))
@@ -259,11 +273,14 @@ async def test_folded_stream_yields_raw_immediately_then_explicit_authority(monk
         enriched = json.loads(chunk.split("data: ")[1])
         assert enriched == {**raw, "folded_quote_pending": False, "folded_quote": quote}
         assert calls == [(1, frame)]
+        assert not coverage_cancelled.is_set()
     finally:
         release.set()
         if task is not None:
             await asyncio.gather(task, return_exceptions=True)
         await stream.aclose()
+    assert coverage_cancelled.is_set()
+    assert set(hub.released) == {"live:event:1", "live:event:2"}
 
 
 async def test_singleton_stream_never_requests_projection(monkeypatch):
