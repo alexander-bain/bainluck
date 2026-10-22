@@ -62,7 +62,7 @@ final class LivePregameComparison11296Tests: XCTestCase {
     }
 
     /// The baseline with each key's raw JSON value replaced.
-    private func baseline(_ json: String = LivePregameComparison11296Tests.baselineNFL,
+    private func baseline(_ json: String,
                           _ edits: [(key: String, value: String)]) throws -> PregameProjection {
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
         for edit in edits {
@@ -72,9 +72,18 @@ final class LivePregameComparison11296Tests: XCTestCase {
         return try decoder().decode(PregameProjection.self, from: data)
     }
 
-    private func baseline(_ json: String = LivePregameComparison11296Tests.baselineNFL,
-                          _ key: String, _ value: String) throws -> PregameProjection {
+    private func baseline(_ json: String, _ key: String, _ value: String) throws -> PregameProjection {
         try baseline(json, [(key, value)])
+    }
+
+    // A leading defaulted unlabeled parameter is never skipped, so the NFL
+    // baseline's calls need their own overloads.
+    private func baseline(_ edits: [(key: String, value: String)]) throws -> PregameProjection {
+        try baseline(LivePregameComparison11296Tests.baselineNFL, edits)
+    }
+
+    private func baseline(_ key: String, _ value: String) throws -> PregameProjection {
+        try baseline(LivePregameComparison11296Tests.baselineNFL, [(key, value)])
     }
 
     /// An admitted current pair, as `LiveProjectedFinal2920.page` hands it on.
