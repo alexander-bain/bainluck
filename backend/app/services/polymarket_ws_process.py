@@ -63,6 +63,23 @@ MAX_CATALOG_FRAME_BYTES = 16 << 20
 #: How often the child reports its client's ``stats`` (connection, coverage).
 STATS_SECONDS = 5.0
 
+#: #10663 — how often the child hands its freed C heap back (``malloc_trim``).
+#: The two venue processes trim after each catalog refresh (#11218); this child
+#: never did. Its frees come from no single refresh. Each of ~133 shards can
+#: hold ``max_queue`` + 1 messages of up to ``MAX_MESSAGE_BYTES`` while the
+#: parent is slow, and a restarted shard is re-sent its books. So it trims on
+#: a timer. Retained captures K5–K8 (10/21–22): the dyno's ``memory_total``
+#: includes swap, and the venue processes' ``rss=`` lines exclude their own
+#: swapped pages, so total minus both holds all swap by construction. The
+#: resident remainder (this child plus the stdlib supervisor) stayed ~226–299
+#: MB while swap grew 181–236 MB. Whose pages are swapped is unmeasured. This
+#: child is the only glibc process that never trimmed, so a timer trim is a
+#: cheap candidate, not an attribution. Each trim logs
+#: ``arm=polymarket_open_receiver released=…`` for this child's resident
+#: memory only (statm excludes swap). A trim of a ~400 MB heap took 1–18 ms in
+#: the venue processes.
+HEAP_TRIM_SECONDS = 60.0
+
 #: Shutdown bound for the child after its stdin closes; it has no drain.
 CHILD_EXIT_SECONDS = 5.0
 
@@ -323,8 +340,14 @@ def _kill(child) -> None:
             pass
 
 
-async def serve_receiver(client_cls, *, read_fd: int = 0, write_fd: int = 1) -> int:
+async def serve_receiver(
+    client_cls, *, read_fd: int = 0, write_fd: int = 1,
+    release_free_heap: Optional[Callable[[], Any]] = None,
+) -> int:
     """The child: one client, forwarding its prices/trades up the pipe.
+
+    ``release_free_heap`` runs every ``HEAP_TRIM_SECONDS`` (#10663). The entry
+    point passes ``app.utils.heap_trim``'s, loaded by path. It must not raise.
 
     Returns 0 when the parent closes the pipe, 1 when the client fails.
     """
@@ -361,8 +384,12 @@ async def serve_receiver(client_cls, *, read_fd: int = 0, write_fd: int = 1) -> 
     client.on_trade = lambda message: forward(TRADE, message)
 
     async def report():
+        trimmed_at = loop.time()
         while True:
             await forward(STATS, client.stats)
+            if release_free_heap is not None and loop.time() - trimmed_at >= HEAP_TRIM_SECONDS:
+                release_free_heap()
+                trimmed_at = loop.time()
             await asyncio.sleep(STATS_SECONDS)
 
     async def control():
