@@ -15,6 +15,7 @@ import { fieldOrder } from "@/lib/eventConceptDisplay";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { servedBoutPercents } from "@/lib/servedBoutPercents";
 import type { EventConceptCompetitor, FuturesOutcomeHistory } from "@/lib/types";
+import { isSettlementPoint } from "@/lib/chartSettlementPoints";
 import { FuturesChart } from "@/components/FuturesChart";
 import FighterAvatar from "./FighterAvatar";
 
@@ -144,7 +145,9 @@ export default function TwoSidedTimeline({
   const [aServed, bServed] = fieldIsThePair ? servedBoutPercents(pair) : [null, null];
   const outcomes: FuturesOutcomeHistory[] = data?.outcomes ?? [];
   const hasHistory = outcomes.some(
-    (o) => o.history.filter((p) => p.probability != null).length >= 2,
+    // #10955 (U1): a settlement point is the result, not a recorded reading,
+    // so it never makes up the two readings a drawable history needs.
+    (o) => o.history.filter((p) => p.probability != null && !isSettlementPoint(p)).length >= 2,
   );
   // #683: the All rung's full read can leave older prices out and too few to
   // draw; the timeline (and its rung chips, the way back) still shows, and the
