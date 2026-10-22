@@ -183,7 +183,7 @@
     "#8129 earlier completed blend groups release rows and publish (real Postgres)",
     "#10090 next same-game quote owns no history wait (real Postgres)",
     "#11181 owed chart points: atomic custody, replay and restart (real Postgres)",
-    "#10090 PM release wake, trace modes and price runtime bound (real Postgres)",
+    "#10090 PM release wake with the stage trace off and on (real Postgres)",
     "#10090 a withdrawn PM price leaves the page through contention, cancellation and restart (real Postgres)",
     "#10090 a live price frame's source snapshot comes from its own committed stamp (real Postgres)",
     "#10090 restarts and transaction errors never strand a PM source removal; a due withdrawal never slows a healthy quote (real Postgres)",

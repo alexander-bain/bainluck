@@ -5096,11 +5096,10 @@ jobs:
             exit 1
           }
 
-      - name: "#10090 PM release wake, trace modes and price runtime bound (real Postgres)"
+      - name: "#10090 PM release wake with the stage trace off and on (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           if python -m pytest tests/integration/test_pm_stamp_release_wake_10090_pg.py \
-            tests/integration/test_pm_price_statement_deadline_10090_pg.py \
             -v -rs > /tmp/release-wake10090.txt 2>&1; then
             gate_status=0
           else
@@ -5113,8 +5112,8 @@ jobs:
             echo "::error::#10090 PM release-wake gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]23 passed[,[:space:]]" /tmp/release-wake10090.txt || {
-            echo "::error::#10090 PM release-wake gate did not run all twenty-three cases"
+          grep -qE "[^0-9]15 passed[,[:space:]]" /tmp/release-wake10090.txt || {
+            echo "::error::#10090 PM release-wake gate did not run all fifteen cases"
             exit 1
           }
 
@@ -5288,6 +5287,7 @@ jobs:
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           if python -m pytest tests/integration/test_pm_held_price_row_stamps_received_quote_11138_pg.py \
+            tests/integration/test_pm_price_statement_deadline_10090_pg.py \
             -v -rs > /tmp/held-row11138.txt 2>&1; then
             gate_status=0
           else
@@ -5300,8 +5300,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row gate did not run all twelve cases"
+          grep -qE "[^0-9]20 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row gate did not run all twenty cases"
             exit 1
           }
 
