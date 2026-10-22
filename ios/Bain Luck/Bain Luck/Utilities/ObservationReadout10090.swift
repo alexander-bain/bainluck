@@ -74,7 +74,8 @@ nonisolated struct ObservationReadout10090: Equatable, Sendable {
     static func clock(_ observedAt: Date, now: Date = .now, calendar: Calendar = .current,
                       locale: Locale = .current) -> String {
         var style = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
-            .hour().minute().second().secondFraction(.fractional(3)).timeZone(.specificName(.short))
+            .hour().minute(.twoDigits).second(.twoDigits).secondFraction(.fractional(3))
+            .timeZone(.specificName(.short))
         if !calendar.isDate(observedAt, inSameDayAs: now) {
             style = style.month(.abbreviated).day().year()
         }

@@ -96,10 +96,11 @@ final class ObservationReadout10090Tests: XCTestCase {
 
     private final class FakeHandle: LiveStreamHandle, @unchecked Sendable {
         private var handlers: [String: [@MainActor (String) -> Void]] = [:]
+        var isClosed = false
         func on(_ event: String, _ handler: @escaping @MainActor (String) -> Void) {
             handlers[event, default: []].append(handler)
         }
-        func close() {}
+        func close() { isClosed = true }
         @MainActor func fire(_ event: String, _ data: String = "") {
             for h in handlers[event] ?? [] { h(data) }
         }
