@@ -13,6 +13,7 @@ from sqlalchemy.sql.dml import Update
 from app.models.models import Event, FuturesMarket, FuturesOutcome
 import app.tasks.polymarket_token_topup as topup
 import app.tasks.polymarket_ws as ws
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 
 class Service:
@@ -43,7 +44,7 @@ class Session:
             self.updates.append(stmt)
             rows = []
         else:
-            rows = next(self.batches)
+            rows = answer_slate_market_read(stmt, next(self.batches))  # #10663
         return SimpleNamespace(all=lambda: rows)
 
 

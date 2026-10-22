@@ -58,6 +58,7 @@ from tests.test_ws_flush_retry_q491 import (
     is_stored_live_slate_read,
     stored_live_batches,
 )
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 #: A URL whose engine can be built and disposed without a server: nothing in
 #: these tests executes SQL on it.
@@ -136,7 +137,8 @@ class _Rig:
                     # #10090 attempt156: the stored-live load reads its own
                     # three batches; the full slate stays queued.
                     rig.batches[:0] = stored_live_batches(*rig.slate[:3])
-                return _Result(rig.batches.pop(0) if rig.batches else [])
+                rows = rig.batches.pop(0) if rig.batches else []
+                return _Result(answer_slate_market_read(stmt, rows))  # #10663
 
         class _Ctx:
             async def __aenter__(self_inner):

@@ -67,6 +67,7 @@ import app.tasks.polymarket_open_contracts as open_mod
 import app.tasks.polymarket_ws as poly_task
 from app.models.models import FuturesOutcome
 from app.utils.market_quote_push import market_channel, parse_market_frame
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 pytestmark = pytest.mark.asyncio
 
@@ -760,7 +761,8 @@ class _Session:
             # #10090 attempt156: the stored-live load reads its own three
             # batches; the full slate stays queued for the full read.
             self._rig.slate[:0] = self._rig.stored_live()
-        return _Replayed(self._rig.slate.pop(0) if self._rig.slate else [])
+        rows = self._rig.slate.pop(0) if self._rig.slate else []
+        return _Replayed(answer_slate_market_read(stmt, rows))  # #10663
 
 
 class _PipelinedPublish:

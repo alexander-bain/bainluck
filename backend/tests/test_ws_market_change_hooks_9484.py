@@ -70,6 +70,7 @@ import app.tasks.live_blend_refresh as blend_mod
 from app.models.models import FuturesOutcome
 from app.utils.market_quote_push import market_channel, parse_market_frame
 from tests._kalshi_price_session import bind_sessions
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 pytestmark = pytest.mark.asyncio
 
@@ -188,7 +189,8 @@ class _HybridSession:
             # #10090 attempt156: the stored-live load reads its own three
             # batches; the full slate stays queued for the full read.
             self._batches[:0] = self._stored_live()
-        return _Replayed(self._batches.pop(0) if self._batches else [])
+        rows = self._batches.pop(0) if self._batches else []
+        return _Replayed(answer_slate_market_read(stmt, rows))  # #10663
 
 
 class _PipelinedPublish:
