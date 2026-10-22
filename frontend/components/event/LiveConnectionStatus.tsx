@@ -23,8 +23,11 @@ import { formatAgeFromSeconds } from '@/lib/sourceAge';
  * a guess when a clock is absent or unreadable.
  */
 
+export type ObservationDelivery = 'dnpl' | 'committed' | 'unknown';
+
 interface LiveConnectionStatusProps {
   presentation: ConnectionPresentation;
+  observation?: { eventId: number; count: number; delivery: ObservationDelivery };
   /** The accepted price clock — the same one the tracker keys receipts on. */
   priceObservedAt: string | null | undefined;
   /** True when a score is on screen, so its confirmation time is a fact worth giving. */
@@ -70,8 +73,8 @@ function ageWords(iso: string | null | undefined, now: number): string | null {
   return seconds < 60 ? `${seconds}s ago` : formatAgeFromSeconds(seconds);
 }
 
-function Clock({ iso, now }: { iso: string | null | undefined; now: number }) {
-  const wall = formatObservationClock(iso);
+function Clock({ iso, now, milliseconds = false }: { iso: string | null | undefined; now: number; milliseconds?: boolean }) {
+  const wall = formatObservationClock(iso, milliseconds);
   if (!wall) return <span>Time unavailable</span>;
   const age = ageWords(iso, now);
   return (
@@ -84,6 +87,7 @@ function Clock({ iso, now }: { iso: string | null | undefined; now: number }) {
 
 export default function LiveConnectionStatus({
   presentation,
+  observation,
   priceObservedAt,
   scoreShown,
   scoreConfirmedAt,
@@ -121,7 +125,12 @@ export default function LiveConnectionStatus({
   const { label, tone, breathes, announcement } = presentation;
 
   return (
-    <div ref={root} className="min-w-0" data-testid="live-connection-status" data-status={label}>
+    <div ref={root} className="min-w-0" data-testid="live-connection-status" data-status={label}
+      data-observation-at={typeof priceObservedAt === 'string' && Number.isFinite(Date.parse(priceObservedAt)) ? priceObservedAt : ''}
+      data-observation-count={observation?.count ?? 0}
+      data-observation-delivery={observation?.delivery ?? 'unknown'}
+      data-observation-event-id={observation?.eventId ?? ''}
+    >
       <button
         ref={button}
         type="button"
@@ -158,9 +167,21 @@ export default function LiveConnectionStatus({
           <div>
             <dt className="font-medium text-text-primary">Probability observed</dt>
             <dd>
-              <Clock iso={priceObservedAt} now={now} />
+              <Clock iso={priceObservedAt} now={now} milliseconds />
             </dd>
           </div>
+          {observation ? (
+            <>
+              <div>
+                <dt className="font-medium text-text-primary">Observations shown</dt>
+                <dd>{observation.count} · first + newer times</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-text-primary">Current probability delivery</dt>
+                <dd>{observation.delivery === 'dnpl' ? 'DNPL active' : observation.delivery === 'committed' ? 'Committed delivery' : 'Delivery unknown'}</dd>
+              </div>
+            </>
+          ) : null}
           {scoreShown ? (
             <div>
               <dt className="font-medium text-text-primary">Score confirmed</dt>

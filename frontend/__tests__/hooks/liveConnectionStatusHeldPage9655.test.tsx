@@ -17,9 +17,8 @@
  * is left off (a REST adoption is driven explicitly with `poll()`, so no timer
  * fires a request the test did not ask for), the paired quote read is absent
  * (the scheduler falls through to the detail refetch, its second branch), and
- * the printed percent is `round(hero_probability × 100)` rather than the full
- * `resolveProbability` — the status compares what the hero prints, and on a
- * live blend that is this number.
+ * history is absent. The real `resolveProbability` selects the hero and
+ * its provenance; the accepted clock follows that selection, as on the page.
  *
  * Network is a list of deferred promises the test resolves; time is fake
  * (`jest.useFakeTimers`, `Date.now` included). No assertion branches on the
@@ -42,6 +41,8 @@ import { canSubscribeEventQuotes } from "../../lib/eventQuoteStream";
 import { fetchEventWithLiveFrame } from "../../lib/reconcileEventPoll";
 import { createFoldedRefetchScheduler, takeFreshRead } from "../../lib/foldedRefetchScheduler";
 import { isFinishedStatus } from "../../lib/eventState";
+import { resolveProbability } from "../../lib/eventKeyStats";
+import type { EventDetailResponse } from "../../lib/types";
 import { DATA_SILENCE_TIMEOUT_MS, TICK_INTERVAL_MS } from "../../lib/liveStreamController";
 import {
   CONNECTION_FEEDBACK_MS,
@@ -212,13 +213,20 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
 
   // ── app/events/[id]/page.tsx — the status wiring, as the page writes it ────
   const freshestSourceStamp = Object.values(event.win_probability_sources)[0]?.updated_at ?? null;
-  const homePct = Math.round(overlayBlendPreview(event, blendPreview, blendPreviewNow).hero_probability * 100);
-  const awayPct = 100 - homePct;
-  const connectionTerminalLabel = isFinishedStatus(event.status) ? "Finished" : null;
-  const acceptedPriceClock = displayedProbabilityObservedAt(
-    event, blendPreview, blendPreviewNow,
-    event.hero_probability_observed_at ?? freshestSourceStamp,
+  const resolvedProbability = resolveProbability(
+    overlayBlendPreview(event, blendPreview, blendPreviewNow) as unknown as EventDetailResponse,
+    undefined, null, event.status === "live", isFinishedStatus(event.status),
+    event.status === "suspended", false, true,
   );
+  const { homePct, awayPct } = resolvedProbability;
+  const connectionTerminalLabel = isFinishedStatus(event.status) ? "Finished" : null;
+  const acceptedPriceClock = resolvedProbability?.selectedProbabilitySource === "hero-blend"
+    && typeof resolvedProbability.homeProb === "number" && Number.isFinite(resolvedProbability.homeProb)
+      ? displayedProbabilityObservedAt(
+        event, blendPreview, blendPreviewNow,
+        event?.hero_probability_observed_at ?? freshestSourceStamp,
+      )
+      : null;
   connectionTrackerRef.current = stepConnectionTracker(
     connectionTrackerRef.current,
     {
@@ -330,7 +338,9 @@ describe("structural pin: the harness carries the page's own wiring", () => {
     // #10090 G1: plus its journal entry while a paired read is in flight — a replay, not a write.
     expect(PAGE.match(/pairJournalRef\.current\?\.record\(\(prev\) => applyLiveFrame\(prev, frame\)\);/g)).toHaveLength(1);
     // The status wiring: the ACCEPTED clock, and one step per render from the held result.
-    expect(PAGE).toMatch(/const acceptedPriceClock = displayedProbabilityObservedAt\(\s*event, blendPreview, blendPreviewNow,\s*event\.hero_probability_observed_at \?\? freshestSourceStamp,\s*\);/);
+    const harness = fs.readFileSync(__filename, "utf8");
+    const clockBlock = (source: string) => source.match(/  const acceptedPriceClock =[^;]+;/)![0].replace(/\s+/g, " ");
+    expect(clockBlock(PAGE)).toBe(clockBlock(harness));
     expect(PAGE).toMatch(/connectionTrackerRef\.current = stepConnectionTracker\(\s*connectionTrackerRef\.current,\s*\{\s*eventId,\s*status: streamStatus,\s*priceObservedAt: acceptedPriceClock,/);
     expect(PAGE).toMatch(/valueKey: homePct === null \? null : `\$\{homePct\}\/\$\{awayPct \?\? ""\}`,\s*terminal: Boolean\(connectionTerminalLabel\),\s*\},\s*Date\.now\(\),/);
     expect(PAGE).toMatch(/const connectionPresentation = presentConnectionStatus\(\s*connectionTrackerRef\.current,\s*\{\s*status: streamStatus,\s*terminalLabel: connectionTerminalLabel,/);
@@ -371,6 +381,19 @@ describe("#10200 quiet is quiet: open, heartbeat-only, publication silence", () 
     expect(page.read().label).toBe("Connected · waiting");
     page.unmount();
   });
+});
+
+test("a non-blend held payload cannot earn observations from its unrelated advancing source clock", async () => {
+  const initial = { ...held({ p: .6, at: T(0) }), hero_probability_source: "opening" };
+  const page = await mountHeldPage(initial);
+  await page.emit("open");
+  expect(page.read()).toMatchObject({ pct: "null", clock: "null" });
+  await page.poll();
+  await page.resolveLast({ ...initial, hero_probability_observed_at: T(5),
+    win_probability_sources: { kalshi: { value: .6, updated_at: T(5) } } });
+  expect(page.read()).toMatchObject({ pct: "null", clock: "null" });
+  expect(page.seen.filter((label) => RECEIPTS.includes(label))).toEqual([]);
+  page.unmount();
 });
 
 describe("#10200 receipts come from adoption, never from arrival", () => {
@@ -522,7 +545,7 @@ describe("#10090 preview readout follows actual transport admission", () => {
     event_id: A, p, status: "live", observed_at: T(99), display_observed_at: clock,
     preview: { kind: "blend", epoch: 1, seq: 1, base_rev: 10, ttl_ms: 1000 },
   });
-  it.each(["expiry", "revoke", "reconnect", "commit", "terminal"])("restores committed clock after %s", async reason => {
+  it.each(["expiry", "revoke", "reconnect", "commit", "terminal"])("uses the selected probability clock after %s", async reason => {
     const initial = { ...held({ p: .6, at: T(0) }), blend_fold_revision: { [A]: 10 } };
     const page = await mountHeldPage(initial);
     try {
@@ -549,7 +572,13 @@ describe("#10090 preview readout follows actual transport admission", () => {
           status: reason === "terminal" ? "completed" : "live",
         });
       }
-      expect(page.read().clock).toBe(reason === "commit" || reason === "terminal" ? T(8) : T(0));
+      if (reason === "terminal") {
+        // The actual resolver no longer selects a live blend on a completed
+        // page. The old simplified harness wrongly kept its live value/clock.
+        expect(page.read()).toMatchObject({ pct: "null", label: "Finished", clock: "null" });
+      } else {
+        expect(page.read().clock).toBe(reason === "commit" ? T(8) : T(0));
+      }
     } finally { page.unmount(); }
   });
 

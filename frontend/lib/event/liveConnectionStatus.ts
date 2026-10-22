@@ -235,7 +235,7 @@ export function presentConnectionStatus(
 }
 
 /** A clock for the tap details: wall time with its zone, or null when absent/unparseable. */
-export function formatObservationClock(iso: string | null | undefined): string | null {
+export function formatObservationClock(iso: string | null | undefined, milliseconds = false): string | null {
   const t = parseClock(iso);
   if (t === null) return null;
   return new Intl.DateTimeFormat('en-US', {
@@ -244,6 +244,7 @@ export function formatObservationClock(iso: string | null | undefined): string |
     hour: 'numeric',
     minute: '2-digit',
     second: '2-digit',
+    ...(milliseconds ? { fractionalSecondDigits: 3 as const } : {}),
     timeZoneName: 'short',
   }).format(new Date(t));
 }
