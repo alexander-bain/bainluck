@@ -56,6 +56,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.utils.async_binary_pair import paired_binary_leg_ids as _paired_binary_leg_ids
+from app.utils.futures_chart_series import MAX_HEARTBEAT_SECONDS
 from app.utils.generic_market_history import (
     BANK_MARKER_KEY,
     CACHE_VERSION,
@@ -146,6 +147,29 @@ SETTLED_CACHE_TTL_SECONDS = 7 * 24 * 3600
 MAX_SETTLED_EMPTY_ATTEMPTS = 3
 
 _SETTLED_STATUSES = {"settled", "closed", "resolved"}
+
+#: #10955 — the widest two kept points of one outcome may sit apart after the
+#: bank is compacted, wherever the venue itself reported closer than that. The
+#: per-band budgets give way to it (`futures_chart_series._thin_by_smallest_move`).
+#:
+#: WHY A JOINT AND NOT A BIGGER BUDGET. Both readers draw any gap wider than six
+#: times the line's own median spacing as a dotted "no numbers here" bridge
+#: (web `seriesGapThresholdMs`, iPhone `EvolutionChartView`). On `/futures/109923`
+#: the bank's band older than 30 days was cut to its 80-point budget, which left
+#: July as seven points up to twelve days apart. The venue had a candle for every
+#: day of July and nearly every hour. So the chart said "no data" over a month
+#: the venue observed. A larger budget only moves the cut. A joint is what
+#: guarantees compaction never opens a gap the venue did not have.
+#:
+#: THE MODULE'S OWN FLAT-STRETCH CEILING, `MAX_HEARTBEAT_SECONDS` (12 h), not a
+#: new number: compaction already promised no flat joint wider than that and the
+#: budget thinning broke the promise. Replayed on that specimen's recorded venue
+#: answers (2026-10-22) through this build and the serve's capture layering:
+#: master's bank reproduces production exactly (371 venue points, 978 served, a
+#: 168 h largest gap, 90 bridged intervals, May–August 74 points); with this
+#: joint, 0 bridged intervals, a 15 h largest gap, May–August 338 points, the
+#: bank 372 → 836 points. A 6 h joint also bridged nothing there and cost 1,334.
+VENUE_BANK_MAX_JOINT_SECONDS = MAX_HEARTBEAT_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -888,7 +912,10 @@ def _compact_entries(
     for oid, entry in entries.items():
         points: list[VenuePoint] = entry["points"]
         by_oid_ts[oid] = {p.observed_at: p for p in points}
-        kept = compact_by_band([(p.observed_at, p.probability) for p in points], now)
+        kept = compact_by_band(
+            [(p.observed_at, p.probability) for p in points], now,
+            max_joint_s=VENUE_BANK_MAX_JOINT_SECONDS,
+        )
         kept_by_oid[oid] = {ts for ts, _p in kept}
 
     if pair is not None:
@@ -953,6 +980,7 @@ async def build_generic_history(
                 kalshi_service, [o for o in outcomes if o.id in contracts],
                 listed_at=getattr(market, "created_at", None),
                 now=now, lifetime_hours=lifetime, stats=stats, on_candle=book,
+                hourly_whole_life=True,
             )
             stats["candles_seen"] = book.seen
             if book.unpriced:
