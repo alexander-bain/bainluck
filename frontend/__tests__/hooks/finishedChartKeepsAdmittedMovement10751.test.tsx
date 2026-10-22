@@ -182,7 +182,7 @@ function ChartPage({ net, eventId }: { net: Net; eventId: number }) {
 
   // ── app/events/[id]/page.tsx — the hook, as the page calls it ──────────────
   const quoteEligible = canSubscribeEventQuotes(event);
-  const { chartPoints, status: reportedStreamStatus } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame);
+  const { chartPoints, status: reportedStreamStatus } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame, undefined, event?.blend_fold_revision);
 
   // ── app/events/[id]/page.tsx — the chart composition, carried (PINNED) ─────
   // #10090 attempt155: the page bumps this only when an accepted recovery pair

@@ -205,7 +205,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
     status: reportedStreamStatus,
     blendPreview,
     blendPreviewNow,
-  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame);
+  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame, undefined, event?.blend_fold_revision);
   const streamStatus = reportedStreamStatus ?? (streamConnected ? "open" : "idle");
 
   // The page returns its loading view here; the status is drawn only below.
