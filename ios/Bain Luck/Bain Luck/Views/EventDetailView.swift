@@ -2064,6 +2064,48 @@ struct EventDetailView: View {
             projection: event.pregameProjection)
     }
 
+    /// #11296 — a LIVE headline's retained forecast: the pair served from
+    /// before the scheduled start, beneath the current projected final it can
+    /// be compared with. Only when the page prints the producer's admitted
+    /// in-play pair (`projectionText` answered, through
+    /// `LiveProjectedFinal2920.page`'s admitted arm); the ladders' pair and a
+    /// refused object add nothing. Nil leaves the current forecast exactly as it
+    /// was. Static so the suite reaches it.
+    static func liveBaseline11296(
+        _ event: EventDetail,
+        ladderHome: Double?, ladderAway: Double?,
+        hasScore: Bool,
+        now: Date = Date()
+    ) -> LivePregameComparison11296.Comparison? {
+        guard case .admitted(let printed) = LiveProjectedFinal2920.page(event, now: now),
+              projectionText(event, ladderHome: ladderHome, ladderAway: ladderAway,
+                             hasScore: hasScore, now: now) != nil
+        else { return nil }
+        return LivePregameComparison11296.resolve(
+            status: event.status, sport: event.sport, commenceTime: event.commenceTime,
+            current: printed, projection: event.pregameProjection)
+    }
+
+    private func liveBaseline11296(_ event: EventDetail, hasScore: Bool) -> LivePregameComparison11296.Comparison? {
+        EventDetailView.liveBaseline11296(
+            event,
+            ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
+            ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
+            hasScore: hasScore)
+    }
+
+    /// #11296 — the current group's one spoken sentence: the current pair, then
+    /// the retained one when it prints, each naming both teams.
+    static func projectionWithBaselineAccessibilityLabel11296(
+        figure: String, names: (away: String, home: String),
+        baseline: LivePregameComparison11296.Comparison?
+    ) -> String {
+        let current = projectionAccessibilityLabel9483(figure: figure, names: names)
+        guard let baseline else { return current }
+        return "\(current). "
+            + LivePregameComparison11296.spokenText(baseline, awayName: names.away, homeName: names.home)
+    }
+
     /// The hero's team-tinted backdrop: its own on the legacy hero, the joined
     /// headline + chart card's on the adopted pair.
     static func heroBackdrop(_ colors: (away: Color, home: Color)) -> LinearGradient {
@@ -2367,6 +2409,9 @@ struct EventDetailView: View {
                                                           names: names, colors: colors)
                         } else {
                             // Figure over caption in the score's own style, on its baseline.
+                            // #11296 — live, the retained pregame pair sits under
+                            // them in this same group, never a third column.
+                            let liveBaseline = liveBaseline11296(event, hasScore: hasScore)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(figure)
                                     .font(.system(size: eventHeadlineScoreSize9483, weight: .bold, design: .rounded).monospacedDigit())
@@ -2378,9 +2423,15 @@ struct EventDetailView: View {
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.5)
                                     .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
+                                if let liveBaseline {
+                                    LivePregameBaselineLine11296(
+                                        comparison: liveBaseline, awayName: names.away, homeName: names.home)
+                                        .padding(.top, 4)
+                                }
                             }
                             .accessibilityElement(children: .ignore)
-                            .accessibilityLabel(Self.projectionAccessibilityLabel9483(figure: figure, names: names))
+                            .accessibilityLabel(Self.projectionWithBaselineAccessibilityLabel11296(
+                                figure: figure, names: names, baseline: liveBaseline))
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
