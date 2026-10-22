@@ -20,6 +20,8 @@ from collections.abc import Collection, Iterable, Iterator, Mapping
 from typing import Any, NamedTuple, Optional
 from datetime import datetime, timezone
 
+from sqlalchemy import text
+
 from app.tasks.kalshi_ws import (
     FINAL_FLUSH_ATTEMPTS,
     PRICE_FLUSH_SECONDS,
@@ -57,6 +59,20 @@ PRICE_STATEMENT_LOCK_TIMEOUT_MS = 50
 #: turned a 20 ms hold into a 270 ms prop/standalone wait (real PG, 50 ms: 34–49).
 FAST_GAME_PRICE_STATEMENT_LOCK_TIMEOUT_MS = 1
 FAST_GAME_FLUSH_SECONDS = 0.025
+
+# Optional DNPL game writers must not hold later arrivals inside a slow price
+# statement. Keep the separate lock budget; preserve any tighter prior cap.
+DNPL_PRICE_STATEMENT_TIMEOUT_MS = 250
+ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL = text("""
+    WITH prior AS MATERIALIZED (
+        SELECT current_setting('statement_timeout') AS value
+    )
+    SELECT value, set_config('statement_timeout', CASE
+        WHEN CAST(value AS interval) > interval '0'
+         AND CAST(value AS interval) < CAST(CAST(:ms AS text) AS interval) THEN value
+        ELSE CAST(:ms AS text) END, true)
+    FROM prior
+""")
 
 #: #10090 — after an idle input wakes the price flush, wait this long (fixed,
 #: once) before it snapshots the buffer, so the rest of an already-arriving
@@ -1852,6 +1868,29 @@ def is_price_row_lock_refusal(exc: BaseException) -> bool:
     return False
 
 
+def is_price_statement_timeout(exc: BaseException) -> bool:
+    """Require PostgreSQL's statement-timeout diagnostic, not just 57014.
+
+    Operator cancellation shares 57014. Unknown/localised messages stay on
+    the ordinary failure path; elapsed time never authorizes held admission.
+    """
+    seen = set()
+    cur = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        code = getattr(cur, "sqlstate", None) or getattr(cur, "pgcode", None)
+        message = getattr(cur, "message", None)
+        if not isinstance(message, str):
+            message = getattr(getattr(cur, "diag", None), "message_primary", None)
+        if code == "57014" and message == "canceling statement due to statement timeout":
+            return True
+        nxt = getattr(cur, "orig", None)
+        if nxt is None or nxt is cur:
+            nxt = cur.__cause__
+        cur = nxt
+    return False
+
+
 def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False):
     """#10664: a flush chunk's price writes as ONE UPDATE ... RETURNING.
 
@@ -3409,7 +3448,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # Entries now leave only after the write lands, so nothing needs to be
         # "put back", because it was never taken away.
         from app.tasks.live_blend_refresh import _mono
-        from app.tasks.polymarket_ws import _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS
+        from app.tasks.polymarket_ws import (
+            _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS,
+            DNPL_PRICE_STATEMENT_TIMEOUT_MS, ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+            is_price_statement_timeout,
+        )
+        from app.utils.repair_lock_budget import SET_STATEMENT_TIMEOUT_SQL
 
         # #10090 stage trace (OFF by default): times only the chunk the game
         # flush registered for its selected outcomes; never raises. Reached
@@ -3435,15 +3479,25 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # #10090 (Root attempt71): only a whole game chunk — every leg names
         # its event, none is a prop or an open-catalog leg — takes the game
         # loop's own first wait; the side loops never write such a chunk.
+        game_chunk = bool(chunk) and all(
+            event_id_by_outcome.get(oid) is not None
+            and oid not in non_blend_outcome_ids
+            and oid not in open_outcome_ids
+            for oid in chunk
+        )
         price_lock_timeout_ms = (
             catalog_boundary.game_price_lock_timeout_ms
-            if chunk and all(
-                event_id_by_outcome.get(oid) is not None
-                and oid not in non_blend_outcome_ids
-                and oid not in open_outcome_ids
-                for oid in chunk
-            ) else PRICE_STATEMENT_LOCK_TIMEOUT_MS
+            if game_chunk else PRICE_STATEMENT_LOCK_TIMEOUT_MS
         )
+        bound_price_statement = (
+            not final and game_chunk and getattr(blend_refresher, "preview", False)
+            and bool(getattr(blend_refresher, "preview_events", ()))
+        )
+        # Includes unrelated game B: bounding B is what lets a later DNPL A
+        # reach the same serial writer. Side loops and disabled/final stay as-is.
+        previous_statement_timeout = None
+        rolled_back_statement_timeout = None
+        price_statement_timeout_seen = False
         # A hold that outlasts a try this short is ordinary, not news: its
         # first timeout is counted like a probe's repeat, never logged as a
         # flush error (one Sentry event per 1–50 ms hold otherwise).
@@ -3479,6 +3533,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     or oid not in successful_price_write_at
                     or now - successful_price_write_at[oid] >= PM_QUOTE_LIVENESS_SECONDS
                 }
+                if bound_price_statement:
+                    previous_statement_timeout = (await session.execute(
+                        ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+                        {"ms": lock_timeout_value(DNPL_PRICE_STATEMENT_TIMEOUT_MS)},
+                    )).scalar_one()
                 try:
                     if stage_trace is not None:
                         stage_trace.write_stage(chunk, "STATEMENT_START")
@@ -3495,7 +3554,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # for next-cadence retry; other failures keep their cooldown.
                     probe_refused = probe and is_price_row_lock_refusal(exc)
                     price_lock_timed_out = is_lock_timeout(exc)
+                    if previous_statement_timeout is not None and is_price_statement_timeout(exc):
+                        price_statement_timeout_seen = True
+                        # A server cancellation aborted this transaction. Only
+                        # a successful explicit rollback AND successful context
+                        # cleanup may hand its frozen cohort to the held path.
+                        await session.rollback()
+                        rolled_back_statement_timeout = exc
                     raise
+                if previous_statement_timeout is not None:
+                    await session.execute(
+                        SET_STATEMENT_TIMEOUT_SQL, {"ms": previous_statement_timeout},
+                    )
                 # The shorter budget belongs only to the price-row attempt.
                 # Rerank and other transaction work keep their existing budget.
                 if not final:
@@ -3549,10 +3619,26 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             if stage_trace is not None:
                 stage_trace.write_stage(
                     chunk, "FAILED",
-                    reason="LOCK_PROBE_REFUSED" if probe_refused
+                    reason="PRICE_STATEMENT_TIMEOUT" if exc is rolled_back_statement_timeout
+                    else "LOCK_PROBE_REFUSED" if probe_refused
                     else "LOCK_TIMEOUT" if is_lock_timeout(exc)
                     else type(exc).__name__,
                 )
+            if exc is rolled_back_statement_timeout:
+                # Separate from a row-lock refusal: the price statement spent
+                # its own runtime budget. Keep ordinary buffered retry/overlay
+                # admission; a cleanup replacement error never enters here.
+                stats["price_statement_timeouts"] = stats.get("price_statement_timeouts", 0) + 1
+                lock_retry_until.update({oid: lock_retry_until.get(oid, 0) for oid in chunk})
+                lock_retry_events.update(event_ids_for_outcomes(event_id_by_outcome, chunk))
+                return None
+            if price_statement_timeout_seen:
+                # Rollback/cleanup replaced the UPDATE error. It must never
+                # inherit held admission, even if cleanup itself says 55P03.
+                stats["errors"] += 1
+                stats["requeued"] += len(chunk)
+                logger.exception("Polymarket WS: price timeout cleanup failed")
+                return False
             # Q491 — THE SHIP. The chunk is still in `price_buffer`, so the next
             # flush retries it. Before Q491 the buffer was drained up front and
             # a failed write DISCARDED those prices outright: the socket only

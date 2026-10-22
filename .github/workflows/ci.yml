@@ -5096,10 +5096,11 @@ jobs:
             exit 1
           }
 
-      - name: "#10090 PM release wake with the stage trace off and on (real Postgres)"
+      - name: "#10090 PM release wake, trace modes and price runtime bound (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           if python -m pytest tests/integration/test_pm_stamp_release_wake_10090_pg.py \
+            tests/integration/test_pm_price_statement_deadline_10090_pg.py \
             -v -rs > /tmp/release-wake10090.txt 2>&1; then
             gate_status=0
           else
@@ -5112,8 +5113,8 @@ jobs:
             echo "::error::#10090 PM release-wake gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]15 passed[,[:space:]]" /tmp/release-wake10090.txt || {
-            echo "::error::#10090 PM release-wake gate did not run all fifteen cases"
+          grep -qE "[^0-9]23 passed[,[:space:]]" /tmp/release-wake10090.txt || {
+            echo "::error::#10090 PM release-wake gate did not run all twenty-three cases"
             exit 1
           }
 
