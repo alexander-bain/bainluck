@@ -13,11 +13,13 @@ import {
   gridCellExplanation,
   gridCellGlyph,
   gridIsDecided,
+  gridRowExit,
   gridScrollFloorPx,
   gridScrolls,
   markedCellCount,
   type GridCell,
   type GridColumn,
+  type GridRow,
   type PlayoffGrid as PlayoffGridModel,
 } from "@/lib/playoffGrid";
 
@@ -392,6 +394,30 @@ function Cell({
         <LiquidityMark facts={cell} observedAt={cell.observed_at} size="sm" decorative />
       </span>
       {barred && <SparkBar probability={cell.probability as number} />}
+    </span>
+  );
+}
+
+/**
+ * #4793: the line under an eliminated player's name — `Out · R64`.
+ *
+ * Inside the name's own box, as a block, so it takes the line under the name
+ * and adds nothing to the name track's width: the column measurements above
+ * (#4593, #4558) are untouched, and a row that is not out renders exactly the
+ * markup it did before. The cells keep their dash — the dash is now explained
+ * by the row instead of standing alone. Spoken in words, not as `R64`.
+ */
+function RowExit({ row }: { row: GridRow }) {
+  const exit = gridRowExit(row);
+  if (!exit) return null;
+  return (
+    <span
+      className="block text-[11px] font-normal leading-tight text-text-muted lg:text-[12px]"
+      data-testid="grid-row-exit"
+      data-exit-round={exit.round ?? undefined}
+    >
+      <span aria-hidden="true">{exit.text}</span>
+      <span className="sr-only">{exit.spoken}</span>
     </span>
   );
 }
@@ -876,6 +902,7 @@ export default function PlayoffGrid({
                       has one. */}
                   <span className="ml-1 self-center break-words text-[13.5px] font-semibold text-text-primary lg:text-[15px]">
                     {row.displayName}
+                    <RowExit row={row} />
                   </span>
                   {row.seed !== null && (
                     <span className="ml-1.5 shrink-0 text-[11px] font-normal text-text-muted">

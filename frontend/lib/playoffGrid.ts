@@ -634,6 +634,53 @@ function settledSentence(cell: GridCell): string {
   return `Settled: ${cell.note ?? "decided"}.`;
 }
 
+/**
+ * The exit round in the grid's own column vocabulary (#4793) — `R16`, `QF`,
+ * `SF` are what the header prints, so the row's line reads in the same words.
+ * The same keys as `EXIT_ROUND_WORDS` and nothing else.
+ */
+const EXIT_ROUND_SHORT: Record<string, string> = {
+  qualifying: "Qualifying",
+  R128: "R128",
+  R64: "R64",
+  R32: "R32",
+  R16: "R16",
+  QF: "QF",
+  SF: "SF",
+  F: "Final",
+};
+
+export interface GridRowExit {
+  /** What the row prints under the name: `Out · R64`, or `Out` alone. */
+  text: string;
+  /** The same fact for a screen reader: `Out in the second round.` */
+  spoken: string;
+  /** The served round key, or `null` when the line names no round. */
+  round: string | null;
+}
+
+/**
+ * Where a player went out, for the line under their name (#4793).
+ *
+ * A player out in the first week used to be five dashes and nothing else — a
+ * row that read as a loading failure while every one of its cells carried
+ * `note: "out"` and the round. Read ONLY from the draw's own `out` cells: a
+ * zero or missing probability is not an exit and never makes one. A round the
+ * register has no words for, or cells that disagree on the round, print `Out`
+ * without one rather than a guess.
+ */
+export function gridRowExit(row: GridRow): GridRowExit | null {
+  const outs = Object.values(row.cells).filter(
+    (cell) => cell?.state === "settled" && cell.note === "out"
+  );
+  if (outs.length === 0) return null;
+  const rounds = new Set(outs.map((cell) => cell.settled_round ?? null));
+  const round = rounds.size === 1 ? [...rounds][0] : null;
+  const short = round ? EXIT_ROUND_SHORT[round] : undefined;
+  if (!round || !short) return { text: "Out", spoken: "Out of the tournament.", round: null };
+  return { text: `Out · ${short}`, spoken: `Out ${EXIT_ROUND_WORDS[round]}.`, round };
+}
+
 function gridCellStateExplanation(cell: GridCell, columnLabel: string): string {
   switch (cell.state) {
     case "live":
