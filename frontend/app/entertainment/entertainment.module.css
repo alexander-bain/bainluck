@@ -249,11 +249,23 @@
    side card, and the other three side cards make the second row. No row height
    is reserved anywhere, so there is no band left for the content to fail to fill.
    This retires #7356's desktop control (the floor it pinned is gone on purpose);
-   the <=900px block below is unchanged. */
+   the <=900px block below is unchanged.
+
+   Every card is also top-aligned and as tall as its OWN content (Design's
+   selection on the bff73d37d1 frames; uneven bottoms are chosen). A grid row
+   is as tall as its tallest card, and the default `stretch` held each shorter
+   card open to that height, so the card's `flex: 1` spacer printed the
+   difference as a blank band: 53px beside a six-rung lead, 52-69px in a binary
+   card among box-office cards, 43px beside a three-rung lead (same rig). With
+   `align-items: start` a card is not stretched, so the side card's inline
+   `height: 100%` has no definite height to resolve against and falls back to
+   its content. The <=900px block restores `stretch`, so the two-column tablet
+   rows and the phone column keep the card heights they had. */
 .heroGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+  align-items: start;
 }
 
 .heroLead {
@@ -291,7 +303,9 @@
    rather than as spacing (latency/661 measured it twice, 70 minutes apart).
 
    Releasing it costs nothing at 1280px (421px is unchanged) and lets the card
-   size to its content below 900px. The lead still reads as the lead there on
+   size to its content below 900px. (Historical: #7382 has since removed the
+   desktop min-height and fraction rows described here — see its header above
+   `.heroGrid`.) The lead still reads as the lead there on
    the marks that survive: a 72px cover against the siblings' 44px, an 18px
    title against 14px, and this 18px padding against 14px. */
 .heroCardLead {
@@ -731,6 +745,7 @@
     grid-template-columns: 1fr 1fr;
     grid-template-rows: auto auto auto;
     min-height: auto;
+    align-items: stretch;
   }
 
   .heroLead {

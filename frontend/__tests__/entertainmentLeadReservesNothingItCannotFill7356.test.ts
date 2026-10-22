@@ -61,7 +61,9 @@
 // in all four, same rig). The CONTROL below now pins THAT shape: no grid height
 // is reserved, no row is a fraction, the lead spans columns and not rows. The
 // phone half of this file — no reservation on the card or below 900px — is
-// unchanged.
+// unchanged. Design then selected top-aligned, content-height cards above 900px
+// (uneven bottoms accepted): a second CONTROL pins `align-items: start` there
+// and `stretch` in the narrow block (side bands 53/52/69/43px -> 0px, same rig).
 //
 // Every parser asserts what it FOUND before it asserts anything about it: a
 // source-scanning guard that quietly matches nothing is worse than no guard.
@@ -213,6 +215,8 @@ describe("#7356 — the /entertainment lead card reserves nothing it cannot fill
     expect(grid).not.toMatch(/(?:^|;)\s*grid-template-rows\s*:/);
     expect(grid).not.toMatch(/(?:^|;)\s*grid-auto-rows\s*:[^;]*fr/);
     expect(grid).not.toMatch(/(?:^|;)\s*height\s*:/);
+    // The `grid-template` / `grid` shorthands set rows too (lane1 L7 survivor).
+    expect(grid).not.toMatch(/(?:^|;)\s*grid(?:-template)?\s*:/);
 
     const lead = ruleBody(".heroLead");
     expect(lead).toContain("grid-column: span 2");
@@ -222,5 +226,27 @@ describe("#7356 — the /entertainment lead card reserves nothing it cannot fill
     const block = releaseBlock();
     expect(ruleBody(".heroLead", block)).toContain("grid-column: span 2");
     expect(ruleBody(".heroLead", block)).toContain("grid-row: auto");
+  });
+
+  it("THE CONTROL (#7382, Design on bff73d37d1): desktop cards are top-aligned at their own height", () => {
+    // A row is as tall as its tallest card. Stretched, each shorter card was
+    // held open to that height and its `flex: 1` spacer printed the difference
+    // as a band (53px beside a six-rung lead, 52-69px in a binary card, local
+    // rig). Top-aligned, every card is its content and the spacer is 0px.
+    const grid = ruleBody(".heroGrid");
+    expect(grid).toMatch(/(?:^|;)\s*align-items\s*:\s*start\s*(?:;|$)/);
+    expect(grid).not.toMatch(/(?:^|;)\s*place-items\s*:/);
+
+    // No card re-stretches itself against the grid's choice.
+    for (const sel of [".heroLead", ".heroCard", ".heroCardLead"]) {
+      expect(ruleBody(sel)).not.toMatch(/(?:^|;)\s*(?:align|place)-self\s*:/);
+    }
+
+    // At <=900px the cards stretch as they always did, so the two-column
+    // tablet rows and the phone column keep their card heights.
+    const block = releaseBlock();
+    expect(ruleBody(".heroGrid", block)).toMatch(
+      /(?:^|;)\s*align-items\s*:\s*stretch\s*(?:;|$)/,
+    );
   });
 });
