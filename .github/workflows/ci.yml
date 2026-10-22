@@ -5357,6 +5357,9 @@ jobs:
 
       - name: "#10090 a lock-held KALSHI price row stamps the received quote; a restart cannot undo it (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        env:
+          EVENT_FRAME_REDIS_SERVER: ${{ runner.temp }}/held-row-redis/redislite/bin/redis-server
+          EVENT_FRAME_REDIS_REQUIRED: '1'
         run: |
           if python -m pytest tests/integration/test_kalshi_held_price_row_10090_pg.py \
             tests/integration/test_kalshi_floor_deferred_owed_held_stamp_10090_pg.py \
