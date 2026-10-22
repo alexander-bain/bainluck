@@ -63,6 +63,19 @@ MAX_CATALOG_FRAME_BYTES = 16 << 20
 #: How often the child reports its client's ``stats`` (connection, coverage).
 STATS_SECONDS = 5.0
 
+#: #10663 — how often the child hands its freed C heap back (``malloc_trim``).
+#: The two venue processes trim after each catalog refresh (#11218); this child
+#: never did. Its frees come from no single refresh. Each of ~133 shards can
+#: hold ``max_queue`` + 1 messages of up to ``MAX_MESSAGE_BYTES`` while the
+#: parent is slow, and a restarted shard is re-sent its books. So it trims on
+#: a timer. Retained captures K5–K8 (10/21–22): both venue processes' post-trim
+#: RSS stayed flat, while dyno total minus both grew from ~245 MB to 434–474 MB
+#: and held all the swap. That remainder is this child plus the stdlib
+#: supervisor. Each trim logs ``arm=polymarket_open_receiver released=…``,
+#: which is the production reading. A trim of a ~400 MB heap took 2–13 ms in
+#: the venue processes.
+HEAP_TRIM_SECONDS = 60.0
+
 #: Shutdown bound for the child after its stdin closes; it has no drain.
 CHILD_EXIT_SECONDS = 5.0
 
@@ -323,8 +336,14 @@ def _kill(child) -> None:
             pass
 
 
-async def serve_receiver(client_cls, *, read_fd: int = 0, write_fd: int = 1) -> int:
+async def serve_receiver(
+    client_cls, *, read_fd: int = 0, write_fd: int = 1,
+    release_free_heap: Optional[Callable[[], Any]] = None,
+) -> int:
     """The child: one client, forwarding its prices/trades up the pipe.
+
+    ``release_free_heap`` runs every ``HEAP_TRIM_SECONDS`` (#10663). The entry
+    point passes ``app.utils.heap_trim``'s, loaded by path. It must not raise.
 
     Returns 0 when the parent closes the pipe, 1 when the client fails.
     """
@@ -361,8 +380,12 @@ async def serve_receiver(client_cls, *, read_fd: int = 0, write_fd: int = 1) -> 
     client.on_trade = lambda message: forward(TRADE, message)
 
     async def report():
+        trimmed_at = loop.time()
         while True:
             await forward(STATS, client.stats)
+            if release_free_heap is not None and loop.time() - trimmed_at >= HEAP_TRIM_SECONDS:
+                release_free_heap()
+                trimmed_at = loop.time()
             await asyncio.sleep(STATS_SECONDS)
 
     async def control():
