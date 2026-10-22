@@ -140,6 +140,20 @@ describe("#10346 fixture against its receipts", () => {
     expect([e.basis, e.probability, e.observed_at]).toEqual(["blend_mean", 0.0155, "2026-09-29T23:50:23.519482+00:00"]);
   });
 
+  it("each Rice contributor carries its OWN admitted clock from the excerpt, never a borrowed one", () => {
+    // lane1b A3 on c0: pin every contributor's instant against the excerpt, not just its id and value.
+    const served = artifact("served-admission-excerpt.json").after_player_props_rice_2plus.expectation;
+    const hr = preview().highlights[1];
+    const ms = (iso: string) => Math.floor(Date.parse(iso));
+    expect(ms(hr.before.observedAt)).toBe(ms(served.observed_at));
+    expect(hr.before.contributors).toHaveLength(served.contributors.length);
+    served.contributors.forEach((c: { outcome_id: number; probability: number; observed_at: string }, i: number) => {
+      const shown = hr.before.contributors[i];
+      expect([shown.outcomeId, shown.probability]).toEqual([c.outcome_id, c.probability]);
+      expect(ms(shown.observedAt)).toBe(ms(c.observed_at));
+    });
+  });
+
   it("labels phases, never clocks, and the recorded instants agree with them", () => {
     for (const h of preview().highlights) {
       expect(h.before.when).toBe("Pregame");
