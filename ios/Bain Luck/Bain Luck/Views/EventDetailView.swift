@@ -2128,10 +2128,8 @@ struct EventDetailView: View {
         let event = vm.headline(served)
         let hasScore = EventDetailView.showsScore(
             status: event.status, away: event.awayScore, home: event.homeScore)
-        guard liveForecast11296(event, hasScore: hasScore)?.baseline != nil,
-              let away = event.pregameProjection?.projectedAwayScore,
-              let home = event.pregameProjection?.projectedHomeScore else { return nil }
-        return (away: away, home: home)
+        return LivePregameComparison11296.servedHalves(
+            liveForecast11296(event, hasScore: hasScore), projection: event.pregameProjection)
     }
 
     /// #11296 — the same forecast on a live page the paired headline does not

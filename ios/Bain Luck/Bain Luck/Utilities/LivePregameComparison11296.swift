@@ -135,6 +135,17 @@ enum LivePregameComparison11296 {
             earliestCapturedAt: earliest, latestCapturedAt: latest, scheduledStart: boundary)
     }
 
+    /// #9483 A3 — the admitted retained pair's served halves, unrounded, for
+    /// the live Projected finish card: only when `headline` (decided from this
+    /// same `projection`) printed a baseline; nil otherwise. Nothing is
+    /// re-derived — `resolve` already refused any non-finite or non-positive half.
+    nonisolated static func servedHalves(_ headline: Headline?, projection p: PregameProjection?)
+        -> (away: Double, home: Double)? {
+        guard headline?.baseline != nil, let p, let away = p.projectedAwayScore,
+              let home = p.projectedHomeScore else { return nil }
+        return (away: away, home: home)
+    }
+
     /// The visible pair, away then home as the current figure reads, each score
     /// glued to its team by a no-break space.
     nonisolated static func pairText(_ c: Comparison, awayName: String, homeName: String) -> String {

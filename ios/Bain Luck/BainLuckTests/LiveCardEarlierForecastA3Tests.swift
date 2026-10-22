@@ -194,13 +194,50 @@ final class LiveCardEarlierForecastA3Tests: XCTestCase {
         XCTAssertTrue(page[body.upperBound...].hasPrefix(
             "letevent=vm.headline(served)"
             + "lethasScore=EventDetailView.showsScore(status:event.status,away:event.awayScore,home:event.homeScore)"
-            + "guardliveForecast11296(event,hasScore:hasScore)?.baseline!=nil,"
-            + "letaway=event.pregameProjection?.projectedAwayScore,"
-            + "lethome=event.pregameProjection?.projectedHomeScoreelse{returnnil}"
-            + "return(away:away,home:home)}"),
+            + "returnLivePregameComparison11296.servedHalves("
+            + "liveForecast11296(event,hasScore:hasScore),projection:event.pregameProjection)}"),
                       "exactly when the headline prints its admitted pair, that pair's served halves")
         XCTAssertEqual(page.components(separatedBy: "liveCardBaseline11296(").count - 1, 2, "defined once, read once")
         XCTAssertTrue(page.contains("liveBaseline:liveCardBaseline11296(event))"))
+    }
+
+    func testTheServedHalvesFollowTheHeadlinesOwnDecision() throws {
+        let p = PregameProjection(projectedHomeScore: 26.5, projectedAwayScore: 27.6,
+                                  kind: "last_before_scheduled_start",
+                                  earliestCapturedAt: "2026-10-19T23:00:00Z", latestCapturedAt: "2026-10-20T00:10:00Z",
+                                  boundary: "scheduled_start", boundaryAt: "2026-10-20T00:20:00Z", source: "sportsbooks",
+                                  basis: "consensus_spread_total", bookmakerCount: 7, unit: "points", period: "full_game")
+        let comparison = LivePregameComparison11296.Comparison(
+            label: FinalForecastComparison11296.label, away: 28, home: 27, bookmakerCount: 7,
+            earliestCapturedAt: Self.start, latestCapturedAt: Self.start, scheduledStart: Self.start)
+        let printed = try XCTUnwrap(Self.printed(), "control: an admitted current pair")
+        let halves = try XCTUnwrap(LivePregameComparison11296.servedHalves(
+            .init(current: printed, baseline: comparison), projection: p))
+        XCTAssertEqual(halves.away, 27.6, "unrounded, keyed by team")
+        XCTAssertEqual(halves.home, 26.5)
+        XCTAssertNil(LivePregameComparison11296.servedHalves(.init(current: printed, baseline: nil), projection: p),
+                     "no baseline printed, no halves")
+        XCTAssertNil(LivePregameComparison11296.servedHalves(nil, projection: p), "no headline, no halves")
+        XCTAssertNil(LivePregameComparison11296.servedHalves(.init(current: printed, baseline: comparison),
+                                                             projection: nil))
+        // The page's one read of the in-play pair stays the only one (#8617).
+        let page = try source("Views/EventDetailView.swift")
+        XCTAssertEqual(page.components(separatedBy: "projectedHomeScore").count - 1, 1)
+    }
+
+    /// An admitted in-play pair, as `LiveProjectedFinal2920.page` hands it on
+    /// (the 11296 suite's own shape).
+    private static func printed() -> LiveProjectedFinalAdmission2920.Printed? {
+        typealias A = LiveProjectedFinalAdmission2920
+        return A.Printed(
+            label: "Projected final", home: 30, away: 19,
+            admitted: A.AdmittedPair(
+                home: 29.5, away: 19.0,
+                provenance: A.Provenance(
+                    bookmakerCount: 2, scheduledStart: start,
+                    earliestConfirmedAt: start.addingTimeInterval(2460),
+                    latestCapturedAt: start.addingTimeInterval(2460),
+                    unit: .points, period: .fullGame)))
     }
 
     // MARK: - Caption hierarchy
