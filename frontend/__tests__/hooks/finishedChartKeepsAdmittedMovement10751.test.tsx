@@ -301,7 +301,7 @@ afterEach(() => {
 describe("structural pin: the harness carries the page's own composition", () => {
   it("app/events/[id]/page.tsx still reads as the lines ChartPage mounts", () => {
     expect(PAGE).toContain("const quoteEligible = canSubscribeEventQuotes(event);");
-    expect(PAGE).toMatch(/chartPoints,\s*status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl\);/);
+    expect(PAGE).toMatch(/chartPoints,\s*status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl, event\?\.blend_fold_revision\);/);
     expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined \|\| frameCarriesUnpricedSnapshot\(liveFrame\)\) return;\s*(?:\/\/[^\n]*\n\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*let sourceAdded = false;\s*pairJournalRef\.current\?\.record\(\(prev\) => applyLiveFrame\(prev, frame\)\);\s*void refreshEvent\(/);
     expect(PAGE.match(/const adopted = applyLiveFrameRail\(prev, frame\);/g)).toHaveLength(1);
     expect(PAGE).toMatch(/applyLiveFrameRail\(prev, frame\);[^]{0,600}\{ revalidate: false \}/);
