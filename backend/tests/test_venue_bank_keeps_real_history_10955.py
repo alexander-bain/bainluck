@@ -156,6 +156,41 @@ class TestTheJoint:
         assert quiet_from in stamps and after[0][0] in stamps
         assert not [t for t in stamps if quiet_from < t < after[0][0]]
 
+    def test_the_last_point_before_a_silence_is_kept_and_the_drawn_gap_is_the_venues(self):
+        """lane1b R1(a): flat hourly, observed up to T+11 h after the last kept
+        point, silent until T+40 h. 869bc dropped T+11 h and drew a 40 h gap over
+        a 29 h venue silence."""
+        start = NOW - timedelta(days=100)
+        lead = start + timedelta(days=50, hours=11)
+        trail = start + timedelta(days=50, hours=40)
+        flat = [(start + timedelta(hours=h), 0.4) for h in range(24 * 50 + 12)]
+        flat += [(start + timedelta(days=50, hours=h), 0.4) for h in range(40, 24 * 50)]
+        assert flat[24 * 50 + 11][0] == lead
+        kept = fcs.compact_series(flat, target_points=80, max_joint_s=JOINT)
+        stamps = [t for t, _ in kept]
+        assert lead in stamps and trail in stamps
+        drawn = trail - max(t for t in stamps if t < trail)
+        assert drawn == trail - lead == timedelta(hours=29)
+
+    @pytest.mark.parametrize("seed", range(4))
+    def test_irregular_spacing_never_joins_wider_than_the_joint(self, seed):
+        """lane1b R1(b): 1–7 h venue spacing (largest venue gap 7 h, under the
+        joint). 869bc kept joints up to 18 h, so a uniform-hourly test could not
+        see the heartbeat landing past the joint."""
+        rng = random.Random(seed)
+        t, value, points = NOW - timedelta(days=200), 0.4, []
+        while t < NOW - timedelta(days=1):
+            t += timedelta(hours=rng.choice((1, 1, 1, 2, 3, 5, 7)))
+            if rng.random() >= 0.9:
+                value = round(value + rng.choice((-0.01, 0.01)), 2)
+            points.append((t, value))
+        assert max((b[0] - a[0]).total_seconds() for a, b in zip(points, points[1:])) <= 7 * 3600
+        for kept in (
+            fcs.compact_series(points, target_points=80, max_joint_s=JOINT),
+            fcs.compact_by_band(points, NOW, max_joint_s=JOINT),
+        ):
+            assert max((b[0] - a[0]).total_seconds() for a, b in zip(kept, kept[1:])) <= JOINT
+
     def test_the_bank_compacts_with_the_joint(self, monkeypatch):
         seen = {}
         real = fcs.compact_by_band

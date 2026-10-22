@@ -644,6 +644,21 @@ def compact_series(
         is_edge = index == 0 or index == len(pts) - 1
         changed = last_value is None or value != last_value
         stale = last_ts is None or (ts - last_ts).total_seconds() >= heartbeat
+        # LOOK AHEAD, under a joint only (lane1b's R1). `stale` keeps the first
+        # point AT OR PAST the heartbeat, so on irregular spacing a kept joint
+        # could reach heartbeat + the venue's own spacing there, and the last
+        # point before a venue silence was dropped — drawing hours the venue
+        # observed as part of its silence. Keep a point whenever the NEXT one
+        # would sit further than the joint from the last kept point: every joint
+        # is then within it unless the venue's own spacing is wider, and both
+        # edges of a wider silence survive.
+        if (
+            max_joint_s is not None
+            and not is_edge
+            and last_ts is not None
+            and (pts[index + 1][0] - last_ts).total_seconds() > max_joint_s
+        ):
+            stale = True
         if is_edge or changed or stale:
             if kept and kept[-1][0] == ts:
                 continue
