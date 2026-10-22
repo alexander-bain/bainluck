@@ -5,12 +5,23 @@
  * full catalogue one tap away. Renders only what `highlightsPreviewFor` returns;
  * see `lib/eventHighlightsPreview.ts` for the evidence and what the copy may not
  * say. Phone: a swipeable row. Wider screens: three columns.
+ *
+ * Every card has the same anatomy (Design, 2026-10-22): subject, the official
+ * fact, one short supporting line, its graphic, the chance(s) with their phase,
+ * then ONE "Sources" fold at the card's foot holding the providers, contributors
+ * and recorded times. A closed card carries no provider or clock rows; the
+ * series card alone keeps a visible recorded-day cue so its after-game number
+ * cannot read as current. Cards stretch to the row and the fold sits at the
+ * foot, so a short card has no blank pocket under it on the phone and its fold
+ * lines up with its neighbours'. No clamp, truncation or fixed height: large
+ * text grows the card.
  */
 
 import {
   ALL_MARKETS_ANCHOR_ID,
   formatQuotePercent,
   formatRecordedAt,
+  formatRecordedDays,
   sourceMark,
   type CountVisual,
   type EventHighlight,
@@ -44,7 +55,7 @@ function CountMarks({ visual }: { visual: CountVisual }) {
               data-mark={i < visual.actual ? "hit" : "open"}
             />
             {visual.marks?.[i] && (
-              <div className="mt-1 truncate text-[11px] text-text-secondary">{visual.marks[i]}</div>
+              <div className="mt-1 break-words text-[11px] leading-tight text-text-secondary">{visual.marks[i]}</div>
             )}
           </div>
         ))}
@@ -59,47 +70,66 @@ function CountMarks({ visual }: { visual: CountVisual }) {
   );
 }
 
-/** One chance on the shared 0–100% scale, labelled with its phase and recorded time. */
+/**
+ * One chance on the shared 0–100% scale, labelled with its phase. Provenance
+ * lives in Sources. Its three cells join the card's one chance grid (the row
+ * itself is `display: contents`), so paired bars share one track by
+ * construction at every text size. When the card is too narrow for three
+ * columns at the reader's text size, the phase moves onto its own line above
+ * its bar and number — still visible, never squeezed out.
+ */
 function ChanceRow({ quote }: { quote: HighlightQuote }) {
   const pct = formatQuotePercent(quote.probability, quote.whole);
   return (
-    <div data-when={quote.when}>
-      {/* Fixed label and number columns, so paired bars start and scale together. */}
-      <div className="grid grid-cols-[5.5rem_minmax(0,1fr)_3.75rem] items-center gap-2">
-        <span className="text-xs font-medium text-text-secondary">{quote.when}</span>
-        <div className="h-1.5 rounded-full bg-surface-elevated" aria-hidden="true">
-          <div
-            className="h-1.5 rounded-full bg-accent-brand/60"
-            style={{ width: `${Math.max(0, Math.min(1, quote.probability)) * 100}%` }}
-          />
-        </div>
-        <span className="text-right text-lg font-semibold tabular-nums text-text-primary">{pct}</span>
+    <div data-when={quote.when} className="contents">
+      <span className="text-xs font-medium text-text-secondary [@container(max-width:14rem)]:col-span-2">{quote.when}</span>
+      <div className="h-1.5 rounded-full bg-surface-elevated" aria-hidden="true">
+        <div
+          className="h-1.5 rounded-full bg-accent-brand/60"
+          style={{ width: `${Math.max(0, Math.min(1, quote.probability)) * 100}%` }}
+        />
       </div>
-      <div className="text-[11px] text-text-muted">
-        {sourceMark(quote)} ·{" "}
-        <time dateTime={quote.observedAt} title={`${quote.observedAt.replace("T", " ").slice(0, 19)} UTC`}>
-          {formatRecordedAt(quote.observedAt)}
-        </time>
-      </div>
+      <span className="whitespace-nowrap text-right text-lg font-semibold tabular-nums text-text-primary">{pct}</span>
     </div>
   );
 }
 
-/** Exact-source details, only where the shown number combines more than one source. */
-function Sources({ quotes }: { quotes: readonly HighlightQuote[] }) {
-  const combined = quotes.filter((q) => q.contributors.length > 1);
-  if (combined.length === 0) return null;
+/** A recorded instant in the reader's zone; the exact UTC instant, labelled, on hover. */
+function Recorded({ iso }: { iso: string }) {
   return (
-    <details className="text-[11px] text-text-muted">
+    <time dateTime={iso} title={`${iso.replace("T", " ").slice(0, 19)} UTC`}>
+      {formatRecordedAt(iso)}
+    </time>
+  );
+}
+
+/**
+ * The card's one exact-source fold: each shown number with its source and
+ * recorded time, and every contributor when a number combines more than one.
+ */
+function Sources({ quotes, note }: { quotes: readonly HighlightQuote[]; note?: string }) {
+  return (
+    <details className="mt-auto text-[11px] text-text-muted" data-sources>
       <summary className="cursor-pointer">Sources</summary>
       <ul className="mt-1 space-y-0.5">
-        {combined.flatMap((q) =>
-          q.contributors.map((c) => (
-            <li key={`${q.when}-${c.outcomeId}`}>
-              {q.when} · {c.source} {formatQuotePercent(c.probability)} ·{" "}
-              <time dateTime={c.observedAt}>{formatRecordedAt(c.observedAt)}</time>
+        {note && <li>{note}</li>}
+        {quotes.map((q) =>
+          q.contributors.length > 1 ? (
+            <li key={q.when}>
+              {q.when} {formatQuotePercent(q.probability, q.whole)} combines:
+              <ul className="pl-3">
+                {q.contributors.map((c) => (
+                  <li key={c.outcomeId}>
+                    {c.source} {formatQuotePercent(c.probability)} · <Recorded iso={c.observedAt} />
+                  </li>
+                ))}
+              </ul>
             </li>
-          )),
+          ) : (
+            <li key={q.when}>
+              {q.when} {formatQuotePercent(q.probability, q.whole)} · {sourceMark(q)} · <Recorded iso={q.observedAt} />
+            </li>
+          ),
         )}
       </ul>
     </details>
@@ -120,13 +150,27 @@ function HighlightCard({ highlight }: { highlight: EventHighlight }) {
         <p className="mt-0.5 text-sm text-text-secondary">{highlight.detail}</p>
       </div>
       {visual && <CountMarks visual={visual} />}
-      <div className="flex flex-col gap-2" data-visual={after ? "paired" : "chance"}>
+      <div className="flex flex-col gap-2 [container-type:inline-size]" data-visual={after ? "paired" : "chance"}>
         <div className="text-xs font-medium text-text-primary">Chance of {before.question}</div>
-        {quotes.map((q) => (
-          <ChanceRow key={q.when} quote={q} />
-        ))}
+        {/* One grid for every chance on the card: the label column wraps between words, the
+            bar keeps a visible minimum, the number column fits the widest value. Narrower
+            than 14rem (a width that grows with the reader's text size), the label takes
+            its own line and the bar and number share the row beneath it. */}
+        <div
+          className="grid grid-cols-[minmax(min-content,5.5rem)_minmax(2.5rem,1fr)_auto] items-center gap-2 [@container(max-width:14rem)]:grid-cols-[minmax(2.5rem,1fr)_auto] [@container(max-width:14rem)]:gap-y-1"
+          data-chance-grid
+        >
+          {quotes.map((q) => (
+            <ChanceRow key={q.when} quote={q} />
+          ))}
+        </div>
+        {after && (
+          <div className="text-[11px] text-text-muted" data-recorded-days>
+            Recorded {formatRecordedDays(quotes.map((q) => q.observedAt))}
+          </div>
+        )}
       </div>
-      <Sources quotes={quotes} />
+      <Sources quotes={quotes} note={highlight.sourceNote} />
     </li>
   );
 }
@@ -150,7 +194,7 @@ export default function EventHighlightsPreview({
         </h2>
         <span className="text-[11px] text-text-muted">{preview.officialSource}</span>
       </div>
-      <ol className="-mx-4 mt-3 flex items-start snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 md:mx-0 md:grid md:grid-cols-3 md:items-start md:overflow-visible md:px-0">
+      <ol className="-mx-4 mt-3 flex items-stretch snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 md:mx-0 md:grid md:grid-cols-3 md:items-stretch md:overflow-visible md:px-0">
         {preview.highlights.map((highlight) => (
           <HighlightCard key={highlight.id} highlight={highlight} />
         ))}

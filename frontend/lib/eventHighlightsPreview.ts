@@ -29,12 +29,20 @@
  *       ask 82) recorded 2026-09-30T03:55:42.969Z, the first stored row after
  *       the final out. Same outcome id both times.
  *
+ * TIMES are the READER's: every recorded instant prints in the viewer's own time
+ * zone with its zone named ("29 Sep, 4:52 PM PDT"), through the platform's one
+ * precise-stamp formatter, the convention the page's chart and the app already
+ * use (Design, 2026-10-22). Each observation keeps its own instant; nothing
+ * borrows another row's clock, and no stamp is relabelled as a first-pitch time.
+ *
  * WHAT THE COPY MAY NOT SAY: any clock interval ("N min before first pitch",
  * "after the final out") — the reader sees "Pregame" / "After Game 1" and the
  * recorded time; "exactly two homers"; "the win moved the series by N points"
  * (after Game 1, not because of it); a present-tense series standing; contract
  * mechanics (bids, asking prices); or anything about Game 2.
  */
+
+import { preciseObservedAt } from "@/lib/liquidity";
 
 export const HIGHLIGHTS_PREVIEW_PARAM = "highlights";
 export const HIGHLIGHTS_PREVIEW_VALUE = "preview";
@@ -84,6 +92,8 @@ export interface EventHighlight {
   /** The official fact. */
   headline: string;
   detail: string;
+  /** Extra dated context for the Sources fold (never on the closed card). */
+  sourceNote?: string;
   /** Count stories show the result against the line; the series story pairs two chances. */
   visual?: CountVisual;
   before: HighlightQuote;
@@ -123,9 +133,9 @@ const BOS_NYY_WILD_CARD_G1: EventHighlightsPreview = {
     {
       id: "rice-2hr",
       subject: "Ben Rice",
-      headline: "Rice homered twice, the second a grand slam",
-      detail: "4 for 5; drove in 6 of the Yankees' 9 runs",
-      visual: { kind: "count", unit: "home run", actual: 2, line: 2, marks: ["5th", "8th · slam"] },
+      headline: "Rice homered twice",
+      detail: "4 hits · 6 RBI",
+      visual: { kind: "count", unit: "home run", actual: 2, line: 2, marks: ["5th", "8th · grand slam"] },
       before: {
         when: "Pregame",
         question: "2+ home runs",
@@ -143,8 +153,9 @@ const BOS_NYY_WILD_CARD_G1: EventHighlightsPreview = {
     {
       id: "nyy-series-g1",
       subject: "Yankees",
-      headline: "Yankees won Game 1, 9–0",
-      detail: "Yankees led the best-of-three 1–0 after Game 1",
+      headline: "Series win chance rose",
+      detail: "Yankees led 1–0 after Game 1",
+      sourceNote: "Game 1 of the best-of-three: Yankees 9, Red Sox 0",
       before: {
         when: "Pregame",
         question: "the Yankees winning the series",
@@ -196,17 +207,47 @@ export function formatQuotePercent(probability: number, whole = false): string {
   return `${Number.isInteger(pct) ? pct.toFixed(0) : pct.toFixed(1)}%`;
 }
 
-const RECORDED = new Intl.DateTimeFormat("en-US", {
-  timeZone: "America/New_York",
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
+/** The reader's own short zone name for this instant ("PDT", "EDT", "UTC"). */
+function readerZone(at: Date): string {
+  return (
+    new Intl.DateTimeFormat("en-US", { timeZoneName: "short" })
+      .formatToParts(at)
+      .find((p) => p.type === "timeZoneName")?.value ?? ""
+  );
+}
 
-/** "Sep 29, 7:52 PM ET" — the local time at the ballpark the value was recorded. */
+/**
+ * "29 Sep, 4:52 PM PDT" — the recorded instant in the READER's time zone, named.
+ * Delegates to `preciseObservedAt`, the one precise-stamp formatter web has
+ * (#6343), so the card and the chart spell one instant one way.
+ */
 export function formatRecordedAt(iso: string): string {
-  return `${RECORDED.format(new Date(iso))} ET`;
+  const stamp = preciseObservedAt(iso) ?? iso;
+  const zone = readerZone(new Date(iso));
+  return zone ? `${stamp} ${zone}` : stamp;
+}
+
+/** "29 Sep" or "29–30 Sep" — the reader-local day(s) these instants were recorded on. */
+export function formatRecordedDays(isos: readonly string[]): string {
+  const days = Array.from(
+    new Map(
+      isos
+        .map((iso) => new Date(iso))
+        .sort((a, b) => a.getTime() - b.getTime())
+        .map((at) => {
+          const day = at.toLocaleString("en-US", { day: "numeric" });
+          const month = at.toLocaleString("en-US", { month: "short" });
+          return [`${day} ${month}`, { day, month }] as const;
+        }),
+    ).values(),
+  );
+  if (days.length === 0) return "";
+  const first = days[0];
+  const last = days[days.length - 1];
+  if (days.length === 1) return `${first.day} ${first.month}`;
+  return first.month === last.month
+    ? `${first.day}–${last.day} ${last.month}`
+    : `${first.day} ${first.month} – ${last.day} ${last.month}`;
 }
 
 /** "Kalshi" or "Kalshi + Polymarket" — the short source mark. */
