@@ -85,8 +85,14 @@ const BASE = {
  * suite would pass while asserting nothing about the arm it was written for.
  */
 function event(opts: { stampAgeMs: number; status?: string; commenceInMs?: number }) {
+  const observedAt = new Date(Date.now() - opts.stampAgeMs).toISOString();
   return {
     ...BASE,
+    // The detail response owns this selected blend, not merely a source row.
+    hero_probability: 0.48,
+    hero_probability_away: 0.52,
+    hero_probability_source: "blend",
+    hero_probability_observed_at: observedAt,
     ...(opts.status ? { status: opts.status } : {}),
     ...(opts.commenceInMs === undefined
       ? {}
@@ -97,7 +103,7 @@ function event(opts: { stampAgeMs: number; status?: string; commenceInMs?: numbe
         display_name: "Kalshi",
         type: "market",
         color: "#22c55e",
-        updated_at: new Date(Date.now() - opts.stampAgeMs).toISOString(),
+        updated_at: observedAt,
       },
     },
   };
@@ -177,6 +183,21 @@ describe("#5039 the polled live header says how old its number is", () => {
     expect(status).toContain("8s ago");
     // #10200: no seconds in the headline any more.
     expect(html).not.toContain(AGE);
+  });
+
+  it("does not borrow a source clock when the detail has no selected probability", () => {
+    eventPayload = {
+      ...event({ stampAgeMs: 8_000 }),
+      hero_probability: undefined, hero_probability_away: undefined,
+      hero_probability_source: undefined, hero_probability_observed_at: undefined,
+    };
+    const html = draw();
+    expect(html).toContain('data-probability=""');
+    expect(html).toContain("Probability observed</dt><dd><span>Time unavailable</span>");
+    expect(html).toContain('data-observation-at=""');
+    expect(html).toContain('data-observation-count="0"');
+    expect(html).not.toContain("8s ago");
+    expect(html).toContain(PROMISE);
   });
 
   it("does not take the countdown away to do it", () => {
