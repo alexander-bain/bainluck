@@ -39,11 +39,14 @@ interface SettledPathChartProps {
   championName?: string | null;
 }
 
-/** Last non-null probability of a series (its "current"/final value). */
+/** Last non-null probability of a series (its "current"/final value). #10955:
+ *  a settlement point is the result, not a reading — skipped, so evidenced
+ *  losers rank by their last real price instead of tying at 0. */
 function lastProbOf(o: FuturesOutcomeHistory): number {
   for (let i = o.history.length - 1; i >= 0; i--) {
-    const p = o.history[i]?.probability;
-    if (p != null) return p;
+    const point = o.history[i];
+    if (!point || isSettlementPoint(point)) continue;
+    if (point.probability != null) return point.probability;
   }
   return -1;
 }
