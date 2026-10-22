@@ -1715,11 +1715,14 @@ def test_successful_unknown_recovery_still_takes_full_master_tests_on_historical
 def test_historical_failed_check_refusal_stays_byte_identical():
     source = SCRIPT.read_text()
     assert 'api.pages(f"commits/{head}/check-runs?filter=all", "check_runs")' in source
-    assert """        require(
+    assert (
+        """        require(
             check["conclusion"] != "failure"
             and not REFUSAL.search((check.get("output") or {}).get("title") or ""),
             "security/check refusal",
-        )""" in source
+        )"""
+        in source
+    )
 
 
 def test_rerunning_only_one_language_cannot_pay_current_security_attempt():
@@ -2168,9 +2171,20 @@ def test_successful_snapshot_cannot_arrive_after_original_deadline(monkeypatch):
 
 
 def run_readiness_api(
-    monkeypatch, *, queued_reads=1, pending_reads=0, latency=0, attempt=1
+    monkeypatch,
+    *,
+    queued_reads=99,
+    pending_reads=0,
+    latency=0,
+    attempt=1,
+    witness=True,
 ):
-    """The real qualifier reads its own run; the first reads say `queued`."""
+    """The real qualifier reads its own run; the first reads say `queued`.
+
+    With `witness`, the jobs carry the real jobs-API identity fields and the
+    producer's own job is executing, as 39793061366's JavaScript job was when
+    its qualifier read the run `queued` (#11445).
+    """
     api, clock = readiness_api(monkeypatch, pending_reads=pending_reads)
     if attempt != 1:
         api.current["run_attempt"] = attempt
@@ -2178,6 +2192,15 @@ def run_readiness_api(
         api.proof["attempt"] = attempt
         for job in api.current_jobs:
             job["run_attempt"] = attempt
+    if witness:
+        for job in api.current_jobs:
+            job.update(
+                run_id=110,
+                head_sha=HEAD,
+                head_branch=BRANCH,
+                started_at="2026-10-15T22:29:00Z",
+            )
+        api.current_jobs[0].update(status="in_progress", conclusion=None)
     original = api.get
     api.run_reads = 0
     api.mutate_run = lambda run, index: None
@@ -2196,121 +2219,220 @@ def run_readiness_api(
     return api, clock
 
 
+@pytest.mark.parametrize("attempt", [1, 2])
 @pytest.mark.parametrize(
-    "queued_reads,waits",
-    [(0, []), (1, [1]), (3, [1, 2, 4]), (8, [1, 2, 4] + [4] * 5)],
+    "pending_reads,waits", [(0, []), (3, [1, 2, 4]), (18, [1, 2, 4] + [4] * 15)]
 )
-def test_run_level_queued_read_of_the_running_attempt_waits_then_qualifies(
-    monkeypatch, capsys, queued_reads, waits
+def test_run_queued_for_the_whole_budget_qualifies_only_on_its_live_own_job_witness(
+    monkeypatch, capsys, attempt, pending_reads, waits
 ):
-    """#11445: master 40fb61c6e3 CodeQL 39793061366 attempt 1 JavaScript refused
-    at run-validation with the run read `status=queued conclusion=null` while
-    its own analyze job was running. A validated queued read is rereaded until
-    the run reads in_progress, then every existing check runs as before."""
-    api, clock = run_readiness_api(monkeypatch, queued_reads=queued_reads)
+    """#11445: master 40fb61c6e3 CodeQL 39793061366 JavaScript read its run
+    `status=queued conclusion=null` 5 and 10 minutes into attempts 1 and 2
+    while its own job ran. Here every run read is queued for the whole 75 s
+    decision window; only the producer's own executing job and its completed
+    analysis step, read fresh and rebound at the final reread, let every
+    existing check run and pay."""
+    api, clock = run_readiness_api(
+        monkeypatch, pending_reads=pending_reads, attempt=attempt
+    )
     receipt = api.qualify()
     assert receipt["qualified"] is True and receipt["qualification"] == "PASS"
-    assert clock.waits == waits and api.job_reads == 1
-    # queued reads + the in_progress validation read + the existing reread.
-    assert api.run_reads == queued_reads + 2
-    assert clock.now < api.deadline == 175.0
+    assert receipt["attempt"] == attempt and receipt["baseline"]["run_id"] == 90
+    assert receipt["delta"] is not None
+    assert clock.waits == waits and clock.now < api.deadline == 175.0
+    # One validated run read, then the existing final reread; both queued.
+    assert api.run_reads == 2
+    # Witness reads until the step completes, then exactly one rebind read.
+    assert api.job_reads == pending_reads + 2
     lines = capsys.readouterr().out.splitlines()
-    validations = [x for x in lines if "CHECKPOINT run-validation " in x]
-    assert sum("status=queued" in x for x in validations) == queued_reads
-    assert [x for x in lines if "run-readiness-wait" in x] == [
-        f"SECURITY CHECKPOINT run-readiness-wait read_count={i + 1} "
-        f"wait_seconds={delay}"
-        for i, delay in enumerate(waits)
+    assert not [x for x in lines if "run-readiness-wait" in x]
+    assert [x for x in lines if "CHECKPOINT run-validation " in x] == [
+        f"SECURITY CHECKPOINT run-validation attempt={attempt} conclusion=null "
+        f"expected_attempt={attempt} run_id=110 status=queued"
     ]
+    assert [x for x in lines if "CHECKPOINT run-revalidation " in x] == [
+        f"SECURITY CHECKPOINT run-revalidation attempt={attempt} conclusion=null "
+        f"expected_attempt={attempt} run_id=110 status=queued"
+    ]
+    assert [x for x in lines if "liveness-witness" in x] == [
+        f"SECURITY CHECKPOINT liveness-witness conclusion=null "
+        f"job_attempt={attempt} job_id=800 status=in_progress"
+    ] * (pending_reads + 1)
+    order = [x.split()[2] for x in lines if x.startswith("SECURITY CHECKPOINT ")]
+    tail = ["analysis-reread", "run-reread", "run-revalidation", "liveness-rebind"]
+    assert order[-5:] == tail + ["qualified"]
+    for paid in ("upload-window", "candidate-snapshot", "baseline", "alert-comparison"):
+        assert paid in order
 
 
-def test_run_queued_on_a_rerun_attempt_waits_only_for_that_attempt(monkeypatch):
-    api, clock = run_readiness_api(monkeypatch, queued_reads=2, attempt=2)
-    assert api.qualify()["qualified"] is True
-    assert clock.waits == [1, 2] and api.run_reads == 4
+def test_queued_run_without_a_live_own_job_never_pays(monkeypatch):
+    """A queued read alone is never paid: jobs that do not carry the witness
+    refuse at the first jobs read, with no wait."""
+    api, clock = run_readiness_api(monkeypatch, witness=False)
+    with pytest.raises(ValueError, match="liveness witness unpaid"):
+        api.qualify()
+    assert clock.waits == [] and api.run_reads == 1 and api.job_reads == 1
 
 
-@pytest.mark.parametrize("queued_reads", [20, 99])
-def test_endless_run_queued_refuses_at_the_original_deadline(monkeypatch, queued_reads):
-    api, clock = run_readiness_api(monkeypatch, queued_reads=queued_reads)
+def test_queued_run_with_endless_pending_analysis_refuses_at_the_one_deadline(
+    monkeypatch,
+):
+    api, clock = run_readiness_api(monkeypatch, pending_reads=99)
     with pytest.raises(ValueError, match="decision deadline"):
         api.qualify()
-    assert clock.waits == [1, 2, 4] + [4] * 16 and api.run_reads == 20
-    assert api.job_reads == 0 and clock.now == 171.0 and api.deadline == 175.0
+    assert clock.waits == [1, 2, 4] + [4] * 16 and api.job_reads == 20
+    assert api.run_reads == 1 and clock.now == 171.0 and api.deadline == 175.0
 
 
-def test_run_queued_never_pays_on_a_frozen_clock(monkeypatch):
-    api, clock = run_readiness_api(monkeypatch, queued_reads=99)
+def test_queued_run_never_pays_a_pending_analysis_on_a_frozen_clock(monkeypatch):
+    api, clock = run_readiness_api(monkeypatch, pending_reads=99)
     monkeypatch.setattr(evidence.time, "sleep", clock.waits.append)
-    with pytest.raises(ValueError, match="producer attempt unpaid"):
+    with pytest.raises(ValueError, match="analysis step is unpaid"):
         api.qualify()
-    assert clock.waits == [1, 2, 4] + [4] * 17 and api.run_reads == 21
-    assert api.job_reads == 0 and clock.now == 100.0
+    assert clock.waits == [1, 2, 4] + [4] * 17 and api.job_reads == 21
+    assert api.run_reads == 1 and clock.now == 100.0
 
 
-def test_run_read_time_counts_toward_the_same_deadline(monkeypatch):
-    api, clock = run_readiness_api(monkeypatch, queued_reads=99, latency=3)
-    with pytest.raises(ValueError, match="decision deadline"):
-        api.qualify()
-    # Each run read costs 3 s: reads end at 103, 107, 112, then every 7 s to
-    # 168; the read started at 172 ends at the deadline and is refused.
-    assert clock.waits == [1, 2, 4] + [4] * 8 and api.run_reads == 12
-    assert api.job_reads == 0 and clock.now == 175.0
+def _witness_fault(jobs, fault):
+    own, sibling = jobs[0], jobs[1]
+    step = own["steps"][0]
+    if fault == "own-job-missing":
+        own["name"] = "Analyze (ruby)"
+    elif fault == "own-job-duplicated":
+        sibling["name"] = own["name"]
+    elif fault == "foreign-run":
+        own["run_id"] = 111
+    elif fault == "foreign-sibling-run":
+        sibling["run_id"] = 111
+    elif fault == "foreign-head":
+        own["head_sha"] = BASE
+    elif fault == "foreign-sibling-head":
+        sibling["head_sha"] = BASE
+    elif fault == "foreign-branch":
+        own["head_branch"] = "master"
+    elif fault == "missing-run-id":
+        del own["run_id"]
+    elif fault == "moved-attempt":
+        for job in jobs:
+            job["run_attempt"] += 1
+    elif fault == "mixed-attempt":
+        sibling["run_attempt"] += 1
+    elif fault == "job-failed":
+        own.update(status="completed", conclusion="failure")
+    elif fault == "job-cancelled":
+        own.update(status="completed", conclusion="cancelled")
+    elif fault == "job-no-longer-executing":
+        own.update(status="completed", conclusion="success")
+    elif fault == "job-not-started":
+        own.update(status="queued", conclusion=None, started_at=None)
+    elif fault == "job-start-missing":
+        own["started_at"] = None
+    elif fault == "job-start-malformed":
+        own["started_at"] = "not-a-timestamp"
+    elif fault == "job-started-after-analysis":
+        own["started_at"] = "2026-10-15T22:31:00Z"
+    elif fault == "analysis-missing":
+        step["name"] = "Upload results"
+    elif fault == "analysis-failed":
+        step.update(status="completed", conclusion="failure")
+    elif fault == "analysis-cancelled":
+        step.update(status="completed", conclusion="cancelled")
+    elif fault == "analysis-not-started":
+        step.update(status="queued", conclusion=None, completed_at=None)
+    else:
+        raise AssertionError(fault)
 
 
-def test_a_run_wait_never_starts_when_the_read_used_the_remaining_budget(
-    monkeypatch,
+MATRIX = "wrong producer matrix membership"
+MIXED = "mixed producer attempts"
+WITNESS = "producer liveness witness unpaid"
+JOB = "producer job belongs to an unpaid attempt"
+STEP = "producer analysis step is unpaid"
+WITNESS_FAULTS = {
+    "own-job-missing": MATRIX,
+    "own-job-duplicated": MATRIX,
+    "foreign-run": WITNESS,
+    "foreign-sibling-run": WITNESS,
+    "foreign-head": WITNESS,
+    "foreign-sibling-head": WITNESS,
+    "foreign-branch": WITNESS,
+    "missing-run-id": "run_id",
+    "moved-attempt": MIXED,
+    "mixed-attempt": MIXED,
+    "job-failed": JOB,
+    "job-cancelled": JOB,
+    "job-no-longer-executing": WITNESS,
+    "job-not-started": JOB,
+    "job-start-missing": WITNESS,
+    "job-start-malformed": "isoformat",
+    "job-started-after-analysis": WITNESS,
+    "analysis-missing": STEP,
+    "analysis-failed": STEP,
+    "analysis-cancelled": STEP,
+    "analysis-not-started": STEP,
+}
+
+
+@pytest.mark.parametrize("fault,refusal", WITNESS_FAULTS.items())
+def test_queued_run_witness_refuses_missing_foreign_moved_or_unpaid_job_at_once(
+    monkeypatch, capsys, fault, refusal
 ):
-    api, clock = run_readiness_api(monkeypatch, queued_reads=99, latency=3)
-    api.deadline = clock.now + 3.5
-    with pytest.raises(ValueError, match="decision deadline"):
+    api, clock = run_readiness_api(monkeypatch)
+    api.mutate_snapshot = lambda jobs, read: _witness_fault(jobs, fault)
+    with pytest.raises((ValueError, KeyError), match=refusal):
         api.qualify()
-    assert clock.waits == [] and api.run_reads == 1 and clock.now == 103.0
+    assert clock.waits == [] and api.run_reads == 1 and api.job_reads == 1
+    assert "CHECKPOINT upload-lookup" not in capsys.readouterr().out
 
 
-def test_an_in_progress_run_cannot_arrive_after_original_deadline(monkeypatch, capsys):
-    api, clock = run_readiness_api(monkeypatch, queued_reads=0, latency=3)
-    api.deadline = clock.now + 3
-    with pytest.raises(ValueError, match="decision deadline"):
+@pytest.mark.parametrize(
+    "fault,refusal",
+    list(WITNESS_FAULTS.items())
+    + [
+        ("moved-job", "readiness identity moved"),
+        ("moved-step-number", "readiness identity moved"),
+        ("moved-step-start", "readiness identity moved"),
+        ("moved-completion", "liveness witness moved"),
+        ("analysis-pending-again", STEP),
+    ],
+)
+def test_final_queued_reread_refuses_unless_the_same_witness_rebinds_fresh(
+    monkeypatch, capsys, fault, refusal
+):
+    """The final reread is not skipped and does not reuse the first witness:
+    a fresh jobs read must show the same live job and the same completed
+    analysis step, on its first read, with no wait."""
+    api, clock = run_readiness_api(monkeypatch)
+
+    def mutate(jobs, read):
+        if read != 2:
+            return
+        own = jobs[0]
+        if fault == "moved-job":
+            own["id"] = 850
+        elif fault == "moved-step-number":
+            own["steps"][0]["number"] = 9
+        elif fault == "moved-step-start":
+            own["steps"][0]["started_at"] = "2026-10-15T22:29:30Z"
+        elif fault == "moved-completion":
+            own["steps"][0]["completed_at"] = "2026-10-15T22:58:00Z"
+        elif fault == "analysis-pending-again":
+            own["steps"][0].update(
+                status="in_progress", conclusion=None, completed_at=None
+            )
+        else:
+            _witness_fault(jobs, fault)
+
+    api.mutate_snapshot = mutate
+    with pytest.raises((ValueError, KeyError), match=refusal):
         api.qualify()
-    assert clock.waits == [] and api.run_reads == 1 and api.job_reads == 0
+    assert clock.waits == [] and api.run_reads == 2 and api.job_reads == 2
     out = capsys.readouterr().out
-    assert "CHECKPOINT run-validation" not in out
-    assert "CHECKPOINT repository-binding" not in out
+    assert "CHECKPOINT liveness-rebind" in out
+    assert "CHECKPOINT qualified" not in out
 
 
-def test_a_run_wait_spends_the_budget_already_used_not_a_fresh_one(monkeypatch):
-    api, clock = run_readiness_api(monkeypatch, queued_reads=99)
-    api.deadline = clock.now + 10  # 65 s of the 75 s already spent
-    with pytest.raises(ValueError, match="decision deadline"):
-        api.qualify()
-    assert clock.waits == [1, 2, 4] and api.run_reads == 4 and clock.now == 107.0
-
-
-def test_run_and_analysis_readiness_share_one_seventy_five_second_budget(
-    monkeypatch,
-):
-    """No second budget: the analysis wait starts where the run wait ended."""
-    api, clock = run_readiness_api(monkeypatch, queued_reads=10, pending_reads=99)
-    with pytest.raises(ValueError, match="decision deadline"):
-        api.qualify()
-    run_waits = [1, 2, 4] + [4] * 7  # 35 s; the run reads in_progress at 135
-    # Analysis rereads at 135, 136, 138, 142, ... 174; 174 + 4 is not < 175.
-    assert clock.waits == run_waits + [1, 2, 4] + [4] * 8
-    assert api.run_reads == 11 and api.job_reads == 12
-    assert clock.now == 174.0 and api.deadline == 175.0
-
-
-def test_run_then_analysis_late_completion_qualifies_inside_the_deadline(
-    monkeypatch,
-):
-    api, clock = run_readiness_api(monkeypatch, queued_reads=5, pending_reads=5)
-    assert api.qualify()["qualified"] is True
-    assert clock.waits == [1, 2, 4, 4, 4] * 2 and clock.now == 130.0
-    assert api.run_reads == 7 and api.job_reads == 6
-
-
-@pytest.mark.parametrize("index", [1, 6])
+@pytest.mark.parametrize("index", [1, 2])
 @pytest.mark.parametrize(
     "fault",
     [
@@ -2334,10 +2456,11 @@ def test_run_then_analysis_late_completion_qualifies_inside_the_deadline(
         "missing-conclusion",
     ],
 )
-def test_run_queued_wait_refuses_every_other_or_foreign_state_at_once(
-    monkeypatch, index, fault
+def test_queued_run_refuses_every_other_foreign_or_terminal_bad_state(
+    monkeypatch, capsys, index, fault
 ):
-    api, clock = run_readiness_api(monkeypatch, queued_reads=99)
+    """Read 1 is run-validation, read 2 the existing final reread."""
+    api, clock = run_readiness_api(monkeypatch)
 
     def mutate(run, read):
         if read != index:
@@ -2378,35 +2501,97 @@ def test_run_queued_wait_refuses_every_other_or_foreign_state_at_once(
     api.mutate_run = mutate
     with pytest.raises((ValueError, KeyError)):
         api.qualify()
-    assert clock.waits == [1, 2, 4, 4, 4][: index - 1]
-    assert api.run_reads == index and api.job_reads == 0
+    assert clock.waits == [] and api.run_reads == index
+    assert api.job_reads == index - 1
+    assert "CHECKPOINT qualified" not in capsys.readouterr().out
 
 
-def test_run_queued_at_the_existing_reread_still_refuses(monkeypatch):
-    """Only run-validation readiness changed; the final reread does not wait."""
+def test_final_queued_reread_after_an_in_progress_read_needs_a_fresh_witness(
+    monkeypatch,
+):
     api, clock = run_readiness_api(monkeypatch, queued_reads=0)
+    api.mutate_run = lambda run, read: (
+        run.update(status="queued", conclusion=None) if read == 2 else None
+    )
+    assert api.qualify()["qualified"] is True
+    assert clock.waits == [] and api.run_reads == 2 and api.job_reads == 2
 
-    def requeue(run, read):
-        if read == 2:
-            run.update(status="queued", conclusion=None)
 
-    api.mutate_run = requeue
-    with pytest.raises(ValueError, match="producer attempt unpaid"):
+def test_final_queued_reread_without_witness_still_refuses(monkeypatch):
+    api, clock = run_readiness_api(monkeypatch, queued_reads=0, witness=False)
+    api.mutate_run = lambda run, read: (
+        run.update(status="queued", conclusion=None) if read == 2 else None
+    )
+    with pytest.raises(ValueError, match="liveness witness unpaid"):
         api.qualify()
-    assert clock.waits == [] and api.run_reads == 2 and api.job_reads == 1
+    assert clock.waits == [] and api.run_reads == 2 and api.job_reads == 2
 
 
-def test_api_error_on_a_queued_run_reread_has_no_retry(monkeypatch):
-    api, clock = run_readiness_api(monkeypatch, queued_reads=99)
+def test_final_in_progress_reread_of_a_witnessed_queued_run_needs_no_rebind(
+    monkeypatch,
+):
+    api, clock = run_readiness_api(monkeypatch, queued_reads=1)
+    assert api.qualify()["qualified"] is True
+    assert api.run_reads == 2 and api.job_reads == 1
+
+
+def test_a_rebind_cannot_arrive_after_the_original_deadline(monkeypatch, capsys):
+    api, clock = run_readiness_api(monkeypatch)
+
+    def consume_budget(jobs, read):
+        if read == 2:
+            clock.now = api.deadline
+
+    api.mutate_snapshot = consume_budget
+    with pytest.raises(ValueError, match="decision deadline"):
+        api.qualify()
+    assert api.run_reads == 2 and api.job_reads == 2
+    assert "CHECKPOINT qualified" not in capsys.readouterr().out
+
+
+def test_queued_run_read_time_counts_toward_the_same_deadline(monkeypatch):
+    api, clock = run_readiness_api(monkeypatch, latency=3)
+    api.deadline = clock.now + 3
+    with pytest.raises(ValueError, match="decision deadline"):
+        api.qualify()
+    assert clock.waits == [] and api.run_reads == 1 and api.job_reads == 0
+
+
+def test_an_in_progress_run_cannot_arrive_after_original_deadline(monkeypatch, capsys):
+    api, clock = run_readiness_api(monkeypatch, queued_reads=0, latency=3)
+    api.deadline = clock.now + 3
+    with pytest.raises(ValueError, match="decision deadline"):
+        api.qualify()
+    assert clock.waits == [] and api.run_reads == 1 and api.job_reads == 0
+    out = capsys.readouterr().out
+    assert "CHECKPOINT run-validation" not in out
+    assert "CHECKPOINT repository-binding" not in out
+
+
+@pytest.mark.parametrize("read", [1, 2])
+def test_api_error_on_a_witness_or_rebind_read_has_no_retry(monkeypatch, read):
+    api, clock = run_readiness_api(monkeypatch)
+
+    def fail(jobs, index):
+        if index == read:
+            raise RuntimeError("offline response error")
+
+    api.mutate_snapshot = fail
+    with pytest.raises(RuntimeError):
+        api.qualify()
+    assert api.job_reads == read and api.run_reads == read and clock.waits == []
+
+
+def test_api_error_on_a_queued_run_read_has_no_retry(monkeypatch):
+    api, clock = run_readiness_api(monkeypatch)
 
     def fail(run, read):
-        if read == 2:
-            raise RuntimeError("offline response error")
+        raise RuntimeError("offline response error")
 
     api.mutate_run = fail
     with pytest.raises(RuntimeError):
         api.qualify()
-    assert api.run_reads == 2 and clock.waits == [1] and api.job_reads == 0
+    assert api.run_reads == 1 and clock.waits == [] and api.job_reads == 0
 
 
 class TransitionBaselineAPI(BaseSecurityAPI):

@@ -34,8 +34,6 @@ SARIF_MAX_BYTES = 8_000_000  # >2x the observed 3.54 MB Python snapshot; SARIF O
 # Pending analysis-step rereads: 1/2/4 s, then every 4 s. The sleeps total the
 # 75 s API deadline, so that deadline (request time included), never this
 # count, ends a pending wait; the count only keeps the reads finite (#11445).
-# A run-level `queued` read of the producer's own attempt rereads on the same
-# schedule against the same deadline.
 ANALYSIS_READINESS_DELAYS = (1, 2, 4) + (4,) * 17
 SECURITY_RECORD_STEP = "Record CodeQL checkout provenance"
 SECURITY_QUALIFY_STEP = "Qualify compose security or record master baseline"
@@ -796,7 +794,7 @@ def _security_diagnostic(checkpoint, **fields):
         "provenance",
         "run-lookup",
         "run-validation",
-        "run-readiness-wait",
+        "liveness-witness",
         "repository-binding",
         "jobs-lookup",
         "matrix-membership",
@@ -815,6 +813,7 @@ def _security_diagnostic(checkpoint, **fields):
         "analysis-reread",
         "run-reread",
         "run-revalidation",
+        "liveness-rebind",
         "qualified",
     }
     numeric = {
@@ -877,58 +876,50 @@ def _security_diagnostic(checkpoint, **fields):
 
 
 def _producer_run(api, expected, branch):
-    """Bounded rereads of only a run-level queued read of the producer's attempt.
+    """Read and fully validate the producer's own attempt once.
 
-    The runs API can report the exact attempt queued while its own job is
-    running (#11445, 39793061366 attempt 1). Each read passes the full run
-    identity validation before queued counts as pending; queued never pays,
-    every other state refuses at once, and waits share the original deadline.
+    The runs API can report the exact attempt `queued conclusion=null` for
+    minutes while its own jobs run (#11445, 39793061366 attempts 1 and 2), so
+    a queued read is returned unpaid: it qualifies nothing unless the
+    producer's own executing job and completed analysis step witness it.
     """
-    for read_index in range(len(ANALYSIS_READINESS_DELAYS) + 1):
-        require(time.monotonic() < api.deadline, "evidence decision deadline")
-        run = api.get(f"actions/runs/{expected['run_id']}")
-        require(time.monotonic() < api.deadline, "evidence decision deadline")
-        _security_diagnostic(
-            "run-validation",
-            run_id=run.get("id"),
-            attempt=run.get("run_attempt"),
-            expected_attempt=expected["attempt"],
-            status=run.get("status"),
-            conclusion=run.get("conclusion"),
-        )
-        _validate_codeql_run(
-            run,
-            expected["head"],
-            branch,
-            expected["repository_id"],
-            attempt=expected["attempt"],
-            successful=False,
-            queued=True,
-        )
-        if run["status"] != "queued":
-            return run
-        require(
-            read_index < len(ANALYSIS_READINESS_DELAYS),
-            "CodeQL producer attempt unpaid",
-        )
-        delay = ANALYSIS_READINESS_DELAYS[read_index]
-        require(time.monotonic() + delay < api.deadline, "evidence decision deadline")
-        _security_diagnostic(
-            "run-readiness-wait", read_count=read_index + 1, wait_seconds=delay
-        )
-        time.sleep(delay)
-    raise ValueError("CodeQL producer attempt unpaid")
+    require(time.monotonic() < api.deadline, "evidence decision deadline")
+    run = api.get(f"actions/runs/{expected['run_id']}")
+    require(time.monotonic() < api.deadline, "evidence decision deadline")
+    _security_diagnostic(
+        "run-validation",
+        run_id=run.get("id"),
+        attempt=run.get("run_attempt"),
+        expected_attempt=expected["attempt"],
+        status=run.get("status"),
+        conclusion=run.get("conclusion"),
+    )
+    _validate_codeql_run(
+        run,
+        expected["head"],
+        branch,
+        expected["repository_id"],
+        attempt=expected["attempt"],
+        successful=False,
+        queued=True,
+    )
+    return run
 
 
-def _producer_analysis_step(api, run, language, *, diagnostic=False):
+def _producer_analysis_step(api, run, language, *, diagnostic=False, rebind=None):
     """Bounded rereads of only the observed current analysis-step pending state.
 
     All other states/errors refuse immediately. Identity pins and the original
     API deadline survive every read; the selected step must still finish green.
     The jobs API can lag the finished step by more than 7 s (#11445), so a
     pending read waits on until the next wait would reach that same deadline.
+    A queued run read is witnessed only by every job of this exact run, head
+    and attempt with the producer's own job executing since before its
+    analysis step started. `rebind` is the identity a final reread must
+    match on its first read, with no wait. Returns (step, identity).
     """
-    pinned = None
+    witness = run["status"] == "queued"
+    pinned = rebind
     for read_index in range(len(ANALYSIS_READINESS_DELAYS) + 1):
         require(time.monotonic() < api.deadline, "evidence decision deadline")
         if diagnostic:
@@ -1013,6 +1004,28 @@ def _producer_analysis_step(api, run, language, *, diagnostic=False):
             pinned is None or pinned == identity, "producer readiness identity moved"
         )
         pinned = identity
+        if witness:
+            if diagnostic:
+                _security_diagnostic(
+                    "liveness-witness",
+                    job_id=job.get("id"),
+                    job_attempt=job.get("run_attempt"),
+                    status=job.get("status"),
+                    conclusion=job.get("conclusion"),
+                )
+            require(
+                job["status"] == "in_progress"
+                and job["conclusion"] is None
+                and all(
+                    item["run_id"] == run["id"]
+                    and item["head_sha"] == run["head_sha"]
+                    and item["head_branch"] == run["head_branch"]
+                    for item in jobs
+                )
+                and isinstance(job["started_at"], str)
+                and stamp(job["started_at"]) <= stamp(step["started_at"]),
+                "producer liveness witness unpaid",
+            )
         if step["status"] == "completed" and step["conclusion"] == "success":
             if diagnostic:
                 _security_diagnostic("analysis-window")
@@ -1020,7 +1033,7 @@ def _producer_analysis_step(api, run, language, *, diagnostic=False):
                 stamp(step["started_at"]) <= stamp(step["completed_at"]),
                 "invalid producer analysis window",
             )
-            return step
+            return step, identity
         pending = (
             job["status"] == "in_progress"
             and job["conclusion"] is None
@@ -1029,7 +1042,7 @@ def _producer_analysis_step(api, run, language, *, diagnostic=False):
             and step["completed_at"] is None
         )
         require(
-            pending and read_index < len(ANALYSIS_READINESS_DELAYS),
+            pending and rebind is None and read_index < len(ANALYSIS_READINESS_DELAYS),
             "producer analysis step is unpaid",
         )
         delay = ANALYSIS_READINESS_DELAYS[read_index]
@@ -1634,7 +1647,9 @@ def qualify_security(api, env, provenance, sarif_id, language):
     _security_diagnostic("repository-binding")
     if isinstance(api, API):
         api.bind_repository(run["repository"])
-    upload_step = _producer_analysis_step(api, run, language, diagnostic=True)
+    upload_step, pinned_witness = _producer_analysis_step(
+        api, run, language, diagnostic=True
+    )
     _security_diagnostic("upload-lookup")
     rows = api.array_pages(
         "code-scanning/analyses?sarif_id=" + urllib.parse.quote(sarif_id, safe="")
@@ -1717,7 +1732,14 @@ def qualify_security(api, env, provenance, sarif_id, language):
         expected["repository_id"],
         attempt=expected["attempt"],
         successful=False,
+        queued=True,
     )
+    if latest["status"] == "queued":
+        _security_diagnostic("liveness-rebind")
+        rebound, _ = _producer_analysis_step(
+            api, latest, language, rebind=pinned_witness
+        )
+        require(rebound == upload_step, "producer liveness witness moved")
     if receipt["baseline"] and receipt["baseline"]["selection"] == TRANSITION_SELECTION:
         require(
             api.get("git/ref/heads/master")["object"]["sha"] == TRANSITION_BASE,
