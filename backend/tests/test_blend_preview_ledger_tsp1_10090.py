@@ -1010,6 +1010,63 @@ class TestBoundedLifecycle:
         assert await rig.run(rig.k, delayed) == []
 
 
+class _VirtualTimeoutClock:
+    """Production timeout scopes, with elapsed time advanced by the test.
+
+    Real PostgreSQL/Redis I/O may take any host time. Advancing this clock
+    expires the real asyncio Timeout, preserving its cancellation/unwind
+    behavior and the exact duration requested by production.
+    """
+
+    def __init__(self, monkeypatch):
+        import asyncio
+        from app.tasks import live_blend_refresh
+
+        self.now = 0.0
+        self.active = []
+        self.durations = []
+        self.expired = 0
+        clock = self
+
+        class AsyncioWithVirtualTimeouts:
+            timeout = staticmethod(clock.timeout)
+
+            def __getattr__(self, name):
+                return getattr(asyncio, name)
+
+        # Replace only this module's timeout clock, not asyncio globally or
+        # the DB/Redis libraries' network timeouts.
+        monkeypatch.setattr(live_blend_refresh, 'asyncio', AsyncioWithVirtualTimeouts())
+
+    def timeout(self, delay):
+        import asyncio
+        import contextlib
+
+        self.durations.append(delay)
+
+        @contextlib.asynccontextmanager
+        async def scope():
+            handle = asyncio.Timeout(None)
+            entry = (self.now + delay, handle)
+            async with handle:
+                self.active.append(entry)
+                try:
+                    yield handle
+                finally:
+                    self.active.remove(entry)
+                    self.expired += int(handle.expired())
+
+        return scope()
+
+    def advance(self, seconds):
+        import asyncio
+
+        self.now += seconds
+        for deadline, handle in tuple(self.active):
+            if deadline <= self.now:
+                handle.reschedule(asyncio.get_running_loop().time())
+
+
 class TestLifecycleCaller:
     async def test_ticket_precedes_statement_and_cached_graph_keeps_that_ticket(self, rig, monkeypatch):
         from app.tasks.live_blend_refresh import (
@@ -1060,6 +1117,10 @@ class TestLifecycleCaller:
         from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
         from app.tasks.live_blend_refresh import LiveBlendRefresher
 
+        # This is a 600-case ordering/state proof, not a host-speed gate.
+        # Keep production's exact deadlines and exercise their cancellation
+        # separately below; wall-clock scheduling cannot decide retirement.
+        deadlines = _VirtualTimeoutClock(monkeypatch)
         url = os.environ['BLEND_DEADLOCK_DATABASE_URL']
         pg_url = url.replace('postgresql+asyncpg://', 'postgresql://')
         schema = 'dnpl_lifecycle_' + uuid.uuid4().hex
@@ -1145,6 +1206,12 @@ class TestLifecycleCaller:
                 await refresher._publish_previews(settled)
                 assert await rig.hget(f'e:{eid}:gen') is None
                 assert await control.fetchval(f'SELECT win_probability_sources_rev FROM {schema}.events WHERE id=$1', eid) == 12
+                # Retain 250 ms of logical elapsed time per completed case;
+                # no timing scope spans these independent retirements.
+                assert not deadlines.active
+                deadlines.advance(.25)
+            assert deadlines.durations.count(.25) >= 600
+            assert deadlines.expired == 0
             assert await rig.hget('nevents') == '1'  # the still-live reopened event 1 only
             assert await rig.client.hlen(blend_preview.LEDGER_KEY) <= 15
         finally:
@@ -1172,6 +1239,50 @@ class TestLifecycleCaller:
         monkeypatch.setattr(refresher, '_client', lambda: rig.client)
         monkeypatch.setattr(blend_preview, 'registry', lambda: rig.k)
         await refresher._retire_preview_event(EV, 11, ticket)
+        assert await rig.hget(f'e:{EV}:term') == '11'
+        assert await rig.hget(f'e:{EV}:gen') is not None
+        assert await rig.hget('nevents') == '1'
+        assert await rig.hget('retired') == '0'
+        assert refresher.preview_stats['publish_errors'] == 1
+
+
+    async def test_deadline_during_durable_commit_keeps_terminal_guard(self, rig, monkeypatch):
+        import asyncio
+        import contextlib
+        from app.tasks.live_blend_refresh import LiveBlendRefresher
+
+        deadlines = _VirtualTimeoutClock(monkeypatch)
+        await rig.run(rig.k, await _fresh_ops(rig, rig.k, 'kalshi'))
+        ticket, _ = await rig.k.read_ticket(rig.call, 'kalshi')
+        commit_started = False
+        commit_completed = False
+
+        class Session:
+            async def execute(self, stmt):
+                return SimpleNamespace(scalar_one_or_none=lambda: 12)
+
+            async def commit(self):
+                nonlocal commit_started, commit_completed
+                commit_started = True
+                # Expire exactly the production .25-second outer retirement
+                # scope while the durable commit is suspended. This is real
+                # task cancellation, not an injected TimeoutError.
+                assert len(deadlines.active) == 1
+                assert deadlines.active[0][0] - deadlines.now == .25
+                deadlines.advance(.25)
+                await asyncio.Event().wait()
+                commit_completed = True
+
+        @contextlib.asynccontextmanager
+        async def factory():
+            yield Session()
+
+        refresher = LiveBlendRefresher('kalshi', session_factory=factory)
+        monkeypatch.setattr(refresher, '_client', lambda: rig.client)
+        monkeypatch.setattr(blend_preview, 'registry', lambda: rig.k)
+        await refresher._retire_preview_event(EV, 11, ticket)
+        assert commit_started and not commit_completed
+        assert deadlines.expired == 1 and not deadlines.active
         assert await rig.hget(f'e:{EV}:term') == '11'
         assert await rig.hget(f'e:{EV}:gen') is not None
         assert await rig.hget('nevents') == '1'
