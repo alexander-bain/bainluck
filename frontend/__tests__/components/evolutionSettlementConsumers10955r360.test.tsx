@@ -242,6 +242,55 @@ describe("#10955 (360) a result survives the time range", () => {
   });
 });
 
+describe("#10955 (360) a result is marked only where the range can mark it truthfully", () => {
+  function marksWithAnchor(): string[] {
+    return descendants(host)
+      .filter((n) => props(n)["data-testid"] === "futures-chart-result-mark")
+      .map((n) => `${props(n)["data-outcome-id"]}:${props(n)["data-result"]}:${props(n)["data-anchor"]}`)
+      .sort();
+  }
+  function markLabels(): string[] {
+    return descendants(host)
+      .filter((n) => props(n)["data-testid"] === "futures-chart-result-mark")
+      .map((n) => String(props(n)["aria-label"] ?? n.textContent));
+  }
+
+  it("a graded leg whose readings all predate the range gets NO mark there — never a false 'no history' one", () => {
+    history = {
+      outcomes: [
+        leg(1, "Alpha Upset", [real(0.05, 5 * H), real(0.08, 2 * H), settlement(1)]),
+        leg(2, "Bravo Stale", [real(0.4, 72 * H), real(0.45, 60 * H), settlement(0)]),
+        leg(4, "Delta Live", [real(0.2, 5 * H), real(0.22, 2 * H)]),
+      ],
+    };
+    render();
+    // 7 Days: Bravo's readings are in range, so its mark sits on its last one.
+    expect(marksWithAnchor()).toEqual(["1:won:last-observation", "2:lost:last-observation"]);
+    clickRange("24 Hours");
+    // 24 Hours: Bravo draws no line here, so it draws no mark either. Keeping its
+    // settlement point alone pushed it to the edge slot that tells the reader
+    // "No probability history was recorded for it" — false; it was recorded.
+    expect(marksWithAnchor()).toEqual(["1:won:last-observation"]);
+    for (const label of markLabels()) expect(label).not.toContain("No probability history");
+    // The sidebar reads the full history, so the result is still stated there.
+    expect(rows().find((r) => r.name === "Bravo Stale")?.value).toBe("Lost");
+  });
+
+  it("a winner with no reading anywhere keeps its edge mark on a short range", () => {
+    history = {
+      outcomes: [
+        leg(1, "Alpha Synth", [settlement(1)]),
+        leg(4, "Delta Live", [real(0.2, 5 * H), real(0.22, 2 * H)]),
+        leg(5, "Echo Live", [real(0.3, 5 * H), real(0.31, 2 * H)]),
+      ],
+    };
+    render();
+    clickRange("24 Hours");
+    expect(marksWithAnchor()).toEqual(["1:won:real-edge"]);
+    expect(rows()[0]).toMatchObject({ name: "Alpha Synth", value: "Won" });
+  });
+});
+
 describe("#10955 (360) controls", () => {
   it("a field with no settlement points keeps the plain last-value order and percents", () => {
     history = {

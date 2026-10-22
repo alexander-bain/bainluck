@@ -48,8 +48,8 @@ function timeRangeCutoff(timeRange: TimeRange, tournamentStart?: string | null):
  *  color/selection stays stable. Outcomes left with <2 points simply don't draw
  *  a line (FuturesChart handles that), matching the old windowed behavior.
  *  #10955 (360): a settlement point is a result, not a reading, and its timestamp
- *  is never a market time — it is kept on every range, so the chart's result
- *  mark and the sidebar's result word never disagree because a range moved. */
+ *  is never a market time — so it is never windowed BY TIME. Whether it stays
+ *  depends on whether the chart can mark it truthfully on this range (below). */
 function windowByTimeRange(
   outcomes: FuturesOutcomeHistory[],
   timeRange: TimeRange,
@@ -57,12 +57,22 @@ function windowByTimeRange(
 ): FuturesOutcomeHistory[] {
   const cutoff = timeRangeCutoff(timeRange, tournamentStart);
   if (!cutoff) return outcomes;
-  return outcomes.map((o) => ({
-    ...o,
-    history: o.history.filter(
-      (p) => isSettlementPoint(p) || new Date(p.timestamp).getTime() >= cutoff,
-    ),
-  }));
+  return outcomes.map((o) => {
+    const inRange = (p: FuturesOutcomeHistory["history"][number]) =>
+      !isSettlementPoint(p) && new Date(p.timestamp).getTime() >= cutoff;
+    const hasReading = (p: FuturesOutcomeHistory["history"][number]) =>
+      !isSettlementPoint(p) && p.probability != null;
+    // The result is kept only where FuturesChart can mark it truthfully: on a
+    // reading this range still draws, or — for a leg with no reading anywhere —
+    // at the edge it reserves for exactly that. A leg whose readings all predate
+    // the range draws nothing here, and its mark must not claim it had none.
+    const keepResult =
+      o.history.some((p) => inRange(p) && p.probability != null) || !o.history.some(hasReading);
+    return {
+      ...o,
+      history: o.history.filter((p) => (isSettlementPoint(p) ? keepResult : inRange(p))),
+    };
+  });
 }
 
 export interface PositionOption {
