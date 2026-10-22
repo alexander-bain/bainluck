@@ -163,7 +163,7 @@ final class CompactEventPriceStatusTests: XCTestCase {
                       "the delivery half stays: \(withForecast)")
         XCTAssertTrue(withForecast.contains("sportsbooks") && withForecast.contains("times")
                       && withForecast.contains("projected scores"), withForecast)
-        for word in ["bookmaker", "books ", "eceived", "kickoff", "tip-off"] {
+        for word in ["bookmaker", " books", "eceived", "kickoff", "tip-off"] {
             XCTAssertFalse(withForecast.contains(word), "'\(word)' in: \(withForecast)")
         }
     }
