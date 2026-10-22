@@ -569,6 +569,14 @@ async def _stream(
             projected_preview = update_preview_session()
             if projected_preview is not None:
                 yield sse_encode(json.dumps(projected_preview), event="preview")
+            if preview_session is not None and preview_session.reconnect_required:
+                # Withdraw the previous election before rolling over through
+                # the existing client reconnect path. Keeping this disabled
+                # session open would strand eligible previews until max-age.
+                yield sse_encode(
+                    json.dumps({"reason": "preview_election_changed"}), event="reconnect"
+                )
+                return
 
             if folded_projection is not None and folded_projection.done():
                 quote = folded_projection.result()

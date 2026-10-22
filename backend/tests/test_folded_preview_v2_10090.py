@@ -253,6 +253,118 @@ async def test_actual_route_expiry_recomposes_sibling_while_sql_stays_blocked(mo
         await stream.aclose()
 
 
+@pytest.mark.parametrize('pending', [False, True])
+async def test_election_change_reconnects_then_new_stream_delivers_new_owner(monkeypatch, pending):
+    from app.routes import event_stream as route
+    from app.utils import live_fanout
+    from tests.test_folded_event_stream_invalidation_837 import Hub, Request
+
+    _, base, kalshi, pm, _ = setup()
+    current = [base]
+    hub = Hub()
+    hub.folded_preview_base = lambda eid, **kw: current[0]
+    recovery_started, recovery_cancelled = asyncio.Event(), asyncio.Event()
+
+    async def blocked(*args):
+        recovery_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            recovery_cancelled.set()
+
+    hub.project_recovery_quote = blocked
+    monkeypatch.setattr(live_fanout, 'fanout', lambda: hub)
+    monkeypatch.setattr(route, 'preview_route_events', lambda: {1})
+    monkeypatch.setattr(route, 'latest_frames', lambda ids: asyncio.sleep(0, result=[]))
+    monkeypatch.setattr(route, '_current_reconcile', lambda *args: asyncio.sleep(0, result={
+        'event_id': 1, 'custody_id': 'state:test', 'removal_rev': current[0].revision}))
+    # Make the parent's silent continuation observable, without waiting for
+    # its production heartbeat or treating a timeout as a product result.
+    monkeypatch.setattr(route, 'HEARTBEAT_INTERVAL_S', 0)
+    monkeypatch.setattr(route, 'FRAME_WAIT_S', .001)
+    request = Request()
+    request.query_params = {'preview_protocol': 'folded-v2'}
+    connections_before = route._open_connections
+
+    def decode(chunk):
+        return json.loads(chunk.split('data: ')[1])
+
+    stream = route._stream(1, request, [1, 2, 3])
+    try:
+        await anext(stream)
+        old_open = decode(await anext(stream))
+        assert 'event: reconcile' in await asyncio.wait_for(anext(stream), 1)
+        if pending:
+            for frame in (kalshi, pm):
+                hub.subscriptions[f'live:event:{frame["event_id"]}'].offer(json.dumps(frame))
+                assert 'event: preview' in await asyncio.wait_for(anext(stream), 1)
+        else:
+            assert 'event: heartbeat' in await asyncio.wait_for(anext(stream), 1)
+            # Resume the generator after its first idle yield so the owned
+            # recovery read is actually scheduled before checking cancellation.
+            assert 'event: heartbeat' in await asyncio.wait_for(anext(stream), 1)
+        await asyncio.wait_for(recovery_started.wait(), 1)
+        current[0] = replace(base, owners={**base.owners, 'polymarket': 1})
+        if pending:
+            withdrawn = decode(await asyncio.wait_for(anext(stream), 1))
+            assert withdrawn['preview']['kind'] == 'revoke'
+            assert withdrawn['preview']['ttl_ms'] == 0
+            assert all(item['state'] == 'revoked' for item in auth(withdrawn).values())
+        reconnect = await asyncio.wait_for(anext(stream), 1)
+        assert 'event: reconnect' in reconnect
+        assert decode(reconnect) == {'reason': 'preview_election_changed'}
+        with pytest.raises(StopAsyncIteration):
+            await anext(stream)
+        assert recovery_cancelled.is_set()
+        assert route._open_connections == connections_before
+        assert len(hub.released) == 3
+    finally:
+        await stream.aclose()
+
+    # The ordinary fresh stream gets the new election once, then delivers
+    # eligible frames; it must not inherit a permanent reconnect condition.
+    stream = route._stream(1, request, [1, 2, 3])
+    try:
+        await anext(stream)
+        new_open = decode(await anext(stream))
+        assert new_open['fold_session'] != old_open['fold_session']
+        assert 'event: reconcile' in await asyncio.wait_for(anext(stream), 1)
+        successor = deepcopy(pm)
+        successor['event_id'] = 1
+        successor['preview'].update(base_rev=11, epoch=4, seq=1)
+        hub.subscriptions['live:event:1'].offer(json.dumps(successor))
+        delivered = decode(await asyncio.wait_for(anext(stream), 1))
+        assert delivered['preview']['kind'] == 'blend'
+        assert delivered['preview']['fold_session'] == new_open['fold_session']
+        assert set(auth(delivered)) == {'1'}
+        assert auth(delivered)['1']['state'] == 'pending'
+        assert 'event: heartbeat' in await asyncio.wait_for(anext(stream), 1)
+    finally:
+        await stream.aclose()
+    assert len(hub.released) == 6
+    assert route._open_connections == connections_before
+
+
+@pytest.mark.parametrize('invalid', ['event', 'members', 'owner', 'terminal', 'already_disabled'])
+def test_invalid_base_cannot_request_election_reconnect(invalid):
+    session, base, kalshi, _, _ = setup()
+    send(session, base, kalshi)
+    changed = replace(base, owners={**base.owners, 'polymarket': 1})
+    if invalid == 'event':
+        changed = replace(changed, event_id=999)
+    elif invalid == 'members':
+        changed = replace(changed, revision={**base.revision, '4': 1})
+    elif invalid == 'owner':
+        changed = replace(changed, owners={**base.owners, 'polymarket': 999})
+    elif invalid == 'terminal':
+        changed = replace(changed, context={**base.context, 'status': 'completed'})
+    else:
+        send(session, replace(base, event_id=999))
+    send(session, changed, now=100.1)
+    assert session.disabled
+    assert not session.reconnect_required
+
+
 # Real Redis proves these packets retain the existing event-ledger final-send
 # checks. Independent sessions/generations are never synthesized by the route.
 from tests.test_blend_preview_ledger_tsp1_10090 import (

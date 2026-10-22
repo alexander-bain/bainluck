@@ -46,6 +46,7 @@ class FoldedPreviewSession:
         self.vector = {}
         self.status = None
         self.disabled = False
+        self.reconnect_required = False
         self._last_snapshot = None
 
     def _retire_all(self):
@@ -91,6 +92,11 @@ class FoldedPreviewSession:
         elif self.election != election:
             # A changed owner set requires a fresh stream; otherwise seen
             # authority could grow unbounded or silently change its meaning.
+            # Only a valid, eligible election may request rollover. A bad
+            # base remains disabled, rather than making clients reconnect in
+            # a loop on the same invalid authority.
+            if not self.disabled and base.context["status"] in PREVIEW_STATUSES:
+                self.reconnect_required = True
             self.disabled = True
         if self.disabled or base.context["status"] not in PREVIEW_STATUSES:
             self._retire_all()
