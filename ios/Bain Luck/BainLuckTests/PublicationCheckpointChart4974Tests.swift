@@ -724,10 +724,14 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
             .filter { !$0.isWhitespace }
     }
 
-    /// Inline and fullscreen take one mount, built the same way.
+    /// Inline and fullscreen take one mount, built the same way. #11356 — so
+    /// does the finished line's key reading, which names the mount's resting
+    /// end: three sites, one builder.
     func testInlineAndFullscreenShareOneIntegration() throws {
         let chart = try code("Bain Luck/Components/OddsChartView.swift")
-        XCTAssertEqual(chart.components(separatedBy: "letcheckpoints=checkpointMount(for:dataPoints)").count - 1, 2)
+        XCTAssertEqual(chart.components(separatedBy: "letcheckpoints=checkpointMount(for:dataPoints)").count - 1, 3)
+        XCTAssertTrue(chart.contains("privatefuncfinishedEndKeyReading9483(dataPoints:[ChartDataPoint])->(text:String,ink:Color)?{letcheckpoints=checkpointMount(for:dataPoints)"),
+                      "the third mount is the finished key's, not a third chart")
         XCTAssertEqual(chart.components(separatedBy: "periodMarkers:periodMarkers,moments:moments,checkpoints:checkpoints,").count - 1, 2)
         XCTAssertTrue(chart.contains("pageGaveCard:readout!=nil).publicationCheckpoints(checkpoints)"))
         XCTAssertTrue(chart.contains("gameFinished:EventState.isFinished(status),checkpoints:checkpoints,"))
