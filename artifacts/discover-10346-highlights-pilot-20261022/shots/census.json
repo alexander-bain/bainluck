@@ -1,0 +1,84 @@
+{
+  "phone": {
+    "cards": [
+      {
+        "id": "schlittler-10k",
+        "top": 118,
+        "left": 12,
+        "w": 284,
+        "text": "CAM SCHLITTLER Schlittler struck out 10 6⅓ scoreless innings, two hits allowed 10+ strikeouts BEFORE Kalshi · 23 min before first pitch 18.5%"
+      },
+      {
+        "id": "rice-2hr",
+        "top": 118,
+        "left": 308,
+        "w": 284,
+        "text": "BEN RICE Rice homered twice, the second a grand slam 4 for 5; drove in 6 of the Yankees' 9 runs 2+ home runs BEFORE Kalshi · 23 min before first pitch 2% No one was bidding; 2% was the asking price"
+      },
+      {
+        "id": "nyy-series-g1",
+        "top": 118,
+        "left": 604,
+        "w": 284,
+        "text": "YANKEES Yankees won Game 1, 9–0 Best-of-three Wild Card Series, Yankees lead 1–0 Yankees win the series BEFORE Kalshi · 24 min before first pitch 56% AFTER GAME 1 Kalshi · 39 min after the final out 80.5%"
+      }
+    ],
+    "row": {
+      "scrollWidth": 908,
+      "clientWidth": 366
+    },
+    "sectionOrder": {
+      "winProbabilityCard": 360,
+      "highlights": 970,
+      "catalogue": 5426,
+      "pageHeight": 8118
+    },
+    "catalogueOpenBefore": false,
+    "catalogueOpenAfter": true,
+    "catalogueTopAfter": 80,
+    "catalogueText": "All markets Game lines Team scoring Periods Player props Other Boston vs New York Yankees: Total Runs Kalshi Over 1.5 runs scored Over 2.5 runs scored Over 3.5 runs scored Over 4.5 runs scored Over 5.5 runs scored Over 6.5 runs scored Show all 10 outcomes About this market Spread: Boston Red Sox (-1",
+    "controlHighlights": 0,
+    "controlCatalogue": 13
+  },
+  "desktop": {
+    "cards": [
+      {
+        "id": "schlittler-10k",
+        "top": 118,
+        "left": 40,
+        "w": 392,
+        "text": "CAM SCHLITTLER Schlittler struck out 10 6⅓ scoreless innings, two hits allowed 10+ strikeouts BEFORE Kalshi · 23 min before first pitch 18.5%"
+      },
+      {
+        "id": "rice-2hr",
+        "top": 118,
+        "left": 444,
+        "w": 392,
+        "text": "BEN RICE Rice homered twice, the second a grand slam 4 for 5; drove in 6 of the Yankees' 9 runs 2+ home runs BEFORE Kalshi · 23 min before first pitch 2% No one was bidding; 2% was the asking price"
+      },
+      {
+        "id": "nyy-series-g1",
+        "top": 118,
+        "left": 848,
+        "w": 392,
+        "text": "YANKEES Yankees won Game 1, 9–0 Best-of-three Wild Card Series, Yankees lead 1–0 Yankees win the series BEFORE Kalshi · 24 min before first pitch 56% AFTER GAME 1 Kalshi · 39 min after the final out 80.5%"
+      }
+    ],
+    "row": {
+      "scrollWidth": 1200,
+      "clientWidth": 1200
+    },
+    "sectionOrder": {
+      "winProbabilityCard": 376,
+      "highlights": 974,
+      "catalogue": 4948,
+      "pageHeight": 6594
+    },
+    "catalogueOpenBefore": false,
+    "catalogueOpenAfter": true,
+    "catalogueTopAfter": 80,
+    "catalogueText": "All markets Game lines Team scoring Periods Player props Other Boston vs New York Yankees: Total Runs Kalshi Over 1.5 runs scored Over 2.5 runs scored Over 3.5 runs scored Over 4.5 runs scored Over 5.5 runs scored Over 6.5 runs scored Show all 10 outcomes About this market Spread: Boston Red Sox (-1",
+    "controlHighlights": 0,
+    "controlCatalogue": 13
+  }
+}
