@@ -7,7 +7,7 @@ ten minutes. After: each consumer re-reads its slate's live arm every 30 s and
 ends the run early, through the existing recycle, when a live event is missing.
 
 The four guards the directive names, each driven through the REAL consumer over
-the REAL service (only the socket and the session are faked):
+the REAL service (the socket, session and startup display claim are faked):
 
 - a missing live event recycles, named as an admission;
 - a complete subscription does not recycle, however often it is checked;
@@ -140,8 +140,21 @@ def _install_session(monkeypatch, slate_batches, reread, *, replay_slate=False):
     _stand_in_for_a_granted_withdrawal_owner(monkeypatch)
     state = {
         "slate": list(slate_batches), "rereads": [], "reread_calls": 0,
-        "slate_replays": 0, "debt_reads": [],
+        "slate_replays": 0, "debt_reads": [], "display_claims": [],
     }
+    # These quiet-socket controls have neither price frames nor a Redis
+    # server. Default DNPL now claims at startup; an attempted localhost
+    # connection must not consume this test's 300 ms subscription window.
+    # Keep default eligibility and record the claim, just as the independent
+    # withdrawal-owner startup above is granted by this session fake.
+    from app.tasks.live_blend_refresh import LiveBlendRefresher
+
+    async def display_claimed(refresher):
+        assert refresher.preview and 900 in refresher.preview_events
+        state["display_claims"].append(refresher.source)
+        return 1
+
+    monkeypatch.setattr(LiveBlendRefresher, "claim_preview_display", display_claimed)
     answered = {}
 
     class _Session:
@@ -255,6 +268,29 @@ async def _still_streaming_after_a_refresh(consumer, state):
 _AT_LEAST_ONE_COMPARISON = 2
 
 
+def _expire_timer_after_comparison(monkeypatch, state):
+    """Expire the consumer timer after the real watcher has actually run.
+
+    These two controls judge the reason for recycling, not host scheduling.
+    A laptop suspension or busy CI host can otherwise consume their entire
+    300 ms window after only the baseline read. Keep the configured deadline
+    and all non-vacuity assertions; drive expiry explicitly. Missing watcher
+    work still fails through the consumer's existing five-second outer bound.
+    """
+    real_wait = asyncio.wait
+
+    async def controlled_wait(tasks, *, timeout=None, return_when=asyncio.ALL_COMPLETED):
+        if timeout == 0.3 and return_when == asyncio.FIRST_COMPLETED:
+            while state["reread_calls"] < _AT_LEAST_ONE_COMPARISON:
+                if any(task.done() for task in tasks):
+                    break
+                await asyncio.sleep(0)
+            return await real_wait(tasks, timeout=0, return_when=return_when)
+        return await real_wait(tasks, timeout=timeout, return_when=return_when)
+
+    monkeypatch.setattr(asyncio, "wait", controlled_wait)
+
+
 def _timing(monkeypatch, module, *, refresh, check, floor):
     monkeypatch.setattr(module, "SUBSCRIPTION_REFRESH_SECONDS", refresh)
     monkeypatch.setattr(admission, "ADMISSION_CHECK_SECONDS", check)
@@ -311,6 +347,7 @@ class TestACompleteSubscriptionDoesNotRecycle:
         _timing(monkeypatch, module, refresh=0.3, check=0.01, floor=0)
         connects = _install_quiet_socket(monkeypatch)
         state = _install_session(monkeypatch, slate, lambda: [900])
+        _expire_timer_after_comparison(monkeypatch, state)
 
         stats = await asyncio.wait_for(consumer(), timeout=5)
 
@@ -319,6 +356,7 @@ class TestACompleteSubscriptionDoesNotRecycle:
         # Non-vacuity: the reread ran past its baseline and was satisfied. Two
         # calls is the count-independent floor (_AT_LEAST_ONE_COMPARISON).
         assert state["reread_calls"] >= _AT_LEAST_ONE_COMPARISON, state["reread_calls"]
+        assert state["display_claims"] == ["polymarket"]
         assert connects["n"] == 1
 
     async def test_kalshi_every_live_event_subscribed_streams_through_the_refresh(
@@ -443,6 +481,7 @@ class TestAFailedRereadNeverRecycles:
             raise RuntimeError("db down")
 
         state = _install_session(monkeypatch, slate, _boom)
+        _expire_timer_after_comparison(monkeypatch, state)
 
         stats = await asyncio.wait_for(consumer(), timeout=5)
 

@@ -280,6 +280,9 @@ async def test_folded_page_replay_never_receives_a_row_snapshot(monkeypatch):
     try:
         await anext(stream)
         await anext(stream)
+        chunk, floor = await _next_payload(stream)
+        assert chunk.startswith("event: fold_preview_floor\n")
+        assert floor == {"event_id": 1, "floor": {"1": 11}}
         _, raw = await _next_payload(stream)
         assert raw["rev"] == {"1": 11} and "source_snapshot" not in raw
     finally:

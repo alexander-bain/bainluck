@@ -17,8 +17,8 @@ from tests.test_live_blend_refresh import _one_event_refresher
 @pytest.fixture(autouse=True)
 def preview_enabled(monkeypatch):
     blend_preview.reset_registry_for_tests()
-    monkeypatch.setenv(blend_preview.SOURCE_ENV, "polymarket")
-    monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, "1")
+    # These composition controls use the explicit legacy in-process subject.
+    monkeypatch.setattr(blend_preview, "_REGISTRY", blend_preview.PreviewRegistry())
     yield
     blend_preview.reset_registry_for_tests()
 
@@ -150,7 +150,7 @@ async def test_regular_restamp_commit_retires_observation_preview(monkeypatch):
 
 
 async def test_off_retains_original_unchanged_storage_throttle(monkeypatch):
-    monkeypatch.delenv(blend_preview.SOURCE_ENV)
+    monkeypatch.setattr(blend_preview, "preview_events_for", lambda source: frozenset())
     r, session, previews, committed, _, _, _ = rig(monkeypatch)
     await r._refresh_batch([1], 101.)
     assert r._dispositions[1] == ("unchanged", .9)

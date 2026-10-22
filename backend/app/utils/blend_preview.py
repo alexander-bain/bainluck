@@ -1,11 +1,11 @@
 """#10090 — a provisional blend published BEFORE its event stamp commits.
 
-OFF BY DEFAULT, AND THEN ONLY FOR NAMED EVENTS FROM ONE NAMED SOURCE. Nothing
-here runs unless the process sets BOTH ``LIVE_BLEND_PREVIEW_SOURCE`` (``kalshi``
-or ``polymarket``) and ``LIVE_BLEND_PREVIEW_EVENT_IDS`` (comma-separated event
-ids). Unset, malformed or empty, the worker publishes exactly the committed
-frames it always did and the stream route forwards nothing new. Turning the
-switch on is a production activation decision; landing this code is not one.
+DNPL is the ordinary delivery path for both supported streaming sources.
+Every positive event identity may enter the existing eligibility checks; no
+operator event list or source activation flag is required. New events are
+covered without restarting a worker. The ledger's source/status/revision,
+freshness, capacity and owner fences still decide whether a frame may publish.
+An ineligible observation retains the committed delivery path.
 
 Why it exists. A held event page only moves when the WS lane's
 ``UPDATE events SET win_probability_sources = …`` commits. When another
@@ -73,8 +73,7 @@ reach the reader as newer committed revisions, which retire any preview
 composed on an older base, and the preview arm's next attempt recomposes on
 the freshly read row. No pending state is shared between processes.
 
-Two previewing sources (TSP-1, ``LIVE_BLEND_PREVIEW_SOURCES``; OFF unless set,
-and then the single-source switch above is ignored). Both venue processes
+Two previewing sources (TSP-1, the default shared-ledger path). Both venue processes
 write their pending value into ONE per-event ledger inside one Redis hash
 (`LEDGER_SCRIPT`), and a frame is composed from the whole ledger and published
 only while that exact read-set still stands. The contract, in the order the
@@ -296,7 +295,7 @@ if op == 'read_ticket' then
   local out = {'ok', decimal(barrier)}
   local count = field('nevents')
   if count == BAD then return {'malformed'} end
-  if (count or 0) >= 512 and compatible then
+  if ARGV[6] == '1' and (count or 0) >= 512 and compatible then
     -- At capacity only: at most 512 event ids, never base/payload values.
     -- The caller rereads their authoritative DB status before retiring any.
     for _, f in ipairs(redis.call('HKEYS', L)) do
@@ -459,9 +458,19 @@ if op == 'terminal' then
   for _, s in ipairs(sources) do redis.call('HDEL', L, P .. 'm:' .. s, P .. 'p:' .. s) end
   return {'ok', decimal(gen), decimal(seq)}
 end
-if op == 'retire' then
-  local ctx, ticket, durable = uint(ARGV[6]), uint(ARGV[7]), uint(ARGV[8])
-  if not ctx or not ticket or not durable or durable ~= ctx + 1 then return {'malformed'} end
+if op == 'retire' or op == 'retire_missing' then
+  local ctx, ticket, durable
+  if op == 'retire_missing' then
+    -- The caller proved absence in a fresh DB statement AFTER this ticket.
+    -- No durable row remains to increment. The global barrier invalidates
+    -- every prepared open from before deletion, including other producers.
+    ticket = uint(ARGV[6])
+    ctx = math.max(st.live or 0, st.term or 0, st.base_rev or 0)
+    if not ticket then return {'malformed'} end
+  else
+    ctx, ticket, durable = uint(ARGV[6]), uint(ARGV[7]), uint(ARGV[8])
+    if not ctx or not ticket or not durable or durable ~= ctx + 1 then return {'malformed'} end
+  end
   if not compatible then return {'legacy_owner'} end
   if ticket ~= barrier then return {'read_required'} end
   if st.live ~= nil and ctx < st.live then return {'stale_terminal'} end
@@ -527,57 +536,42 @@ def ledger_keys() -> tuple:
             *(fence_owner_key(name) for name in sorted(PREVIEW_SOURCES)))
 
 
-def _ledger_env() -> Optional[str]:
-    raw = (os.environ.get(LEDGER_SOURCES_ENV) or "").strip()
-    return raw or None
+class PreviewEventScope:
+    """Stateless admission to preview validation, not a set of enrolled events.
+
+    Membership only establishes a valid event identity. The existing graph,
+    source, freshness and ledger checks still establish publication eligibility.
+    Deliberately not iterable: callers must supply a finite batch to select.
+    """
+
+    def __contains__(self, event_id: object) -> bool:
+        return type(event_id) is int and 0 < event_id <= 9007199254740991
+
+    def isdisjoint(self, event_ids) -> bool:
+        return not any(event_id in self for event_id in event_ids)
+
+
+_ALL_PREVIEW_EVENTS = PreviewEventScope()
 
 
 def ledger_sources() -> frozenset:
-    """TSP-1's previewing sources. Any malformed entry turns previews off."""
-    raw = _ledger_env()
-    if raw is None:
-        return frozenset()
-    names = {token.strip() for token in raw.split(",")}
-    return frozenset(names) if names and names <= PREVIEW_SOURCES else frozenset()
+    """Both streaming sources share one fenced ledger in ordinary operation."""
+    return PREVIEW_SOURCES
 
 
 def preview_source() -> Optional[str]:
-    """The one source allowed to preview, or None (the default: off).
-
-    Ignored (None) whenever ``LIVE_BLEND_PREVIEW_SOURCES`` is set, valid or not.
-    """
-    if _ledger_env() is not None:
-        return None
-    value = (os.environ.get(SOURCE_ENV) or "").strip()
-    return value if value in PREVIEW_SOURCES else None
+    """There is no single-source activation mode in ordinary delivery."""
+    return None
 
 
-def preview_event_ids() -> frozenset:
-    """The canary's events. Any malformed entry turns the whole list off."""
-    raw = (os.environ.get(EVENT_IDS_ENV) or "").strip()
-    if not raw:
-        return frozenset()
-    ids = set()
-    for token in raw.split(","):
-        token = token.strip()
-        if not token.isdigit() or int(token) <= 0:
-            return frozenset()
-        ids.add(int(token))
-    return frozenset(ids)
+def preview_events_for(source: str) -> PreviewEventScope | frozenset:
+    """Admit supported sources to validation for every arriving event."""
+    return _ALL_PREVIEW_EVENTS if source in PREVIEW_SOURCES else frozenset()
 
 
-def preview_events_for(source: str) -> frozenset:
-    """Events ``source``'s arm previews: empty unless it is THE preview source."""
-    if _ledger_env() is not None:
-        return preview_event_ids() if source in ledger_sources() else frozenset()
-    return preview_event_ids() if preview_source() == source else frozenset()
-
-
-def preview_route_events() -> frozenset:
-    """Events whose stream forwards previews: the canary's, once a source is named."""
-    if _ledger_env() is not None:
-        return preview_event_ids() if ledger_sources() else frozenset()
-    return preview_event_ids() if preview_source() is not None else frozenset()
+def preview_route_events() -> PreviewEventScope:
+    """All event streams may forward eligible, client-compatible previews."""
+    return _ALL_PREVIEW_EVENTS
 
 
 def _max_uncommitted_s() -> float:
@@ -1086,7 +1080,7 @@ class LedgerRegistry(PreviewRegistry):
     def claim_of(self, source: str) -> Optional[int]:
         return self.claims.get(source)
 
-    async def read_ticket(self, call, source: str) -> tuple[Optional[int], list[int]]:
+    async def read_ticket(self, call, source: str, *, include_candidates: bool = False) -> tuple[Optional[int], list[int]]:
         """Capture before the caller's fresh READ COMMITTED statement.
 
         Never call this around an already prepared/cached graph. A refused
@@ -1095,7 +1089,8 @@ class LedgerRegistry(PreviewRegistry):
         claim = self.claims.get(source)
         if claim is None:
             return None, []
-        reply = await self._eval(call, "read_ticket", source, claim, "", " ".join(self.sources))
+        reply = await self._eval(call, "read_ticket", source, claim, "", " ".join(self.sources),
+                                 int(include_candidates))
         if reply[0] != "ok":
             return None, []
         return int(reply[1]), [int(eid) for eid in reply[2:]]
@@ -1107,6 +1102,9 @@ class LedgerRegistry(PreviewRegistry):
         if ticket is None and (state is None or source not in state.pending):
             return []
         ops = super().propose(event_id, source, **kwargs)
+        # Terminal/refused observations also allocate context before returning.
+        # Keep those paths bounded and settle any displaced pending chains.
+        ops.extend(self._evict())
         for op in ops:
             if op.get("ledger_op") in ("propose", "terminal"):
                 op["read_ticket"] = ticket
@@ -1122,6 +1120,11 @@ class LedgerRegistry(PreviewRegistry):
         """
         return {"ledger_op": "retire", "event_id": int(event_id), "source": source,
                 "ctx_rev": rev, "read_ticket": ticket, "committed_rev": committed_rev}
+
+    def retire_missing(self, event_id: int, source: str, ticket: int) -> dict:
+        """Only after a fresh authoritative DB statement proved row absence."""
+        return {"ledger_op": "retire_missing", "event_id": int(event_id),
+                "source": source, "read_ticket": ticket}
 
     # ── local bookkeeping → operations ──────────────────────────────────
     @staticmethod
@@ -1237,7 +1240,10 @@ class LedgerRegistry(PreviewRegistry):
         Sent even with nothing pending here: the commit is the event's newer
         committed base, which a sibling's pending value must compose on.
         """
-        state = self._state(event_id)
+        # Commit-only events need a base for sibling composition, not retained
+        # local state. In particular, Redis admission failure must not turn
+        # successful database writes into an unbounded event catalog.
+        state = (self._state(event_id) if event_id in self._events else _EventState())
         if event is not None:
             self._context(state, event)
         self._adopt_base(state, sources, rev)
@@ -1384,6 +1390,8 @@ class LedgerRegistry(PreviewRegistry):
         elif kind == "settle":
             reply = await self._eval(call, "settle", *common, op["mode"], op["through"],
                                      op["base_rev"], op["base"])
+        elif kind == "retire_missing":
+            reply = await self._eval(call, "retire_missing", *common, op["read_ticket"])
         elif kind == "retire":
             reply = await self._eval(call, "retire", *common, op["ctx_rev"], op["read_ticket"],
                                      op["committed_rev"])
@@ -1391,7 +1399,7 @@ class LedgerRegistry(PreviewRegistry):
             reply = await self._eval(call, "terminal", *common, op["ctx_rev"],
                                      LEDGER_MAX_EVENTS, op.get("read_ticket"))
         status = reply[0]
-        if kind in ("terminal", "retire"):
+        if kind in ("terminal", "retire", "retire_missing"):
             if status != "ok":
                 self._refusal(stats, status, kind, source, event_id)
                 return []
@@ -1529,8 +1537,7 @@ def registry() -> PreviewRegistry:
     """The process's one registry: both source arms must share it."""
     global _REGISTRY
     if _REGISTRY is None:
-        sources = ledger_sources()
-        _REGISTRY = LedgerRegistry(sources=sources) if sources else PreviewRegistry()
+        _REGISTRY = LedgerRegistry(sources=ledger_sources())
     return _REGISTRY
 
 

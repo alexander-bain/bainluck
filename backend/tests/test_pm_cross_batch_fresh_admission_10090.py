@@ -20,8 +20,22 @@ if os.environ.get("PM_SHARED_SNAPSHOT"):
 from tests.test_pm_same_flush_fresh_admission_10090 import paired
 from tests.test_polymarket_withdrawal_speed_10651 import compile_functions
 from tests.test_single_event_commit_10090 import settle_until
+from tests.test_blend_preview_ledger_tsp1_10090 import redis_kwargs
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("preview_redis")]
+
+
+@pytest.fixture
+async def preview_redis(redis_kwargs, monkeypatch):
+    """Default DNPL admission/settlement uses its real, isolated Redis ledger."""
+    from redis.asyncio import Redis
+
+    client = Redis(**redis_kwargs)
+    monkeypatch.setattr(blend.LiveBlendRefresher, "_client", lambda self: client)
+    try:
+        yield client
+    finally:
+        await client.aclose()
 
 
 def cross_batch(monkeypatch, **kwargs):
@@ -170,6 +184,9 @@ async def test_quiet_batch_does_not_overlap_refresh_and_debt_progresses_after_jo
     assert await p.ns["write_chunk"](later)
     x.r.adopt_pending([2])
     assert await p.ns["flush_prices"](flush_started=1002)
+    # The timed flush retains its stamp owner across the real ledger I/O.
+    # Observe the completed owner, not an incidental no-I/O scheduling turn.
+    await p.ns["catalog_boundary"].join_stamps()
     assert x.published == [1, 2] and not x.r.pending_event_ids()
 
 
@@ -285,12 +302,15 @@ async def test_repeated_shutdown_cancel_joins_old_owner_then_still_drains_prices
             try:
                 yield session
             finally:
-                if 1 in session.event_ids and asyncio.current_task().cancelling():
+                if 1 in getattr(session, "event_ids", ()) and asyncio.current_task().cancelling():
                     unwinding.set()
                     await unwind.wait()
 
     x.r._session_factory = slow_unwind
     assert await p.ns["flush_prices"](flush_started=1000)
+    # Cancellation must hit the held price transaction, after DNPL's ledger
+    # admission read, rather than cancel an owner still preparing its read.
+    await settle_until(lambda: any(s.event_ids == [1] for s in x.sessions))
     p.ns["price_buffer"].update(later)
     compile_functions(
         Path(__file__).parents[1] / "app/tasks/polymarket_ws.py",
