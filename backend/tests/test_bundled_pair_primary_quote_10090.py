@@ -1,5 +1,6 @@
 """Original normal-policy ticker custody: no estimator or trade subscription."""
 import ast
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace as NS
 from datetime import datetime,timezone,timedelta
@@ -306,7 +307,8 @@ def test_overlay_classification_keeps_original_rows_alive_until_identity_check()
     tree=ast.parse(Path(R.__file__).read_text())
     method=next(n for n in ast.walk(tree) if isinstance(n,ast.AsyncFunctionDef) and n.name=='_read_groups')
     start=next(i for i,n in enumerate(method.body) if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='original_rows' for t in n.targets))
-    fn=ast.FunctionDef(name='attach',args=ast.arguments(posonlyargs=[],args=[ast.arg(arg='self'),ast.arg(arg='grouped'),ast.arg(arg='held')],kwonlyargs=[],kw_defaults=[],defaults=[]),body=method.body[start:],decorator_list=[])
+    # The tail awaits the terminal retirement (F3), so it compiles as a coroutine; no ticket skips that call.
+    fn=ast.AsyncFunctionDef(name='attach',args=ast.arguments(posonlyargs=[],args=[ast.arg(arg='self'),ast.arg(arg='grouped'),ast.arg(arg='held'),ast.arg(arg='preview_ticket')],kwonlyargs=[],kw_defaults=[],defaults=[ast.Constant(None)]),body=method.body[start:],decorator_list=[])
     ns={};exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),R.__file__,'exec'),ns)
     class WeakRow(NS):pass
     row=WeakRow(id=11);reference=weakref.ref(row);entry=NS(outcomes=[row]);del row
@@ -316,6 +318,6 @@ def test_overlay_classification_keeps_original_rows_alive_until_identity_check()
         gc.collect()
         assert reference() is not None, 'original row was freed before overlay classification; its object id could be reused'
     grouped={100:(NS(),[entry])}
-    ns['attach'](NS(current_primary_input=lambda *args:None),grouped,NS(overlay_event=overlay))
+    asyncio.run(ns['attach'](NS(current_primary_input=lambda *args:None),grouped,NS(overlay_event=overlay)))
     assert replacement._primary_quote_overlaid is True
     assert reference() is None # temporary strong reference ends after classification
