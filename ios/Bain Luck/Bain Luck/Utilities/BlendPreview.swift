@@ -277,6 +277,13 @@ nonisolated struct BlendPreviewReader: Sendable, Equatable {
     /// Consumed by the first ACCEPTED v2 frame (`readerAfterV2`), which merges
     /// it into its origin's fence: after migration the fence is the record.
     var foldedSequence: FoldedSequence? = nil
+    /// The legacy path's own order, per row (f211): the highest tuple each
+    /// row's v1 frames reached here — accepted, or named by a revoke. A v1
+    /// frame at or below its row's order is a replay (v1 never replays) and
+    /// is refused; rows never order one another. `foldedSequence` stays the
+    /// latest of them, for the v1→v2 bridge. Read by the v1 path only and
+    /// dropped by the first accepted v2 frame, like `foldedSequence`.
+    var legacyOrders: [String: FoldedSequence] = [:]
     var enteredV2 = false
     var foldSession: String? = nil
     var foldSeq = -1
@@ -441,6 +448,29 @@ nonisolated enum BlendPreview {
             // It orders nothing in the fold the page joins.
             next.epoch = -1
         }
+        // Every row's legacy order crosses the boundary on the same rule as
+        // the latest one above. A removed row leaves it as retired evidence;
+        // folded down, or still on display, it becomes the row's fence (a
+        // same tuple keeps its first-seen deadline); a surviving row whose
+        // tuple is no longer shown keeps its order, so a replay of it stays
+        // refused on the legacy path while the fence v2 reads is untouched.
+        let shownRow = reader.held.flatMap { held in
+            held.originEventId.map(String.init) ?? (held.baseFoldRevision == nil ? String(held.eventId) : nil)
+        }
+        var orders = reader.legacyOrders
+        for (row, order) in reader.legacyOrders {
+            let live = shownRow == row && reader.held?.epoch == order.epoch && reader.held?.seq == order.seq
+            if !members.contains(row) {
+                leaving[row] = ownFence(leaving[row], epoch: order.epoch, seq: order.seq,
+                                        retired: !live, deadline: live ? reader.held?.expiresAt : nil)
+                orders[row] = nil
+            } else if members.count == 1 || live {
+                fences[row] = ownFence(fences[row], epoch: order.epoch, seq: order.seq,
+                                       retired: !live, deadline: live ? reader.held?.expiresAt : nil)
+                orders[row] = nil
+            }
+        }
+        next.legacyOrders = orders
         var retired = reader.retiredMembers.filter { !members.contains($0.row) }
         for row in Set(leaving.keys).union(reader.floors.map { Set($0.rows.keys) } ?? [])
         where !members.contains(row) {
@@ -569,6 +599,7 @@ nonisolated enum BlendPreview {
         // which every later frame, reset, reconnect and membership boundary
         // reads instead.
         next.foldedSequence = nil
+        next.legacyOrders = [:]
         if frame.kind == .revoke { next.held = nil; return next }
         guard let p = frame.p, let rev = base.rows[String(eventId)], deadline > now else { return reader }
         next.held = BlendPreviewState(eventId: eventId, epoch: 0, seq: sequence, baseRev: rev,
@@ -593,7 +624,23 @@ nonisolated enum BlendPreview {
         var next = reader
         guard let floor else { next.held = nil; return next }
         var rows = reader.floors?.rows ?? [:]
-        for (id, rev) in floor.rows { rows[id] = max(rows[id] ?? 0, rev) }
+        for (id, rev) in floor.rows {
+            // A row the page no longer folds cannot withhold the current
+            // fold; its floor is kept as that row's retired evidence, for
+            // its return (`readerAfterMembership`).
+            if let members = reader.authorityMembers, !members.contains(id) {
+                guard !reader.evidenceSaturated else { continue }
+                if let i = next.retiredMembers.firstIndex(where: { $0.row == id }) {
+                    let entry = next.retiredMembers[i]
+                    next.retiredMembers[i] = .init(row: id, fence: entry.fence, floor: max(entry.floor ?? 0, rev))
+                } else {
+                    next.retiredMembers.append(.init(row: id, fence: nil, floor: rev))
+                    if next.retiredMembers.count > BlendPreviewReader.maxRetiredMembers { next.evidenceSaturated = true }
+                }
+                continue
+            }
+            rows[id] = max(rows[id] ?? 0, rev)
+        }
         next.floors = FoldRevision(rows)
         if let base = reader.held?.baseFoldRevision, let floors = next.floors, !base.covers(floors) {
             next.held = nil
@@ -615,16 +662,19 @@ nonisolated enum BlendPreview {
         return readerAfterCommitFloor(reader, packet.floor.flatMap(validRevision))
     }
 
-    /// The reader after `frame` arrives at `now`. A lower epoch is fenced out; a
-    /// higher one raises the floor and voids the older epoch's preview first.
+    /// The reader after `frame` arrives at `now`. A lower epoch of the frame's
+    /// row is fenced out; a higher one voids the preview that row's older epoch
+    /// showed first. Rows never order one another: a folded frame orders
+    /// against its origin's legacy order and fence, a singleton against the
+    /// page's scalar epoch.
     static func readerAfter(_ reader: BlendPreviewReader, _ frame: BlendPreviewFrame,
                             eventId: Int, now: TimeInterval) -> BlendPreviewReader {
         // COVERAGE LIMIT (`evidenceSaturated`): this visit admits nothing more.
         guard !reader.evidenceSaturated else { return reader }
         if frame.foldedVersion == 2 { return readerAfterV2(reader, frame, eventId: eventId, now: now) }
-        guard frame.eventId == eventId, frame.epoch >= reader.epoch else { return reader }
         let own = String(eventId)
         let singleton = frame.baseFoldRevision == nil && frame.originEventId == nil
+        guard frame.eventId == eventId, !singleton || frame.epoch >= reader.epoch else { return reader }
         // After v2 authority, a legacy frame is a protocol downgrade — except
         // the page row's own singleton frames once the authoritative
         // membership is that row alone: the stream's composition is singleton
@@ -645,9 +695,17 @@ nonisolated enum BlendPreview {
         if let base = frame.baseFoldRevision, let members = reader.foldMembers, Set(base.rows.keys) != members {
             return reader
         }
-        if let order = reader.foldedSequence {
-            if frame.kind == .revoke, frame.originEventId != order.originEventId { return reader }
-            if frame.epoch == order.epoch, frame.seq <= order.seq { return reader }
+        // The frame's row: its origin when folded, the page when singleton.
+        let row = frame.originEventId.map { String($0) } ?? own
+        if !singleton || reader.hasFolded, let order = reader.legacyOrders[row],
+           frame.epoch < order.epoch || (frame.epoch == order.epoch && frame.seq <= order.seq) {
+            return reader
+        }
+        if reader.foldedSequence != nil {
+            // A folded withdrawal speaks only for a row this visit accepted.
+            if frame.kind == .revoke, !singleton, reader.legacyOrders[row] == nil,
+               reader.originFences[row] == nil { return reader }
+            if frame.kind == .revoke, singleton { return reader }
             // Once this visit has seen folded authority, unmarked singleton
             // blends cannot re-enter its ordering domain after a reset.
             if frame.kind == .blend, frame.baseFoldRevision == nil { return reader }
@@ -669,10 +727,17 @@ nonisolated enum BlendPreview {
         }
         var next = reader
         next.epoch = frame.epoch
-        let held = frame.epoch > reader.epoch ? nil : reader.held
+        // A higher epoch voids only the preview its own row's older epoch showed.
+        let held = reader.held.flatMap { state in
+            (state.originEventId.map { String($0) } ?? own) == row && frame.epoch > state.epoch ? nil : state
+        }
         if let origin = frame.originEventId, frame.baseFoldRevision != nil || reader.foldedSequence != nil {
             next.foldedSequence = .init(epoch: frame.epoch, seq: frame.seq, originEventId: origin)
             next.hasFolded = true
+        }
+        if frame.kind == .revoke || frame.originEventId != nil {
+            next.legacyOrders[row] = .init(epoch: frame.epoch, seq: max(frame.seq, frame.throughSeq ?? 0),
+                                           originEventId: frame.originEventId ?? eventId)
         }
         if let base = frame.baseFoldRevision, let floors = reader.floors, !base.covers(floors) {
             next.held = nil
@@ -699,6 +764,7 @@ nonisolated enum BlendPreview {
                 if let state = next.held, state.epoch == frame.epoch, state.seq == frame.seq {
                     next.originFences[own] = ownFence(reader.originFences[own], epoch: state.epoch, seq: state.seq,
                                                       retired: false, deadline: state.expiresAt)
+                    next.legacyOrders[own] = .init(epoch: state.epoch, seq: state.seq, originEventId: eventId)
                 }
             case .revoke:
                 if let through = frame.throughSeq {
@@ -714,9 +780,12 @@ nonisolated enum BlendPreview {
     static func previewAfter(_ state: BlendPreviewState?, _ frame: BlendPreviewFrame,
                              eventId: Int, now: TimeInterval) -> BlendPreviewState? {
         guard frame.eventId == eventId else { return state }
-        let sameEpoch = state.map { $0.epoch == frame.epoch } ?? false
+        let sameOrigin = state.map { ($0.originEventId ?? eventId) == (frame.originEventId ?? eventId) } ?? false
+        let sameEpoch = sameOrigin && state?.epoch == frame.epoch
         switch frame.kind {
         case .revoke:
+            // Another row's withdrawal says nothing about this preview.
+            if let state, !sameOrigin { return state }
             guard let state, sameEpoch, let through = frame.throughSeq else {
                 // A new epoch spoke; the old one's preview cannot be trusted.
                 return nil

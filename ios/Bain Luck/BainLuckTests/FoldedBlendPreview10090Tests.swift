@@ -194,7 +194,7 @@ final class FoldedBlendPreview10090Tests: XCTestCase {
         XCTAssertEqual(BlendPreview.membershipChanges(r, members: Set(ac.keys)), true)
         r = try adopt(r, ac)
         XCTAssertEqual(r.authorityMembers, ["4242", "4244"])
-        XCTAssertEqual(r.floors?.rows, ["4242": 10, "4243": 21], "the removed row's floor is kept, not erased")
+        XCTAssertEqual(r.retiredMembers.first { $0.row == "4243" }?.floor, 21, "the removed row's floor is kept, not erased")
         r = read(r, try folded(origin: 4244, epoch: 5, seq: 1, base: ac), at: 101)
         XCTAssertEqual(BlendPreview.displayed(r.held, held: try detail(revision: ac), now: 101), 0.6,
                        "the new fold is no longer withheld by a row it does not contain")
@@ -215,7 +215,7 @@ final class FoldedBlendPreview10090Tests: XCTestCase {
         XCTAssertNil(r.held, "the old fold's preview is withdrawn at the boundary")
         r = read(r, try folded(origin: 4244, epoch: 12, seq: 81, base: ac), at: 100.2)
         XCTAssertEqual(BlendPreview.displayed(r.held, held: try detail(revision: ac), now: 100.2), 0.6)
-        XCTAssertEqual(r.originFences["4243"].map { [$0.epoch, $0.seq] }, [900, 2],
+        XCTAssertEqual(r.retiredMembers.first { $0.row == "4243" }?.fence.map { [$0.epoch, $0.seq] }, [900, 2],
                        "the removed origin's fence is retained")
         // Ordering within the replacement origin is unchanged.
         for stale in [try folded(origin: 4244, epoch: 12, seq: 81, base: ac),
