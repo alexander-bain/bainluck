@@ -103,6 +103,18 @@ enum FinalForecastComparison11296 {
         }
     }
 
+    /// A comparison that passed every gate, with the served halves it was
+    /// rounded from. #9483 R2 — the finished page's other comparisons (the
+    /// projected-finish card, the NBA margin and total) read THESE halves, so
+    /// the headline and the cards under it compare the final with one pregame
+    /// expectation. The halves are the served projection's own; no rounded
+    /// display integer is ever turned back into a number.
+    nonisolated struct Qualified: Equatable, Sendable {
+        let comparison: Comparison
+        let away: Double
+        let home: Double
+    }
+
     /// The forecast pair to print under a finished game's actual result, or
     /// nil when any part of it cannot be shown honestly. Nil prints nothing:
     /// no placeholder, no gap, no explanation.
@@ -117,6 +129,19 @@ enum FinalForecastComparison11296 {
         actualPeriod: ScorePeriod?,
         projection p: PregameProjection?
     ) -> Comparison? {
+        qualified(sport: sport, status: status, homeScore: homeScore, awayScore: awayScore,
+                  actualPeriod: actualPeriod, projection: p)?.comparison
+    }
+
+    /// `resolve`'s gates, returning the served halves beside the printed pair.
+    static func qualified(
+        sport: String?,
+        status: String?,
+        homeScore: Int?,
+        awayScore: Int?,
+        actualPeriod: ScorePeriod?,
+        projection p: PregameProjection?
+    ) -> Qualified? {
         guard EventState.isFinished(status) else { return nil }
         guard let homeScore, let awayScore, homeScore >= 0, awayScore >= 0 else { return nil }
         guard let p else { return nil }
@@ -156,8 +181,10 @@ enum FinalForecastComparison11296 {
               let roundedAway = Int(exactly: away.rounded()) else { return nil }
         guard roundedHome != roundedAway || vocab.canEndInATie else { return nil }
 
-        return Comparison(label: actualPeriod == .regulation ? label90Min : label,
-                          away: roundedAway, home: roundedHome, bookmakerCount: books)
+        return Qualified(
+            comparison: Comparison(label: actualPeriod == .regulation ? label90Min : label,
+                                   away: roundedAway, home: roundedHome, bookmakerCount: books),
+            away: away, home: home)
     }
 
     /// The visible pair in the card's own order — both native cards stack away

@@ -312,7 +312,7 @@ struct NFLFinishCardView9483: View {
                     HStack(alignment: .firstTextBaseline) {
                         teamName(isHome: isHome)
                         Spacer(minLength: 8)
-                        number(isHome ? card.pregame.home : card.pregame.away, label: "pregame projection")
+                        number(isHome ? card.pregame.home : card.pregame.away, label: card.pregameLabel)
                         if let later, let laterLabel {
                             number(isHome ? later.home : later.away, label: laterLabel.lowercased())
                                 .frame(minWidth: 72, alignment: .trailing)
@@ -320,7 +320,7 @@ struct NFLFinishCardView9483: View {
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         teamName(isHome: isHome)
-                        number(isHome ? card.pregame.home : card.pregame.away, label: "pregame projection",
+                        number(isHome ? card.pregame.home : card.pregame.away, label: card.pregameLabel,
                                alignment: .leading)
                         if let later, let laterLabel {
                             number(isHome ? later.home : later.away, label: laterLabel.lowercased(),
@@ -330,7 +330,8 @@ struct NFLFinishCardView9483: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            Text(card.final != nil ? "Points · outline = pregame · cross = final"
+            Text(card.namesDistinctBasis ? "Points · outline = \(NFLFinishCard9483.earlierForecast.lowercased()) · cross = final"
+                 : card.final != nil ? "Points · outline = pregame · cross = final"
                  : card.projectedNow != nil ? "Points · outline = pregame · filled = projected now"
                  : "Projected points")
                 .font(.caption2)
@@ -389,7 +390,8 @@ struct NFLFinishCardView9483: View {
 
     private var accessibilityText: String {
         var parts = [card.kicker, card.headline(awayName: awayName, homeName: homeName),
-                     "Pregame projection \(awayName) \(Self.points(card.pregame.away)), \(homeName) \(Self.points(card.pregame.home))"]
+                     "\(card.namesDistinctBasis ? NFLFinishCard9483.earlierForecast : "Pregame projection") "
+                     + "\(awayName) \(Self.points(card.pregame.away)), \(homeName) \(Self.points(card.pregame.home))"]
         if let later, let laterLabel {
             parts.append("\(laterLabel) \(awayName) \(Self.points(later.away)), \(homeName) \(Self.points(later.home))")
         }

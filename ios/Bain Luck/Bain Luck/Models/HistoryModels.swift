@@ -266,6 +266,13 @@ nonisolated struct WinProbGameState: Decodable, Sendable, Equatable {
     let inning: Int?
     let homeScore: Int?
     let awayScore: Int?
+    /// #11356 — how the producer timed this reading: `"espn"` (the game clock
+    /// ESPN served) or `"wall_clock"` (the imprecise fallback when the ESPN name
+    /// match fails; `odds_polling.py`). Additive and lenient: absent, null or
+    /// unreadable is nil — never `"wall_clock"` — and can never fail the point,
+    /// its siblings or the response. Read only by
+    /// `OddsChartView.withheldSources9483`.
+    @LenientDecode var timeSource: String? = nil
 }
 
 // MARK: - Win Prob Source Info
