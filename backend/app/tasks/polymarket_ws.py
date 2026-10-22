@@ -2585,6 +2585,60 @@ def _slate_market_filter():
     )
 
 
+def _slate_metadata_keys() -> tuple[str, ...]:
+    """The only ``market_metadata`` keys the slate's market loop reads (#10663)."""
+    from app.tasks.polymarket_token_topup import OUTCOME_TOKEN_METADATA_KEY
+    from app.utils.content_understanding import CONTENT_UNDERSTANDING_KEY
+
+    return (
+        "clob_token_ids",
+        "clobTokenIds",
+        OUTCOME_TOKEN_METADATA_KEY,
+        CONTENT_UNDERSTANDING_KEY,
+    )
+
+
+def slate_market_stmt(market_ids: Iterable[int]):
+    """The slate's market read: ``(id, external_id, <four keys>, event status)``.
+
+    #10663 — the four keys the loop reads, never the whole metadata blob, the
+    same way ``open_contract_markets_stmt`` reads its token keys. A key the row
+    does not carry (or a blob that is not an object) reads as SQL NULL.
+    """
+    from sqlalchemy import select
+
+    from app.models.models import Event, FuturesMarket
+
+    meta = FuturesMarket.market_metadata
+    return (
+        select(
+            FuturesMarket.id,
+            FuturesMarket.external_id,
+            *(meta[key] for key in _slate_metadata_keys()),
+            Event.status,
+        )
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(FuturesMarket.id.in_(list(market_ids)))
+    )
+
+
+def slate_market_rows(rows: Iterable[Any]) -> Iterator[tuple[Any, Any, dict, Any]]:
+    """``slate_market_stmt`` rows as ``(id, external_id, metadata, status)``.
+
+    ``metadata`` holds only the keys that are present, so the loop reads it as
+    it read the full blob. A row with no token key is still skipped: an empty
+    dict hits ``if not metadata``, where the full blob hit ``if not tokens``.
+    """
+    keys = _slate_metadata_keys()
+    for mid, mext, *values, event_status in rows:
+        metadata = {
+            key: value
+            for key, value in zip(keys, values, strict=True)
+            if value is not None
+        }
+        yield mid, mext, metadata, event_status
+
+
 def _format_by_shard(ws_stats: dict) -> str:
     """`0:14/500 1:26/500 …` — the per-shard shape behind the coverage ratio.
 
@@ -2963,18 +3017,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         stored_outcome_tokens: dict[int, tuple[int, str]] = {}
 
         async with get_task_session() as session:
-            market_result = await session.execute(
-                select(
-                    FuturesMarket.id,
-                    FuturesMarket.external_id,
-                    FuturesMarket.market_metadata,
-                    Event.status,
-                )
-                .join(Event, FuturesMarket.event_id == Event.id)
-                .where(FuturesMarket.id.in_(list(market_ids)))
-            )
+            market_result = await session.execute(slate_market_stmt(market_ids))
             ext_by_market: dict[int, str] = {}
-            for mid, mext, metadata, event_status in market_result.all():
+            for mid, mext, metadata, event_status in slate_market_rows(
+                market_result.all()
+            ):
                 # Same authoritative refutation as shared WIN admission, using the
                 # catalog metadata this token read already owns. Missing labels
                 # remain conservative; titles and outcome names are never guessed.

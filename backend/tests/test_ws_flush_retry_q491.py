@@ -56,6 +56,7 @@ import app.tasks.live_blend_refresh as blend_mod
 import app.tasks.polymarket_ws as poly_task
 import app.services.polymarket_ws as poly_svc
 from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 YES_TOKEN = "111"
 NO_TOKEN = "222"
@@ -290,7 +291,8 @@ class _FlakySession:
             # #10090 attempt156: the stored-live load reads its own three
             # batches; the full slate stays queued for the full read.
             self._batches[:0] = self._stored_live()
-        return _Result(self._batches.pop(0) if self._batches else [])
+        rows = self._batches.pop(0) if self._batches else []
+        return _Result(answer_slate_market_read(stmt, rows))  # #10663
 
 
 def test_the_fake_session_has_its_own_empty_info_like_a_real_session():

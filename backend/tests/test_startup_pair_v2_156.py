@@ -17,6 +17,7 @@ from tests.test_ws_consumer_session_lifetime_2471 import (
     _install, _assert_one_lent_engine, _assert_disposed_once_after_last_session,
 )
 from tests.test_ws_flush_retry_q491 import _Result
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 
 @pytest.mark.asyncio
@@ -99,7 +100,8 @@ async def test_stored_live_startup_pair(monkeypatch, mode):
                             return _Result([(100, "Missing"), (110, "New")])
                         if "futures_markets.market_metadata" in sql:
                             assert selected is not None
-                            return _Result([row for row in metadata if row[0] in selected])
+                            return _Result(answer_slate_market_read(
+                                stmt, [row for row in metadata if row[0] in selected]))
                         if sql.startswith("SELECT futures_outcomes.id, futures_outcomes.market_id, futures_outcomes.external_id"):
                             assert selected is not None
                             return _Result([row for row in outcomes if row[1] in selected])

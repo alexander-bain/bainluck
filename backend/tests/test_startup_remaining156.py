@@ -23,6 +23,7 @@ from tests.test_ws_consumer_session_lifetime_2471 import (
 from tests.test_ws_flush_retry_q491 import _Result
 from tests.pm_bulk_test_support import price_writes, statement_params
 from tests._kalshi_price_session import is_price_write, returned
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 
 def slate(markets):
@@ -125,7 +126,7 @@ class Rig(CatalogRig):
                     if sql.startswith("SELECT events.id") and "events.completed_at IS NULL" in sql:
                         return SimpleNamespace(scalars=lambda: _Result([907]))
                     if "futures_markets.market_metadata" in sql:
-                        return _Result(rig.current[1])
+                        return _Result(answer_slate_market_read(stmt, rig.current[1]))
                     if sql.startswith("SELECT futures_outcomes.id, futures_outcomes.market_id, futures_outcomes.external_id"):
                         return _Result(rig.current[2])
                     return _Result([])

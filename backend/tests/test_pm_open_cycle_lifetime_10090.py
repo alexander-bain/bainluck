@@ -16,6 +16,7 @@ from tests.test_ws_consumer_session_lifetime_2471 import (
     _assert_disposed_once_after_last_session,
 )
 from tests.test_ws_flush_retry_q491 import POLY_SLATE, _Result
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 
 async def until(predicate):
@@ -149,7 +150,7 @@ class CatalogRig(_Rig):
                     if "linked_event_id" in sql:
                         return _Result(await rig.read_slate_rows())
                     if "futures_markets.market_metadata" in sql:
-                        return _Result(rig.slate[1])
+                        return _Result(answer_slate_market_read(stmt, rig.slate[1]))
                     if sql.startswith(
                         "SELECT futures_outcomes.id, futures_outcomes.market_id, futures_outcomes.external_id"
                     ):

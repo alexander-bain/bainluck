@@ -60,6 +60,7 @@ from app.tasks import polymarket_ws as task  # noqa: E402
 from app.tasks import ws_admission  # noqa: E402
 from app.utils import heap_trim  # noqa: E402
 from tests.test_ws_consumer_session_lifetime_2471 import _install, _Rig  # noqa: E402
+from tests._pm_slate_market_read_10663 import answer_slate_market_read  # noqa: E402
 
 SLATE_MARKETS, OPEN_MARKETS, EVENTS = 3_000, 12_000, 120
 READ_DELAY_S, FRAMES_PER_S = 0.05, 40
@@ -221,8 +222,10 @@ def rows_for(stmt):
     if "linked_event_id" in sql:
         return [(*leg, m["cond"], m["event"]) for m in c.slate for leg in c.legs(m)]
     if "futures_markets.market_metadata" in sql:
-        return [(m["mid"], m["cond"], {"clob_token_ids": m["tokens"]}, "scheduled")
-                for m in c.slate]
+        return answer_slate_market_read(stmt, [
+            (m["mid"], m["cond"], {"clob_token_ids": m["tokens"]}, "scheduled")
+            for m in c.slate
+        ])
     if sql.startswith(SLATE_OUTCOMES_SQL):
         return [leg for m in c.slate for leg in c.legs(m)]
     return []
