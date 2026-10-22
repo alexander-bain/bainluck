@@ -5973,6 +5973,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 for owners in (market_by_outcome, event_id_by_outcome):
                     for oid in owners.keys() - old_debt:
                         del owners[oid]
+                # #10663: per-outcome bookkeeping keeps only the outcomes this
+                # catalog owns or a buffered write still carries. Nothing else
+                # retired an entry, so both grew by every outcome the process
+                # ever priced. A re-admitted outcome has no last-write instant
+                # and is written on its next price (never suppressed); its next
+                # accepted input records a fresh mark before any flush reads it.
+                retained = current_outcomes | protected
+                for bookkeeping in (successful_price_write_at, input_marks):
+                    for oid in bookkeeping.keys() - retained:
+                        del bookkeeping[oid]
                 asset_ids[:] = slate["asset_ids"]
                 market_ids.clear()
                 market_ids.update(slate["market_ids"])
