@@ -462,7 +462,7 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             // The stacked layout: the whole name on its own line over the number.
             XCTAssertEqual(read[p - 1].text.trimmingCharacters(in: .whitespaces), team,
                            "\(name): the line over \(read[p].text) is not the whole name \(team) — \(all)")
-            assertLabel(read[(p + 1)..<n], reads: "pregame projection", under: read[p], over: read[n],
+            assertLabel(read[(p + 1)..<n], reads: "earlier forecast", under: read[p], over: read[n],
                         "\(name) \(team)", all: all)
             assertLabel(read[(n + 1)..<max(n + 1, ends[i])], reads: "projected now", under: read[n],
                         over: read[ends[i]], "\(name) \(team)", all: all)
@@ -470,7 +470,9 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
         // The live legend, whole, under the last row.
         let stop = read.indices.first { $0 > legend && read[$0].text.contains("Open") } ?? read.endIndex
         let text = read[legend..<stop].map(\.text).joined(separator: " ")
-        XCTAssertEqual(text.filter { $0.isLetter || $0 == "=" }, "Pointsoutline=pregamefilled=projectednow",
+        // Letter case is folded, every letter still read: Vision read a lone
+        // wrapped "now" as "noW" at 375/AX5 (A3, 2026-10-22).
+        XCTAssertEqual(text.filter { $0.isLetter || $0 == "=" }.lowercased(), "pointsoutline=earlierforecastfilled=projectednow",
                        "\(name): the legend read \"\(text)\" — \(all)")
     }
 

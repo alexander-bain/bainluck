@@ -393,7 +393,7 @@ final class NBAEventCards9483Tests: XCTestCase {
         let card = try XCTUnwrap(NFLFinishCard9483.build(input))
         XCTAssertEqual(card.tickStep, 20)
         XCTAssertEqual(card.startWord, "tip-off")
-        XCTAssertEqual(card.headline(awayName: "Warriors", homeName: "Clippers"), "Warriors projected ahead before tip-off")
+        XCTAssertEqual(card.headline(awayName: "Warriors", homeName: "Clippers"), "Warriors led the earlier forecast")
         XCTAssertEqual(card.withoutProjectedNow.startWord, "tip-off", "expiry keeps the sport's words")
         // Basketball's axis starts a gridline below the smallest score; the
         // football axis is unchanged and zero-based.

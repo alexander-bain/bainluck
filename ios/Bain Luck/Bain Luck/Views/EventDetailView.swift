@@ -1040,14 +1040,15 @@ struct EventDetailView: View {
         .accessibilityLabel("Probability confidence and update details. " +
             (priceStreamingEligible ? LivePriceReceiptCue.accessibilityText(status: vm.liveUpdateStatus,
                 receivedAt: vm.priceActivity?.receivedAt) : ""))
-        .accessibilityHint("Shows connection status and when the last probability update reached this phone")
+        .accessibilityHint(Self.probabilityDetailsHint(forecastShown: revealForecast11296 != nil))
         // #9408 — open BELOW the button (on iOS, `.top` measured below; the
         // default nil picked above, under the nav bar with 144pt to spare, and at
         // Alex's XXXL text the content overflowed both edges). The reveal
         // scrolls if even the lower space runs out.
         .popover(isPresented: $showProbabilityDetails, arrowEdge: .top) {
             FreshnessRevealView(status: vm.liveUpdateStatus,
-                lastReceivedAt: vm.priceActivity?.receivedAt, confidenceTier: confidenceTier)
+                lastReceivedAt: vm.priceActivity?.receivedAt, confidenceTier: confidenceTier,
+                forecast: revealForecast11296)
                 // idealWidth: the popover sizes from the IDEAL size; with only a
                 // max it measured the text unwrapped and came out 144pt tall.
                 .frame(idealWidth: 300, maxWidth: 300)
@@ -2034,6 +2035,13 @@ struct EventDetailView: View {
                 FinalForecastLine11296(
                     comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
             }
+            // #11296 — live, on a page the paired headline does not adopt: the
+            // admitted in-play pair under the arm that printed the score, and
+            // the retained pregame pair under it. Game Info no longer repeats it.
+            if let liveForecast = genericLiveForecast11296(event, hasScore: hasScore) {
+                LiveHeadlineForecast11296(
+                    forecast: liveForecast, awayName: event.awayTeam, homeName: event.homeTeam)
+            }
         }
         // #9483 v476 — on the adopted pair the hero is the top of ONE card with
         // the chart (see the page body): no own backdrop or corners, a short
@@ -2068,6 +2076,81 @@ struct EventDetailView: View {
             actualPeriod: FinalForecastComparison11296.actualPeriod(
                 sport: event.sport, servedFinalScorePeriod: event.finalScorePeriod),
             projection: event.pregameProjection)
+    }
+
+    /// #11296 — a LIVE headline's forecast: the producer's admitted in-play
+    /// pair, and the pair served from before the scheduled start when it can be
+    /// compared with it. Only when the page prints that admitted pair
+    /// (`projectionText` answered, through `LiveProjectedFinal2920.page`'s
+    /// admitted arm); the ladders' untyped pair and a refused object answer nil,
+    /// and keep printing where they print today. Static so the suite reaches it.
+    static func liveForecast11296(
+        _ event: EventDetail,
+        ladderHome: Double?, ladderAway: Double?,
+        hasScore: Bool,
+        now: Date = Date()
+    ) -> LivePregameComparison11296.Headline? {
+        guard case .admitted(let printed) = LiveProjectedFinal2920.page(event, now: now),
+              projectionText(event, ladderHome: ladderHome, ladderAway: ladderAway,
+                             hasScore: hasScore, now: now) != nil
+        else { return nil }
+        return LivePregameComparison11296.Headline(
+            current: printed,
+            baseline: LivePregameComparison11296.resolve(
+                status: event.status, sport: event.sport, commenceTime: event.commenceTime,
+                current: printed, projection: event.pregameProjection))
+    }
+
+    private func liveForecast11296(_ event: EventDetail, hasScore: Bool) -> LivePregameComparison11296.Headline? {
+        EventDetailView.liveForecast11296(
+            event,
+            ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
+            ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
+            hasScore: hasScore)
+    }
+
+    /// #11296 — the forecast the information popover describes: the same
+    /// decision, on the same headline row, that both hosts mount from — so it
+    /// opens on the pair the page prints and is nil wherever none prints.
+    private var revealForecast11296: LivePregameComparison11296.Headline? {
+        guard let served = vm.event else { return nil }
+        let event = vm.headline(served)
+        return liveForecast11296(event, hasScore: EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore))
+    }
+
+    /// #9483 A3 — the live card's pregame side: exactly when the live headline
+    /// prints its admitted retained pair (the same decision, on the same
+    /// headline row, as `revealForecast11296`), that pair's served halves
+    /// unrounded, as the finished card reads its qualified one. Nil otherwise,
+    /// and the card names its history point "Earlier forecast".
+    private func liveCardBaseline11296(_ served: EventDetail) -> (away: Double, home: Double)? {
+        let event = vm.headline(served)
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        return LivePregameComparison11296.servedHalves(
+            liveForecast11296(event, hasScore: hasScore), projection: event.pregameProjection)
+    }
+
+    /// #11296 — the same forecast on a live page the paired headline does not
+    /// adopt (soccer, college football, the other basketball leagues): the
+    /// generic hero prints it, and Game Info stops repeating it. Nil wherever
+    /// the paired headline prints its own, or no admitted pair prints.
+    private func genericLiveForecast11296(_ event: EventDetail, hasScore: Bool) -> LivePregameComparison11296.Headline? {
+        guard nflPairedHeadline(event, hasScore: hasScore) == nil else { return nil }
+        return liveForecast11296(event, hasScore: hasScore)
+    }
+
+    /// #11296 — the current group's one spoken sentence: the current pair, then
+    /// the retained one when it prints, each naming both teams.
+    static func projectionWithBaselineAccessibilityLabel11296(
+        figure: String, names: (away: String, home: String),
+        baseline: LivePregameComparison11296.Comparison?
+    ) -> String {
+        let current = projectionAccessibilityLabel9483(figure: figure, names: names)
+        guard let baseline else { return current }
+        return "\(current). "
+            + LivePregameComparison11296.spokenText(baseline, awayName: names.away, homeName: names.home)
     }
 
     /// The hero's team-tinted backdrop: its own on the legacy hero, the joined
@@ -2111,9 +2194,11 @@ struct EventDetailView: View {
         guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
         // #9483 R2 — a finished page's card compares the final with the
         // headline's own qualified forecast, not an earlier history point.
+        // A3 — a live one compares with the live headline's admitted pair.
         let finish = NFLFinishCard9483.build(
             projectedInput,
-            finalBaseline: Self.qualifiedFinalForecast11296(event).map { (away: $0.away, home: $0.home) })
+            finalBaseline: Self.qualifiedFinalForecast11296(event).map { (away: $0.away, home: $0.home) },
+            liveBaseline: liveCardBaseline11296(event))
         return NFLEventCardDeck9483.cards(
             sportKey: event.sport,
             finish: finish,
@@ -2377,6 +2462,9 @@ struct EventDetailView: View {
                                                           names: names, colors: colors)
                         } else {
                             // Figure over caption in the score's own style, on its baseline.
+                            // #11296 — live, the retained pregame pair sits under
+                            // them in this same group, never a third column.
+                            let liveBaseline = liveForecast11296(event, hasScore: hasScore)?.baseline
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(figure)
                                     .font(.system(size: eventHeadlineScoreSize9483, weight: .bold, design: .rounded).monospacedDigit())
@@ -2388,9 +2476,21 @@ struct EventDetailView: View {
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.5)
                                     .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
+                                if let liveBaseline {
+                                    // Design 2026-10-22 — the retained pair is never
+                                    // larger than the current caption above it: the
+                                    // caption's own font and ceiling, still wrapping,
+                                    // never scaled down.
+                                    LivePregameBaselineLine11296(
+                                        comparison: liveBaseline, awayName: names.away, homeName: names.home,
+                                        font: .caption2)
+                                        .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
+                                        .padding(.top, 4)
+                                }
                             }
                             .accessibilityElement(children: .ignore)
-                            .accessibilityLabel(Self.projectionAccessibilityLabel9483(figure: figure, names: names))
+                            .accessibilityLabel(Self.projectionWithBaselineAccessibilityLabel11296(
+                                figure: figure, names: names, baseline: liveBaseline))
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
@@ -2856,6 +2956,17 @@ struct EventDetailView: View {
         statusInDetails ? nil : heroVerdictWidth(at: size)
     }
 
+    /// #11296 — what the info control opens, said before it is opened. The
+    /// delivery sentence is unchanged; it grows the forecast's clause only when
+    /// the popover will actually carry the forecast section (the same
+    /// `revealForecast11296` the popover reads), so it never promises details
+    /// that are not there.
+    nonisolated static func probabilityDetailsHint(forecastShown: Bool) -> String {
+        forecastShown
+            ? "Shows connection status, when the last probability update reached this phone, and the sportsbooks and times behind the projected scores"
+            : "Shows connection status and when the last probability update reached this phone"
+    }
+
     // MARK: - Hero Status Badge
 
     /// #4002 — the arms are ORDERED, and `suspended` has to come before the
@@ -2918,6 +3029,8 @@ struct EventDetailView: View {
         // in any state, so Game Info holds them; it carries the projection, so
         // Game Info does not repeat it.
         let nflHeadline = nflPairedHeadline(event, hasScore: gameInfoHasScore) != nil
+        // #11296 — nor when the generic hero printed the admitted live pair.
+        let heroLiveForecast = genericLiveForecast11296(event, hasScore: gameInfoHasScore) != nil
         let nflHandedOver: [(icon: String, text: String)] = nflHeadline ? [
             recordsText(event).map { ("list.number", $0) },
             openedText(event).map { ("flag", $0) },
@@ -2926,7 +3039,7 @@ struct EventDetailView: View {
             EventDetailView.heroCarriesGameContext(status: event.status) ? [] : [
                 recordsText(event).map { ("list.number", $0) },
                 openedText(event).map { ("flag", $0) },
-                nflHeadline ? nil : projectionText(
+                nflHeadline || heroLiveForecast ? nil : projectionText(
                     event,
                     hasScore: gameInfoHasScore
                 ).map { ("chart.line.uptrend.xyaxis", $0) },
