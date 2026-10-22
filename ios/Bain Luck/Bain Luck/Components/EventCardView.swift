@@ -454,7 +454,8 @@ struct EventCardView: View {
 
             if let liveProjection = liveProjectedFinal2920 {
                 LiveProjectedFinalLine2920(
-                    printed: liveProjection, awayName: event.awayTeam, homeName: event.homeTeam)
+                    printed: liveProjection, awayName: event.awayTeam, homeName: event.homeTeam,
+                    sportKey: event.sport)
                     .padding(.leading, 32)
             }
         }
@@ -641,6 +642,24 @@ struct EventCardView: View {
             // nothing, so it is still not content.
             return awayOpening != nil || DrawPricedWinner.sportPricesADraw(sport)
         }
+
+        /// #11422 — whether the served reason already says where the game
+        /// STARTED. Every live claim `feed_reasons.py` writes carries the
+        /// kickoff price ("New Orleans Pelicans leading after starting at 44%",
+        /// "… chance rose from 46% to 87%", "… chance fell from …"), and the
+        /// footer then printed "Opened 56%/44%" beside it: the same fact twice,
+        /// one of them as a pair the reader has to map back onto the sentence.
+        /// When the reason says it, the caption steps aside.
+        ///
+        /// Pinned to the TEMPLATE's words around the number, never a bare
+        /// keyword, for the reason `reasonStyle` gives: the sentence has a team
+        /// name in it, and "after starting at 44%" is the part no name can forge.
+        static func reasonStatesTheOpening(_ reason: String?) -> Bool {
+            guard let reason, !reason.isEmpty else { return false }
+            return reason.range(
+                of: #"(after starting at|chance (rose|fell) from) \d+%"#,
+                options: [.regularExpression, .caseInsensitive]) != nil
+        }
     }
 
     @ViewBuilder
@@ -681,7 +700,8 @@ struct EventCardView: View {
             // that let the other go unnamed, so it NAMES the side (#3430 —
             // via the pair, because "Tigers" is not a name when both shorten
             // to it).
-            if isLive, let opened = DrawPricedWinner.printablePair(
+            if isLive, !EventCardFooter.reasonStatesTheOpening(reason),
+               let opened = DrawPricedWinner.printablePair(
                 away: event.openingOdds?.awayProbability,
                 home: event.openingOdds?.homeProbability,
                 sport: event.sport) {
@@ -712,12 +732,20 @@ struct EventCardView: View {
             Text(text)
                 .font(.caption2)
                 .fontWeight(.medium)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(color)
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
         .background(color.opacity(0.1))
-        .clipShape(Capsule())
+        // #11422 — a Capsule's radius is half its height, so a sentence that
+        // wrapped to three lines had its first and last letters cut off by its
+        // own ends. A fixed radius reads as the same pill on one line and
+        // leaves every letter of a wrapped one inside the shape.
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        // The sentence outranks the "Opened" caption beside it for the width.
+        .layoutPriority(1)
     }
 
     /// Which badge family a served reason belongs to. (#5749)
