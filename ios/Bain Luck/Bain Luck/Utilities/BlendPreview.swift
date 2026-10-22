@@ -284,6 +284,9 @@ nonisolated struct BlendPreviewReader: Sendable, Equatable {
     /// latest of them, for the v1→v2 bridge. Read by the v1 path only and
     /// dropped by the first accepted v2 frame, like `foldedSequence`.
     var legacyOrders: [String: FoldedSequence] = [:]
+    /// A fold has a handful of rows. Past this many distinct legacy origins a
+    /// new one is refused rather than any order forgotten (f211).
+    static let maxOrigins = 32
     var enteredV2 = false
     var foldSession: String? = nil
     var foldSeq = -1
@@ -665,8 +668,8 @@ nonisolated enum BlendPreview {
     /// The reader after `frame` arrives at `now`. A lower epoch of the frame's
     /// row is fenced out; a higher one voids the preview that row's older epoch
     /// showed first. Rows never order one another: a folded frame orders
-    /// against its origin's legacy order and fence, a singleton against the
-    /// page's scalar epoch.
+    /// against its origin's legacy order and fence; the scalar epoch is the
+    /// page row's alone (f211).
     static func readerAfter(_ reader: BlendPreviewReader, _ frame: BlendPreviewFrame,
                             eventId: Int, now: TimeInterval) -> BlendPreviewReader {
         // COVERAGE LIMIT (`evidenceSaturated`): this visit admits nothing more.
@@ -674,7 +677,9 @@ nonisolated enum BlendPreview {
         if frame.foldedVersion == 2 { return readerAfterV2(reader, frame, eventId: eventId, now: now) }
         let own = String(eventId)
         let singleton = frame.baseFoldRevision == nil && frame.originEventId == nil
-        guard frame.eventId == eventId, !singleton || frame.epoch >= reader.epoch else { return reader }
+        // The frame's row: its origin when folded, the page when singleton.
+        let row = frame.originEventId.map { String($0) } ?? own
+        guard frame.eventId == eventId, row != own || frame.epoch >= reader.epoch else { return reader }
         // After v2 authority, a legacy frame is a protocol downgrade — except
         // the page row's own singleton frames once the authoritative
         // membership is that row alone: the stream's composition is singleton
@@ -695,8 +700,9 @@ nonisolated enum BlendPreview {
         if let base = frame.baseFoldRevision, let members = reader.foldMembers, Set(base.rows.keys) != members {
             return reader
         }
-        // The frame's row: its origin when folded, the page when singleton.
-        let row = frame.originEventId.map { String($0) } ?? own
+        guard reader.legacyOrders[row] != nil || reader.legacyOrders.count < BlendPreviewReader.maxOrigins else {
+            return reader
+        }
         if !singleton || reader.hasFolded, let order = reader.legacyOrders[row],
            frame.epoch < order.epoch || (frame.epoch == order.epoch && frame.seq <= order.seq) {
             return reader
@@ -726,7 +732,7 @@ nonisolated enum BlendPreview {
             }
         }
         var next = reader
-        next.epoch = frame.epoch
+        if row == own { next.epoch = frame.epoch }
         // A higher epoch voids only the preview its own row's older epoch showed.
         let held = reader.held.flatMap { state in
             (state.originEventId.map { String($0) } ?? own) == row && frame.epoch > state.epoch ? nil : state

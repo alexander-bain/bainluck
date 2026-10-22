@@ -673,17 +673,21 @@ final class FoldedBlendPreview10090Tests: XCTestCase {
         let old = BlendPreview.readerAfterMembership(.empty, members: ["4242", "4243"])
         let fold2 = BlendPreview.readerAfter(
             old, try folded(origin: 4243, epoch: 900, seq: 2, baseRev: 20, base: ["4242": 10, "4243": 20]), eventId: id, now: 100)
-        XCTAssertEqual(fold2.epoch, 900)
+        XCTAssertEqual(fold2.epoch, -1, "the scalar epoch is the page row's alone (f211)")
+        XCTAssertEqual(fold2.legacyOrders["4243"], BlendPreviewReader.FoldedSequence(epoch: 900, seq: 2, originEventId: 4243),
+                       "origin 4243's epoch 900 is its own order")
         XCTAssertEqual(fold2.held?.p, 0.6)
         let origin3 = try folded(origin: 4244, epoch: 12, seq: 81, baseRev: 30, base: ["4242": 10, "4244": 30])
         let reset = BlendPreview.readerReset(fold2)
         XCTAssertEqual(BlendPreview.readerAfter(reset, origin3, eventId: id, now: 100.2), reset,
-                       "reset is not a boundary: the removed origin's epoch 900 still fences origin 4244's epoch 12")
+                       "reset is not a boundary: origin 4244 is not in the authoritative fold, so its frame is still refused")
         let pruned = BlendPreview.readerAfterMembership(fold2, members: ["4242", "4244"])
         XCTAssertEqual(pruned.epoch, -1)
         XCTAssertNil(pruned.foldedSequence)
         let admitted = BlendPreview.readerAfter(pruned, origin3, eventId: id, now: 100.2)
-        XCTAssertEqual(admitted.epoch, 12, "the replacement origin's own epoch is the fence now")
+        XCTAssertEqual(admitted.epoch, -1, "the replacement origin's epoch is not the page row's scalar")
+        XCTAssertEqual(admitted.legacyOrders["4244"], BlendPreviewReader.FoldedSequence(epoch: 12, seq: 81, originEventId: 4244),
+                       "the replacement origin's own order is the fence now")
         XCTAssertEqual(admitted.foldedSequence, BlendPreviewReader.FoldedSequence(epoch: 12, seq: 81, originEventId: 4244))
         XCTAssertEqual(BlendPreview.displayed(admitted.held, held: try detail(revision: ["4242": 10, "4244": 30]), now: 100.2), 0.6)
         XCTAssertEqual(BlendPreview.readerAfter(
