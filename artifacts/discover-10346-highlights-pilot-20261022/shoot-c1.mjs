@@ -1,14 +1,18 @@
 // #10346 local preview rig (c1 successor): phone + desktop hierarchy, Sources folds, viewer-local
 // clocks (phone in Pacific, desktop in Eastern), a large-text phone frame and catalogue navigation.
-// API calls to api.bainluck.com are fulfilled by curl (session egress) and cached;
-// stream endpoints are aborted (they reconnect forever and never settle).
-import { execFileSync } from "node:child_process";
+// API calls to api.bainluck.com are answered ONLY from the cache directory (no live
+// read; a miss is aborted); stream endpoints are aborted (they never settle).
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 
 const BASE = process.argv[2] || "http://127.0.0.1:3461";
-const OUT = process.argv[3] || "/tmp/d10346/shots";
-const CACHE = "/tmp/d10346/apicache";
+// Output and cache directories are REQUIRED arguments: no temp-dir default (CodeQL
+// js/insecure-temporary-file). Usage: node <rig> <base-url> <out-dir> <cache-dir>
+const [OUT, CACHE] = [process.argv[3], process.argv[4]];
+if (!OUT || !CACHE) {
+  console.error("usage: node <rig> <base-url> <out-dir> <cache-dir>");
+  process.exit(2);
+}
 fs.mkdirSync(OUT, { recursive: true });
 fs.mkdirSync(CACHE, { recursive: true });
 

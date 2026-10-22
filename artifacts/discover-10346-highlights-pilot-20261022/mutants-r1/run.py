@@ -1,4 +1,4 @@
-import subprocess, hashlib, sys, pathlib
+import subprocess, hashlib, pathlib
 F=pathlib.Path('/tmp/wt-d10346/frontend')
 LIB=F/'lib/eventHighlightsPreview.ts'; CMP=F/'components/event/EventHighlightsPreview.tsx'
 M=[
