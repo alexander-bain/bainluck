@@ -599,6 +599,35 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
                        "control: joined, the same points do lay ink under the plate")
     }
 
+    /// A plate the bounded step put on the ink's edge keeps it, even when
+    /// `edge + h/2 − h/2` misses the edge by one ulp (Lane1b C1's specimen,
+    /// through the real placement). The touch allowance stays sub-pixel: a
+    /// third of a point of real overlap still drops the plate.
+    func testAPlateSteppedOntoTheInksEdgeIsClearDespiteRounding() throws {
+        let climb = [CGPoint(x: 169, y: 37.603193728308504), CGPoint(x: 203, y: 26.76989447121026),
+                     CGPoint(x: 274, y: 19.885678711051654), CGPoint(x: 290, y: 0)]
+        let placed = Chart.endLabelCenter9483(end: CGPoint(x: 290, y: 0), size: plate,
+                                              lineYBeneath: 26.76989447121026, plot: platePlot,
+                                              topReserve: 20, ink: ink([climb]))
+        XCTAssertEqual(placed.x, 259)
+        XCTAssertNotEqual(placed.y, 27, "control: the frame moved it and the step ran")
+        let line = try XCTUnwrap(ink([climb])((placed.x - plate.width / 2)...(placed.x + plate.width / 2)))
+        let overlap = line.upperBound - (placed.y - plate.height / 2)
+        XCTAssertGreaterThan(overlap, 0, "control: the stepped plate's top misses the ink's edge by rounding")
+        XCTAssertLessThan(overlap, Chart.endLabelPlateTouch9483)
+        XCTAssertTrue(Chart.endLabelPlateClears9483(center: placed, size: plate, ink: ink([climb])),
+                      "a plate stepped onto the ink's edge is kept")
+        // Both edges allow the same rounding (a collapse's `edge − h/2` is
+        // exact for whole plate heights, so no placement reaches this arm)…
+        let size = CGSize(width: 40, height: 16)
+        let center = CGPoint(x: 224, y: 50)
+        XCTAssertTrue(Chart.endLabelPlateClears9483(center: center, size: size, ink: { _ in (58 - 0.005)...70 }))
+        XCTAssertTrue(Chart.endLabelPlateClears9483(center: center, size: size, ink: { _ in 10...(42 + 0.005) }))
+        // …and stay bounded: one @3x pixel of overlap is real cover, above and below.
+        XCTAssertFalse(Chart.endLabelPlateClears9483(center: center, size: size, ink: { _ in (58 - 1.0 / 3)...70 }))
+        XCTAssertFalse(Chart.endLabelPlateClears9483(center: center, size: size, ink: { _ in 10...(42 + 1.0 / 3) }))
+    }
+
     /// What the primary key prints: the last DRAWN primary reading, named for
     /// whose chance it is, in the end label's words — never a value the line
     /// lacks, and the same whether Sources is open or not.

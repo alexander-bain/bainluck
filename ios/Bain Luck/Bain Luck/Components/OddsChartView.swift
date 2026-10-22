@@ -4764,11 +4764,20 @@ extension OddsChartView {
     /// the frame's placement over the climb, and an in-bounds position is no
     /// permission to paint over it. Not clear ⇒ the plate is left off; the end dot
     /// stays, and the primary key carries the reading (`endKeyReading9483`).
+    /// Touching is clear, within `endLabelPlateTouch9483`: the step lands the
+    /// plate on the ink's edge as `edge ± h/2`, which can come back one ulp
+    /// over it (Lane1b C1, ~1 stepped finish in 20).
     static func endLabelPlateClears9483(center: CGPoint, size: CGSize,
                                         ink: (ClosedRange<CGFloat>) -> ClosedRange<CGFloat>?) -> Bool {
         guard let line = ink((center.x - size.width / 2)...(center.x + size.width / 2)) else { return true }
-        return center.y + size.height / 2 <= line.lowerBound || center.y - size.height / 2 >= line.upperBound
+        let touch = endLabelPlateTouch9483
+        return center.y + size.height / 2 <= line.lowerBound + touch
+            || center.y - size.height / 2 >= line.upperBound - touch
     }
+
+    /// How far a plate may overlap the ink and still count as touching it: a
+    /// rounding error, far under one @3x pixel (0.33pt).
+    static let endLabelPlateTouch9483: CGFloat = 0.01
 
     /// The primary line's marks exactly as `chartContent` draws them: its
     /// joined runs (two or more points, straight segments, #7878's breaks left
