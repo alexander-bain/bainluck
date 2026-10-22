@@ -30,18 +30,14 @@ async function open(width, height, url) {
     const key = createHash("sha1").update(u).digest("hex");
     const f = `${CACHE}/${key}.json`;
     let body;
-    if (fs.existsSync(f)) body = fs.readFileSync(f);
-    else {
-      try {
-        body = execFileSync("curl", ["-s", "-m", "40", u], { maxBuffer: 64 << 20 });
-        fs.writeFileSync(f, body);
-      } catch {
-        return route.abort();
-      }
-    }
+    // Cache only: no new production read for this correction.
+    if (!fs.existsSync(f)) { (report.misses ||= []).push(u); return route.abort(); }
+    body = fs.readFileSync(f);
     return route.fulfill({ status: 200, contentType: "application/json", body, headers: { "access-control-allow-origin": "*" } });
   });
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 240000 });
+  // The ordinary consent control, as a reader would use it (Design: judge the unobscured view).
+  await page.getByRole("button", { name: /^Accept/ }).first().click({ timeout: 60000 }).then(() => (report.consentClicked = true)).catch(() => {});
   page.done = () => browser.close();
   return page;
 }
@@ -72,6 +68,8 @@ for (const [name, width, height] of [["phone", 390, 844], ["desktop", 1280, 900]
   });
   r.catalogueOpenBefore = await page.$eval("#all-markets details", (d) => d.open).catch(() => "absent");
   await page.screenshot({ path: `${OUT}/10346-${name}-${width}-highlights.png` });
+  await hl.screenshot({ path: `${OUT}/10346-${name}-${width}-section.png` });
+  r.cardHeights = await page.$$eval("[data-highlight-id]", (els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
   if (name === "phone") {
     await page.$eval('[data-testid="event-highlights-preview"] ol', (ol) => ol.scrollBy({ left: ol.clientWidth * 0.85, behavior: "instant" }));
     await page.waitForTimeout(500);
