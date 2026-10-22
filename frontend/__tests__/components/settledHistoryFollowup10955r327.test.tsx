@@ -292,6 +292,22 @@ describe("T the host places its callout from the measured window", () => {
     expect(Number(crosshairX())).toBe(780);
   });
 
+  it("SCROLLED phone (the real 390 geometry): placed beside the crosshair inside the visible window", () => {
+    // Measured on the built page at 390 (owner fit receipt): the plot keeps its
+    // 600px minimum, the card shows 318px of it, scrolled to 282.
+    const svg = mountAt390();
+    const scroller = descendants(host).find((n) => typeof props(n)?.onScroll === "function")!;
+    Object.defineProperty(scroller, "clientWidth", { value: 318, configurable: true });
+    scroller.scrollLeft = 282;
+    svg.getBoundingClientRect = () => ({ left: 0, width: 600 }) as DOMRect;
+    hover(svg, 780); // crosshair at 780/800 of the plot = 585px of content
+    const left = parseFloat(String(tooltipNode().style.left));
+    expect(left).toBe((780 / 800) * 600 - 8 - TOOLTIP_WIDTH); // beside it, on its left
+    expect(left).toBeGreaterThanOrEqual(282 + TOOLTIP_EDGE_MARGIN_PX);
+    expect(left + TOOLTIP_WIDTH).toBeLessThanOrEqual(282 + 318 - TOOLTIP_EDGE_MARGIN_PX);
+    expect(tooltipNode().style.maxWidth).toBe("310px");
+  });
+
   it("at the left edge it sits right of the crosshair, still inside", () => {
     const svg = mountAt390();
     hover(svg, 60);
