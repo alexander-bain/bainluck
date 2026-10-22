@@ -1377,9 +1377,12 @@ export default function OddsChart({
    * other four, which is precisely how two tabs came to disagree about the same
    * finished game.
    */
+  // A preview can re-evaluate the survival guards above without moving the
+  // cutoff. Depend on its value, not the freshly allocated Date, so unchanged
+  // source histories keep their filtered arrays and support classifications.
+  const startMs = rangeStartTime ? rangeStartTime.getTime() : null;
+  const endMs = rangeEndTime ? rangeEndTime.getTime() : null;
   const inChartRange = useMemo(() => {
-    const startMs = rangeStartTime ? rangeStartTime.getTime() : null;
-    const endMs = rangeEndTime ? rangeEndTime.getTime() : null;
     if (startMs === null && endMs === null) return null;
     return (timestamp: string): boolean => {
       const t = parseISO(timestamp).getTime();
@@ -1387,7 +1390,7 @@ export default function OddsChart({
       if (endMs !== null && t > endMs) return false;
       return true;
     };
-  }, [rangeStartTime, rangeEndTime]);
+  }, [startMs, endMs]);
 
   // Filter history to the chart window
   const filteredHistory = useMemo(() => {
