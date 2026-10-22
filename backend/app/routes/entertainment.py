@@ -1056,6 +1056,26 @@ async def get_entertainment(db: AsyncSession):
             all_rows.append(row)
 
     trending = _build_trending(all_rows)
+    # #7382 — THE WEB LEAD'S OWN RUNGS, IN A FIELD ONLY IT READS.
+    #
+    # At 1280px the lead hero spans both grid rows (421px, set by the two side
+    # cards stacked beside it) and printed three rungs under a 196px blank band
+    # (production 2026-10-22 03:52Z, "Oscar Winner: Best Picture", 41 outcomes).
+    # `lead_outcomes` carries up to six of the SAME priced, non-withheld rungs in
+    # the same price order, so `top_outcomes[:n]` is always its prefix; six is a
+    # ceiling, never a pad.
+    #
+    # ⚠️ ADDITIVE, NOT A WIDER `top_outcomes`. The app's `EntertainmentView`
+    # prints `topOutcomes.prefix(isLead ? 5 : 3)`, so widening the shared field
+    # would grow every installed iPhone's lead from three rows to five with no
+    # app change. The app's `EntMarketRow` decodes explicit keys, so this one is
+    # ignored by every shipped build; `top_outcomes`, and which markets trend,
+    # are byte-identical to before. Only `trending[0]` carries it: that row is
+    # the web lead (`TrendingHero`'s `[lead, ...rest]`).
+    if trending:
+        lead_market = next(m for m in featured_eligible if m.id == trending[0]["market_id"])
+        wide = _market_row(lead_market, max_outcomes=6, withheld_ids=withheld_ids)
+        trending[0] = {**trending[0], "lead_outcomes": wide["top_outcomes"]}
     music = _build_music(themed, withheld_ids)
     movies_tv = _build_movies_tv(themed, withheld_ids)
     cultural_moments = _build_cultural(themed, withheld_ids)
