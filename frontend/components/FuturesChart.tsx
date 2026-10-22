@@ -11,6 +11,12 @@ import { anchorScrollLeft, edgeOverflowFor, seriesMovementMarks } from "@/lib/ch
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
 import { seriesFreshness } from "@/lib/seriesFreshness";
 import { chartSeriesPath } from "@/lib/chartSeriesPath";
+import {
+  settlementResultWord,
+  splitSettlementPoints,
+  type SettlementResult,
+} from "@/lib/chartSettlementPoints";
+import { SettledMark } from "@/components/SettledOutcomeMark";
 import { combinedLinePoints } from "@/lib/combinedLinePolicy";
 import {
   inFixedSeriesOrder,
@@ -221,6 +227,17 @@ export function FuturesChart({
     [historyData, selectedOutcomes, seriesOrderIds],
   );
 
+  // #10955 / #11158: a `bookmaker: "settlement"` point is the GRADE, not a
+  // reading — its stamp is a schedule, a notice, a nudge, the clock or nothing.
+  // Split it off HERE, before the domain, the point counts, freshness, the
+  // combined line, the hover candidates and every path, so none of them can see
+  // it; the grade rides `settlementResults` to the result marks instead. With no
+  // settlement point anywhere, `plottedOutcomes` IS `displayedOutcomes`.
+  const { real: plottedOutcomes, results: settlementResults } = useMemo(
+    () => splitSettlementPoints(displayedOutcomes),
+    [displayedOutcomes],
+  );
+
   // #8095: the default palette gives a party line its party's colour rather than
   // whatever its sort position dealt it. The gold/green leader themes are a
   // deliberate emphasis on the frontrunner and keep their index order.
@@ -296,7 +313,7 @@ export function FuturesChart({
     // while it still believed itself live must re-anchor when it learns.
     // #9867: and "behind" is wherever its lines moved — see `anchorScrollLeft`.
     const movement = settled
-      ? seriesMovementMarks(displayedOutcomes, {
+      ? seriesMovementMarks(plottedOutcomes, {
           width: FULL_CHART_WIDTH,
           left: FULL_PADDING.left,
           right: FULL_PADDING.right,
@@ -308,7 +325,7 @@ export function FuturesChart({
     // still has plot behind it.
     window.addEventListener("resize", syncEdgeOverflow);
     return () => window.removeEventListener("resize", syncEdgeOverflow);
-  }, [mini, displayedOutcomes, settled, syncEdgeOverflow]);
+  }, [mini, plottedOutcomes, settled, syncEdgeOverflow]);
 
   // #683: a full read that served nothing to draw and says it held some back
   // falls through to the too-little-to-draw state below, which says so. A
@@ -328,7 +345,7 @@ export function FuturesChart({
   let maxTime = -Infinity;
   let maxProb = 0;
 
-  for (const outcome of displayedOutcomes) {
+  for (const outcome of plottedOutcomes) {
     for (const point of outcome.history) {
       const time = new Date(point.timestamp).getTime();
       if (time < minTime) minTime = time;
@@ -340,7 +357,7 @@ export function FuturesChart({
   }
 
   // Check total data points across all displayed outcomes
-  const totalPoints = displayedOutcomes.reduce(
+  const totalPoints = plottedOutcomes.reduce(
     (sum, o) => sum + o.history.filter((p) => p.probability !== null).length,
     0
   );
@@ -375,14 +392,14 @@ export function FuturesChart({
   // ago its last number arrived — of course it is old; the question is answered.
   // The hole warning is unaffected (see the `stale` branch in `seriesFreshness`).
   const freshness = seriesFreshness(
-    displayedOutcomes.flatMap((o) =>
+    plottedOutcomes.flatMap((o) =>
       o.history.filter((p) => p.probability !== null).map((p) => p.timestamp),
     ),
     undefined,
     { settled },
   );
   // #683 — a plain call beside `freshness`, over the same drawn outcomes.
-  const archiveNote = archiveChartNote(displayedOutcomes);
+  const archiveNote = archiveChartNote(plottedOutcomes);
   const hoverArchiveNote = hoverInfo
     ? archiveTooltipNote(hoverInfo.values.map((v) => v.point))
     : null;
@@ -431,8 +448,66 @@ export function FuturesChart({
   // NOTE: a plain call (not a hook) — it lives below the early returns, so a
   // useMemo here would break the rules of hooks. The walk is O(points) and cheap.
   const combinedPoints = showCombinedProbability
-    ? combinedLinePoints(displayedOutcomes)
+    ? combinedLinePoints(plottedOutcomes)
     : null;
+
+  // #10955 / #11158: where each graded leg's result is marked. A leg with real
+  // history carries it at its OWN last real x/y — an annotation of that point,
+  // never a new sample at the settlement stamp or at 0/100 on the axis. A leg
+  // with no real point at all (the #6331 synthesized winner) has no y to give
+  // it, so its mark sits at the real domain's right edge in the band ABOVE the
+  // plot, off the probability scale, and cannot widen the domain. Two such legs
+  // step left rather than stack on one pixel. A plain computation, not a hook —
+  // below the early returns, like `combinedPoints`.
+  const edgeX = xScale(maxTime);
+  let edgeSlot = 0;
+  const resultMarkSpecs: {
+    outcome: FuturesOutcomeHistory;
+    idx: number;
+    result: SettlementResult;
+    anchor: "last-observation" | "real-edge";
+    x: number;
+    y: number;
+  }[] = [];
+  displayedOutcomes.forEach((outcome, idx) => {
+    const result = settlementResults.get(outcome.outcome_id);
+    if (!result) return;
+    const realPoints = plottedOutcomes[idx].history.filter((p) => p.probability !== null);
+    const last = realPoints[realPoints.length - 1];
+    if (last) {
+      resultMarkSpecs.push({
+        outcome,
+        idx,
+        result,
+        anchor: "last-observation",
+        x: xScale(new Date(last.timestamp).getTime()),
+        y: yScale(last.probability!),
+      });
+    } else {
+      resultMarkSpecs.push({
+        outcome,
+        idx,
+        result,
+        anchor: "real-edge",
+        x: edgeX - edgeSlot++ * (mini ? 7 : 14),
+        y: padding.top / 2,
+      });
+    }
+  });
+
+  // The legend's result word: the product's one settled vocabulary, beside the
+  // name it belongs to. This is where the result is READ — the mark in the plot
+  // only points at it — so overlapping end-marks never hide whose result is
+  // whose. Nothing for a leg without a grade, or a grade we will not name.
+  const legendResult = (outcome: FuturesOutcomeHistory) => {
+    const result = settlementResults.get(outcome.outcome_id);
+    if (!result || settlementResultWord(result) === null) return null;
+    return (
+      <span data-testid="futures-chart-legend-result" data-result={result}>
+        <SettledMark won={result === "won"} />
+      </span>
+    );
+  };
 
   // Hover handler for interactive tooltip
   function handleChartHover(e: React.MouseEvent<SVGSVGElement>) {
@@ -451,7 +526,7 @@ export function FuturesChart({
         let best: number | null = null;
         let bestPoint: FuturesHistoryPoint | null = null;
         let bestDist = Infinity;
-        for (const pt of outcome.history) {
+        for (const pt of plottedOutcomes[idx].history) {
           if (pt.probability === null) continue;
           const d = Math.abs(new Date(pt.timestamp).getTime() - time);
           if (d < bestDist) {
@@ -666,7 +741,7 @@ export function FuturesChart({
 
             {/* Lines */}
             {displayedOutcomes.map((outcome, idx) => {
-              const points = outcome.history
+              const points = plottedOutcomes[idx].history
                 .filter((p) => p.probability !== null)
                 .map((p) => {
                   const t = new Date(p.timestamp).getTime();
@@ -797,6 +872,64 @@ export function FuturesChart({
                 strokeLinejoin="round"
               />
             )}
+
+            {/* #10955 / #11158: result marks. Distinct from the recorded-dot
+                vocabulary (r=3, no ring) and the hover dot (r=4): larger, ringed
+                in white and carrying the result's glyph — a check for a win, a
+                cross for a loss — so shape says it without colour. No percent
+                and no time: the true last reading stays on the line and in the
+                tooltip, and the mark is never a hover candidate. */}
+            {resultMarkSpecs.map((m) => {
+              const word = settlementResultWord(m.result);
+              const label = `${seriesLabel(m.outcome.name)}: ${word ?? "result recorded"}. ${
+                m.anchor === "real-edge"
+                  ? "No probability history was recorded for it."
+                  : "The result marker is attached to the last recorded probability. It is not another probability update."
+              }`;
+              const isDimmed =
+                highlightedOutcomeId != null && highlightedOutcomeId !== m.outcome.outcome_id;
+              const opacity = isDimmed ? 0.2 : m.outcome.eliminated ? 0.4 : 1;
+              const { x, y } = m;
+              const glyph =
+                m.result === "won"
+                  ? `M ${x - 2.6} ${y + 0.2} L ${x - 0.8} ${y + 2} L ${x + 2.8} ${y - 1.8}`
+                  : m.result === "lost"
+                    ? `M ${x - 2} ${y - 2} L ${x + 2} ${y + 2} M ${x + 2} ${y - 2} L ${x - 2} ${y + 2}`
+                    : null;
+              return (
+                <g
+                  key={`result-${m.outcome.outcome_id}`}
+                  data-testid="futures-chart-result-mark"
+                  data-outcome-id={m.outcome.outcome_id}
+                  data-result={m.result}
+                  data-anchor={m.anchor}
+                  role="img"
+                  aria-label={label}
+                >
+                  <title>{label}</title>
+                  <circle
+                    cx={x}
+                    cy={y}
+                    r={mini ? 2.5 : 6}
+                    fill={colorFor(m.outcome, m.idx)}
+                    fillOpacity={opacity}
+                    stroke="#FFFFFF"
+                    strokeWidth={mini ? 1 : 1.5}
+                  />
+                  {!mini && glyph && (
+                    <path
+                      d={glyph}
+                      fill="none"
+                      stroke="#FFFFFF"
+                      strokeOpacity={opacity}
+                      strokeWidth={1.6}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  )}
+                </g>
+              );
+            })}
 
             {/* Hover crosshair and dots */}
             {hoverInfo && !mini && (
@@ -1010,6 +1143,7 @@ export function FuturesChart({
                 style={{ backgroundColor: colorFor(outcome, idx) }}
               />
               <span className="text-text-primary">{seriesLabel(outcome.name)}</span>
+              {legendResult(outcome)}
             </button>
           ))}
         </div>
@@ -1026,6 +1160,7 @@ export function FuturesChart({
                 style={{ backgroundColor: colorFor(outcome, idx) }}
               />
               <span className="text-text-primary truncate max-w-[160px]">{seriesLabel(outcome.name)}</span>
+              {legendResult(outcome)}
             </span>
           ))}
         </div>
