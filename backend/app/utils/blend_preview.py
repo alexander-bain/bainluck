@@ -103,8 +103,9 @@ script enforces it:
   were allocated with.
 
 Limits kept explicit: the readers' expiry is still receipt-relative
-(``now + ttl_ms``), so delivery delay shifts it; folded pages refuse ledger
-frames (``pending_entries`` is withheld), so two sources never fold.
+(``now + ttl_ms``), so delivery delay shifts it. Folded pages accept ledger
+frames only when every contributor is elected from the same origin event.
+Split-origin folded composition remains unsupported.
 """
 
 from __future__ import annotations
@@ -1214,9 +1215,11 @@ class LedgerRegistry(PreviewRegistry):
                                     ttl_ms=lambda: LEDGER_TTL_TOKEN.strip('"'),
                                     next_seq=lambda: seq)
         if frame is not None:
-            # Folded readers compose one owner's entry under one process
-            # identity; a per-event generation is neither. Withheld = refused.
-            frame["preview"]["pending_entries"] = None
+            # All entries share this event's generation/sequence and the
+            # final-send contributor checks below. Folded readers may project
+            # them only when every source is elected from this same event.
+            frame["preview"]["pending_entries_version"] = 2
+            frame["preview"]["pending_entries_authority"] = "event-ledger-v1"
             frame["_ledger"] = {"gen": gen, "seq": seq, "contributors": [
                 (name, *owners[name]) for name in sorted(state.pending)]}
             return frame, excluded
