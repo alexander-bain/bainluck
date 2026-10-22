@@ -12194,7 +12194,18 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
             #
             # The tag is `set_config(..., is_local)`, so it ends with each
             # transaction as well and is re-armed at the start of every one.
-            async def _begin_read() -> None:
+            #
+            # So does `SET LOCAL statement_timeout`, and that is the trap these
+            # commits open. In the one shared transaction the soccer grid ran
+            # under the 45 s bound the last landed chunk had armed; once that
+            # chunk commits, a read that does not arm its own runs under the
+            # connection's resting bound (30 minutes) instead — silently. So a
+            # bounded read names its bound here, and it is armed FIRST: the tag
+            # and the read both run under it.
+            async def _begin_read(statement_timeout_s: int | None = None) -> None:
+                if statement_timeout_s is not None:
+                    await session.execute(text(
+                        f"SET LOCAL statement_timeout = '{statement_timeout_s}s'"))
                 await tag_task_session(session, **identity)
 
             async def _end_read() -> None:
@@ -12209,6 +12220,10 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
             # (category, month) cells that contain eligible events, so an empty
             # span is never queried at all and a dense cell starts one halving
             # away from its answer.
+            #
+            # No bound is armed: the grid was always the walk's first statement,
+            # so it has only ever run under the connection's resting bound, and
+            # this change neither widens nor tightens that.
             await _begin_read()
             grid = (await session.execute(text("""
                 SELECT s.key AS category,
@@ -12246,9 +12261,7 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                         f"{depth}")
                     return False
                 try:
-                    await _begin_read()
-                    await session.execute(
-                        text(f"SET LOCAL statement_timeout = '{_CHUNK_TIMEOUT_S}s'"))
+                    await _begin_read(_CHUNK_TIMEOUT_S)
                     rows = (await session.execute(
                         text(sql),
                         {**(params or {}),
@@ -12313,7 +12326,13 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
             # above. The two-way soccer rows the walk above still produces are
             # published by nobody: the reader keeps a soccer bucket only when it
             # carries the three-way stamp these rows are given below.
-            await _begin_read()
+            #
+            # #1479: under the 45 s chunk bound, armed here because nothing is
+            # left to inherit it from — every chunk before it has committed or
+            # rolled back. It is the bound this read had on every walk that
+            # landed a chunk last; an all-carried, empty or failed-last walk
+            # now gets it too instead of the 30-minute resting one.
+            await _begin_read(_CHUNK_TIMEOUT_S)
             soccer_grid = (await session.execute(
                 text(_BOOKMAKER_SOCCER_THREE_WAY_GRID_SQL),
                 SOCCER_THREE_WAY_PARAMS)).all()
