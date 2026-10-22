@@ -24,7 +24,8 @@ HEAP_TRIM_FILE = os.path.join(BACKEND, "app", "utils", "heap_trim.py")
 
 DRIVER = textwrap.dedent(
     """
-    import asyncio, importlib.util, sys
+    import asyncio, importlib.util, sys, time
+    T0 = time.monotonic()
     spec = importlib.util.spec_from_file_location("pwp_child", sys.argv[1])
     pwp = importlib.util.module_from_spec(spec); spec.loader.exec_module(pwp)
     pwp.STATS_SECONDS = 0.02
@@ -38,7 +39,8 @@ DRIVER = textwrap.dedent(
             self.on_price = self.on_trade = None
         @property
         def stats(self):
-            return {"connected": True, "emitted": self.emitted, "trims": len(trims)}
+            return {"connected": True, "emitted": self.emitted, "trims": len(trims),
+                    "elapsed": time.monotonic() - T0}
         def update_asset_ids(self, ids, *, price_book_snapshots=None):
             pass
         async def run_refreshable(self, ids, *, price_book_snapshots=None):
@@ -83,6 +85,7 @@ async def test_the_child_trims_on_its_timer_while_frames_keep_flowing():
     seen, stats = await _run_child(cadence=0.1, n=300, settle=0.5)
     assert seen == list(range(300))
     assert stats["trims"] >= 3, stats
+    assert stats["trims"] <= stats["elapsed"] / 0.1 + 1, stats  # one per cadence
 
 
 @pytest.mark.asyncio

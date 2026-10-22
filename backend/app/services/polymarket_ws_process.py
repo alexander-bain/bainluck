@@ -68,11 +68,15 @@ STATS_SECONDS = 5.0
 #: never did. Its frees come from no single refresh. Each of ~133 shards can
 #: hold ``max_queue`` + 1 messages of up to ``MAX_MESSAGE_BYTES`` while the
 #: parent is slow, and a restarted shard is re-sent its books. So it trims on
-#: a timer. Retained captures K5–K8 (10/21–22): both venue processes' post-trim
-#: RSS stayed flat, while dyno total minus both grew from ~245 MB to 434–474 MB
-#: and held all the swap. That remainder is this child plus the stdlib
-#: supervisor. Each trim logs ``arm=polymarket_open_receiver released=…``,
-#: which is the production reading. A trim of a ~400 MB heap took 2–13 ms in
+#: a timer. Retained captures K5–K8 (10/21–22): the dyno's ``memory_total``
+#: includes swap, and the venue processes' ``rss=`` lines exclude their own
+#: swapped pages, so total minus both holds all swap by construction. The
+#: resident remainder (this child plus the stdlib supervisor) stayed ~226–299
+#: MB while swap grew 181–236 MB. Whose pages are swapped is unmeasured. This
+#: child is the only glibc process that never trimmed, so a timer trim is a
+#: cheap candidate, not an attribution. Each trim logs
+#: ``arm=polymarket_open_receiver released=…`` for this child's resident
+#: memory only (statm excludes swap). A trim of a ~400 MB heap took 1–18 ms in
 #: the venue processes.
 HEAP_TRIM_SECONDS = 60.0
 
