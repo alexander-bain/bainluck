@@ -224,7 +224,7 @@ final class SSEFrameAssemblyOverTheRealTransport10090Tests: XCTestCase {
             transport.close()
             let url = try XCTUnwrap(ChunkedStream.requestedURLs.first)
             XCTAssertEqual(url.path, "/api/events/4242/stream")
-            XCTAssertEqual(url.query, enabled ? "preview_protocol=folded-v1" : nil)
+            XCTAssertEqual(url.query, enabled ? "preview_protocol=folded-v2" : nil)
         }
     }
 

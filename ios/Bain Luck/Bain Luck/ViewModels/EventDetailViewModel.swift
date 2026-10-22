@@ -661,23 +661,26 @@ final class EventDetailViewModel: ObservableObject {
             &latestSourceFrames, over: fetched, streamRecoverable: streamRecoverable
         )
         event = fetched
+        // #10090 — the adopted detail is the authority on the fold's membership.
+        // A change of it is a different fold: the old fold's preview authority
+        // is retired (`BlendPreview.readerAfterMembership`) and its connection,
+        // whose server-side composition is bound to the membership it opened
+        // with, is closed so the caller's `configureAutoRefresh()` opens the new
+        // fold. An unchanged membership records nothing and keeps the stream.
+        if let revision = LiveEventPriceReconciliation.pairedFoldRevision(in: fetched) {
+            let members = Set(revision.rows.keys)
+            let changed = BlendPreview.membershipChanges(blendPreviewReader, members: members)
+            blendPreviewReader = BlendPreview.readerAfterMembership(blendPreviewReader, members: members)
+            if changed {
+                publishPreview(nil, at: now())
+                if stream != nil { stopStream() }
+            }
+        }
         LiveTimingSeam.readAdopted(prior: prior, fetched: fetched)
         if recordsPriceActivity, let prior, LivePriceActivity.isNewer(fetched, than: prior) {
             recordPriceActivity(from: prior, to: fetched)
         }
         probabilityAtLastLoad = fetched.currentOdds?.homeProbability
-        // #10090 — the adopted fold is the preview membership authority. The
-        // server composes a connection's folded previews for the rows it opened
-        // with, so a changed membership withdraws the old fold's preview and
-        // closes that connection; every caller re-plans after `adopt`, which
-        // opens one on the new fold. Fences and floors are kept (`BlendPreview`).
-        let membership = LiveEventPriceReconciliation.pairedFoldRevision(in: fetched)
-        let membershipChanged = BlendPreview.membershipChanges(blendPreviewReader, membership)
-        blendPreviewReader = BlendPreview.readerAfterMembership(blendPreviewReader, membership)
-        if membershipChanged {
-            publishPreview(nil, at: now())
-            if stream != nil { stopStream() }
-        }
     }
 
     @MainActor
@@ -1288,6 +1291,15 @@ final class EventDetailViewModel: ObservableObject {
             onReconcile: { [weak self] control in self?.receiveReconcile(control) },
             onPreview: { [weak self] raw in self?.receivePreview(raw) },
             onPreviewFloor: { [weak self] raw in self?.receivePreviewFloor(raw) },
+            onPreviewOpen: { [weak self] raw in
+                guard let self else { return }
+                self.blendPreviewReader = BlendPreview.readerOpened(self.blendPreviewReader, raw: raw, eventId: self.eventId)
+            },
+            onPreviewInvalidate: { [weak self] in
+                guard let self else { return }
+                self.blendPreviewReader.held = nil
+                self.publishPreview(nil, at: self.now())
+            },
             onPreviewReset: { [weak self] in self?.clearPreview() },
             deliversFoldedQuotes: true
         )
@@ -1391,7 +1403,7 @@ final class EventDetailViewModel: ObservableObject {
     /// Clears only the held preview; keeps epoch, sequence and commit floors.
     @MainActor
     private func clearPreview() {
-        blendPreviewReader.held = nil
+        blendPreviewReader = BlendPreview.readerReset(blendPreviewReader)
         publishPreview(nil, at: now())
     }
 
