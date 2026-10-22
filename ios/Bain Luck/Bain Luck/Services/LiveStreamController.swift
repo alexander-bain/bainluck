@@ -456,6 +456,7 @@ final class LiveStreamController {
     /// committed frame (`BlendPreview`). Touches no clock or delivery state: it
     /// can neither keep push "delivering" nor postpone the data-silence fallback.
     private let onPreview: @MainActor (String) -> Void
+    private let onPreviewFloor: @MainActor (String) -> Void
     /// #10090 — previews are never replayed, so every (re)open and the end of
     /// the match clear them.
     private let onPreviewReset: @MainActor () -> Void
@@ -501,6 +502,7 @@ final class LiveStreamController {
         onResync: @escaping @MainActor () -> Void = {},
         onReconcile: @escaping @MainActor (LiveStreamReconcile) -> Void = { _ in },
         onPreview: @escaping @MainActor (String) -> Void = { _ in },
+        onPreviewFloor: @escaping @MainActor (String) -> Void = { _ in },
         onPreviewReset: @escaping @MainActor () -> Void = {},
         deliversFoldedQuotes: Bool = false,
         schedule: @escaping LiveStreamSchedule = LiveStreamController.sleepThenRun,
@@ -515,6 +517,7 @@ final class LiveStreamController {
         self.onResync = onResync
         self.onReconcile = onReconcile
         self.onPreview = onPreview
+        self.onPreviewFloor = onPreviewFloor
         self.onPreviewReset = onPreviewReset
         self.deliversFoldedQuotes = deliversFoldedQuotes
         self.schedule = schedule
@@ -745,6 +748,7 @@ final class LiveStreamController {
                   let recovery = try? JSONDecoder().decode(LiveStreamRecovery.self, from: data),
                   recovery.generation > self.lastResyncGeneration else { return }
             self.lastResyncGeneration = recovery.generation
+            self.onPreviewReset()
             self.onResync()
         }
 
@@ -765,6 +769,13 @@ final class LiveStreamController {
         next.on("preview") { [weak self, weak next] raw in
             guard let self, let next, !self.stopped, self.handle === next else { return }
             self.onPreview(raw)
+        }
+
+        // A raw commit invalidates folded preview authority before its slower
+        // committed quote arrives. This control earns no delivery or freshness.
+        next.on("fold_preview_floor") { [weak self, weak next] raw in
+            guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.onPreviewFloor(raw)
         }
 
         next.on("heartbeat") { [weak self, weak next] _ in

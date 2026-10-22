@@ -2582,31 +2582,60 @@ struct OddsChartView: View {
         guard !liveFrames.isEmpty else { return points }
         guard !EventState.isFinished(history.status), history.completedAt == nil else { return points }
 
-        let publishedEdge = points
+        // The preview's metadata is disposable, never committed history.
+        // Re-check against THIS chart's payload: a held detail/preview alone
+        // cannot authorize deleting a newer real point or another event's pin.
+        var rendered = points
+        var frames = liveFrames
+        var replacedPin = false
+        if let preview = frames.last, let authority = preview.previewAuthority {
+            if !BlendPreview.chartCoversAuthority(history, authority: authority) {
+                frames.removeLast()
+            } else if let edge = BlendPreview.syntheticEdgeToReplace(history, authority: authority, at: preview.date),
+               let edgeAt = edge.timestamp.asDate,
+               let index = rendered.lastIndex(where: {
+                   $0.source == "aggregate" && $0.date == edgeAt && $0.probability == edge.homeProbability
+               }),
+               !rendered.enumerated().contains(where: {
+                   $0.offset != index && $0.element.source == "aggregate" && $0.element.date >= preview.date
+               }) {
+                rendered.remove(at: index)
+                replacedPin = true
+            } else if rendered.contains(where: { $0.source == "aggregate" && $0.date >= preview.date }) {
+                frames.removeLast()
+            }
+        }
+        let publishedEdge = rendered
             .filter { $0.source == "aggregate" }
             .map(\.date)
             .max()
         guard let publishedEdge else {
+            // The removed pin itself proves this aggregate series existed.
+            if replacedPin {
+                return rendered + frames.map {
+                    ChartDataPoint(date: $0.date, probability: $0.homeProbability, source: "aggregate")
+                }
+            }
             return extendingServedSourceSeries(
-                points, with: liveFrames,
+                rendered, with: frames,
                 served: history.winProbHistory ?? [:])
         }
 
-        var extended = points
-        for frame in liveFrames where frame.date > publishedEdge {
+        var extended = rendered
+        for frame in frames where frame.date > publishedEdge {
             extended.append(
                 ChartDataPoint(date: frame.date, probability: frame.homeProbability, source: "aggregate")
             )
         }
         // Only a frame before the edge can sit inside the served blend.
-        guard liveFrames.contains(where: { $0.date < publishedEdge }) else { return extended }
+        guard frames.contains(where: { $0.date < publishedEdge }) else { return extended }
         // The blend carries no evidence and no live-edge flag on this client,
         // so every served blend point is a reading that can open an interval.
-        let servedBlend = points.lazy.filter { $0.source == "aggregate" }.map {
+        let servedBlend = rendered.lazy.filter { $0.source == "aggregate" }.map {
             (date: $0.date, value: Optional($0.probability), synthetic: false, coveredThrough: Date?.none)
         }
         let held = heldReadingsBetween(
-            Array(servedBlend), liveFrames.map { (date: $0.date, value: $0.homeProbability) })
+            Array(servedBlend), frames.map { (date: $0.date, value: $0.homeProbability) })
         return inserting(
             held.map { ChartDataPoint(date: $0.date, probability: $0.value, source: "aggregate") },
             into: extended)

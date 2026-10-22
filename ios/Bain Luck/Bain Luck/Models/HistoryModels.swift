@@ -49,6 +49,8 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable, Equatable {
     /// of the detail hero, and the fold revision that pinned value was computed
     /// from (detail's `blend_fold_revision` twin; null when there is no pin).
     let blendEdgePinned: Bool?
+    /// Observation time behind the synthetic read-time pin, never the pin time.
+    var blendEdgeObservedAt: String? = nil
     let blendEdgeFoldRevision: ServedFoldRevision?
     /// #10090 — `{row_id: rev}` a complete FRESH build read every series it
     /// draws after, for exactly the rows it charts, pinned or not (producer
