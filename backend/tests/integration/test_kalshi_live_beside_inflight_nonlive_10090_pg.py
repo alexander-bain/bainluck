@@ -339,6 +339,7 @@ def _rig(engine, side, ids, source=None):
         price_buffer={}, buffer_lock=asyncio.Lock(), input_marks={},
         # #10090: the worker's primary-quote custody (bundled pair).
         primary_quote_custody=PrimaryQuoteCustody(),
+        observation_continuity={}, game_clients=[],
         market_id_by_outcome=market_of, event_id_by_outcome=event_of,
         tail_receipts=_Receipts(), open_contract_outcome_ids=set(),
         blend_refresher=refresher, non_blend_outcome_ids=set(),
@@ -354,7 +355,8 @@ def _rig(engine, side, ids, source=None):
         flush_wake=asyncio.Event(), admission_wake=asyncio.Event(),
     )
     tree = ast.parse(source or SOURCE.read_text())
-    wanted = ("flush_prices", "drain_prices", "handle_ticker", "_parse_dollar")
+    wanted = ("flush_prices", "drain_prices", "handle_ticker", "_parse_dollar",
+              "steady_book_signature", "observation_signature", "note_observation_continuity")
     nodes = [n for n in ast.walk(tree)
              if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef)) and n.name in wanted]
     assert sorted(n.name for n in nodes) == sorted(wanted)
