@@ -601,6 +601,14 @@ class _RecordingSession:
         if isinstance(statement, Update):
             self.updates.append(statement)
             return _Result(scalar=self._returned, rev=self.returned_rev)
+        columns = list(getattr(statement, "selected_columns", ()))
+        if [(getattr(getattr(c, "table", None), "name", None), getattr(c, "name", None))
+                for c in columns] == [("events", "id")]:
+            # #10090 — a failed chart point's retry asks whether its event row
+            # still exists; answered from the events this session holds.
+            wanted = set(statement.compile().params.values())
+            found = [event.id for _market, event in self._market_rows if event.id in wanted]
+            return _Result(scalar=found[0] if found else None)
         self._selects += 1
         from app.tasks.live_blend_refresh import (
             PREPARED_EVENT_FIELDS, PREPARED_MARKET_FIELDS, PREPARED_OUTCOME_FIELDS,
