@@ -107,7 +107,7 @@ async def test_a_gone_event_is_retired_on_its_retry_while_its_sibling_drains(mon
     assert lookups == []
     assert calls == [(2, 0.40, A)], "the healthy sibling is paid in the same drain"
     assert _owed_events(r) == [1] and [p[0] for p in r._history] == [1]
-    assert r.stats["history_event_gone"] == 0 and r.stats["errors"] == 1
+    assert r.stats.get("history_event_gone", 0) == 0 and r.stats["errors"] == 1
     assert 1 in r._history_retry_at
 
     # The sibling owes a new point (one reservation spacing later) in the
@@ -118,7 +118,7 @@ async def test_a_gone_event_is_retired_on_its_retry_while_its_sibling_drains(mon
     await r._history_task
     assert lookups == [1]
     assert calls == [(2, 0.40, A), (2, 0.60, B)], "no chart write for the gone event"
-    assert r.stats["history_event_gone"] == 1 and r.stats["errors"] == 1
+    assert r.stats.get("history_event_gone", 0) == 1 and r.stats["errors"] == 1
     assert not r._chart_custody.rows, "its custody row is settled with the retirement"
     assert not r._history and not r._history_count
     assert not r._history_retry_at and not r._history_reserved
@@ -134,7 +134,7 @@ async def test_a_present_event_that_failed_once_is_written_on_its_retry(monkeypa
     await _retry(r, clock)
     assert lookups == [1]
     assert calls == [(2, 0.40, A), (1, 0.40, A)]
-    assert r.stats["history_event_gone"] == 0
+    assert r.stats.get("history_event_gone", 0) == 0
     assert not r._chart_custody.rows and not r._history
 
 
@@ -160,11 +160,11 @@ async def test_a_failed_commit_of_the_retirement_keeps_the_debt_and_counts_nothi
     failing[0] = True
     await _retry(r, clock)
     assert lookups == [1] and not failing[0], "the retirement ran and its COMMIT failed"
-    assert r.stats["history_event_gone"] == 0, "a failed COMMIT never reports retirement"
+    assert r.stats.get("history_event_gone", 0) == 0, "a failed COMMIT never reports retirement"
     assert _owed_events(r) == [1] and [p[0] for p in r._history] == [1]
     assert r.stats["errors"] == 2
     await _retry(r, clock)
-    assert lookups == [1, 1] and r.stats["history_event_gone"] == 1
+    assert lookups == [1, 1] and r.stats.get("history_event_gone", 0) == 1
     assert not r._chart_custody.rows and not r._history
     assert calls == [(2, 0.40, A)]
 
@@ -175,10 +175,10 @@ async def test_a_lookup_error_keeps_the_debt(monkeypatch):
     await _first_attempt(r)
     lookup_error.append(RuntimeError("connection reset during the lookup"))
     await _retry(r, clock)
-    assert lookups == [1] and r.stats["history_event_gone"] == 0
+    assert lookups == [1] and r.stats.get("history_event_gone", 0) == 0
     assert _owed_events(r) == [1] and [p[0] for p in r._history] == [1]
     await _retry(r, clock)
-    assert r.stats["history_event_gone"] == 1 and not r._chart_custody.rows
+    assert r.stats.get("history_event_gone", 0) == 1 and not r._chart_custody.rows
 
 
 @pytest.mark.asyncio
@@ -192,5 +192,5 @@ async def test_a_cancelled_lookup_keeps_the_debt_and_propagates(monkeypatch):
             [(eid, value, reading)], observed_clock, r._session_factory,
             verify_event=True,
         )
-    assert lookups == [1] and r.stats["history_event_gone"] == 0
+    assert lookups == [1] and r.stats.get("history_event_gone", 0) == 0
     assert _owed_events(r) == [1]

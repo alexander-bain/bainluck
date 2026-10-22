@@ -545,7 +545,7 @@ async def test_a_deleted_events_point_fails_once_on_the_real_fk_then_retires(rig
         (1, True, True, []),
     ]
     assert "win_prob_snapshots_event_id_fkey" in caplog.text, "the real FK failed attempt 1"
-    assert fresh.stats["history_event_gone"] == 1
+    assert fresh.stats.get("history_event_gone", 0) == 1
     assert await _owed(rig) == []
     assert await _event_points(rig, 1) == []
     assert (await _event_points(rig, 2))[-1] == (0.7, _at(frames[2]))
@@ -570,7 +570,7 @@ async def test_a_present_events_failed_point_is_written_on_its_retry(rig):
     assert attempts[:2] == [(1, False, False, [1, 2]), (2, False, True, [1])]
     await _drain(fresh)
     assert attempts[2:] == [(1, True, True, [])]
-    assert fresh.stats["history_event_gone"] == 0
+    assert fresh.stats.get("history_event_gone", 0) == 0
     assert (await _event_points(rig, 1))[-1] == (0.7, _at(frames[1]))
     assert await _owed(rig) == []
 
@@ -615,6 +615,6 @@ async def test_a_failed_commit_of_a_retirement_keeps_the_row_and_counts_nothing(
         (1, True, False, [1]),
         (1, True, True, []),
     ]
-    assert fresh.stats["history_event_gone"] == 1
+    assert fresh.stats.get("history_event_gone", 0) == 1
     assert await _owed(rig) == []
     assert (await _event_points(rig, 2))[-1] == (0.7, _at(frames[2]))
