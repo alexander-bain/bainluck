@@ -5,14 +5,18 @@
  * At 1280px the lead spans both grid rows, so its height is the two side cards
  * stacked beside it (421px), not its content. With three rungs it carried a
  * 196px blank band (production 2026-10-22 03:52Z, "Oscar Winner: Best Picture",
- * 41 outcomes). The trending rows now carry six (backend
- * `test_entertainment_trending_carries_six_rungs_7382.py`), and this file pins
- * the page half:
+ * 41 outcomes). The lead row now carries up to six in `lead_outcomes`, a field
+ * only this page reads, while `top_outcomes` stays the shared three the app
+ * prints (backend `test_entertainment_lead_outcomes_web_only_7382.py`). This
+ * file pins the page half:
  *
- *   ARM 1  the lead renders min(6, served) rungs, in served order, real values;
+ *   ARM 1  the lead renders min(6, `lead_outcomes`) rungs, in served order;
  *   ARM 2  rungs 4–6 carry `leadRowExtra` and rungs 1–3 never do;
- *   ARM 3  each side card renders three rungs even when six are served;
+ *   ARM 3  each side card renders three `top_outcomes` rungs and never reads
+ *          `lead_outcomes`, even when six of each are served;
  *   ARM 4  a sparse lead prints what it has — no pad, no extra marker;
+ *   ARM 6  a payload without `lead_outcomes` (older server, stale cache), or
+ *          with one shorter than `top_outcomes`, prints the shared rungs;
  *   ARM 5  the stylesheet hides `leadRowExtra` at <=900px and restores the side
  *          cards' 12px / 4px / 6px scale there, so the phone card is unchanged.
  *
@@ -133,7 +137,8 @@ function market(over: Partial<EntMarketRow> = {}): EntMarketRow {
     market_id: 6173044,
     external_id: "KXOSCARPIC-27",
     kind: "multi",
-    top_outcomes: OSCAR,
+    top_outcomes: OSCAR.slice(0, 3),
+    lead_outcomes: OSCAR,
     outcome_count: 41,
     volume_24h: 59366,
     resolution_date: "2027-12-31T15:00:00+00:00",
@@ -145,7 +150,13 @@ function market(over: Partial<EntMarketRow> = {}): EntMarketRow {
 
 const SIDE_SIX = OSCAR.slice(0, 6).map((o, i) => ({ ...o, name: `Side ${i + 1}` }));
 const SIDES: EntMarketRow[] = [2, 3, 4, 5].map((id) =>
-  market({ q: `Side market ${id}`, market_id: id, outcome_count: 16, top_outcomes: SIDE_SIX }),
+  market({
+    q: `Side market ${id}`,
+    market_id: id,
+    outcome_count: 16,
+    top_outcomes: SIDE_SIX,
+    lead_outcomes: SIDE_SIX.map((o) => ({ ...o, name: `Lead-only ${o.name}` })),
+  }),
 );
 
 function entData(trending: EntMarketRow[]): EntertainmentData {
@@ -186,7 +197,7 @@ function textOf(html: string): string {
 }
 
 describe("#7382 — the desktop lead shows more of its own field", () => {
-  it("ARM 1: the lead renders six rungs of eight served, in served order", () => {
+  it("ARM 1: the lead renders six of eight `lead_outcomes`, in served order", () => {
     const lead = renderHero().children[0];
     expect(leadRows(lead)).toHaveLength(6);
     // Each row's own markup, in document order: row i names served rung i.
@@ -205,27 +216,54 @@ describe("#7382 — the desktop lead shows more of its own field", () => {
     ]);
   });
 
-  it("ARM 3: every side card renders three rungs although six are served", () => {
+  it("ARM 3: every side card renders three `top_outcomes` rungs, never `lead_outcomes`", () => {
     const grid = renderHero();
     for (const cell of grid.children.slice(1)) {
       expect(leadRows(cell)).toHaveLength(0);
       expect(sideRows(cell)).toHaveLength(3);
     }
+    const html = renderToStaticMarkup(React.createElement(EntertainmentPage));
+    expect(html).toContain("Side 3");
+    expect(html).not.toContain("Side 4");
+    expect(html).not.toContain("Lead-only");
   });
 
   it("ARM 4: a sparse lead prints what it has — no pad, no extra marker", () => {
-    const three = leadRows(renderHero(market({ outcome_count: 3, top_outcomes: OSCAR.slice(0, 3) })).children[0]);
+    const three = leadRows(
+      renderHero(market({ outcome_count: 3, lead_outcomes: OSCAR.slice(0, 3) })).children[0],
+    );
     expect(three).toHaveLength(3);
     expect(three.some((r) => /leadRowExtra/.test(classOf(r)))).toBe(false);
 
-    const four = leadRows(renderHero(market({ outcome_count: 4, top_outcomes: OSCAR.slice(0, 4) })).children[0]);
+    const four = leadRows(
+      renderHero(market({ outcome_count: 4, lead_outcomes: OSCAR.slice(0, 4) })).children[0],
+    );
     expect(four).toHaveLength(4);
 
     // A one-leg contract keeps the binary body; it never becomes a rung list.
     const binary = renderHero(
-      market({ kind: "binary", outcome_count: 1, prob: 51, top_outcomes: [{ name: "Yes", prob: 51, delta_24h: 0 }] }),
+      market({
+        kind: "binary",
+        outcome_count: 1,
+        prob: 51,
+        top_outcomes: [{ name: "Yes", prob: 51, delta_24h: 0 }],
+        lead_outcomes: [{ name: "Yes", prob: 51, delta_24h: 0 }],
+      }),
     ).children[0];
     expect(leadRows(binary)).toHaveLength(0);
+  });
+
+  it("ARM 6: without a usable `lead_outcomes` the lead prints the shared rungs", () => {
+    // An older server or a stale cache: no key at all.
+    const older = leadRows(renderHero(market({ lead_outcomes: undefined })).children[0]);
+    expect(older).toHaveLength(3);
+    expect(older.some((r) => /leadRowExtra/.test(classOf(r)))).toBe(false);
+
+    // A key shorter than the shared field is not trusted over it.
+    const short = renderHero(market({ lead_outcomes: OSCAR.slice(0, 2) })).children[0];
+    expect(leadRows(short)).toHaveLength(3);
+    const html = renderToStaticMarkup(React.createElement(EntertainmentPage));
+    expect(html).toContain("The Black Ball");
   });
 });
 

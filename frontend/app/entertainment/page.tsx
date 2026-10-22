@@ -537,8 +537,10 @@ function HeroCardContent({
    Above 900px the lead spans both hero rows, so its height is the two side
    cards stacked beside it (421px at 1280), not its content. With three rungs it
    printed a 196px blank band between the title and the list (production
-   2026-10-22 03:52Z, "Oscar Winner: Best Picture", 41 outcomes). The trending
-   rows now carry up to six priced rungs, and the lead prints them at lead scale.
+   2026-10-22 03:52Z, "Oscar Winner: Best Picture", 41 outcomes). The lead row
+   now carries up to six priced rungs in `lead_outcomes` — a field only this
+   page reads, so the app's lead (which prints `top_outcomes`) is untouched —
+   and the lead prints them at lead scale.
    Six is a ceiling: a field with fewer priced rungs prints what it has and the
    card keeps its band — no filler, no invented rung, no smaller type.
 
@@ -684,7 +686,13 @@ function CardBodyByKind({
       named !== null) &&
     outcomes.length >= 2
   ) {
-    if (isLead) return <LeadOutcomeRows outcomes={outcomes} />;
+    if (isLead) {
+      // `lead_outcomes` (#7382) is served on the lead row alone and always
+      // starts with `top_outcomes`; a payload without it (an older server, a
+      // stale cache) prints the shared three at lead scale.
+      const lead = market.lead_outcomes;
+      return <LeadOutcomeRows outcomes={lead && lead.length >= outcomes.length ? lead : outcomes} />;
+    }
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {outcomes.slice(0, 3).map((o, i) => (

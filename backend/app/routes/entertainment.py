@@ -1049,22 +1049,33 @@ async def get_entertainment(db: AsyncSession):
         )
 
     # Build all enriched rows for trending scoring
-    #
-    # #7382 — SIX RUNGS, BECAUSE THE LEAD CARD HAS ROOM FOR THEM. At 1280px the
-    # lead hero spans both grid rows (421px) and printed this list's default
-    # three rungs under a 196px blank band; the page already asked for a fourth
-    # and the payload never carried one. The slice only ever drops rungs from
-    # `top_outcomes` — the priced/withheld filter above it, `outcome_count`,
-    # `prob`, the headline and every field `_score_for_trending` reads are the
-    # same at any `max_outcomes`, so which markets trend is unchanged. Side
-    # cards and narrow widths still render three (the page decides that).
     all_rows = []
     for m in featured_eligible:
-        row = _market_row(m, max_outcomes=6, withheld_ids=withheld_ids)
+        row = _market_row(m, withheld_ids=withheld_ids)
         if row and _is_interesting(row):
             all_rows.append(row)
 
     trending = _build_trending(all_rows)
+    # #7382 — THE WEB LEAD'S OWN RUNGS, IN A FIELD ONLY IT READS.
+    #
+    # At 1280px the lead hero spans both grid rows (421px, set by the two side
+    # cards stacked beside it) and printed three rungs under a 196px blank band
+    # (production 2026-10-22 03:52Z, "Oscar Winner: Best Picture", 41 outcomes).
+    # `lead_outcomes` carries up to six of the SAME priced, non-withheld rungs in
+    # the same price order, so `top_outcomes[:n]` is always its prefix; six is a
+    # ceiling, never a pad.
+    #
+    # ⚠️ ADDITIVE, NOT A WIDER `top_outcomes`. The app's `EntertainmentView`
+    # prints `topOutcomes.prefix(isLead ? 5 : 3)`, so widening the shared field
+    # would grow every installed iPhone's lead from three rows to five with no
+    # app change. The app's `EntMarketRow` decodes explicit keys, so this one is
+    # ignored by every shipped build; `top_outcomes`, and which markets trend,
+    # are byte-identical to before. Only `trending[0]` carries it: that row is
+    # the web lead (`TrendingHero`'s `[lead, ...rest]`).
+    if trending:
+        lead_market = next(m for m in featured_eligible if m.id == trending[0]["market_id"])
+        wide = _market_row(lead_market, max_outcomes=6, withheld_ids=withheld_ids)
+        trending[0] = {**trending[0], "lead_outcomes": wide["top_outcomes"]}
     music = _build_music(themed, withheld_ids)
     movies_tv = _build_movies_tv(themed, withheld_ids)
     cultural_moments = _build_cultural(themed, withheld_ids)

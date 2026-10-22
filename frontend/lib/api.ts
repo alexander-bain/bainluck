@@ -2518,6 +2518,8 @@ export interface EntMarketRow {
   ladder?: boolean;
   /** #9803: on a cumulative ladder, the tightest rung the market still calls likely — served only when it is not `top_outcomes[0]`. */
   headline?: { name: string; prob: number } | null;
+  /** #7382: on `trending[0]` only — up to six of the same priced rungs, `top_outcomes` as its prefix; read by the web lead alone. */
+  lead_outcomes?: { name: string; prob: number; delta_24h: number }[];
 }
 
 export interface EntThresholdGroup {
