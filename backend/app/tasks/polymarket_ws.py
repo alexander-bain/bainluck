@@ -105,6 +105,14 @@ class _PMCatalogFlushBoundary:
         self.stamps: Optional["_PMStampOwner"] = None
         self.flush_wake = asyncio.Event()
         self.flush_work = 0
+        # Optional observations never own price/stamp debt. A successful
+        # unchanged acknowledgement permits only its uninterrupted input value.
+        self.observation_ack = {}
+        self.observation_pending = {}
+        self.observation_wake = asyncio.Event()
+        self.observation_writing = set()
+        self.observation_write_epoch = {}
+        self.observation_drain = None
         # #10090: the linked props' own loop (`flush_props`).
         self.prop_wake = asyncio.Event()
         self.prop_work = 0
@@ -4448,16 +4456,21 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # Handlers update complementary legs under this same lock;
                     # newly buffered ids still belong to a successor flush.
                     held_quotes = getattr(blend_refresher, "held_quotes", None)
-                    preview_observations = (
-                        getattr(blend_refresher, "preview_accepted_observations", None)
-                        if getattr(blend_refresher, "preview_events", ()) else None
-                    )
                     async with buffer_lock:
-                        observation_generation = routing_generation if callable(preview_observations) else None
-                        observation_tokens = (
-                            {oid: observation_continuity.get(oid) for oid in chunk_ids}
-                            if callable(preview_observations) else {}
-                        )
+                        observation_generation = None
+                        observation_tokens = {}
+                        if getattr(blend_refresher, "preview_events", ()):
+                            observation_generation = routing_generation
+                            observation_tokens = {
+                                oid: observation_continuity.get(oid) for oid in chunk_ids
+                            }
+                            catalog_boundary.observation_writing = event_ids_for_outcomes(
+                                headline_event_ids, chunk_ids,
+                            ).intersection(blend_refresher.preview_events)
+                            for eid in catalog_boundary.observation_writing:
+                                catalog_boundary.observation_write_epoch[eid] = (
+                                    catalog_boundary.observation_write_epoch.get(eid, 0) + 1
+                                )
                         current_chunk = {oid: price_buffer[oid] for oid in chunk_ids}
                         for oid in chunk_ids:
                             if oid in input_marks:
@@ -4486,56 +4499,25 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # AFTER it, for FUTURE inputs, never to re-date this batch.
                     if held_quotes is not None and not final:
                         await held_quotes.sample_database_clock(get_task_session)
-                    # An acknowledged same-price input is a real observation,
-                    # but deliberately not a durable stamp/receipt. Keep its
-                    # optional preview outside `owed` and HeldRowQuotes: putting
-                    # it in either would force persistence on the next flush.
-                    if (not final and callable(preview_observations)
+                    # Only a completed unchanged acknowledgement establishes
+                    # continuity. A price/heartbeat write still owes its stamp;
+                    # failed/held writes never authorize observation bypass.
+                    if (not final and observation_tokens
                             and getattr(wrote, "written_ids", None) is not None):
-                        observation_groups = {}
-                        for oid, value in current_chunk.items():
-                            eid = headline_event_ids.get(oid)
-                            if eid in getattr(blend_refresher, "preview_events", ()):
-                                observation_groups.setdefault(eid, {})[oid] = (
-                                    value, chunk_bounds.get(oid), batch_marks.get(oid),
-                                )
                         written_events = event_ids_for_outcomes(headline_event_ids, wrote.written_ids)
-                        for eid in written_events:
-                            observation_groups.pop(eid, None)
-                        observation_window = getattr(blend_refresher, "_admission", None)
-                        observation_releases = {
-                            eid: observation_window.released.get(eid, 0)
-                            if observation_window is not None else 0
-                            for eid in observation_groups
-                        }
-
-                        async def validate_observations(event_ids):
-                            async with buffer_lock:
-                                if routing_generation != observation_generation:
-                                    return set()
-                                held = (stamp_owner.held_events()
-                                        if stamp_owner.task is not None and not stamp_owner.task.done() else set())
-                                current_window = getattr(blend_refresher, "_admission", None)
-                                if held is None or (current_window is not None and current_window is not observation_window):
-                                    return set()
-                                withdrawals = event_ids_for_outcomes(headline_event_ids, withdraw_buffer)
-                                return {
-                                    eid for eid in event_ids if eid not in withdrawals and eid not in held
-                                    and (observation_window is None
-                                         or observation_window.released.get(eid, 0) == observation_releases[eid])
-                                    and all(
-                                        mark is not None and input_marks.get(oid) is not None
-                                        and getattr(mark, "probability", None) == value
-                                        and round(float(input_marks[oid].probability), 6) == round(float(value), 6)
-                                        and getattr(input_marks[oid], "seq", -1) >= getattr(mark, "seq", 0)
-                                        and bound is not None and observation_tokens.get(oid) is not None
-                                        and observation_continuity.get(oid) == observation_tokens[oid]
-                                        for oid, (value, bound, mark) in observation_groups[eid].items()
-                                    )
-                                }
-
-                        if observation_groups:
-                            await preview_observations(observation_groups, validate_observations)
+                        async with buffer_lock:
+                            for oid, value in current_chunk.items():
+                                eid = headline_event_ids.get(oid)
+                                token = observation_tokens.get(oid)
+                                if (eid in getattr(blend_refresher, "preview_events", ())
+                                        and eid not in written_events and token is not None
+                                        and token == observation_continuity.get(oid)
+                                        and routing_generation == observation_generation):
+                                    catalog_boundary.observation_ack[oid] = token
+                                    entry = (eid, value, chunk_bounds.get(oid), batch_marks.get(oid),
+                                             token, observation_generation)
+                                    catalog_boundary.observation_pending.setdefault(oid, entry)
+                                    catalog_boundary.observation_wake.set()
                     # #11138: None is a price row a lock holds (refused, timed
                     # out or cooling down). Each event whose speaking legs here
                     # all carry their received quote is stamped from
@@ -5032,10 +5014,120 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             wrote_all = False
         return wrote_all
 
+    async def flush_observations():
+        """Admit frozen unchanged inputs beside an unrelated price transaction."""
+        boundary = catalog_boundary
+
+        def owners():
+            owner = boundary.stamp_owner(blend_refresher)
+            held = (owner.held_events()
+                    if owner.task is not None and not owner.task.done() else set())
+            if held is None:
+                return None
+            pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+            pending = set(pending_reader()) if callable(pending_reader) else set()
+            # PM buffers unchanged BBOs too. Only acknowledged uninterrupted
+            # values may pass; another leg's queued change owns the whole event
+            # even before its price chunk starts (including A-B-A).
+            price_owned = {
+                event_id_by_outcome.get(oid) for oid, value in price_buffer.items()
+                if oid not in non_blend_outcome_ids
+                and (observation_continuity.get(oid) is None
+                     or boundary.observation_ack.get(oid) != observation_continuity[oid]
+                     or observation_continuity[oid][1] != round(float(value), 6))
+            }
+            return (held | pending | price_owned | boundary.observation_writing
+                    | boundary.bridges.reserved | boundary.bridges.unstamped
+                    | event_ids_for_outcomes(event_id_by_outcome, withdraw_buffer))
+
+        async with buffer_lock:
+            busy = owners()
+            if busy is None:
+                return
+            snapshot = {oid: entry for oid, entry in boundary.observation_pending.items()
+                        if entry[0] not in busy}
+            if not snapshot:
+                return
+            for oid in snapshot:
+                boundary.observation_pending.pop(oid)
+            window = getattr(blend_refresher, "_admission", None)
+            releases = {entry[0]: window.released.get(entry[0], 0) if window else 0
+                        for entry in snapshot.values()}
+            epochs = {entry[0]: boundary.observation_write_epoch.get(entry[0], 0)
+                      for entry in snapshot.values()}
+        boundary.flush_work += 1
+        groups = {}
+        for oid, (eid, value, bound, mark, _token, _generation) in snapshot.items():
+            groups.setdefault(eid, {})[oid] = (value, bound, mark)
+
+        async def validate(event_ids):
+            async with buffer_lock:
+                busy = owners()
+                if busy is None or getattr(blend_refresher, "_admission", None) is not window:
+                    return set()
+                return {
+                    eid for eid in event_ids
+                    if eid not in busy and eid in getattr(blend_refresher, "preview_events", ())
+                    and boundary.observation_write_epoch.get(eid, 0) == epochs[eid]
+                    and (window is None or window.released.get(eid, 0) == releases[eid])
+                    and all(
+                        event_id_by_outcome.get(oid) == eid
+                        and oid not in non_blend_outcome_ids and oid not in open_outcome_ids
+                        and generation == routing_generation
+                        and token == observation_continuity.get(oid)
+                        and token == boundary.observation_ack.get(oid)
+                        and mark is not None and bound is not None
+                        and getattr(mark, "probability", None) == value
+                        and input_marks.get(oid) is not None
+                        and round(float(input_marks[oid].probability), 6) == round(float(value), 6)
+                        and getattr(input_marks[oid], "seq", -1) >= getattr(mark, "seq", 0)
+                        for oid, (event, value, bound, mark, token, generation) in snapshot.items()
+                        if event == eid
+                    )
+                }
+
+        async def restore():
+            async with buffer_lock:
+                for oid, entry in snapshot.items():
+                    boundary.observation_pending.setdefault(oid, entry)
+                boundary.observation_wake.set()
+
+        try:
+            accepted = await blend_refresher.preview_accepted_observations(groups, validate)
+        except asyncio.CancelledError:
+            await restore()
+            raise
+        if accepted is False:
+            await restore()
+            return
+        held = getattr(blend_refresher, "held_quotes", None)
+        if held is not None and any(entry[2] == getattr(held, "_database_bound", None)
+                                    for entry in snapshot.values()):
+            # Advance bounds for FUTURE arrivals only. Never re-date retries.
+            await held.sample_database_clock(get_task_session)
+
     async def flush_prices(flush_started=None, final=False):
-        # The final drain also writes standalone legs.
+        # The joined pump cannot outlive the catalog/routing scope or final drain.
         async with catalog_boundary.flushing(standalone=final):
-            return await _flush_prices(flush_started, final=final)
+            if (final or not getattr(blend_refresher, "preview_events", ())
+                    or not callable(getattr(blend_refresher, "preview_accepted_observations", None))):
+                return await _flush_prices(flush_started, final=final)
+            from app.tasks.ws_observation_drain import ObservationDrain
+            if catalog_boundary.observation_drain is None:
+                catalog_boundary.observation_drain = ObservationDrain(
+                    flush_observations, lambda: any(
+                        entry[0] not in catalog_boundary.observation_writing
+                        for entry in catalog_boundary.observation_pending.values()
+                    ),
+                    catalog_boundary.observation_wake, game_period,
+                )
+            async def work():
+                try:
+                    return await _flush_prices(flush_started, final=final)
+                finally:
+                    catalog_boundary.observation_writing.clear()
+                    catalog_boundary.observation_wake.set()
+            return await catalog_boundary.observation_drain.run_with(work)
 
     async def flush_standalone(flush_started=None):
         async with catalog_boundary.flushing(standalone=True):
@@ -5329,6 +5421,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             held = getattr(blend_refresher, "held_quotes", None)
             if held is not None:
                 held.note_input(mark)
+            token = observation_continuity.get(outcome_id)
+            if token is not None and catalog_boundary.observation_ack.get(outcome_id) == token:
+                catalog_boundary.observation_pending[outcome_id] = (
+                    event_id_by_outcome.get(outcome_id), prob,
+                    held.bound_for(mark) if held is not None else None,
+                    mark, token, routing_generation,
+                )
+                catalog_boundary.observation_wake.set()
+            else:
+                catalog_boundary.observation_pending.pop(outcome_id, None)
             stage_trace = getattr(tail_receipts, "exact_trace", None)
             if stage_trace is not None:
                 stage_trace.input_accepted(mark)  # never raises
@@ -5645,6 +5747,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 timing.enter("map")
                 routing_generation += 1
                 observation_continuity.clear()
+                catalog_boundary.observation_ack.clear()
+                catalog_boundary.observation_pending.clear()
+                catalog_boundary.observation_write_epoch.clear()
                 # Keep accepted writes' ownership through their drain even if the
                 # token has left the catalog. New inputs use ONLY the fresh maps.
                 protected = set(price_buffer) | set(withdraw_buffer)
