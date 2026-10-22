@@ -115,6 +115,29 @@ own card refuses. The key is a sibling of the forecast and is set whether or
 not a forecast was found: it is a fact about the score, not about the reading.
 Football and basketball rows serve no key; their callers pass ``full_game``.
 
+── LIVE DETAIL ─────────────────────────────────────────────────────────────────
+
+The event page of a game being played may ask the same question, so its
+headline can set the current in-play projection beside the one retained from
+before the scheduled start (``read_pregame_projections(..., live_detail=True)``).
+Only the event page passes it, and only a row that PRINTS ``"live"`` is added;
+every list, search and feed caller stays settled-only. Nothing else changes:
+the same boundary and its provenance gates, the same statement and selection,
+the same format table and refusals, the same object.
+
+* **The baseline is not the in-play reading.** The in-play pair
+  (``card_projected_pair._live_projection``) admits only rows at or after this
+  same ``commence_time``; this reads only rows strictly before it. No row can be
+  both, so the first in-play reading can never become the baseline. A live row
+  whose published start is still ahead is not asked at all.
+* **Soccer's period is the forecast's, not the scoreboard's.** The baseline
+  carries ``period: "regulation"`` because its lines settle on 90 minutes. A
+  live row never serves ``final_score_period`` (there is no final yet), and the
+  baseline is not withheld for want of one. Whether the CURRENT pair may be set
+  beside it is the in-play pair's own gate (it is withheld outside regulation
+  play), so a client compares only when both objects name the same ``unit`` and
+  ``period``.
+
 ── PROVENANCE IS ITS OWN ───────────────────────────────────────────────────────
 
 ``prematch_odds.source`` names the VENUE of the settled probability prior
@@ -153,6 +176,10 @@ UNAVAILABLE_KEY = "pregame_projection_unavailable"
 SCORE_PERIOD_KEY = "final_score_period"
 #: The one value served: a soccer match that ended at full time.
 SCORE_PERIOD_REGULATION = "regulation"
+
+#: The one non-settled status the event page may ask about (``live_detail``).
+#: Exact: ``suspended``, ``scheduled`` and anything unrecognised are not asked.
+LIVE_DETAIL_STATUS = "live"
 
 #: The only kind produced, named for the boundary it actually used: each book's
 #: last reading before the PUBLISHED start. It is not ``"latest_before_play"``:
@@ -231,7 +258,8 @@ def _loaded(event: Any, name: str) -> Any:
 def pregame_boundary(event: Any) -> tuple[Optional[datetime], Optional[str]]:
     """``(boundary_at, None)`` when the row's start may bound a pregame read, else ``(None, reason)``.
 
-    Not a status check: callers decide which rows are asked (settled only).
+    Not a status check: callers decide which rows are asked (settled, plus a
+    live row on the event page: see "LIVE DETAIL").
     """
     commence = _utc(_loaded(event, "commence_time"))
     if commence is None:
@@ -439,14 +467,24 @@ def final_score_period(event: Any, sport_key: Optional[str], status: Any) -> Opt
 
 
 def plan_pregame_projections(
-    events: Iterable[Any], sport_key_of, status_of=None
+    events: Iterable[Any],
+    sport_key_of,
+    status_of=None,
+    *,
+    live_detail: bool = False,
+    now: Optional[datetime] = None,
 ) -> tuple[Optional[dict], dict[int, dict]]:
-    """Decide every settled row's question in one pass: ``(binds, answers)``.
+    """Decide every asked row's question in one pass: ``(binds, answers)``.
 
-    ``answers`` already holds each settled row that is refused before any read
+    ``answers`` already holds each asked row that is refused before any read
     (``{UNAVAILABLE_KEY: reason}``); ``binds`` covers the rest, or is ``None``
-    when nothing needs reading. Unsettled rows are absent from both: they are
-    not asked. ``sport_key_of(event)`` must not emit IO.
+    when nothing needs reading. Rows that are not asked are absent from both.
+    ``sport_key_of(event)`` must not emit IO.
+
+    By default only SETTLED rows are asked. ``live_detail=True`` also asks a
+    row that prints exactly ``"live"`` (see "LIVE DETAIL" below); only the
+    event page passes it, so every list and feed caller keeps settled-only
+    cost and output.
 
     ``status_of(event)`` is the status the CARD PRINTS, when the caller has
     one. Routes pass it so "settled" means what the reader sees: #11295's
@@ -460,7 +498,8 @@ def plan_pregame_projections(
     answers: dict[int, dict] = {}
     for event in events:
         status = status_of(event) if status_of is not None else _loaded(event, "status")
-        if status not in SETTLED_STATUSES:
+        live = live_detail and status == LIVE_DETAIL_STATUS
+        if status not in SETTLED_STATUSES and not live:
             continue
         event_id = _loaded(event, "id")
         if event_id is None:
@@ -472,6 +511,12 @@ def plan_pregame_projections(
         boundary, reason = pregame_boundary(event)
         if boundary is None:
             answers[event_id] = {UNAVAILABLE_KEY: reason}
+            continue
+        if live and boundary > (_utc(now) or datetime.now(timezone.utc)):
+            # A live row whose published start is still ahead: every row before
+            # that start may already be in-play, so it has no pregame side yet.
+            # Served statuses cannot reach this (`served_event_status` downgrades
+            # a live claim before its start); a stored-status caller can.
             continue
         ids.append(event_id)
         cutoffs.append(boundary)
@@ -506,8 +551,9 @@ async def read_pregame_projections(
     status_of=None,
     *,
     timeout_ms: Optional[int] = None,
+    live_detail: bool = False,
 ) -> dict[int, dict]:
-    """``{event_id: {PROJECTION_KEY: …} | {UNAVAILABLE_KEY: reason}}`` for the settled rows.
+    """``{event_id: {PROJECTION_KEY: …} | {UNAVAILABLE_KEY: reason}}`` for the asked rows.
 
     At most one statement, inside a SAVEPOINT so a failure (a statement
     timeout on a bounded route) cannot poison the caller's transaction. A
@@ -521,13 +567,18 @@ async def read_pregame_projections(
     writes nothing, and the rollback reverts the SET LOCAL so the bound cannot
     leak into a later stage on the same session. ``timeout_ms`` of zero or less
     means no budget is left: no round trip, and ``read_failed``.
+
+    ``live_detail`` is :func:`plan_pregame_projections`' opt-in, for the event
+    page only. It adds no statement: the live row joins the same one.
     """
     import logging
 
     from sqlalchemy import text
 
     events = list(events)
-    plan, answers = plan_pregame_projections(events, sport_key_of, status_of)
+    plan, answers = plan_pregame_projections(
+        events, sport_key_of, status_of, live_detail=live_detail
+    )
     # What each settled row's actual score covers: decided from the row alone,
     # so it is served whatever the read below answers.
     score_periods: dict[int, str] = {}
