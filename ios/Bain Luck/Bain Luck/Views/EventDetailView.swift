@@ -1040,7 +1040,7 @@ struct EventDetailView: View {
         .accessibilityLabel("Probability confidence and update details. " +
             (priceStreamingEligible ? LivePriceReceiptCue.accessibilityText(status: vm.liveUpdateStatus,
                 receivedAt: vm.priceActivity?.receivedAt) : ""))
-        .accessibilityHint("Shows connection status and when the last probability update reached this phone")
+        .accessibilityHint(Self.probabilityDetailsHint(forecastShown: revealForecast11296 != nil))
         // #9408 — open BELOW the button (on iOS, `.top` measured below; the
         // default nil picked above, under the nav bar with 144pt to spare, and at
         // Alex's XXXL text the content overflowed both edges). The reveal
@@ -2923,6 +2923,17 @@ struct EventDetailView: View {
     /// the control still prints status words.
     static func probabilityDetailsMaxWidth(at size: DynamicTypeSize, statusInDetails: Bool) -> CGFloat? {
         statusInDetails ? nil : heroVerdictWidth(at: size)
+    }
+
+    /// #11296 — what the info control opens, said before it is opened. The
+    /// delivery sentence is unchanged; it grows the forecast's clause only when
+    /// the popover will actually carry the forecast section (the same
+    /// `revealForecast11296` the popover reads), so it never promises details
+    /// that are not there.
+    nonisolated static func probabilityDetailsHint(forecastShown: Bool) -> String {
+        forecastShown
+            ? "Shows connection status, when the last probability update reached this phone, and the sportsbooks and times behind the projected scores"
+            : "Shows connection status and when the last probability update reached this phone"
     }
 
     // MARK: - Hero Status Badge

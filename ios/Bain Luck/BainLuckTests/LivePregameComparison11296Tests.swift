@@ -110,7 +110,8 @@ final class LivePregameComparison11296Tests: XCTestCase {
         period: String? = "Q3",
         liveProjection: String?,
         pregameProjection: String?,
-        finalScorePeriod: String? = nil
+        finalScorePeriod: String? = nil,
+        venueSettled: Bool? = nil
     ) -> String {
         var odds = #"{"home_probability": 0.80, "away_probability": 0.20, "projected_home_score": 36.9, "projected_away_score": 10.7, "bookmaker_count": 3"#
         if let liveProjection { odds += #", "live_projection": "# + liveProjection }
@@ -120,6 +121,7 @@ final class LivePregameComparison11296Tests: XCTestCase {
         var extra = ""
         if let pregameProjection { extra += #", "pregame_projection": "# + pregameProjection }
         if let finalScorePeriod { extra += #", "final_score_period": "\#(finalScorePeriod)""# }
+        if let venueSettled { extra += #", "venue_settled": \#(venueSettled)"# }
         return #"""
         {"id": 14870008, "sport": "\#(sport)", "home_team": "Georgia Bulldogs", "away_team": "Oklahoma Sooners", "commence_time": "\#(start)", "start_is_tbd": false, "start_is_from_schedule": true, "status": "\#(status)", "home_score": \#(score(home)), "away_score": \#(score(away)), "current_odds": \#(odds), "espn": \#(espn)\#(extra)}
         """#
@@ -409,6 +411,48 @@ final class LivePregameComparison11296Tests: XCTestCase {
             XCTAssertNil(h.baseline, bad ?? "absent")
             XCTAssertEqual(C.spokenText(h, awayName: "A", homeName: "H"), "Projected final: A 19, H 30")
         }
+    }
+
+    /// The one live hero arm that mounts no information control is the
+    /// venue-settled verdict (the finished arm needs a finished status; the
+    /// priced arm always mounts it, a live quote is never an opening line; the
+    /// `vs` arm mounts it whenever the status is live). A forecast printed under
+    /// that verdict would have details nobody can open — and it cannot print,
+    /// because the two need opposite rows: the live forecast needs a score,
+    /// twice over (admission withholds `.noActualScore`; `showsProjection`
+    /// needs `hasScore` once underway, both scores present), and the
+    /// producer serves `venue_settled` only on a row with NO score
+    /// (`venue_settlement_is_askable`'s first test, pinned for a live row by
+    /// `test_venue_settled_payload_6381.py::…scored_live_row…`). The client
+    /// never adds a score to a served row that had none
+    /// (`LiveEventScoreReconciliation` keeps a held score only over a polled one).
+    func testAVenueSettledLiveRowCarriesNoForecastSoTheArmWithoutTheControlHidesNone() throws {
+        let settled = try detail(rowJSON(sport: "americanfootball_ncaaf", home: nil, away: nil,
+                                         liveProjection: Self.nflObject, pregameProjection: Self.baselineNFL,
+                                         venueSettled: true))
+        XCTAssertTrue(EventState.showsVenueSettledVerdict(
+            settled.status, venueSettled: settled.venueSettled,
+            commenceTime: settled.commenceTime?.asDate, now: Self.pageNow),
+            "control: this row takes the verdict arm")
+        XCTAssertEqual(LiveProjectedFinal2920.page(settled, now: Self.pageNow), .withheld,
+                       "no actual score: the in-play object is withheld")
+        XCTAssertNil(forecast(settled), "no score, no live forecast — the verdict arm prints none")
+
+        // The score is the whole difference: the same row scored prints both forecasts.
+        let scored = try detail(rowJSON(sport: "americanfootball_ncaaf",
+                                        liveProjection: Self.nflObject, pregameProjection: Self.baselineNFL,
+                                        venueSettled: true))
+        guard case .admitted = LiveProjectedFinal2920.page(scored, now: Self.pageNow) else {
+            return XCTFail("control: the same object is admitted once the row is scored")
+        }
+        let h = try XCTUnwrap(forecast(scored), "control: the fixture is admissible once scored")
+        XCTAssertNotNil(h.baseline)
+
+        // The hero's gate is the page's own score test, not a constant.
+        let page = try source("Views/EventDetailView.swift")
+        let hero = try XCTUnwrap(page.range(of: "privatefuncheroSection(_event:EventDetail)->someView{"))
+        XCTAssertTrue(page[hero.upperBound...].hasPrefix(
+            "letcolors=teamColors(event)lethasScore=EventDetailView.showsScore(status:event.status,away:event.awayScore,home:event.homeScore)"))
     }
 
     func testAnUntypedOrRefusedCurrentPairIsNotTakenIntoTheHeadline() throws {
