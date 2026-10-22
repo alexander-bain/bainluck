@@ -186,11 +186,17 @@ LEDGER_MAX_BASE_BYTES = 262144
 #: not supersession (`stale`, `terminal`) or expiry. Each is logged in the
 #: fixed `LEDGER_ALARM_FORMAT` so the operator can stop on the first one
 #: (#11388 admission review, item 4); the counters alone are never logged.
-LEDGER_ALARM_STATUSES = frozenset({"fenced", "lost", "malformed", "exhausted", "full", "no_base"})
+#: `lost_admission` is a ledger whose retirement barrier is gone or unreadable
+#: while it still has owners: every operation then refuses. `read_required`
+#: (a retirement elsewhere moved the barrier) and `legacy_owner` (a venue not
+#: yet claimed under read-before-admit, so retirement waits) are normal.
+LEDGER_ALARM_STATUSES = frozenset(
+    {"fenced", "lost", "malformed", "exhausted", "full", "no_base", "lost_admission"})
 #: The operator's matcher keys on this shape; change it only with that matcher.
-#: phase = claim, propose, settle, terminal or publish. One line per (status,
-#: phase, source) per batch; `count` includes refusals held back since that
-#: key's previous line, and `event_id` is the first of them (`-` for a claim).
+#: phase = claim, read_ticket, propose, settle, terminal, retire or publish.
+#: One line per (status, phase, source) per batch; `count` includes refusals
+#: held back since that key's previous line, and `event_id` is the first of
+#: them (`-` for a claim or a read_ticket).
 LEDGER_ALARM_FORMAT = "blend_preview ledger ALARM status=%s phase=%s source=%s count=%d event_id=%s"
 #: A persisting refusal repeats its line at most this often per key.
 LEDGER_ALARM_INTERVAL_S = 10.0
@@ -1075,6 +1081,9 @@ class LedgerRegistry(PreviewRegistry):
             return None, []
         reply = await self._eval(call, "read_ticket", source, claim, "", " ".join(self.sources))
         if reply[0] != "ok":
+            # With no chain in flight this is the only ledger call, so a lost
+            # barrier would otherwise stop every new preview without a line.
+            self._alarm(reply[0], "read_ticket", source, None)
             return None, []
         return int(reply[1]), [int(eid) for eid in reply[2:]]
 

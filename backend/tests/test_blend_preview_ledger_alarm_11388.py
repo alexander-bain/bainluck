@@ -30,8 +30,8 @@ LOGGER = "app.utils.blend_preview"
 #: What the operator's immediate-stop matcher is handed. Searched, not anchored:
 #: production prefixes every line.
 OPERATOR_PATTERN = re.compile(
-    r"blend_preview ledger ALARM status=(fenced|lost|malformed|exhausted|full|no_base)"
-    r" phase=(claim|propose|settle|terminal|publish) source=(kalshi|polymarket)"
+    r"blend_preview ledger ALARM status=(fenced|lost|malformed|exhausted|full|no_base|lost_admission)"
+    r" phase=(claim|read_ticket|propose|settle|terminal|retire|publish) source=(kalshi|polymarket)"
     r" count=([1-9][0-9]*) event_id=([0-9]+|-)$"
 )
 
@@ -53,7 +53,7 @@ def test_the_format_and_status_set_are_the_ones_handed_to_the_operator():
     assert blend_preview.LEDGER_ALARM_FORMAT == (
         "blend_preview ledger ALARM status=%s phase=%s source=%s count=%d event_id=%s")
     assert blend_preview.LEDGER_ALARM_STATUSES == frozenset(
-        {"fenced", "lost", "malformed", "exhausted", "full", "no_base"})
+        {"fenced", "lost", "malformed", "exhausted", "full", "no_base", "lost_admission"})
     assert blend_preview.LEDGER_ALARM_INTERVAL_S == 10.0
 
 
@@ -110,6 +110,112 @@ class TestPublication:
         await rig.k.execute(frames, rig.call, rig.channel, rig.stats)
         assert _blends(await rig.drain()) == []
         assert _alarms(caplog) == [("fenced", "publish", "kalshi", "1", str(EV))]
+
+
+class TestAdmissionAuthority:
+    """F3: a ledger that still has owners but no readable retirement barrier.
+
+    Every operation refuses `lost_admission`, so without a line the window
+    would keep running with no previews at all.
+    """
+
+    async def test_a_lost_barrier_alarms_on_the_reclaim(self, rig, caplog):
+        # (An unreadable one is `malformed` at a claim, already an alarm.)
+        await _lose_barrier(rig)
+        with pytest.raises(RuntimeError, match="lost_admission"):
+            await rig.registry().claim(rig.call, "kalshi")
+        assert _alarms(caplog) == [("lost_admission", "claim", "kalshi", "1", "-")]
+
+    async def test_a_lost_barrier_alarms_on_the_ticket_read_with_no_chain_in_flight(self, rig, caplog):
+        await _lose_barrier(rig)
+        assert await rig.k.read_ticket(rig.call, "kalshi") == (None, [])
+        # Without a ticket nothing else reaches the ledger: the read is the only line.
+        assert await _tsp1_fresh_ops(rig, rig.k) == []
+        assert _alarms(caplog) == [("lost_admission", "read_ticket", "kalshi", "1", "-")]
+
+    @pytest.mark.parametrize("barrier", [None, "01"])
+    async def test_a_lost_or_unreadable_barrier_alarms_on_the_write(self, rig, caplog, barrier):
+        await _lose_barrier(rig, barrier)
+        assert await rig.run(rig.k, _propose(rig.k, "kalshi", 0.6)) == []
+        assert rig.stats["ledger_refused"] == 1
+        assert _alarms(caplog) == [("lost_admission", "propose", "kalshi", "1", str(EV))]
+
+    async def test_a_barrier_lost_between_read_and_send_alarms_at_publish(self, rig, caplog):
+        frames = await rig.k.prepare(_propose(rig.k, "kalshi", 0.6), rig.call, rig.stats)
+        assert _blends(frames)
+        await _lose_barrier(rig)
+        await rig.k.execute(frames, rig.call, rig.channel, rig.stats)
+        assert _blends(await rig.drain()) == []
+        assert _alarms(caplog) == [("lost_admission", "publish", "kalshi", "1", str(EV))]
+
+    async def test_a_barrier_lost_after_the_ticket_alarms_at_retire(self, rig, caplog):
+        await rig.run(rig.k, await _tsp1_fresh_ops(rig, rig.k))
+        ticket, _ = await rig.k.read_ticket(rig.call, "kalshi")
+        await _lose_barrier(rig)
+        assert await rig.run(rig.k, [rig.k.retire_read(EV, "kalshi", 11, ticket, committed_rev=12)]) == []
+        assert await rig.hget(f"e:{EV}:gen") is not None
+        assert _alarms(caplog) == [("lost_admission", "retire", "kalshi", "1", str(EV))]
+
+
+class TestAdmissionQuietWhenNormal:
+    """The two other F3 refusals are ordinary transitions, counted but quiet."""
+
+    async def test_an_open_read_before_another_venues_retirement_is_read_required(
+            self, rig, caplog, monkeypatch):
+        seen = _statuses(rig.k, monkeypatch)
+        delayed = await _tsp1_fresh_ops(rig, rig.k)
+        ticket, _ = await rig.p.read_ticket(rig.call, "polymarket")
+        await rig.run(rig.p, [rig.p.retire_read(EV, "polymarket", 11, ticket, committed_rev=12)])
+        assert await rig.run(rig.k, delayed) == []
+        assert seen == ["read_required"]
+        assert rig.stats["ledger_refused"] >= 1
+        assert _alarms(caplog) == []
+
+    async def test_a_retirement_on_a_superseded_ticket_is_read_required(self, rig, caplog, monkeypatch):
+        await rig.run(rig.p, await _tsp1_fresh_ops(rig, rig.p))
+        ticket, _ = await rig.p.read_ticket(rig.call, "polymarket")
+        await rig.run(rig.k, [rig.k.retire_read(999, "kalshi", 20, ticket, committed_rev=21)])
+        seen = _statuses(rig.p, monkeypatch)
+        assert await rig.run(rig.p, [rig.p.retire_read(EV, "polymarket", 11, ticket, committed_rev=12)]) == []
+        assert seen == ["read_required"]
+        assert await rig.hget(f"e:{EV}:gen") is not None
+        assert _alarms(caplog) == []
+
+    async def test_a_venue_without_read_before_admit_makes_retirement_wait_quietly(
+            self, rig, caplog, monkeypatch):
+        await rig.run(rig.k, await _tsp1_fresh_ops(rig, rig.k))
+        await rig.client.hdel(blend_preview.LEDGER_KEY, "read_owner:polymarket")
+        ticket, _ = await rig.k.read_ticket(rig.call, "kalshi")
+        assert ticket is not None
+        seen = _statuses(rig.k, monkeypatch)
+        assert await rig.run(rig.k, [rig.k.retire_read(EV, "kalshi", 11, ticket, committed_rev=12)]) == []
+        assert seen == ["legacy_owner"]
+        assert await rig.hget(f"e:{EV}:gen") is not None
+        assert _alarms(caplog) == []
+
+
+async def _lose_barrier(rig, value=None):
+    if value is None:
+        await rig.client.hdel(blend_preview.LEDGER_KEY, "retired")
+    else:
+        await rig.client.hset(blend_preview.LEDGER_KEY, "retired", value)
+
+
+async def _tsp1_fresh_ops(rig, reg, source=None):
+    source = source or ("kalshi" if reg is rig.k else "polymarket")
+    return await tsp1._fresh_ops(rig, reg, source)
+
+
+def _statuses(reg, monkeypatch):
+    """Every refusal status the registry passed to its alarm filter."""
+    seen, original = [], reg._alarm
+
+    def spy(status, *args):
+        seen.append(status)
+        original(status, *args)
+
+    monkeypatch.setattr(reg, "_alarm", spy)
+    return seen
 
 
 class TestQuietWhenNormal:
@@ -191,8 +297,29 @@ class TestBound:
 
     @pytest.mark.parametrize("status", ["stale", "terminal", "missing_chain",
                                         "old_local", "chain_exists", "contributor",
-                                        "stale_terminal", "unchanged", "none"])
+                                        "stale_terminal", "unchanged", "none",
+                                        "read_required", "legacy_owner"])
     async def test_normal_refusals_are_quiet(self, caplog, status):
         reg = _registry([0.0])
         await reg.prepare([_settle(3)], Scripted(status), {})
+        assert _alarms(caplog) == []
+
+
+class TestTicketRead:
+    async def test_a_refused_ticket_read_alarms_once_per_interval(self, caplog):
+        clock = [0.0]
+        reg = _registry(clock)
+        assert await reg.read_ticket(Scripted("lost_admission"), "kalshi") == (None, [])
+        assert await reg.read_ticket(Scripted("lost_admission"), "kalshi") == (None, [])
+        clock[0] = 10.0
+        assert await reg.read_ticket(Scripted("lost_admission"), "kalshi") == (None, [])
+        assert _alarms(caplog) == [("lost_admission", "read_ticket", "kalshi", "1", "-"),
+                                   ("lost_admission", "read_ticket", "kalshi", "2", "-")]
+
+    async def test_an_unclaimed_source_reads_no_ticket_and_says_nothing(self, caplog):
+        reg = _registry([0.0])
+        reg.claims = {}
+        call = Scripted()
+        assert await reg.read_ticket(call, "kalshi") == (None, [])
+        assert call.calls == 0
         assert _alarms(caplog) == []
