@@ -369,4 +369,32 @@ final class SettlementResultMarks10955Tests: XCTestCase {
         XCTAssertEqual(code.components(separatedBy: ".accessibilityValue(mark.outcome.spoken)").count - 1, 2,
                        "both the point and the words are spoken as Won / Lost")
     }
+
+    /// Design (2223Z): a settlement-only winner's words are its only mark, and the
+    /// default selection is the first three served names, so dimming them with the
+    /// curves would leave the winner at 0.1 opacity. The words take no opacity; the
+    /// priced result point keeps the line's.
+    func testTheNoPriceResultWordsAreNeverDimmedByTheCurveSelection() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck/Components/EvolutionChartView.swift")
+        let code = try String(contentsOf: url, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        let start = try XCTUnwrap(code.range(of: "private func unpricedResultLabel("),
+                                  "the label's function is gone")
+        let end = try XCTUnwrap(code.range(of: "private static func resultSymbol(",
+                                           range: start.upperBound..<code.endIndex),
+                                "the label's body has no end marker")
+        let body = code[start.upperBound..<end.lowerBound]
+        XCTAssertTrue(body.contains("Text(mark.outcome.spoken)"), "the slice is not the label")
+        XCTAssertFalse(body.contains(".opacity("),
+                       "the only mark of a settlement-only winner must not fade with the curves")
+        XCTAssertFalse(body.contains("lineOpacity"))
+        XCTAssertTrue(code.contains(
+            "                    .opacity(lineOpacity(for: mark.name, isCombined: false))"),
+                      "the priced result point still follows its line's emphasis")
+    }
 }
