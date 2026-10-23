@@ -1365,7 +1365,7 @@ struct MarketMapView: View {
             && (showsShape || !markers.isEmpty)
         let ladderOpen = expandedLadders.contains(title) || Self.rigOpensLadders
         let drawnLadder = ladderOpen && fullLadder.count > ladder.count ? fullLadder : ladder
-        let otherLineCount = otherFamilies.reduce(0) { $0 + $1.rows.count }
+        let otherLineCount = otherFamilies.map(\.rows.count).reduce(0, +)
         let hasMoreLines = fullLadder.count > ladder.count || otherLineCount > 0
         return VStack(alignment: .leading, spacing: 10) {
             // Header
@@ -1782,7 +1782,7 @@ struct MarketMapView: View {
         if isLive { return sportsbookSpreadIsAMargin ? liveForecast : nil }
         return marginProjection(
             homeSpread: homeSpread, rungs: rungs,
-            sportsbookSpreadIsAMargin: sportsbookSpreadIsAMargin, isLive: false)
+            sportsbookSpreadIsAMargin: sportsbookSpreadIsAMargin, isLive: isLive)
     }
 
     /// Derive the period label for a market outcome.

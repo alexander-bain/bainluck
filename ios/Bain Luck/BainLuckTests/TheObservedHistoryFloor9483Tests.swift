@@ -135,7 +135,7 @@ final class TheObservedHistoryFloor9483Tests: XCTestCase {
 
     func testAFloorAfterTheReadersClockStillMountsNothing() throws {
         let h = try history(espn: specimenESPN, markers: specimenMarkers,
-                            pairs: [rec("01:20", 114.2, 122.2)])
+                            pairs: [rec("01:20", 122.2, 114.2)])
         XCTAssertNil(ProjectedFinalPointsMount.input(
             sportKey: "basketball_nba", eventStatus: "live", history: h,
             finalHome: nil, finalAway: nil, asOf: "2026-10-23T01:45:00Z".asDate!))
@@ -143,7 +143,7 @@ final class TheObservedHistoryFloor9483Tests: XCTestCase {
 
     func testBeforeTheGameNoFloorIsRead() throws {
         let h = try history(status: "scheduled", espn: specimenESPN, markers: specimenMarkers,
-                            pairs: [rec("01:20", 114.2, 122.2)])
+                            pairs: [rec("01:20", 122.2, 114.2)])
         let input = try XCTUnwrap(ProjectedFinalPointsMount.input(
             sportKey: "basketball_nba", eventStatus: "scheduled", history: h,
             finalHome: nil, finalAway: nil, asOf: "2026-10-23T01:25:00Z".asDate!))
