@@ -85,11 +85,13 @@ struct EventDetailView: View {
     /// Original history window bounds legacy ink even when stored dots widen the axis.
     private var legacyChartDataDomain: ClosedRange<Date>? {
         Self.pageLegacyChartDataDomain(event: vm.event, history: vm.history, range: chartRange,
-                                       journey: vm.publicationJourney, key: publicationTaskKey)
+                                       journey: vm.publicationJourney, key: publicationTaskKey,
+                                       now: displayNow())
     }
     private var sharedChartDomain: ClosedRange<Date>? {
         Self.pageSharedChartDomain(event: vm.event, history: vm.history, range: chartRange,
-                                   journey: vm.publicationJourney, key: publicationTaskKey)
+                                   journey: vm.publicationJourney, key: publicationTaskKey,
+                                   now: displayNow())
     }
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -97,10 +99,29 @@ struct EventDetailView: View {
     /// #10796 keeps the competitors together in the larger-text layout.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    init(eventId: Int, viewModel: EventDetailViewModel? = nil) {
+    /// #9483 / #11296 — ONE display clock for the page's freshness readers:
+    /// the headline's phase and age, the quote-is-current test the chart's end
+    /// dot follows, the live chart window's end, and the NBA ladders' quote
+    /// eligibility. Nil — every production mount — is the real clock, read
+    /// where each reader read it before. A retained-data check sets the
+    /// retained observation's instant here so all four read the same held
+    /// moment; no served timestamp is restamped. A view-model clock alone
+    /// cannot do it: these readers are the page's, not the model's.
+    private let displayAsOf: Date?
+
+    init(eventId: Int, viewModel: EventDetailViewModel? = nil, displayAsOf: Date? = nil) {
         self.eventId = eventId
+        self.displayAsOf = displayAsOf
         _vm = StateObject(wrappedValue: viewModel ?? EventDetailViewModel(eventId: eventId))
     }
+
+    /// The instant the page's freshness readers compare against: the injected
+    /// display clock, else `tick` (a `TimelineView`'s date), else now.
+    private func displayNow(_ tick: Date? = nil) -> Date {
+        Self.displayNow(asOf: displayAsOf, tick: tick ?? Date())
+    }
+
+    static func displayNow(asOf: Date?, tick: Date) -> Date { asOf ?? tick }
 
     private var isLive: Bool { vm.event?.status == "live" }
     private var publicationTaskKey: PublicationTaskKey4974 {
@@ -445,10 +466,10 @@ struct EventDetailView: View {
                                                  OpeningLineHero.resolve($0, for: event).isOpeningLine } ?? false,
                                              observedAt: vm.displayedProbabilityObservedAt(event),
                                              deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
-                                             now: tick.date)
+                                             now: displayNow(tick.date))
                                              && !EventState.showsVenueSettledVerdict(
                                                  event.status, venueSettled: event.venueSettled,
-                                                 commenceTime: event.commenceTime?.asDate, now: tick.date),
+                                                 commenceTime: event.commenceTime?.asDate, now: displayNow(tick.date)),
                                           pairedAwayLabel9483: LivePriceActivity.displayedLabels(in: vm.headline(event)).away,
                                          // #10456 — the served winner pair, both
                                          // sides: admission for the balance ink.
@@ -2242,7 +2263,7 @@ struct EventDetailView: View {
             commenceTime: event.commenceTime?.asDate,
             homeScore: hasScore ? event.homeScore : nil, awayScore: hasScore ? event.awayScore : nil,
             pregameProjection: finish?.ladderPregame,
-            homeShort: names.home, awayShort: names.away, now: Date())
+            homeShort: names.home, awayShort: names.away, now: displayNow())
         return [NBALadderCard9483.margin(input), NBALadderCard9483.total(input)].compactMap { $0 }
     }
 
@@ -2791,7 +2812,7 @@ struct EventDetailView: View {
                 // #10090 — a preview's own observation time; unknown is undated.
                 observedAt: vm.displayedProbabilityObservedAt(event),
                 deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
-                now: tick.date) {
+                now: displayNow(tick.date)) {
                 EventHeadlinePhaseLabel9483(phase: phase, baseline: baseline, maxWidth: maxWidth)
             }
         }
