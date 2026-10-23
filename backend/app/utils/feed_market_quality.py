@@ -18,6 +18,11 @@ from dataclasses import dataclass, field
 from typing import Callable, Iterable, Literal, Optional, Sequence
 
 from app.utils.card_integrity import is_anonymized_market
+from app.utils.congress_control_story import (
+    US_CONGRESS_CONTROL_STORY_PREFIX,
+    congress_control_story_key_for_market,
+    is_congress_control_story_key,
+)
 from app.utils.feed_reasons import RESOLVING_WITHIN_MONTH_HEADLINE
 
 # #921: a market needs a real, showable price to earn a Discover card. Below
@@ -3351,10 +3356,20 @@ def classify_market_quality(
     # `story:brazil_presidential_election`, "Brazil Presidential election
     # winner?" → `story:brazil_presidential_election_winner`), which is how one
     # race reached page one twice.
-    computed_story_key = _story_key(name, category)
+    congress_story_key = congress_control_story_key_for_market(
+        market_name=name,
+        external_id=external_id,
+        outcome_names=outcome_names,
+    )
+    computed_story_key = congress_story_key or _story_key(name, category)
     if computed_story_key is not None and (
         computed_story_key.startswith(GOLF_TOURNAMENT_STORY_PREFIX)
         or is_national_presidential_election_story_key(computed_story_key)
+        or is_congress_control_story_key(computed_story_key)
+    ):
+        story_key = computed_story_key
+    elif isinstance(persisted_story_key, str) and persisted_story_key.startswith(
+        "story:us_congress_control"
     ):
         story_key = computed_story_key
     else:
@@ -5375,6 +5390,7 @@ def diversify_quality_families(
         # per event: the cap is a dial on how much of one card reaches a page,
         # and splitting the key must not quietly raise it to the default 5.
         UFC_EVENT_STORY_PREFIX: 3,
+        US_CONGRESS_CONTROL_STORY_PREFIX: 2,
     }
 
     def _cap_for(story_key: str) -> int:

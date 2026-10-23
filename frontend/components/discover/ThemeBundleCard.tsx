@@ -8,6 +8,8 @@ import { BundleActionBar } from "./BundleActionBar";
 import { BundleHeader } from "./BundleHeader";
 import { bundleExpandLabel, bundleSeatCount } from "./constants";
 import { FuturesCard, FuturesCompactRow } from "./FuturesCard";
+import { PartyControlRow } from "./PartyControlRow";
+import { isCongressControlStoryKey } from "@/lib/discover/partyControlRow";
 import {
   CollectionEntryLink,
   admitCollectionRef,
@@ -112,7 +114,11 @@ export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positi
             {peek.map((member, i) => (
               <div key={i} className="px-4 py-3">
                 {member.type === "futures" ? (
-                  <FuturesCompactRow item={member} data={member.data as FeedFuturesData} />
+                  isCongressControlStoryKey(storyKey) ? (
+                    <PartyControlRow member={member} data={member.data as FeedFuturesData} />
+                  ) : (
+                    <FuturesCompactRow item={member} data={member.data as FeedFuturesData} />
+                  )
                 ) : (
                   <div className="text-sm font-semibold text-text-primary line-clamp-2">{member.headline || "Market"}</div>
                 )}
