@@ -25,6 +25,7 @@ from tests.test_ws_flush_retry_q491 import _Result
 from tests.pm_bulk_test_support import price_writes, statement_params
 from tests._kalshi_price_session import is_price_write, returned
 from tests._pm_slate_market_read_10663 import answer_slate_market_read
+from tests._pm_slate_link_read_10663 import answer_slate_link_read
 
 
 def slate(markets):
@@ -110,8 +111,8 @@ class Rig(CatalogRig):
                         if narrow:
                             rig.current = rig.initial
                             rig.calls_log.append("stored_live_select")
-                            return _Result(rig.initial[0])
-                        return _Result(await rig.read_full())
+                            return _Result(answer_slate_link_read(stmt, rig.initial[0]))  # #10663
+                        return _Result(answer_slate_link_read(stmt, await rig.read_full()))
                     if sql == str(admission.open_contract_markets_stmt()):
                         rig.open_reads += 1
                         rig.calls_log.append(f"open:{rig.open_reads}:entered")

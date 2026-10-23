@@ -18,6 +18,7 @@ from tests.test_ws_consumer_session_lifetime_2471 import (
 )
 from tests.test_ws_flush_retry_q491 import _Result
 from tests._pm_slate_market_read_10663 import answer_slate_market_read
+from tests._pm_slate_link_read_10663 import answer_slate_link_read
 
 
 @pytest.mark.asyncio
@@ -87,7 +88,8 @@ async def test_stored_live_startup_pair(monkeypatch, mode):
                             isinstance(value, (list, tuple)) and set(value) == {"live", "suspended"}
                             for value in bound.values()):
                             marks.append("stored_live_select")
-                            return _Result([row for row in slate[0] if row[1] in live_markets])
+                            return _Result(answer_slate_link_read(  # #10663
+                                stmt, [row for row in slate[0] if row[1] in live_markets]))
                         if "linked_event_id" in sql:
                             return await execute(stmt, params)
                         if "clock_timestamp()" in sql:

@@ -17,6 +17,7 @@ from tests.test_ws_consumer_session_lifetime_2471 import (
 )
 from tests.test_ws_flush_retry_q491 import POLY_SLATE, _Result
 from tests._pm_slate_market_read_10663 import answer_slate_market_read
+from tests._pm_slate_link_read_10663 import answer_slate_link_read
 
 
 async def until(predicate):
@@ -148,7 +149,8 @@ class CatalogRig(_Rig):
                     if sql == str(admission.open_contract_outcomes_stmt()):
                         return _Result([(171, 17, "0xopen", False)])
                     if "linked_event_id" in sql:
-                        return _Result(await rig.read_slate_rows())
+                        return _Result(  # #10663
+                            answer_slate_link_read(stmt, await rig.read_slate_rows()))
                     if "futures_markets.market_metadata" in sql:
                         return _Result(answer_slate_market_read(stmt, rig.slate[1]))
                     if sql.startswith(

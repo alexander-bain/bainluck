@@ -11,10 +11,15 @@ selects, read off the statement itself — never off the production key list —
 so a key dropped from the read is dropped from the answer too, and the parent's
 bare-blob read is answered unchanged. A JSONB subscript of an absent key, or
 of a blob that is not an object, is SQL NULL (PostgreSQL ``jsonb['key']``),
-which is ``None`` here. Any other statement gets its rows back untouched.
+which is ``None`` here. The slate's LINK read (its first query) is answered by
+``answer_slate_link_read`` from the parent's outcome-level rows, so a fake that
+routes every slate read through here answers both. Any other statement gets
+its rows back untouched.
 """
 
 from sqlalchemy.sql import operators
+
+from tests._pm_slate_link_read_10663 import answer_slate_link_read, is_slate_link_read
 
 
 def _slate_market_columns(stmt):
@@ -61,6 +66,8 @@ def is_slate_market_read(stmt) -> bool:
 
 def answer_slate_market_read(stmt, stored_rows):
     """The rows ``stmt`` returns over these stored market rows."""
+    if is_slate_link_read(stmt):
+        return answer_slate_link_read(stmt, stored_rows)
     getters = _slate_market_columns(stmt)
     if getters is None:
         return stored_rows

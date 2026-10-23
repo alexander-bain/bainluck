@@ -3012,13 +3012,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
     async def load_game_slate(*, stored_live_only=False):
         # Load linked Polymarket market asset IDs
+        # #10663: one row per linked market. The outcome join still requires a
+        # market to have an outcome, but no outcome field is read here: tokens
+        # and outcomes come from the reads below. An event id belongs to its
+        # market row, so DISTINCT drops only the per-outcome repeats.
         async with get_task_session() as session:
             result = await session.execute(
                 select(
-                    FuturesOutcome.id,
                     FuturesOutcome.market_id,
-                    FuturesOutcome.external_id,
-                    FuturesMarket.external_id.label("market_ext_id"),
                     FuturesMarket.event_id.label("linked_event_id"),
                 )
                 .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
@@ -3030,20 +3031,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     _slate_market_filter(),
                     *([Event.status.in_(("live", "suspended"))] if stored_live_only else []),
                 )
+                .distinct()
             )
             rows = result.all()
 
-        # Polymarket outcomes store condition_id as external_id (e.g. "0xabc..._yes").
-        # But the WS needs asset_ids (token IDs), which we store in market_metadata.
-        # For now, load token IDs from the outcomes' market_metadata.
-        # Build lookup: condition_id → (market_id, outcome_id)
-        condition_to_ids: dict[str, tuple[int, int]] = {}
         market_ids = set()
         # Q460: linked event per market, so a flushed price can re-stamp the blend.
         event_id_by_market: dict[int, int] = {}
-        for outcome_id, market_id, ext_id, market_ext_id, linked_event_id in rows:
-            if ext_id:
-                condition_to_ids[ext_id] = (market_id, outcome_id)
+        for market_id, linked_event_id in rows:
             market_ids.add(market_id)
             if linked_event_id is not None:
                 event_id_by_market[market_id] = linked_event_id
