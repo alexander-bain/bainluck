@@ -164,6 +164,9 @@ final class TheLiveMarginTileReadsTheHeadlinesPair9483Tests: XCTestCase {
         XCTAssertEqual(MarketMapView.familyDrawOrder([Family(source: "kalshi", marketId: nil): 3,
                                                       Family(source: "kalshi", marketId: 5): 3]).first?.marketId, 5,
                        "an unserved id sorts after a served one")
+        XCTAssertEqual(MarketMapView.familyDrawOrder([Family(source: nil, marketId: 5): 3,
+                                                      Family(source: "polymarket", marketId: 9): 3]).first?.source,
+                       "polymarket", "an unserved source sorts after a served one")
     }
 
     /// The specimen's three families, served interleaved: the Kalshi rows above
@@ -222,6 +225,10 @@ final class TheLiveMarginTileReadsTheHeadlinesPair9483Tests: XCTestCase {
         let families = card(try d.decode(GameMarketsResponse.self, from: Data(json.utf8))).fullMarginFamilies
         XCTAssertEqual(families.count, 1)
         XCTAssertEqual(families.first?.map.rungs.count, 2)
+        // #4135 — an unserved source stays unserved: the key holds nil, never an
+        // invented "", and the card names no venue ("Lines from" has no source).
+        XCTAssertEqual(families.first?.key, Family(source: nil, marketId: nil))
+        XCTAssertNil(SourceLabels.label(for: families.first?.key.source))
     }
 
     func testTheLiveTileNamesTheSportsbooks() throws {

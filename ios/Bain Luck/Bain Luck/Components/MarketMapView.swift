@@ -136,14 +136,20 @@ struct MarketMapView: View {
     /// so the density and the ladder read Polymarket's DEN by 3.5+ at 33% above
     /// Kalshi's DEN by 2.5+ at 29.5%: a distribution no venue quoted.
     struct SpreadFamilyKey: Hashable, Comparable {
-        /// The served `source`, "" where none is served.
-        let source: String
+        /// The served `source`, nil where none is served.
+        let source: String?
         /// The served `_market_id`, nil where none is served.
         let marketId: Int?
 
         /// Source, then id; an unserved id sorts after every served one.
         static func < (a: Self, b: Self) -> Bool {
-            if a.source != b.source { return a.source < b.source }
+            if a.source != b.source {
+                switch (a.source, b.source) {
+                case let (x?, y?): return x < y
+                case (.some, nil): return true
+                default: return false
+                }
+            }
             switch (a.marketId, b.marketId) {
             case let (x?, y?): return x < y
             case (.some, nil): return true
@@ -167,7 +173,7 @@ struct MarketMapView: View {
     var fullMarginFamilies: [(key: SpreadFamilyKey, map: SpreadRungs.Map)] {
         let rows = (gameMarkets.spreads ?? []).filter { isFullGameSpread($0.marketName) }
         let maps = Dictionary(grouping: rows) {
-            SpreadFamilyKey(source: $0.source ?? "", marketId: $0._marketId)
+            SpreadFamilyKey(source: $0.source, marketId: $0._marketId)
         }.mapValues {
             SpreadRungs.map(from: $0.map(Self.leg), home: homeTeam, away: awayTeam, sportUnit: vocab.unit)
         }
