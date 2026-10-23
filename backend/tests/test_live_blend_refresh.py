@@ -617,12 +617,19 @@ class _RecordingSession:
         column = columns[len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
             "win_probability_sources"
         )] if columns else None
-        source = column.element.right.value if hasattr(column, "element") else None
+        from copy import deepcopy
+        from sqlalchemy.sql.elements import Cast, Null
+        null_source = (hasattr(column, "element") and isinstance(column.element, Cast)
+                       and isinstance(column.element.clause, Null))
+        source = (column.element.right.value
+                  if hasattr(getattr(column, "element", None), "right") else None)
 
         def field(obj, key):
             raw = getattr(obj, key, None)
+            if key == "win_probability_sources" and null_source:
+                return None
             if key == "win_probability_sources" and source is not None:
-                return raw.get(source) if isinstance(raw, dict) else None
+                return deepcopy(raw.get(source)) if isinstance(raw, dict) else None
             return raw
 
         # The read admits only the events it names (`event_id IN ...`), as the

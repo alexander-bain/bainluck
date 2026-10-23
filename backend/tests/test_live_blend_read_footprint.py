@@ -43,12 +43,18 @@ class ReadSession:
         column = columns[len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
             "win_probability_sources"
         )] if columns else None
-        source = column.element.right.value if hasattr(column, "element") else None
+        from sqlalchemy.sql.elements import Cast, Null
+        null_source = (hasattr(column, "element") and isinstance(column.element, Cast)
+                       and isinstance(column.element.clause, Null))
+        source = column.element.right.value if hasattr(getattr(column, "element", None), "right") else None
 
         def field(obj, key):
             raw = getattr(obj, key, None)
-            if key == "win_probability_sources" and source is not None:
-                return raw.get(source) if isinstance(raw, dict) else None
+            if key == "win_probability_sources":
+                if null_source:
+                    return None
+                if source is not None:
+                    return copy.deepcopy(raw.get(source)) if isinstance(raw, dict) else None
             return raw
 
         self.outcome_ids = []
@@ -218,7 +224,14 @@ async def test_read_projects_one_event_context_and_omits_only_impossible_kalshi_
         ) for key in fields if key != "win_probability_sources"
     ] + ["events.win_probability_sources", "events.win_probability_sources_rev"]
     assert [column.name for column in columns[-2:]] == ["preview_sources", "preview_rev"]
-    assert columns[source_position].element.right.value == "kalshi"
+    from sqlalchemy.sql.elements import Cast, Null
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    source_projection = columns[source_position].element
+    assert isinstance(source_projection, Cast)
+    assert isinstance(source_projection.clause, Null)
+    assert isinstance(source_projection.type, JSONB)
+    assert grouped[1][0].win_probability_sources == {"kalshi": None}
     assert session.statements[0].compile().params["event_id_1"] == [1, 999]
 
 

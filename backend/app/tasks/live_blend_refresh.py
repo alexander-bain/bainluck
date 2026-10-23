@@ -3212,8 +3212,9 @@ class LiveBlendRefresher:
 
     async def _read_groups(self, session, event_ids: list[int], *, overlay_held=True,
                            clock_sample=None) -> dict[int, tuple]:
+        from copy import deepcopy
         from types import SimpleNamespace
-        from sqlalchemy import and_, func, literal, or_, select
+        from sqlalchemy import and_, cast, func, literal, null, or_, select
         from app.models.models import Event, FuturesMarket, FuturesOutcome
         from app.utils.live_blend import MarketOutcomes
         from app.utils.prediction_market_matching import (
@@ -3292,7 +3293,9 @@ class LiveBlendRefresher:
             rows = (
                 await session.execute(
                     select(*(
-                        Event.win_probability_sources.op("->")(literal(self.source)).label(key)
+                        (cast(null(), Event.win_probability_sources.type)
+                         if preview_columns else
+                         Event.win_probability_sources.op("->")(literal(self.source))).label(key)
                         if model is Event and key == "win_probability_sources"
                         else getattr(model, key)
                         for model, keys in fields for key in keys
@@ -3332,9 +3335,16 @@ class LiveBlendRefresher:
                     context = dict(zip(PREPARED_EVENT_FIELDS, event_values))
                     # Before the UPDATE only this source's restamp guard reads
                     # the JSON. The full aggregate uses UPDATE RETURNING below.
-                    context["win_probability_sources"] = {
-                        self.source: context["win_probability_sources"],
-                    }
+                    source_value = context["win_probability_sources"]
+                    if preview_columns:
+                        # This same SELECT already returned the full bag. Avoid
+                        # transferring/decoding its source again on every row.
+                        # Preserve the two independently decoded JSON owners,
+                        # copying only once per event, including nested values.
+                        full_sources = row[-2]
+                        source_value = (deepcopy(full_sources.get(self.source))
+                                        if isinstance(full_sources, dict) else None)
+                    context["win_probability_sources"] = {self.source: source_value}
                     if preview_columns:
                         # Trailing columns; the outcome slice below zips by
                         # field name, so they never reach an outcome row.
