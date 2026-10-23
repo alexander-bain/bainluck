@@ -260,12 +260,12 @@ private struct EvolutionRoundBoundary: Identifiable {
 
 /// What colour an Evolution outcome is drawn in — #7036's fifth arm.
 ///
-/// **One function, four marks.** `EvolutionChartView.colorForOutcome` is a choke
+/// **One function, five marks.** `EvolutionChartView.colorForOutcome` is a choke
 /// point: everything the chart paints per outcome comes out of it. The plotted
 /// LINE (`chartForegroundStyleScale`), the crosshair tooltip's 6pt dot, the
-/// leaderboard row's 6pt dot, and the `color:` handed to `TeamLogoView`, whose
-/// `initialsFallback` paints the outcome's letters in it. All four sit on
-/// `Color.cardBackground`, which is white. So one floor under one function
+/// leaderboard row's 6pt dot, the `color:` handed to `TeamLogoView`, whose
+/// `initialsFallback` paints the outcome's letters in it, and a no-price line's
+/// result words (#10955). All five sit on `Color.cardBackground`, which is white. So one floor under one function
 /// covers the lot, and there is no second copy for the arms to drift apart on.
 ///
 /// **This one is reachable from stored data, unlike arm 4.** Measured on
@@ -1656,6 +1656,8 @@ struct EvolutionChartView: View {
 
     /// #10955 — a no-price line's result: the same glyph, its name and the word,
     /// in the line's colour. Visible text, so the result is read, not only spoken.
+    /// Never dimmed by the curve selection: it is that outcome's only mark, so a
+    /// winner outside the default first three would otherwise read at 10%.
     private func unpricedResultLabel(_ mark: EvolutionResultMarks.Placement) -> some View {
         let idx = displayedNames.firstIndex(of: mark.name) ?? 0
         return HStack(spacing: 3) {
@@ -1669,7 +1671,6 @@ struct EvolutionChartView: View {
         .padding(.vertical, 2)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 4))
-        .opacity(lineOpacity(for: mark.name, isCombined: false))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(mark.name)
         .accessibilityValue(mark.outcome.spoken)
