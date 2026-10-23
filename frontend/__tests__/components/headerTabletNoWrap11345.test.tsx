@@ -50,7 +50,7 @@ const LAYOUT_PATH = path.join(FRONTEND_ROOT, "app", "layout.tsx");
 function classesOfTagContaining(html: string, tag: string, text: string): string[] {
   const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(
-    `<${tag}\\b[^>]*class="([^"]+)"[^>]*>[\\s\\S]*?${escaped}[\\s\\S]*?<\\/${tag}>`,
+    `<${tag}\\b[^>]*class="([^"]+)"[^>]*>(?:(?!<${tag}\\b)[\\s\\S])*?${escaped}(?:(?!<${tag}\\b)[\\s\\S])*?<\\/${tag}>`,
   );
   const match = html.match(pattern);
   if (!match) {
