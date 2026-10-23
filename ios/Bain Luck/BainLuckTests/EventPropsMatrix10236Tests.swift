@@ -16,6 +16,10 @@ import XCTest
 /// unavailable quote, a result) edit one row of that body and say so.
 @MainActor
 final class EventPropsMatrix10236Tests: XCTestCase {
+    /// #10236 — the fixture's own capture minute. Its quotes were observed
+    /// 07:08:00–07:08:50Z, so at this clock every one of them is current.
+    private static let routeNow = "2026-10-03T07:09:00Z".asDate!
+
     private static let fixtureURL =
         URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent("Fixtures")
@@ -88,7 +92,7 @@ final class EventPropsMatrix10236Tests: XCTestCase {
     // MARK: - Layout
 
     func testHitsGridHasEveryThresholdColumnStablePlayersAndEmptySlots() throws {
-        let grid = try XCTUnwrap(EventPropsMatrixLayout.grid(try props(try specimen()), statKey: "hits"))
+        let grid = try XCTUnwrap(EventPropsMatrixLayout.grid(try props(try specimen()), statKey: "hits", now: Self.routeNow))
         XCTAssertEqual(grid.columns, [1, 2, 3, 4])
         XCTAssertEqual(grid.players.map(\.label), ["Aaron Judge", "Juan Soto"], "server order, not price")
         XCTAssertEqual(grid.players[0].cells.keys.sorted(), [1, 2, 3, 4])
@@ -115,7 +119,7 @@ final class EventPropsMatrix10236Tests: XCTestCase {
     func testAFiniteZeroIsAQuoteAndKeepsItsPrecisionInDetail() throws {
         let zero = try row(try props(try specimen()), judge4)
         XCTAssertEqual(zero.current.quotedProbability, 0.0)
-        XCTAssertEqual(EventPropsMatrixLayout.cellText(zero), "<1%")
+        XCTAssertEqual(EventPropsMatrixLayout.cellText(zero, now: Self.routeNow), "<1%")
         XCTAssertEqual(EventPropsMatrixLayout.exactPercent(zero.current.quotedProbability), "0.0%")
     }
 
@@ -126,14 +130,14 @@ final class EventPropsMatrix10236Tests: XCTestCase {
         let during = try props(dict)
         let gone = try row(during, judge2)
         XCTAssertNil(gone.current.quotedProbability)
-        XCTAssertEqual(EventPropsMatrixLayout.cellText(gone), "\u{2014}")
-        XCTAssertNil(EventPropsMatrixLayout.changeText(gone), "its comparable delta is not shown without a quote")
+        XCTAssertEqual(EventPropsMatrixLayout.cellText(gone, now: Self.routeNow), "\u{2014}")
+        XCTAssertNil(EventPropsMatrixLayout.changeText(gone, now: Self.routeNow), "its comparable delta is not shown without a quote")
         // #10877: the typed state names no reason, so the speech claims none.
-        let spoken = EventPropsMatrixLayout.accessibilityLabel(gone, stat: during.stats.first)
+        let spoken = EventPropsMatrixLayout.accessibilityLabel(gone, stat: during.stats.first, now: Self.routeNow)
         XCTAssertTrue(spoken.hasSuffix(", current probability unavailable"), spoken)
         XCTAssertFalse(spoken.contains("price"), spoken)
         XCTAssertFalse(spoken.contains("percent"), "no number is spoken without a quote: \(spoken)")
-        XCTAssertEqual(EventPropsMatrixLayout.grid(during, statKey: "hits")?.unavailableCount, 1)
+        XCTAssertEqual(EventPropsMatrixLayout.grid(during, statKey: "hits", now: Self.routeNow)?.unavailableCount, 1)
 
         for bad in [Double.nan, .infinity, 1.5, -0.1] {
             XCTAssertNil(DuringPropCurrent(state: "quoted", probability: bad, basis: nil, observedAt: nil).quotedProbability)
@@ -148,19 +152,19 @@ final class EventPropsMatrix10236Tests: XCTestCase {
         }
         let graded = try row(try props(dict), judge2)
         XCTAssertNil(graded.current.quotedProbability)
-        XCTAssertEqual(EventPropsMatrixLayout.cellText(graded), "Hit")
-        XCTAssertNil(EventPropsMatrixLayout.changeText(graded))
-        XCTAssertEqual(EventPropsMatrixLayout.grid(try props(dict), statKey: "hits")?.unavailableCount, 0)
+        XCTAssertEqual(EventPropsMatrixLayout.cellText(graded, now: Self.routeNow), "Hit")
+        XCTAssertNil(EventPropsMatrixLayout.changeText(graded, now: Self.routeNow))
+        XCTAssertEqual(EventPropsMatrixLayout.grid(try props(dict), statKey: "hits", now: Self.routeNow)?.unavailableCount, 0)
         // #10877: the authoritative result keeps its own speech; an
         // actual-only row with no result claims neither a result nor a reason.
         let hits = try props(dict).stats.first
-        XCTAssertEqual(EventPropsMatrixLayout.accessibilityLabel(graded, stat: hits),
+        XCTAssertEqual(EventPropsMatrixLayout.accessibilityLabel(graded, stat: hits, now: Self.routeNow),
                        "Aaron Judge, 2 or more hits, result: hit")
         let ungraded = try row(try props(try editing(judge2) {
             $0["current"] = ["state": "actual_only", "probability": NSNull(), "basis": NSNull(), "observed_at": NSNull()]
             $0["result"] = NSNull()
         }), judge2)
-        XCTAssertEqual(EventPropsMatrixLayout.accessibilityLabel(ungraded, stat: hits),
+        XCTAssertEqual(EventPropsMatrixLayout.accessibilityLabel(ungraded, stat: hits, now: Self.routeNow),
                        "Aaron Judge, 2 or more hits, current probability unavailable")
     }
 
@@ -168,20 +172,20 @@ final class EventPropsMatrix10236Tests: XCTestCase {
 
     func testChangeIsTheServersComparableDeltaInWholePointsAndNeverAFalseZero() throws {
         let during = try props(try specimen())
-        XCTAssertEqual(EventPropsMatrixLayout.changeText(try row(during, "s:aaron judge|hits|full_game|ge:1|over")), "+17%")
-        XCTAssertEqual(EventPropsMatrixLayout.changeText(try row(during, judge2)), "+10%")
-        XCTAssertEqual(EventPropsMatrixLayout.changeText(try row(during, judge4)), "\u{2212}2%")
+        XCTAssertEqual(EventPropsMatrixLayout.changeText(try row(during, "s:aaron judge|hits|full_game|ge:1|over"), now: Self.routeNow), "+17%")
+        XCTAssertEqual(EventPropsMatrixLayout.changeText(try row(during, judge2), now: Self.routeNow), "+10%")
+        XCTAssertEqual(EventPropsMatrixLayout.changeText(try row(during, judge4), now: Self.routeNow), "\u{2212}2%")
         // No pregame pin: no change, even though both numbers exist elsewhere.
-        XCTAssertNil(EventPropsMatrixLayout.changeText(try row(during, "s:juan soto|hits|full_game|ge:1|over")))
-        XCTAssertTrue(try XCTUnwrap(EventPropsMatrixLayout.grid(during, statKey: "hits")).showsChange)
-        XCTAssertFalse(try XCTUnwrap(EventPropsMatrixLayout.grid(during, statKey: "total_bases")).showsChange)
+        XCTAssertNil(EventPropsMatrixLayout.changeText(try row(during, "s:juan soto|hits|full_game|ge:1|over"), now: Self.routeNow))
+        XCTAssertTrue(try XCTUnwrap(EventPropsMatrixLayout.grid(during, statKey: "hits", now: Self.routeNow)).showsChange)
+        XCTAssertFalse(try XCTUnwrap(EventPropsMatrixLayout.grid(during, statKey: "total_bases", now: Self.routeNow)).showsChange)
 
         let small = try props(try editing(judge2) {
             var c = $0["comparison"] as? [String: Any] ?? [:]
             c["delta_points"] = 0.6
             $0["comparison"] = c
         })
-        XCTAssertNil(EventPropsMatrixLayout.changeText(try row(small, judge2)), "under one point prints nothing, not 0%")
+        XCTAssertNil(EventPropsMatrixLayout.changeText(try row(small, judge2), now: Self.routeNow), "under one point prints nothing, not 0%")
     }
 
     // MARK: - Words
@@ -192,9 +196,9 @@ final class EventPropsMatrix10236Tests: XCTestCase {
         XCTAssertEqual(EventPropsMatrixLayout.question(try row(during, "s:aaron judge|hits|full_game|ge:1|over"), stat: hits), "1+ hit")
         XCTAssertEqual(EventPropsMatrixLayout.question(try row(during, judge2), stat: hits), "2+ hits")
         XCTAssertEqual(EventPropsMatrixLayout.question(try row(during, "s:juan soto|hits|full_game|le:0|under"), stat: hits), "0 or fewer hits")
-        XCTAssertEqual(EventPropsMatrixLayout.accessibilityLabel(try row(during, judge2), stat: hits),
+        XCTAssertEqual(EventPropsMatrixLayout.accessibilityLabel(try row(during, judge2), stat: hits, now: Self.routeNow),
                        "Aaron Judge, 2 or more hits, 48 percent, up 10 points since pregame")
-        XCTAssertEqual(EventPropsMatrixLayout.accessibilityLabel(try row(during, judge4), stat: hits),
+        XCTAssertEqual(EventPropsMatrixLayout.accessibilityLabel(try row(during, judge4), stat: hits, now: Self.routeNow),
                        "Aaron Judge, 4 or more hits, under 1 percent, down 2 points since pregame")
         XCTAssertEqual(EventPropsMatrixLayout.basisText(try row(during, judge2)), "Average of Kalshi and Polymarket")
         XCTAssertEqual(EventPropsMatrixLayout.basisText(try row(during, judge4)), "Kalshi")
@@ -220,7 +224,7 @@ final class EventPropsMatrix10236Tests: XCTestCase {
         let newer = try props(dict)
         XCTAssertNil(EventPropsMatrixSelection.resolve(try XCTUnwrap(selection.openQuestion), in: newer))
         XCTAssertEqual(selection.resolvedStat(in: newer), "total_bases", "a chosen stat that leaves stays chosen")
-        XCTAssertNil(EventPropsMatrixLayout.grid(newer, statKey: "total_bases"))
+        XCTAssertNil(EventPropsMatrixLayout.grid(newer, statKey: "total_bases", now: Self.routeNow))
     }
 
     // MARK: - #9524 fences

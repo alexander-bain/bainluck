@@ -36,11 +36,14 @@ enum EventPropsMatrixLayout {
         let questionCount: Int
         /// Questions shown with no current chance (unavailable, not results).
         let unavailableCount: Int
+        /// #10236 — quoted questions whose last price is too old to show as
+        /// current, so the legend for the stale mark appears once.
+        let staleCount: Int
         /// True when any placed cell prints a change, so the legend appears once.
         let showsChange: Bool
     }
 
-    static func grid(_ props: DuringPlayerProps, statKey: String) -> Grid? {
+    static func grid(_ props: DuringPlayerProps, statKey: String, now: Date) -> Grid? {
         guard let stat = props.stats.first(where: { $0.statKey == statKey }) else { return nil }
         let rows = props.rows.filter { $0.statKey == statKey }
         guard !rows.isEmpty else { return nil }
@@ -70,7 +73,8 @@ enum EventPropsMatrixLayout {
             playerCount: Set(rows.map(\.subject.key)).count,
             questionCount: placed.count + unplaced.count,
             unavailableCount: rows.filter { $0.current.quotedProbability == nil && !$0.current.isActualOnly }.count,
-            showsChange: placed.contains { changeText($0) != nil }
+            staleCount: rows.filter { $0.current.isStale(now: now) }.count,
+            showsChange: placed.contains { changeText($0, now: now) != nil }
         )
     }
 
@@ -97,8 +101,9 @@ enum EventPropsMatrixLayout {
         in props: DuringPlayerProps
     ) -> ReturnFocus {
         if props.rows.isEmpty { return .matrixWithdrawn }
+        // Placement never depends on a price or its age, so any clock will do.
         guard selection.resolvedStat(in: props) == open.statKey,
-              let grid = grid(props, statKey: open.statKey) else { return .header }
+              let grid = grid(props, statKey: open.statKey, now: .distantPast) else { return .header }
         let drawnRows = grid.players.flatMap { Array($0.cells.values) } + grid.unplaced
         let stillDrawn = drawnRows.contains { EventPropsMatrixSelection.OpenQuestion($0) == open }
         return stillDrawn ? .question(open) : .header
@@ -125,9 +130,18 @@ enum EventPropsMatrixLayout {
 
     // MARK: - Formatting (the view's only words)
 
-    /// The cell's figure: the quoted chance, the server's grade, or the dash.
-    static func cellText(_ row: DuringPropRow) -> String {
-        if let p = row.current.quotedProbability { return formatProbability(p) }
+    /// #10236 — what a cell prints for a quote too old to be current: no
+    /// number, never the dash (which means no price exists).
+    static let staleCellText = "No update"
+
+    /// The legend for ``staleCellText``, printed once under a grid that has one.
+    static let staleLegend = "No update: no new probability for over 30 minutes"
+
+    /// The cell's figure: the current chance, the stale mark, the server's
+    /// grade, or the dash.
+    static func cellText(_ row: DuringPropRow, now: Date) -> String {
+        if let p = row.current.currentProbability(now: now) { return formatProbability(p) }
+        if row.current.isStale(now: now) { return staleCellText }
         if row.current.isActualOnly {
             switch row.result?.hit {
             case true?: return "Hit"
@@ -140,17 +154,18 @@ enum EventPropsMatrixLayout {
 
     /// The signed whole-point change since the pregame price, or nil.
     ///
-    /// Only the server's `comparable` delta, only on a quoted row, and never a
+    /// Only the server's `comparable` delta, only on a row whose chance is
+    /// current (#10236: a stale quote is compared with nothing), and never a
     /// false zero: a change under one point prints nothing.
-    static func changePoints(_ row: DuringPropRow) -> Int? {
-        guard row.current.quotedProbability != nil,
+    static func changePoints(_ row: DuringPropRow, now: Date) -> Int? {
+        guard row.current.currentProbability(now: now) != nil,
               let comparison = row.comparison, comparison.isComparable,
               let delta = comparison.deltaPoints, delta.isFinite, abs(delta) >= 1 else { return nil }
         return Int(delta.rounded())
     }
 
-    static func changeText(_ row: DuringPropRow) -> String? {
-        guard let points = changePoints(row) else { return nil }
+    static func changeText(_ row: DuringPropRow, now: Date) -> String? {
+        guard let points = changePoints(row, now: now) else { return nil }
         return points > 0 ? "+\(points)%" : "\u{2212}\(-points)%"
     }
 
@@ -170,18 +185,21 @@ enum EventPropsMatrixLayout {
         return unit.isEmpty ? words : "\(words) \(unit)"
     }
 
-    static func accessibilityLabel(_ row: DuringPropRow, stat: DuringPropStat?) -> String {
+    static func accessibilityLabel(_ row: DuringPropRow, stat: DuringPropStat?, now: Date) -> String {
         var parts = [row.subject.label, spokenQuestion(row, stat: stat)]
-        if let p = row.current.quotedProbability {
+        if let p = row.current.currentProbability(now: now) {
             let pct = formatProbability(p)
                 .replacingOccurrences(of: "<", with: "under ")
                 .replacingOccurrences(of: ">", with: "over ")
                 .replacingOccurrences(of: "%", with: " percent")
             parts.append(pct)
-            if let points = changePoints(row) {
+            if let points = changePoints(row, now: now) {
                 let noun = abs(points) == 1 ? "point" : "points"
                 parts.append("\(points > 0 ? "up" : "down") \(abs(points)) \(noun) since pregame")
             }
+        } else if row.current.isStale(now: now) {
+            // #10236: the old number is not spoken as a current chance.
+            parts.append("no recent probability update")
         } else if row.current.isActualOnly, let hit = row.result?.hit {
             parts.append(hit ? "result: hit" : "result: missed")
         } else {

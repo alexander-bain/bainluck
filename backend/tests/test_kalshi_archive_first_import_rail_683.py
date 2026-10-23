@@ -1799,9 +1799,10 @@ class TestConsoleInsideTheWall:
         argv = PROFILE[: PROFILE.index("--deadline") + 1] + ["1.0"] + PROFILE[
             PROFILE.index("--deadline") + 2 :
         ]
-        t0 = time.monotonic()
-        code, _ = planner_cli(argv + ["--output", str(out)], handler=handler)
-        elapsed = time.monotonic() - t0
+        with _a_collection_scans_only_the_cli():
+            t0 = time.monotonic()
+            code, _ = planner_cli(argv + ["--output", str(out)], handler=handler)
+            elapsed = time.monotonic() - t0
         assert out.exists()
         if delay:
             assert code == 3 and elapsed < 1.0 + 0.15

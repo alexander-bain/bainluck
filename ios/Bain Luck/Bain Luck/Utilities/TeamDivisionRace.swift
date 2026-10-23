@@ -213,6 +213,9 @@ enum TeamDivisionRace {
     /// The race arrives after the page. Until its fetch has settled, the division rank
     /// prints nothing, never the served "#1" that flips to "#2" a moment later.
     static func pathRank(_ entry: ChampionshipPathEntry, race: Race?, raceSettled: Bool) -> Int? {
+        // #11493 — a decided step is a result; a rank is a claim about a race
+        // still being run.
+        guard entry.gridVerdict == nil else { return nil }
         guard entry.tier == divisionPathTier else { return entry.rank }
         guard raceSettled else { return nil }
         guard let race, race.hasDivision else { return entry.rank }
@@ -233,6 +236,8 @@ enum TeamDivisionRace {
         race: Race?, sportKey: String?
     ) -> [TeamFutureItem] {
         let path = championshipPath.filter {
+            // #11493 — a decided step answers its question with or without a price.
+            if $0.gridVerdict != nil { return true }
             guard let p = $0.probability else { return false }
             return p.isFinite && (0...1).contains(p)
         }
