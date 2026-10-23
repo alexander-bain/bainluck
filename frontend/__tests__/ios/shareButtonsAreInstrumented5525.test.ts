@@ -41,6 +41,7 @@ const MODIFIER = ".recordsShareOpened";
  * an already-listed file is a failure rather than an invisible addition.
  */
 const MENU_SITES: Record<string, number> = {
+  "Utilities/MacBrowseRowActions10878.swift": 1,
   "Components/CardContextMenu.swift": 2,
   "Views/MyStuffView.swift": 2,
 };

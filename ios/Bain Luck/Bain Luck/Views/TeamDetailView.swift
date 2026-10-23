@@ -33,6 +33,7 @@ enum TeamDetailTeamColour {
 struct TeamDetailView: View {
     let slug: String
 
+    @EnvironmentObject private var pinManager: PinManager
     @State private var data: TeamPageResponse?
     @State private var loading = true
     @State private var error: String?
@@ -126,6 +127,7 @@ struct TeamDetailView: View {
                                 }
                             }
                         }
+                        .macBrowseRowMenu(.futuresDetail(id: entry.marketId), pinManager: pinManager)
                     }
                 }
             }
@@ -137,6 +139,7 @@ struct TeamDetailView: View {
                         NavigationLink(value: Route.eventDetail(id: event.id)) {
                             gameRow(event, teamName: team.name)
                         }
+                        .macBrowseRowMenu(.eventDetail(id: event.id), pinManager: pinManager)
                     }
                 }
             }
@@ -148,6 +151,7 @@ struct TeamDetailView: View {
                         NavigationLink(value: Route.eventDetail(id: event.id)) {
                             gameRow(event, teamName: team.name)
                         }
+                        .macBrowseRowMenu(.eventDetail(id: event.id), pinManager: pinManager)
                     }
                 }
             }
@@ -198,6 +202,7 @@ struct TeamDetailView: View {
                                 }
                             }
                         }
+                        .macBrowseRowMenu(.futuresDetail(id: future.marketId), pinManager: pinManager)
                     }
                 }
             }
