@@ -38,7 +38,7 @@ export interface TeamHeadline {
    * #11493 — the championship grid's verdict on this question. When set, every
    * surface prints `decidedHeadlineText` instead of `probability`: an
    * eliminated club's title leg keeps trading at 0.001 until the venue grades
-   * it, and "<1%" says the season is still alive.
+   * it, and `<1%` says the season is still alive.
    */
   state: TeamDecidedState | null;
 }

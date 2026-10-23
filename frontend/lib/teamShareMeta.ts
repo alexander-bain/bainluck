@@ -277,7 +277,7 @@ export function buildTeamShareCopy(
     ? formatShareProbability(headline.probability)
     : null;
   // #11493: a decided question is stated as its result, never as the price an
-  // eliminated leg still trades at ("<1% to win the championship").
+  // eliminated leg still trades at (`<1% to win the championship`).
   const lead = headline?.state
     ? decidedHeadlineSentence(headline.label, headline.state)
     : headline && probability
@@ -436,7 +436,7 @@ export function teamCardCopy(
 
   // #11493: a decided headline takes the card's verdict slot — the one
   // `UnfurlCard` keeps for "a settled result" — so the picture says the club is
-  // out rather than drawing a 3% bar beside "<1%".
+  // out rather than drawing a 3% bar beside `<1%`.
   if (headline?.state) {
     return {
       eyebrow: teamLeagueLabel(team, routeLeague),
