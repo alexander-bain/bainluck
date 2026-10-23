@@ -1078,6 +1078,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     market_id_by_ext, event_id_by_market, ticker_to_ids = linked_maps(
         rows, outcome_rows,
     )
+    # Scope and maps own the copied values now. Do not retain the startup
+    # result lists and SQLAlchemy row wrappers for this long-lived run.
+    del rows, outcome_rows
 
     market_tickers = list(ticker_to_ids.keys())
     if exact_trace is not None:

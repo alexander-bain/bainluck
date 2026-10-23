@@ -722,45 +722,7 @@ class TestModeReturn:
         assert reader.epoch == revoke["preview"]["epoch"] and reader.held is None
 
 
-# ------------------------------------------------------------- off path (G4)
-
-
-class TestSwitch:
-    def test_unset_leaves_the_single_source_path(self, monkeypatch):
-        monkeypatch.delenv(blend_preview.LEDGER_SOURCES_ENV, raising=False)
-        monkeypatch.setenv(blend_preview.SOURCE_ENV, "polymarket")
-        monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, "7")
-        blend_preview.reset_registry_for_tests()
-        try:
-            assert type(blend_preview.registry()) is blend_preview.PreviewRegistry
-            assert blend_preview.preview_events_for("polymarket") == frozenset({7})
-            assert blend_preview.preview_events_for("kalshi") == frozenset()
-        finally:
-            blend_preview.reset_registry_for_tests()
-
-    def test_set_names_both_sources_and_ignores_the_single_switch(self, monkeypatch):
-        monkeypatch.setenv(blend_preview.LEDGER_SOURCES_ENV, "kalshi, polymarket")
-        monkeypatch.setenv(blend_preview.SOURCE_ENV, "polymarket")
-        monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, "7")
-        blend_preview.reset_registry_for_tests()
-        try:
-            assert blend_preview.preview_source() is None
-            assert isinstance(blend_preview.registry(), blend_preview.LedgerRegistry)
-            assert blend_preview.preview_events_for("kalshi") == frozenset({7})
-            assert blend_preview.preview_events_for("polymarket") == frozenset({7})
-            assert blend_preview.preview_route_events() == frozenset({7})
-        finally:
-            blend_preview.reset_registry_for_tests()
-
-    @pytest.mark.parametrize("raw", ["kalshi,", "kalshi,espn", "Kalshi", ","])
-    def test_a_malformed_list_turns_every_preview_off(self, monkeypatch, raw):
-        monkeypatch.setenv(blend_preview.LEDGER_SOURCES_ENV, raw)
-        monkeypatch.setenv(blend_preview.SOURCE_ENV, "polymarket")
-        monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, "7")
-        assert blend_preview.preview_events_for("kalshi") == frozenset()
-        assert blend_preview.preview_events_for("polymarket") == frozenset()
-        assert blend_preview.preview_route_events() == frozenset()
-
+# Default-delivery configuration is covered by test_dnpl_default_delivery_10090.py.
 
 # ---------------------------------------------------- the refresher boundary
 
@@ -787,7 +749,7 @@ class TestRefresherBoundary:
             await listener.subscribe(event_channel(EV))
             await listener.get_message(timeout=0.2)
             refresher = LiveBlendRefresher("kalshi")
-            assert refresher.preview and refresher.preview_events == frozenset({EV})
+            assert refresher.preview and EV in refresher.preview_events
             monkeypatch.setattr(refresher, "_client", lambda: client)
             # Another process claims polymarket first, so claims and generations differ.
             other = blend_preview.LedgerRegistry(sources=SOURCES)
@@ -829,14 +791,11 @@ class TestRefresherBoundary:
         listener = listener_client.pubsub()
 
         def mode(ledger: bool):
-            if ledger:
-                monkeypatch.setenv(blend_preview.LEDGER_SOURCES_ENV, "kalshi,polymarket")
-                monkeypatch.delenv(blend_preview.SOURCE_ENV, raising=False)
-            else:
-                monkeypatch.delenv(blend_preview.LEDGER_SOURCES_ENV, raising=False)
-                monkeypatch.setenv(blend_preview.SOURCE_ENV, "kalshi")
-            monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, str(EV))
-            blend_preview.reset_registry_for_tests()  # a restarted process
+            # Explicit mixed-version rollout control, not a runtime toggle.
+            blend_preview.reset_registry_for_tests()
+            monkeypatch.setattr(blend_preview, "_REGISTRY",
+                                blend_preview.LedgerRegistry(sources=SOURCES) if ledger
+                                else blend_preview.PreviewRegistry())
             refresher = LiveBlendRefresher("kalshi")
             assert refresher.preview
             monkeypatch.setattr(refresher, "_client", lambda: client)
@@ -1023,7 +982,7 @@ class TestBoundedLifecycle:
     async def test_full_ledger_offers_only_bounded_ids_for_authoritative_terminal_read(self, rig):
         for eid in range(1, 513):
             await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid), rig.call, rig.stats)
-        ticket, ids = await rig.p.read_ticket(rig.call, 'polymarket')
+        ticket, ids = await rig.p.read_ticket(rig.call, 'polymarket', include_candidates=True)
         assert sorted(ids) == list(range(1, 513))
         assert len(ids) == 512
         assert await rig.p.prepare(await _fresh_ops(rig, rig.p, 'polymarket', event_id=513), rig.call, rig.stats) == []
@@ -1049,6 +1008,63 @@ class TestBoundedLifecycle:
             await rig.k._publish(frame, rig.call, rig.channel, rig.stats)
         assert _blends(await rig.drain()) == []
         assert await rig.run(rig.k, delayed) == []
+
+
+class _VirtualTimeoutClock:
+    """Production timeout scopes, with elapsed time advanced by the test.
+
+    Real PostgreSQL/Redis I/O may take any host time. Advancing this clock
+    expires the real asyncio Timeout, preserving its cancellation/unwind
+    behavior and the exact duration requested by production.
+    """
+
+    def __init__(self, monkeypatch):
+        import asyncio
+        from app.tasks import live_blend_refresh
+
+        self.now = 0.0
+        self.active = []
+        self.durations = []
+        self.expired = 0
+        clock = self
+
+        class AsyncioWithVirtualTimeouts:
+            timeout = staticmethod(clock.timeout)
+
+            def __getattr__(self, name):
+                return getattr(asyncio, name)
+
+        # Replace only this module's timeout clock, not asyncio globally or
+        # the DB/Redis libraries' network timeouts.
+        monkeypatch.setattr(live_blend_refresh, 'asyncio', AsyncioWithVirtualTimeouts())
+
+    def timeout(self, delay):
+        import asyncio
+        import contextlib
+
+        self.durations.append(delay)
+
+        @contextlib.asynccontextmanager
+        async def scope():
+            handle = asyncio.Timeout(None)
+            entry = (self.now + delay, handle)
+            async with handle:
+                self.active.append(entry)
+                try:
+                    yield handle
+                finally:
+                    self.active.remove(entry)
+                    self.expired += int(handle.expired())
+
+        return scope()
+
+    def advance(self, seconds):
+        import asyncio
+
+        self.now += seconds
+        for deadline, handle in tuple(self.active):
+            if deadline <= self.now:
+                handle.reschedule(asyncio.get_running_loop().time())
 
 
 class TestLifecycleCaller:
@@ -1101,6 +1117,10 @@ class TestLifecycleCaller:
         from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
         from app.tasks.live_blend_refresh import LiveBlendRefresher
 
+        # This is a 600-case ordering/state proof, not a host-speed gate.
+        # Keep production's exact deadlines and exercise their cancellation
+        # separately below; wall-clock scheduling cannot decide retirement.
+        deadlines = _VirtualTimeoutClock(monkeypatch)
         url = os.environ['BLEND_DEADLOCK_DATABASE_URL']
         pg_url = url.replace('postgresql+asyncpg://', 'postgresql://')
         schema = 'dnpl_lifecycle_' + uuid.uuid4().hex
@@ -1110,13 +1130,13 @@ class TestLifecycleCaller:
         try:
             await control.execute(f'CREATE SCHEMA {schema}')
             await control.execute(f'''CREATE TABLE {schema}.events
-                (id integer primary key, status text, completed_at timestamptz,
+                (id integer primary key, status text, completed_at timestamptz, commence_time timestamptz,
                  win_probability_sources_rev bigint, win_probability_sources jsonb NOT NULL DEFAULT '{{}}')''')
             from app.utils.wps_revision import CREATE_FUNCTION_SQL, CREATE_TRIGGER_SQL
             await control.execute(f'SET search_path TO {schema}')
             await control.execute(CREATE_FUNCTION_SQL)
             await control.execute(CREATE_TRIGGER_SQL)
-            await control.execute(f"INSERT INTO {schema}.events (id, status, completed_at, win_probability_sources_rev) VALUES (1, 'live', NULL, 10)")
+            await control.execute(f"INSERT INTO {schema}.events (id, status, completed_at, win_probability_sources_rev) SELECT id, 'live', NULL, 10 FROM generate_series(1,512) id")
             engine = create_async_engine(url.replace('postgresql://', 'postgresql+asyncpg://'),
                 connect_args={'server_settings': {'search_path': schema}}, pool_size=2, max_overflow=0)
             maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -1135,11 +1155,17 @@ class TestLifecycleCaller:
             await writer.execute(f"UPDATE {schema}.events SET status='final', win_probability_sources_rev=11 WHERE id=1")
             # While final is UNCOMMITTED, fresh reads see live: no deletion.
             before = await refresher._preview_admission_read()
+            await refresher._preview_maintenance_task
             assert before == 0
             assert await rig.hget('nevents') == '512'
             assert await rig.hget('e:1:gen') is not None
             delayed = await _fresh_ops(rig, rig.p, 'polymarket', event_id=1)
             await tx.commit()
+            # Production runs capacity maintenance outside quote admission.
+            # Advance the test's maintenance opportunity after COMMIT.
+            refresher._preview_maintenance_after = 0
+            await refresher._preview_admission_read()
+            await refresher._preview_maintenance_task
             after = await refresher._preview_admission_read()
             assert after == 1
             assert await rig.hget('nevents') == '511'
@@ -1157,8 +1183,8 @@ class TestLifecycleCaller:
             # preview/settlement phases, through 600 sequential final events.
             refresher.preview_events = frozenset(range(1, 603))
             for eid in range(2, 602):
-                await control.execute(f"INSERT INTO {schema}.events (id, status, completed_at, win_probability_sources_rev) VALUES ($1, 'live', NULL, 10)", eid)
                 if eid > 512:
+                    await control.execute(f"INSERT INTO {schema}.events (id, status, completed_at, win_probability_sources_rev) VALUES ($1, 'live', NULL, 10)", eid)
                     opened = await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid)
                     await refresher._publish_previews(opened)
                     assert await rig.hget(f'e:{eid}:gen') is not None
@@ -1180,6 +1206,12 @@ class TestLifecycleCaller:
                 await refresher._publish_previews(settled)
                 assert await rig.hget(f'e:{eid}:gen') is None
                 assert await control.fetchval(f'SELECT win_probability_sources_rev FROM {schema}.events WHERE id=$1', eid) == 12
+                # Retain 250 ms of logical elapsed time per completed case;
+                # no timing scope spans these independent retirements.
+                assert not deadlines.active
+                deadlines.advance(.25)
+            assert deadlines.durations.count(.25) >= 600
+            assert deadlines.expired == 0
             assert await rig.hget('nevents') == '1'  # the still-live reopened event 1 only
             assert await rig.client.hlen(blend_preview.LEDGER_KEY) <= 15
         finally:
@@ -1207,6 +1239,50 @@ class TestLifecycleCaller:
         monkeypatch.setattr(refresher, '_client', lambda: rig.client)
         monkeypatch.setattr(blend_preview, 'registry', lambda: rig.k)
         await refresher._retire_preview_event(EV, 11, ticket)
+        assert await rig.hget(f'e:{EV}:term') == '11'
+        assert await rig.hget(f'e:{EV}:gen') is not None
+        assert await rig.hget('nevents') == '1'
+        assert await rig.hget('retired') == '0'
+        assert refresher.preview_stats['publish_errors'] == 1
+
+
+    async def test_deadline_during_durable_commit_keeps_terminal_guard(self, rig, monkeypatch):
+        import asyncio
+        import contextlib
+        from app.tasks.live_blend_refresh import LiveBlendRefresher
+
+        deadlines = _VirtualTimeoutClock(monkeypatch)
+        await rig.run(rig.k, await _fresh_ops(rig, rig.k, 'kalshi'))
+        ticket, _ = await rig.k.read_ticket(rig.call, 'kalshi')
+        commit_started = False
+        commit_completed = False
+
+        class Session:
+            async def execute(self, stmt):
+                return SimpleNamespace(scalar_one_or_none=lambda: 12)
+
+            async def commit(self):
+                nonlocal commit_started, commit_completed
+                commit_started = True
+                # Expire exactly the production .25-second outer retirement
+                # scope while the durable commit is suspended. This is real
+                # task cancellation, not an injected TimeoutError.
+                assert len(deadlines.active) == 1
+                assert deadlines.active[0][0] - deadlines.now == .25
+                deadlines.advance(.25)
+                await asyncio.Event().wait()
+                commit_completed = True
+
+        @contextlib.asynccontextmanager
+        async def factory():
+            yield Session()
+
+        refresher = LiveBlendRefresher('kalshi', session_factory=factory)
+        monkeypatch.setattr(refresher, '_client', lambda: rig.client)
+        monkeypatch.setattr(blend_preview, 'registry', lambda: rig.k)
+        await refresher._retire_preview_event(EV, 11, ticket)
+        assert commit_started and not commit_completed
+        assert deadlines.expired == 1 and not deadlines.active
         assert await rig.hget(f'e:{EV}:term') == '11'
         assert await rig.hget(f'e:{EV}:gen') is not None
         assert await rig.hget('nevents') == '1'

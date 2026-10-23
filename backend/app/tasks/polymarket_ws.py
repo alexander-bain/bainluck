@@ -1720,7 +1720,11 @@ async def withdraw_attributed_event_sources(session, withdrawn_rows):
         return []
     # Re-read the whole source population in the removal transaction, after
     # the independent price withdrawal committed. A newly stored quote wins.
-    groups = await LiveBlendRefresher('polymarket')._read_groups(session, sorted(event_ids))
+    # This transaction helper has no consumer shutdown/drain lifecycle.
+    # It reads ordinary DNPL context but cannot own background maintenance.
+    groups = await LiveBlendRefresher(
+        'polymarket', owns_preview_maintenance=False,
+    )._read_groups(session, sorted(event_ids))
     frames = []
     for event_id, (event, group) in groups.items():
         if event.status != 'live' or event.completed_at is not None:
@@ -3413,6 +3417,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     blend_refresher = LiveBlendRefresher(
         "polymarket", min_refresh_interval_s=blend_floor,
         session_factory=get_task_session,  # #2471
+        observation_read_factory=sessions.observation_read,
         chart_custody=OwedChartCustody(),  # #11181: no owed chart point is lost
     )
     # #11138: quotes whose price-row write a lock holds; the stamp reads them
@@ -4672,9 +4677,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             observation_tokens = {
                                 oid: observation_continuity.get(oid) for oid in chunk_ids
                             }
-                            catalog_boundary.observation_writing = event_ids_for_outcomes(
-                                headline_event_ids, chunk_ids,
-                            ).intersection(blend_refresher.preview_events)
+                            catalog_boundary.observation_writing = {
+                                eid for eid in event_ids_for_outcomes(headline_event_ids, chunk_ids)
+                                if eid in blend_refresher.preview_events
+                            }
                             for eid in catalog_boundary.observation_writing:
                                 catalog_boundary.observation_write_epoch[eid] = (
                                     catalog_boundary.observation_write_epoch.get(eid, 0) + 1
@@ -5968,6 +5974,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 for owners in (market_by_outcome, event_id_by_outcome):
                     for oid in owners.keys() - old_debt:
                         del owners[oid]
+                # #10663: per-outcome bookkeeping keeps only the outcomes this
+                # catalog owns or a buffered write still carries. Nothing else
+                # retired an entry, so both grew by every outcome the process
+                # ever priced. A re-admitted outcome has no last-write instant
+                # and is written on its next price (never suppressed); its next
+                # accepted input records a fresh mark before any flush reads it.
+                retained = current_outcomes | protected
+                for bookkeeping in (successful_price_write_at, input_marks):
+                    for oid in bookkeeping.keys() - retained:
+                        del bookkeeping[oid]
                 asset_ids[:] = slate["asset_ids"]
                 market_ids.clear()
                 market_ids.update(slate["market_ids"])

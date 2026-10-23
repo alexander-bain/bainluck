@@ -301,7 +301,8 @@ struct NativeEventDiscoverCard: View {
                 // quiet slot and the title's team order. The score is the hero.
                 if let liveProjection = liveProjectedFinal2920 {
                     LiveProjectedFinalLine2920(
-                        printed: liveProjection, awayName: event.awayTeam, homeName: event.homeTeam)
+                        printed: liveProjection, awayName: event.awayTeam, homeName: event.homeTeam,
+                        sportKey: event.sport)
                 }
 
                 // live/048 — the shared summary, in the slot the settled card

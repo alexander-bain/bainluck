@@ -216,16 +216,17 @@ final class EvolutionChartMarksResolveTeamColourThroughTheFloor7036Tests: XCTest
                        "the chart is reading meta.primaryColor straight again")
     }
 
-    /// 🪤 THE HALF-FIX. The chart draws its outcome colour in three places — the
-    /// series scale, the crosshair, the leaderboard — and every one of them goes
-    /// through `colorForOutcome`. Wiring the floor and then letting ONE site
-    /// bypass it compiles, renders, and leaves every helper assertion green.
+    /// 🪤 THE HALF-FIX. The chart draws its outcome colour in four places — the
+    /// series scale, the crosshair, the leaderboard, and (#10955) a no-price
+    /// line's result label — and every one of them goes through
+    /// `colorForOutcome`. Wiring the floor and then letting ONE site bypass it
+    /// compiles, renders, and leaves every helper assertion green.
     /// A count, not a `contains`, is the only thing that sees it.
     func testAllThreeMarkSitesGoThroughTheOneResolver() throws {
         let body = try String(contentsOf: Self.chartURL, encoding: .utf8)
 
-        // Three call sites plus the declaration.
-        XCTAssertEqual(body.components(separatedBy: "colorForOutcome(name:").count - 1, 4,
+        // Four call sites plus the declaration.
+        XCTAssertEqual(body.components(separatedBy: "colorForOutcome(name:").count - 1, 5,
                        "a mark site has stopped going through the chart's one resolver")
         XCTAssertFalse(body.contains("Color(hex: outcome.primaryColor"),
                        "the leaderboard row is painting a raw primary_color again")

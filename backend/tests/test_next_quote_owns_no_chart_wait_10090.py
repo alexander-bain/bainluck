@@ -631,8 +631,9 @@ async def test_history_and_next_refresh_share_existing_three_session_ceiling(
     next_refresh = asyncio.create_task(x.r.refresh([2, 3, 4], flush_started=1002))
     try:
         await settle_until(lambda: opened[0] == 3)
-        for _ in range(10):
-            await asyncio.sleep(0)
+        # A session opening precedes its preview admission read. Wait for
+        # the actual two blocked stamps, rather than counting loop turns.
+        await settle_until(lambda: x.commands.count("update") == 3)
         assert maximum[0] == 3
         assert x.commands.count("update") == 3, "history plus only two next stamps"
         assert len(x.committed) == 1 and not next_refresh.done()

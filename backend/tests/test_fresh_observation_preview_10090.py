@@ -17,8 +17,8 @@ from tests.test_live_blend_refresh import _one_event_refresher
 @pytest.fixture(autouse=True)
 def preview_enabled(monkeypatch):
     blend_preview.reset_registry_for_tests()
-    monkeypatch.setenv(blend_preview.SOURCE_ENV, "polymarket")
-    monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, "1")
+    # These composition controls use the explicit legacy in-process subject.
+    monkeypatch.setattr(blend_preview, "_REGISTRY", blend_preview.PreviewRegistry())
     yield
     blend_preview.reset_registry_for_tests()
 
@@ -150,7 +150,7 @@ async def test_regular_restamp_commit_retires_observation_preview(monkeypatch):
 
 
 async def test_off_retains_original_unchanged_storage_throttle(monkeypatch):
-    monkeypatch.delenv(blend_preview.SOURCE_ENV)
+    monkeypatch.setattr(blend_preview, "preview_events_for", lambda source: frozenset())
     r, session, previews, committed, _, _, _ = rig(monkeypatch)
     await r._refresh_batch([1], 101.)
     assert r._dispositions[1] == ("unchanged", .9)
@@ -208,6 +208,36 @@ async def test_accepted_observation_uses_only_ephemeral_clocks_and_no_stamp_stat
     assert all(row.last_updated == now - timedelta(seconds=3) for row in rows)
     assert not session.updates and not committed and not r._lock_retry
     assert r._last_write_at[1] == 100. and r._last_written_value[1] == .9
+
+
+async def test_accepted_observation_uses_dedicated_read_scope_before_publish(monkeypatch):
+    from contextlib import asynccontextmanager
+
+    r, session, frames, _, _, _, observations, validate, _ = acknowledged_rig(monkeypatch)
+    calls = []
+
+    @asynccontextmanager
+    async def read_scope():
+        calls.append("read-open")
+        yield session
+        calls.append("read-closed")
+
+    @asynccontextmanager
+    async def writer_scope():
+        raise AssertionError("observation must not wait for a writer COMMIT")
+        yield
+
+    original_publish = r._publish_previews
+
+    async def publish(*args, **kwargs):
+        assert calls == ["read-open", "read-closed"]
+        await original_publish(*args, **kwargs)
+
+    r._observation_read_factory = read_scope
+    r._session_factory = writer_scope
+    monkeypatch.setattr(r, "_publish_previews", publish)
+    await r.preview_accepted_observations(observations, validate)
+    assert len(_blends(frames)) == 1
     assert not r._dispositions and not r._history
 
 
@@ -250,6 +280,161 @@ async def test_accepted_observation_skips_busy_slots_without_read_or_error(monke
     await r.preview_accepted_observations(observations, validate_available)
     executes.assert_awaited_once()
     assert len(_blends(frames)) == 1
+
+
+@pytest.mark.parametrize("dedicated", [True, False])
+async def test_completed_observation_survives_only_readonly_cleanup_deadline(monkeypatch, dedicated):
+    from contextlib import asynccontextmanager
+
+    r, session, frames, committed, rows, _, observations, validate, now = acknowledged_rig(monkeypatch)
+    cleanup_started, cleanup_cancelled = asyncio.Event(), asyncio.Event()
+
+    @asynccontextmanager
+    async def scope():
+        yield session
+        cleanup_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleanup_cancelled.set()
+
+    if dedicated:
+        r._observation_read_factory = scope
+    else:
+        r._session_factory = scope
+    result = await r.preview_accepted_observations(observations, validate)
+    assert cleanup_started.is_set() and cleanup_cancelled.is_set()
+    assert not r._session_slots.locked()
+    if dedicated:
+        [frame] = _blends(frames)
+        assert frame["display_observed_at"] == (now - timedelta(seconds=1)).isoformat()
+        assert result is None
+    else:
+        assert result is False and not frames
+    assert all(row.last_updated == now - timedelta(seconds=3) for row in rows)
+    assert not session.updates and not committed and not r._history and not r._lock_retry
+
+
+@pytest.mark.parametrize("failure", ["query-deadline", "query-error", "close-error", "cancel", "superseded"])
+async def test_readonly_cleanup_recovery_never_rescues_invalid_work(monkeypatch, failure):
+    from contextlib import asynccontextmanager
+
+    r, session, frames, committed, _, _, observations, _, _ = acknowledged_rig(monkeypatch)
+    cleanup_started = asyncio.Event()
+    valid = True
+    query_finished = False
+    original_read = r._read_groups
+
+    async def read(*args, **kwargs):
+        nonlocal query_finished
+        if failure == "query-deadline":
+            await asyncio.Event().wait()
+        if failure == "query-error":
+            raise TimeoutError("query failed before any completed graph")
+        result = await original_read(*args, **kwargs)
+        query_finished = True
+        return result
+
+    @asynccontextmanager
+    async def scope():
+        nonlocal valid
+        yield session
+        cleanup_started.set()
+        if failure == "close-error":
+            raise TimeoutError("driver close failed before budget expired")
+        if failure == "superseded":
+            valid = False
+        await asyncio.Event().wait()
+
+    async def validate(ids):
+        return set(ids) if valid else set()
+
+    r._observation_read_factory = scope
+    monkeypatch.setattr(r, "_read_groups", read)
+    task = asyncio.create_task(r.preview_accepted_observations(observations, validate))
+    if failure == "cancel":
+        await asyncio.wait_for(cleanup_started.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        await task
+    assert query_finished is (failure not in {"query-deadline", "query-error"})
+    assert not frames and not session.updates and not committed
+    assert not r._session_slots.locked()
+    assert not blend_preview.registry().has_pending(1)
+
+
+@pytest.mark.parametrize("mode", ["deadline", "late-close-error", "external-cancel"])
+async def test_observation_cleanup_owned_until_real_connection_close_finishes(monkeypatch, caplog, mode):
+    from sqlalchemy.ext.asyncio import AsyncConnection
+    from app.tasks.ws_consumer_sessions import ConsumerSessions
+
+    r, session, frames, committed, _, _, observations, validate, _ = acknowledged_rig(monkeypatch)
+    entered, release, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    disposals = []
+
+    # Inherits SQLAlchemy's real __aenter__/__aexit__ contract. The baseline
+    # __aexit__ shields close but loses the owner's count on caller timeout.
+    class Connection(AsyncConnection):
+        def __init__(self):
+            pass
+
+        async def start(self, is_ctxmanager=False):
+            return self
+
+        async def execution_options(self, **options):
+            assert options == {"isolation_level": "AUTOCOMMIT"}
+            return self
+
+        async def execute(self, statement):
+            return await session.execute(statement)
+
+        async def close(self):
+            entered.set()
+            await release.wait()
+            closed.set()
+            if mode == "late-close-error":
+                raise RuntimeError("retained close failure")
+
+    async def dispose():
+        assert closed.is_set()
+        disposals.append(True)
+
+    engine = SimpleNamespace(connect=Connection, dispose=dispose)
+    owner = ConsumerSessions("cleanup-control")
+    owner._engine = engine
+    monkeypatch.setattr(owner, "_engine_here", lambda: engine)
+    r._observation_read_factory = owner.observation_read
+    work = asyncio.create_task(r.preview_accepted_observations(observations, validate))
+    shutdown = None
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        if mode == "external-cancel":
+            work.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await work
+            assert not frames
+        else:
+            await work
+            assert len(_blends(frames)) == 1
+        assert not closed.is_set()
+        assert owner._open == 1 and not owner._idle.is_set()
+        assert len(owner._observation_closers) == 1
+        shutdown = asyncio.create_task(owner.aclose())
+        await asyncio.sleep(0)
+        assert not shutdown.done() and not disposals
+        release.set()
+        await asyncio.wait_for(shutdown, 1)
+        assert owner._open == 0 and owner._idle.is_set()
+        assert not owner._observation_closers and disposals == [True]
+        if mode == "late-close-error":
+            assert "observation connection cleanup failed" in caplog.text
+            assert "retained close failure" in caplog.text
+        assert not session.updates and not committed
+    finally:
+        release.set()
+        await asyncio.gather(work, *([shutdown] if shutdown else []), return_exceptions=True)
 
 
 @pytest.mark.parametrize("refusal", ["unknown-orientation", "missing-partner", "settled-row", "closed-market",

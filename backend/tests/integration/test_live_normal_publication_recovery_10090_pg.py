@@ -44,6 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.tasks.base import get_task_session
 from app.tasks.live_blend_refresh import LiveBlendRefresher, hand_off_pending
+from app.utils.blend_preview import is_preview_frame
 from app.utils.live_push import event_channel, latest_frame_key
 from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: F401
     DB_URL,
@@ -64,6 +65,7 @@ from tests.integration.test_pm_withdrawal_debt_10090_pg import (
     setup,
 )
 from tests.integration.test_pm_withdrawal_peer_publication_and_startup_10090_pg import (  # noqa: F401
+    default_preview_redis,
     real_redis,
 )
 
@@ -1037,7 +1039,7 @@ def median(values):
 
 @pytest.mark.parametrize("cohort", [False, True])
 async def test_busy_timed_pm_flushes_recover_a_quiet_failed_game(
-    rig, consumer, monkeypatch, cohort,
+    rig, consumer, monkeypatch, cohort, default_preview_redis,
 ):
     t = await setup(rig, consumer, monkeypatch)
     t.r.min_refresh_interval_s = 0
@@ -1357,9 +1359,10 @@ async def test_sustained_retention_refusal_cost_is_bounded_per_event_per_flush(
     # control's ACK settles, and only its own revision.
     assert set(settled) <= set(control_revs), detail
     assert not remaining, (remaining, detail)
-    # Delivery despite refusal: readers got every price and every control.
+    # Delivery despite refusal: readers got every committed price and control.
+    # DNPL preview prices also share this channel, but have no committed rev.
     assert sorted((f["event_id"], f["rev"][str(f["event_id"])]) for f in received
-                  if f.get("p") is not None) == sorted(price_revs), detail
+                  if f.get("p") is not None and not is_preview_frame(f)) == sorted(price_revs), detail
     assert sorted((f["event_id"], f["rev"][str(f["event_id"])]) for f in received
                   if f.get("reconcile_only")) == sorted(control_revs), detail
     print(

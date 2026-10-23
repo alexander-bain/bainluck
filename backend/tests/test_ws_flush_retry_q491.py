@@ -55,7 +55,7 @@ import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.live_blend_refresh as blend_mod
 import app.tasks.polymarket_ws as poly_task
 import app.services.polymarket_ws as poly_svc
-from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, SET_STATEMENT_TIMEOUT_SQL
 from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 YES_TOKEN = "111"
@@ -233,6 +233,12 @@ class _FlakySession:
         self._stored_live = stored_live
 
     async def execute(self, stmt, params=None):
+        if stmt is poly_task.ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL:
+            # These immediate recording writes start with PostgreSQL's default
+            # unlimited timeout. The real timeout/cancellation gates use PG.
+            return SimpleNamespace(scalar_one=lambda: "0")
+        if stmt is SET_STATEMENT_TIMEOUT_SQL:
+            return _Result([])
         if stmt is SET_LOCK_TIMEOUT_SQL:  # #10661: the flush's per-phase lock budget
             return _Result([])
         if isinstance(stmt, Update):

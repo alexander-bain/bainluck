@@ -526,8 +526,10 @@ d("a draw is not the away team on iOS", () => {
       /return awayOpening != nil \|\| DrawPricedWinner\.sportPricesADraw\(sport\)/
     );
     // The caption itself goes through the rule and names its survivor.
+    // #11422 — it also steps aside when the reason already states the
+    // opening; that clause sits between the live test and the pair.
     expect(code).toMatch(
-      /if isLive, let opened = DrawPricedWinner\.printablePair\(/
+      /if isLive,\s*!EventCardFooter\.reasonStatesTheOpening\(reason\),\s*let opened = DrawPricedWinner\.printablePair\(/
     );
     expect(code).toMatch(
       /Text\("Opened \\\(named\.home\) \\\(formatProbability\(opened\.home\)\)"\)/

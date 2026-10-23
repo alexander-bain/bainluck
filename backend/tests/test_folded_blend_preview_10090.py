@@ -169,7 +169,6 @@ async def test_route_keeps_reading_previews_and_terminal_while_projection_waits(
     hub.project_recovery_quote = blocked
     hub.project_folded_preview = lambda eid, frame, **kw: base.project(frame, **kw)
     monkeypatch.setattr(live_fanout, "fanout", lambda: hub)
-    monkeypatch.setattr(route, "preview_route_events", lambda: {1})
     monkeypatch.setattr(route, "latest_frames", lambda ids: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(route, "_current_reconcile", coverage)
     request = capable_request()
@@ -221,7 +220,6 @@ async def test_actual_mailbox_route_subtracts_age_and_refuses_expired_preview(mo
     clock = [100.]
     monkeypatch.setattr(live_fanout, "monotonic", lambda: clock[0])
     monkeypatch.setattr(live_fanout, "fanout", lambda: hub)
-    monkeypatch.setattr(route, "preview_route_events", lambda: {1})
     monkeypatch.setattr(route, "latest_frames", lambda ids: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(route, "_current_reconcile", lambda *args: asyncio.sleep(0, result={
         "event_id": 1, "custody_id": "state:test", "removal_rev": base.revision,
@@ -269,7 +267,6 @@ async def test_recovery_rewarms_same_revision_without_a_new_committed_frame(monk
     hub.forget_folded_preview = lambda eid: warm.__setitem__(0, False)
     hub.project_folded_preview = lambda eid, frame, **kw: base.project(frame, **kw) if warm[0] else None
     monkeypatch.setattr(live_fanout, "fanout", lambda: hub)
-    monkeypatch.setattr(route, "preview_route_events", lambda: {1})
     monkeypatch.setattr(route, "latest_frames", lambda ids: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(route, "_current_reconcile", lambda eid, ids: asyncio.sleep(0, result={
         "event_id": 1, "custody_id": "state:unchanged",
@@ -313,7 +310,6 @@ async def test_preview_requires_capability_only_for_folded_pages(monkeypatch, pr
 
     hub.project_folded_preview = project_preview
     monkeypatch.setattr(live_fanout, "fanout", lambda: hub)
-    monkeypatch.setattr(route, "preview_route_events", lambda: {1, 2})
     monkeypatch.setattr(route, "latest_frames", lambda ids: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(route, "_current_reconcile", lambda *args: asyncio.sleep(0, result={"event_id": 1 if folded else 2, "custody_id": "state:test", "removal_rev": base.revision}))
     request = Request()

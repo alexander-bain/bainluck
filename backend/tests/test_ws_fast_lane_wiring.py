@@ -553,8 +553,15 @@ def _exec_flush(module, consumer_name: str, namespace: dict):
     for real. Transaction-only names are absent: touching them is a NameError.
     """
     fn = _flush_function(module, consumer_name)
+    nodes = [fn]
+    if hasattr(module, "_KalshiPriceOwner"):
+        names = {"steady_book_signature", "observation_signature", "note_observation_continuity"}
+        helpers = [node for node in ast.walk(ast.parse(inspect.getsource(module)))
+                   if isinstance(node, ast.FunctionDef) and node.name in names]
+        assert {node.name for node in helpers} == names and len(helpers) == len(names)
+        nodes.extend(helpers)
     code = compile(
-        ast.fix_missing_locations(ast.Module(body=[fn], type_ignores=[])),
+        ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])),
         inspect.getsourcefile(module), "exec",
     )
     exec(code, namespace)
@@ -607,6 +614,8 @@ def _quiet_namespace(module, refresher):
     # run's price owner, which the consumer's lifetime wrapper creates.
     if hasattr(module, "_KalshiPriceOwner"):
         namespace["prices"] = module._KalshiPriceOwner()
+        namespace["observation_continuity"] = {}
+        namespace["game_clients"] = []
     # Polymarket's run-scoped catalog boundary owns its persistent stamp.
     if hasattr(module, "_PMCatalogFlushBoundary"):
         namespace["catalog_boundary"] = module._PMCatalogFlushBoundary()
