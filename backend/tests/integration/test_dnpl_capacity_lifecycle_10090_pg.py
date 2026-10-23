@@ -223,7 +223,8 @@ async def test_repeated_withdrawal_reads_do_not_spawn_capacity_owners(rig, capac
 async def test_idle_residency_reclaims_settled_slots_and_admits_eligible_pages(rig, capacity, state):
     worker, registry, client, reads = capacity
     async with rig.engine.begin() as conn:
-        await conn.execute(text("UPDATE events SET status=:status, win_probability_sources_rev=11"),
+        await conn.execute(text("UPDATE events SET status=:status, win_probability_sources_rev=11, "
+                                "commence_time=NOW()+INTERVAL '2 hours'"),
                            {'status': state})
     for eid in range(1, 513):
         seq = registry.pending_seq(eid, 'kalshi')
@@ -243,6 +244,17 @@ async def test_idle_residency_reclaims_settled_slots_and_admits_eligible_pages(r
     await subscriber.get_message(timeout=1)
     try:
         await worker._maintain_preview_capacity()
+        if state == 'live':
+            # K1 supersedes the old expectation that settled LIVE residency
+            # may be discarded. All-live capacity stays safely full.
+            assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 512
+            assert int(await client.hget(blend_preview.LEDGER_KEY, 'e:1:gen')) == old_gen
+            ticket, _ = await registry.read_ticket(client.execute_command, 'kalshi')
+            event.preview_read_ticket = ticket
+            frames = await registry.prepare(registry.propose(1, 'kalshi', value=.8,
+                event=event, row_sources=BASE10, row_rev=11), client.execute_command, worker.preview_stats)
+            assert frames and frames[0]['preview']['kind'] == 'blend'
+            return
         assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 480
         assert await client.hget(blend_preview.LEDGER_KEY, 'e:1:gen') is None
         assert not any('UPDATE events' in sql for sql in reads)
@@ -274,13 +286,15 @@ async def test_idle_residency_reclaims_settled_slots_and_admits_eligible_pages(r
 
 async def test_idle_candidates_are_filtered_before_batch_limit_and_rechecked(rig, capacity, monkeypatch):
     worker, registry, client, reads = capacity
+    async with rig.engine.begin() as conn:
+        await conn.execute(text("UPDATE events SET status='scheduled', commence_time=NOW()+INTERVAL '2 hours'"))
     # First 480 are active; only the late 32 are idle. None may starve behind the first 32.
     for eid in range(481, 513):
         await registry.execute(registry.committed(eid, 'kalshi', seq=registry.pending_seq(eid, 'kalshi'),
                                sources=BASE10, rev=10), client.execute_command, event_channel, worker.preview_stats)
-    publish = worker._publish_previews
+    prepare = worker._prepare_ledger_previews
     raced = False
-    async def racing_publish(items):
+    async def racing_prepare(items):
         nonlocal raced
         if not raced and items and items[0].get('ledger_op') == 'retire_idle':
             raced = True
@@ -289,8 +303,8 @@ async def test_idle_candidates_are_filtered_before_batch_limit_and_rechecked(rig
             await registry.execute(registry.propose(481, 'polymarket', value=.8, event=event,
                                    row_sources=BASE10, row_rev=10),
                                    client.execute_command, event_channel, worker.preview_stats)
-        await publish(items)
-    monkeypatch.setattr(worker, '_publish_previews', racing_publish)
+        return await prepare(items)
+    monkeypatch.setattr(worker, '_prepare_ledger_previews', racing_prepare)
     await worker._maintain_preview_capacity()
     assert raced
     assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 481
@@ -298,3 +312,130 @@ async def test_idle_candidates_are_filtered_before_batch_limit_and_rechecked(rig
     assert await client.hget(blend_preview.LEDGER_KEY, 'e:512:gen') is None
     assert await client.hget(blend_preview.LEDGER_KEY, 'e:1:m:kalshi') is not None
     assert worker.preview_stats['publish_errors'] == 0
+
+
+async def test_adversarial_k1_live_residents_survive_and_farthest_scheduled_go_first(rig, capacity):
+    worker, registry, client, reads = capacity
+    async with rig.engine.begin() as conn:
+        await conn.execute(text("UPDATE events SET status='scheduled', commence_time=NOW()+INTERVAL '2 hours'"))
+        await conn.execute(text("UPDATE events SET status='live', commence_time=NOW()-INTERVAL '1 hour' WHERE id<=20"))
+        await conn.execute(text("UPDATE events SET status='suspended', commence_time=NOW()-INTERVAL '2 hours' WHERE id BETWEEN 21 AND 40"))
+        await conn.execute(text("UPDATE events SET commence_time=NOW()+id*INTERVAL '1 day' WHERE id>=481"))
+    for eid in range(1, 513):
+        await registry.execute(registry.committed(eid, 'kalshi', seq=registry.pending_seq(eid, 'kalshi'),
+                               sources=BASE10, rev=10), client.execute_command, event_channel, worker.preview_stats)
+    await worker._maintain_preview_capacity()
+    assert all([await client.hget(blend_preview.LEDGER_KEY, f'e:{eid}:gen') is not None
+                for eid in range(1, 41)]), 'K1: known-live or in-play suspended resident was reclaimed'
+    assert all([await client.hget(blend_preview.LEDGER_KEY, f'e:{eid}:gen') is None
+                for eid in range(481, 513)]), 'K1: farthest scheduled slots were not preferred'
+    assert await client.hget(blend_preview.LEDGER_KEY, 'e:480:gen') is not None
+    assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 480
+
+
+@pytest.mark.parametrize('dead', ['old_owner', 'expired'])
+async def test_adversarial_k2_dead_metadata_is_reclaimed_by_actual_caller(rig, capacity, monkeypatch, dead):
+    worker, registry, client, reads = capacity
+    async with rig.engine.begin() as conn:
+        await conn.execute(text("UPDATE events SET status='scheduled', commence_time=NOW()+INTERVAL '8 days'"))
+    if dead == 'old_owner':
+        replacement = blend_preview.LedgerRegistry(sources=blend_preview.PREVIEW_SOURCES)
+        await replacement.claim(client.execute_command, 'kalshi')
+        monkeypatch.setattr(blend_preview, 'registry', lambda: replacement)
+    else:
+        # Execute the production Redis-clock check at an exact expired deadline.
+        # Only time is virtual; metadata is produced by the actual fixture proposals.
+        script = blend_preview.LEDGER_SCRIPT
+        monkeypatch.setattr(blend_preview, 'LEDGER_SCRIPT', script.replace(
+            'local now = now_ms()', 'local now = now_ms() + 60001'))
+    await worker._maintain_preview_capacity()
+    assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 480, 'K2: dead metadata still blocks idle reclamation'
+    assert await client.hget(blend_preview.LEDGER_KEY, 'e:1:gen') is None
+    assert await client.hget(blend_preview.LEDGER_KEY, 'e:1:m:kalshi') is None
+
+    if dead == 'expired':
+        ticket, _ = await registry.read_ticket(client.execute_command, 'kalshi')
+        event = _ev('scheduled'); event.preview_read_ticket = ticket
+        operations = registry.propose(1, 'kalshi', value=.7, event=event, row_sources=BASE10, row_rev=10)
+        assert operations[0]['mode'] == 'continue'
+        assert not await registry.prepare(operations, client.execute_command, worker.preview_stats)
+        assert registry._events[1].expired['kalshi'] == .7
+        assert registry.propose(1, 'kalshi', value=.7, event=event, row_sources=BASE10, row_rev=10) == []
+        assert await client.hget(blend_preview.LEDGER_KEY, 'e:1:gen') is None
+
+
+@pytest.mark.parametrize('race', ['before_lock', 'locked_row', 'during_mutation'])
+async def test_idle_status_proof_is_locked_and_busy_rows_are_skipped(rig, capacity, monkeypatch, race):
+    from sqlalchemy.exc import DBAPIError
+    worker, registry, client, reads = capacity
+    async with rig.engine.begin() as conn:
+        await conn.execute(text("UPDATE events SET status='scheduled', commence_time=NOW()+INTERVAL '8 days' WHERE id=481"))
+    await registry.execute(registry.committed(481, 'kalshi', seq=registry.pending_seq(481, 'kalshi'),
+                           sources=BASE10, rev=10), client.execute_command, event_channel, worker.preview_stats)
+    entered = False
+    if race == 'before_lock':
+        retire = worker._retire_idle_preview_event
+        async def flip_then_retire(eid, ticket):
+            nonlocal entered
+            entered = True
+            async with rig.engine.begin() as conn:
+                await conn.execute(text("UPDATE events SET status='live' WHERE id=481"))
+            await retire(eid, ticket)
+        monkeypatch.setattr(worker, '_retire_idle_preview_event', flip_then_retire)
+    elif race == 'during_mutation':
+        prepare = worker._prepare_ledger_previews
+        async def prove_status_update_is_locked(items):
+            nonlocal entered
+            entered = True
+            with pytest.raises(DBAPIError) as exc:
+                async with rig.engine.begin() as conn:
+                    await conn.execute(text("SET LOCAL lock_timeout='20ms'"))
+                    await conn.execute(text("UPDATE events SET status='live' WHERE id=481"))
+            assert 'lock timeout' in str(exc.value)
+            return await prepare(items)
+        monkeypatch.setattr(worker, '_prepare_ledger_previews', prove_status_update_is_locked)
+    if race == 'locked_row':
+        async with rig.engine.begin() as conn:
+            await conn.execute(text("UPDATE events SET status='scheduled' WHERE id=481"))
+            await worker._maintain_preview_capacity()
+    else:
+        await worker._maintain_preview_capacity()
+        assert entered
+    if race == 'during_mutation':
+        assert await client.hget(blend_preview.LEDGER_KEY, 'e:481:gen') is None
+        # The row lock is released before publishing and does not outlive maintenance.
+        async with rig.engine.begin() as conn:
+            await conn.execute(text("UPDATE events SET status='live' WHERE id=481"))
+    else:
+        assert await client.hget(blend_preview.LEDGER_KEY, 'e:481:gen') is not None
+        assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 512
+        assert int(await client.hget(blend_preview.LEDGER_KEY, 'retired')) == 0
+    assert worker.preview_stats['publish_errors'] == 0
+
+
+async def test_idle_cancel_before_eval_releases_status_lock_without_reclaim(rig, capacity, monkeypatch):
+    worker, registry, client, reads = capacity
+    async with rig.engine.begin() as conn:
+        await conn.execute(text("UPDATE events SET status='scheduled', commence_time=NOW()+INTERVAL '8 days' WHERE id=481"))
+    await registry.execute(registry.committed(481, 'kalshi', seq=registry.pending_seq(481, 'kalshi'),
+                           sources=BASE10, rev=10), client.execute_command, event_channel, worker.preview_stats)
+    entered = asyncio.Event()
+    async def pause_before_eval(items):
+        entered.set()
+        await asyncio.Event().wait()
+    monkeypatch.setattr(worker, '_prepare_ledger_previews', pause_before_eval)
+    task = asyncio.create_task(worker._maintain_preview_capacity())
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    assert await client.hget(blend_preview.LEDGER_KEY, 'e:481:gen') is not None
+    assert int(await client.hget(blend_preview.LEDGER_KEY, 'retired')) == 0
+    async with rig.engine.begin() as conn:
+        await conn.execute(text("SET LOCAL lock_timeout='20ms'"))
+        await conn.execute(text("UPDATE events SET status='live' WHERE id=481"))

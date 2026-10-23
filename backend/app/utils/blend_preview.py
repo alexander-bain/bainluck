@@ -107,9 +107,12 @@ script enforces it:
   barrier and cannot open or recreate a tombstone. The database increment is
   lifecycle ordering only: source values and observation timestamps do not
   change. Active continuations retain their original deadlines. Mixed-version
-  owners cannot retire. At 512 events the caller may reread a bounded set of
-  ids and retire one authoritatively finished event; active/expired-but-live
-  events are never evicted for capacity. A missing barrier fails closed;
+  owners cannot retire. At 512 events the caller may reread bounded ids and
+  retire authoritatively finished rows or idle non-live residents. A fresh
+  SHARE/SKIP LOCKED read excludes known-live rows; distant scheduled rows go
+  first, started suspended rows last. Current unexpired proposals survive.
+  The status lock covers an acknowledged reclaim, not an uncertain Redis
+  command completing after cancellation. A missing barrier fails closed;
 * publish — generation, sequence, tombstone and EVERY contributor's owner and
   original deadline are rechecked at the send; the reader's ``ttl_ms`` is
   computed there, last. Revokes keep the generation and ``through_seq`` they
@@ -309,6 +312,8 @@ local compatible = true
 for _, s in ipairs(sources) do
   if owners[s] == nil or field('read_owner:' .. s) ~= owners[s] then compatible = false end
 end
+local now = now_ms()
+local function stale(s, m) return m.owner ~= owners[s] or m.expires <= now end
 if op == 'read_ticket' or op == 'capacity_ticket' then
   local out = {'ok', decimal(barrier)}
   local count = field('nevents')
@@ -324,7 +329,8 @@ if op == 'read_ticket' or op == 'capacity_ticket' then
         candidates[#candidates + 1] = id
         local empty = redis.call('HEXISTS', L, 'e:' .. id .. ':term') == 0
         for _, s in ipairs(sources) do
-          if redis.call('HEXISTS', L, 'e:' .. id .. ':m:' .. s) == 1 then empty = false end
+          local m = meta('e:' .. id .. ':m:' .. s)
+          if m == BAD or (m ~= nil and not stale(s, m)) then empty = false end
         end
         if empty then idle[#idle + 1] = id end
       end
@@ -347,8 +353,6 @@ for _, s in ipairs(sources) do
   if m == BAD then return {'malformed'} end
   st.metas[s] = m
 end
-local now = now_ms()
-local function stale(s, m) return m.owner ~= owners[s] or m.expires <= now end
 local function readset(status, gen, seq, extra)
   local out = {status, decimal(gen), decimal(seq), decimal(now),
     redis.call('HGET', L, P .. 'base_rev') or '', redis.call('HGET', L, P .. 'base') or '', extra}
@@ -544,10 +548,10 @@ if op == 'retire_idle' then
   if st.term ~= nil then return {'terminal'} end
   if st.live ~= nil and ctx < st.live then return {'stale_terminal'} end
   if st.base_rev ~= nil and ctx < st.base_rev then return {'stale_terminal'} end
-  -- Initial safe subset: fully settled/pruned, not raw expired metadata.
+  -- Dead metadata follows the existing owner/deadline pruning rule.
   -- A live renewal/proposal wins atomically and refuses this reclamation.
   for _, s in ipairs(sources) do
-    if st.metas[s] ~= nil then return {'pending'} end
+    if st.metas[s] ~= nil and not stale(s, st.metas[s]) then return {'pending'} end
   end
   if barrier >= MAX then return {'exhausted'} end
   local count = field('nevents')
@@ -562,7 +566,7 @@ if op == 'retire_idle' then
   redis.call('HDEL', L, P .. 'gen', P .. 'seq', P .. 'live',
     P .. 'base_rev', P .. 'base')
   for _, s in ipairs(sources) do
-    redis.call('HDEL', L, P .. 'p:' .. s)
+    redis.call('HDEL', L, P .. 'm:' .. s, P .. 'p:' .. s)
   end
   redis.call('HINCRBY', L, 'nevents', -1)
   return {'ok', decimal(gen), decimal(seq)}
@@ -1223,7 +1227,7 @@ class LedgerRegistry(PreviewRegistry):
             int(eid) for eid in json.loads(reply[3])}
 
     def retire_idle(self, event_id: int, source: str, rev: int, ticket: int) -> dict:
-        """Fresh DB revision proof for a nonterminal, metadata-empty resident."""
+        """Locked fresh non-live DB proof for a resident with no valid pending metadata."""
         return {"ledger_op": "retire_idle", "event_id": int(event_id), "source": source,
                 "ctx_rev": rev, "read_ticket": ticket}
 
