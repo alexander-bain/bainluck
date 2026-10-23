@@ -354,7 +354,7 @@ final class MacBrowseRowActions10878Tests: XCTestCase {
             .background(Color(nsColor: .windowBackgroundColor))
             .environment(\.colorScheme, .light)
 
-            let renderer = ImageRenderer(content: preview)
+            let renderer = rendererForMeasurement(preview)
             renderer.scale = 2.0
             let cgImage = try XCTUnwrap(renderer.cgImage, "Failed to render \(scenario.name)")
             XCTAssertEqual(cgImage.width, 560)
