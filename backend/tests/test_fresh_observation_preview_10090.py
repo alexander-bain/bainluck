@@ -42,6 +42,110 @@ def rig(monkeypatch):
     return refresher, session, previews, committed, rows, reading, now
 
 
+@pytest.mark.parametrize("failure", ["checkout", "admission", "query", "cleanup", "publish"])
+async def test_optional_read_failure_receipt_separates_budget_stages(monkeypatch, caplog, failure):
+    from contextlib import asynccontextmanager
+    from app.tasks import live_blend_refresh as module
+
+    r, session, frames, _, _, _, observations, validate, _ = acknowledged_rig(monkeypatch)
+    clock = [10.]
+    monkeypatch.setattr(module, "_mono", lambda: clock[0])
+
+    @asynccontextmanager
+    async def scope():
+        clock[0] += .05
+        if failure == "checkout":
+            raise TimeoutError("checkout")
+        try:
+            yield session
+        finally:
+            clock[0] += .02
+            if failure == "cleanup":
+                raise TimeoutError("cleanup")
+
+    async def admission():
+        clock[0] += .07
+        if failure == "admission":
+            raise TimeoutError("admission")
+        return None  # Continuations may read without an admission ticket.
+
+    execute = session.execute
+
+    async def query(statement):
+        clock[0] += .11
+        if failure == "query":
+            raise TimeoutError("query")
+        return await execute(statement)
+
+    async def publish(*args, **kwargs):
+        assert module._observation_read_timing.get() is None
+        raise RuntimeError("publication outside read scope")
+
+    r._observation_read_factory = scope
+    monkeypatch.setattr(r, "_preview_admission_read", admission)
+    monkeypatch.setattr(session, "execute", query)
+    monkeypatch.setattr(r, "_publish_previews", publish)
+    assert await r.preview_accepted_observations(observations, validate) is False
+    assert module._observation_read_timing.get() is None
+    records = [record for record in caplog.records
+               if "optional observation preview unavailable" in record.msg]
+    assert len(records) == 1
+    timing = records[0].args[1]
+    assert "started_s" not in timing
+    assert timing["scope_ms"] == {"checkout": 50., "admission": 140.}.get(failure, 250.)
+    if failure == "checkout":
+        assert timing == {"scope_ms": 50.}
+    else:
+        assert timing["admission_start_ms"] == 50.
+        assert timing["admission_ms"] == 70.
+        assert timing["admission_completed"] is (failure != "admission")
+        if failure == "admission":
+            assert "query_start_ms" not in timing
+        else:
+            assert timing["query_start_ms"] == 120.
+            assert timing["query_ms"] == 110.
+            assert timing["query_completed"] is (failure != "query")
+            assert timing.get("graph_ready_ms") == (None if failure == "query" else 230.)
+    assert not frames and not session.updates
+
+
+async def test_read_timing_is_task_local_and_restored_on_cancellation():
+    from app.tasks import live_blend_refresh as module
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    outer = {"started_s": module._mono()}
+    outer_token = module._observation_read_timing.set(outer)
+    cancelled_timing = {"started_s": module._mono()}
+
+    async def cancelled_read():
+        token = module._observation_read_timing.set(cancelled_timing)
+        try:
+            with module._observation_read_step("query"):
+                entered.set()
+                await release.wait()
+        finally:
+            module._observation_read_timing.reset(token)
+            assert module._observation_read_timing.get() is outer
+
+    task = asyncio.create_task(cancelled_read())
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        with module._observation_read_step("admission"):
+            assert module._observation_read_timing.get() is outer
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert cancelled_timing["query_completed"] is False
+        assert "query_ms" in cancelled_timing
+        assert "admission_ms" not in cancelled_timing
+        assert outer["admission_completed"] is True
+        assert "query_ms" not in outer
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        module._observation_read_timing.reset(outer_token)
+
+
 async def test_fresh_same_value_previews_without_event_update(monkeypatch):
     r, session, previews, committed, rows, _, _ = rig(monkeypatch)
     await r._refresh_batch([1], 101.)
