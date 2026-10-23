@@ -12,6 +12,9 @@ import XCTest
 /// serializer's spelling on a mocked session, NOT production prices.
 @MainActor
 final class EventPropsMatrixMounted10236Tests: XCTestCase {
+    /// #10236 — the route body's capture minute (quotes observed 07:08Z).
+    private static let routeNow = "2026-10-03T07:09:00Z".asDate!
+
     private static let fixtureURL =
         URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent("Fixtures")
@@ -235,7 +238,11 @@ final class EventPropsMatrixMounted10236Tests: XCTestCase {
             await vm.load(); handle.open()
             XCTAssertEqual(vm.gameMarkets?.duringPlayerProps?.rows.count, 12,
                            "control: the ordinary game-markets path adopted the typed rows")
-            let page = NavigationStack { EventDetailView(eventId: 15320207, viewModel: vm) }
+            // #10236 — read at the route body's own minute, so its quotes are
+            // current rather than aged by whatever day the suite runs on.
+            let page = NavigationStack {
+                EventDetailView(eventId: 15320207, viewModel: vm, displayAsOf: Self.routeNow)
+            }
                 .environmentObject(PinManager())
                 .environment(\.scenePhase, .active).environment(\.colorScheme, .light)
             let host = hostForMeasurement(page, at: size)

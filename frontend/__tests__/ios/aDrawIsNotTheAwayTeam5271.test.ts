@@ -338,13 +338,16 @@ d("a draw is not the away team on iOS", () => {
     expect(code).toMatch(/let probabilities: \(away: Double, home: Double\)/);
   });
 
-  /** THE MAP HEADER — Alex's third sighting of the same 99%. */
-  it("the map headline asks the rule which side it may name", () => {
+  /** THE MAP HEADER — Alex's third sighting of the same 99%. #9483
+   *  (Design, 2026-10-23) then removed the header outright: it repeated the
+   *  hero's blended winner over individually sourced venue rungs. With no
+   *  header, the map names no winning side at all, so a draw cannot be read
+   *  as the away team there. */
+  it("the map prints no winner header, so it names no side", () => {
     const code = stripComments(map());
 
-    expect(code).toMatch(
-      /DrawPricedWinner\.headlineSide\(\s*away: awayWinProb, home: homeWinProb, sport: sportKey\s*\)/
-    );
+    expect(code).not.toMatch(/homeWinProb|awayWinProb/);
+    expect(code).not.toMatch(/DrawPricedWinner\.headlineSide/);
     // The old name-the-favourite line is gone.
     expect(code).not.toMatch(/let favored = homeProbability > 0\.5/);
   });

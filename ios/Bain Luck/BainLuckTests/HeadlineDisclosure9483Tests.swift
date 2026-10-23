@@ -379,7 +379,8 @@ final class HeadlineDisclosure9483Tests: XCTestCase {
         // #10090 — the displayed number's clock: committed, or a shown preview's own.
         XCTAssertTrue(args.contains("observedAt: vm.displayedProbabilityObservedAt(event)"),
                       "the phase must read the hero quote's own clock")
-        XCTAssertTrue(args.contains("now: tick.date"), "the phase must age on the minute tick")
+        // #9483 — on the page's display clock, which is the tick in production.
+        XCTAssertTrue(args.contains("now: displayNow(tick.date)"), "the phase must age on the minute tick")
         let before = String(text[..<call.lowerBound].suffix(300))
         XCTAssertTrue(before.contains("TimelineView(.periodic(from: .now, by: 60)) { tick in"))
     }

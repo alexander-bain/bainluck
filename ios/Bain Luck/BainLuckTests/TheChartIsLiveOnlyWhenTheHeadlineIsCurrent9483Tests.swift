@@ -95,7 +95,8 @@ final class TheChartIsLiveOnlyWhenTheHeadlineIsCurrent9483Tests: XCTestCase {
         XCTAssertTrue(args.contains("observedAt: vm.displayedProbabilityObservedAt(event)"),
                       "the chart must read the hero quote's own clock")
         XCTAssertTrue(args.contains("deliveryInterrupted: vm.liveUpdateStatus == .interrupted"))
-        XCTAssertTrue(args.contains("now: tick.date"), "the chart must age on the minute tick")
+        // #9483 — on the page's display clock, which is the tick in production.
+        XCTAssertTrue(args.contains("now: displayNow(tick.date)"), "the chart must age on the minute tick")
         let mount = try XCTUnwrap(text.range(of: "OddsChartView("))
         XCTAssertLessThan(mount.lowerBound, call.lowerBound, "the argument belongs to the chart mount")
         let before = String(text[..<mount.lowerBound].suffix(120))
@@ -112,14 +113,14 @@ final class TheChartIsLiveOnlyWhenTheHeadlineIsCurrent9483Tests: XCTestCase {
     func testThePageDeclinesTheChartsCurrentnessOnAVenueSettledVerdict() throws {
         let text = try page()
         let call = try XCTUnwrap(text.range(of: "quoteIsCurrent: EventHeadlinePhase9483.isCurrent("))
-        let close = try XCTUnwrap(text.range(of: "now: tick.date)", range: call.upperBound..<text.endIndex))
+        let close = try XCTUnwrap(text.range(of: "now: displayNow(tick.date))", range: call.upperBound..<text.endIndex))
         let rest = text[close.upperBound...]
         XCTAssertTrue(rest.drop(while: \.isWhitespace).hasPrefix("&& !EventState.showsVenueSettledVerdict("),
                       "the verdict decline must be ANDed onto the same argument")
-        let end = try XCTUnwrap(rest.range(of: "tick.date),"), "the decline closes the argument on the tick")
+        let end = try XCTUnwrap(rest.range(of: "displayNow(tick.date)),"), "the decline closes the argument on the tick")
         let verdict = String(rest[..<end.upperBound])
         XCTAssertTrue(verdict.contains("event.status, venueSettled: event.venueSettled,"))
-        XCTAssertTrue(verdict.contains("commenceTime: event.commenceTime?.asDate, now: tick.date)"),
+        XCTAssertTrue(verdict.contains("commenceTime: event.commenceTime?.asDate, now: displayNow(tick.date))"),
                       "the verdict reads the same tick as the currentness it declines")
         XCTAssertFalse(verdict.contains("venueClosedNoWinner"), "a no-winner close is not this decline")
     }
