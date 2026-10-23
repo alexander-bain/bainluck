@@ -60,11 +60,15 @@ async def test_actual_select_narrows_only_source_json_and_preserves_joined_graph
             ("futures_markets", PREPARED_MARKET_FIELDS),
             ("events", PREPARED_EVENT_FIELDS),
             ("futures_outcomes", PREPARED_OUTCOME_FIELDS),
-        ) for key in fields if key != "win_probability_sources"
+        ) for key in fields if key not in ("win_probability_sources", "market_metadata")
     ]
-    assert [str(c) for i, c in enumerate(columns) if i != position] == expected + [
+    assert [str(c) for i, c in enumerate(columns) if i not in (position, PREPARED_MARKET_FIELDS.index("market_metadata"))] == expected + [
         "events.win_probability_sources", "events.win_probability_sources_rev",
     ]
+    metadata_projection = columns[PREPARED_MARKET_FIELDS.index("market_metadata")]
+    assert metadata_projection.name == "market_metadata"
+    assert metadata_projection.element.name == "jsonb_build_object"
+    assert list(metadata_projection.element.clauses)[0].value == "content_understanding_v1"
     assert [c.name for c in columns[-2:]] == ["preview_sources", "preview_rev"]
     assert context.preview_sources == e.win_probability_sources
     assert context.preview_rev == e.win_probability_sources_rev
