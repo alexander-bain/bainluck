@@ -1430,7 +1430,12 @@ class LedgerRegistry(PreviewRegistry):
     def _evict(self) -> list[dict]:
         ops: list[dict] = []
         while len(self._events) > self.max_events:
-            event_id, state = self._events.popitem(last=False)
+            # Prefer LRU context that has no work or same-value expiry proof.
+            # If every context carries either, retain the bounded LRU fallback.
+            event_id = next((eid for eid, candidate in self._events.items()
+                             if not candidate.pending and not candidate.expired
+                             and not candidate.expired_through), next(iter(self._events)))
+            state = self._events.pop(event_id)
             for name, entry in state.pending.items():
                 self._chains.pop((event_id, name), None)
                 ops.append(self._settle_op(event_id, name, entry.seq, "evicted"))
