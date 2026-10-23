@@ -183,7 +183,21 @@ _BRANCH_MARKET_ROSTER = "market_roster"
 #: market page runs. It reports through the same two reason prefixes so the
 #: completion path treats it exactly like a branch: `branch_deferred:` is an IOU
 #: the unbudgeted rebuild pays, `branch_timeout:` is a real expiry.
+#:
+#: #11534: and unlike a branch it FAILS CLOSED. A missing branch is content the
+#: page lacks; a missing screen is a price the page should not print. So a screen
+#: that is deferred, times out or fails withholds every market it would have
+#: judged — the IOU is then owed for content, never paid in wrong numbers.
 _BRANCH_PRICE_SCREEN = "price_screen"
+
+#: #11534: the slice of `_READER_BUDGET_MS` the fetch branches leave for the
+#: screen. Without it the roster probe — started, then cancelled by whatever is
+#: LEFT — spent the whole budget on every rostered team, so every cold NFL build
+#: deferred the screen (Steelers, Patriots, Chiefs, 2026-10-23, all
+#: `branch_deferred:price_screen`). The screen is a reload of the family markets
+#: by id plus at most four indexed reads (`withheld_price_outcome_ids_for_markets`);
+#: the roster probe it is taken from never finishes inside the budget anyway.
+_PRICE_SCREEN_RESERVE_MS = 750
 
 #: #9610: the side screen, also a step after the fetch branches. It reports a
 #: failure through `branch_timeout:` like the price screen, and it never defers.
@@ -640,11 +654,15 @@ async def build_prop_families(
     # None` is the background path — nobody is waiting, so the per-branch bound
     # is the only bound and behaviour is byte-for-byte what it was.
     _t0 = time.monotonic()
+    # #11534: the branches stop short of the budget by the screen's reserve.
+    _fetch_budget_ms = (
+        None if budget_ms is None else budget_ms - _PRICE_SCREEN_RESERVE_MS
+    )
 
     for _name, _cond in branches:
         _timeout_ms = _BRANCH_TIMEOUT_MS
-        if budget_ms is not None:
-            _remaining = budget_ms - int((time.monotonic() - _t0) * 1000)
+        if _fetch_budget_ms is not None:
+            _remaining = _fetch_budget_ms - int((time.monotonic() - _t0) * 1000)
             if _remaining < _MIN_BRANCH_MS:
                 # NOT started. A cancelled statement still costs its full wait,
                 # so a branch we already know cannot finish is skipped outright
@@ -877,10 +895,16 @@ async def _withhold_refused_prices(
     ("Malik Willis — Philadelphia") leaves the card instead of printing a dash,
     and a family left with fewer than two entities is not emitted at all.
 
-    Returns a loss reason, or None. A failed screen FAILS OPEN — the page keeps
-    today's numbers — and says so in the envelope, so the build is partial and
-    never mistaken for full. A board the helper could not read is omitted from
-    its map and served as-is, its own documented failure direction.
+    Returns a loss reason, or None. A screen that did not run FAILS CLOSED
+    (#11534): deferred by the reader budget, expired or failed, it withholds
+    every market it would have judged, and says so in the envelope, so the build
+    is partial and never mistaken for full. It used to fail open, and on every
+    cold build of a rostered team the budget was already spent, so the Steelers
+    page printed ``KXNFLSBMVP-26`` — last season's game — at 50% a leg while
+    ``/api/futures/479`` withheld all 79 legs. A blank Prop Races is the honest
+    answer to "we could not check these prices"; the rebuild scheduled behind a
+    partial fills it in. A board the helper could not read is omitted from its
+    map and served as-is, its own documented failure direction.
     """
     ids = sorted(mid for mid, m in by_market.items() if resolve_family_key(m))
     if not ids:
@@ -889,6 +913,7 @@ async def _withhold_refused_prices(
     if budget_ms is not None:
         remaining = budget_ms - int((time.monotonic() - t0) * 1000)
         if remaining < _MIN_BRANCH_MS:
+            _withhold_unscreened(by_market, ids)
             return f"{_REASON_DEFERRED}{_BRANCH_PRICE_SCREEN}"
         timeout_ms = min(remaining, _BRANCH_TIMEOUT_MS)
     try:
@@ -916,6 +941,7 @@ async def _withhold_refused_prices(
             )
         else:
             logger.exception("prop-families: price screen FAILED for team %s", team_id)
+        _withhold_unscreened(by_market, ids)
         return f"{_REASON_TIMEOUT}{_BRANCH_PRICE_SCREEN}"
 
     for mid, refused in withheld.items():
@@ -928,6 +954,12 @@ async def _withhold_refused_prices(
         if not entry["outcomes"]:
             del by_market[mid]
     return None
+
+
+def _withhold_unscreened(by_market: dict[int, dict], ids: list[int]) -> None:
+    """Remove every market the price screen was owed and did not judge (#11534)."""
+    for mid in ids:
+        by_market.pop(mid, None)
 
 
 def _stored_mirror(rc, keys: ConceptCacheKeys) -> tuple[Any, bool]:
