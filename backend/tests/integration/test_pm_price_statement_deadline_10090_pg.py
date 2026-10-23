@@ -46,7 +46,7 @@ async def preview(monkeypatch, private_redis_socket):
 
     async def call(*args):
         result = await client.execute_command(*args)
-        if (args[0] == 'EVAL' and args[3 + int(args[2])] in ('publish', 'revoke')
+        if (args[0] == 'EVAL' and args[4 + int(args[2])] in ('publish', 'revoke')
                 and result and result[0] == b'published'):
             message = await subscriber.get_message(ignore_subscribe_messages=True, timeout=1)
             assert message is not None, 'successful DNPL PUBLISH must reach subscriber'

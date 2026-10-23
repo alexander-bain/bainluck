@@ -1317,6 +1317,7 @@ async def _join_closing_samplers(source: Optional[str], deadline: float) -> int:
 # fallbacks. Unrelated score/metadata JSON must not ride every linked prop row.
 PREPARED_EVENT_FIELDS = (
     "id",
+    "sport_key",
     "home_team_name",
     "away_team_name",
     "status",
@@ -3215,7 +3216,7 @@ class LiveBlendRefresher:
         from copy import deepcopy
         from types import SimpleNamespace
         from sqlalchemy import and_, cast, func, literal, null, or_, select
-        from app.models.models import Event, FuturesMarket, FuturesOutcome
+        from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
         from app.utils.live_blend import MarketOutcomes
         from app.utils.content_understanding import CONTENT_UNDERSTANDING_KEY
         from app.utils.prediction_market_matching import (
@@ -3283,7 +3284,8 @@ class LiveBlendRefresher:
         # canary event in this batch: any other read is the statement it was.
         preview_columns = (
             (Event.win_probability_sources.label("preview_sources"),
-             Event.win_probability_sources_rev.label("preview_rev"))
+             Event.win_probability_sources_rev.label("preview_rev"),
+             func.statement_timestamp().label("preview_context_at"))
             if not getattr(self, "preview_events", frozenset()).isdisjoint(event_ids)
             else ()
         )
@@ -3297,7 +3299,8 @@ class LiveBlendRefresher:
             rows = (
                 await session.execute(
                     select(*(
-                        (cast(null(), Event.win_probability_sources.type)
+                        Sport.key.label("sport_key") if model is Event and key == "sport_key"
+                        else (cast(null(), Event.win_probability_sources.type)
                          if preview_columns else
                          Event.win_probability_sources.op("->")(literal(self.source))).label(key)
                         if model is Event and key == "win_probability_sources"
@@ -3314,6 +3317,7 @@ class LiveBlendRefresher:
                     ))
                     .select_from(FuturesMarket)
                     .join(Event, Event.id == FuturesMarket.event_id)
+                    .outerjoin(Sport, Sport.id == Event.sport_id)
                     .outerjoin(FuturesOutcome, outcome_join)
                     .where(
                         FuturesMarket.source == self.source,
@@ -3350,15 +3354,16 @@ class LiveBlendRefresher:
                         # transferring/decoding its source again on every row.
                         # Preserve the two independently decoded JSON owners,
                         # copying only once per event, including nested values.
-                        full_sources = row[-2]
+                        full_sources = row[-3]
                         source_value = (deepcopy(full_sources.get(self.source))
                                         if isinstance(full_sources, dict) else None)
                     context["win_probability_sources"] = {self.source: source_value}
                     if preview_columns:
                         # Trailing columns; the outcome slice below zips by
                         # field name, so they never reach an outcome row.
-                        context["preview_sources"] = row[-2]
-                        context["preview_rev"] = row[-1]
+                        context["preview_sources"] = row[-3]
+                        context["preview_rev"] = row[-2]
+                        context["preview_context_at"] = row[-1]
                         context["preview_read_ticket"] = preview_ticket
                     grouped[event_id] = (
                         SimpleNamespace(**context),
@@ -5116,6 +5121,22 @@ class LiveBlendRefresher:
                 ticket, candidates, idle = await self._preview_ticket(include_candidates=True)
                 if ticket is None or not candidates:
                     return
+                # Account a bounded set without changing lifecycle or display
+                # authority. Older/unclassified context is first in Redis's
+                # persisted ordering, so restarts do not restart the migration.
+                await self._classify_preview_residents(ticket, candidates[:32])
+                ticket, candidates, idle = await self._preview_ticket(include_candidates=True)
+                if ticket is None:
+                    return
+                for eid in [eid for eid in candidates if eid in idle][:8]:
+                    await self._retire_policy_preview_event(eid, ticket)
+                    ticket, _ = await self._preview_ticket()
+                    if ticket is None:
+                        return
+                # Policy retirement changed the barrier and resident hints.
+                ticket, candidates, idle = await self._preview_ticket(include_candidates=True)
+                if ticket is None or not candidates:
+                    return
                 factory = self._session_factory or get_task_session
                 # Fetch existence and retirement eligibility together. This is
                 # a fresh statement after the ticket, never cached slate data.
@@ -5170,6 +5191,65 @@ class LiveBlendRefresher:
             self.preview_stats["publish_errors"] += 1
             logger.warning("live_blend_refresh[%s]: preview capacity maintenance incomplete",
                            self.source, exc_info=True)
+
+    @staticmethod
+    def _reservation_context_query(event_ids):
+        from sqlalchemy import func, select
+        from app.models.models import Event, Sport
+
+        # Lock event context, not the nullable side of the sport lookup. The
+        # canonical key comes from Event.sport_id -> Sport.key, never a market
+        # hint or a competing tier table. SKIP LOCKED is absence of proof.
+        return (select(Event.id, Event.status, Event.commence_time, Event.completed_at,
+                       Event.win_probability_sources_rev.label("preview_rev"),
+                       Sport.key.label("sport_key"),
+                       func.statement_timestamp().label("preview_context_at"))
+                .outerjoin(Sport, Sport.id == Event.sport_id)
+                .where(Event.id.in_(event_ids))
+                .with_for_update(of=Event, read=True, skip_locked=True))
+
+    async def _classify_preview_residents(self, ticket: int, event_ids: list[int]) -> None:
+        from types import SimpleNamespace
+        from app.tasks.base import get_task_session
+        from app.utils.blend_preview import registry
+
+        factory = self._session_factory or get_task_session
+        async with self._session_slot(), factory() as session:
+            rows = (await session.execute(self._reservation_context_query(event_ids[:32]))).all()
+            ops = []
+            for row in rows:
+                context = SimpleNamespace(**dict(row._mapping))
+                op = registry().classify(context.id, self.source, context,
+                                         context.preview_rev, ticket)
+                if op is not None:
+                    ops.append(op)
+            # Keep fresh context locked until Redis has acknowledged accounting.
+            await self._prepare_ledger_previews(ops)
+
+    async def _retire_policy_preview_event(self, event_id: int, ticket: int) -> None:
+        """Fresh locked policy proof, separate from future-idle lifecycle proof.
+
+        Redis checks every contributor's owner/deadline atomically and only
+        reclaims a charged full/debt bucket. No valid preview is evicted.
+        Cancellation has the same bounded cross-store ambiguity as idle
+        maintenance: a sent Redis command may finish after the lock releases.
+        """
+        from types import SimpleNamespace
+        from app.tasks.base import get_task_session
+        from app.utils.blend_preview import registry
+
+        factory = self._session_factory or get_task_session
+        frames = []
+        async with self._session_slot(), factory() as session:
+            row = (await session.execute(self._reservation_context_query([event_id]))).first()
+            if row is None:
+                return
+            context = SimpleNamespace(**dict(row._mapping))
+            op = registry().retire_policy(event_id, self.source, context,
+                                         context.preview_rev, ticket)
+            if op is not None:
+                frames = await self._prepare_ledger_previews([op])
+        await self._publish_previews(frames)
 
     async def _retire_idle_preview_event(self, event_id: int, ticket: int) -> None:
         """Skip busy rows; hold fresh future-scheduled proof through mutation.
