@@ -5,6 +5,12 @@ import SwiftUI
 struct LeagueGridView: View {
     let slug: String
     @StateObject private var viewModel: LeagueGridViewModel
+    #if os(macOS)
+    @EnvironmentObject private var pinManager: PinManager
+    private var macPinManager: PinManager? { pinManager }
+    #else
+    private var macPinManager: PinManager? { nil }
+    #endif
 
     init(slug: String) {
         self.slug = slug
@@ -165,6 +171,7 @@ struct LeagueGridView: View {
                             NavigationLink(value: Route.futuresDetail(id: market.id)) {
                                 leagueMarketRow(market)
                             }
+                            .macHubAndGridRowMenu(.futuresDetail(id: market.id), pinManager: macPinManager)
                         }
                         if markets.count > 8 {
                             Text("+\(markets.count - 8) more")

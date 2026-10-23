@@ -17,6 +17,12 @@ struct TournamentHubView: View {
     let displayName: String
 
     @StateObject private var vm: TournamentHubViewModel
+    #if os(macOS)
+    @EnvironmentObject private var pinManager: PinManager
+    private var macPinManager: PinManager? { pinManager }
+    #else
+    private var macPinManager: PinManager? { nil }
+    #endif
 
     init(slug: String, displayName: String) {
         self.slug = slug
@@ -31,7 +37,7 @@ struct TournamentHubView: View {
                 TournamentHubLoadingView()
             case .loaded(let presentation):
                 ScrollView {
-                    TournamentHubSurface(presentation: presentation)
+                    TournamentHubSurface(presentation: presentation, pinManager: macPinManager)
                         .padding(.horizontal, 18)
                         .padding(.vertical, 16)
                         .frame(maxWidth: 900, alignment: .leading)
@@ -59,6 +65,7 @@ struct TournamentHubView: View {
 
 struct TournamentHubSurface: View {
     let presentation: TournamentHubPresentation
+    var pinManager: PinManager? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -74,7 +81,7 @@ struct TournamentHubSurface: View {
                         TournamentHubNote(text: note)
                     } else {
                         VStack(spacing: 10) {
-                            ForEach(presentation.liveMatches) { TournamentHubMatchCard(row: $0) }
+                            ForEach(presentation.liveMatches) { TournamentHubMatchCard(row: $0, pinManager: pinManager) }
                         }
                     }
                 }
@@ -84,7 +91,7 @@ struct TournamentHubSurface: View {
                         TournamentHubNote(text: note)
                     } else {
                         VStack(spacing: 10) {
-                            ForEach(presentation.upcomingMatches) { TournamentHubMatchCard(row: $0) }
+                            ForEach(presentation.upcomingMatches) { TournamentHubMatchCard(row: $0, pinManager: pinManager) }
                         }
                     }
                 }
@@ -105,7 +112,7 @@ struct TournamentHubSurface: View {
                         TournamentHubNote(text: note)
                     } else {
                         VStack(spacing: 10) {
-                            ForEach(presentation.results) { TournamentHubResultCard(row: $0) }
+                            ForEach(presentation.results) { TournamentHubResultCard(row: $0, pinManager: pinManager) }
                         }
                     }
                 }
@@ -196,6 +203,7 @@ private struct TournamentHubNote: View {
 
 private struct TournamentHubMatchCard: View {
     let row: TournamentHubPresentation.MatchRow
+    var pinManager: PinManager? = nil
 
     var body: some View {
         // Only a match that resolves to an event page becomes a link. A row that
@@ -207,6 +215,7 @@ private struct TournamentHubMatchCard: View {
                 card(showsChevron: true)
             }
             .buttonStyle(.plain)
+            .macHubAndGridRowMenu(.eventDetail(id: eventId), pinManager: pinManager)
         } else {
             card(showsChevron: false)
         }
@@ -272,6 +281,7 @@ private struct TournamentHubMatchCard: View {
 
 private struct TournamentHubResultCard: View {
     let row: TournamentHubPresentation.ResultRow
+    var pinManager: PinManager? = nil
 
     var body: some View {
         if let eventId = row.eventId {
@@ -279,6 +289,7 @@ private struct TournamentHubResultCard: View {
                 card(showsChevron: true)
             }
             .buttonStyle(.plain)
+            .macHubAndGridRowMenu(.eventDetail(id: eventId), pinManager: pinManager)
         } else {
             card(showsChevron: false)
         }
