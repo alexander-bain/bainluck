@@ -700,6 +700,8 @@ struct EventDetailView: View {
                             afterProps: AfterPropsMatrixLayout.drawable(vm.gameMarkets?.afterPlayerProps),
                             gameEnded: isFinished
                                 || AfterPropsMatrixLayout.drawable(vm.gameMarkets?.afterPlayerProps) != nil,
+                            // #10236 — the page's one display clock.
+                            displayAsOf: displayAsOf,
                             onDetailPresentationChanged: { presented in
                                 if presented {
                                     duringPageAnchor.capture(eventID: eventId)
