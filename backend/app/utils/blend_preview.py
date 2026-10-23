@@ -411,7 +411,7 @@ if op == 'read_ticket' or op == 'capacity_ticket' then
     end)
     return {'ok', decimal(barrier), cjson.encode(candidates), cjson.encode(idle),
       cjson.encode({unclassified=unclassified, debt=debt(), compatible=compatible,
-        ready=compatible and unclassified == 0 and debt() == 0, counts=counts})}
+        ready=compatible and unclassified == 0 and debt() == 0, counts=counts}), decimal(now)}
   end
   return out
 end
@@ -706,6 +706,9 @@ if op == 'terminal' then
 end
 -- Eligible rows may release idle residency without becoming terminal.
 if op == 'retire_idle' or op == 'retire_policy' then
+  local deadline = uint(ARGV[op == 'retire_policy' and 10 or 8])
+  if not deadline then return {'malformed'} end
+  if now >= deadline then return {'late'} end
   local ctx, ticket = uint(ARGV[6]), uint(ARGV[7])
   if not ctx or not ticket then return {'malformed'} end
   if not compatible then return {'legacy_owner'} end
@@ -1399,7 +1402,7 @@ class LedgerRegistry(PreviewRegistry):
             return None, []
         return int(reply[1]), [int(eid) for eid in reply[2:]]
 
-    async def capacity_ticket(self, call, source: str) -> tuple[Optional[int], list[int], set[int]]:
+    async def capacity_ticket(self, call, source: str) -> tuple[Optional[int], list[int], set[int], Optional[int]]:
         """One bounded resident/idle hint, before the maintenance DB statement.
 
         The idle hint never authorizes deletion: retire_idle checks it again.
@@ -1407,10 +1410,10 @@ class LedgerRegistry(PreviewRegistry):
         """
         claim = self.claims.get(source)
         if claim is None:
-            return None, [], set()
+            return None, [], set(), None
         reply = await self._eval(call, "capacity_ticket", source, claim, "", " ".join(self.sources))
         if reply[0] != "ok":
-            return None, [], set()
+            return None, [], set(), None
         self.capacity_status = json.loads(reply[4])
         self.capacity_status["shared_ready"] = self.capacity_status["ready"]
         self.capacity_status["local"] = self.local_capacity_status
@@ -1420,12 +1423,12 @@ class LedgerRegistry(PreviewRegistry):
             logger.warning("blend_preview reservation migration pending source=%s status=%s",
                            source, self.capacity_status)
         return int(reply[1]), [int(eid) for eid in json.loads(reply[2])], {
-            int(eid) for eid in json.loads(reply[3])}
+            int(eid) for eid in json.loads(reply[3])}, int(reply[5])
 
-    def retire_idle(self, event_id: int, source: str, rev: int, ticket: int) -> dict:
+    def retire_idle(self, event_id: int, source: str, rev: int, ticket: int, deadline_ms: int) -> dict:
         """Locked fresh future-scheduled DB proof for a resident with no valid pending metadata."""
         return {"ledger_op": "retire_idle", "event_id": int(event_id), "source": source,
-                "ctx_rev": rev, "read_ticket": ticket}
+                "ctx_rev": rev, "read_ticket": ticket, "deadline_ms": deadline_ms}
 
     def classify(self, event_id: int, source: str, event: Any, rev: int, ticket: int) -> dict | None:
         from app.utils.preview_reservations import reservation_context
@@ -1437,9 +1440,9 @@ class LedgerRegistry(PreviewRegistry):
                 "bucket": context.bucket, "context_clock": context.clock_us,
                 "ctx_rev": rev, "read_ticket": ticket}
 
-    def retire_policy(self, event_id: int, source: str, event: Any, rev: int, ticket: int) -> dict | None:
+    def retire_policy(self, event_id: int, source: str, event: Any, rev: int, ticket: int, deadline_ms: int) -> dict | None:
         op = self.classify(event_id, source, event, rev, ticket)
-        return None if op is None else {**op, "ledger_op": "retire_policy"}
+        return None if op is None else {**op, "ledger_op": "retire_policy", "deadline_ms": deadline_ms}
 
     @property
     def local_capacity_status(self) -> dict:
@@ -1843,9 +1846,10 @@ class LedgerRegistry(PreviewRegistry):
                                      op["context_clock"], op["ctx_rev"], op["read_ticket"])
         elif kind == "retire_policy":
             reply = await self._eval(call, "retire_policy", *common, op["ctx_rev"],
-                                     op["read_ticket"], op["bucket"], op["context_clock"])
+                                     op["read_ticket"], op["bucket"], op["context_clock"], op["deadline_ms"])
         elif kind == "retire_idle":
-            reply = await self._eval(call, "retire_idle", *common, op["ctx_rev"], op["read_ticket"])
+            reply = await self._eval(call, "retire_idle", *common, op["ctx_rev"], op["read_ticket"],
+                                     op["deadline_ms"])
         elif kind == "retire_missing":
             reply = await self._eval(call, "retire_missing", *common, op["read_ticket"])
         elif kind == "retire":

@@ -37,6 +37,11 @@ def context(*, sport=OTHER, status="live", at=0, start=None, ticket=0):
     )
 
 
+async def deadline(rig):
+    _, _, _, now = await rig.k.capacity_ticket(rig.call, "kalshi")
+    return now + 1000
+
+
 async def ops(
     r,
     reg,
@@ -164,7 +169,7 @@ async def test_full_active_transition_retains_charge_transfers_once_and_fences_s
     )
     await rig.k.prepare(rig.k.refused(1, "kalshi", "settled"), rig.call, rig.stats)
     ticket, _ = await rig.k.read_ticket(rig.call, "kalshi")
-    op = rig.k.retire_policy(1, "kalshi", context(sport=T1, at=2), 10, ticket)
+    op = rig.k.retire_policy(1, "kalshi", context(sport=T1, at=2), 10, ticket, await deadline(rig))
     assert await rig.k.prepare([op], rig.call, rig.stats)
     await classify(rig, 300, sport=T1, at=3)
     await classify(rig, 300, sport=T1, at=3)
@@ -297,7 +302,7 @@ async def test_debt_preserves_deadline_consumes_progress_and_denies_sibling_open
     assert await rig.hget("e:1:m:polymarket") is None
     ticket, _ = await rig.k.read_ticket(rig.call, "kalshi")
     await rig.k.prepare(
-        [rig.k.retire_policy(99, "kalshi", context(at=2), 10, ticket)],
+        [rig.k.retire_policy(99, "kalshi", context(at=2), 10, ticket, await deadline(rig))],
         rig.call,
         rig.stats,
     )
@@ -306,7 +311,7 @@ async def test_debt_preserves_deadline_consumes_progress_and_denies_sibling_open
     assert await rig.hget("e:1:m:kalshi") == before
     ticket, _ = await rig.k.read_ticket(rig.call, "kalshi")
     assert not await rig.k.prepare(
-        [rig.k.retire_policy(1, "kalshi", context(at=3), 11, ticket)],
+        [rig.k.retire_policy(1, "kalshi", context(at=3), 11, ticket, await deadline(rig))],
         rig.call,
         rig.stats,
     )
@@ -318,7 +323,7 @@ async def test_debt_preserves_deadline_consumes_progress_and_denies_sibling_open
     through = dict(rig.k._events[1].expired_through)
     ticket, _ = await rig.k.read_ticket(rig.call, "kalshi")
     await rig.k.prepare(
-        [rig.k.retire_policy(1, "kalshi", context(at=4), 11, ticket)],
+        [rig.k.retire_policy(1, "kalshi", context(at=4), 11, ticket, await deadline(rig))],
         rig.call,
         rig.stats,
     )
@@ -387,7 +392,7 @@ async def test_demotion_or_postponement_cannot_renew_or_replace_borrowed_high_sl
     rig.k._clock = lambda: 60
     await rig.k.prepare(rig.k.expire(), rig.call, rig.stats)
     ticket, _ = await rig.k.read_ticket(rig.call, "kalshi")
-    op = rig.k.retire_policy(1, "kalshi", context(at=3, **kwargs), 11, ticket)
+    op = rig.k.retire_policy(1, "kalshi", context(at=3, **kwargs), 11, ticket, await deadline(rig))
     await rig.k.prepare([op], rig.call, rig.stats)
     assert await rig.hget("e:1:gen") is None
     assert await rig.hget("r:count:0") == "0"
@@ -440,7 +445,7 @@ async def test_policy_retirement_ack_preserves_expiry_proof_and_newer_work(
     old = rig.k._events[1].pending["kalshi"]
     await rig.clock(1_060_000)
     ticket, _ = await rig.k.read_ticket(rig.call, "kalshi")
-    retirement = rig.k.retire_policy(1, "kalshi", context(at=2), 10, ticket)
+    retirement = rig.k.retire_policy(1, "kalshi", context(at=2), 10, ticket, await deadline(rig))
     original_eval = rig.k._eval
 
     async def delayed_ack(call, operation, *args):

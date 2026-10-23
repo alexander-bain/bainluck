@@ -49,6 +49,14 @@ async def actors(rig, redis_kwargs, monkeypatch):
         await client.aclose()
 
 
+async def retire_policy(worker, registry, client, eid, ticket):
+    import asyncio
+    _, _, _, now = await registry.capacity_ticket(client.execute_command, worker.source)
+    await worker._retire_policy_preview_event(
+        eid, ticket, now + 1000, asyncio.get_running_loop().time() + 1,
+    )
+
+
 async def graph(rig, worker, ids):
     async with rig.maker() as session:
         return await worker._read_groups(session, ids)
@@ -94,14 +102,14 @@ async def test_bounded_legacy_classification_progress_survives_restart(rig, acto
     for eid in range(1, 36):
         values.update({f"e:{eid}:gen": "2", f"e:{eid}:seq": "1"})
     await client.hset(bp.LEDGER_KEY, mapping=values)
-    ticket, candidates, _ = await registry.capacity_ticket(
+    ticket, candidates, _, _ = await registry.capacity_ticket(
         client.execute_command, "polymarket"
     )
     await worker._classify_preview_residents(ticket, candidates)
     assert await h(client, "r:unclassified") == "3"
     replacement = bp.LedgerRegistry(sources=SOURCES, policy=registry.policy)
     await replacement.claim(client.execute_command, "polymarket")
-    ticket, candidates, _ = await replacement.capacity_ticket(
+    ticket, candidates, _, _ = await replacement.capacity_ticket(
         client.execute_command, "polymarket"
     )
     assert set(candidates[:3]) == {33, 34, 35}
@@ -132,10 +140,10 @@ async def test_policy_retirement_skips_locked_active_row_then_reclaims_clean_con
     ticket, _ = await registry.read_ticket(client.execute_command, "polymarket")
     async with rig.maker() as held:
         await held.execute(text("SELECT id FROM events WHERE id=1 FOR UPDATE"))
-        await worker._retire_policy_preview_event(1, ticket)
+        await retire_policy(worker, registry, client, 1, ticket)
         assert await h(client, "e:1:gen") is not None
         await held.rollback()
-    await worker._retire_policy_preview_event(1, ticket)
+    await retire_policy(worker, registry, client, 1, ticket)
     assert await h(client, "e:1:gen") is None
     async with rig.maker() as session:
         assert (
@@ -187,7 +195,7 @@ async def test_locked_policy_proof_rechecks_sibling_pending_and_holds_lock_throu
 
     monkeypatch.setattr(worker, "_prepare_ledger_previews", race)
     ticket, _ = await registry.read_ticket(client.execute_command, "polymarket")
-    await worker._retire_policy_preview_event(1, ticket)
+    await retire_policy(worker, registry, client, 1, ticket)
     assert witnessed == [True]
     assert await h(client, "e:1:gen") is not None
     assert await h(client, "e:1:m:kalshi") is not None
