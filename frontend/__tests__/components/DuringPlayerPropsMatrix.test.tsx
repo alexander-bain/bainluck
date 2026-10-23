@@ -18,7 +18,7 @@ const data: DuringPlayerProps = {
 test("semantic matrix names player/stat/threshold/zero chance and accurate loaded coverage", () => {
   const html = renderToStaticMarkup(<DuringPlayerPropsMatrix data={data} />);
   expect(html).toContain('aria-label="Aaron Judge, Hits, 2+, 0% chance"');
-  expect(html).toContain("1 player · 1 question loaded"); expect(html).not.toContain("90 players");
+  expect(html).toContain("1 player · 1 prop line loaded"); expect(html).not.toContain("90 players");
   expect(html).toContain('scope="row"'); expect(html).toContain("sticky left-0");
   expect(html).toContain("text-[22px]"); expect(html).toContain("min-h-[72px]");
 });
@@ -78,6 +78,22 @@ test("deployed under-to-over relation is navigable from both exact details with 
 });
 test("withdrawn selection stays unavailable and unsupported/null fallback renders nothing", () => {
   const html = renderToStaticMarkup(<DuringPlayerPropsMatrix data={{ ...data, rows: [] }} initialSelection={selectQuestion(row)} />);
-  expect(html).toContain("This question isn&#x27;t available right now.");
+  expect(html).toContain("This prop line isn&#x27;t available right now.");
   expect(renderToStaticMarkup(<DuringPlayerPropsMatrix data={null} />)).toBe("");
+});
+test("#10877: reader copy names prop lines, never the internal 'question' noun", () => {
+  // Every reader-facing branch: loaded footer, under-only cell label, empty statistic,
+  // withdrawn selection (heading + status) and an open line's detail sheet.
+  const under: DuringPropsRow = { ...row, question_key: "under-key", predicate: { kind: "count_at_most", count: 1, side: "under", label: "1 or fewer" } };
+  const silent: DuringPropsRow = { ...row, contributors: [] };
+  const pages = [
+    renderToStaticMarkup(<DuringPlayerPropsMatrix data={{ ...data, rows: [row, under] }} />),
+    renderToStaticMarkup(<DuringPlayerPropsMatrix data={{ ...data, stats: [...data.stats, { ...data.stats[0], stat_key: "runs", label: "Runs" }] }} initialStatKey="runs" />),
+    renderToStaticMarkup(<DuringPlayerPropsMatrix data={{ ...data, rows: [] }} initialSelection={selectQuestion(row)} />),
+    renderToStaticMarkup(<DuringPlayerPropsMatrix data={{ ...data, rows: [silent] }} initialSelection={selectQuestion(silent)} />),
+  ];
+  expect(pages[0]).toContain("1 player · 2 prop lines loaded"); expect(pages[0]).toContain(", exact under line available");
+  expect(pages[1]).toContain("No prop lines for this statistic are currently available.");
+  expect(pages[2]).toContain("Prop line unavailable");
+  for (const html of pages) expect(html.replace(/\sdata-[a-z-]+="[^"]*"/g, "")).not.toMatch(/question/i);
 });
