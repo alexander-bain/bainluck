@@ -129,7 +129,7 @@ final class LiveEventStreamTransport: LiveStreamHandle {
         retryDelay: TimeInterval = LiveEventStreamTransport.defaultRetryDelay,
         firstRetryDelay: TimeInterval = LiveEventStreamTransport.defaultFirstRetryDelay
     ) throws {
-        let capability = foldedPreviews ? "?preview_protocol=folded-v1" : ""
+        let capability = foldedPreviews ? "?preview_protocol=folded-v2" : ""
         guard let url = URL(string: "\(baseURL)/api/events/\(eventId)/stream\(capability)") else {
             throw URLError(.badURL)
         }
