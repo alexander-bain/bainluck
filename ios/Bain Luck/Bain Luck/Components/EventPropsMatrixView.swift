@@ -201,10 +201,15 @@ struct EventPropsMatrixView: View {
             } label: {
                 VStack(spacing: 1) {
                     let current = row.current.currentProbability(now: now)
-                    Text(EventPropsMatrixLayout.cellText(row, now: now))
+                    let text = EventPropsMatrixLayout.cellText(row, now: now)
+                    Text(text)
                         .font(.subheadline.monospacedDigit())
                         .fontWeight(current == nil ? .regular : .semibold)
                         .foregroundStyle(current == nil ? Color.secondary : Color.primary)
+                        // #10236 — "No update" is two words in a cell sized for
+                        // "39%": it wraps onto two lines rather than print "No upda…".
+                        .lineLimit(text == EventPropsMatrixLayout.staleCellText ? 2 : 1)
+                        .multilineTextAlignment(.center)
                     if let change = EventPropsMatrixLayout.changeText(row, now: now) {
                         Text(change)
                             .font(.caption2.monospacedDigit())

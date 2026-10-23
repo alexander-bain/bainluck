@@ -1395,30 +1395,9 @@ struct MarketMapView: View {
 
             // Summary tiles
             if !markers.isEmpty {
-                HStack(spacing: 8) {
-                    ForEach(markers) { m in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(m.label)
-                                .font(.caption2.weight(.heavy))
-                                .foregroundStyle(.secondary)
-                                .tracking(0.5)
-                            Text(m.displayValue)
-                                .font(.subheadline.weight(.black))
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.secondary.opacity(0.04))
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                        .overlay(alignment: .bottom) {
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(m.type.dotColor)
-                                .frame(height: 3)
-                                .padding(.horizontal, 4)
-                        }
-                    }
-                }
+                MarketMapSummaryTiles(tiles: markers.map {
+                    .init(id: $0.id, label: $0.label, value: $0.displayValue, accent: $0.type.dotColor)
+                })
             }
 
             // #4671 — the rail and its axis are ONE thing and are withheld
@@ -1937,5 +1916,60 @@ struct MarketMapAxisRow: Layout {
         place(subviews[0], frames.left)
         if let mid = frames.mid { place(subviews[1], mid) }
         place(subviews[subviews.count - 1], frames.right)
+    }
+}
+
+/// The map's summary tiles ("ACTUAL · DEN by 3", "SPORTSBOOK PROJECTION · OKC
+/// by about 2").
+///
+/// #9483 — side by side only when every tile's whole label and value fit on one
+/// line; otherwise stacked at full width, the words wrapping. The fixed row cut
+/// the projection to "OKC by abo…" at XXXL and both figures to "DEN…" / "OK…"
+/// at AX5: a forecast with its number cut off.
+struct MarketMapSummaryTiles: View {
+    struct Tile: Identifiable {
+        let id: String
+        let label: String
+        let value: String
+        let accent: Color
+    }
+
+    let tiles: [Tile]
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                ForEach(tiles) { tile($0, wraps: false) }
+            }
+            VStack(spacing: 8) {
+                ForEach(tiles) { tile($0, wraps: true) }
+            }
+        }
+    }
+
+    /// Unwrapped, each line is held at its full width, so the row is only
+    /// chosen when it really fits and can never take width out of a word.
+    private func tile(_ tile: Tile, wraps: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(tile.label)
+                .font(.caption2.weight(.heavy))
+                .foregroundStyle(.secondary)
+                .tracking(0.5)
+                .fixedSize(horizontal: !wraps, vertical: true)
+            Text(tile.value)
+                .font(.subheadline.weight(.black))
+                .fixedSize(horizontal: !wraps, vertical: true)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(alignment: .bottom) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(tile.accent)
+                .frame(height: 3)
+                .padding(.horizontal, 4)
+        }
     }
 }
