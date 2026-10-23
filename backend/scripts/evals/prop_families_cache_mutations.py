@@ -145,7 +145,7 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         # replacement here would sit in this file as a byte-for-byte copy of a
         # SIBLING harness's mutant and Pass B would report it as residue. That is
         # LAT-P136's finding, applied before the scan had to find it again.
-        'PROP_FAMILIES_CACHE_PREFIX = "bainluck:prop_families:"',
+        'PROP_FAMILIES_CACHE_PREFIX = "bainluck:prop_families:v2:"',
         'PROP_FAMILIES_CACHE_PREFIX = "bainluck:typeahead:"',
     ),
     # -- the ladder -----------------------------------------------------------

@@ -308,7 +308,15 @@ def _roster_player_names(team: Team) -> list[str]:
 # mirror, same single-flight refresh lock, same "an empty build never overwrites
 # a good mirror" ordering.
 
-PROP_FAMILIES_CACHE_PREFIX = "bainluck:prop_families:"
+#: 🔴 VERSIONED, AND BUMPED WHEN WHAT A BUILD MAY SERVE NARROWS (#11534). The
+#: 24h mirror outlives the 15-minute primary, and a partial build never replaces
+#: a mirror that reads `full` (CERT-480). So a mirror written BEFORE a withholding
+#: rule shipped is served again on every primary miss for up to a day — on
+#: 2026-10-23 the Patriots' 17:22Z mirror still carried `KXNFLSBMVP-26` (last
+#: season's Super Bowl MVP, 18 legs) after the fix went live, because every
+#: rebuild since loses its roster branches and lands `partial`. A new prefix
+#: makes every pre-fix entry a miss; the old keys expire on their own TTL.
+PROP_FAMILIES_CACHE_PREFIX = "bainluck:prop_families:v2:"
 
 #: How fresh a *live* hit is. Prop families are season-long questions ("Next
 #: Team", MVP races, threshold ladders) whose probabilities move on the futures
