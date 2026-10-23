@@ -1,4 +1,8 @@
 import XCTest
+#if os(macOS)
+import AppKit
+import SwiftUI
+#endif
 @testable import Bain_Luck
 
 /// #4939 (M1 under #4931) — Check one explicitly selected game's score, state,
@@ -476,6 +480,161 @@ final class MacMenuBarSelectedGame4939Tests: XCTestCase {
         XCTAssertTrue(source.contains("mac-menubar-clear-game"))
         XCTAssertTrue(source.contains("mac-menubar-retry"))
     }
+
+    #if os(macOS)
+    func testMenuBarViewOffscreenRenderedStatesProduceNonEmptyBitmaps() async throws {
+        let fixedNow = try XCTUnwrap(ISO8601Stamp.date("2026-10-22T20:00:00Z"))
+        let liveNBA = Self.makeLiveTwoWaySnapshot(id: 501, awayScore: 102, homeScore: 98)
+        let staleSoccer = MacMenuBarGameSnapshot4939(
+            id: 502,
+            sportKey: "soccer_epl",
+            sportLabel: "EPL",
+            awayTeam: "Arsenal FC",
+            homeTeam: "Liverpool FC",
+            awayAbbrev: "Arsenal FC",
+            homeAbbrev: "Liverpool FC",
+            status: "live",
+            commenceTime: "2026-10-22T19:00:00Z",
+            startIsTbd: false,
+            awayScore: 1,
+            homeScore: 1,
+            liveClockText: "67'",
+            awayWinPercent: nil,
+            homeWinPercent: 48,
+            winnerMarketPricesADraw: true,
+            heroSettledResult: nil,
+            venueSettled: nil,
+            venueSettledResult: nil,
+            venueClosedNoWinner: nil,
+            scoreObservedAt: "2026-10-22T19:45:00Z",
+            probabilityObservedAt: "2026-10-22T19:45:00Z"
+        )
+        let scheduledMissingScores = MacMenuBarDebugFixtures4939.scheduledMissingScoresGame
+        let finalCompleted = MacMenuBarDebugFixtures4939.finalCompletedGame
+
+        // 1. Live 2-way NBA game selected
+        let liveStore = MacMenuBarSelectedGameStore4939(
+            dataSource: MockMacMenuBarDataSource4939(selectedByID: [501: liveNBA], candidates: [liveNBA]),
+            defaults: defaults,
+            now: { fixedNow }
+        )
+        liveStore.selectGame(liveNBA)
+        await liveStore.refresh()
+
+        // 2. Live 3-way soccer game with stale source
+        let soccerDefaults = UserDefaults(suiteName: "\(suiteName!).soccer")!
+        soccerDefaults.removePersistentDomain(forName: "\(suiteName!).soccer")
+        let soccerStore = MacMenuBarSelectedGameStore4939(
+            dataSource: MockMacMenuBarDataSource4939(selectedByID: [502: staleSoccer], candidates: [staleSoccer]),
+            defaults: soccerDefaults,
+            now: { fixedNow }
+        )
+        soccerStore.selectGame(staleSoccer)
+        await soccerStore.refresh()
+
+        // 3. Scheduled game with missing scores ("—")
+        let schedDefaults = UserDefaults(suiteName: "\(suiteName!).sched")!
+        schedDefaults.removePersistentDomain(forName: "\(suiteName!).sched")
+        let schedStore = MacMenuBarSelectedGameStore4939(
+            dataSource: MockMacMenuBarDataSource4939(
+                selectedByID: [scheduledMissingScores.id: scheduledMissingScores],
+                candidates: [scheduledMissingScores]
+            ),
+            defaults: schedDefaults,
+            now: { fixedNow }
+        )
+        schedStore.selectGame(scheduledMissingScores)
+        await schedStore.refresh()
+
+        // 4. Settled final game
+        let finalDefaults = UserDefaults(suiteName: "\(suiteName!).final")!
+        finalDefaults.removePersistentDomain(forName: "\(suiteName!).final")
+        let finalStore = MacMenuBarSelectedGameStore4939(
+            dataSource: MockMacMenuBarDataSource4939(
+                selectedByID: [finalCompleted.id: finalCompleted],
+                candidates: [finalCompleted]
+            ),
+            defaults: finalDefaults,
+            now: { fixedNow }
+        )
+        finalStore.selectGame(finalCompleted)
+        await finalStore.refresh()
+
+        // 5. Unavailable 404 state
+        let unavailDefaults = UserDefaults(suiteName: "\(suiteName!).unavail")!
+        unavailDefaults.removePersistentDomain(forName: "\(suiteName!).unavail")
+        unavailDefaults.set(999, forKey: MacMenuBarSelectedGameStore4939.selectedEventIDKey)
+        let unavailStore = MacMenuBarSelectedGameStore4939(
+            dataSource: MockMacMenuBarDataSource4939(selectedByID: [:], candidates: [liveNBA]),
+            defaults: unavailDefaults,
+            now: { fixedNow }
+        )
+        await unavailStore.refresh()
+
+        // 6. Transient error retaining last-good reading
+        let errorDefaults = UserDefaults(suiteName: "\(suiteName!).error")!
+        errorDefaults.removePersistentDomain(forName: "\(suiteName!).error")
+        let errorDS = MockMacMenuBarDataSource4939(selectedByID: [501: liveNBA], candidates: [liveNBA])
+        let errorStore = MacMenuBarSelectedGameStore4939(
+            dataSource: errorDS,
+            defaults: errorDefaults,
+            now: { fixedNow }
+        )
+        errorStore.selectGame(liveNBA)
+        await errorStore.refresh()
+        errorDS.selectedError = .message("Timed out reaching /api/events/501")
+        await errorStore.refresh()
+
+        // 7. Picker list with candidates
+        let pickerDefaults = UserDefaults(suiteName: "\(suiteName!).picker")!
+        pickerDefaults.removePersistentDomain(forName: "\(suiteName!).picker")
+        let pickerStore = MacMenuBarSelectedGameStore4939(
+            dataSource: MockMacMenuBarDataSource4939(
+                selectedByID: [:],
+                candidates: [liveNBA, staleSoccer, scheduledMissingScores]
+            ),
+            defaults: pickerDefaults,
+            now: { fixedNow }
+        )
+        await pickerStore.refresh()
+
+        let states: [(name: String, store: MacMenuBarSelectedGameStore4939)] = [
+            ("01-selected-live-nba", liveStore),
+            ("02-selected-soccer-3way-stale", soccerStore),
+            ("03-selected-scheduled-missing-scores", schedStore),
+            ("04-selected-settled-final", finalStore),
+            ("05-selected-unavailable-404", unavailStore),
+            ("06-selected-transient-error-retained", errorStore),
+            ("07-picker-candidates", pickerStore),
+        ]
+
+        let outputDir = ProcessInfo.processInfo.environment["MENUBAR_4939_SNAPSHOT_DIR"]
+        if let outputDir {
+            try FileManager.default.createDirectory(
+                at: URL(fileURLWithPath: outputDir),
+                withIntermediateDirectories: true
+            )
+        }
+
+        for (name, stateStore) in states {
+            let rootView = MenuBarView(store: stateStore, enableAutoRefresh: false)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .environment(\.colorScheme, .light)
+            let renderer = ImageRenderer(content: rootView)
+            renderer.scale = 2.0
+            let cgImage = try XCTUnwrap(renderer.cgImage, "Failed to render \(name)")
+            XCTAssertEqual(cgImage.width, 560, "Rendered width at 2x scale should be 560px for \(name)")
+            XCTAssertGreaterThan(cgImage.height, 140, "Rendered height at 2x scale should exceed 140px for \(name)")
+
+            if let outputDir {
+                let rep = NSBitmapImageRep(cgImage: cgImage)
+                let pngData = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+                let url = URL(fileURLWithPath: outputDir).appendingPathComponent("\(name).png")
+                try pngData.write(to: url)
+            }
+        }
+    }
+    #endif
 
     // MARK: - Test Helpers
 

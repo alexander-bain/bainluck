@@ -4,7 +4,18 @@ import SwiftUI
 
 struct MenuBarView: View {
     @Environment(\.openWindow) private var openWindow
-    @StateObject private var store = MenuBarView.makeDefaultStore()
+    @StateObject private var store: MacMenuBarSelectedGameStore4939
+    private let enableAutoRefresh: Bool
+
+    @MainActor
+    init(
+        store: MacMenuBarSelectedGameStore4939? = nil,
+        enableAutoRefresh: Bool = true
+    ) {
+        let resolvedStore = store ?? MenuBarView.makeDefaultStore()
+        _store = StateObject(wrappedValue: resolvedStore)
+        self.enableAutoRefresh = enableAutoRefresh
+    }
 
     var body: some View {
         let now = store.currentInstant
@@ -31,6 +42,7 @@ struct MenuBarView: View {
         .frame(width: 280)
         .padding(.vertical, 4)
         .task {
+            guard enableAutoRefresh else { return }
             store.syncAccount(ownerID: APIClient.persistedLastKnownUserId())
             await store.refresh()
             while !Task.isCancelled {
@@ -40,6 +52,7 @@ struct MenuBarView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+            guard enableAutoRefresh else { return }
             store.syncAccount(ownerID: APIClient.persistedLastKnownUserId())
         }
     }
@@ -155,8 +168,9 @@ struct MenuBarView: View {
                     Button("Retry") {
                         Task { await store.refresh() }
                     }
-                    .buttonStyle(.link)
+                    .buttonStyle(.plain)
                     .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
                     .accessibilityIdentifier("mac-menubar-retry")
                 }
             }
@@ -238,6 +252,13 @@ struct MenuBarView: View {
                 if store.selectedGame != nil {
                     Button("Keep Current") {
                         store.cancelChangingGame()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                } else if store.selectedEventID != nil {
+                    Button("Clear") {
+                        store.clearSelection()
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 10, weight: .medium))
@@ -327,28 +348,35 @@ struct MenuBarView: View {
                     }
                 }
 
-                HStack {
+                HStack(spacing: 4) {
                     Text(game.awayAbbrev)
                         .font(.system(size: 12, weight: .bold))
                         .lineLimit(1)
-                        .frame(width: 48, alignment: .leading)
+                        .minimumScaleFactor(0.85)
+                        .frame(minWidth: 40, maxWidth: 56, alignment: .leading)
                     Text(game.snapshot.awayScoreText)
                         .font(.system(size: 13, weight: .heavy, design: .rounded).monospacedDigit())
-                        .frame(width: 24, alignment: .trailing)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(minWidth: 24, alignment: .trailing)
 
                     Text("–")
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: true, vertical: false)
 
                     Text(game.snapshot.homeScoreText)
                         .font(.system(size: 13, weight: .heavy, design: .rounded).monospacedDigit())
-                        .frame(width: 24, alignment: .leading)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(minWidth: 24, alignment: .leading)
                     Text(game.homeAbbrev)
                         .font(.system(size: 12, weight: .bold))
                         .lineLimit(1)
-                        .frame(width: 48, alignment: .trailing)
+                        .minimumScaleFactor(0.85)
+                        .frame(minWidth: 40, maxWidth: 56, alignment: .trailing)
 
-                    Spacer()
+                    Spacer(minLength: 4)
 
                     // #5363 — a draw-priced sport has no away number to print, and
                     // "—–68" in a 10pt monospaced pair is not a legible absence, so
@@ -359,10 +387,14 @@ struct MenuBarView: View {
                         Text("\(awayProb)–\(game.homeProb)")
                             .font(.system(size: 10, weight: .medium).monospacedDigit())
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     } else {
                         Text("\(game.homeAbbrev) \(game.homeProb)")
                             .font(.system(size: 10, weight: .medium).monospacedDigit())
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                 }
             }
