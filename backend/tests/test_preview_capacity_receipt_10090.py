@@ -135,6 +135,27 @@ async def test_error_keeps_the_incomplete_warning_and_adds_a_receipt(monkeypatch
     assert ' end=error ' in line
 
 
+async def test_counting_fault_never_stops_reclamation(monkeypatch, caplog):
+    rows = [(1, 10, True, 'final', NOW)]
+    rig = _Rig(monkeypatch, tickets=[(7, [1, 2]), (8, [])], rows=rows)
+
+    counts = rig.worker._preview_capacity_counts
+
+    def broken(candidates, rows, now):
+        if rows:
+            raise TypeError('count')
+        return counts(candidates, rows, now)
+
+    monkeypatch.setattr(rig.worker, '_preview_capacity_counts', broken)
+    caplog.set_level(logging.INFO, logger=lbr.__name__)
+    await rig.worker._maintain_preview_capacity()
+    assert rig.retired == [1] and rig.missing == [('retire_missing', 2)]
+    assert rig.worker.preview_stats['publish_errors'] == 0
+    assert any('preview capacity receipt uncounted' in r.getMessage() for r in caplog.records)
+    [line] = _receipts(caplog)
+    assert _fields(line)['end'] == 'done' and _fields(line)['attempted'] == '2'
+
+
 async def test_cancelled_pass_logs_no_receipt(monkeypatch, caplog):
     rig = _Rig(monkeypatch, tickets=[(7, [1])])
     started = asyncio.Event()

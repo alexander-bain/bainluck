@@ -5173,8 +5173,13 @@ class LiveBlendRefresher:
                         self._preview_retirable_row().label("retirable"),
                         Event.status, Event.commence_time, func.now().label("read_at"),
                     ).where(Event.id.in_(candidates)))).all()
-                counts = self._preview_capacity_counts(
-                    candidates, rows, datetime.now(timezone.utc))
+                try:
+                    counts = self._preview_capacity_counts(
+                        candidates, rows, datetime.now(timezone.utc))
+                except Exception:
+                    # Report only: a counting fault never stops reclamation.
+                    logger.warning("live_blend_refresh[%s]: preview capacity receipt uncounted",
+                                   self.source, exc_info=True)
                 present = {row[0]: row for row in rows}
                 def priority(eid):
                     row = present.get(eid)
