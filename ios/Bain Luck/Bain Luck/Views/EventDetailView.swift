@@ -750,9 +750,13 @@ struct EventDetailView: View {
                             homeColor: teamColors(event).home,
                             awayColor: teamColors(event).away,
                             sportKey: event.sport,
-                            homeWinProb: event.currentOdds?.homeProbability,
-                            awayWinProb: event.currentOdds?.awayProbability,
                             homeSpread: event.currentOdds?.homeSpread,
+                            // #9483 — live, the tile reads the headline's own
+                            // admitted pair (the same decision the popover
+                            // opens on) or draws nothing.
+                            liveForecast: revealForecast11296.map {
+                                MarketMapRail.LiveMarginForecast($0.current)
+                            },
                             overUnder: event.currentOdds?.overUnder,
                             // #6290 — the pre-game total, from `opening_odds` and
                             // never from `current_odds`. The two are the same

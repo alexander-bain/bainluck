@@ -39,9 +39,15 @@ struct MarketMapView: View {
     let homeColor: Color
     let awayColor: Color
     let sportKey: String?
-    var homeWinProb: Double?
-    var awayWinProb: Double?
     var homeSpread: Double?
+    /// #9483 / #11296 — the live full-game forecast, from the SAME admitted
+    /// in-play pair the headline prints (`EventDetailView.liveForecast11296`).
+    /// While the game is live this is the ONLY thing the full-game PROJECTION
+    /// tile may read: nil — refused, absent, or a surface that never passes
+    /// one — draws no tile. Never `homeSpread`, which this payload can leave
+    /// nil while carrying a different `spread`, and never the rung nearest a
+    /// coin flip, which is a market threshold and not a projected final.
+    var liveForecast: MarketMapRail.LiveMarginForecast? = nil
     var overUnder: Double?
     /// #6290 — `opening_odds.over_under`, the combined total the market closed
     /// pre-game on. The ONLY number on this payload a `PRE-GAME` tile may name
@@ -392,8 +398,10 @@ struct MarketMapView: View {
         // exactly when the sport declares a unit for it to be in.
         // #8721 — and only where the sportsbooks' spread is a margin at all;
         // baseball's is the ±1.5 run line, which projects nothing.
+        // While live, only the admitted forecast projects (`liveForecast`).
         let hasProjection = vocab.sportsbookSpreadIsAMargin
-            && sportUnitLineApplies(fullMarginData.unit) && homeSpread != nil
+            && sportUnitLineApplies(fullMarginData.unit)
+            && (isLive ? liveForecast != nil : homeSpread != nil)
         let hasScoreTile = scoredHomeScore != nil && scoredAwayScore != nil && (isLive || isDone)
         return !hasProjection && !hasScoreTile
     }
@@ -444,21 +452,14 @@ struct MarketMapView: View {
         let ladder = marginLadders(parsed, settledMargin: settledMargin)
         let fullLadder = marginLadders(parsed, settledMargin: settledMargin, limit: nil)
 
-        // Headline: favored team + win %
-        //
-        // #5271 — which side may be named is `DrawPricedWinner`'s call. Alex
-        // found this header printing `Al-Ittihad 99%` above a match its own
-        // card on the same page priced at 93%: naming the favourite reaches
-        // for `1 − P(home)` every time the home team is the underdog, and on a
-        // three-way market that figure is the away side's chances PLUS the
-        // draw's. A draw-priced sport names home, favourite or not.
-        let headline = Self.marginHeadline(
-            isDone: isDone,
-            side: DrawPricedWinner.headlineSide(
-                away: awayWinProb, home: homeWinProb, sport: sportKey
-            ),
-            homeAbbr: hAbbr, awayAbbr: aAbbr
-        )
+        // #9483 — NO HEADER. It printed the blended winner (`OKC 56%`) over a
+        // ladder of individually sourced venue rungs (`OKC by 1.5+ 62%`): two
+        // inputs that are not one distribution, so the card read as if winning
+        // by more than 1.5 were likelier than winning. The hero carries the
+        // blend; this card cannot substantiate a shared family, so it states
+        // none (Design 2026-10-23). Removing it repairs no data — the rungs
+        // below are still the venues' own exact markets — and settled cards
+        // printed none already (#9336).
 
         // Markers
         var markers: [MapMarker] = []
@@ -467,9 +468,13 @@ struct MarketMapView: View {
         // has carried on the totals side since #3509. Without it a tennis SET
         // margin map would print the books' GAME line as its projection.
         let sportSpread = sportUnitLineApplies(data.unit) ? homeSpread : nil
-        let projValue = Self.marginProjection(
+        // #9483 — the admitted pair is in the sport's unit over the full game,
+        // so it passes the same rail gate as the spread.
+        let sportForecast = sportUnitLineApplies(data.unit) ? liveForecast : nil
+        let projValue = Self.fullGameMarginProjection(
+            isLive: isLive, liveForecast: sportForecast?.margin,
             homeSpread: sportSpread, rungs: parsed,
-            sportsbookSpreadIsAMargin: vocab.sportsbookSpreadIsAMargin, isLive: isLive
+            sportsbookSpreadIsAMargin: vocab.sportsbookSpreadIsAMargin
         )
         if isDone {
             if let homeScoreValue = scoredHomeScore,
@@ -499,13 +504,24 @@ struct MarketMapView: View {
         // (The totals card below is NOT the same shape — its LIVE branch says
         // `PRE-GAME` too — so it is gated separately rather than by a shared
         // helper that would have to know which card it was on.)
-        if MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded), let pv = projValue {
+        // Live, the tile states the headline's projected final margin
+        // ("OKC by about 2"); before the game it quotes a cover line.
+        let projLabel: String? = isLive
+            ? sportForecast.map {
+                MarketMapRail.liveForecastMarginLabel(
+                    homeAbbr: hAbbr, awayAbbr: aAbbr, printedMargin: $0.printedMargin)
+            }
+            : projValue.map {
+                MarketMapRail.projectedMarginLabel(homeAbbr: hAbbr, awayAbbr: aAbbr, margin: $0)
+            }
+        if MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded),
+           let pv = projValue, let projLabel {
             markers.append(MapMarker(
                 id: "proj",
                 value: pv,
                 type: .proj,
                 label: "PROJECTION",
-                displayValue: MarketMapRail.projectedMarginLabel(homeAbbr: hAbbr, awayAbbr: aAbbr, margin: pv)
+                displayValue: projLabel
             ))
         }
 
@@ -551,7 +567,7 @@ struct MarketMapView: View {
                 // `mapCard` withholds the shape (`isDone`).
                 hasDistribution: !isDone && MarketMapRail.marginRailHasDistribution(density: density)
             ),
-            headline: headline,
+            headline: "",
             density: density,
             rangeMin: rangeMin,
             rangeMax: rangeMax,
@@ -1635,28 +1651,6 @@ struct MarketMapView: View {
         return parsed.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) })!.margin
     }
 
-    /// The full-game margin card's header (#9336, the iPhone twin of web
-    /// #6359 + #6853).
-    ///
-    /// A settled card prints NO header. It used to print the last live quote:
-    /// Texans @ Colts (`/events/14782154`, FINAL 17–19) read `IND 93%`, which was
-    /// `current_odds` captured 50 s before the final whistle, over the card's
-    /// own `FINAL · IND by 2` tile and a graded `HIT` rung. On a draw it named
-    /// home at an in-play price. The result is already on the card twice, so a
-    /// header would only be a second voice.
-    ///
-    /// An open card goes through `formatProbability`, so a live 0.999 reads
-    /// `>99%` like the hero above it and not `100%`.
-    static func marginHeadline(
-        isDone: Bool,
-        side: (isHome: Bool, probability: Double)?,
-        homeAbbr: String,
-        awayAbbr: String
-    ) -> String {
-        guard !isDone, let side else { return "" }
-        return "\(side.isHome ? homeAbbr : awayAbbr) \(formatProbability(side.probability))"
-    }
-
     /// A margin card's projection value (#8721, the iPhone twin of web PR
     /// #8725). The full-game card passes its unit-gated spread; the half cards
     /// have none and pass nil.
@@ -1683,6 +1677,23 @@ struct MarketMapView: View {
               let closest = rungs.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) }),
               closest.probability >= 0.5 else { return nil }
         return closest.margin
+    }
+
+    /// #9483 — the full-game card's projection value. Live, it is the
+    /// headline's admitted in-play pair and nothing else: `homeSpread` is a raw
+    /// field the admission never qualified, and the rung nearest a coin flip
+    /// (`closestToEvenMargin`) is a market threshold — on 15195971 `OKC by 4.5+`
+    /// at 49% beside a headline projecting the Thunder by about 2. No admitted
+    /// pair, no tile. Not live, `marginProjection` decides exactly as before;
+    /// the half cards never come through here.
+    static func fullGameMarginProjection(
+        isLive: Bool, liveForecast: Double?, homeSpread: Double?,
+        rungs: [SpreadRungs.Rung], sportsbookSpreadIsAMargin: Bool
+    ) -> Double? {
+        if isLive { return sportsbookSpreadIsAMargin ? liveForecast : nil }
+        return marginProjection(
+            homeSpread: homeSpread, rungs: rungs,
+            sportsbookSpreadIsAMargin: sportsbookSpreadIsAMargin, isLive: false)
     }
 
     /// Derive the period label for a market outcome.
