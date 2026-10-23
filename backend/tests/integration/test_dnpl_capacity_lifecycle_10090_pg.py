@@ -232,7 +232,7 @@ async def test_idle_residency_reclaims_settled_slots_and_admits_eligible_pages(r
         await registry.execute(registry.committed(eid, 'kalshi', seq=seq, sources=BASE10, rev=11),
                                client.execute_command, event_channel, worker.preview_stats)
     assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 512
-    ticket, candidates, idle = await registry.capacity_ticket(client.execute_command, 'kalshi')
+    ticket, candidates, idle, redis_now = await registry.capacity_ticket(client.execute_command, 'kalshi')
     assert set(candidates) == idle == set(range(1, 513))
     old_gen = int(await client.hget(blend_preview.LEDGER_KEY, 'e:1:gen'))
     event = _ev(state); event.preview_read_ticket = ticket
@@ -380,7 +380,7 @@ async def test_idle_status_proof_is_locked_and_busy_rows_are_skipped(rig, capaci
     entered = False
     if race.startswith('before_lock'):
         retire = worker._retire_idle_preview_event
-        async def flip_then_retire(eid, ticket):
+        async def flip_then_retire(eid, ticket, deadline_ms, when):
             nonlocal entered
             entered = True
             async with rig.engine.begin() as conn:
@@ -391,7 +391,7 @@ async def test_idle_status_proof_is_locked_and_busy_rows_are_skipped(rig, capaci
                     'before_lock_null': "commence_time=NULL",
                 }
                 await conn.execute(text("UPDATE events SET " + changes[race] + " WHERE id=481"))
-            await retire(eid, ticket)
+            await retire(eid, ticket, deadline_ms, when)
         monkeypatch.setattr(worker, '_retire_idle_preview_event', flip_then_retire)
     elif race == 'during_mutation':
         prepare = worker._prepare_ledger_previews

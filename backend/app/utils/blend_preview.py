@@ -337,7 +337,7 @@ if op == 'read_ticket' or op == 'capacity_ticket' then
     end
   end
   if op == 'capacity_ticket' then
-    return {'ok', decimal(barrier), cjson.encode(candidates), cjson.encode(idle)}
+    return {'ok', decimal(barrier), cjson.encode(candidates), cjson.encode(idle), decimal(now)}
   end
   return out
 end
@@ -539,6 +539,9 @@ if op == 'terminal' then
 end
 -- Eligible rows may release idle residency without becoming terminal.
 if op == 'retire_idle' then
+  local deadline = uint(ARGV[8])
+  if not deadline then return {'malformed'} end
+  if now >= deadline then return {'late'} end
   local ctx, ticket = uint(ARGV[6]), uint(ARGV[7])
   if not ctx or not ticket then return {'malformed'} end
   if not compatible then return {'legacy_owner'} end
@@ -1211,7 +1214,7 @@ class LedgerRegistry(PreviewRegistry):
             return None, []
         return int(reply[1]), [int(eid) for eid in reply[2:]]
 
-    async def capacity_ticket(self, call, source: str) -> tuple[Optional[int], list[int], set[int]]:
+    async def capacity_ticket(self, call, source: str) -> tuple[Optional[int], list[int], set[int], Optional[int]]:
         """One bounded resident/idle hint, before the maintenance DB statement.
 
         The idle hint never authorizes deletion: retire_idle checks it again.
@@ -1219,17 +1222,17 @@ class LedgerRegistry(PreviewRegistry):
         """
         claim = self.claims.get(source)
         if claim is None:
-            return None, [], set()
+            return None, [], set(), None
         reply = await self._eval(call, "capacity_ticket", source, claim, "", " ".join(self.sources))
         if reply[0] != "ok":
-            return None, [], set()
+            return None, [], set(), None
         return int(reply[1]), [int(eid) for eid in json.loads(reply[2])], {
-            int(eid) for eid in json.loads(reply[3])}
+            int(eid) for eid in json.loads(reply[3])}, int(reply[4])
 
-    def retire_idle(self, event_id: int, source: str, rev: int, ticket: int) -> dict:
+    def retire_idle(self, event_id: int, source: str, rev: int, ticket: int, deadline_ms: int) -> dict:
         """Locked fresh future-scheduled DB proof for a resident with no valid pending metadata."""
         return {"ledger_op": "retire_idle", "event_id": int(event_id), "source": source,
-                "ctx_rev": rev, "read_ticket": ticket}
+                "ctx_rev": rev, "read_ticket": ticket, "deadline_ms": deadline_ms}
 
     def propose(self, event_id: int, source: str, **kwargs: Any) -> list[dict]:
         ticket = getattr(kwargs["event"], "preview_read_ticket", None)
@@ -1545,7 +1548,8 @@ class LedgerRegistry(PreviewRegistry):
                                      op["base_rev"], op["base"], op.get("chain"),
                                      int(self.max_uncommitted_s * 1000))
         elif kind == "retire_idle":
-            reply = await self._eval(call, "retire_idle", *common, op["ctx_rev"], op["read_ticket"])
+            reply = await self._eval(call, "retire_idle", *common, op["ctx_rev"], op["read_ticket"],
+                                     op["deadline_ms"])
         elif kind == "retire_missing":
             reply = await self._eval(call, "retire_missing", *common, op["read_ticket"])
         elif kind == "retire":
