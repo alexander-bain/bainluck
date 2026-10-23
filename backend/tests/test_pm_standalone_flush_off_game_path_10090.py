@@ -301,7 +301,7 @@ def _slate_session(base):
                 str(open_mod.open_contract_outcomes_stmt()),
             ):
                 if "linked_event_id" in sql:
-                    return _Replayed(GAME_SLATE[0])
+                    return _Replayed(answer_slate_market_read(stmt, GAME_SLATE[0]))  # #10663
                 if "futures_markets.market_metadata" in sql:
                     return _Replayed(answer_slate_market_read(stmt, GAME_SLATE[1]))
                 if sql.startswith(
