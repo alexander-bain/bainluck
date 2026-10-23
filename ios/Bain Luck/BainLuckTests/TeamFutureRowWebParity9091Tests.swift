@@ -140,11 +140,13 @@ final class TeamFutureRowWebParity9091Tests: XCTestCase {
 
     /// The three rules this file mirrors, read off the web row rather than
     /// restated on trust: settled is `is_winner === true`, the outcome name is
-    /// drawn, and the rank is withheld when settled.
+    /// drawn, and the rank is withheld when settled or decided (#11493: web's
+    /// `decided` is the served eliminated/won state, mirrored here as the grid
+    /// verdict's `out`/`settledWon`).
     func testTheWebRowStillCarriesTheRulesMirroredHere() throws {
         let web = try webRowSource
         XCTAssertTrue(web.contains("item.is_winner === true"))
         XCTAssertTrue(web.contains("{item.outcome_name}"))
-        XCTAssertTrue(web.contains("!settledWon && item.rank && item.total_outcomes"))
+        XCTAssertTrue(web.contains("!settledWon && !decided && item.rank && item.total_outcomes"))
     }
 }
