@@ -201,7 +201,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         let row = leagueAndBadgeBox(league, in: read)
         let hosted = Line(text: hostedText, box: row, frame: league.frame)
         print("Finished card 11325 pill edge: local top row \(describe(read.filter { sameRow($0, league) })), "
-              + "ink re-read \((try? league.frame.recognizeInk(in: row.insetBy(dx: -row.height * 0.15, dy: -row.height * 0.15)))?.map(\.text) ?? [])")
+              + "ink re-read '\(inkText(hosted) ?? "nil")'")
         XCTAssertEqual(badgeTokens(hosted), ["NFL", "FINAL"], "\(name): the pill edge was not settled — \(all)")
         let asHosted = read.filter { !sameRow($0, league) } + [hosted]
         let status = try XCTUnwrap(asHosted.first { badgeTokens($0).contains("FINAL") }, "\(name): \(all)")
@@ -221,6 +221,17 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             XCTExpectFailure("'\(text)' has no FINAL") { assertWholeToken("FINAL", in: [bare], name) }
         }
 
+        // The real pill set far enough from the league that its ink re-reads as
+        // two lines on the row: they join, left to right, and still settle.
+        let apartName = "\(name)-two-ink-lines"
+        let apart = try self.read(constructedTopBar(badge: "FINAL", spacing: 60), width: 393, size: .large, name: apartName)
+        let apartLeague = try XCTUnwrap(apart.first { normalized($0.text).hasPrefix("NFL") }, "\(apartName): \(describe(apart))")
+        let split = Line(text: hostedText, box: leagueAndBadgeBox(apartLeague, in: apart), frame: apartLeague.frame)
+        let b = split.box, pad = b.height * 0.15
+        XCTAssertEqual(try split.frame.recognizeInk(in: b.insetBy(dx: -pad, dy: -pad)).count, 2,
+                       "\(apartName): precondition: the ink re-reads as two lines — \(describe(apart))")
+        XCTAssertEqual(badgeTokens(split), ["NFL", "FINAL"], "\(apartName): two ink lines on one row did not settle — \(describe(apart))")
+
         // A bracket actually drawn before FINAL is ink: the same text stays as read.
         let drawnName = "\(name)-drawn-bracket"
         let drawn = try self.read(constructedTopBar(badge: "(FINAL"), width: 393, size: .large, name: drawnName)
@@ -234,8 +245,9 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         let bareName = "\(name)-no-badge"
         let bareRead = try self.read(constructedTopBar(badge: nil), width: 393, size: .large, name: bareName)
         let bareLeague = try XCTUnwrap(bareRead.first { normalized($0.text).hasPrefix("NFL") }, "\(bareName): \(describe(bareRead))")
-        print("Finished card 11325 pill edge controls: drawn \(describe(drawn)), no badge \(describe(bareRead))")
         let noBadge = Line(text: hostedText, box: CGRect(origin: bareLeague.box.origin, size: row.size), frame: bareLeague.frame)
+        print("Finished card 11325 pill edge controls: drawn \(describe(drawn)), ink re-read '\(inkText(bracket) ?? "nil")'; "
+              + "no badge \(describe(bareRead)), ink re-read '\(inkText(noBadge) ?? "nil")'")
         XCTAssertEqual(badgeTokens(noBadge), ["NFL", "(FINAL"], "\(bareName): a row with no badge was settled — \(describe(bareRead))")
     }
 
@@ -559,10 +571,10 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     }
 
     /// The single-row top bar's league and FINAL pill as `StatusBadge` draws
-    /// them, with `badge` as the pill's text (nil: no pill). CONSTRUCTED, to
-    /// draw what the card never does.
-    private func constructedTopBar(badge: String?) -> some View {
-        HStack(spacing: 6) {
+    /// them, with `badge` as the pill's text (nil: no pill) and `spacing`
+    /// between them. CONSTRUCTED, to draw what the card never does.
+    private func constructedTopBar(badge: String?, spacing: CGFloat = 6) -> some View {
+        HStack(spacing: spacing) {
             Text("NFL").font(.caption).foregroundStyle(.secondary)
             if let badge {
                 Text(badge).font(.caption2).fontWeight(.medium).foregroundStyle(.secondary)
@@ -635,20 +647,27 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     /// top row as "NFL (FINAL": nothing is drawn between "NFL" and "FINAL" —
     /// the "(" is the left edge of FINAL's capsule, whose fill (≈240) is not
     /// ink. A token that is ONE edge mark glued to a whole "FINAL" counts as
-    /// "FINAL" only when the line, read again from its ink alone, is one line
-    /// whose tokens are the line's own with that mark gone. A bracket actually
-    /// drawn is ink, survives the re-read, and the token stays as read; so does
-    /// any fragment ("(FIN"), and a row with no FINAL ink.
+    /// "FINAL" only when the line, read again from its ink alone, has exactly
+    /// the line's own tokens with that mark gone. A bracket actually drawn is
+    /// ink, survives the re-read, and the token stays as read; so does any
+    /// fragment ("(FIN"), and a row with no FINAL ink.
     private func badgeTokens(_ line: Line) -> [String] {
         let read = tokens(line.text)
         let settled = read.map { t in
             Self.pillEdgeMarks.contains(t.first ?? " ") && t.dropFirst() == "FINAL" ? "FINAL" : t
         }
-        guard settled != read else { return read }
-        let b = line.box, pad = b.height * 0.15
-        guard let reread = try? line.frame.recognizeInk(in: b.insetBy(dx: -pad, dy: -pad)), reread.count == 1,
-              tokens(reread[0].text) == settled else { return read }
+        guard settled != read, let ink = inkText(line), tokens(ink) == settled else { return read }
         return settled
+    }
+
+    /// `line` read again from its ink alone: Vision's lines inside its box,
+    /// left to right, joined — the pill gone, its 12pt of padding and spacing
+    /// can read as two lines on one row. Nil if none, or one sits off the row.
+    private func inkText(_ line: Line) -> String? {
+        let b = line.box, pad = b.height * 0.15
+        guard let reread = try? line.frame.recognizeInk(in: b.insetBy(dx: -pad, dy: -pad)), !reread.isEmpty,
+              reread.allSatisfy({ $0.box.midY >= b.minY && $0.box.midY <= b.maxY }) else { return nil }
+        return reread.sorted { $0.box.minX < $1.box.minX }.map(\.text).joined(separator: " ")
     }
 
     // MARK: - Fixture
