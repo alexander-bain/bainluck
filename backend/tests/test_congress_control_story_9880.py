@@ -635,3 +635,31 @@ def test_anchor_and_outcome_validation_mutants() -> None:
         ["Democratic Party", "Republican Party", "Independent"]
     )
     assert congress_control_bundle_members("story:us_congress_control:2026", []) is None
+
+
+def test_r4_valid_chamber_anchor_with_non_party_or_duplicate_party_answers_never_keys_or_folds() -> None:
+    """UX REVISE 4: a real CONTROLS anchor and Senate title do not carry a market
+    whose answers are not exactly one Democratic and one Republican party — through
+    actual classification AND actual assembly, with or without a forged carried key."""
+    for answers in (["Yes", "No"], ["Democratic Party", "Democrats"]):
+        q = classify_market_quality(
+            market_name="Which party will win the U.S. Senate?",
+            sport_category="politics",
+            outcome_names=answers,
+            external_id="CONTROLS-2026",
+        )
+        assert not is_congress_control_story_key(q.story_key), answers
+
+        for carried in (q.story_key, "story:us_congress_control:2026"):
+            senate = _clone(REAL_SENATE_108620)
+            for outcome, name in zip(senate["data"]["top_outcomes"], answers):
+                outcome["name"] = name
+            senate["_quality_class"] = q.quality_class
+            senate["_quality_story_key"] = carried
+            assert congress_control_story_key_for_item(senate) is None, answers
+
+            house = _clone(REAL_HOUSE_108621)
+            house["_quality_story_key"] = "story:us_congress_control:2026"
+            out = assemble_story_theme_bundles([senate, house])
+            assert len(out) == 2, (answers, carried)
+            assert all(it["type"] == "futures" for it in out), (answers, carried)

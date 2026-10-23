@@ -409,6 +409,88 @@ describe("Congress control bundle & PartyControlRow (#9880)", () => {
     expect(html).toContain('data-testid="compact-row-percent">51%<');
   });
 
+  test("R1 (UX REVISE 1): equal printed percents give neither side the leader size, whatever order or raw edge", () => {
+    const tied = clone(REAL_SENATE_ITEM);
+    const tData = tied.data as FeedFuturesData;
+    tData.top_outcomes[0].probability = 0.5;
+    tData.top_outcomes[0].rendered_percent = 50;
+    tData.top_outcomes[1].probability = 0.5;
+    tData.top_outcomes[1].rendered_percent = 50;
+
+    const html = renderBundle(makeCongressBundleItem([tied, clone(REAL_HOUSE_ITEM)]));
+    const senateRow = html.slice(0, html.indexOf("Which party will win the U.S. House?"));
+    expect(senateRow).toContain(
+      'data-probability="0.5" data-rendered-percent="50" data-leader="false" data-testid="party-control-percent-left">50%<',
+    );
+    expect(senateRow).toContain(
+      'data-probability="0.5" data-rendered-percent="50" data-leader="false" data-testid="party-control-percent-right">50%<',
+    );
+    expect(senateRow).not.toContain("text-[22px]");
+
+    // Served order reversed, and a raw edge the printed numbers hide (0.502 vs 0.498, both 50%).
+    const edge = clone(tData);
+    edge.top_outcomes = [
+      { ...tData.top_outcomes[1], probability: 0.498 },
+      { ...tData.top_outcomes[0], probability: 0.502 },
+    ];
+    for (const data of [tData, edge]) {
+      const model = partyControlRowProps(data);
+      expect(model).not.toBeNull();
+      expect(model?.leaderIdx).toBeNull();
+      expect([model?.a.isLeader, model?.b.isLeader]).toEqual([false, false]);
+    }
+
+    // One printed point apart is a lead again.
+    const apart = clone(tData);
+    apart.top_outcomes[0].probability = 0.505;
+    apart.top_outcomes[0].rendered_percent = 51;
+    apart.top_outcomes[1].probability = 0.495;
+    apart.top_outcomes[1].rendered_percent = 49;
+    expect(partyControlRowProps(apart)?.leaderIdx).toBe(0);
+  });
+
+  test("R2 (UX REVISE 2): the printed number is the served rendered_percent even where it differs from raw rounding; the bar stays raw", () => {
+    const senate = clone(REAL_SENATE_ITEM);
+    const sData = senate.data as FeedFuturesData;
+    sData.top_outcomes[0].probability = 0.645;
+    sData.top_outcomes[0].rendered_percent = 66;
+    sData.top_outcomes[1].probability = 0.335;
+    sData.top_outcomes[1].rendered_percent = 34;
+
+    const html = renderBundle(makeCongressBundleItem([senate, clone(REAL_HOUSE_ITEM)]));
+    expect(html).toContain('data-testid="party-control-percent-left">66%<');
+    expect(html).toContain('data-testid="party-control-percent-right">34%<');
+    expect(html).not.toContain(">65%<");
+    expect(html).toContain(
+      `style="width:64.50%;background-color:${PARTY_CONTROL_SLOT_COLORS[0]}"`,
+    );
+    expect(html).toContain(
+      `style="width:33.50%;background-color:${PARTY_CONTROL_SLOT_COLORS[1]}"`,
+    );
+    expect(html).toContain('data-residual="0.0200"');
+  });
+
+  test("R3 (UX REVISE 3): a pair summing 1.005 — inside the serializer's raw band (1.000, 1.01] — is refused at the 1.000 boundary", () => {
+    const senate = clone(REAL_SENATE_ITEM);
+    const sData = senate.data as FeedFuturesData;
+    sData.top_outcomes[0].probability = 0.67;
+    sData.top_outcomes[0].rendered_percent = 67;
+    sData.top_outcomes[1].probability = 0.335;
+    sData.top_outcomes[1].rendered_percent = 34;
+
+    expect(partyControlRowProps(sData)).toBeNull();
+
+    const html = renderBundle(makeCongressBundleItem([senate, clone(REAL_HOUSE_ITEM)]));
+    expect(
+      Array.from(html.matchAll(/data-row-kind="two-sided"/g)),
+    ).toHaveLength(1);
+    expect(html).toContain('data-testid="compact-row-percent">67%<');
+
+    // Exactly 1.000 stays two-sided: the boundary is "above 1.000", not "at".
+    sData.top_outcomes[0].probability = 0.665;
+    expect(partyControlRowProps(sData)).not.toBeNull();
+  });
+
   test("W5: withheld / null probabilities fall back to FuturesCompactRow printing em-dash", () => {
     const senate = clone(REAL_SENATE_ITEM);
     const house = clone(REAL_HOUSE_ITEM);

@@ -17,7 +17,8 @@ const TERMINAL_STATUSES = new Set([
  * Fixed slot order on every Congress control row (#9880 / Option A ruling):
  * registry blue party (`SERIES_COLORS[0]`) on the left, red party
  * (`SERIES_COLORS[1]`) on the right. Leadership is carried by type size
- * (22px vs 15px), never by swapping sides.
+ * (22px vs 15px), never by swapping sides, and only when the PRINTED percents
+ * differ: an exact 50% / 50% gives neither side the larger size.
  */
 export const PARTY_CONTROL_SLOT_COLORS = [
   SERIES_COLORS[0],
@@ -38,7 +39,8 @@ export interface PartyControlSide {
 export interface PartyControlRowModel {
   a: PartyControlSide;
   b: PartyControlSide;
-  leaderIdx: 0 | 1;
+  /** `null` when both sides print the same percent — a tie crowns no one. */
+  leaderIdx: 0 | 1 | null;
   residual: number;
 }
 
@@ -142,13 +144,27 @@ export function partyControlRowProps(
   const probB = outB.probability as number;
   const rendA = outA.rendered_percent as number;
   const rendB = outB.rendered_percent as number;
-  const leaderIdx: 0 | 1 = probA >= probB ? 0 : 1;
+  const textA = formatProbabilityPercent(probA, { rendered: rendA });
+  const textB = formatProbabilityPercent(probB, { rendered: rendB });
+  // Type size IS the lead, so it follows what the reader can see: equal printed
+  // percents get equal emphasis, whatever edge the raw probabilities carry.
+  const leaderIdx: 0 | 1 | null =
+    textA === textB
+      ? null
+      : rendA !== rendB
+        ? rendA > rendB
+          ? 0
+          : 1
+        : probA > probB
+          ? 0
+          : 1;
   const residual = Math.max(0, 1 - rawSum);
 
   const buildSide = (
     outcome: FeedFuturesOutcome,
     probability: number,
     renderedPercent: number,
+    percentText: string,
     color: string,
     slotIdx: 0 | 1,
   ): PartyControlSide => ({
@@ -156,17 +172,15 @@ export function partyControlRowProps(
     name: outcome.name.trim(),
     probability,
     renderedPercent,
-    percentText: formatProbabilityPercent(probability, {
-      rendered: renderedPercent,
-    }),
+    percentText,
     widthPercent: `${(probability * 100).toFixed(2)}%`,
     color,
     isLeader: leaderIdx === slotIdx,
   });
 
   return {
-    a: buildSide(outA, probA, rendA, PARTY_CONTROL_SLOT_COLORS[0], 0),
-    b: buildSide(outB, probB, rendB, PARTY_CONTROL_SLOT_COLORS[1], 1),
+    a: buildSide(outA, probA, rendA, textA, PARTY_CONTROL_SLOT_COLORS[0], 0),
+    b: buildSide(outB, probB, rendB, textB, PARTY_CONTROL_SLOT_COLORS[1], 1),
     leaderIdx,
     residual,
   };
