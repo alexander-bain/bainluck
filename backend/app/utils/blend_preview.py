@@ -89,11 +89,14 @@ script enforces it:
   may have raised a held reader's floor that high) takes a new generation
   above it, keeping every pending entry and the sequence;
 * propose — fenced on the source's owner; ``continue`` needs this owner's
-  chain and a newer local sequence and keeps its fixed Redis-clock deadline;
+  chain and a newer local sequence and keeps its Redis-clock deadline;
   ``open`` never renews an existing chain; a terminal tombstone refuses any
   proposal read at or below its revision;
 * settle — deletes only an entry this owner wrote, through the local sequence
-  the stamp carried; a newer committed base is adopted as the event's floor,
+  the stamp carried; a strictly advancing landed commit may renew that owner's
+  still-live newer chain. Reproposals, repeated receipts and expired chains
+  cannot renew. Progress lives inside the pending payload and retires with it;
+  a newer committed base is adopted as the event's floor,
   so a sibling never composes on an older committed bag;
 * terminal — a revision-checked tombstone plus one ordered revoke;
 * bounded lifecycle — every new-chain admission carries the retirement barrier
@@ -233,6 +236,21 @@ local function meta(f)
   o, c, l, x = uint(o), uint(c), uint(l), uint(x)
   if not (o and c and l and x) then return BAD end
   return {owner = o, chain = c, lseq = l, expires = x}
+end
+-- Progress belongs to the existing pending payload, so every old/new delete
+-- or replacement also discards it. Never cjson-encode observation numbers:
+-- preserve their exact JSON bytes and append one privately-owned final field.
+local function progress(raw)
+  if not raw then return nil end
+  local prefix, o, c, q, r = string.match(raw,
+    '^(.*),"_commit_progress":"(%d+) (%d+) (%d+) (%d+)"}$')
+  o, c, q, r = uint(o), uint(c), uint(q), uint(r)
+  if not (prefix and o and c and q and r) then return nil end
+  return {prefix = prefix, owner = o, chain = c, through = q, rev = r}
+end
+local function progressed(prefix, owner, chain, through, rev)
+  return prefix .. ',"_commit_progress":"' .. decimal(owner) .. ' ' .. decimal(chain)
+    .. ' ' .. decimal(through) .. ' ' .. decimal(rev) .. '"}'
 end
 local function shared_floor()
   local v = redis.call('GET', SHARED)
@@ -385,6 +403,17 @@ if op == 'propose' then
     expires = now + max_ms
     if expires > MAX then return {'malformed'} end
   end
+  local payload = ARGV[12]
+  if string.sub(payload, -1) ~= '}' then return {'malformed'} end
+  local prior_progress = progress(redis.call('HGET', L, P .. 'p:' .. src))
+  if mode == 'open' then
+    if chain == 0 then return {'malformed'} end
+    payload = progressed(string.sub(payload, 1, -2), claim, chain, chain - 1, ctx)
+  elseif prior_progress ~= nil and prior_progress.owner == claim
+      and prior_progress.chain == chain then
+    payload = progressed(string.sub(payload, 1, -2), claim, chain,
+      prior_progress.through, prior_progress.rev)
+  end
   local adopt = brev ~= nil and ARGV[14] ~= '' and (st.base_rev == nil or brev > st.base_rev)
   if not adopt and st.base_rev == nil and not expired then return {'no_base'} end
   local gen, seq = admit(max_ev)
@@ -401,7 +430,7 @@ if op == 'propose' then
     if st.live == nil or ctx > st.live then redis.call('HSET', L, P .. 'live', decimal(ctx)) end
     redis.call('HSET', L, P .. 'm:' .. src,
       decimal(claim) .. ' ' .. decimal(chain) .. ' ' .. decimal(lseq) .. ' ' .. decimal(expires),
-      P .. 'p:' .. src, ARGV[12])
+      P .. 'p:' .. src, payload)
   end
   for _, s in ipairs(sources) do
     local m = st.metas[s]
@@ -419,6 +448,29 @@ if op == 'settle' then
   local mine = st.metas[src]
   local remove = ARGV[6] == 'settle' and mine ~= nil and mine.owner == claim
     and (through == nil or mine.lseq <= through)
+  local mode, chain, max_ms = ARGV[6], nil, nil
+  if mode == 'commit' or mode == 'expire' then
+    chain = uint(ARGV[10])
+    if chain == nil then return {'malformed'} end
+  end
+  if mode == 'expire' then
+    -- An expiry prepared before an accepted renewal cannot withdraw it.
+    remove = mine ~= nil and mine.owner == claim and mine.chain == chain
+      and through ~= nil and mine.lseq <= through and mine.expires <= now
+  end
+  local renew, record_progress, progress_value, renewed_expires = false, false, nil, nil
+  if mode == 'commit' then
+    max_ms = uint(ARGV[11])
+    if max_ms == nil or max_ms == 0 or now + max_ms > MAX then return {'malformed'} end
+    progress_value = progress(redis.call('HGET', L, P .. 'p:' .. src))
+    local own_commit = mine ~= nil and mine.owner == claim and mine.chain == chain
+      and not stale(src, mine) and through ~= nil and through >= chain and through < mine.lseq
+      and brev ~= nil and ARGV[9] ~= '' and progress_value ~= nil
+      and progress_value.owner == claim and progress_value.chain == chain
+    renew = own_commit and through > progress_value.through and brev > progress_value.rev
+    record_progress = own_commit and (through > progress_value.through or brev > progress_value.rev)
+    if renew then renewed_expires = math.max(mine.expires, now + max_ms) end
+  end
   local adopt = brev ~= nil and ARGV[9] ~= '' and (st.base_rev == nil or brev > st.base_rev)
   local gone, remaining = {}, 0
   for _, s in ipairs(sources) do
@@ -427,8 +479,9 @@ if op == 'settle' then
       if stale(s, m) then gone[#gone + 1] = s else remaining = remaining + 1 end
     end
   end
-  if not remove and #gone == 0 and not (adopt and remaining > 0) then
+  if not remove and not record_progress and #gone == 0 and not (adopt and remaining > 0) then
     if adopt then redis.call('HSET', L, P .. 'base_rev', decimal(brev), P .. 'base', ARGV[9]) end
+    if mode == 'expire' then return readset('current', st.gen, st.seq, '') end
     return {'unchanged'}
   end
   local gen, seq = admit(MAX)
@@ -438,6 +491,16 @@ if op == 'settle' then
   advance(gen, seq)
   -- @@FAULT:settle
   if adopt then redis.call('HSET', L, P .. 'base_rev', decimal(brev), P .. 'base', ARGV[9]) end
+  if renew then
+    redis.call('HSET', L, P .. 'm:' .. src,
+      decimal(claim) .. ' ' .. decimal(chain) .. ' ' .. decimal(mine.lseq) .. ' ' .. decimal(renewed_expires),
+      P .. 'p:' .. src, progressed(progress_value.prefix, claim, chain, through, brev))
+  elseif record_progress then
+    -- Consume each dimension even when only the other was replayed. A later
+    -- crossed pair cannot reuse either receipt to buy another lifetime.
+    redis.call('HSET', L, P .. 'p:' .. src, progressed(progress_value.prefix, claim, chain,
+      math.max(through, progress_value.through), math.max(brev, progress_value.rev)))
+  end
   if remove then redis.call('HDEL', L, P .. 'm:' .. src, P .. 'p:' .. src) end
   for _, s in ipairs(gone) do redis.call('HDEL', L, P .. 'm:' .. s, P .. 'p:' .. s) end
   return readset('ok', gen, seq, remove and '1' or '0')
@@ -626,6 +689,9 @@ class _EventState:
     #: source -> the value whose uncommitted chain expired. Not proposed again
     #: until a commit, a refusal or a different value ends the chain.
     expired: dict = field(default_factory=dict)
+    #: Ledger-only sequence of an expired reading. A delayed older commit
+    #: cannot clear that newer reading's same-value tombstone. Event-bounded.
+    expired_through: dict = field(default_factory=dict)
     #: Highest seq this process published for the event (blend or revoke).
     last_seq: int = 0
     #: Highest ``through_seq`` of a revoke this process has sent for the event.
@@ -1183,6 +1249,7 @@ class LedgerRegistry(PreviewRegistry):
         for name in list(state.pending):
             self._forget(event_id, name)
         state.expired.clear()
+        state.expired_through.clear()
         rev = _revision(row_rev)
         if rev is None:
             return []
@@ -1220,6 +1287,7 @@ class LedgerRegistry(PreviewRegistry):
         if chain is None:
             chain = local_seq
         self._chains[(event_id, source)] = chain
+        state.expired_through.pop(source, None)
         state.pending[source] = _Pending(
             value=value, eligibility=eligibility,
             observed_basis=dict(observed_basis) if observed_basis else None,
@@ -1247,18 +1315,28 @@ class LedgerRegistry(PreviewRegistry):
         if event is not None:
             self._context(state, event)
         self._adopt_base(state, sources, rev)
-        state.expired.pop(source, None)
+        expired_through = state.expired_through.get(source)
+        if (expired_through is None or seq is None
+                or (_revision(seq) is not None and seq >= expired_through)):
+            state.expired.pop(source, None)
+            state.expired_through.pop(source, None)
         entry = state.pending.get(source)
         if entry is not None and (seq is None or entry.seq <= seq):
             self._forget(event_id, source)
-        return [self._settle_op(event_id, source, seq, "unorderable",
-                                self._base(sources, rev, state))]
+        op = self._settle_op(event_id, source, seq, "unorderable",
+                             self._base(sources, rev, state))
+        chain = self._chains.get((event_id, source))
+        if (entry is not None and chain is not None and _revision(seq) is not None
+                and chain <= seq < entry.seq):
+            op.update(mode="commit", chain=chain, owner=self.claims.get(source))
+        return [op]
 
     def refused(self, event_id: int, source: str, reason: str) -> list[dict]:
         state = self._events.get(event_id)
         if state is None:
             return []
         state.expired.pop(source, None)
+        state.expired_through.pop(source, None)
         entry = state.pending.get(source)
         if entry is None:
             return []
@@ -1271,9 +1349,12 @@ class LedgerRegistry(PreviewRegistry):
         for event_id, state in list(self._events.items()):
             for name, entry in list(state.pending.items()):
                 if now - entry.since >= self.max_uncommitted_s:
-                    state.expired[name] = entry.value
-                    self._forget(event_id, name)
-                    ops.append(self._settle_op(event_id, name, entry.seq, "expired"))
+                    # Redis is authoritative: a landed-commit renewal may
+                    # have succeeded even if its reply was lost/cancelled.
+                    op = self._settle_op(event_id, name, entry.seq, "expired")
+                    op.update(mode="expire", chain=self._chains[(event_id, name)],
+                              owner=self.claims.get(name), value=entry.value)
+                    ops.append(op)
         return ops
 
     def _evict(self) -> list[dict]:
@@ -1292,6 +1373,7 @@ class LedgerRegistry(PreviewRegistry):
         if entry is not None and entry.seq == op["local_seq"]:
             self._forget(op["event_id"], op["source"])
             state.expired[op["source"]] = op["value"]
+            state.expired_through[op["source"]] = op["local_seq"]
 
     # ── Redis execution ─────────────────────────────────────────────────
     async def _eval(self, call, *argv: Any) -> list:
@@ -1380,7 +1462,8 @@ class LedgerRegistry(PreviewRegistry):
         if claim is None:
             self._refusal(stats, "fenced", kind, source, event_id)
             return []
-        common = (source, claim, event_id, " ".join(self.sources))
+        common = (source, op.get("owner", claim), event_id, " ".join(self.sources))
+        started = self._clock()
         if kind == "propose":
             reply = await self._eval(
                 call, "propose", *common, op["mode"], op["chain"], op["local_seq"],
@@ -1389,7 +1472,8 @@ class LedgerRegistry(PreviewRegistry):
             )
         elif kind == "settle":
             reply = await self._eval(call, "settle", *common, op["mode"], op["through"],
-                                     op["base_rev"], op["base"])
+                                     op["base_rev"], op["base"], op.get("chain"),
+                                     int(self.max_uncommitted_s * 1000))
         elif kind == "retire_missing":
             reply = await self._eval(call, "retire_missing", *common, op["read_ticket"])
         elif kind == "retire":
@@ -1399,6 +1483,24 @@ class LedgerRegistry(PreviewRegistry):
             reply = await self._eval(call, "terminal", *common, op["ctx_rev"],
                                      LEDGER_MAX_EVENTS, op.get("read_ticket"))
         status = reply[0]
+        if (status in ("ok", "current") and op.get("chain") is not None
+                and self._chains.get((event_id, source)) == op["chain"]):
+            state = self._events.get(event_id)
+            entry = None if state is None else state.pending.get(source)
+            own = next((reply[i:i + 4] for i in range(7, len(reply) - 3, 4)
+                        if reply[i] == source and int(reply[i + 1]) == claim), None)
+            if entry is not None and own is not None:
+                # The pre-EVAL monotonic time is conservative under slow/lost
+                # replies; only Redis acknowledgement can advance this hint.
+                entry.since = max(entry.since, started +
+                    (int(own[2]) - int(reply[3])) / 1000 - self.max_uncommitted_s)
+            elif (entry is not None and op.get("mode") == "expire"
+                  and entry.seq <= op["through"]):
+                state.expired[source] = entry.value
+                state.expired_through[source] = entry.seq
+                self._forget(event_id, source)
+        if status == "current":
+            return []
         if kind in ("terminal", "retire", "retire_missing"):
             if status != "ok":
                 self._refusal(stats, status, kind, source, event_id)
