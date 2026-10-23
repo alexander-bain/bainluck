@@ -70,7 +70,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Team, FuturesMarket, FuturesOutcome, Sport
-from app.routes.futures import withheld_price_outcome_ids_for_markets
+from app.routes.futures import (
+    _board_has_a_verdict,
+    _fleet_newest_observation,
+    withheld_price_outcome_ids_for_markets,
+)
 from app.services import get_db
 from app.utils.event_concept_cache import (
     AVAILABILITY_LIVE,
@@ -926,6 +930,10 @@ async def _withhold_refused_prices(
             )
         ).scalars().all()
         withheld = await withheld_price_outcome_ids_for_markets(db, markets)
+        for market in markets:
+            stopped = await _board_staleness_withheld(db, market)
+            if stopped:
+                withheld[market.id] = withheld.get(market.id, set()) | stopped
     except Exception as exc:  # noqa: BLE001 — classified below, then contained
         try:
             await db.rollback()
@@ -954,6 +962,47 @@ async def _withhold_refused_prices(
         if not entry["outcomes"]:
             del by_market[mid]
     return None
+
+
+async def _board_staleness_withheld(db: AsyncSession, market) -> set[int]:
+    """The two board-level refusals the market page adds outside the six arms (#11534).
+
+    ``withheld_price_outcome_ids_for_markets`` is the shared six arms, and
+    ``get_futures_market`` unions two more terms outside them: per-leg staleness
+    on an open board (#7537) and the stopped-board rule on an open or resolved
+    board (#8011). ``league_futures._page_withheld_outcome_ids`` (#8972) found
+    the same gap on league and hub pages; this is that composition, same calls,
+    same gates, same order.
+
+    WHAT A READER SAW, 2026-10-23 18:40Z. The Patriots page, a FULL build with
+    the screen run to completion, printed ``KXNFLSBMVP-26`` — last season's
+    Super Bowl MVP board — as "Drake Maye 26.5%" plus seventeen more legs. Every
+    leg was last written 2026-02-04 with a real bid/ask, so none of the six arms
+    refuse it; ``/api/futures/479`` serves all 79 legs ``null`` with
+    ``prices_withheld: 79`` on #8011 alone.
+
+    Both helpers fail open on a row with no stamp, and ``_fleet_newest_observation``
+    skips its single index-only read for any board whose own stamp is recent.
+    """
+    from app.utils.market_staleness import (
+        stale_observation_keys,
+        unobserved_board_keys,
+    )
+
+    outcomes = getattr(market, "outcomes", None) or []
+    observations = [(o.id, getattr(o, "last_updated", None)) for o in outcomes]
+    status = getattr(market, "status", None)
+    withheld: set[int] = set()
+    if status == "open":
+        withheld |= stale_observation_keys(observations)
+    if status in ("open", "resolved"):
+        withheld |= unobserved_board_keys(
+            observations,
+            board_touched_at=getattr(market, "updated_at", None),
+            fleet_newest_observation=await _fleet_newest_observation(db, market),
+            board_has_a_verdict=_board_has_a_verdict(outcomes),
+        )
+    return withheld
 
 
 def _withhold_unscreened(by_market: dict[int, dict], ids: list[int]) -> None:
