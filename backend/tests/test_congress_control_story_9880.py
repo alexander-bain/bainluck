@@ -18,7 +18,6 @@ from typing import Any
 
 from app.utils.congress_control_story import (
     US_CONGRESS_CONTROL_QUESTION,
-    US_CONGRESS_CONTROL_STORY_PREFIX,
     US_CONGRESS_CONTROL_TITLE,
     congress_control_bundle_members,
     congress_control_member_identity,

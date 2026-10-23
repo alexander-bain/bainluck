@@ -12,6 +12,7 @@ from app.utils.congress_control_story import (
     US_CONGRESS_CONTROL_TITLE,
     congress_control_bundle_members,
     congress_control_story_key_for_item,
+    has_congress_control_story_prefix,
     is_congress_control_story_key,
 )
 from app.utils.feed_market_quality import GOLF_TOURNAMENT_STORY_PREFIX
@@ -724,7 +725,7 @@ def _theme_story_key(item: dict[str, Any]) -> str | None:
         return congress_key
     carried = item.get("_quality_story_key")
     if isinstance(carried, str) and carried.startswith("story:"):
-        if not carried.startswith("story:us_congress_control"):
+        if not has_congress_control_story_prefix(carried):
             return carried
     name = str(data.get("name") or "")
     if not name:

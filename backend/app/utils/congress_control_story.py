@@ -67,6 +67,14 @@ def is_congress_control_story_key(story_key: str | None) -> bool:
     return isinstance(story_key, str) and bool(_STORY_KEY_RE.match(story_key))
 
 
+def has_congress_control_story_prefix(story_key: str | None) -> bool:
+    """Return whether ``story_key`` claims the US Congress control namespace (valid or forged)."""
+    if not isinstance(story_key, str):
+        return False
+    base = US_CONGRESS_CONTROL_STORY_PREFIX[:-1]
+    return story_key == base or story_key.startswith(US_CONGRESS_CONTROL_STORY_PREFIX)
+
+
 def congress_control_edition_from_story_key(story_key: str | None) -> str | None:
     """Return the 4-digit election edition from ``story_key``, or ``None``."""
     if not isinstance(story_key, str):

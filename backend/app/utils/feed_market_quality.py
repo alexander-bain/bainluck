@@ -21,6 +21,7 @@ from app.utils.card_integrity import is_anonymized_market
 from app.utils.congress_control_story import (
     US_CONGRESS_CONTROL_STORY_PREFIX,
     congress_control_story_key_for_market,
+    has_congress_control_story_prefix,
     is_congress_control_story_key,
 )
 from app.utils.feed_reasons import RESOLVING_WITHIN_MONTH_HEADLINE
@@ -3368,9 +3369,7 @@ def classify_market_quality(
         or is_congress_control_story_key(computed_story_key)
     ):
         story_key = computed_story_key
-    elif isinstance(persisted_story_key, str) and persisted_story_key.startswith(
-        "story:us_congress_control"
-    ):
+    elif has_congress_control_story_prefix(persisted_story_key):
         story_key = computed_story_key
     else:
         story_key = persisted_story_key or computed_story_key
