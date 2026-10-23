@@ -86,14 +86,14 @@ async def graded_out_leg_ids_by_market(
         ids = list(candidates)
         out: dict[int, set[int]] = {}
         for start in range(0, len(ids), CHUNK):
-            result = await db.execute(
+            rows = await db.execute(
                 select(FuturesOutcome.id).where(
                     FuturesOutcome.id.in_(ids[start : start + CHUNK]),
                     FuturesOutcome.is_winner.is_(False),
                     FuturesOutcome.resolution_source.in_(AUTHORITATIVE_SOURCES),
                 )
             )
-            for (outcome_id,) in result.all():
+            for (outcome_id,) in rows.all():
                 out.setdefault(candidates[outcome_id], set()).add(outcome_id)
         return {market_id: frozenset(ids) for market_id, ids in out.items()}
     except Exception:
