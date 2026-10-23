@@ -65,8 +65,8 @@ final class PropsGridSaysPropLine10877Tests: XCTestCase {
                          "This prop line isn't available right now."] {
             XCTAssertTrue(literals.contains(expected), "missing: \(expected)")
         }
-        XCTAssertEqual(literals.filter { $0 == "Shows this prop line and its sources" }.count, 2,
-                       "the During and After cells both hint at the prop line")
+        XCTAssertEqual(literals.filter { $0 == "Shows this prop line and its sources" }.count, 3,
+                       "the During cell, the After cell and the After no-chance row all hint at the prop line")
     }
 
     /// The scanner itself: interpolated code is skipped, the copy around it is kept.
