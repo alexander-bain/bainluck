@@ -83,6 +83,7 @@ class ConsumerSessions:
         self._idle.set()
         self._closing = False
         self._disposed = False
+        self._observation_closers: set[asyncio.Task] = set()
 
     def _engine_here(self):
         from app.tasks import base as task_base
@@ -133,22 +134,48 @@ class ConsumerSessions:
         """One fresh statement snapshot, with no separate COMMIT round trip.
 
         Only the observation-preview graph SELECT uses this scope. Writers
-        still use session(), including its commit and publication hooks. The
-        connection shares this consumer's pool and returns before Redis work.
+        still use session(), including its commit and publication hooks.
+        The connection shares this consumer's pool. A close exceeding the
+        caller's budget stays owned and counted until it completes; shutdown
+        drains it under the existing close bound.
         """
         engine = self._engine_here()
         self._open += 1
         self._idle.clear()
+        connection = None
         try:
-            async with engine.connect() as connection:
-                connection = await connection.execution_options(
-                    isolation_level="AUTOCOMMIT",
-                )
-                yield _SingleRead(connection)
+            connection = await engine.connect().__aenter__()
+            connection = await connection.execution_options(
+                isolation_level="AUTOCOMMIT",
+            )
+            yield _SingleRead(connection)
         finally:
-            self._open -= 1
-            if not self._open:
-                self._idle.set()
+            if connection is None:
+                self._observation_finished()
+            else:
+                # Match AsyncConnection.__aexit__'s shielded close, but retain
+                # the task and open count if the caller's deadline interrupts
+                # the await. A late exception must also be retrieved.
+                close_task = asyncio.create_task(connection.close())
+                self._observation_closers.add(close_task)
+                close_task.add_done_callback(self._observation_closed)
+                await asyncio.shield(close_task)
+
+    def _observation_finished(self) -> None:
+        self._open -= 1
+        if not self._open:
+            self._idle.set()
+
+    def _observation_closed(self, task: asyncio.Task) -> None:
+        self._observation_closers.discard(task)
+        if not task.cancelled():
+            error = task.exception()
+            if error is not None:
+                logger.warning(
+                    "%s: observation connection cleanup failed", self.label,
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+        self._observation_finished()
 
     async def aclose(self) -> None:
         """Refuse new sessions, let open ones finish (bounded), dispose once."""

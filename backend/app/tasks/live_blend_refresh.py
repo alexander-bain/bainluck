@@ -4670,8 +4670,24 @@ class LiveBlendRefresher:
             # contended pool/read. The caller may retain the SAME frozen input.
             if self._session_slots.locked():
                 return False
-            async with asyncio.timeout(.25), self._session_slot(), factory() as session:
-                grouped = await self._read_groups(session, sorted(event_ids), overlay_held=False)
+            grouped = None
+            read_budget = asyncio.timeout(.25)
+            try:
+                async with read_budget, self._session_slot(), factory() as session:
+                    grouped = await self._read_groups(session, sorted(event_ids), overlay_held=False)
+            except TimeoutError:
+                # A completed autocommit SELECT needs no commit acknowledgement.
+                # Its detached graph remains usable if only connection cleanup
+                # exhausts our budget. The existing context still owns cleanup;
+                # query failures, writer scopes and external cancellation do not
+                # qualify. All input/freshness/send-boundary checks below remain.
+                if (self._observation_read_factory is None or grouped is None
+                        or not read_budget.expired()):
+                    raise
+                logger.warning(
+                    "live_blend_refresh[%s]: observation read completed; cleanup exceeded budget",
+                    self.source,
+                )
             plans = {}
             refusals = {}
             for eid, (event, group) in grouped.items():
