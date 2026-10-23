@@ -9,10 +9,11 @@ import Foundation
 /// and after the game. It mounts nothing unless every input below is present.
 ///
 /// - The page's own sport key reaches the series unchanged; it picks the
-///   league's first period and axis step. Basketball's during/after phases
-///   need an observed first-period start, which the server serves only for
+///   league's first period and axis step. During and after, every league needs
+///   an observed first-period start. The server serves that marker only for
 ///   football today (`period_markers.TRANSITION_SPORT_PREFIXES`), so a live or
-///   finished basketball page keeps its Score Differential card until it does.
+///   finished basketball page mounts on the history's own first-period
+///   sighting (below), and keeps its Score Differential card without one.
 ///
 /// - The page and the history must be in the same phase. The history carries
 ///   its own served `status`; a finished page over a live, scheduled or
