@@ -174,6 +174,7 @@ import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import { useProjectedFinalPointsMount } from "@/lib/projectedFinalPointsSeries";
 import {
   buildFinishCard,
+  withPagePregame,
   withPageProjection,
   cardAt,
   milestoneCards,
@@ -1878,8 +1879,15 @@ export default function EventPage({ params }: EventPageProps) {
       }),
     [event?.sport, event?.status, isLive, event?.commence_time, event?.current_odds, heroProjectedFinal, event?.pregame_projection]
   );
-  // #11103 — the game-story cards print the hero's projected final, never a second one.
-  const nflCardsShown = useMemo(() => withPageProjection(nflCards, heroProjectedFinal), [nflCards, heroProjectedFinal]);
+  // #2920 / #11296 — the pregame forecast the hero PRINTS (the same conditions as its render
+  // below), so the finish card can never name a different pregame favourite.
+  const heroPregamePair = heroFinalForecast?.forecast ?? (heroProjectedFinal && heroLiveBaseline ? heroLiveBaseline.baseline : null);
+  // #11103 — the game-story cards print the hero's projected final, never a second one; and
+  // its pregame forecast, never a second one.
+  const nflCardsShown = useMemo(
+    () => withPageProjection(withPagePregame(nflCards, heroPregamePair), heroProjectedFinal),
+    [nflCards, heroPregamePair, heroProjectedFinal],
+  );
 
   // #4571 — the age of the score PAIR the two lines above just resolved.
   //
