@@ -1,0 +1,160 @@
+"""#10090: every preview capacity pass leaves one report-only receipt line.
+
+Production 10/23 had the ledger `full` fleet-wide for a whole minute with no
+`maintenance incomplete` line, and a pass that returns silently could not tell
+apart (a) a slate wider than 512, (b) rows stuck live/scheduled, and (c) an
+incompatible owner withholding the residents. The receipt names which, from
+worker-ws logs alone, without changing admission, retirement, cap or TTL.
+"""
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from app.tasks import live_blend_refresh as lbr
+from app.tasks.live_blend_refresh import LiveBlendRefresher
+from app.utils import blend_preview
+
+NOW = datetime.now(timezone.utc)
+
+
+class _Result:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class _Rig:
+    def __init__(self, monkeypatch, *, tickets, rows=(), reread=(), fail=None):
+        self.tickets = list(tickets)
+        self.reads = [list(rows)] + [list(r) for r in reread]
+        self.fail = fail
+        self.retired, self.missing = [], []
+
+        @asynccontextmanager
+        async def factory():
+            yield self
+
+        self.worker = LiveBlendRefresher('kalshi', session_factory=factory)
+
+        async def ticket(include_candidates=False):
+            return self.tickets.pop(0)
+
+        async def retire(eid, rev, ticket):
+            self.retired.append(eid)
+
+        async def publish(frames):
+            self.missing.extend(frames)
+
+        class _Registry:
+            @staticmethod
+            def retire_missing(eid, source, ticket):
+                return ('retire_missing', eid)
+
+        monkeypatch.setattr(self.worker, '_preview_ticket', ticket)
+        monkeypatch.setattr(self.worker, '_retire_preview_event', retire)
+        monkeypatch.setattr(self.worker, '_publish_previews', publish)
+        monkeypatch.setattr(blend_preview, 'registry', lambda: _Registry)
+
+    async def execute(self, statement, *args, **kwargs):
+        if self.fail is not None:
+            raise self.fail
+        return _Result(self.reads.pop(0) if self.reads else [])
+
+
+def _receipts(caplog):
+    return [r.getMessage() for r in caplog.records
+            if 'preview capacity pass' in r.getMessage()]
+
+
+def _fields(line):
+    return dict(part.split('=', 1) for part in line.split(': ', 1)[1].split()[3:])
+
+
+async def test_full_pass_splits_residents_by_state_and_counts_attempts(monkeypatch, caplog):
+    rows = [
+        (1, 10, False, 'live', NOW - timedelta(hours=10)),
+        (2, 10, False, 'live', NOW - timedelta(hours=1)),
+        (3, 10, False, 'scheduled', NOW + timedelta(hours=2)),
+        (4, 10, True, 'final', NOW - timedelta(hours=3)),
+        (6, 10, False, 'suspended', NOW - timedelta(hours=2)),
+    ]
+    # Target 4 retires from the first read; target 5 is missing on its reread.
+    rig = _Rig(monkeypatch, tickets=[(7, [1, 2, 3, 4, 5, 6]), (8, [])], rows=rows)
+    caplog.set_level(logging.INFO, logger=lbr.__name__)
+    await rig.worker._maintain_preview_capacity()
+    assert rig.retired == [4] and rig.missing == [('retire_missing', 5)]
+    [line] = _receipts(caplog)
+    assert line.startswith('live_blend_refresh[kalshi]: preview capacity pass end=done ')
+    assert _fields(line) == {
+        'end': 'done', 'candidates': '6', 'missing': '1', 'retirable': '1',
+        'attempted': '2', 'live': '2', 'scheduled': '1', 'suspended': '1',
+        'other': '1', 'live_over_6h': '1', 'oldest_live_h': '10.0',
+    }
+
+
+@pytest.mark.parametrize('ticket, end', [((None, []), 'no_ticket'), ((3, []), 'no_candidates')])
+async def test_silent_returns_now_leave_a_receipt(monkeypatch, caplog, ticket, end):
+    # no_candidates beside a `status=full` ALARM is case (c): read_ticket
+    # returns residents only when full AND every owner is read-compatible.
+    rig = _Rig(monkeypatch, tickets=[ticket])
+    caplog.set_level(logging.INFO, logger=lbr.__name__)
+    await rig.worker._maintain_preview_capacity()
+    [line] = _receipts(caplog)
+    fields = _fields(line)
+    assert fields['end'] == end and fields['candidates'] == '0'
+    assert fields['oldest_live_h'] == '-' and fields['attempted'] == '0'
+
+
+async def test_ticket_lost_mid_pass_is_named(monkeypatch, caplog):
+    rows = [(1, 10, True, 'final', NOW), (2, 10, True, 'final', NOW)]
+    rig = _Rig(monkeypatch, tickets=[(7, [1, 2]), (None, [])], rows=rows)
+    caplog.set_level(logging.INFO, logger=lbr.__name__)
+    await rig.worker._maintain_preview_capacity()
+    [line] = _receipts(caplog)
+    fields = _fields(line)
+    assert fields['end'] == 'ticket_lost' and fields['attempted'] == '1'
+    assert fields['candidates'] == '2' and fields['retirable'] == '2'
+
+
+async def test_error_keeps_the_incomplete_warning_and_adds_a_receipt(monkeypatch, caplog):
+    rig = _Rig(monkeypatch, tickets=[(7, [1])], fail=RuntimeError('db'))
+    caplog.set_level(logging.INFO, logger=lbr.__name__)
+    await rig.worker._maintain_preview_capacity()
+    assert any('preview capacity maintenance incomplete' in r.getMessage()
+               for r in caplog.records)
+    assert rig.worker.preview_stats['publish_errors'] == 1
+    [line] = _receipts(caplog)
+    assert ' end=error ' in line
+
+
+async def test_cancelled_pass_logs_no_receipt(monkeypatch, caplog):
+    rig = _Rig(monkeypatch, tickets=[(7, [1])])
+    started = asyncio.Event()
+
+    async def held(statement, *args, **kwargs):
+        started.set()
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr(rig, 'execute', held)
+    caplog.set_level(logging.INFO, logger=lbr.__name__)
+    task = asyncio.create_task(rig.worker._maintain_preview_capacity())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert _receipts(caplog) == []
+
+
+def test_alarm_format_is_unchanged():
+    # Operators stop on the first ALARM line; the receipt must not move it.
+    assert blend_preview.LEDGER_ALARM_FORMAT == (
+        "blend_preview ledger ALARM status=%s phase=%s source=%s count=%d event_id=%s")
+    assert 'ALARM' not in lbr.PREVIEW_CAPACITY_RECEIPT_FORMAT
