@@ -1048,10 +1048,15 @@ class _VirtualTimeoutClock:
         async def scope():
             handle = asyncio.Timeout(None)
             entry = (self.now + delay, handle)
+            # Production reads the pass deadline through when(). Cancellation
+            # remains advanced explicitly below; expose the requested deadline
+            # in the real loop's clock domain, as asyncio.timeout(delay) does.
+            deadline = asyncio.get_running_loop().time() + delay
+            scope_budget = SimpleNamespace(when=lambda: deadline)
             async with handle:
                 self.active.append(entry)
                 try:
-                    yield handle
+                    yield scope_budget
                 finally:
                     self.active.remove(entry)
                     self.expired += int(handle.expired())
