@@ -244,9 +244,9 @@ async def test_idle_residency_reclaims_settled_slots_and_admits_eligible_pages(r
     await subscriber.get_message(timeout=1)
     try:
         await worker._maintain_preview_capacity()
-        if state == 'live':
+        if state in ('live', 'suspended'):
             # K1 supersedes the old expectation that settled LIVE residency
-            # may be discarded. All-live capacity stays safely full.
+            # may be discarded. Protected capacity stays safely full.
             assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 512
             assert int(await client.hget(blend_preview.LEDGER_KEY, 'e:1:gen')) == old_gen
             ticket, _ = await registry.read_ticket(client.execute_command, 'kalshi')
@@ -364,22 +364,33 @@ async def test_adversarial_k2_dead_metadata_is_reclaimed_by_actual_caller(rig, c
         assert await client.hget(blend_preview.LEDGER_KEY, 'e:1:gen') is None
 
 
-@pytest.mark.parametrize('race', ['before_lock', 'locked_row', 'during_mutation'])
+@pytest.mark.parametrize('race', ['before_lock', 'before_lock_suspended', 'before_lock_started',
+                                  'before_lock_null', 'locked_row', 'during_mutation'])
 async def test_idle_status_proof_is_locked_and_busy_rows_are_skipped(rig, capacity, monkeypatch, race):
     from sqlalchemy.exc import DBAPIError
     worker, registry, client, reads = capacity
     async with rig.engine.begin() as conn:
+        if race == 'before_lock_null':
+            # The model is NOT NULL; test the defensive guard under an
+            # explicitly relaxed disposable schema, never production.
+            await conn.execute(text("ALTER TABLE events ALTER COLUMN commence_time DROP NOT NULL"))
         await conn.execute(text("UPDATE events SET status='scheduled', commence_time=NOW()+INTERVAL '8 days' WHERE id=481"))
     await registry.execute(registry.committed(481, 'kalshi', seq=registry.pending_seq(481, 'kalshi'),
                            sources=BASE10, rev=10), client.execute_command, event_channel, worker.preview_stats)
     entered = False
-    if race == 'before_lock':
+    if race.startswith('before_lock'):
         retire = worker._retire_idle_preview_event
         async def flip_then_retire(eid, ticket):
             nonlocal entered
             entered = True
             async with rig.engine.begin() as conn:
-                await conn.execute(text("UPDATE events SET status='live' WHERE id=481"))
+                changes = {
+                    'before_lock': "status='live'",
+                    'before_lock_suspended': "status='suspended'",
+                    'before_lock_started': "commence_time=NOW()-INTERVAL '1 minute'",
+                    'before_lock_null': "commence_time=NULL",
+                }
+                await conn.execute(text("UPDATE events SET " + changes[race] + " WHERE id=481"))
             await retire(eid, ticket)
         monkeypatch.setattr(worker, '_retire_idle_preview_event', flip_then_retire)
     elif race == 'during_mutation':
@@ -439,3 +450,37 @@ async def test_idle_cancel_before_eval_releases_status_lock_without_reclaim(rig,
     async with rig.engine.begin() as conn:
         await conn.execute(text("SET LOCAL lock_timeout='20ms'"))
         await conn.execute(text("UPDATE events SET status='live' WHERE id=481"))
+
+
+@pytest.mark.parametrize('state', ['live', 'suspended', 'scheduled', 'unknown_start', 'boundary', 'future'])
+async def test_existing_inplay_resident_keeps_preview_against_newcomer_without_pregame_escape(rig, capacity, state):
+    worker, registry, client, reads = capacity
+    async with rig.engine.begin() as conn:
+        if state == 'unknown_start':
+            # Explicit malformed-state control in this disposable schema.
+            await conn.execute(text("ALTER TABLE events ALTER COLUMN commence_time DROP NOT NULL"))
+        start = {'unknown_start': 'NULL', 'boundary': 'NOW()',
+                 'future': "NOW()+INTERVAL '8 days'"}.get(state, "NOW()-INTERVAL '2 hours'")
+        await conn.execute(text("UPDATE events SET status=:status, commence_time=" + start + " WHERE id=1"),
+                           {'status': state if state in ('live', 'suspended') else 'scheduled'})
+    await registry.execute(registry.committed(1, 'kalshi', seq=registry.pending_seq(1, 'kalshi'),
+                           sources=BASE10, rev=10), client.execute_command, event_channel, worker.preview_stats)
+    assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 512
+    await worker._maintain_preview_capacity()
+    resident_survives = await client.hget(blend_preview.LEDGER_KEY, 'e:1:gen') is not None
+    ticket, _ = await registry.read_ticket(client.execute_command, 'kalshi')
+    event = _ev('live'); event.preview_read_ticket = ticket
+    newcomer = await registry.prepare(registry.propose(513, 'kalshi', value=.8, event=event,
+                               row_sources=BASE10, row_rev=10), client.execute_command, worker.preview_stats)
+    ticket, _ = await registry.read_ticket(client.execute_command, 'kalshi')
+    event = _ev(state if state in ('live', 'suspended') else 'scheduled'); event.preview_read_ticket = ticket
+    existing = await registry.prepare(registry.propose(1, 'kalshi', value=.9, event=event,
+                               row_sources=BASE10, row_rev=10), client.execute_command, worker.preview_stats)
+    if state == 'future':
+        assert not resident_survives
+        assert any(f['event_id'] == 513 and f['preview']['kind'] == 'blend' for f in newcomer)
+        return
+    assert resident_survives, 'CERT4288: the only idle in-play resident lost residency'
+    assert not any(f['event_id'] == 513 and f['preview']['kind'] == 'blend' for f in newcomer)
+    assert any(f['event_id'] == 1 and f['preview']['kind'] == 'blend' for f in existing)
+    assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 512

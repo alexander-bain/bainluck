@@ -108,9 +108,9 @@ script enforces it:
   lifecycle ordering only: source values and observation timestamps do not
   change. Active continuations retain their original deadlines. Mixed-version
   owners cannot retire. At 512 events the caller may reread bounded ids and
-  retire authoritatively finished rows or idle non-live residents. A fresh
-  SHARE/SKIP LOCKED read excludes known-live rows; distant scheduled rows go
-  first, started suspended rows last. Current unexpired proposals survive.
+  retire authoritatively finished rows or idle future-scheduled residents.
+  A fresh SHARE/SKIP LOCKED read preserves live, suspended and started or
+  undated scheduled rows. Distant starts go first; valid proposals survive.
   The status lock covers an acknowledged reclaim, not an uncertain Redis
   command completing after cancellation. A missing barrier fails closed;
 * publish — generation, sequence, tombstone and EVERY contributor's owner and
@@ -1227,7 +1227,7 @@ class LedgerRegistry(PreviewRegistry):
             int(eid) for eid in json.loads(reply[3])}
 
     def retire_idle(self, event_id: int, source: str, rev: int, ticket: int) -> dict:
-        """Locked fresh non-live DB proof for a resident with no valid pending metadata."""
+        """Locked fresh future-scheduled DB proof for a resident with no valid pending metadata."""
         return {"ledger_op": "retire_idle", "event_id": int(event_id), "source": source,
                 "ctx_rev": rev, "read_ticket": ticket}
 

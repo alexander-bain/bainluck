@@ -5130,17 +5130,16 @@ class LiveBlendRefresher:
                     row = present.get(eid)
                     if row is None or row[2]:
                         return (0, 0, eid)
-                    # Free the most distant pregame residency first. Started
-                    # suspended games can still be in play, so rank them last.
-                    start = row[4]
-                    future = start is not None and start > row[5]
-                    if row[3] == "scheduled":
-                        return (1 if future else 2, -start.timestamp() if start else 0, eid)
-                    return (3 if future else 4, -start.timestamp() if start else 0, eid)
+                    # Only future scheduled rows reach this idle branch.
+                    return (1, -row[4].timestamp(), eid)
+
+                def idle_target(row):
+                    return (not row[2] and row[3] == "scheduled"
+                            and row[4] is not None and row[4] > row[5])
 
                 targets = sorted((eid for eid in candidates
                                   if eid not in present or present[eid][2]
-                                  or (eid in idle and present[eid][3] != "live")),
+                                  or (eid in idle and idle_target(present[eid]))),
                                  key=priority)[:32]
                 # Reclaim a bounded batch rather than allowing just one new
                 # event per cadence. Every deletion advances the barrier;
@@ -5165,7 +5164,7 @@ class LiveBlendRefresher:
                         # Inline terminal callers already own their slot.
                         async with self._session_slot():
                             await self._retire_preview_event(eid, row[1], ticket)
-                    elif eid in idle and row[3] != "live":
+                    elif eid in idle and idle_target(row):
                         await self._retire_idle_preview_event(eid, ticket)
         except Exception:
             self.preview_stats["publish_errors"] += 1
@@ -5173,15 +5172,15 @@ class LiveBlendRefresher:
                            self.source, exc_info=True)
 
     async def _retire_idle_preview_event(self, event_id: int, ticket: int) -> None:
-        """Skip busy rows; hold fresh non-live status through ledger mutation.
+        """Skip busy rows; hold fresh future-scheduled proof through mutation.
 
-        An absent locked result means missing OR locked: neither authorizes
+        An absent locked result means protected, missing or locked; none authorizes
         missing-row retirement. Publication happens after releasing the row.
         The enclosing maintenance timeout bounds this work. An uncertain
         Redis command may complete after cancellation releases the DB lock;
         this is not distributed atomicity across the two stores.
         """
-        from sqlalchemy import select
+        from sqlalchemy import func, select
         from app.models.models import Event
         from app.tasks.base import get_task_session
         from app.utils.blend_preview import registry
@@ -5191,8 +5190,12 @@ class LiveBlendRefresher:
         async with self._session_slot(), factory() as session:
             row = (await session.execute(select(
                 Event.status, Event.win_probability_sources_rev,
-            ).where(Event.id == event_id).with_for_update(read=True, skip_locked=True))).first()
-            if row is None or row[0] == "live":
+            ).where(
+                Event.id == event_id, Event.status == "scheduled",
+                Event.commence_time.is_not(None), Event.commence_time > func.now(),
+                Event.completed_at.is_(None),
+            ).with_for_update(read=True, skip_locked=True))).first()
+            if row is None:
                 return
             frames = await self._prepare_ledger_previews([
                 registry().retire_idle(event_id, self.source, row[1], ticket)])
