@@ -2404,10 +2404,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     stamp_admit()
 
                 if clock_after_delivery:
-                    # The committed cohort can start display work now. This
-                    # sample only bounds FUTURE inputs and still completes
-                    # before the next price phase starts.
-                    await held_quotes.sample_database_clock(get_task_session)
+                    # One owned sampler coalesces future-input clock work;
+                    # later price phases need not wait for this optional IO.
+                    held_quotes.request_phase_sample(get_task_session)
 
                 # #9484: keep every committed MARKET notification, including
                 # standalone futures/props which have no event blend.

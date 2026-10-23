@@ -27,9 +27,15 @@ def setup_clock(r):
     return entered, release, samples
 
 
+async def stop_clock(r):
+    task = r.ns["blend_refresher"].held_quotes.close()
+    if task:
+        await asyncio.gather(task, return_exceptions=True)
+
+
 async def test_committed_game_starts_display_while_future_clock_is_pending():
     r = rig()
-    r.release.set()
+    # Hold the next price write, not the clock-owned sampler, for cancellation.
     gate, calls = held_refresher(r)
     entered, release, samples = setup_clock(r)
     task = asyncio.create_task(r.flush())
@@ -38,20 +44,22 @@ async def test_committed_game_starts_display_while_future_clock_is_pending():
         assert r.committed == [1, 2]
         assert calls["started"] == [(100,)]
         assert samples == [(1, 2)]
-        assert ("write", 3) not in r.trace
+        assert ("write", 3) in r.trace  # later phase is allowed to start
         assert not task.done()
     finally:
         release.set()
+        r.release.set()
         gate.set()
         await asyncio.wait_for(task, 2)
         await r.ns["prices"].join_stamp(r.ns["blend_refresher"])
+        await stop_clock(r)
     assert r.committed == [1, 2, 3, 9]
-    assert len(samples) == 3
+    assert samples  # completed phases coalesce on the owned sampler
 
 
 async def test_cancelling_future_clock_joins_started_display_and_keeps_debt():
     r = rig()
-    r.release.set()
+    # Hold the next price write, not the clock-owned sampler, for cancellation.
     gate, calls = held_refresher(r)
     entered, release, samples = setup_clock(r)
     task = asyncio.create_task(r.flush())
@@ -63,7 +71,9 @@ async def test_cancelling_future_clock_joins_started_display_and_keeps_debt():
         with pytest.raises(asyncio.CancelledError):
             await task
         release.set()
+        r.release.set()
         gate.set()
+    await stop_clock(r)
     assert calls["cancelled"] == [(100,)]
     assert calls["running"] == 0
     assert r.ns["prices"].stamping is None
@@ -72,7 +82,7 @@ async def test_cancelling_future_clock_joins_started_display_and_keeps_debt():
 
 async def test_failed_transaction_never_starts_display_or_samples_future_clock():
     r = rig(failed=1)
-    r.release.set()
+    # Hold the next price write, not the clock-owned sampler, for cancellation.
     gate, calls = held_refresher(r)
     entered, release, samples = setup_clock(r)
     release.set()
@@ -98,6 +108,7 @@ async def test_real_refresher_publishes_before_future_clock_completes(monkeypatc
     from tests.test_single_event_commit_10090 import settle_until
 
     x, r = _caller(monkeypatch, blocked=())
+    r.release.clear()  # isolate first-cohort publication while both IOs wait
     entered, release, samples = setup_clock(r)
     task = asyncio.create_task(r.flush(1000.0))
     try:
@@ -109,6 +120,8 @@ async def test_real_refresher_publishes_before_future_clock_completes(monkeypatc
         assert not task.done()
     finally:
         release.set()
+        r.release.set()
         x.release.set()
         await asyncio.wait_for(task, 2)
         await r.ns["prices"].join_stamp(x.r)
+        await stop_clock(r)
