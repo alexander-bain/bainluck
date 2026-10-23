@@ -37,20 +37,40 @@ final class SmallGroupsAreDrawnWhole7074Tests: XCTestCase {
         XCTAssertEqual(Card.visibleCount(itemCount: 0, expanded: false), 0)
         XCTAssertTrue(Card.showsEveryRow(itemCount: 0, expanded: false))
         XCTAssertFalse(Card.canExpand(itemCount: 0, kind: nil))
-        XCTAssertNil(Card.footerTitle(itemCount: 0, kind: nil, expanded: false))
+        XCTAssertNil(Card.footerTitle(memberTypes: [], kind: nil, expanded: false))
     }
 
-    func testFooterNamesAllQuestionsAndShortThemesOpenFullCards() {
+    private func members(_ count: Int, _ type: String = "futures") -> [String] {
+        Array(repeating: type, count: count)
+    }
+
+    func testFooterNamesTheMembersAndShortThemesOpenFullCards() {
         let kinds: [String?] = [nil, "theme", "comparison"]
         for kind in kinds {
-            XCTAssertEqual(Card.footerTitle(itemCount: 5, kind: kind, expanded: false), "All 5 questions")
-            XCTAssertNil(Card.footerTitle(itemCount: 5, kind: kind, expanded: true))
+            XCTAssertEqual(Card.footerTitle(memberTypes: members(5), kind: kind, expanded: false), "All 5 markets")
+            XCTAssertNil(Card.footerTitle(memberTypes: members(5), kind: kind, expanded: true))
         }
         for count in 1...4 {
-            XCTAssertEqual(Card.footerTitle(itemCount: count, kind: "theme", expanded: false), "Expand")
+            XCTAssertEqual(Card.footerTitle(memberTypes: members(count), kind: "theme", expanded: false), "Expand")
             XCTAssertTrue(Card.canExpand(itemCount: count, kind: "theme"))
-            XCTAssertNil(Card.footerTitle(itemCount: count, kind: "comparison", expanded: false))
+            XCTAssertNil(Card.footerTitle(memberTypes: members(count), kind: "comparison", expanded: false))
             XCTAssertFalse(Card.canExpand(itemCount: count, kind: "comparison"))
+        }
+    }
+
+    /// #10877 — web's `bundleExpandLabel`: every member a game says games, a
+    /// mix gets no noun, and no footer ever says "questions".
+    func testFooterSaysGamesForAllGamesAndNoNounForAMix() {
+        XCTAssertEqual(Card.footerTitle(memberTypes: members(6, "event"), kind: "theme", expanded: false), "All 6 games")
+        XCTAssertEqual(Card.footerTitle(memberTypes: members(4) + members(2, "event"), kind: "theme", expanded: false), "See all 6")
+        XCTAssertEqual(Card.footerTitle(memberTypes: members(5, "event"), kind: "theme", expanded: true), nil)
+        for count in 0...12 {
+            for types in [members(count), members(count, "event"), members(count, "something_new")] {
+                for kind in [nil, "theme", "comparison"] as [String?] {
+                    let title = Card.footerTitle(memberTypes: types, kind: kind, expanded: false) ?? ""
+                    XCTAssertFalse(title.localizedCaseInsensitiveContains("question"), title)
+                }
+            }
         }
     }
 }

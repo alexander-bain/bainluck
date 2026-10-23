@@ -425,7 +425,7 @@ struct EventPropsMatrixDetailView: View {
                     Text("This game is over.")
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("This question isn't being offered right now.")
+                    Text("This prop line isn't being offered right now.")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -747,7 +747,7 @@ struct AfterPropsMatrixView: View {
                 if !grid.withoutChance.isEmpty { withoutChanceSection(grid) }
                 footer(grid)
             } else {
-                Text("No questions for this stat")
+                Text("No prop lines for this stat")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -936,7 +936,7 @@ struct AfterPropsMatrixView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(PropExpectationActualDisplay.accessibilityLabel(
                 question, actual: props.actual(for: question), stat: stat))
-            .accessibilityHint("Shows this question and its sources")
+            .accessibilityHint("Shows this prop line and its sources")
             .accessibilityFocused($accessibilityFocus, equals: .question(.init(question)))
         } else {
             Color.clear
@@ -1033,7 +1033,7 @@ struct AfterPropsMatrixView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(PropExpectationActualDisplay.accessibilityLabel(question, actual: actual, stat: stat))
-                .accessibilityHint("Shows this question and its sources")
+                .accessibilityHint("Shows this prop line and its sources")
                 .accessibilityFocused($accessibilityFocus, equals: .question(.init(question)))
             }
         }
@@ -1065,7 +1065,7 @@ struct AfterPropsDetailView: View {
                     result(question)
                     if !question.expectation.contributors.isEmpty { sources(question) }
                 } else {
-                    Text("This question isn't available right now.")
+                    Text("This prop line isn't available right now.")
                         .foregroundStyle(.secondary)
                 }
             }
