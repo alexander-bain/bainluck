@@ -1849,6 +1849,7 @@ class LiveBlendRefresher:
         snapshot_max_gap_s: float = DEFAULT_SNAPSHOT_MAX_GAP_S,
         stamp_lock_timeout_ms: Optional[int] = DEFAULT_STAMP_LOCK_TIMEOUT_MS,
         session_factory=None,
+        observation_read_factory=None,
         chart_custody: Optional[OwedChartCustody] = None,
     ) -> None:
         self.source = source
@@ -1893,6 +1894,7 @@ class LiveBlendRefresher:
         #: the consumer's one engine instead of building a pool per batch.
         #: None ⇒ ``app.tasks.base.get_task_session``, looked up per batch.
         self._session_factory = session_factory
+        self._observation_read_factory = observation_read_factory
         self.min_refresh_interval_s = min_refresh_interval_s
         self.failed_retry_interval_s = failed_retry_interval_s
         self.inversion_ttl_s = inversion_ttl_s
@@ -4662,7 +4664,8 @@ class LiveBlendRefresher:
             event_ids.intersection_update(await validate(event_ids))
             if not event_ids:
                 return
-            factory = self._session_factory or get_task_session
+            factory = (self._observation_read_factory
+                       or self._session_factory or get_task_session)
             # Optional display work must not queue the game loop behind a
             # contended pool/read. The caller may retain the SAME frozen input.
             if self._session_slots.locked():

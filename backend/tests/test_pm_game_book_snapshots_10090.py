@@ -146,7 +146,7 @@ async def _reconnect(monkeypatch, frame, *, flag="1", stale=False):
 
     monkeypatch.setattr(websockets, "connect", connect)
     consumer = asyncio.create_task(task._run_polymarket_ws_consumer.__wrapped__(
-        sessions=SimpleNamespace(session=session), stop=stop,
+        sessions=SimpleNamespace(session=session, observation_read=session), stop=stop,
     ))
     try:
         await asyncio.wait_for(completed.wait(), 5)

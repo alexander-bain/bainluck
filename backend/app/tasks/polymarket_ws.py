@@ -3417,6 +3417,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     blend_refresher = LiveBlendRefresher(
         "polymarket", min_refresh_interval_s=blend_floor,
         session_factory=get_task_session,  # #2471
+        observation_read_factory=sessions.observation_read,
         chart_custody=OwedChartCustody(),  # #11181: no owed chart point is lost
     )
     # #11138: quotes whose price-row write a lock holds; the stamp reads them

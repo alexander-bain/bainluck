@@ -41,6 +41,83 @@ needs_postgres = pytest.mark.skipif(
 OPERATIONS = 4
 
 
+@needs_postgres
+async def test_observation_read_has_no_commit_and_writer_pool_stays_transactional(
+    counted, scratch_table, monkeypatch,
+):
+    import asyncpg.transaction
+    from sqlalchemy import column, select, table as sql_table
+    from app.tasks.ws_consumer_sessions import ConsumerSessions
+
+    name, admin = scratch_table
+    rows = sql_table(name, column("op"))
+    sessions = ConsumerSessions("observation-test")
+    commits = []
+    original_commit = asyncpg.transaction.Transaction.commit
+
+    async def counted_commit(transaction):
+        commits.append(transaction)
+        return await original_commit(transaction)
+
+    states = []
+    engine = sessions._engine_here()
+
+    @event.listens_for(engine.sync_engine, "after_cursor_execute")
+    def record_transaction(connection, cursor, statement, parameters, context, many):
+        states.append(connection.connection.driver_connection.is_in_transaction())
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(asyncpg.transaction.Transaction, "commit", counted_commit)
+            async with sessions.observation_read() as reader:
+                assert list((await reader.execute(select(rows.c.op))).scalars()) == []
+                with pytest.raises(ValueError, match="exactly one SELECT"):
+                    await reader.execute(select(rows.c.op))
+            assert states == [False]
+            assert commits == []
+
+        async with sessions.session() as writer:
+            await writer.execute(text(f"INSERT INTO {name} VALUES (1)"))
+        assert states[-1] is True
+        assert await _committed_ops(admin, name) == [1]
+        async with sessions.observation_read() as reader:
+            assert list((await reader.execute(select(rows.c.op))).scalars()) == [1]
+        assert states[-1] is False
+        with pytest.raises(RuntimeError, match="rollback"):
+            async with sessions.session() as writer:
+                await writer.execute(text(f"INSERT INTO {name} VALUES (2)"))
+                raise RuntimeError("rollback")
+        assert await _committed_ops(admin, name) == [1]
+        async with sessions.observation_read() as reader:
+            with pytest.raises(ValueError, match="exactly one SELECT"):
+                await reader.execute(rows.delete())
+        assert sessions._open == 0
+        assert counted["engines"] == 1
+        assert counted["connects"] == 1
+    finally:
+        await sessions.aclose()
+
+
+@needs_postgres
+async def test_cancelled_observation_read_returns_capacity(counted):
+    import asyncio
+    from sqlalchemy import func, select
+    from app.tasks.ws_consumer_sessions import ConsumerSessions
+
+    sessions = ConsumerSessions("cancel-observation-test")
+    try:
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(.05), sessions.observation_read() as reader:
+                await reader.execute(select(func.pg_sleep(1)))
+        assert sessions._open == 0 and sessions._idle.is_set()
+        async with sessions.observation_read() as reader:
+            assert (await reader.execute(select(1))).scalar_one() == 1
+        async with sessions.session() as writer:
+            assert (await writer.execute(text("SELECT 2"))).scalar_one() == 2
+    finally:
+        await sessions.aclose()
+
+
 @pytest.fixture
 def counted(monkeypatch):
     """Point the task factory at the test server and count DBAPI connects."""

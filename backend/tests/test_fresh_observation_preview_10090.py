@@ -208,6 +208,36 @@ async def test_accepted_observation_uses_only_ephemeral_clocks_and_no_stamp_stat
     assert all(row.last_updated == now - timedelta(seconds=3) for row in rows)
     assert not session.updates and not committed and not r._lock_retry
     assert r._last_write_at[1] == 100. and r._last_written_value[1] == .9
+
+
+async def test_accepted_observation_uses_dedicated_read_scope_before_publish(monkeypatch):
+    from contextlib import asynccontextmanager
+
+    r, session, frames, _, _, _, observations, validate, _ = acknowledged_rig(monkeypatch)
+    calls = []
+
+    @asynccontextmanager
+    async def read_scope():
+        calls.append("read-open")
+        yield session
+        calls.append("read-closed")
+
+    @asynccontextmanager
+    async def writer_scope():
+        raise AssertionError("observation must not wait for a writer COMMIT")
+        yield
+
+    original_publish = r._publish_previews
+
+    async def publish(*args, **kwargs):
+        assert calls == ["read-open", "read-closed"]
+        await original_publish(*args, **kwargs)
+
+    r._observation_read_factory = read_scope
+    r._session_factory = writer_scope
+    monkeypatch.setattr(r, "_publish_previews", publish)
+    await r.preview_accepted_observations(observations, validate)
+    assert len(_blends(frames)) == 1
     assert not r._dispositions and not r._history
 
 

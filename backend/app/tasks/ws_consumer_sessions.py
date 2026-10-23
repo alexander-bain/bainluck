@@ -55,6 +55,20 @@ logger = logging.getLogger(__name__)
 CLOSE_WAIT_S = 10.0
 
 
+class _SingleRead:
+    """Only one SQLAlchemy SELECT may use the autocommit connection."""
+
+    def __init__(self, connection):
+        self._connection = connection
+        self._used = False
+
+    async def execute(self, statement):
+        if self._used or not getattr(statement, "is_select", False):
+            raise ValueError("observation read scope permits exactly one SELECT")
+        self._used = True
+        return await self._connection.execute(statement)
+
+
 class ConsumerSessions:
     """One lazily-created engine, fresh sessions per operation, one dispose."""
 
@@ -109,6 +123,28 @@ class ConsumerSessions:
             # definition in `app.tasks.base`.
             async with task_base.get_task_session(engine=engine) as session:
                 yield session
+        finally:
+            self._open -= 1
+            if not self._open:
+                self._idle.set()
+
+    @asynccontextmanager
+    async def observation_read(self):
+        """One fresh statement snapshot, with no separate COMMIT round trip.
+
+        Only the observation-preview graph SELECT uses this scope. Writers
+        still use session(), including its commit and publication hooks. The
+        connection shares this consumer's pool and returns before Redis work.
+        """
+        engine = self._engine_here()
+        self._open += 1
+        self._idle.clear()
+        try:
+            async with engine.connect() as connection:
+                connection = await connection.execution_options(
+                    isolation_level="AUTOCOMMIT",
+                )
+                yield _SingleRead(connection)
         finally:
             self._open -= 1
             if not self._open:
