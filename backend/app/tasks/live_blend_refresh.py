@@ -4743,9 +4743,10 @@ class LiveBlendRefresher:
                             and clock_ordinal > clock_owner._sample_published):
                         clock_owner._database_bound = clock_sample["value"].timestamp()
                         clock_owner._sample_published = clock_ordinal
-                        if clock_ordinal > clock_owner._sample_failure_ordinal:
-                            clock_owner._sample_failure_episode = False
-                            clock_owner._sample_backoff_until = 0.0
+                        # A graph read has a longer budget than the standalone
+                        # clock probe. Its success supplies future input bounds,
+                        # but cannot prove that shorter-budget path recovered.
+                        # Only a standalone success clears its failure backoff.
                         clock_owner._last_sample_done = clock_owner._now()
                 finally:
                     if clock_sample is not None:
