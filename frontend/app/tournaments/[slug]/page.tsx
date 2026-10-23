@@ -138,6 +138,7 @@ import DrawToggle, {
   DRAWS,
   OPENING_DRAW_FALLBACK,
   drawOptions,
+  isValidDrawSelection,
   readRememberedDrawChoice,
   rememberDrawChoice,
 } from "@/components/tournament/DrawToggle";
@@ -232,7 +233,6 @@ export default function TournamentPage() {
    * not follow play around.
    */
   const [drawChoice, setDrawChoice] = useState<string | null>(null);
-  const draw = drawChoice ?? OPENING_DRAW_FALLBACK;
   /**
    * The chart's chosen contenders, or `null` for "whatever the default is".
    *
@@ -346,8 +346,6 @@ export default function TournamentPage() {
    * rather than comparing against `draw`, so a group pill cannot leave one
    * section filtering on an id no row carries.
    */
-  const drawsShown = useMemo(() => selectionDraws(draw), [draw]);
-
   /**
    * The pills, derived from the payload (#4124). Doubles appears the day the
    * doubles draw does and not before — see `drawOptions`.
@@ -356,6 +354,27 @@ export default function TournamentPage() {
     () => drawOptions([data?.slate?.matches ?? [], data?.results?.matches ?? []]),
     [data]
   );
+
+  /**
+   * THE DRAW ON SCREEN: the reader's choice, when this tournament offers it.
+   *
+   * #11424 restores a choice from `?draw=` or session storage, and either can
+   * name a draw this tournament has no pill for — an edited, shared or year-old
+   * `?draw=doubles` on a hub with no doubles rows. Shown as is, that presses no
+   * pill and empties every draw-filtered section. So an unoffered choice shows
+   * the opening draw instead (`defaultDraw`'s answer, as at first payload).
+   *
+   * Checked here, against the pills, and NOT when the choice is restored: the
+   * choice stays in state untouched. `results` arrives in the `rest` request,
+   * so a Doubles pill that only finished doubles rows carry does not exist at
+   * first payload — refusing it then would erase a genuine choice, and this
+   * shows it the moment those rows land.
+   */
+  const draw = isValidDrawSelection(drawChoice, drawPills)
+    ? drawChoice
+    : defaultDraw(data?.slate?.matches ?? [], DRAWS) ?? OPENING_DRAW_FALLBACK;
+
+  const drawsShown = useMemo(() => selectionDraws(draw), [draw]);
 
   const board = useMemo(
     () => data?.boards.find((entry) => drawsShown.includes(entry.draw)) ?? null,
