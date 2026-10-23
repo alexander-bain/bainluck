@@ -1,7 +1,7 @@
 """Ship: PM starts delivery without a redundant post-commit clock query."""
 import asyncio
 import time
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 import pytest
 from sqlalchemy import text
@@ -10,6 +10,23 @@ from tests.integration.test_pm_held_price_row_stamps_received_quote_11138_pg imp
     DB_URL, rig, consumer, build, wire_held_quotes,
 )
 pytestmark = [pytest.mark.asyncio, pytest.mark.skipif(not DB_URL, reason="disposable PostgreSQL required")]
+
+@pytest.fixture(autouse=True)
+async def prepared_price_parameter_types(consumer):
+    """Exercise returned-clock rules on an established consumer pool.
+
+    SELECT 1 opens connections but leaves asyncpg array codecs cold. Prepare
+    the price statement's types on every connection outside its 250ms budget;
+    cold-pool behavior remains covered by the separate deadline suite.
+    """
+    async with AsyncExitStack() as stack:
+        for _ in range(5):
+            conn = await stack.enter_async_context(consumer.connect())
+            await conn.execute(text(
+                "SELECT ARRAY[1]::integer[], ARRAY[0.5]::numeric[], "
+                "ARRAY[0.5]::double precision[], ARRAY[false]::boolean[]"
+            ))
+
 
 async def test_committed_price_supplies_future_bound_without_separate_query(rig, consumer, monkeypatch):
     t = await build(rig, consumer, monkeypatch, trace=False, lock_ms=500)
