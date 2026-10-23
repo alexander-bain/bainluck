@@ -34,6 +34,7 @@ import pytest
 
 from app.utils.cross_source_matching import is_same_question
 from app.utils.discover_bundles import (
+    _canonical_outcome_name,
     _comparison_title,
     _dedupe_same_question_members,
     _same_priced_outcomes,
@@ -365,3 +366,180 @@ def test_opposing_rate_leaders_do_not_fold_under_removal_3():
     kept, folded = _dedupe_same_question_members([kalshi, poly])
     assert folded == []
     assert len(kept) == 2
+
+
+def test_gt25_cut_and_hike_aliases_are_load_bearing_for_removal_3():
+    """R2(a): Positive pin where a `50+`/`>25` leg is load-bearing for both
+    leader agreement and the 2-shared-leg field minimum."""
+    dec_close = "2026-12-09T19:00:00+00:00"
+    poly_dec_close = "2026-12-09T00:00:00+00:00"
+
+    kalshi_cut = _member(
+        301,
+        "Fed decision in Dec 2026?",
+        source="kalshi",
+        resolution_date=dec_close,
+        outcomes=[
+            ("Cut >25bps", 0.55),
+            ("Cut 25bps", 0.30),
+            ("Fed maintains rate", 0.15),
+        ],
+    )
+    poly_cut = _member(
+        302,
+        "Fed Decision in December?",
+        source="polymarket",
+        resolution_date=poly_dec_close,
+        outcomes=[
+            ("50+ bps decrease", 0.54),
+            ("25 bps decrease", 0.31),
+            ("25 bps increase", 0.15),
+        ],
+        score=85.0,
+    )
+    assert _same_priced_outcomes(kalshi_cut["data"], poly_cut["data"])
+    kept, folded = _dedupe_same_question_members([kalshi_cut, poly_cut])
+    assert _ids(kept) == [301]
+    assert _ids(folded) == [302]
+    assert _ids(fold_same_question_cards([kalshi_cut, poly_cut])) == [301]
+
+    kalshi_hike = _member(
+        303,
+        "Fed decision in Dec 2026?",
+        source="kalshi",
+        resolution_date=dec_close,
+        outcomes=[
+            ("Hike >25bps", 0.55),
+            ("Hike 25bps", 0.30),
+            ("Fed maintains rate", 0.15),
+        ],
+    )
+    poly_hike = _member(
+        304,
+        "Fed Decision in December?",
+        source="polymarket",
+        resolution_date=poly_dec_close,
+        outcomes=[
+            ("50+ bps increase", 0.54),
+            ("25 bps increase", 0.31),
+            ("25 bps decrease", 0.15),
+        ],
+        score=85.0,
+    )
+    assert _same_priced_outcomes(kalshi_hike["data"], poly_hike["data"])
+    kept_h, folded_h = _dedupe_same_question_members([kalshi_hike, poly_hike])
+    assert _ids(kept_h) == [303]
+    assert _ids(folded_h) == [304]
+    assert _ids(fold_same_question_cards([kalshi_hike, poly_hike])) == [303]
+
+
+def test_exact_50bps_outcomes_do_not_canonicalize_to_gt25bps():
+    """R1 & R2(b): Exact `50 bps` is `(25, 50]`, not `(25, inf)`, and must never
+    canonicalize to `cut >25bps` or `hike >25bps`."""
+    for exact_cut in (
+        "50 bps decrease",
+        "50bps decrease",
+        "cut 50bps",
+        "cut 50 bps",
+    ):
+        assert _canonical_outcome_name(exact_cut) != "cut >25bps"
+
+    for exact_hike in (
+        "50 bps increase",
+        "50bps increase",
+        "hike 50bps",
+        "hike 50 bps",
+    ):
+        assert _canonical_outcome_name(exact_hike) != "hike >25bps"
+
+    # Probe P6b: a board led by exact `50 bps decrease` + `75+ bps decrease`
+    # does not share leader `Cut >25bps` with Kalshi.
+    kalshi_gt25 = _member(
+        401,
+        "Fed decision in Dec 2026?",
+        source="kalshi",
+        resolution_date="2026-12-09T19:00:00+00:00",
+        outcomes=[
+            ("Cut >25bps", 0.50),
+            ("Cut 25bps", 0.30),
+            ("Fed maintains rate", 0.20),
+        ],
+    )
+    poly_exact_50 = _member(
+        402,
+        "Fed Decision in December?",
+        source="polymarket",
+        resolution_date="2026-12-09T00:00:00+00:00",
+        outcomes=[
+            ("50 bps decrease", 0.50),
+            ("25 bps decrease", 0.30),
+            ("75+ bps decrease", 0.20),
+        ],
+        score=85.0,
+    )
+    assert not _same_priced_outcomes(kalshi_gt25["data"], poly_exact_50["data"])
+    kept, folded = _dedupe_same_question_members([kalshi_gt25, poly_exact_50])
+    assert folded == []
+    assert _ids(kept) == [401, 402]
+    assert _ids(fold_same_question_cards([kalshi_gt25, poly_exact_50])) == [401, 402]
+
+
+def test_undated_month_expansion_requires_one_cycle_resolution_p1():
+    """R3 (Probe P1): Kalshi-shaped undated `Fed decision in Sep?` (2026-09-16)
+    beside Polymarket `Fed Decision in September?` (2027-09-15, one year apart)
+    must stay TWO cards in both standalone fold and bundle assembly, as must an
+    undated Sep 2026 row beside a stated `September 2027` row."""
+    sep_2026_undated = _member(
+        501,
+        "Fed decision in Sep?",
+        source="kalshi",
+        resolution_date=KALSHI_SEP_DATE,
+        outcomes=[
+            ("Hike 25bps", 0.55),
+            ("Fed maintains rate", 0.46),
+            ("Hike >25bps", 0.02),
+        ],
+    )
+    sep_2027_undated = _member(
+        502,
+        "Fed Decision in September?",
+        source="polymarket",
+        resolution_date="2027-09-15T00:00:00+00:00",
+        outcomes=[
+            ("25 bps increase", 0.54),
+            ("No change", 0.47),
+            ("25 bps decrease", 0.004),
+        ],
+        score=86.0,
+    )
+    sep_2027_stated = _member(
+        503,
+        "Fed Decision in September 2027?",
+        source="polymarket",
+        resolution_date="2027-09-15T00:00:00+00:00",
+        outcomes=[
+            ("25 bps increase", 0.54),
+            ("No change", 0.47),
+            ("25 bps decrease", 0.004),
+        ],
+        score=84.0,
+    )
+
+    assert (
+        _comparison_title(sep_2026_undated["data"], sep_2027_undated["data"])
+        == "Fed decision in Sep?"
+    )
+
+    for partner in (sep_2027_undated, sep_2027_stated):
+        kept, folded = _dedupe_same_question_members([sep_2026_undated, partner])
+        assert folded == []
+        assert _ids(kept) == [501, partner["data"]["id"]]
+        assert _ids(fold_same_question_cards([sep_2026_undated, partner])) == [
+            501,
+            partner["data"]["id"],
+        ]
+        bundled = assemble_story_theme_bundles([sep_2026_undated, partner])
+        bundle = next((it for it in bundled if it["type"] == "bundle"), None)
+        assert bundle is not None
+        assert bundle["data"]["member_ids"] == [501, partner["data"]["id"]]
+

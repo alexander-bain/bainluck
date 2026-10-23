@@ -1290,11 +1290,16 @@ _FIELD_MIN_SHARED = 2
 
 #: Central-bank rate-decision outcome synonyms (#4082). Kalshi's FOMC board
 #: (``KXFEDDECISION-*``) names its legs "Hike 25bps", "Fed maintains rate",
-#: "Hike >25bps", "Cut 25bps", "Cut >25bps"; Polymarket's twin names the same
-#: legs "25 bps increase", "No change", "50+ bps increase", "25 bps decrease",
-#: "50+ bps decrease". A closed vocabulary of policy-rate legs so Removal 3's
-#: outcome gate sees that both venues are pricing the same FOMC decision without
-#: loosening outcome matching on any other market.
+#: "Hike >25bps", "Cut 25bps", "Cut >25bps"; Polymarket's FOMC board (event
+#: 27824) names its legs "25 bps increase", "No change", "50+ bps increase",
+#: "25 bps decrease", "50+ bps decrease". Under the venues' own rules
+#: ``50+ bps`` is equivalent to ``>25bps``: Kalshi ``KXFEDDECISION`` carries
+#: ``custom_strike`` ``>25`` ("a 50-basis-point hike resolves Hike >25 to Yes"),
+#: and Polymarket event 27824 rounds any unlisted change UP to the nearest 25
+#: bps (whereas an exact ``50 bps`` leg is ``(25, 50]``, not ``(25, inf)``, and
+#: is excluded). This alias table is a Removal-3 GATE signal only, never a price
+#: join — even ``25 bps decrease`` <-> ``Cut 25bps`` differ for a sub-25 move
+#: under Polymarket's round-up rule.
 _RATE_DECISION_OUTCOME_ALIASES: dict[str, str] = {
     "fed maintains rate": "no change",
     "maintain current rate": "no change",
@@ -1311,18 +1316,10 @@ _RATE_DECISION_OUTCOME_ALIASES: dict[str, str] = {
     "lower 25 bps": "cut 25bps",
     "50+ bps increase": "hike >25bps",
     "50+bps increase": "hike >25bps",
-    "50 bps increase": "hike >25bps",
-    "50bps increase": "hike >25bps",
     "hike more than 25bps": "hike >25bps",
-    "hike 50bps": "hike >25bps",
-    "hike 50 bps": "hike >25bps",
     "50+ bps decrease": "cut >25bps",
     "50+bps decrease": "cut >25bps",
-    "50 bps decrease": "cut >25bps",
-    "50bps decrease": "cut >25bps",
     "cut more than 25bps": "cut >25bps",
-    "cut 50bps": "cut >25bps",
-    "cut 50 bps": "cut >25bps",
 }
 
 
@@ -1515,11 +1512,21 @@ def _comparison_title(data: dict[str, Any], other: dict[str, Any]) -> str:
        below the near arm's 3, so the prefilter still never hides a pair this
        rewrite lets the matcher pair.
 
-    5. **A month abbreviation whose partner spells that same month out in full**
-       (#4082): ``Sep`` -> ``September`` when the other title already contains
-       ``September`` ("Fed decision in Sep 2026?" beside "Fed Decision in
-       September?"). Pairwise, so a title whose partner names a different month
-       or no month at all is untouched.
+    5. **A month abbreviation whose partner spells that same month out in full,
+       when both rows resolve inside one cycle** (#4082): ``Sep`` -> ``September``
+       when the other title already contains ``September`` and
+       :func:`_resolve_within_one_cycle` holds ("Fed decision in Sep 2026?"
+       beside "Fed Decision in September?"). Pairwise and resolution-gated, so a
+       title whose partner names a different month, no month at all, or resolves
+       in a different year ("Fed decision in Sep?" 2026 beside "Fed Decision in
+       September?" 2027) is untouched. Note on the prefilter bound:
+       ``could_be_same_question`` documents the ceremony plural as one
+       substitution; month expansion is a second substitution and can rewrite
+       two or more tokens when a title names multiple abbreviated months ("Sep
+       or Oct" -> "September or October"), so Removal 5 relies on the raw titles
+       already sharing at least two non-month tokens (such as ``fed`` and
+       ``decision``) to pass ``could_be_same_question``'s 2-token floor before
+       ``_comparison_title`` runs.
 
     WHY THIS IS NOT A THRESHOLD MOVE, measured on the 23 same-bundle pairs served
     on page one at 13:30 PT 2026-09-09:
@@ -1572,7 +1579,8 @@ def _comparison_title(data: dict[str, Any], other: dict[str, Any]) -> str:
             ):
                 title = _ANY_YEAR_RE.sub("", title).strip()
 
-    title = _expand_shared_month_abbreviations(title, other_stripped)
+    if _resolve_within_one_cycle(data, other):
+        title = _expand_shared_month_abbreviations(title, other_stripped)
     return _CEREMONY_PLURAL_RE.sub(lambda m: m.group(1), title)
 
 
