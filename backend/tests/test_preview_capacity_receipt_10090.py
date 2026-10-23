@@ -79,12 +79,14 @@ def _fields(line):
 
 
 async def test_full_pass_splits_residents_by_state_and_counts_attempts(monkeypatch, caplog):
+    # Anchored at call time, not import: a CI shard runs minutes after import.
+    now = datetime.now(timezone.utc)
     rows = [
-        (1, 10, False, 'live', NOW - timedelta(hours=10)),
-        (2, 10, False, 'live', NOW - timedelta(hours=1)),
-        (3, 10, False, 'scheduled', NOW + timedelta(hours=2)),
-        (4, 10, True, 'final', NOW - timedelta(hours=3)),
-        (6, 10, False, 'suspended', NOW - timedelta(hours=2)),
+        (1, 10, False, 'live', now - timedelta(hours=10)),
+        (2, 10, False, 'live', now - timedelta(hours=1)),
+        (3, 10, False, 'scheduled', now + timedelta(hours=2)),
+        (4, 10, True, 'final', now - timedelta(hours=3)),
+        (6, 10, False, 'suspended', now - timedelta(hours=2)),
     ]
     # Target 4 retires from the first read; target 5 is missing on its reread.
     rig = _Rig(monkeypatch, tickets=[(7, [1, 2, 3, 4, 5, 6]), (8, [])], rows=rows)
