@@ -345,3 +345,72 @@ async def test_optional_close_cannot_block_or_abort_writer(
     assert owner._open == 0 and owner._writers == 0
     if failure == "error":
         assert "optional close failed" in caplog.text
+
+
+async def test_clock_scope_must_complete_before_inputs_receive_bound():
+    from app.tasks.live_blend_refresh import HeldRowQuotes, LiveBlendRefresher
+    from tests.test_held_quotes_idle_bound_10090 import Clock, FakeDB, _mark
+
+    clock = Clock()
+    read_scope = FakeDB(clock)
+    read_scope.hold_exit = asyncio.Event()
+    fallback = FakeDB(clock)
+    refresher = LiveBlendRefresher("polymarket", observation_read_factory=read_scope)
+    refresher.preview_events = frozenset()
+    held = HeldRowQuotes()
+    held._now = clock.now
+    refresher.held_quotes = held
+    task = asyncio.create_task(held.sample_database_clock(fallback))
+    await asyncio.sleep(0)
+    before = _mark(event_id=8)
+    held.note_input(before)
+    assert held.bound_for(before) is None
+    assert not task.done() and read_scope.active == 1
+    read_scope.hold_exit.set()
+    assert await task
+    after = _mark(event_id=8)
+    held.note_input(after)
+    assert held.bound_for(before) is None
+    assert held.bound_for(after) == 1000
+    assert fallback.calls == 0
+    held.close()
+
+
+@pytest.mark.parametrize("failure", ["error", "cancel"])
+async def test_clock_read_failure_never_falls_back_to_writer_factory(failure):
+    from app.tasks.live_blend_refresh import HeldRowQuotes, LiveBlendRefresher
+    from tests.test_held_quotes_idle_bound_10090 import Clock, FakeDB
+
+    clock = Clock()
+    fallback = FakeDB(clock)
+    entered = asyncio.Event()
+
+    @asynccontextmanager
+    async def failed_scope():
+        entered.set()
+        if failure == "error":
+            raise RuntimeError("clock read failed")
+        await asyncio.Event().wait()
+        yield None
+
+    refresher = LiveBlendRefresher("polymarket", observation_read_factory=failed_scope)
+    held = HeldRowQuotes()
+    held._now = clock.now
+    refresher.held_quotes = held
+    task = asyncio.create_task(held.sample_database_clock(fallback))
+    await entered.wait()
+    if failure == "cancel":
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert held.sample_failures == 0
+    else:
+        assert not await task
+        assert held.sample_failures == 1
+        assert held._sample_backoff_until == held.SAMPLE_RECOVERY_S
+        clock.t = held.SAMPLE_RECOVERY_S
+        assert not await held.sample_database_clock(fallback)
+        assert held.sample_failures == 2
+        assert held._sample_backoff_until == clock.t + held.SAMPLE_BACKOFF_S
+    assert held._database_bound is None and fallback.calls == 0
+    held.close()

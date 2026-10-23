@@ -81,6 +81,46 @@ async def test_burst_reads_see_new_commits_without_another_checkout(
 
 
 @needs_postgres
+async def test_observation_clock_observation_keeps_one_fresh_read_connection(
+    counted, scratch_table,
+):
+    from sqlalchemy import column, select, table as sql_table
+    from app.tasks.ws_consumer_sessions import ConsumerSessions
+    from app.tasks.live_blend_refresh import HeldRowQuotes, LiveBlendRefresher
+
+    name, admin = scratch_table
+    rows = sql_table(name, column("op"))
+    sessions = ConsumerSessions("clock-between-observations")
+    refresher = LiveBlendRefresher(
+        "polymarket", session_factory=sessions.session,
+        observation_read_factory=sessions.observation_read,
+    )
+    refresher.held_quotes = HeldRowQuotes()
+    engine = sessions._engine_here()
+    checkouts = []
+
+    @event.listens_for(engine.sync_engine, "checkout")
+    def checkout(dbapi, record, proxy):
+        checkouts.append(record)
+
+    try:
+        async with sessions.observation_read() as reader:
+            assert list((await reader.execute(select(rows.c.op))).scalars()) == []
+        # The real consumer does this between observations. It must not tear
+        # down a usable read scope just to read the clock on another checkout.
+        assert await refresher.held_quotes.sample_database_clock(sessions.session)
+        assert refresher.held_quotes._database_bound is not None
+        async with admin.begin() as writer:
+            await writer.execute(text(f"INSERT INTO {name} VALUES (23)"))
+        async with sessions.observation_read() as reader:
+            assert list((await reader.execute(select(rows.c.op))).scalars()) == [23]
+        assert len(checkouts) == 1
+    finally:
+        refresher.held_quotes.close()
+        await sessions.aclose()
+
+
+@needs_postgres
 async def test_observation_read_has_no_commit_and_writer_pool_stays_transactional(
     counted, scratch_table, monkeypatch,
 ):
