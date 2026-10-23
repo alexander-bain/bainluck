@@ -1375,8 +1375,7 @@ class HeldRowQuotes:
     outcome, released when its write lands or its book is withdrawn.
     """
 
-    #: Optional DB samples after game chunks (coalesced for completed Kalshi
-    #: phases), plus the bounded idle sampler. A sample that times
+    #: One optional DB round trip per nonempty game chunk. A sample that times
     #: out backs later samples off. Preview owners get one early recovery
     #: opportunity; sustained failure then costs at most one timeout per long
     #: window however many chunks a flush plans.
@@ -1417,10 +1416,9 @@ class HeldRowQuotes:
         self._sample_failure_ordinal = 0
         self.sample_failures = 0
         # Idle bound (class doc). The owning refresher installs its CURRENT
-        # preview events; empty disables idle work, not explicit phase requests.
+        # preview events; empty means no idle sampling at all.
         self.preview_events: Callable[[], Container[int]] = frozenset
         self._sessions = None
-        self._phase_sample_pending = False
         self._idle_task: Optional[asyncio.Task] = None
         self._closed = False
         self._sample_started = 0  # ordinal of the newest sample started
@@ -1508,18 +1506,6 @@ class HeldRowQuotes:
             self._last_preview_input_at = now
             self._start_idle_sampler()
 
-    def request_phase_sample(self, sessions) -> None:
-        """Coalesce completed-phase clock work on the existing owned sampler.
-
-        The phase may deliver and continue while this optional read runs.
-        Only future inputs can use its completed bound; backoff still applies.
-        """
-        if self._closed:
-            return
-        self._sessions = sessions
-        self._phase_sample_pending = True
-        self._start_idle_sampler()
-
     def _start_idle_sampler(self) -> None:
         if self._closed or self._sessions is None or (
                 self._idle_task is not None and not self._idle_task.done()):
@@ -1531,28 +1517,21 @@ class HeldRowQuotes:
         self._idle_task = loop.create_task(self._idle_sampler(), name="held-quotes-idle-bound")
 
     async def _idle_sampler(self) -> None:
-        """Service phase requests and active previews; exits when neither is owed."""
+        """Keep the bound fresh while preview inputs arrive; exits by itself."""
         try:
             while not self._closed:
                 now = self._now()
-                requested = self._phase_sample_pending
                 graph_recovery_deadline = None
-                preview_active = (
-                    now - self._last_preview_input_at < self.IDLE_ACTIVE_S
-                    and bool(self.preview_events())
-                )
-                if not requested and not preview_active:
+                if (now - self._last_preview_input_at >= self.IDLE_ACTIVE_S
+                        or not self.preview_events()):
                     return
-                idle_due = self._last_sample_done + self.IDLE_SAMPLE_S
+                due = self._last_sample_done + self.IDLE_SAMPLE_S
                 if self._last_input_at > self._last_sample_started:
-                    idle_due = max(idle_due, self._last_input_at + self.IDLE_PHASE_GRACE_S)
-                due = now if requested else idle_due
-                # A request may bypass phase grace, but must neither grant nor
-                # suppress recovery earned by ordinary quiet-preview traffic.
-                if (preview_active and self._sample_failure_episode and not self._sampling
+                    due = max(due, self._last_input_at + self.IDLE_PHASE_GRACE_S)
+                if (self._sample_failure_episode and not self._sampling
                         and not self._graph_idle_recovery_used
                         and self._graph_sample_ordinal > self._sample_failure_ordinal
-                        and now >= idle_due
+                        and now >= due
                         and now < self._sample_backoff_until
                         and now - self._last_preview_input_at >= self.IDLE_PHASE_GRACE_S):
                     # A successful graph is evidence for ONE recovery probe
@@ -1571,9 +1550,6 @@ class HeldRowQuotes:
                     continue
                 self.idle_samples += 1
                 probe_ordinal = self._sample_started + 1
-                # Clear BEFORE awaiting: requests arriving during the read
-                # remain owed, without creating a second task or read.
-                self._phase_sample_pending = False
                 try:
                     await self.sample_database_clock(self._sessions)
                 finally:
@@ -1594,7 +1570,6 @@ class HeldRowQuotes:
         Returns the still-running task for the owner to join (or None).
         """
         self._closed = True
-        self._phase_sample_pending = False
         task, self._idle_task = self._idle_task, None
         if task is None or task.done():
             return None

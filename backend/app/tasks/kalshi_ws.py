@@ -1638,6 +1638,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # A skipped/failed first phase must not starve unrelated prior debt.
         implicit_debt_queued = False
         cancelled = False
+        phase_sample_pending = False
         # #10090 — LIVE INPUT PREEMPTS THE NON-LIVE TAIL. A live game's tick
         # that arrived after the snapshot used to wait for every later phase of
         # this flush (up to the whole non-live budget) before the next flush
@@ -2276,6 +2277,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                 continue
                             # For FUTURE inputs, never to re-date this batch.
                             await held_quotes.sample_database_clock(get_task_session)
+                            phase_sample_pending = False
                         # The transaction rolled back; all its prices remain buffered.
                         # Only proceed to phases the unchanged planner separated.
                         had_lock_failure = True
@@ -2343,6 +2345,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     # A committed write advanced last_updated: sample AFTER it,
                     # for future inputs only.
                     await held_quotes.sample_database_clock(get_task_session)
+                    phase_sample_pending = False
                 if callable(preview_observations):
                     observation_groups = {}
                     written_events = event_ids_for_outcomes(cohort_event_ids, written_outcome_ids)
@@ -2391,6 +2394,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         # observation work; its input bounds remain frozen.
                         if clock_after_delivery:
                             await held_quotes.sample_database_clock(get_task_session)
+                            phase_sample_pending = False
                             clock_after_delivery = False
                         await preview_observations(observation_groups, validate_observations)
                 # The event refresh uses its own session and committed prices.
@@ -2404,9 +2408,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     stamp_admit()
 
                 if clock_after_delivery:
-                    # One owned sampler coalesces future-input clock work;
-                    # later price phases need not wait for this optional IO.
-                    held_quotes.request_phase_sample(get_task_session)
+                    # Coalesce future-input sampling across this flush. Later
+                    # independent prices proceed first, but the flush must not
+                    # return before its post-write sample: the next input may
+                    # need that bound to overlay a now-held price row.
+                    phase_sample_pending = True
 
                 # #9484: keep every committed MARKET notification, including
                 # standalone futures/props which have no event blend.
@@ -2478,6 +2484,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         # call no longer admits. Join it, as before, then start.
                         await stamp_done()
                         await stamp_start()
+                    if phase_sample_pending:
+                        # After stamp admission/start, including early returns
+                        # and budget breaks. Never re-date already accepted inputs.
+                        await held_quotes.sample_database_clock(get_task_session)
                     if final_drain:
                         # The drain has no next flush: its hand-off and exit
                         # follow, so no stamp may outlive it.
