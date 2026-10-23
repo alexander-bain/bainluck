@@ -5072,8 +5072,9 @@ class LiveBlendRefresher:
             try:
                 if preview.unclaimed(self.source):
                     await self._claim_preview_epoch(connection, preview)
-                return await preview.read_ticket(self._preview_call(connection), self.source,
-                                                 include_candidates=include_candidates)
+                if include_candidates:
+                    return await preview.capacity_ticket(self._preview_call(connection), self.source)
+                return await preview.read_ticket(self._preview_call(connection), self.source)
             except BaseException:
                 self._redis = None
                 await connection.disconnect()
@@ -5112,7 +5113,7 @@ class LiveBlendRefresher:
 
         try:
             async with asyncio.timeout(1):
-                ticket, candidates = await self._preview_ticket(include_candidates=True)
+                ticket, candidates, idle = await self._preview_ticket(include_candidates=True)
                 if ticket is None or not candidates:
                     return
                 factory = self._session_factory or get_task_session
@@ -5125,7 +5126,7 @@ class LiveBlendRefresher:
                     ).where(Event.id.in_(candidates)))).all()
                 present = {row[0]: row for row in rows}
                 targets = [eid for eid in sorted(candidates)
-                           if eid not in present or present[eid][2]][:32]
+                           if eid not in present or present[eid][2] or eid in idle][:32]
                 # Reclaim a bounded batch rather than allowing just one new
                 # event per cadence. Every deletion advances the barrier;
                 # each next proof therefore needs a new ticket AND DB read.
@@ -5148,6 +5149,12 @@ class LiveBlendRefresher:
                         # Inline terminal callers already own their slot.
                         async with self._session_slot():
                             await self._retire_preview_event(eid, row[1], ticket)
+                    elif eid in idle:
+                        # This fresh row covers the committed floor. Redis must
+                        # still find no pending metadata; never preemptively
+                        # terminalize an eligible event to free its residency.
+                        await self._publish_previews([
+                            registry().retire_idle(eid, self.source, row[1], ticket)])
         except Exception:
             self.preview_stats["publish_errors"] += 1
             logger.warning("live_blend_refresh[%s]: preview capacity maintenance incomplete",

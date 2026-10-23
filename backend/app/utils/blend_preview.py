@@ -309,17 +309,29 @@ local compatible = true
 for _, s in ipairs(sources) do
   if owners[s] == nil or field('read_owner:' .. s) ~= owners[s] then compatible = false end
 end
-if op == 'read_ticket' then
+if op == 'read_ticket' or op == 'capacity_ticket' then
   local out = {'ok', decimal(barrier)}
   local count = field('nevents')
   if count == BAD then return {'malformed'} end
-  if ARGV[6] == '1' and (count or 0) >= 512 and compatible then
+  local candidates, idle = {}, {}
+  if (ARGV[6] == '1' or op == 'capacity_ticket') and (count or 0) >= 512 and compatible then
     -- At capacity only: at most 512 event ids, never base/payload values.
     -- The caller rereads their authoritative DB status before retiring any.
     for _, f in ipairs(redis.call('HKEYS', L)) do
       local id = string.match(f, '^e:(%d+):gen$')
-      if id then out[#out + 1] = id end
+      if id then
+        if op == 'read_ticket' then out[#out + 1] = id end
+        candidates[#candidates + 1] = id
+        local empty = redis.call('HEXISTS', L, 'e:' .. id .. ':term') == 0
+        for _, s in ipairs(sources) do
+          if redis.call('HEXISTS', L, 'e:' .. id .. ':m:' .. s) == 1 then empty = false end
+        end
+        if empty then idle[#idle + 1] = id end
+      end
     end
+  end
+  if op == 'capacity_ticket' then
+    return {'ok', decimal(barrier), cjson.encode(candidates), cjson.encode(idle)}
   end
   return out
 end
@@ -519,6 +531,40 @@ if op == 'terminal' then
   -- @@FAULT:terminal
   redis.call('HSET', L, P .. 'term', decimal(ctx))
   for _, s in ipairs(sources) do redis.call('HDEL', L, P .. 'm:' .. s, P .. 'p:' .. s) end
+  return {'ok', decimal(gen), decimal(seq)}
+end
+-- Eligible rows may release idle residency without becoming terminal.
+if op == 'retire_idle' then
+  local ctx, ticket = uint(ARGV[6]), uint(ARGV[7])
+  if not ctx or not ticket then return {'malformed'} end
+  if not compatible then return {'legacy_owner'} end
+  if ticket ~= barrier then return {'read_required'} end
+  if st.gen == nil then return {'none'} end
+  -- Terminal rows retain their durable revision-advance path.
+  if st.term ~= nil then return {'terminal'} end
+  if st.live ~= nil and ctx < st.live then return {'stale_terminal'} end
+  if st.base_rev ~= nil and ctx < st.base_rev then return {'stale_terminal'} end
+  -- Initial safe subset: fully settled/pruned, not raw expired metadata.
+  -- A live renewal/proposal wins atomically and refuses this reclamation.
+  for _, s in ipairs(sources) do
+    if st.metas[s] ~= nil then return {'pending'} end
+  end
+  if barrier >= MAX then return {'exhausted'} end
+  local count = field('nevents')
+  if count == BAD or count == nil or count < 1 then return {'malformed'} end
+  local gen, seq = admit(MAX)
+  if gen == nil then return {seq} end
+  if seq >= MAX then return {'exhausted'} end
+  seq = seq + 1
+  redis.call('HSET', L, 'retired', decimal(barrier + 1))
+  advance(gen, seq)
+  -- If a subsequent write faults, sequence already invalidates old readsets.
+  redis.call('HDEL', L, P .. 'gen', P .. 'seq', P .. 'live',
+    P .. 'base_rev', P .. 'base')
+  for _, s in ipairs(sources) do
+    redis.call('HDEL', L, P .. 'p:' .. s)
+  end
+  redis.call('HINCRBY', L, 'nevents', -1)
   return {'ok', decimal(gen), decimal(seq)}
 end
 if op == 'retire' or op == 'retire_missing' then
@@ -1161,6 +1207,26 @@ class LedgerRegistry(PreviewRegistry):
             return None, []
         return int(reply[1]), [int(eid) for eid in reply[2:]]
 
+    async def capacity_ticket(self, call, source: str) -> tuple[Optional[int], list[int], set[int]]:
+        """One bounded resident/idle hint, before the maintenance DB statement.
+
+        The idle hint never authorizes deletion: retire_idle checks it again.
+        Ordinary admission keeps read_ticket's unchanged lightweight response.
+        """
+        claim = self.claims.get(source)
+        if claim is None:
+            return None, [], set()
+        reply = await self._eval(call, "capacity_ticket", source, claim, "", " ".join(self.sources))
+        if reply[0] != "ok":
+            return None, [], set()
+        return int(reply[1]), [int(eid) for eid in json.loads(reply[2])], {
+            int(eid) for eid in json.loads(reply[3])}
+
+    def retire_idle(self, event_id: int, source: str, rev: int, ticket: int) -> dict:
+        """Fresh DB revision proof for a nonterminal, metadata-empty resident."""
+        return {"ledger_op": "retire_idle", "event_id": int(event_id), "source": source,
+                "ctx_rev": rev, "read_ticket": ticket}
+
     def propose(self, event_id: int, source: str, **kwargs: Any) -> list[dict]:
         ticket = getattr(kwargs["event"], "preview_read_ticket", None)
         state = self._events.get(event_id)
@@ -1474,6 +1540,8 @@ class LedgerRegistry(PreviewRegistry):
             reply = await self._eval(call, "settle", *common, op["mode"], op["through"],
                                      op["base_rev"], op["base"], op.get("chain"),
                                      int(self.max_uncommitted_s * 1000))
+        elif kind == "retire_idle":
+            reply = await self._eval(call, "retire_idle", *common, op["ctx_rev"], op["read_ticket"])
         elif kind == "retire_missing":
             reply = await self._eval(call, "retire_missing", *common, op["read_ticket"])
         elif kind == "retire":
@@ -1501,7 +1569,7 @@ class LedgerRegistry(PreviewRegistry):
                 self._forget(event_id, source)
         if status == "current":
             return []
-        if kind in ("terminal", "retire", "retire_missing"):
+        if kind in ("terminal", "retire", "retire_missing", "retire_idle"):
             if status != "ok":
                 self._refusal(stats, status, kind, source, event_id)
                 return []
@@ -1511,7 +1579,7 @@ class LedgerRegistry(PreviewRegistry):
             return [{"event_id": int(event_id), "p": None, "status": None,
                      "provisional": True,
                      "preview": {"kind": "revoke", "epoch": gen, "seq": seq,
-                                 "through_seq": seq - 1, "reason": "terminal"},
+                                 "through_seq": seq - 1, "reason": "idle" if kind == "retire_idle" else "terminal"},
                      "_ledger": {"gen": gen, "seq": seq}}]
         if kind == "propose" and status in ("read_required", "full"):
             state = self._events.get(event_id)

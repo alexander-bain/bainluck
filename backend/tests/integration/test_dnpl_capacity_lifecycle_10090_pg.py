@@ -217,3 +217,84 @@ async def test_repeated_withdrawal_reads_do_not_spawn_capacity_owners(rig, capac
     assert all(ref._preview_maintenance_task is None for ref in created)
     assert (await client.info('commandstats')).get('cmdstat_hkeys', {}).get('calls', 0) == before
     assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 512
+
+
+@pytest.mark.parametrize('state', ['live', 'scheduled', 'suspended'])
+async def test_idle_residency_reclaims_settled_slots_and_admits_eligible_pages(rig, capacity, state):
+    worker, registry, client, reads = capacity
+    async with rig.engine.begin() as conn:
+        await conn.execute(text("UPDATE events SET status=:status, win_probability_sources_rev=11"),
+                           {'status': state})
+    for eid in range(1, 513):
+        seq = registry.pending_seq(eid, 'kalshi')
+        assert seq is not None
+        await registry.execute(registry.committed(eid, 'kalshi', seq=seq, sources=BASE10, rev=11),
+                               client.execute_command, event_channel, worker.preview_stats)
+    assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 512
+    ticket, candidates, idle = await registry.capacity_ticket(client.execute_command, 'kalshi')
+    assert set(candidates) == idle == set(range(1, 513))
+    old_gen = int(await client.hget(blend_preview.LEDGER_KEY, 'e:1:gen'))
+    event = _ev(state); event.preview_read_ticket = ticket
+    delayed = registry.propose(1, 'polymarket', value=.8, event=event,
+                               row_sources=BASE10, row_rev=11)
+    subscriber = client.pubsub()
+    await subscriber.subscribe(event_channel(1), event_channel(513))
+    await subscriber.get_message(timeout=1)
+    await subscriber.get_message(timeout=1)
+    try:
+        await worker._maintain_preview_capacity()
+        assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 480
+        assert await client.hget(blend_preview.LEDGER_KEY, 'e:1:gen') is None
+        assert not any('UPDATE events' in sql for sql in reads)
+        async with rig.maker() as session:
+            assert await session.scalar(select(Event.win_probability_sources_rev).where(Event.id == 1)) == 11
+        revoke_msg = await subscriber.get_message(ignore_subscribe_messages=True, timeout=1)
+        assert revoke_msg is not None
+        old_revoke = json.loads(revoke_msg['data'])
+        assert old_revoke['preview']['kind'] == 'revoke'
+        assert old_revoke['preview']['reason'] == 'idle'
+        assert not await registry.prepare(delayed, client.execute_command, worker.preview_stats)
+        for eid in (513, 1):
+            ticket, _ = await registry.read_ticket(client.execute_command, 'kalshi')
+            event = _ev(state); event.preview_read_ticket = ticket
+            await worker._publish_previews(registry.propose(
+                eid, 'kalshi', value=.8, event=event, row_sources=BASE10, row_rev=11))
+            message = await subscriber.get_message(ignore_subscribe_messages=True, timeout=1)
+            assert message is not None
+            frame = json.loads(message['data'])
+            assert frame['event_id'] == eid and frame['preview']['kind'] == 'blend'
+            assert frame['preview']['epoch'] > old_gen
+            if eid == 1:
+                assert frame['preview']['epoch'] > old_revoke['preview']['epoch']
+        assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 482
+        assert worker.preview_stats['publish_errors'] == 0
+    finally:
+        await subscriber.aclose()
+
+
+async def test_idle_candidates_are_filtered_before_batch_limit_and_rechecked(rig, capacity, monkeypatch):
+    worker, registry, client, reads = capacity
+    # First 480 are active; only the late 32 are idle. None may starve behind the first 32.
+    for eid in range(481, 513):
+        await registry.execute(registry.committed(eid, 'kalshi', seq=registry.pending_seq(eid, 'kalshi'),
+                               sources=BASE10, rev=10), client.execute_command, event_channel, worker.preview_stats)
+    publish = worker._publish_previews
+    raced = False
+    async def racing_publish(items):
+        nonlocal raced
+        if not raced and items and items[0].get('ledger_op') == 'retire_idle':
+            raced = True
+            ticket, _ = await registry.read_ticket(client.execute_command, 'polymarket')
+            event = _ev(); event.preview_read_ticket = ticket
+            await registry.execute(registry.propose(481, 'polymarket', value=.8, event=event,
+                                   row_sources=BASE10, row_rev=10),
+                                   client.execute_command, event_channel, worker.preview_stats)
+        await publish(items)
+    monkeypatch.setattr(worker, '_publish_previews', racing_publish)
+    await worker._maintain_preview_capacity()
+    assert raced
+    assert int(await client.hget(blend_preview.LEDGER_KEY, 'nevents')) == 481
+    assert await client.hget(blend_preview.LEDGER_KEY, 'e:481:m:polymarket') is not None
+    assert await client.hget(blend_preview.LEDGER_KEY, 'e:512:gen') is None
+    assert await client.hget(blend_preview.LEDGER_KEY, 'e:1:m:kalshi') is not None
+    assert worker.preview_stats['publish_errors'] == 0
