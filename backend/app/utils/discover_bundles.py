@@ -15,6 +15,10 @@ from app.utils.congress_control_story import (
     has_congress_control_story_prefix,
     is_congress_control_story_key,
 )
+from app.utils.deadline_family_story import (
+    is_deadline_family_story_key,
+    verify_and_select_deadline_family,
+)
 from app.utils.feed_market_quality import GOLF_TOURNAMENT_STORY_PREFIX
 from app.utils.feed_market_quality import UFC_EVENT_STORY_PREFIX
 from app.utils.feed_market_quality import _story_key as compute_story_key
@@ -2206,6 +2210,198 @@ def assemble_awards_theme_bundles(
             continue
         group_id = str(_futures_data(item).get("group_id"))
         output.append(bundle_by_group[group_id])
+
+    return output
+
+
+# ── Theme bundles (movement-led cumulative deadline families — #9878 / #11040) ──
+
+
+def _make_deadline_family_bundle_item(
+    family_payload: dict[str, Any],
+    members: list[dict[str, Any]],
+) -> dict[str, Any]:
+    member_by_id = {
+        int(_futures_data(item).get("id")): item
+        for item in members
+        if _futures_data(item).get("id") is not None
+    }
+    ascending_contracts = family_payload.get("members") or []
+    ascending_items = [
+        member_by_id[int(m["market_id"])]
+        for m in ascending_contracts
+        if int(m["market_id"]) in member_by_id
+    ]
+    score = max(float(item.get("score") or 0) for item in ascending_items)
+    rank_score = max(
+        float(item.get("_rank_score", item.get("score") or 0))
+        for item in ascending_items
+    )
+    sort_time = max(float(item.get("_sort_time") or 0) for item in ascending_items)
+    member_ids = [int(m["market_id"]) for m in ascending_contracts]
+    story_key = str(family_payload["story_key"])
+    group_id = str(family_payload["group_id"])
+    title = str(family_payload["title"])
+    shared_question = str(family_payload["shared_question"])
+
+    return {
+        "type": "bundle",
+        "score": score,
+        "_rank_score": rank_score,
+        "reason": shared_question,
+        "headline": title,
+        "data": {
+            "id": f"theme:{story_key}:{'-'.join(str(m) for m in member_ids)}",
+            "title": title,
+            "kind": "theme",
+            "story_key": story_key,
+            "group_id": group_id,
+            "shared_question": shared_question,
+            "item_count": len(ascending_items),
+            "member_ids": member_ids,
+            "items": [_public_member_item(item) for item in ascending_items],
+            "deadline_family": family_payload,
+            "debug_bundles": {
+                "grouped_by": "deadline_family",
+                "story_key": story_key,
+                "group_id": group_id,
+                "member_ids": member_ids,
+                "representative_market_id": family_payload["representative_market_id"],
+                "representative_outcome_id": family_payload["representative_outcome_id"],
+                "selection_reason": family_payload["selection_reason"],
+                "question_source": "deadline_stem",
+            },
+        },
+        "_sort_time": sort_time,
+    }
+
+
+def assemble_deadline_family_bundles(
+    items: list[dict[str, Any]],
+    *,
+    min_items: int = 2,
+    max_items_per_bundle: int = 8,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Fold verified single-provider cumulative deadline families into one card (#9878 / #11040).
+
+    Reconstructs candidate families from top-level items and any same-group
+    siblings stashed under ``_grouped_members`` by ``_dedupe_futures_by_group_id``.
+    Groups that fail cumulative deadline verification (awards races, exclusive
+    date buckets, mixed predicates, missing outcome/condition IDs, or ambiguous
+    deadlines) pass through untouched.
+    """
+    candidates_by_group: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    seen_ids_by_group: dict[tuple[str, str], set[str]] = {}
+
+    for item in items:
+        if item.get("type") != "futures":
+            continue
+        data = _futures_data(item)
+        source = str(data.get("source") or "").strip().lower()
+        group_id = str(data.get("group_id") or "").strip()
+        if not source or not group_id:
+            continue
+        key = (source, group_id)
+        pool = [item, *_grouped_members(item)]
+        bucket = candidates_by_group.setdefault(key, [])
+        seen = seen_ids_by_group.setdefault(key, set())
+        for candidate in pool:
+            if candidate.get("type") != "futures":
+                continue
+            cid = _item_id(candidate)
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            bucket.append(candidate)
+
+    bundle_by_group: dict[tuple[str, str], dict[str, Any]] = {}
+    represented_ids: set[str] = set()
+    lead_item_id_by_group: dict[tuple[str, str], str] = {}
+
+    for key, members in candidates_by_group.items():
+        if len(members) < min_items:
+            continue
+        contracts: list[dict[str, Any]] = []
+        for member in members:
+            contract = _futures_data(member).get("deadline_member")
+            if not isinstance(contract, dict):
+                contracts = []
+                break
+            contracts.append(contract)
+        if len(contracts) < min_items:
+            continue
+
+        full_family, err = verify_and_select_deadline_family(contracts, now=now)
+        if full_family is None or err is not None:
+            continue
+
+        chosen_members = members
+        family_payload = full_family
+        if len(members) > max_items_per_bundle:
+            rep_id = int(full_family["representative_market_id"])
+            ranked = sorted(
+                members,
+                key=lambda it: (
+                    0 if int(_futures_data(it).get("id") or -1) == rep_id else 1,
+                    -float(it.get("score") or 0),
+                ),
+            )[:max_items_per_bundle]
+            chosen_contracts = []
+            total_known = max(
+                int(full_family.get("provider_market_count") or 0),
+                len(members),
+            )
+            for m in ranked:
+                c = dict(_futures_data(m)["deadline_member"])
+                c["provider_market_count"] = total_known
+                chosen_contracts.append(c)
+            capped_family, capped_err = verify_and_select_deadline_family(
+                chosen_contracts, now=now
+            )
+            if capped_family is None or capped_err is not None:
+                continue
+            chosen_members = ranked
+            family_payload = capped_family
+
+        bundle_by_group[key] = _make_deadline_family_bundle_item(
+            family_payload, chosen_members
+        )
+        for m in members:
+            represented_ids.add(_item_id(m))
+
+    if not bundle_by_group:
+        return items
+
+    for item in items:
+        if item.get("type") != "futures":
+            continue
+        data = _futures_data(item)
+        key = (
+            str(data.get("source") or "").strip().lower(),
+            str(data.get("group_id") or "").strip(),
+        )
+        if key in bundle_by_group and key not in lead_item_id_by_group:
+            lead_item_id_by_group[key] = _item_id(item)
+
+    emitted_groups: set[tuple[str, str]] = set()
+    output: list[dict[str, Any]] = []
+    for item in items:
+        iid = _item_id(item)
+        if item.get("type") == "futures":
+            data = _futures_data(item)
+            key = (
+                str(data.get("source") or "").strip().lower(),
+                str(data.get("group_id") or "").strip(),
+            )
+            if key in bundle_by_group:
+                if key not in emitted_groups and iid == lead_item_id_by_group.get(key):
+                    output.append(bundle_by_group[key])
+                    emitted_groups.add(key)
+                continue
+        if iid in represented_ids:
+            continue
+        output.append(item)
 
     return output
 

@@ -142,8 +142,13 @@ from app.utils.prematch_reading import (
     read_prematch_priors,
     resolve_prematch_reading,
 )
+from app.utils.deadline_family_story import (
+    build_deadline_member_contract,
+    qualifies_for_deadline_near_certain_exception,
+)
 from app.utils.discover_bundles import (
     assemble_awards_theme_bundles,
+    assemble_deadline_family_bundles,
     assemble_discover_comparison_bundles,
     assemble_geopolitics_theme_bundles,
     assemble_swings_theme_bundles,
@@ -2586,6 +2591,7 @@ def apply_discover_display_chain(
 
     if discover_mode:
         items = assemble_discover_comparison_bundles(items)
+        items = assemble_deadline_family_bundles(items, now=now)
         items = assemble_geopolitics_theme_bundles(items)
         items = assemble_awards_theme_bundles(items)
         # #948 (slice 6): fold the biggest guarded 24h movers into one
@@ -9418,14 +9424,37 @@ def _market_runtime_filter_trace(
     probs_available = [
         o["probability"] for o in outcomes_data if o["probability"] is not None
     ]
+    prices_stopped = _prices_have_stopped(newest_outcome_at, now)
+    # Q8 (#9878 / #11040): a genuinely open cumulative deadline-family question at
+    # 97%+ remains eligible locally while it carries a qualifying recent dated move
+    # on its bound Yes outcome inside the 12h–24h dated-basis window. Expires
+    # automatically with its supporting evidence and never overrides settlement,
+    # currentness, unknown identity, or invalid evidence.
+    deadline_near_certain_mover = qualifies_for_deadline_near_certain_exception(
+        name=getattr(market, "name", None),
+        source=getattr(market, "source", None),
+        external_id=getattr(market, "external_id", None),
+        group_id=getattr(market, "group_id", None),
+        status=getattr(market, "status", None),
+        resolution_date=resolution_date,
+        market_metadata=getattr(market, "market_metadata", None),
+        outcomes=getattr(market, "outcomes", None),
+        prices_stopped=prices_stopped,
+        now=now,
+    )
     all_settled = len(probs_available) >= 2 and all(
         p < 0.05 or p > 0.95 for p in probs_available
     )
-    if all_settled:
+    if all_settled and not deadline_near_certain_mover:
         blockers.append("all_outcomes_settled")
-    if leader_prob is not None and leader_prob >= 0.97:
+    if leader_prob is not None and leader_prob >= 0.97 and not deadline_near_certain_mover:
         blockers.append("locked_market")
-    if leader_prob is not None and leader_prob <= 0.03 and len(probs_available) <= 2:
+    if (
+        leader_prob is not None
+        and leader_prob <= 0.03
+        and len(probs_available) <= 2
+        and not deadline_near_certain_mover
+    ):
         blockers.append("near_zero_binary")
     # Dead market: all outcomes at zero probability
     if probs_available and all(p < 0.001 for p in probs_available):
@@ -9435,7 +9464,7 @@ def _market_runtime_filter_trace(
     # touch-stamp on the PARENT row and answers a different question at a
     # different scale. `prices_have_stopped` carries the tier census that proves
     # sharing one constant would have deleted the whole season-futures shelf.
-    if _prices_have_stopped(newest_outcome_at, now):
+    if prices_stopped:
         blockers.append("prices_stopped")
 
     leader_opening = _leader_opening(outcomes_data, leader_name, market)
@@ -9511,8 +9540,10 @@ def _market_runtime_filter_trace(
     )
     if sports_effectively_settled:
         blockers.append("sports_effectively_settled")
-    elif is_effectively_resolved and (
-        leader_opening is None or leader_opening >= opening_threshold
+    elif (
+        is_effectively_resolved
+        and (leader_opening is None or leader_opening >= opening_threshold)
+        and not deadline_near_certain_mover
     ):
         blockers.append("effectively_resolved")
 
@@ -9568,6 +9599,7 @@ def _market_runtime_filter_trace(
             "max_recent_movement": round(max_recent_movement, 4),
             "soft_settled_binary": soft_settled,
             "locked_market": bool(leader_prob is not None and leader_prob >= 0.97),
+            "deadline_family_near_certain_mover_exception": deadline_near_certain_mover,
             "near_zero_binary": bool(
                 leader_prob is not None
                 and leader_prob <= 0.03
@@ -14669,17 +14701,24 @@ async def _score_futures(
             # >=99% or <=1%) with no live interest — the lone "100%"/"0%" junk cards
             # Manus flagged. Guarded: a genuine near-certain mover (>=10pt 24h swing)
             # or a high-volume market stays eligible.
-            if not price_refresh and market.outcomes and is_locked_near_certain(
-                leader_prob,
-                max(
-                    (
-                        abs(o["probability_change_24h"])
-                        for o in outcomes_data
-                        if o.get("probability_change_24h") is not None
+            if (
+                not price_refresh
+                and market.outcomes
+                and not runtime_filters["checks"].get(
+                    "deadline_family_near_certain_mover_exception"
+                )
+                and is_locked_near_certain(
+                    leader_prob,
+                    max(
+                        (
+                            abs(o["probability_change_24h"])
+                            for o in outcomes_data
+                            if o.get("probability_change_24h") is not None
+                        ),
+                        default=None,
                     ),
-                    default=None,
-                ),
-                float(market.volume_24h) if market.volume_24h is not None else None,
+                    float(market.volume_24h) if market.volume_24h is not None else None,
+                )
             ):
                 continue
 
@@ -15375,6 +15414,26 @@ async def _score_futures(
                     now=now,
                 ),
             }
+            _deadline_member = build_deadline_member_contract(
+                market_id=market.id,
+                name=market.name,
+                source=market.source,
+                external_id=getattr(market, "external_id", None),
+                group_id=market.group_id,
+                group_type=market.group_type,
+                market_type=getattr(market, "market_type", None),
+                status=market.status,
+                resolution_date=market.resolution_date,
+                market_metadata=getattr(market, "market_metadata", None),
+                outcomes=market.outcomes,
+                top_outcomes_data=top_outcomes_data,
+                price_observed_at=futures_data["price_observed_at"],
+                now=now,
+            )
+            if _deadline_member is not None:
+                futures_data["external_id"] = _deadline_member["external_id"]
+                futures_data["deadline_member"] = _deadline_member
+
             # #490: data-driven confidence signal (1-3 bars) from signals already on
             # the card — source count, recent movement, real volume. None -> no glyph.
             # L2-172: record has_closing_line (calibration-ready, not scored) when any

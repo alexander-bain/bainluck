@@ -10,6 +10,8 @@ import { bundleExpandLabel, bundleSeatCount } from "./constants";
 import { FuturesCompactRow } from "./FuturesCard";
 import { rottenTomatoesComparison } from "@/lib/discover/rottenTomatoesComparison";
 import { RottenTomatoesComparison } from "./RottenTomatoesComparison";
+import { buildDeadlineFamilyCardModel } from "@/lib/discover/deadlineFamilyCard";
+import { DeadlineFamilyCard } from "./DeadlineFamilyCard";
 
 interface GroupCardProps {
   items: FeedItem[];
@@ -53,6 +55,22 @@ interface GroupCardProps {
  */
 export function GroupCard({ items, title, sharedQuestion, positionIndex }: GroupCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const deadlineFamilyModel = buildDeadlineFamilyCardModel({
+    items,
+    title,
+    sharedQuestion,
+  });
+  if (deadlineFamilyModel) {
+    return (
+      <DeadlineFamilyCard
+        model={deadlineFamilyModel}
+        items={items}
+        title={title}
+        sharedQuestion={sharedQuestion}
+        positionIndex={positionIndex}
+      />
+    );
+  }
   const primary = items[0];
   const peek = items.slice(0, bundleSeatCount(items.length));
   // Every row this card draws is a `FuturesCompactRow` in BOTH states — unlike

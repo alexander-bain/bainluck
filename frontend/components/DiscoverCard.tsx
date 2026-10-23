@@ -215,6 +215,7 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
             positionIndex={positionIndex}
             bundleId={(item.data as FeedBundleData).id}
             collectionRef={(item.data as FeedBundleData).collection_ref}
+            deadlineFamily={(item.data as FeedBundleData).deadline_family}
           />
         ) : item.type === "bundle" ? (
           // Every non-theme bundle — today that is `kind:"comparison"` — draws

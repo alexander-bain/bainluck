@@ -3,12 +3,22 @@
 import { useLayoutEffect, useState } from "react";
 import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
-import type { FeedItem, FeedFuturesData, FeedThemeCollectionRef } from "@/lib/types";
+import type {
+  FeedDeadlineFamilyContract,
+  FeedFuturesData,
+  FeedItem,
+  FeedThemeCollectionRef,
+} from "@/lib/types";
 import { BundleActionBar } from "./BundleActionBar";
 import { BundleHeader } from "./BundleHeader";
 import { bundleExpandLabel, bundleSeatCount } from "./constants";
+import { DeadlineFamilyCard } from "./DeadlineFamilyCard";
 import { FuturesCard, FuturesCompactRow } from "./FuturesCard";
 import { PartyControlRow } from "./PartyControlRow";
+import {
+  buildDeadlineFamilyCardModel,
+  isDeadlineFamilyStoryKey,
+} from "@/lib/discover/deadlineFamilyCard";
 import { isCongressControlStoryKey } from "@/lib/discover/partyControlRow";
 import {
   CollectionEntryLink,
@@ -36,6 +46,10 @@ interface ThemeBundleCardProps {
    * it. Absent ⇒ no link, and the card is exactly what it was.
    */
   collectionRef?: FeedThemeCollectionRef | null;
+  /** Producer-verified cumulative deadline-family contract (#9878 / #11040). */
+  deadlineFamily?: FeedDeadlineFamilyContract | null;
+  nowIso?: string;
+  timeZone?: string;
 }
 
 // Members shown in the collapsed mini-ranked-peek come from `bundleSeatCount`,
@@ -56,7 +70,18 @@ interface ThemeBundleCardProps {
  * The count has not been lost: the peek rows beneath are the members, and
  * the footer ("All N markets", #10877) still prints it.
  */
-export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positionIndex, bundleId, collectionRef }: ThemeBundleCardProps) {
+export function ThemeBundleCard({
+  items,
+  title,
+  sharedQuestion,
+  storyKey,
+  positionIndex,
+  bundleId,
+  collectionRef,
+  deadlineFamily,
+  nowIso,
+  timeZone,
+}: ThemeBundleCardProps) {
   const [expanded, setExpanded] = useState(false);
   const collection = admitCollectionRef(collectionRef);
 
@@ -67,6 +92,26 @@ export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positi
   useLayoutEffect(() => {
     if (bundleId && consumeThemeCollectionReturn(bundleId)) setExpanded(true);
   }, [bundleId]);
+
+  if (isDeadlineFamilyStoryKey(storyKey) || deadlineFamily != null) {
+    const deadlineModel = buildDeadlineFamilyCardModel(
+      { items, title, sharedQuestion, storyKey, deadlineFamily },
+      { nowIso, timeZone },
+    );
+    if (!deadlineModel) {
+      return null;
+    }
+    return (
+      <DeadlineFamilyCard
+        model={deadlineModel}
+        items={items}
+        title={title}
+        sharedQuestion={sharedQuestion}
+        storyKey={storyKey}
+        positionIndex={positionIndex}
+      />
+    );
+  }
   const primary = items[0];
   const cat = primary?.type === "futures" ? (primary.data as FeedFuturesData).llm_sport_category : null;
   const analytics = primary ? getDiscoverItemAnalytics(primary) : { category: "geopolitics" };
