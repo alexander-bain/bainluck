@@ -213,12 +213,12 @@ final class MacBrowseRowActions10878Tests: XCTestCase {
         XCTAssertEqual(
             menuAttaches,
             [
-                ".futuresDetail(id: entry.marketId)",
-                ".eventDetail(id: event.id)",
-                ".eventDetail(id: event.id)",
-                ".futuresDetail(id: future.marketId)",
+                ".futuresDetail(id: entry.marketId), pinManager: pinManager",
+                ".eventDetail(id: event.id), pinManager: pinManager",
+                ".eventDetail(id: event.id), pinManager: pinManager",
+                ".futuresDetail(id: future.marketId), pinManager: pinManager",
             ],
-            "Every Championship Path, Upcoming, Recent, and Season Futures link in TeamDetailView must attach macBrowseRowMenu"
+            "Every Championship Path, Upcoming, Recent, and Season Futures link in TeamDetailView must attach macBrowseRowMenu with pinManager"
         )
     }
 
@@ -284,26 +284,51 @@ final class MacBrowseRowActions10878Tests: XCTestCase {
 
     #if os(macOS)
     func testOffscreenRenderedMenuPreviewProducesNonEmptyBitmaps() throws {
-        let scenarios: [(name: String, subtitle: String, actions: [MacBrowseRowAction10878])] = [
-            (
-                "01-sport-category-live-event-menu",
-                "SportCategoryView · Celtics @ Knicks (EventCardView)",
-                MacBrowseRowAction10878.actions(for: .eventDetail(id: 15330459), isPinned: false)
+        struct Scenario {
+            let name: String
+            let subtitle: String
+            let rowHeadline: String
+            let rowSubline: String
+            let rowTrailing: String
+            let route: Route
+            let isPinned: Bool
+        }
+        let scenarios: [Scenario] = [
+            Scenario(
+                name: "01-sport-category-live-event-menu",
+                subtitle: "SportCategoryView · Live Event Card Right-Click",
+                rowHeadline: "Celtics @ Knicks",
+                rowSubline: "NBA · Q3 4:12 · 81–77",
+                rowTrailing: "BOS 62% · NYK 38%",
+                route: .eventDetail(id: 15330459),
+                isPinned: false
             ),
-            (
-                "02-sport-category-pinned-market-menu",
-                "SportCategoryView · NBA Champion (FuturesCardView, Pinned)",
-                MacBrowseRowAction10878.actions(for: .futuresDetail(id: 6173044), isPinned: true)
+            Scenario(
+                name: "02-sport-category-pinned-market-menu",
+                subtitle: "SportCategoryView · League Market Row Right-Click (Pinned)",
+                rowHeadline: "2026 NBA Champion",
+                rowSubline: "Kalshi · +29 more",
+                rowTrailing: "Celtics 24%",
+                route: .futuresDetail(id: 6173044),
+                isPinned: true
             ),
-            (
-                "03-team-detail-game-menu",
-                "TeamDetailView · Upcoming / Recent Game Row",
-                MacBrowseRowAction10878.actions(for: .eventDetail(id: 15330459), isPinned: nil)
+            Scenario(
+                name: "03-team-detail-game-menu",
+                subtitle: "TeamDetailView · Upcoming / Recent Game Row Right-Click (Pinned)",
+                rowHeadline: "@ Knicks",
+                rowSubline: "Oct 24 · 7:30 PM",
+                rowTrailing: "62%",
+                route: .eventDetail(id: 15330459),
+                isPinned: true
             ),
-            (
-                "04-team-detail-future-menu",
-                "TeamDetailView · Championship Path / Season Futures Row",
-                MacBrowseRowAction10878.actions(for: .futuresDetail(id: 6173044), isPinned: nil)
+            Scenario(
+                name: "04-team-detail-future-menu",
+                subtitle: "TeamDetailView · Championship Path / Season Futures Right-Click",
+                rowHeadline: "Win Finals",
+                rowSubline: "NBA Championship · #1",
+                rowTrailing: "24%",
+                route: .futuresDetail(id: 6173044),
+                isPinned: false
             ),
         ]
 
@@ -316,13 +341,48 @@ final class MacBrowseRowActions10878Tests: XCTestCase {
         }
 
         for scenario in scenarios {
-            let preview = VStack(alignment: .leading, spacing: 6) {
+            let pm = PinManager()
+            if scenario.isPinned, let target = MacBrowseRowAction10878.pinTarget(for: scenario.route) {
+                pm.togglePin(type: target.type, id: target.id)
+            }
+            let actions = MacBrowseRowAction10878.actions(
+                for: scenario.route,
+                isPinned: scenario.isPinned
+            )
+
+            let preview = VStack(alignment: .leading, spacing: 8) {
                 Text(scenario.subtitle)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .padding(.bottom, 2)
+
+                // Simulated browse row with real .macBrowseRowMenu attached
+                HStack(alignment: .center, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(scenario.rowHeadline)
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(scenario.rowSubline)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(scenario.rowTrailing)
+                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
+                )
+                .macBrowseRowMenu(scenario.route, pinManager: pm)
+
+                // Rendered right-click context menu items produced by MacBrowseRowAction10878
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(scenario.actions.enumerated()), id: \.offset) { idx, action in
+                    ForEach(Array(actions.enumerated()), id: \.offset) { idx, action in
                         HStack(spacing: 8) {
                             Image(systemName: action.systemImage)
                                 .font(.system(size: 12, weight: .medium))
@@ -335,7 +395,7 @@ final class MacBrowseRowActions10878Tests: XCTestCase {
                         .padding(.vertical, 5)
                         if case .togglePin = action {
                             Divider().padding(.vertical, 2)
-                        } else if idx < scenario.actions.count - 1 {
+                        } else if idx < actions.count - 1 {
                             Divider().opacity(0.35)
                         }
                     }
@@ -350,15 +410,15 @@ final class MacBrowseRowActions10878Tests: XCTestCase {
                 )
             }
             .padding(12)
-            .frame(width: 280)
+            .frame(width: 300)
             .background(Color(nsColor: .windowBackgroundColor))
             .environment(\.colorScheme, .light)
 
             let renderer = rendererForMeasurement(preview)
             renderer.scale = 2.0
             let cgImage = try XCTUnwrap(renderer.cgImage, "Failed to render \(scenario.name)")
-            XCTAssertEqual(cgImage.width, 560)
-            XCTAssertGreaterThan(cgImage.height, 120)
+            XCTAssertEqual(cgImage.width, 600)
+            XCTAssertGreaterThan(cgImage.height, 200)
 
             if let outputDir {
                 let rep = NSBitmapImageRep(cgImage: cgImage)
