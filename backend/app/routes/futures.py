@@ -56,6 +56,7 @@ from app.utils.futures_verified_title import (
     title_team_index,
 )
 from app.utils.generic_market_history import captures_are_coarse, captures_cover_cell
+from app.utils.grid_out_division_legs import drop_out_division_legs, out_legs_by_market
 from app.utils.kalshi_archive_reader import (
     BASIS_HOURS as ARCHIVE_BASIS_HOURS,
     LIFETIME_FLOOR as ARCHIVE_LIFETIME_FLOOR,
@@ -5549,6 +5550,10 @@ async def get_futures_market(
         leg_sides=leg_sides,
         # #8892: and the one leg that answers "who wins" is named.
         lead_leg=await _game_container_lead_leg(db, market, leg_sides),
+        # #11493: the division legs the playoff grid has put out of the title —
+        # the card's rule (`feed._score_futures`), so the tap lands on the board
+        # the card showed. Cached grid only; a miss keeps every leg.
+        out_division_labels=(await out_legs_by_market([market])).get(market.id),
     )
     if len(bookmakers) > 1 and source_breakdown:
         detail["source_breakdown"] = source_breakdown
@@ -9145,12 +9150,21 @@ async def get_futures_history(
     # — the identity that lets one pass serve both.
     _chartable_ids = {r.outcome_id for r in _supported_field}
 
+    # #11493: a division the playoff grid has put out is not DRAWN (the legend
+    # listed "AL Central" beside the two live divisions). Both selections below
+    # choose from this list; `charted_outcomes` stays the whole field, so the
+    # scale contract divides and validates exactly as before. An explicit
+    # `outcome_id` is the caller's ask and is served.
+    drawable_outcomes = drop_out_division_legs(
+        charted_outcomes, (await out_legs_by_market([market])).get(market.id)
+    )
+
     # Get outcome IDs to chart
     if outcome_id:
         outcome_ids = [outcome_id]
     else:
         outcome_ids = _select_charted_outcome_ids(
-            charted_outcomes, _chartable_ids, top_n, champion
+            drawable_outcomes, _chartable_ids, top_n, champion
         )
 
     charted_ids = set(outcome_ids)
@@ -9297,7 +9311,7 @@ async def get_futures_history(
                 ext_outcome_ids = outcome_ids
             else:
                 ext_outcome_ids = _select_charted_outcome_ids(
-                    charted_outcomes,
+                    drawable_outcomes,
                     {r.outcome_id for r in extended_supported},
                     top_n,
                     champion,
@@ -10176,8 +10190,13 @@ def _format_market_detail(
     fleet_newest_observation: "datetime | None" = None,
     leg_sides: "dict[str, str] | None" = None,
     lead_leg: "str | None" = None,
+    out_division_labels: "frozenset[str] | None" = None,
 ) -> dict:
     """Format a market for detail view with all outcomes.
+
+    ``out_division_labels`` is `grid_out_division_legs.out_legs_by_market`'s set
+    for this board (#11493): a division leg every one of whose clubs the playoff
+    grid has put out leaves the page, as it leaves the Discover card.
 
     ``leg_sides`` is `_game_container_leg_sides`'s map (#8664). A leg named in it
     is served as ``"<side> — <question>"``, because its price is that side's.
@@ -10270,6 +10289,10 @@ def _format_market_detail(
         )
         if not is_placeholder_outcome_name(o.name)
     ]
+    # #11493: before the divisor, as the card drops it before its own. "AL Central
+    # <1%" read as a live chance with all five clubs eliminated; the venue's graded
+    # divisions carry no price, but this one kept its last quote until graded.
+    valid_outcomes = drop_out_division_legs(valid_outcomes, out_division_labels)
     sorted_outcomes = sorted(
         valid_outcomes,
         key=lambda o: o.current_probability or 0,
