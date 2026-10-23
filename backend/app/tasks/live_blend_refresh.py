@@ -68,6 +68,7 @@ from __future__ import annotations
 from asyncio import CancelledError
 import asyncio
 import contextlib
+from contextvars import ContextVar
 from collections import deque
 import logging
 import math
@@ -240,6 +241,37 @@ def _mono() -> float:
 def _wall() -> float:
     """The dyno's wall clock (epoch seconds, UTC) — same seam, same reason."""
     return time.time()
+
+
+# Call-local timing for the existing optional-read failure receipt. A fetch
+# cancellation alone cannot say whether checkout/admission consumed its budget.
+# Ordinary stamp reads have no timing state; no payloads or event IDs are kept.
+_observation_read_timing: ContextVar[dict | None] = ContextVar(
+    "observation_read_timing", default=None,
+)
+
+
+@contextlib.contextmanager
+def _observation_read_step(name):
+    timing = _observation_read_timing.get()
+    if timing is None:
+        yield
+        return
+    started = _mono()
+    timing[name + "_start_ms"] = (started - timing["started_s"]) * 1000
+    timing[name + "_completed"] = False
+    try:
+        yield
+        timing[name + "_completed"] = True
+    finally:
+        timing[name + "_ms"] = (_mono() - started) * 1000
+
+
+def _observation_read_summary(timing):
+    if timing is None:
+        return None
+    return {key: round(value, 3) if type(value) is float else value
+            for key, value in timing.items() if key != "started_s"}
 
 
 def _iso(wall: Optional[float]) -> Optional[str]:
@@ -3221,26 +3253,28 @@ class LiveBlendRefresher:
         )
         # Capture BEFORE the statement, not when a prepared plan is later
         # published. Retirement invalidates this proof without renewing it.
-        preview_ticket = (
-            await self._preview_admission_read() if preview_columns else None
-        )
-        rows = (
-            await session.execute(
-                select(*(
-                    Event.win_probability_sources.op("->")(literal(self.source)).label(key)
-                    if model is Event and key == "win_probability_sources"
-                    else getattr(model, key)
-                    for model, keys in fields for key in keys
-                ), *preview_columns)
-                .select_from(FuturesMarket)
-                .join(Event, Event.id == FuturesMarket.event_id)
-                .outerjoin(FuturesOutcome, outcome_join)
-                .where(
-                    FuturesMarket.source == self.source,
-                    FuturesMarket.event_id.in_(event_ids),
-                )
+        with _observation_read_step("admission"):
+            preview_ticket = (
+                await self._preview_admission_read() if preview_columns else None
             )
-        ).all()
+        with _observation_read_step("query"):
+            rows = (
+                await session.execute(
+                    select(*(
+                        Event.win_probability_sources.op("->")(literal(self.source)).label(key)
+                        if model is Event and key == "win_probability_sources"
+                        else getattr(model, key)
+                        for model, keys in fields for key in keys
+                    ), *preview_columns)
+                    .select_from(FuturesMarket)
+                    .join(Event, Event.id == FuturesMarket.event_id)
+                    .outerjoin(FuturesOutcome, outcome_join)
+                    .where(
+                        FuturesMarket.source == self.source,
+                        FuturesMarket.event_id.in_(event_ids),
+                    )
+                )
+            ).all()
         grouped: dict[int, tuple] = {}
         entries: dict[int, MarketOutcomes] = {}
         held = self.held_quotes if overlay_held else None
@@ -4659,6 +4693,7 @@ class LiveBlendRefresher:
         from app.utils.settledness import market_assigned_settled
         from app.utils.live_blend import compute_source_home_probability, has_proven_home_orientation
 
+        read_timing = None
         try:
             event_ids = {eid for eid in observations if eid in self.preview_events}
             event_ids.intersection_update(await validate(event_ids))
@@ -4672,9 +4707,16 @@ class LiveBlendRefresher:
                 return False
             grouped = None
             read_budget = asyncio.timeout(.25)
+            read_timing = {"started_s": _mono()}
             try:
-                async with read_budget, self._session_slot(), factory() as session:
-                    grouped = await self._read_groups(session, sorted(event_ids), overlay_held=False)
+                token = _observation_read_timing.set(read_timing)
+                try:
+                    async with read_budget, self._session_slot(), factory() as session:
+                        grouped = await self._read_groups(session, sorted(event_ids), overlay_held=False)
+                        read_timing["graph_ready_ms"] = (_mono() - read_timing["started_s"]) * 1000
+                finally:
+                    read_timing["scope_ms"] = (_mono() - read_timing["started_s"]) * 1000
+                    _observation_read_timing.reset(token)
             except TimeoutError:
                 # A completed autocommit SELECT needs no commit acknowledgement.
                 # Its detached graph remains usable if only connection cleanup
@@ -4685,8 +4727,8 @@ class LiveBlendRefresher:
                         or not read_budget.expired()):
                     raise
                 logger.warning(
-                    "live_blend_refresh[%s]: observation read completed; cleanup exceeded budget",
-                    self.source,
+                    "live_blend_refresh[%s]: observation read completed; cleanup exceeded budget read_timing=%s",
+                    self.source, _observation_read_summary(read_timing),
                 )
             plans = {}
             refusals = {}
@@ -4773,7 +4815,10 @@ class LiveBlendRefresher:
             await self._publish_previews([], prepare_frames=prepare_frames)
         except Exception:
             self.preview_stats["publish_errors"] += 1
-            logger.warning("live_blend_refresh[%s]: optional observation preview unavailable", self.source, exc_info=True)
+            logger.warning(
+                "live_blend_refresh[%s]: optional observation preview unavailable read_timing=%s",
+                self.source, _observation_read_summary(read_timing), exc_info=True,
+            )
             return False
 
     async def _preview_before_stamp(self, grouped, plans, published_seq, *, observation_only=()) -> None:
