@@ -620,7 +620,7 @@ final class MacMenuBarSelectedGame4939Tests: XCTestCase {
             let rootView = MenuBarView(store: stateStore, enableAutoRefresh: false)
                 .background(Color(nsColor: .windowBackgroundColor))
                 .environment(\.colorScheme, .light)
-            let renderer = ImageRenderer(content: rootView)
+            let renderer = rendererForMeasurement(rootView)
             renderer.scale = 2.0
             let cgImage = try XCTUnwrap(renderer.cgImage, "Failed to render \(name)")
             XCTAssertEqual(cgImage.width, 560, "Rendered width at 2x scale should be 560px for \(name)")
