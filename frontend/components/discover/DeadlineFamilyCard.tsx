@@ -21,6 +21,7 @@ export interface DeadlineFamilyCardProps {
   sharedQuestion?: string | null;
   storyKey?: string | null;
   positionIndex?: number;
+  defaultExpanded?: boolean;
 }
 
 /**
@@ -39,12 +40,12 @@ export function DeadlineFamilyCard({
   model,
   items = [],
   positionIndex,
+  defaultExpanded = false,
 }: DeadlineFamilyCardProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const primary = items[0];
-  const analytics = primary
-    ? getDiscoverItemAnalytics(primary)
-    : { category: model.category ?? "politics" };
+  const analytics = primary ? getDiscoverItemAnalytics(primary) : null;
+  const category = analytics?.category ?? model.category ?? "politics";
   const rep = model.representative;
 
   const toggleExpanded = () => {
@@ -52,14 +53,16 @@ export function DeadlineFamilyCard({
     setExpanded(next);
     if (next) {
       trackEvent("theme_bundle_expand", {
-        ...analytics,
+        ...(analytics ?? { category }),
         story_key: model.storyKey,
         member_count: model.representedCount,
         position: positionIndex,
         surface: "discover",
       });
-      recordDiscoverInteraction(analytics.category, "group_expand");
-      sendDiscoverInteraction(analytics, "group_expand", positionIndex);
+      recordDiscoverInteraction(category, "group_expand");
+      if (analytics) {
+        sendDiscoverInteraction(analytics, "group_expand", positionIndex);
+      }
     }
   };
 
@@ -72,6 +75,9 @@ export function DeadlineFamilyCard({
       data-group-id={model.groupId}
       data-source={model.source}
       data-family-state={model.familyState}
+      data-rule-template-hash={model.ruleTemplateHash}
+      data-cutoff-timezone={model.cutoffTimezone}
+      data-cutoff-local-time={model.cutoffLocalTime}
       data-selection-reason={model.selectionReason}
       data-representative-market-id={rep.marketId}
       data-representative-outcome-id={rep.yesOutcomeId}
@@ -228,6 +234,7 @@ export function DeadlineFamilyCard({
               data-outcome-id={member.yesOutcomeId}
               data-deadline-instant={member.deadlineInstant}
               data-representative={member.isRepresentative ? "true" : "false"}
+              data-settlement-state={member.settlementState}
               data-settled={member.isSettled ? "true" : "false"}
             >
               <div className="flex-1 min-w-0">
@@ -262,6 +269,13 @@ export function DeadlineFamilyCard({
                     data-testid="deadline-family-member-settled"
                   >
                     {member.settledText ?? "Resolved"}
+                  </span>
+                ) : member.isTradingClosed ? (
+                  <span
+                    className="text-xs font-semibold text-text-secondary"
+                    data-testid="deadline-family-member-trading-closed"
+                  >
+                    Trading closed
                   </span>
                 ) : (
                   <>

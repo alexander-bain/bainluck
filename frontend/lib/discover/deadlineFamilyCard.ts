@@ -2,6 +2,7 @@ import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type {
   FeedDeadlineFamilyContract,
   FeedDeadlineMemberContract,
+  FeedDeadlineSettlementState,
   FeedFuturesData,
   FeedItem,
 } from "@/lib/types";
@@ -28,41 +29,6 @@ export const NEAR_CERTAIN_THRESHOLD = 0.97;
 export const DETERMINISTIC_TIE_BREAK_RULE =
   "abs_supported_move_desc -> distance_from_50pct_asc -> deadline_instant_asc -> market_id_asc";
 
-const SETTLED_STATUSES = new Set([
-  "resolved",
-  "closed",
-  "settled",
-  "finalized",
-  "final",
-]);
-
-const MONTH_NUMBERS: Record<string, number> = {
-  jan: 1,
-  january: 1,
-  feb: 2,
-  february: 2,
-  mar: 3,
-  march: 3,
-  apr: 4,
-  april: 4,
-  may: 5,
-  jun: 6,
-  june: 6,
-  jul: 7,
-  july: 7,
-  aug: 8,
-  august: 8,
-  sep: 9,
-  sept: 9,
-  september: 9,
-  oct: 10,
-  october: 10,
-  nov: 11,
-  november: 11,
-  dec: 12,
-  december: 12,
-};
-
 const SHORT_MONTH_NAMES: Record<number, string> = {
   1: "Jan",
   2: "Feb",
@@ -78,31 +44,9 @@ const SHORT_MONTH_NAMES: Record<number, string> = {
   12: "Dec",
 };
 
-const MONTH_PATTERN =
-  "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
-
-const CUMULATIVE_DEADLINE_QUESTION_RE =
-  /^\s*(.+?)\s+\b(by)\s+([^?]+?)\s*\??\s*$/i;
-
-const CALENDAR_DATE_DEADLINE_RE = new RegExp(
-  `^(${MONTH_PATTERN})\\.?\\s+(\\d{1,2})(?:\\s*,\\s*(\\d{4})|\\s+(\\d{4}))?$`,
-  "i",
-);
-
-const EXCLUSIVE_BUCKET_RE = new RegExp(
-  `\\b(?:between\\s+.+\\s+and|from\\s+.+\\s+to|in\\s+(?:${MONTH_PATTERN})|during\\s+|q[1-4]\\b|quarter\\b|only\\b|or\\s+later\\b|or\\s+earlier\\b|after\\s+)\\b`,
-  "i",
-);
-
-const NEGATIVE_STEM_RE =
-  /\b(?:not|won't|will\s+not|cannot|can't|never|fail(?:s)?\s+to|stay(?:s)?\s+in|remain(?:s)?\s+(?:in|as))\b/i;
-
-const MENTION_ONLY_STEM_RE =
-  /\b(?:say|says|said|mention|mentions|mentioned|tweet|tweets|post|posts|utter|use\s+the\s+word)\b/i;
-
-const LEADING_AUXILIARY_RE = /^(?:will|does|do|is|are|has|have)\s+/i;
-
 const ISO_TIMEZONE_SUFFIX_RE = /(?:Z|[+-]\d{2}:?\d{2})$/i;
+const CALENDAR_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const LOCAL_TIME_RE = /^\d{2}:\d{2}$/;
 
 export function isDeadlineFamilyStoryKey(
   storyKey: string | null | undefined,
@@ -125,133 +69,6 @@ export function parseTimezoneAwareEpochMs(
   if (!trimmed || !ISO_TIMEZONE_SUFFIX_RE.test(trimmed)) return null;
   const ms = Date.parse(trimmed);
   return Number.isFinite(ms) ? ms : null;
-}
-
-function daysInMonthUtc(year: number, month1To12: number): number {
-  return new Date(Date.UTC(year, month1To12, 0)).getUTCDate();
-}
-
-function normalizeStem(rawStem: string): {
-  stemKey: string;
-  displayStem: string;
-} {
-  const collapsed = rawStem
-    .trim()
-    .replace(/\s+/g, " ")
-    .replace(/[?.,:; ]+$/, "");
-  const withoutAux = collapsed.replace(LEADING_AUXILIARY_RE, "").trim();
-  if (!withoutAux) return { stemKey: "", displayStem: "" };
-  const displayStem = withoutAux[0].toUpperCase() + withoutAux.slice(1);
-  const stemKey = withoutAux
-    .toLowerCase()
-    .replace(/[^\w\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return { stemKey, displayStem };
-}
-
-export interface ParsedCumulativeDeadlineQuestion {
-  stemKey: string;
-  displayStem: string;
-  sharedQuestion: string;
-  preposition: string;
-  deadlineText: string;
-  shortDeadline: string;
-  deadlineLabel: string;
-  calendarDate: string;
-  deadlineInstant: string;
-  deadlineEpochMs: number;
-}
-
-export function parseCumulativeDeadlineQuestion(
-  name: string | null | undefined,
-  resolutionDate: string | null | undefined,
-): ParsedCumulativeDeadlineQuestion | null {
-  if (typeof name !== "string") return null;
-  const cleanedName = name.trim();
-  if (!cleanedName || EXCLUSIVE_BUCKET_RE.test(cleanedName)) return null;
-
-  const match = CUMULATIVE_DEADLINE_QUESTION_RE.exec(cleanedName);
-  if (!match) return null;
-
-  const rawStem = match[1].trim();
-  const prep = match[2].trim().toLowerCase();
-  const rawDeadline = match[3].trim();
-  if (!rawStem || !rawDeadline) return null;
-  if (EXCLUSIVE_BUCKET_RE.test(rawDeadline) || EXCLUSIVE_BUCKET_RE.test(rawStem)) {
-    return null;
-  }
-  if (NEGATIVE_STEM_RE.test(rawStem) || NEGATIVE_STEM_RE.test(rawDeadline)) {
-    return null;
-  }
-  if (MENTION_ONLY_STEM_RE.test(rawStem)) {
-    return null;
-  }
-
-  const dateMatch = CALENDAR_DATE_DEADLINE_RE.exec(rawDeadline);
-  if (!dateMatch) return null;
-
-  const monthToken = dateMatch[1].replace(/\.$/, "").toLowerCase();
-  const monthNum = MONTH_NUMBERS[monthToken];
-  if (!monthNum) return null;
-
-  const dayNum = Number(dateMatch[2]);
-  if (!Number.isInteger(dayNum) || dayNum < 1 || dayNum > 31) return null;
-
-  const explicitYearStr = dateMatch[3] || dateMatch[4];
-  const explicitYear = explicitYearStr ? Number(explicitYearStr) : null;
-
-  const deadlineEpochMs = parseTimezoneAwareEpochMs(resolutionDate);
-  if (deadlineEpochMs == null || !resolutionDate) return null;
-
-  const instantYear = new Date(deadlineEpochMs).getUTCFullYear();
-  const candidateYears =
-    explicitYear != null
-      ? [explicitYear]
-      : [instantYear, instantYear - 1, instantYear + 1];
-
-  let matchedYear: number | null = null;
-  for (const year of candidateYears) {
-    if (year < 2000 || year > 2100) continue;
-    const maxDay = daysInMonthUtc(year, monthNum);
-    if (dayNum < 1 || dayNum > maxDay) continue;
-    const dayStartMs = Date.UTC(year, monthNum - 1, dayNum, 0, 0, 0);
-    const dayEndMs = Date.UTC(year, monthNum - 1, dayNum, 23, 59, 59);
-    if (
-      deadlineEpochMs >= dayStartMs - 14 * 3600_000 &&
-      deadlineEpochMs <= dayEndMs + 36 * 3600_000
-    ) {
-      matchedYear = year;
-      break;
-    }
-  }
-  if (matchedYear == null) return null;
-
-  const { stemKey, displayStem } = normalizeStem(rawStem);
-  if (!stemKey || stemKey.split(" ").length < 2) return null;
-
-  const shortMonth = SHORT_MONTH_NAMES[monthNum];
-  const shortDeadline =
-    explicitYear != null
-      ? `${shortMonth} ${dayNum}, ${explicitYear}`
-      : `${shortMonth} ${dayNum}`;
-  const deadlineLabel = `By ${shortDeadline}`;
-  const calendarDate = `${String(matchedYear).padStart(4, "0")}-${String(
-    monthNum,
-  ).padStart(2, "0")}-${String(dayNum).padStart(2, "0")}`;
-
-  return {
-    stemKey,
-    displayStem,
-    sharedQuestion: `${displayStem} by…?`,
-    preposition: prep,
-    deadlineText: rawDeadline,
-    shortDeadline,
-    deadlineLabel,
-    calendarDate,
-    deadlineInstant: resolutionDate.trim(),
-    deadlineEpochMs,
-  };
 }
 
 export interface DeadlineMovementTimeframe {
@@ -296,6 +113,37 @@ function localDateParts(
     hour: map.hour === 24 ? 0 : map.hour,
     minute: map.minute,
   };
+}
+
+/**
+ * Verify that `deadlineEpochMs` converts to the exact contractual `calendarDate` (`YYYY-MM-DD`)
+ * and `cutoffLocalTime` (`HH:MM`) in `cutoffTimezone` (Section 3B).
+ */
+function verifyContractualCutoffInTimezone(
+  deadlineEpochMs: number,
+  calendarDate: string,
+  cutoffTimezone: string,
+  cutoffLocalTime: string,
+): boolean {
+  if (
+    !CALENDAR_DATE_RE.test(calendarDate) ||
+    !LOCAL_TIME_RE.test(cutoffLocalTime) ||
+    !cutoffTimezone
+  ) {
+    return false;
+  }
+  try {
+    const parts = localDateParts(deadlineEpochMs, cutoffTimezone);
+    const localDate = `${String(parts.year).padStart(4, "0")}-${String(
+      parts.month,
+    ).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+    const localTime = `${String(parts.hour).padStart(2, "0")}:${String(
+      parts.minute,
+    ).padStart(2, "0")}`;
+    return localDate === calendarDate && localTime === cutoffLocalTime;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -427,6 +275,9 @@ export interface DeadlineFamilyMemberViewModel {
   calendarDate: string;
   deadlineInstant: string;
   deadlineEpochMs: number;
+  cutoffTimezone: string;
+  cutoffLocalTime: string;
+  ruleTemplateHash: string;
   yesOutcomeId: number;
   noOutcomeId: number;
   yesProbability: number | null;
@@ -450,7 +301,9 @@ export interface DeadlineFamilyMemberViewModel {
   showRowMovementBadge: boolean;
   rowMovementFraction: number | null;
   narrativeCaption: string;
+  settlementState: FeedDeadlineSettlementState;
   isSettled: boolean;
+  isTradingClosed: boolean;
   settledText: string | null;
   laggingLocalStatus: boolean;
   isNearCertain: boolean;
@@ -469,6 +322,9 @@ export interface DeadlineFamilyCardModel {
   sharedQuestion: string;
   category: string | null;
   familyState: "open" | "settled";
+  ruleTemplateHash: string;
+  cutoffTimezone: string;
+  cutoffLocalTime: string;
   selectionReason:
     | "largest_supported_dated_move"
     | "nearest_50_pct_fallback"
@@ -543,43 +399,141 @@ function verifySingleMember(
     return { member: null, reason: "invalid_or_missing_yes_outcome_binding" };
   }
 
-  const parsedQuestion = parseCumulativeDeadlineQuestion(
-    contract.name,
-    contract.deadline_instant,
-  );
-  if (!parsedQuestion) {
+  // Section 3A: Verify producer rule equivalence evidence (`rule_verification` + `rule_template_hash`).
+  const ruleVer = contract.rule_verification;
+  const ruleTemplateHash = (
+    contract.rule_template_hash ??
+    ruleVer?.rule_template_hash ??
+    ""
+  ).trim();
+  const cutoffTimezone = (
+    contract.cutoff_timezone ??
+    ruleVer?.cutoff_timezone ??
+    ""
+  ).trim();
+  const cutoffLocalTime = (
+    contract.cutoff_local_time ??
+    ruleVer?.cutoff_local_time ??
+    ""
+  ).trim();
+
+  if (
+    !ruleVer ||
+    ruleVer.verified !== true ||
+    !ruleTemplateHash ||
+    !cutoffTimezone ||
+    !cutoffLocalTime
+  ) {
+    return { member: null, reason: "missing_rule_equivalence_proof" };
+  }
+
+  const name = (contract.name ?? "").trim();
+  const stemKey = (contract.stem_key ?? "").trim();
+  const displayStem = (contract.display_stem ?? "").trim();
+  const sharedQuestion = (contract.shared_question ?? "").trim();
+  const preposition = (contract.preposition ?? "").trim().toLowerCase();
+  const deadlineLabel = (contract.deadline_label ?? "").trim();
+  const shortDeadline = (contract.short_deadline ?? "").trim();
+  const calendarDate = (contract.calendar_date ?? "").trim();
+  const deadlineInstant = (contract.deadline_instant ?? "").trim();
+  const deadlineEpochMs = parseTimezoneAwareEpochMs(deadlineInstant);
+
+  if (
+    !name ||
+    !stemKey ||
+    !displayStem ||
+    !sharedQuestion ||
+    preposition !== "by" ||
+    !deadlineLabel ||
+    !shortDeadline ||
+    !calendarDate ||
+    deadlineEpochMs == null
+  ) {
     return { member: null, reason: "question_or_deadline_verification_failed" };
   }
 
-  // Re-verify settlement precedence (6D): authoritative terminal evidence wins
-  // over a lagging local status="open" or null winner.
-  const itemStatus = (itemData?.status ?? contract.settlement?.status ?? "open")
+  // Section 3B: Verify that `deadline_instant` matches `calendar_date` and `cutoff_local_time`
+  // in `cutoff_timezone` without any `[-14h, +36h]` tolerance window.
+  if (
+    !verifyContractualCutoffInTimezone(
+      deadlineEpochMs,
+      calendarDate,
+      cutoffTimezone,
+      cutoffLocalTime,
+    )
+  ) {
+    return {
+      member: null,
+      reason: "deadline_instant_cutoff_mismatch",
+    };
+  }
+
+  // Section 3C: Keep `open`, `trading_closed`, `resolved`, `void`, and `unknown` distinct.
+  const rawSettlement = contract.settlement;
+  if (!rawSettlement || typeof rawSettlement !== "object") {
+    return { member: null, reason: "missing_settlement_evidence" };
+  }
+  if (rawSettlement.untrusted_local_grade === true) {
+    return { member: null, reason: "member_settlement_unknown" };
+  }
+
+  const itemStatus = (itemData?.status ?? rawSettlement.status ?? "open")
     .trim()
     .toLowerCase();
-  const itemWinner = (
+  const rawWinner = (
+    rawSettlement.result ??
+    rawSettlement.winner ??
     itemData?.winner ??
-    contract.settlement?.result ??
-    contract.settlement?.winner ??
     ""
   ).trim();
-  const isSettled = Boolean(
-    contract.settlement?.is_settled === true ||
-      itemData?.resolved === true ||
-      SETTLED_STATUSES.has(itemStatus) ||
-      itemWinner.length > 0,
-  );
-  const settledResult =
-    contract.settlement?.result ??
-    contract.settlement?.winner ??
-    (itemWinner || null);
+  const normalizedWinner =
+    rawWinner === "Yes" || rawWinner === "No" ? rawWinner : null;
+
+  let settlementState: FeedDeadlineSettlementState;
+  if (rawSettlement.state) {
+    settlementState = rawSettlement.state;
+  } else if (rawSettlement.is_settled === true || itemData?.resolved === true) {
+    settlementState = "resolved";
+  } else if (
+    rawSettlement.is_trading_closed === true ||
+    itemStatus === "closed" ||
+    itemStatus === "trading_closed"
+  ) {
+    settlementState = "trading_closed";
+  } else {
+    settlementState = "open";
+  }
+
+  if (settlementState === "void") {
+    return { member: null, reason: "member_settlement_void" };
+  }
+  if (settlementState === "unknown") {
+    return { member: null, reason: "member_settlement_unknown" };
+  }
+  if (settlementState === "resolved" && normalizedWinner == null) {
+    return {
+      member: null,
+      reason: "resolved_without_authoritative_winner",
+    };
+  }
+  // If outer item says `closed` without an authoritative resolved state, treat as `trading_closed`.
+  if (
+    settlementState === "open" &&
+    (itemStatus === "closed" || itemStatus === "trading_closed")
+  ) {
+    settlementState = "trading_closed";
+  }
+
+  const isSettled = settlementState === "resolved";
+  const isTradingClosed = settlementState === "trading_closed";
   const settledText = isSettled
-    ? settledResult
-      ? `Resolved · ${settledResult}`
-      : "Resolved"
-    : null;
+    ? `Resolved · ${normalizedWinner}`
+    : isTradingClosed
+      ? "Trading closed"
+      : null;
   const laggingLocalStatus = Boolean(
-    contract.settlement?.lagging_local_status ||
-      (isSettled &&
+    rawSettlement.lagging_local_status ||
+      ((isSettled || isTradingClosed) &&
         (itemData?.status ?? "open").toLowerCase() === "open" &&
         !itemData?.winner),
   );
@@ -636,6 +590,24 @@ function verifySingleMember(
       ? Math.max(0, Math.min(100, Math.round(yesProbability * 100)))
       : 0;
 
+  // Section 3D: Observation timestamps come strictly from `contract.price_observed_at`.
+  // Never substitute `options.nowIso` or `new Date()` when `price_observed_at` is missing!
+  const priceObservedAt =
+    typeof contract.price_observed_at === "string" &&
+    contract.price_observed_at.trim()
+      ? contract.price_observed_at.trim()
+      : null;
+  const observedMs = parseTimezoneAwareEpochMs(priceObservedAt);
+  const nowMs = parseTimezoneAwareEpochMs(options.nowIso);
+
+  const observationFresh = Boolean(
+    observedMs != null &&
+      rawSettlement.stale_observation !== true &&
+      (nowMs == null ||
+        (nowMs - observedMs >= -300_000 &&
+          (nowMs - observedMs) / 3600_000 <= DATED_BASIS_WINDOW_HOURS)),
+  );
+
   // Verify stored movement claim AND outcome-bound dated comparison basis (6A / 6C / 6D / 6E).
   const storedClaim =
     typeof contract.stored_movement_claim === "number" &&
@@ -643,24 +615,18 @@ function verifySingleMember(
       ? contract.stored_movement_claim
       : null;
   const basis = contract.movement_basis;
-  const referenceIso =
-    options.nowIso ??
-    contract.price_observed_at ??
-    itemData?.price_observed_at ??
-    null;
-  const referenceMs = parseTimezoneAwareEpochMs(referenceIso);
   const basisMs = basis ? parseTimezoneAwareEpochMs(basis.observed_at) : null;
 
-  let ageHours: number | null = null;
-  if (referenceMs != null && basisMs != null) {
-    ageHours = (referenceMs - basisMs) / 3600_000;
-  } else if (
-    basis &&
-    typeof basis.age_hours === "number" &&
-    Number.isFinite(basis.age_hours)
-  ) {
-    ageHours = basis.age_hours;
+  let ageHoursAtObservation: number | null = null;
+  if (observedMs != null && basisMs != null) {
+    ageHoursAtObservation = (observedMs - basisMs) / 3600_000;
   }
+
+  const basisFreshNow =
+    nowMs == null ||
+    basisMs == null ||
+    ((nowMs - basisMs) / 3600_000 >= DATED_BASIS_MIN_AGE_HOURS &&
+      (nowMs - basisMs) / 3600_000 <= DATED_BASIS_WINDOW_HOURS);
 
   const basisBoundToYes = Boolean(
     basis &&
@@ -670,9 +636,10 @@ function verifySingleMember(
       basis.basis_price >= 0 &&
       basis.basis_price <= 1 &&
       basisMs != null &&
-      ageHours != null &&
-      ageHours >= DATED_BASIS_MIN_AGE_HOURS &&
-      ageHours <= DATED_BASIS_WINDOW_HOURS,
+      ageHoursAtObservation != null &&
+      ageHoursAtObservation >= DATED_BASIS_MIN_AGE_HOURS &&
+      ageHoursAtObservation <= DATED_BASIS_WINDOW_HOURS &&
+      basisFreshNow,
   );
 
   const admitsZero = Boolean(basis?.admits_zero || source === "datagolf");
@@ -684,18 +651,26 @@ function verifySingleMember(
   let supportedMovePoints: number | null = null;
   let timeframe: DeadlineMovementTimeframe | null = null;
 
-  if (!isSettled && yesProbability != null && hasStoredClaim && basisBoundToYes && basis) {
+  if (
+    settlementState === "open" &&
+    yesProbability != null &&
+    observationFresh &&
+    priceObservedAt != null &&
+    hasStoredClaim &&
+    basisBoundToYes &&
+    basis
+  ) {
     const rawMove = yesProbability - basis.basis_price;
     const tf = formatDeadlineMovementTimeframe(
       basis.observed_at,
-      contract.price_observed_at ?? itemData?.price_observed_at ?? options.nowIso,
+      priceObservedAt,
       options.timeZone,
     );
     if (tf.valid) {
       timeframe = tf;
       supportedMoveFraction = Math.round(rawMove * 1e6) / 1e6;
       supportedMovePoints = Math.round(rawMove * 1000) / 10;
-      const absMove = Math.abs(rawMove);
+      const absMove = Math.abs(supportedMoveFraction);
       if (absMove < 1e-9) {
         movementStatus = "measured_zero";
       } else if (absMove < DEADLINE_MODERATE_MIN_MOVEMENT_FRACTION) {
@@ -709,7 +684,7 @@ function verifySingleMember(
   }
 
   const showHeroMovementChip =
-    !isSettled &&
+    settlementState === "open" &&
     movementStatus === "hero" &&
     supportedMoveFraction != null &&
     timeframe?.chipTimeframe != null;
@@ -737,7 +712,7 @@ function verifySingleMember(
     : null;
 
   const showRowMovementBadge =
-    !isSettled &&
+    settlementState === "open" &&
     (movementStatus === "hero" || movementStatus === "moderate") &&
     supportedMoveFraction != null;
   const rowMovementFraction = showRowMovementBadge ? supportedMoveFraction : null;
@@ -749,14 +724,16 @@ function verifySingleMember(
   let narrativeCaption: string;
   if (isSettled) {
     narrativeCaption = settledText ?? "Resolved";
+  } else if (isTradingClosed) {
+    narrativeCaption = "Trading closed · awaiting resolution";
   } else if (yesProbability == null) {
-    narrativeCaption = `Price unavailable · ${parsedQuestion.deadlineLabel}`;
+    narrativeCaption = `Price unavailable · ${deadlineLabel}`;
   } else if (movementSentenceSummary) {
-    narrativeCaption = `${movementSentenceSummary} — ${yesPercentText} chance by ${parsedQuestion.shortDeadline}`;
+    narrativeCaption = `${movementSentenceSummary} — ${yesPercentText} chance by ${shortDeadline}`;
   } else if (movementStatus === "measured_zero") {
-    narrativeCaption = `${unchangedPhrase} — ${yesPercentText} chance by ${parsedQuestion.shortDeadline}`;
+    narrativeCaption = `${unchangedPhrase} — ${yesPercentText} chance by ${shortDeadline}`;
   } else {
-    narrativeCaption = `${yesPercentText} chance by ${parsedQuestion.shortDeadline}`;
+    narrativeCaption = `${yesPercentText} chance by ${shortDeadline}`;
   }
 
   const noProb =
@@ -769,10 +746,12 @@ function verifySingleMember(
     maxSideProb >= NEAR_CERTAIN_THRESHOLD ||
     (yesProbability != null && yesProbability <= 1 - NEAR_CERTAIN_THRESHOLD);
 
+  const referenceForFutureMs = nowMs ?? observedMs;
   const deadlineInFuture =
-    referenceMs == null || parsedQuestion.deadlineEpochMs > referenceMs;
+    referenceForFutureMs != null && deadlineEpochMs > referenceForFutureMs;
   const nearCertainOpenEligible = Boolean(
-    !isSettled &&
+    settlementState === "open" &&
+      observationFresh &&
       deadlineInFuture &&
       isNearCertain &&
       (movementStatus === "hero" || movementStatus === "moderate") &&
@@ -787,10 +766,12 @@ function verifySingleMember(
       ? `, ${unchangedPhrase}`
       : "";
   const accessibleLabel = isSettled
-    ? `${contract.name} — ${settledText ?? "Resolved"}`
-    : yesProbability != null
-      ? `${contract.name} — Yes (${yesPercentText})${accessibleMovementSuffix}`
-      : `${contract.name} — price unavailable`;
+    ? `${name} — ${settledText ?? "Resolved"}`
+    : isTradingClosed
+      ? `${name} — Trading closed (awaiting resolution)`
+      : yesProbability != null
+        ? `${name} — Yes (${yesPercentText})${accessibleMovementSuffix}`
+        : `${name} — price unavailable`;
 
   const providerMarketCount =
     typeof contract.provider_market_count === "number" &&
@@ -802,27 +783,29 @@ function verifySingleMember(
   return {
     member: {
       marketId: contract.market_id,
-      name: contract.name.trim(),
+      name,
       source,
       externalId,
       groupId,
-      stemKey: parsedQuestion.stemKey,
-      displayStem: parsedQuestion.displayStem,
-      sharedQuestion: parsedQuestion.sharedQuestion,
-      preposition: parsedQuestion.preposition,
-      deadlineLabel: parsedQuestion.deadlineLabel,
-      shortDeadline: parsedQuestion.shortDeadline,
-      calendarDate: parsedQuestion.calendarDate,
-      deadlineInstant: parsedQuestion.deadlineInstant,
-      deadlineEpochMs: parsedQuestion.deadlineEpochMs,
+      stemKey,
+      displayStem,
+      sharedQuestion,
+      preposition,
+      deadlineLabel,
+      shortDeadline,
+      calendarDate,
+      deadlineInstant,
+      deadlineEpochMs,
+      cutoffTimezone,
+      cutoffLocalTime,
+      ruleTemplateHash,
       yesOutcomeId: contract.yes_outcome_id,
       noOutcomeId: contract.no_outcome_id,
       yesProbability,
       yesRenderedPercent,
       yesPercentText,
       barWidthPercent,
-      priceObservedAt:
-        contract.price_observed_at ?? itemData?.price_observed_at ?? null,
+      priceObservedAt,
       movementStatus,
       supportedMoveFraction,
       supportedMovePoints,
@@ -834,7 +817,9 @@ function verifySingleMember(
       showRowMovementBadge,
       rowMovementFraction,
       narrativeCaption,
+      settlementState,
       isSettled,
+      isTradingClosed,
       settledText,
       laggingLocalStatus,
       isNearCertain,
@@ -919,6 +904,18 @@ export function validateAndBuildDeadlineFamilyCardModel(
     return { model: null, rejectionReason: "mixed_subject_or_predicate" };
   }
 
+  // Section 3A: All members must share the exact same rule_template_hash, cutoff_timezone, and cutoff_local_time.
+  const ruleHashes = new Set(verifiedMembers.map((m) => m.ruleTemplateHash));
+  const cutoffTzs = new Set(verifiedMembers.map((m) => m.cutoffTimezone));
+  const cutoffTimes = new Set(verifiedMembers.map((m) => m.cutoffLocalTime));
+  if (
+    ruleHashes.size !== 1 ||
+    cutoffTzs.size !== 1 ||
+    cutoffTimes.size !== 1
+  ) {
+    return { model: null, rejectionReason: "mixed_rule_template_or_cutoff" };
+  }
+
   const calendarDates = new Set(verifiedMembers.map((m) => m.calendarDate));
   const deadlineEpochs = new Set(verifiedMembers.map((m) => m.deadlineEpochMs));
   if (
@@ -944,13 +941,13 @@ export function validateAndBuildDeadlineFamilyCardModel(
     };
   }
 
-  const allSettled = ascending.every((m) => m.isSettled);
+  const allResolved = ascending.every((m) => m.settlementState === "resolved");
   let selectedMarketId: number;
   let selectionReason: DeadlineFamilyCardModel["selectionReason"];
   let selectionBadgeText: string;
   let familyState: DeadlineFamilyCardModel["familyState"];
 
-  if (allSettled) {
+  if (allResolved) {
     familyState = "settled";
     const yesWinner = ascending.find((m) => m.settledText === "Resolved · Yes");
     const chosen = yesWinner ?? ascending[ascending.length - 1];
@@ -959,9 +956,10 @@ export function validateAndBuildDeadlineFamilyCardModel(
     selectionBadgeText = "Resolved";
   } else {
     familyState = "open";
+    // Only genuinely `open` members (never `trading_closed` or `resolved`) are eligible for representative selection.
     const eligibleOpenPriced = ascending.filter(
       (m) =>
-        !m.isSettled &&
+        m.settlementState === "open" &&
         m.yesProbability != null &&
         (!m.isNearCertain || m.nearCertainOpenEligible),
     );
@@ -1030,6 +1028,9 @@ export function validateAndBuildDeadlineFamilyCardModel(
       calendarDate: m.calendarDate,
       deadlineInstant: m.deadlineInstant,
       deadlineEpochMs: m.deadlineEpochMs,
+      cutoffTimezone: m.cutoffTimezone,
+      cutoffLocalTime: m.cutoffLocalTime,
+      ruleTemplateHash: m.ruleTemplateHash,
       yesOutcomeId: m.yesOutcomeId,
       noOutcomeId: m.noOutcomeId,
       yesProbability: m.yesProbability,
@@ -1048,7 +1049,9 @@ export function validateAndBuildDeadlineFamilyCardModel(
       showRowMovementBadge: m.showRowMovementBadge,
       rowMovementFraction: m.rowMovementFraction,
       narrativeCaption: m.narrativeCaption,
+      settlementState: m.settlementState,
       isSettled: m.isSettled,
+      isTradingClosed: m.isTradingClosed,
       settledText: m.settledText,
       laggingLocalStatus: m.laggingLocalStatus,
       isNearCertain: m.isNearCertain,
@@ -1120,6 +1123,9 @@ export function validateAndBuildDeadlineFamilyCardModel(
         input.sharedQuestion?.trim() || ascending[0].sharedQuestion,
       category,
       familyState,
+      ruleTemplateHash: ascending[0].ruleTemplateHash,
+      cutoffTimezone: ascending[0].cutoffTimezone,
+      cutoffLocalTime: ascending[0].cutoffLocalTime,
       selectionReason,
       selectionBadgeText,
       tieBreakRule: DETERMINISTIC_TIE_BREAK_RULE,

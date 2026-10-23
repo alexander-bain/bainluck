@@ -1942,13 +1942,33 @@ export interface FeedDeadlineMovementBasis {
   admits_zero?: boolean;
 }
 
+export type FeedDeadlineSettlementState =
+  | "open"
+  | "trading_closed"
+  | "resolved"
+  | "void"
+  | "unknown";
+
 export interface FeedDeadlineSettlementEvidence {
+  state?: FeedDeadlineSettlementState;
   is_settled: boolean;
+  is_trading_closed?: boolean;
   status: string;
-  winner?: string | null;
-  result?: string | null;
+  winner?: "Yes" | "No" | string | null;
+  result?: "Yes" | "No" | string | null;
   authoritative_source?: string | null;
   lagging_local_status?: boolean;
+  untrusted_local_grade?: boolean;
+  stale_observation?: boolean;
+}
+
+export interface FeedDeadlineRuleVerification {
+  verified: boolean;
+  evidence_source: string | null;
+  rule_template_hash: string | null;
+  cutoff_timezone: string | null;
+  cutoff_local_time: string | null;
+  reason?: string | null;
 }
 
 export interface FeedDeadlineMemberContract {
@@ -1969,6 +1989,10 @@ export interface FeedDeadlineMemberContract {
   calendar_date: string;
   deadline_instant: string;
   deadline_epoch: number;
+  cutoff_timezone?: string | null;
+  cutoff_local_time?: string | null;
+  rule_verification?: FeedDeadlineRuleVerification | null;
+  rule_template_hash?: string | null;
   yes_outcome_id: number;
   yes_outcome_name: "Yes";
   yes_external_id?: string | null;
@@ -1990,6 +2014,8 @@ export interface FeedDeadlineMemberContract {
     | "missing_or_invalid_basis"
     | "basis_out_of_window"
     | "settled_suppressed"
+    | "trading_closed_suppressed"
+    | "unobserved_current_price"
     | "unpriced";
   supported_move: number | null;
   supported_move_points: number | null;
@@ -2009,6 +2035,9 @@ export interface FeedDeadlineFamilyContract {
   title: string;
   shared_question: string;
   family_state: "open" | "settled";
+  rule_template_hash?: string | null;
+  cutoff_timezone?: string | null;
+  cutoff_local_time?: string | null;
   representative_market_id: number;
   representative_outcome_id: number;
   representative_deadline_label: string;

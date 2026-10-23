@@ -9437,6 +9437,7 @@ def _market_runtime_filter_trace(
         group_id=getattr(market, "group_id", None),
         status=getattr(market, "status", None),
         resolution_date=resolution_date,
+        description=market.__dict__.get("description"),
         market_metadata=getattr(market, "market_metadata", None),
         outcomes=getattr(market, "outcomes", None),
         prices_stopped=prices_stopped,
@@ -13462,6 +13463,30 @@ async def _score_sports_mode_futures(
                 now=now,
             ),
         }
+        _deadline_member = build_deadline_member_contract(
+            market_id=market.id,
+            name=market.name,
+            source=market.source,
+            external_id=getattr(market, "external_id", None),
+            group_id=market.group_id,
+            group_type=market.group_type,
+            market_type=getattr(market, "market_type", None),
+            status=market.status,
+            resolution_date=market.resolution_date,
+            description=market.__dict__.get("description"),
+            market_metadata=getattr(market, "market_metadata", None),
+            outcomes=market.outcomes,
+            top_outcomes_data=top_outcomes_data,
+            withheld_outcome_ids=_resolve_withheld_ids(
+                market, withheld_by_market.get(market.id)
+            ),
+            stale_outcome_ids=_stale_ids,
+            now=now,
+        )
+        if _deadline_member is not None:
+            futures_data["external_id"] = _deadline_member["external_id"]
+            futures_data["deadline_member"] = _deadline_member
+
         # #490: confidence signal (1-3 bars) — mirror of the Discover path.
         # L2-172: record has_closing_line (calibration-ready, not scored) when any
         # outcome carries a captured closing/settled price.
@@ -15424,10 +15449,12 @@ async def _score_futures(
                 market_type=getattr(market, "market_type", None),
                 status=market.status,
                 resolution_date=market.resolution_date,
+                description=market.__dict__.get("description"),
                 market_metadata=getattr(market, "market_metadata", None),
                 outcomes=market.outcomes,
                 top_outcomes_data=top_outcomes_data,
-                price_observed_at=futures_data["price_observed_at"],
+                withheld_outcome_ids=_resolve_withheld_ids(market),
+                stale_outcome_ids=_stale_ids,
                 now=now,
             )
             if _deadline_member is not None:

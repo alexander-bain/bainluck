@@ -2220,6 +2220,7 @@ def assemble_awards_theme_bundles(
 def _make_deadline_family_bundle_item(
     family_payload: dict[str, Any],
     members: list[dict[str, Any]],
+    all_group_items: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     member_by_id = {
         int(_futures_data(item).get("id")): item
@@ -2232,12 +2233,13 @@ def _make_deadline_family_bundle_item(
         for m in ascending_contracts
         if int(m["market_id"]) in member_by_id
     ]
-    score = max(float(item.get("score") or 0) for item in ascending_items)
+    score_pool = all_group_items or ascending_items
+    score = max(float(item.get("score") or 0) for item in score_pool)
     rank_score = max(
         float(item.get("_rank_score", item.get("score") or 0))
-        for item in ascending_items
+        for item in score_pool
     )
-    sort_time = max(float(item.get("_sort_time") or 0) for item in ascending_items)
+    sort_time = max(float(item.get("_sort_time") or 0) for item in score_pool)
     member_ids = [int(m["market_id"]) for m in ascending_contracts]
     story_key = str(family_payload["story_key"])
     group_id = str(family_payload["group_id"])
@@ -2288,8 +2290,8 @@ def assemble_deadline_family_bundles(
     Reconstructs candidate families from top-level items and any same-group
     siblings stashed under ``_grouped_members`` by ``_dedupe_futures_by_group_id``.
     Groups that fail cumulative deadline verification (awards races, exclusive
-    date buckets, mixed predicates, missing outcome/condition IDs, or ambiguous
-    deadlines) pass through untouched.
+    date buckets, mixed predicates, missing rule-equivalence proof, missing
+    outcome/condition IDs, or ambiguous deadlines) pass through untouched.
     """
     candidates_by_group: dict[tuple[str, str], list[dict[str, Any]]] = {}
     seen_ids_by_group: dict[tuple[str, str], set[str]] = {}
@@ -2320,10 +2322,16 @@ def assemble_deadline_family_bundles(
     lead_item_id_by_group: dict[tuple[str, str], str] = {}
 
     for key, members in candidates_by_group.items():
-        if len(members) < min_items:
+        child_members = [
+            m
+            for m in members
+            if str(_futures_data(m).get("group_type") or "").strip().lower()
+            != "polymarket_event"
+        ]
+        if len(child_members) < min_items:
             continue
         contracts: list[dict[str, Any]] = []
-        for member in members:
+        for member in child_members:
             contract = _futures_data(member).get("deadline_member")
             if not isinstance(contract, dict):
                 contracts = []
@@ -2336,12 +2344,12 @@ def assemble_deadline_family_bundles(
         if full_family is None or err is not None:
             continue
 
-        chosen_members = members
+        chosen_members = child_members
         family_payload = full_family
-        if len(members) > max_items_per_bundle:
+        if len(child_members) > max_items_per_bundle:
             rep_id = int(full_family["representative_market_id"])
             ranked = sorted(
-                members,
+                child_members,
                 key=lambda it: (
                     0 if int(_futures_data(it).get("id") or -1) == rep_id else 1,
                     -float(it.get("score") or 0),
@@ -2350,7 +2358,7 @@ def assemble_deadline_family_bundles(
             chosen_contracts = []
             total_known = max(
                 int(full_family.get("provider_market_count") or 0),
-                len(members),
+                len(child_members),
             )
             for m in ranked:
                 c = dict(_futures_data(m)["deadline_member"])
@@ -2365,7 +2373,7 @@ def assemble_deadline_family_bundles(
             family_payload = capped_family
 
         bundle_by_group[key] = _make_deadline_family_bundle_item(
-            family_payload, chosen_members
+            family_payload, chosen_members, all_group_items=members
         )
         for m in members:
             represented_ids.add(_item_id(m))

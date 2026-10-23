@@ -1,21 +1,21 @@
 /**
- * Discriminating frontend tests for Slice 1 movement-led deadline-family card (#9878 / #11040).
+ * Discriminating frontend tests for Slice 1 v2 movement-led deadline-family card (#9878 / #11040).
  *
- * Covers all Section 4, 5, 6, 7, and 8 requirements:
- * - Case 1: Actual retained Oct 14 NULL stored-claim control (markets 65678073 & 65678074).
- * - Case 2: Explicitly synthetic valid stored claim + outcome-bound dated comparison basis.
+ * Covers all Section 3, 4, 5, 6, 7, and 8 requirements:
+ * - Case 1a: Missing rule equivalence proof (`rule_verification` absent/false) is refused.
+ * - Case 1b: Rule-verified Oct 14 NULL stored-claim control (markets 65678073 & 65678074) renders level-led family card.
+ * - Case 2: Explicitly synthetic valid stored claim + outcome-bound dated comparison basis (`-6.5` pts).
  * - Case 3: Expired (>24h) or premature (<12h) dated basis refused; fallback to nearest 50%.
  * - Case 4: No-leading binary outcomes — exact Yes outcome ID supplies every value.
- * - Case 5: Raw un-enriched `fetch.json` rows, missing Yes, duplicate IDs, and negative wording refused.
- * - Case 6: One family consumes one feed seat across both `type: "bundle"` and `grouped` shapes.
- * - Case 7: Deterministic tie-breaks and ascending `deadline_instant` ordering.
- * - Case 8: Mixed predicates, exclusive date buckets, mention-only, and timezone-naive/contradictory dates refused.
+ * - Case 5: Raw un-enriched `fetch.json` rows, missing Yes, duplicate IDs, and mismatched rule template hashes refused.
+ * - Case 6 & 7: Single authoritative mount path (`DiscoverCard -> ThemeBundleCard -> DeadlineFamilyCard`), deterministic tie-breaks, and ascending `deadline_instant` ordering.
+ * - Case 8: Exact local calendar date & `23:59` cutoff in `America/New_York` verified (3B); `[-14h, +36h]` neighboring-day shift refused.
  * - Case 9 & 10: Q8 local 97%+ open-mover exception admitted while evidence is in-window and refused after expiry.
- * - Case 11: 6D authoritative venue settlement overrides lagging local `status="open"`; extreme prices alone do not settle.
+ * - Case 11a: 3C / 6D authoritative venue settlement (`resolved`) vs `trading_closed` vs `void`/`unknown` refusal.
+ * - Case 11b: 3D missing `price_observed_at` is never substituted with `nowIso` or `new Date()` and refuses movement claims.
  * - Case 12: 6E honest absence, measured zero, sub-threshold (<2pt), moderate (2..<5pt), and hero (>=5pt) agreement.
  * - Case 13: Direct User Decision Q4 reader-local calendar-day comparison wording ("since yesterday" vs same-day clock).
- * - Case 14: 6F represented count vs provider inventory completeness and unpriced member reachability.
- * - Case 15: Q2 in-place expand/collapse and preserved `/futures/{id}` member destinations.
+ * - Case 14 & 15: 6F represented count vs provider inventory completeness, unpriced member reachability, and Q2 in-place expand/collapse with `/futures/{id}` member destinations.
  */
 
 import "../helpers/minimalDom";
@@ -84,8 +84,10 @@ import {
   validateAndBuildDeadlineFamilyCardModel,
 } from "../../lib/discover/deadlineFamilyCard";
 
-const RETAINED_NOW_ISO = "2026-10-14T13:34:00+00:00";
-const RETAINED_BASIS_AT = "2026-10-13T16:10:00+00:00";
+const RETAINED_NOW_ISO = "2026-10-14T23:47:16+00:00";
+const RETAINED_OBSERVED_AT = "2026-10-14T23:45:00+00:00";
+const RETAINED_BASIS_AT = "2026-10-14T02:10:00+00:00"; // 21.58h before RETAINED_OBSERVED_AT, previous EDT day (Oct 13 22:10 EDT vs Oct 14 19:45 EDT)
+const ZACHARIA_RULE_HASH = "e60c32728557d429";
 
 function makeOct31Contract(
   overrides: Partial<FeedDeadlineMemberContract> = {},
@@ -96,7 +98,7 @@ function makeOct31Contract(
     source: "polymarket",
     external_id:
       "0x42cb81f5eb2fe892f7b1851a8ca9c54f513328b8bc55ff07825a1df5ebdf5f6d",
-    group_id: "polymarket:1183118",
+    group_id: "polymarket:256241",
     group_type: "polymarket_event",
     market_type: "binary",
     stem_key: "zacharia be out as prime minister of israel",
@@ -107,8 +109,19 @@ function makeOct31Contract(
     short_deadline: "Oct 31",
     deadline_label: "By Oct 31",
     calendar_date: "2026-10-31",
-    deadline_instant: "2026-10-31T23:59:00+00:00",
-    deadline_epoch: 1793491140,
+    deadline_instant: "2026-11-01T03:59:00+00:00", // Oct 31, 2026 11:59 PM EDT
+    deadline_epoch: 1793505540,
+    cutoff_timezone: "America/New_York",
+    cutoff_local_time: "23:59",
+    rule_template_hash: ZACHARIA_RULE_HASH,
+    rule_verification: {
+      verified: true,
+      evidence_source: "market_metadata.deadline_rule_contract",
+      rule_template_hash: ZACHARIA_RULE_HASH,
+      cutoff_timezone: "America/New_York",
+      cutoff_local_time: "23:59",
+      reason: null,
+    },
     yes_outcome_id: 246879005,
     yes_outcome_name: "Yes",
     yes_external_id:
@@ -119,13 +132,13 @@ function makeOct31Contract(
     yes_probability: 0.073,
     yes_rendered_percent: 7,
     no_probability: 0.927,
-    price_observed_at: "2026-10-14T13:20:00+00:00",
+    price_observed_at: RETAINED_OBSERVED_AT,
     stored_movement_claim: null,
     movement_basis: {
       outcome_id: 246879005,
       basis_price: 0.084,
       observed_at: RETAINED_BASIS_AT,
-      age_hours: 21.4,
+      age_hours: 21.58,
       in_window: true,
     },
     movement_status: "no_stored_claim",
@@ -134,7 +147,9 @@ function makeOct31Contract(
     show_hero_movement_chip: false,
     show_row_movement_badge: false,
     settlement: {
+      state: "open",
       is_settled: false,
+      is_trading_closed: false,
       status: "open",
       winner: null,
       result: null,
@@ -158,7 +173,7 @@ function makeDec31Contract(
     source: "polymarket",
     external_id:
       "0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
-    group_id: "polymarket:1183118",
+    group_id: "polymarket:256241",
     group_type: "polymarket_event",
     market_type: "binary",
     stem_key: "zacharia be out as prime minister of israel",
@@ -169,8 +184,19 @@ function makeDec31Contract(
     short_deadline: "Dec 31",
     deadline_label: "By Dec 31",
     calendar_date: "2026-12-31",
-    deadline_instant: "2026-12-31T23:59:00+00:00",
-    deadline_epoch: 1798761540,
+    deadline_instant: "2027-01-01T04:59:00+00:00", // Dec 31, 2026 11:59 PM EST
+    deadline_epoch: 1798779540,
+    cutoff_timezone: "America/New_York",
+    cutoff_local_time: "23:59",
+    rule_template_hash: ZACHARIA_RULE_HASH,
+    rule_verification: {
+      verified: true,
+      evidence_source: "market_metadata.deadline_rule_contract",
+      rule_template_hash: ZACHARIA_RULE_HASH,
+      cutoff_timezone: "America/New_York",
+      cutoff_local_time: "23:59",
+      reason: null,
+    },
     yes_outcome_id: 246879007,
     yes_outcome_name: "Yes",
     yes_external_id:
@@ -181,13 +207,13 @@ function makeDec31Contract(
     yes_probability: 0.245,
     yes_rendered_percent: 25,
     no_probability: 0.755,
-    price_observed_at: "2026-10-14T13:20:00+00:00",
+    price_observed_at: RETAINED_OBSERVED_AT,
     stored_movement_claim: null,
     movement_basis: {
       outcome_id: 246879007,
       basis_price: 0.31,
       observed_at: RETAINED_BASIS_AT,
-      age_hours: 21.4,
+      age_hours: 21.58,
       in_window: true,
     },
     movement_status: "no_stored_claim",
@@ -196,7 +222,9 @@ function makeDec31Contract(
     show_hero_movement_chip: false,
     show_row_movement_badge: false,
     settlement: {
+      state: "open",
       is_settled: false,
+      is_trading_closed: false,
       status: "open",
       winner: null,
       result: null,
@@ -274,10 +302,10 @@ function makeDeadlineBundleFeedItem(members: FeedItem[]): FeedItem {
     reason: "Zacharia be out as Prime Minister of Israel by…?",
     headline: "Zacharia be out as Prime Minister of Israel",
     data: {
-      id: "theme:story:deadline_family:polymarket:1183118:65678073-65678074",
+      id: "theme:story:deadline_family:polymarket:256241:65678073-65678074",
       title: "Zacharia be out as Prime Minister of Israel",
       kind: "theme",
-      story_key: "story:deadline_family:polymarket:1183118",
+      story_key: "story:deadline_family:polymarket:256241",
       shared_question: "Zacharia be out as Prime Minister of Israel by…?",
       item_count: members.length,
       member_ids: members.map((m) => (m.data as FeedFuturesData).id),
@@ -311,8 +339,29 @@ function reactProps(node: El): Record<string, (arg?: unknown) => void> {
   return node[key] as Record<string, (arg?: unknown) => void>;
 }
 
-describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
-  test("Case 1: Retained Oct 14 NULL stored claims render one family card with zero fabricated movement", () => {
+describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => {
+  test("Case 1a & 1b: Missing rule equivalence proof is refused; rule-verified Oct 14 NULL control renders level-led family card", () => {
+    // 1a: Missing rule_verification -> refused
+    const oct31NoRule = makeFeedItemFromContract(
+      makeOct31Contract({
+        rule_verification: null,
+        rule_template_hash: null,
+      }),
+    );
+    const dec31NoRule = makeFeedItemFromContract(
+      makeDec31Contract({
+        rule_verification: null,
+        rule_template_hash: null,
+      }),
+    );
+    const unverifiedRes = validateAndBuildDeadlineFamilyCardModel(
+      { items: [oct31NoRule, dec31NoRule] },
+      { nowIso: RETAINED_NOW_ISO, timeZone: "America/New_York" },
+    );
+    expect(unverifiedRes.model).toBeNull();
+    expect(unverifiedRes.rejectionReason).toBe("missing_rule_equivalence_proof");
+
+    // 1b: Rule-verified Oct 14 NULL stored-claim control
     const oct31 = makeFeedItemFromContract(
       makeOct31Contract({ stored_movement_claim: null }),
     );
@@ -325,6 +374,9 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
       { nowIso: RETAINED_NOW_ISO, timeZone: "America/New_York" },
     );
     expect(model).not.toBeNull();
+    expect(model!.ruleTemplateHash).toBe(ZACHARIA_RULE_HASH);
+    expect(model!.cutoffTimezone).toBe("America/New_York");
+    expect(model!.cutoffLocalTime).toBe("23:59");
     expect(model!.selectionReason).toBe("nearest_50_pct_fallback");
     expect(model!.selectionBadgeText).toBe("Selected deadline");
     expect(model!.representative.marketId).toBe(65678074);
@@ -347,6 +399,7 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
       />,
     );
     expect(html).toContain('data-testid="deadline-family-card"');
+    expect(html).toContain(`data-rule-template-hash="${ZACHARIA_RULE_HASH}"`);
     expect(html).toContain("By Dec 31");
     expect(html).toContain("25%");
     expect(html).not.toContain(
@@ -410,7 +463,7 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
         movement_basis: {
           outcome_id: 246879005,
           basis_price: 0.193,
-          observed_at: "2026-10-14T08:00:00+00:00", // 5.5h old (< 12h min)
+          observed_at: "2026-10-14T18:00:00+00:00", // 5.75h old (< 12h min)
         },
       }),
     );
@@ -420,7 +473,7 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
         movement_basis: {
           outcome_id: 246879007,
           basis_price: 0.31,
-          observed_at: "2026-10-13T07:00:00+00:00", // 30.5h old (> 24h max)
+          observed_at: "2026-10-13T17:00:00+00:00", // 30.75h old (> 24h max)
         },
       }),
     );
@@ -461,8 +514,7 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
     expect(model!.representative.supportedMovePoints).toBeNull();
   });
 
-  test("Case 5: Un-enriched fetch.json rows, missing Yes, duplicate outcome IDs, and negative wording are refused", () => {
-    // Raw fetch.json item with no producer `deadline_member` contract
+  test("Case 5: Un-enriched fetch.json rows, missing Yes, duplicate outcome IDs, and mixed rule templates are refused", () => {
     const rawOct31 = makeFeedItemFromContract(makeOct31Contract());
     delete (rawOct31.data as FeedFuturesData).deadline_member;
     const rawDec31 = makeFeedItemFromContract(makeDec31Contract());
@@ -474,7 +526,6 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
     expect(rawResult.model).toBeNull();
     expect(rawResult.rejectionReason).toBe("missing_producer_member_contract");
 
-    // Duplicate outcome IDs refused
     const badIds = makeFeedItemFromContract(
       makeOct31Contract({ yes_outcome_id: 246879006, no_outcome_id: 246879006 }),
     );
@@ -486,23 +537,28 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
       "invalid_or_missing_yes_outcome_binding",
     );
 
-    // Negatively worded question refused
-    const negQuestion = makeFeedItemFromContract(
-      makeOct31Contract({
-        name: "Will Zacharia not be out as Prime Minister of Israel by October 31?",
+    // Mismatched rule_template_hash across identical-stem questions refused (3A)
+    const diffRuleDec31 = makeFeedItemFromContract(
+      makeDec31Contract({
+        rule_template_hash: "different_hash_999",
+        rule_verification: {
+          verified: true,
+          evidence_source: "market_metadata.deadline_rule_contract",
+          rule_template_hash: "different_hash_999",
+          cutoff_timezone: "America/New_York",
+          cutoff_local_time: "23:59",
+        },
       }),
     );
-    const negResult = validateAndBuildDeadlineFamilyCardModel({
-      items: [negQuestion, makeFeedItemFromContract(makeDec31Contract())],
+    const mixedRuleResult = validateAndBuildDeadlineFamilyCardModel({
+      items: [makeFeedItemFromContract(makeOct31Contract()), diffRuleDec31],
     });
-    expect(negResult.model).toBeNull();
-    expect(negResult.rejectionReason).toBe(
-      "question_or_deadline_verification_failed",
-    );
+    expect(mixedRuleResult.model).toBeNull();
+    expect(mixedRuleResult.rejectionReason).toBe("mixed_rule_template_or_cutoff");
   });
 
-  test("Case 6 & 7: Deterministic tie-break and ascending deadline order across bundle and grouped shapes", () => {
-    // Equal move (-5.0 pts) and equal distance from 50% (40% vs 60%) -> earlier deadline (Oct 31) wins
+  test("Case 6 & 7: Single mount path via ThemeBundleCard, deterministic tie-break, and ascending deadline order", () => {
+    // Equal move (-5.0 pts, exact hero boundary) and equal distance from 50% (40% vs 60%) -> earlier deadline (Oct 31) wins
     const oct31Tie = makeFeedItemFromContract(
       makeOct31Contract({
         yes_probability: 0.4,
@@ -537,10 +593,24 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
     expect(model).not.toBeNull();
     expect(model!.tieBreakRule).toBe(DETERMINISTIC_TIE_BREAK_RULE);
     expect(model!.representative.marketId).toBe(65678073);
+    expect(model!.representative.movementStatus).toBe("hero");
+    expect(model!.representative.showHeroMovementChip).toBe(true);
     expect(model!.members.map((m) => m.marketId)).toEqual([65678073, 65678074]);
 
-    // Also renders via DiscoverCard groupedItem.type === "group"
-    const groupedHtml = renderToStaticMarkup(
+    // Single authoritative mount path: `type: "bundle"`, `kind: "theme"` renders `DeadlineFamilyCard`
+    const bundleHtml = renderToStaticMarkup(
+      <DiscoverCard
+        groupedItem={{
+          type: "single",
+          item: makeDeadlineBundleFeedItem([dec31Tie, oct31Tie]),
+        }}
+        positionIndex={0}
+      />,
+    );
+    expect(bundleHtml).toContain('data-testid="deadline-family-card"');
+
+    // `GroupCard` does not intercept client-side groups as a second mount path (Section 7)
+    const groupHtml = renderToStaticMarkup(
       <DiscoverCard
         groupedItem={{
           type: "group",
@@ -550,37 +620,28 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
         positionIndex={0}
       />,
     );
-    expect(groupedHtml).toContain('data-testid="deadline-family-card"');
+    expect(groupHtml).not.toContain('data-testid="deadline-family-card"');
   });
 
-  test("Case 8: Mixed predicates, exclusive buckets, mention-only, and timezone-naive/contradictory dates are refused", () => {
+  test("Case 8: Exact local calendar date & 23:59 cutoff in America/New_York verified (3B)", () => {
     const validOct31 = makeFeedItemFromContract(makeOct31Contract());
 
-    const diffPred = makeFeedItemFromContract(
-      makeDec31Contract({
-        name: "Will Zacharia visit Washington by December 31?",
+    // Neighboring-day shift (`2026-11-01T23:59:00Z` = Nov 1 18:59 EST, which would have passed a [-14h, +36h] window) is refused!
+    const shiftedOct31 = makeFeedItemFromContract(
+      makeOct31Contract({
+        deadline_instant: "2026-11-01T23:59:00+00:00",
       }),
     );
     expect(
       validateAndBuildDeadlineFamilyCardModel({
-        items: [validOct31, diffPred],
+        items: [shiftedOct31, makeFeedItemFromContract(makeDec31Contract())],
       }).rejectionReason,
-    ).toBe("mixed_subject_or_predicate");
+    ).toBe("deadline_instant_cutoff_mismatch");
 
-    const exclusiveBucket = makeFeedItemFromContract(
-      makeDec31Contract({
-        name: "Will Zacharia be out as Prime Minister of Israel in December?",
-      }),
-    );
-    expect(
-      validateAndBuildDeadlineFamilyCardModel({
-        items: [validOct31, exclusiveBucket],
-      }).rejectionReason,
-    ).toBe("question_or_deadline_verification_failed");
-
+    // Timezone-naive deadline_instant refused
     const naiveDate = makeFeedItemFromContract(
       makeDec31Contract({
-        deadline_instant: "2026-12-31T23:59:00",
+        deadline_instant: "2027-01-01T04:59:00",
       }),
     );
     expect(
@@ -594,6 +655,7 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
     const oct31Settled = makeFeedItemFromContract(
       makeOct31Contract({
         settlement: {
+          state: "resolved",
           is_settled: true,
           status: "resolved",
           winner: "No",
@@ -634,7 +696,7 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
         movement_basis: {
           outcome_id: 246879007,
           basis_price: 0.84,
-          observed_at: "2026-10-13T05:00:00+00:00", // 32.5h old
+          observed_at: "2026-10-13T05:00:00+00:00", // >24h old
         },
       }),
     );
@@ -646,45 +708,93 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
     expect(expired.rejectionReason).toBe("no_eligible_open_priced_member");
   });
 
-  test("Case 11: Authoritative venue settlement overrides lagging local open status and suppresses live move", () => {
-    const oct31Open = makeFeedItemFromContract(makeOct31Contract());
-    const dec31VenueResolved = makeFeedItemFromContract(
-      makeDec31Contract({
-        yes_probability: 0.98,
-        yes_rendered_percent: 98,
-        stored_movement_claim: 0.84,
-        movement_basis: {
-          outcome_id: 246879007,
-          basis_price: 0.14,
-          observed_at: RETAINED_BASIS_AT,
-        },
+  test("Case 11a: 3C / 6D keeps resolved, trading_closed, void, and unknown distinct", () => {
+    const oct31TradingClosed = makeFeedItemFromContract(
+      makeOct31Contract({
         settlement: {
-          is_settled: true,
-          status: "resolved",
-          winner: "Yes",
-          result: "Yes",
-          authoritative_source: "venue_metadata",
-          lagging_local_status: true,
+          state: "trading_closed",
+          is_settled: false,
+          is_trading_closed: true,
+          status: "closed",
+          winner: null,
+          result: null,
         },
       }),
     );
-    // Simulate lagging local status="open" on the outer item
-    (dec31VenueResolved.data as FeedFuturesData).status = "open";
+    const dec31Open = makeFeedItemFromContract(makeDec31Contract());
 
-    const model = buildDeadlineFamilyCardModel(
-      { items: [oct31Open, dec31VenueResolved] },
+    const modelWithTradingClosed = buildDeadlineFamilyCardModel(
+      { items: [oct31TradingClosed, dec31Open] },
       { nowIso: RETAINED_NOW_ISO },
     );
+    expect(modelWithTradingClosed).not.toBeNull();
+    // Open Dec 31 represents the family; Oct 31 is trading_closed (not settled Yes/No and not open)
+    expect(modelWithTradingClosed!.representative.marketId).toBe(65678074);
+    const octMember = modelWithTradingClosed!.members.find(
+      (m) => m.marketId === 65678073,
+    )!;
+    expect(octMember.settlementState).toBe("trading_closed");
+    expect(octMember.isSettled).toBe(false);
+    expect(octMember.isTradingClosed).toBe(true);
+    expect(octMember.settledText).toBe("Trading closed");
+
+    // Void or unknown member state refuses the family
+    const oct31Void = makeFeedItemFromContract(
+      makeOct31Contract({
+        settlement: {
+          state: "void",
+          is_settled: false,
+          status: "closed",
+        },
+      }),
+    );
+    expect(
+      validateAndBuildDeadlineFamilyCardModel({
+        items: [oct31Void, dec31Open],
+      }).rejectionReason,
+    ).toBe("member_settlement_void");
+
+    const oct31Unknown = makeFeedItemFromContract(
+      makeOct31Contract({
+        settlement: {
+          state: "unknown",
+          is_settled: false,
+          status: "open",
+          untrusted_local_grade: true,
+        },
+      }),
+    );
+    expect(
+      validateAndBuildDeadlineFamilyCardModel({
+        items: [oct31Unknown, dec31Open],
+      }).rejectionReason,
+    ).toBe("member_settlement_unknown");
+  });
+
+  test("Case 11b: 3D missing price_observed_at is never substituted with nowIso and refuses movement claims", () => {
+    const oct31NoObs = makeFeedItemFromContract(
+      makeOct31Contract({
+        price_observed_at: null,
+        stored_movement_claim: -0.08,
+      }),
+    );
+    const dec31NoObs = makeFeedItemFromContract(
+      makeDec31Contract({
+        price_observed_at: null,
+        stored_movement_claim: -0.065,
+      }),
+    );
+
+    const model = buildDeadlineFamilyCardModel(
+      { items: [oct31NoObs, dec31NoObs] },
+      { nowIso: RETAINED_NOW_ISO, timeZone: "America/New_York" },
+    );
     expect(model).not.toBeNull();
-    // Dec 31 is settled so open Oct 31 represents the open family
-    expect(model!.representative.marketId).toBe(65678073);
-    const decMember = model!.members.find((m) => m.marketId === 65678074)!;
-    expect(decMember.isSettled).toBe(true);
-    expect(decMember.settledText).toBe("Resolved · Yes");
-    expect(decMember.laggingLocalStatus).toBe(true);
-    expect(decMember.showHeroMovementChip).toBe(false);
-    expect(decMember.showRowMovementBadge).toBe(false);
-    expect(decMember.supportedMovePoints).toBeNull();
+    expect(model!.selectionReason).toBe("nearest_50_pct_fallback");
+    expect(model!.representative.priceObservedAt).toBeNull();
+    expect(model!.representative.movementStatus).toBe("none");
+    expect(model!.representative.showHeroMovementChip).toBe(false);
+    expect(model!.representative.showRowMovementBadge).toBe(false);
   });
 
   test("Case 12: Honest absence, measured zero, sub-threshold (<2pt), moderate (2..<5pt), and hero (>=5pt) agree across all surfaces", () => {
@@ -719,11 +829,10 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
       { nowIso: RETAINED_NOW_ISO, timeZone: "America/New_York" },
     );
     expect(model).not.toBeNull();
-    // Oct 31 (+3.2 pts moderate move) leads over Dec 31 (measured zero)
     expect(model!.representative.marketId).toBe(65678073);
     expect(model!.representative.movementStatus).toBe("moderate");
-    expect(model!.representative.showHeroMovementChip).toBe(false); // < 5 pts (Q7)
-    expect(model!.representative.showRowMovementBadge).toBe(true); // >= 2 pts
+    expect(model!.representative.showHeroMovementChip).toBe(false);
+    expect(model!.representative.showRowMovementBadge).toBe(true);
     expect(model!.representative.narrativeCaption).toBe(
       "Up 3.2 points since yesterday — 25% chance by Oct 31",
     );
@@ -731,7 +840,6 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
       "Will Zacharia be out as Prime Minister of Israel by October 31? — Yes (25%), Up 3.2 points since yesterday",
     );
 
-    // Dec 31 measured zero gets "Unchanged since yesterday"
     const decMember = model!.members.find((m) => m.marketId === 65678074)!;
     expect(decMember.movementStatus).toBe("measured_zero");
     expect(decMember.showHeroMovementChip).toBe(false);
@@ -755,7 +863,6 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
     expect(prevDay.chipTimeframe).toBe("since yesterday");
     expect(prevDay.sentenceTimeframe).toBe("since yesterday");
 
-    // 13 hours apart on the SAME local calendar day in America/New_York (1:15 AM EDT -> 2:15 PM EDT)
     const sameDay = formatDeadlineMovementTimeframe(
       "2026-10-14T05:15:00+00:00",
       "2026-10-14T18:15:00+00:00",
@@ -768,7 +875,7 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
     expect(sameDay.sentenceTimeframe).toBe("today since 1:15 AM");
   });
 
-  test("Cases 14 & 15: Partial inventory wording, unpriced reachability, and in-place expand/collapse with member links", () => {
+  test("Cases 14 & 15: Partial inventory wording, unpriced reachability, trading-closed row rendering, and in-place expand/collapse", () => {
     const oct31Unpriced = makeFeedItemFromContract(
       makeOct31Contract({
         yes_probability: null,
@@ -793,7 +900,6 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
     expect(model!.inventoryComplete).toBe(false);
     expect(model!.expandLabel).toBe("Compare 2 of 4 deadlines");
 
-    // Mount interactively and verify Q2 in-place expansion
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -818,7 +924,6 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
       findByTestId(container as unknown as El, "deadline-family-member-list"),
     ).toBeUndefined();
 
-    // Expand in place
     act(() => {
       reactProps(toggleBtn!).onClick();
     });
@@ -830,13 +935,6 @@ describe("Slice 1 movement-led deadline-family card (#9878 / #11040)", () => {
     expect(String(toggleBtnAfter!["aria-expanded"])).toBe("true");
     expect(toggleBtnAfter!.textContent).toContain("Hide deadlines");
 
-    const expandedList = findByTestId(
-      container as unknown as El,
-      "deadline-family-member-list",
-    );
-    expect(expandedList).toBeDefined();
-
-    // Verify ascending deadline order (65678073 By Oct 31 first, 65678074 By Dec 31 second)
     const memberRows = descendants(container as unknown as El).filter(
       (el) => el["data-testid"] === "deadline-family-member-row",
     );
