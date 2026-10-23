@@ -32,10 +32,39 @@ from sqlalchemy.dialects import postgresql
 from app.tasks import live_blend_refresh as blend
 from app.tasks import polymarket_open_contracts as open_mod
 from app.tasks import polymarket_ws as task
-from tests.test_pm_open_catalog_map_turns_10090 import _BulkRig, _catalog
+from tests.test_pm_open_catalog_map_turns_10090 import _BulkRig, _Result, _catalog
 from tests.test_pm_open_cycle_lifetime_10090 import until
 from tests.test_ws_consumer_session_lifetime_2471 import _install
 from tests.test_ws_flush_retry_q491 import POLY_SLATE_LIVE
+
+
+class _ChunkedRig(_BulkRig):
+    """``_BulkRig`` answering each leg statement with ITS markets' legs only
+    (the ``market_ids`` bind), so a read split into several statements
+    returns every leg exactly once, as production's ``= ANY`` read does."""
+
+    def get_task_session(self, **kwargs):
+        context, rig = super().get_task_session(**kwargs), self
+
+        class Context:
+            async def __aenter__(self):
+                session = await context.__aenter__()
+                route = session.execute
+
+                async def chunked(stmt, params=None):
+                    if str(stmt) == str(open_mod.open_contract_outcomes_stmt()):
+                        ids = set(stmt.compile().params["market_ids"])
+                        rig.leg_reads += 1
+                        return _Result([r for r in rig.legs if r[1] in ids])
+                    return await route(stmt, params)
+
+                session.execute = chunked
+                return session
+
+            async def __aexit__(self, *exc):
+                return await context.__aexit__(*exc)
+
+        return Context()
 
 
 def _ordered(admission):
@@ -156,7 +185,8 @@ async def test_the_real_consumer_hands_the_mapper_digested_legs_not_a_row_list(m
     On the parent the mapper receives a ``list`` (the flat rows), so this fails
     there for the stated reason."""
     n = 40
-    rig, stop = _BulkRig(n), asyncio.Event()
+    rig, stop = _ChunkedRig(n), asyncio.Event()
+    rig.leg_reads = 0
     rig.slate = POLY_SLATE_LIVE
 
     class Socket:
@@ -197,6 +227,8 @@ async def test_the_real_consumer_hands_the_mapper_digested_legs_not_a_row_list(m
     monkeypatch.setattr(blend, "LiveBlendRefresher", Refresher)
     monkeypatch.setattr(open_mod, "open_contract_asset_map_cooperatively", observed)
     monkeypatch.setattr(task, "PRICE_FLUSH_SECONDS", 10)
+    # Six leg statements: the reader must keep every chunk it digests.
+    monkeypatch.setattr(open_mod, "OUTCOME_READ_MARKETS", 7)
     monkeypatch.delenv("PM_WS_PRICE_FLUSH_SECONDS", raising=False)
     monkeypatch.delenv("POLYMARKET_WS_OPEN_RECEIVER_PROCESS", raising=False)
     monkeypatch.setenv("POLYMARKET_WS_OPEN_CONTRACT_PRICES", "1")
@@ -211,6 +243,7 @@ async def test_the_real_consumer_hands_the_mapper_digested_legs_not_a_row_list(m
     await stopper
     (legs, *_later) = handed
     assert isinstance(legs, open_mod.OpenContractLegs), type(legs)
+    assert rig.leg_reads == 6
     assert legs.rows == len(rig.legs) == 2 * n
     assert legs.by_market == {
         900 + i: [(9000 + 2 * i, f"0xbulk{i}_yes"), (9001 + 2 * i, f"0xbulk{i}_no")]
