@@ -44,6 +44,12 @@ do {
     try tests.testASuccessfulV2MigrationConsumesTheLegacyOrderAndKeepsTheOriginPending()
     try tests.testANonMemberFloorMergesIntoRetiredEvidenceAndNeverRegresses()
     try tests.testTheLegacyLedgerRefusesANewOriginPastItsBoundAndKeepsServingHeldOnes()
+    try tests.testV2AMembershipChangeRetiresTheRemovedRowsFloorWithoutForgettingIt()
+    try tests.testV2AnotherOriginsEpochNeverFencesTheReplacementOrigin()
+    try tests.testV2ASingletonsAcceptedIdentityStillFencesTheFoldAfterAReset()
+    try tests.testV2ARowThatLeavesAndReturnsKeepsItsFenceAndFloor()
+    try tests.testV2ResetAndAnUnchangedMembershipRenewNothing()
+    try tests.testV2AFoldCollapsingToThePagesRowContinuesOnItsOwnLedger()
 } catch {
     ReaderChecks.failures += 1
     print("Unexpected error: \(error)")

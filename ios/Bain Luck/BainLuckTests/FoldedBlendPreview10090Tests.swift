@@ -1426,4 +1426,273 @@ final class FoldedBlendPreview10090Tests: XCTestCase {
         XCTAssertEqual(held.held?.seq, 2)
     }
 
+    // MARK: - v2 equivalents of the six f211 membership scenarios (Native 423, additive)
+    //
+    // Each case below replays one `testA…`/`…Origin…`/`…Collapsing…` scenario
+    // above on the protocol the composed client speaks
+    // (`preview_protocol=folded-v2`): per-origin `(epoch, seq)` authority
+    // instead of the scalar epoch and the legacy order, a server composite
+    // with `fold_seq` instead of one origin's frame, and a session the
+    // membership boundary drops so the page reopens its stream. The originals
+    // stay exactly as they are. Where v2 differs by protocol the assertion
+    // pins the v2 form of the same guarantee and says so in its message:
+    // - a same origin tuple re-sent at a higher `fold_seq` is admitted under
+    //   its first-seen deadline (no new lease) where v1 refused the replay
+    //   outright; a replay of the `fold_seq` itself is refused;
+    // - a v2 withdrawal is the whole composite; the server recomposes around
+    //   the row that is still pending, whose lease is untouched;
+    // - a snapshot an uncovered commit floor withdraws is refused outright,
+    //   so no fence advances, where v1 recorded the order and withheld the
+    //   display;
+    // - a membership change drops the session, so each case reopens one.
+
+    /// v2 of `testAMembershipChangeRetiresTheRemovedRowsFloorWithoutForgettingIt`.
+    func testV2AMembershipChangeRetiresTheRemovedRowsFloorWithoutForgettingIt() throws {
+        var r = try adopt(opened(), ab)
+        r = try applyV2(r, v2Wire(authority: ["4242": origin(100, 2), "4243": origin(2, 1)]), now: 100)
+        XCTAssertEqual(r.held?.p, 0.65)
+        r = BlendPreview.readerAfterCommitFloor(r, raw: #"{"event_id":4242,"floor":{"4242":10,"4243":21}}"#, eventId: id)
+        XCTAssertNil(r.held, "a member committed past the composed base withdraws the composite")
+        XCTAssertEqual(BlendPreview.membershipChanges(r, members: Set(ab.keys)), false)
+        XCTAssertEqual(BlendPreview.membershipChanges(r, members: Set(ac.keys)), true)
+        r = try adopt(r, ac)
+        XCTAssertEqual(r.authorityMembers, ["4242", "4244"])
+        XCTAssertEqual(r.retiredMembers.first { $0.row == "4243" }?.floor, 21, "the removed row's floor is kept, not erased")
+        XCTAssertEqual(r.retiredMembers.first { $0.row == "4243" }?.fence,
+                       BlendPreviewReader.OriginFence(epoch: 2, seq: 1, retired: false, deadline: 101), "and so is its fence")
+        XCTAssertNil(r.foldSession, "the session is dropped: the page reopens its stream on the new fold")
+        let newFold: [String: Any] = ["4242": origin(100, 3), "4244": origin(7, 1)]
+        r = try applyV2(opened(r, session: "s2"), v2Wire(session: "s2", authority: newFold, base: ac), now: 101)
+        XCTAssertEqual(BlendPreview.displayed(r.held, held: try detail(revision: ac), now: 101), 0.65,
+                       "the new fold is no longer withheld by a row it does not contain")
+        XCTAssertEqual(r.held?.expiresAt, 102)
+        // A snapshot still composed for the old membership never applies — on
+        // the new session, nor on the old one.
+        XCTAssertEqual(try applyV2(r, v2Wire(2, session: "s2", authority: ["4242": origin(100, 3), "4243": origin(2, 2)]), now: 101.1), r)
+        XCTAssertEqual(try applyV2(r, v2Wire(2, session: "s1", authority: newFold, base: ac), now: 101.1), r)
+        // A member's floor still withdraws; a non-member's no longer can.
+        XCTAssertEqual(BlendPreview.readerAfterCommitFloor(r, FoldRevision(["4243": 99])).held, r.held)
+        XCTAssertNil(BlendPreview.readerAfterCommitFloor(r, FoldRevision(["4244": 31])).held)
+        XCTAssertNil(BlendPreview.readerAfterCommitFloor(r, FoldRevision(["4242": 11])).held)
+    }
+
+    /// v2 of `testAnotherOriginsEpochNeverFencesTheReplacementOrigin`. There
+    /// is no scalar epoch to keep out of another row's domain: each origin's
+    /// `(epoch, seq)` is its own fence. So the proof is that a removed
+    /// origin's fence is retired evidence that never orders the replacement,
+    /// and that two owning rows of one fold order independently inside the
+    /// composite, whose lease is the earliest pending deadline.
+    func testV2AnotherOriginsEpochNeverFencesTheReplacementOrigin() throws {
+        var r = try adopt(opened(), ab)
+        r = try applyV2(r, v2Wire(authority: ["4243": origin(900, 2)]), now: 100)
+        XCTAssertEqual(r.held?.p, 0.65)
+        XCTAssertNil(r.originFences["4242"], "another row's epoch is not the page row's fence")
+        XCTAssertEqual(r.epoch, -1, "and v2 never writes the scalar epoch")
+        r = try adopt(r, ac)
+        XCTAssertNil(r.held, "the old fold's preview is withdrawn at the boundary")
+        r = try applyV2(opened(r, session: "s2"), v2Wire(session: "s2", authority: ["4244": origin(12, 81)], base: ac), now: 100.2)
+        XCTAssertEqual(BlendPreview.displayed(r.held, held: try detail(revision: ac), now: 100.2), 0.65)
+        XCTAssertEqual(r.held?.expiresAt, 101.2)
+        XCTAssertEqual(r.retiredMembers.first { $0.row == "4243" }?.fence.map { [$0.epoch, $0.seq] }, [900, 2],
+                       "the removed origin's fence is retained")
+        XCTAssertEqual(r.originFences["4244"], BlendPreviewReader.OriginFence(epoch: 12, seq: 81, retired: false, deadline: 101.2),
+                       "the replacement origin's epoch 12 is its own fence; 900 never ordered it")
+        // Ordering within the replacement origin is unchanged.
+        let olderTuples: [[String: Any]] = [["4244": origin(12, 80)], ["4244": origin(11, 99)]]
+        for stale in olderTuples {
+            XCTAssertEqual(try applyV2(r, v2Wire(2, session: "s2", authority: stale, base: ac), now: 100.3), r)
+        }
+        XCTAssertEqual(try applyV2(r, v2Wire(session: "s2", authority: ["4244": origin(12, 81)], base: ac), now: 100.3), r,
+                       "the same fold sequence is a replay")
+        XCTAssertEqual(try applyV2(r, v2Wire(2, session: "s2", authority: ["4244": origin(12, 81)], base: ac), now: 100.3).held?.expiresAt, 101.2,
+                       "the same tuple at a later fold sequence keeps its first-seen deadline: no new lease")
+        let advanced = try applyV2(r, v2Wire(2, session: "s2", authority: ["4244": origin(12, 82)], base: ac), now: 100.3)
+        XCTAssertEqual(advanced.originFences["4244"]?.seq, 82)
+        XCTAssertEqual(advanced.held?.seq, 2)
+        XCTAssertEqual(advanced.held?.expiresAt, 101.3)
+
+        // Steady state: two owning rows of one fold order independently too.
+        var both = try adopt(opened(), ab)
+        both = try applyV2(both, v2Wire(authority: ["4243": origin(900, 2)]), now: 100)
+        both = try applyV2(both, v2Wire(2, authority: ["4242": origin(3, 7), "4243": origin(900, 2)]), now: 100.1)
+        XCTAssertEqual(both.sessionOrigins, ["4242", "4243"], "the page row joins at epoch 3 beside 4243's 900")
+        XCTAssertEqual(both.originFences["4242"], BlendPreviewReader.OriginFence(epoch: 3, seq: 7, retired: false, deadline: 101.1))
+        XCTAssertEqual(both.held?.expiresAt, 101, "the composite's lease is the earliest pending deadline, not a renewal")
+        XCTAssertEqual(try applyV2(both, v2Wire(3, authority: ["4242": origin(3, 6), "4243": origin(900, 2)]), now: 100.2), both)
+        let ownHigh = try applyV2(adopt(opened(), ab), v2Wire(authority: ["4242": origin(900, 1)]), now: 100)
+        let joined = try applyV2(ownHigh, v2Wire(2, authority: ["4242": origin(900, 1), "4243": origin(12, 1)]), now: 100.1)
+        XCTAssertEqual(joined.originFences["4243"]?.epoch, 12, "nor does the page row's own epoch fence another row")
+        XCTAssertEqual(joined.held?.p, 0.65)
+        // Neither a lower seq nor a withdrawal of one row speaks for the other's.
+        var shared = try adopt(opened(), ab)
+        shared = try applyV2(shared, v2Wire(authority: ["4242": origin(5, 1)]), now: 100)
+        shared = try applyV2(shared, v2Wire(2, authority: ["4242": origin(5, 1), "4243": origin(5, 9)]), now: 100.1)
+        shared = try applyV2(shared, v2Wire(3, authority: ["4242": origin(5, 3), "4243": origin(5, 9)]), now: 100.2)
+        XCTAssertEqual(shared.originFences["4242"], BlendPreviewReader.OriginFence(epoch: 5, seq: 3, retired: false, deadline: 101.2),
+                       "the page row's seq 3 is never compared with 4243's seq 9")
+        XCTAssertEqual(shared.held?.seq, 3)
+        let retired4243: [String: Any] = ["4242": origin(5, 3), "4243": origin(5, 9, state: "revoked")]
+        let recomposed = try applyV2(shared, v2Wire(4, authority: retired4243), now: 100.3)
+        XCTAssertEqual(recomposed.held?.p, 0.65, "4243's withdrawal recomposes around the page row")
+        XCTAssertEqual(recomposed.held?.expiresAt, 101.2, "and does not touch its lease")
+        XCTAssertEqual(recomposed.originFences["4243"]?.retired, true)
+        XCTAssertEqual(recomposed.originFences["4242"], shared.originFences["4242"])
+        let withdrawn = try applyV2(shared, v2Wire(4, kind: "revoke", authority: retired4243), now: 100.3)
+        XCTAssertNil(withdrawn.held, "a v2 withdrawal is the whole composite")
+        XCTAssertEqual(withdrawn.originFences["4242"], shared.originFences["4242"], "but it does not speak for the page row's lease")
+        XCTAssertEqual(try applyV2(withdrawn, v2Wire(5, authority: retired4243), now: 100.4).held?.expiresAt, 101.2,
+                       "which the recomposition resumes, unrenewed")
+    }
+
+    /// v2 of `testASingletonsAcceptedIdentityStillFencesTheFoldAfterAReset`.
+    /// The singleton visit is legacy by nature (v2 is a fold protocol); its
+    /// accepted identity is the page row's fence, which the v2 fold it later
+    /// joins validates against. One protocol difference is pinned, not hidden:
+    /// the v1 ledger consumes a revoke frame's own `seq` (3 here), while the
+    /// fence a singleton revoke records is the revoked tuple itself (through
+    /// 2) — so v2 admits (100, 3) as a newer identity where v1 refused it, as
+    /// `testSingletonAuthorityOutlivesTheDisplayAndFencesTheFoldItJoins` pins.
+    func testV2ASingletonsAcceptedIdentityStillFencesTheFoldAfterAReset() throws {
+        let a = ["4242": 10]
+        var r = try adopt(.empty, a)
+        r = read(r, try singleton(epoch: 100, seq: 2), at: 100)
+        XCTAssertEqual(r.held?.expiresAt, 101)
+        XCTAssertEqual(r.originFences["4242"], BlendPreviewReader.OriginFence(epoch: 100, seq: 2, retired: false, deadline: 101),
+                       "the identity is recorded at acceptance")
+        r = BlendPreview.readerReset(r) // disconnect / resync
+        r = try opened(adopt(r, ab), session: "s2")
+        XCTAssertEqual(r.originFences["4242"]?.seq, 2, "and survives the reset into the fold")
+        let olderIdentities: [[String: Any]] = [["4242": origin(100, 1), "4243": origin(2, 1)],
+                                                ["4242": origin(99, 9), "4243": origin(2, 1)]]
+        for stale in olderIdentities {
+            XCTAssertEqual(try applyV2(r, v2Wire(session: "s2", authority: stale), now: 100.5), r, "an older identity gets no lease")
+        }
+        let same: [String: Any] = ["4242": origin(100, 2), "4243": origin(2, 1)]
+        XCTAssertEqual(try applyV2(r, v2Wire(session: "s2", authority: same), now: 100.5).held?.expiresAt, 101,
+                       "the same identity gets no new lease: its first-seen deadline caps the fold")
+        XCTAssertEqual(try applyV2(r, v2Wire(session: "s2", authority: same), now: 101), r, "and past it the tuple stays expired")
+        XCTAssertEqual(try applyV2(r, v2Wire(session: "s2", authority: ["4242": origin(100, 3), "4243": origin(2, 1)]), now: 100.5).held?.expiresAt, 101.5,
+                       "a newer identity of the same ledger is admitted")
+        // A revoked singleton identity stays revoked through the upgrade.
+        var revoked = try adopt(.empty, a)
+        revoked = read(revoked, try singleton(epoch: 100, seq: 2), at: 100)
+        revoked = read(revoked, BlendPreviewFrame(eventId: id, p: nil, status: "live", kind: .revoke,
+                                                  epoch: 100, seq: 3, throughSeq: 2), at: 100.1)
+        XCTAssertNil(revoked.held)
+        XCTAssertEqual(revoked.originFences["4242"], BlendPreviewReader.OriginFence(epoch: 100, seq: 2, retired: true, deadline: 101))
+        revoked = try opened(adopt(BlendPreview.readerReset(revoked), ab), session: "s2")
+        XCTAssertEqual(try applyV2(revoked, v2Wire(session: "s2", authority: same), now: 100.2), revoked,
+                       "the revoked tuple cannot become pending again")
+        XCTAssertEqual(try applyV2(revoked, v2Wire(session: "s2", authority: ["4242": origin(100, 4), "4243": origin(2, 1)]), now: 100.2).held?.seq, 1)
+        // Protocol difference, pinned: v1 refused (100, 3) because its ledger
+        // consumed the revoke's own seq; the v2 fence holds the revoked tuple
+        // (100, 2), so (100, 3) is a newer identity here.
+        XCTAssertEqual(try applyV2(revoked, v2Wire(session: "s2", authority: ["4242": origin(100, 3), "4243": origin(2, 1)]), now: 100.2).held?.p, 0.65)
+    }
+
+    /// v2 of `testARowThatLeavesAndReturnsKeepsItsFenceAndFloor`.
+    func testV2ARowThatLeavesAndReturnsKeepsItsFenceAndFloor() throws {
+        var r = try adopt(opened(), ab)
+        r = try applyV2(r, v2Wire(authority: ["4242": origin(5, 7)]), now: 100)
+        r = try applyV2(r, v2Wire(2, authority: ["4242": origin(5, 7), "4243": origin(900, 5)]), now: 100.1)
+        XCTAssertEqual(r.held?.expiresAt, 101, "the page row's first-seen deadline bounds the composite")
+        r = BlendPreview.readerAfterCommitFloor(r, FoldRevision(["4243": 21]))
+        XCTAssertNil(r.held, "4243 committed past the composed base")
+        r = try adopt(r, ac) // e.g. a cached detail, then the fresh one, then cached again
+        XCTAssertEqual(r.retiredMembers, [BlendPreviewReader.RetiredMember(
+            row: "4243", fence: BlendPreviewReader.OriginFence(epoch: 900, seq: 5, retired: false, deadline: 101.1), floor: 21)])
+        XCTAssertEqual(r.originFences["4242"], BlendPreviewReader.OriginFence(epoch: 5, seq: 7, retired: false, deadline: 101),
+                       "the surviving row keeps its identity and deadline")
+        XCTAssertNil(r.floors, "the removed row's floor leaves the fold with it")
+        let onAC = try applyV2(opened(r, session: "s2"), v2Wire(session: "s2", authority: ["4244": origin(12, 1)], base: ac), now: 100.2)
+        XCTAssertEqual(onAC.held?.baseFoldRevision?.rows, ac)
+        XCTAssertEqual(onAC.sessionOrigins, ["4244"])
+        // The surviving row's order carries across the change: an older tuple
+        // is refused; the same tuple gets no new lease (v1 refused the replay
+        // outright; v2 re-admits it under the deadline it had before the
+        // change); a newer one advances.
+        XCTAssertEqual(try applyV2(onAC, v2Wire(2, session: "s2", authority: ["4242": origin(5, 6), "4244": origin(12, 1)], base: ac), now: 100.3), onAC)
+        XCTAssertEqual(try applyV2(onAC, v2Wire(2, session: "s2", authority: ["4242": origin(5, 7), "4244": origin(12, 1)], base: ac), now: 100.3)
+                           .held?.expiresAt, 101, "the surviving row's order carries across the change")
+        XCTAssertEqual(try applyV2(onAC, v2Wire(2, session: "s2", authority: ["4242": origin(5, 7), "4244": origin(12, 1)], base: ac), now: 101), onAC,
+                       "and its expired tuple stays expired")
+        let advanced = try applyV2(onAC, v2Wire(2, session: "s2", authority: ["4242": origin(5, 8), "4244": origin(12, 1)], base: ac), now: 100.3)
+        XCTAssertEqual(advanced.originFences["4242"]?.seq, 8)
+        XCTAssertEqual(advanced.held?.expiresAt, 101.2, "bounded by 4244's own first-seen deadline")
+        // The flap back: 4243 returns with its fence and floor; nothing is renewed.
+        r = try adopt(onAC, ab)
+        XCTAssertNil(r.held)
+        XCTAssertEqual(r.originFences["4243"], BlendPreviewReader.OriginFence(epoch: 900, seq: 5, retired: false, deadline: 101.1))
+        XCTAssertEqual(r.floors?.rows, ["4243": 21])
+        XCTAssertEqual(r.retiredMembers.map(\.row), ["4244"])
+        r = try opened(r, session: "s3")
+        let rebased = ["4242": 10, "4243": 21]
+        XCTAssertEqual(try applyV2(r, v2Wire(session: "s3", authority: ["4243": origin(900, 5)], base: rebased), now: 100.4).held?.expiresAt, 101.1,
+                       "the returned row's old identity is not granted a new lease")
+        XCTAssertEqual(try applyV2(r, v2Wire(session: "s3", authority: ["4243": origin(900, 5)], base: rebased), now: 101.1), r)
+        XCTAssertEqual(try applyV2(r, v2Wire(session: "s3", authority: ["4243": origin(899, 50)], base: rebased), now: 100.4), r)
+        let uncovered = try applyV2(r, v2Wire(session: "s3", authority: ["4243": origin(900, 6)]), now: 100.4)
+        XCTAssertNil(uncovered.held, "nor is a newer one on a base its kept commit floor has passed")
+        XCTAssertEqual(uncovered, r, "v2 refuses the uncovered snapshot outright: no fence advances")
+        let covered = try applyV2(r, v2Wire(session: "s3", authority: ["4243": origin(900, 6)], base: rebased), now: 100.4)
+        XCTAssertEqual(covered.originFences["4243"]?.seq, 6)
+        XCTAssertEqual(covered.held?.seq, 1)
+    }
+
+    /// v2 of `testResetAndAnUnchangedMembershipRenewNothing`.
+    func testV2ResetAndAnUnchangedMembershipRenewNothing() throws {
+        var r = try adopt(opened(), ab)
+        r = try applyV2(r, v2Wire(authority: ["4243": origin(5, 1)]), now: 100)
+        XCTAssertEqual(r.held?.seq, 1)
+        XCTAssertEqual(try adopt(r, ab), r, "an unchanged membership changes nothing: the preview, session and fences included")
+        XCTAssertEqual(adopt(r, nil as FoldRevision?), r, "an absent fold makes no claim")
+        XCTAssertEqual(BlendPreview.readerAfterMembership(r, members: []), r, "and neither does an empty one")
+        let first = try adopt(applyV2(opened(), v2Wire(authority: ["4243": origin(5, 1)]), now: 100), ab)
+        XCTAssertEqual(first.held?.seq, 1, "the first membership is recorded, not a change")
+        XCTAssertEqual(first.foldSession, "s1")
+        XCTAssertEqual(first.authorityMembers, ["4242", "4243"])
+        r = try adopt(r, ac)
+        r = BlendPreview.readerReset(r) // an ordinary reconnect after the change keeps every fence
+        r = try opened(adopt(r, ab), session: "s2")
+        XCTAssertEqual(r.originFences["4243"], BlendPreviewReader.OriginFence(epoch: 5, seq: 1, retired: false, deadline: 101))
+        XCTAssertEqual(try applyV2(r, v2Wire(session: "s2", authority: ["4243": origin(5, 1)]), now: 200), r,
+                       "the replayed identity is past its first-seen deadline: nothing is renewed")
+        XCTAssertEqual(try applyV2(r, v2Wire(session: "s1", authority: ["4243": origin(5, 2)]), now: 200), r, "the old session says nothing")
+        XCTAssertEqual(try applyV2(r, v2Wire(session: "s2", authority: ["4243": origin(5, 2)]), now: 200).held?.expiresAt, 201)
+    }
+
+    /// v2 of `testAFoldCollapsingToThePagesRowContinuesOnItsOwnLedger`: the
+    /// page row's own fence is what its singleton frames resume under.
+    func testV2AFoldCollapsingToThePagesRowContinuesOnItsOwnLedger() throws {
+        let a = ["4242": 10]
+        var r = try adopt(opened(), ab)
+        r = try applyV2(r, v2Wire(authority: ["4242": origin(7, 2)]), now: 100)
+        r = try applyV2(r, v2Wire(2, authority: ["4242": origin(7, 2), "4243": origin(900, 1)]), now: 100.1)
+        XCTAssertEqual(r.held?.expiresAt, 101)
+        XCTAssertEqual(read(r, try singleton(epoch: 7, seq: 3), at: 100.2), r, "a singleton never applies to a two-row page")
+        r = try adopt(r, a)
+        XCTAssertNil(r.held)
+        XCTAssertNil(r.foldSession)
+        XCTAssertEqual(r.originFences["4242"], BlendPreviewReader.OriginFence(epoch: 7, seq: 2, retired: false, deadline: 101),
+                       "the row's accepted identity is its own fence now")
+        XCTAssertEqual(r.retiredMembers.map(\.row), ["4243"])
+        for stale in [try singleton(epoch: 7, seq: 1), try singleton(epoch: 6, seq: 9)] {
+            XCTAssertEqual(read(r, stale, at: 100.3), r, "the row's accepted identity still fences")
+        }
+        XCTAssertEqual(read(r, try singleton(epoch: 7, seq: 2), at: 100.3).held?.expiresAt, 101,
+                       "the same identity resumes under its first-seen deadline, not a new lease")
+        XCTAssertEqual(read(r, try singleton(epoch: 7, seq: 2), at: 101), r, "and stays expired past it")
+        r = read(r, try singleton(epoch: 7, seq: 3), at: 100.3)
+        XCTAssertEqual(BlendPreview.displayed(r.held, held: try detail(revision: a), now: 100.3), 0.7)
+        XCTAssertEqual(r.originFences["4242"], BlendPreviewReader.OriginFence(epoch: 7, seq: 3, retired: false, deadline: 101.3))
+        r = BlendPreview.readerReset(r) // reconnect: after folded authority a replay never renews
+        XCTAssertEqual(read(r, try singleton(epoch: 7, seq: 3), at: 100.4), r)
+        XCTAssertEqual(read(r, try folded(origin: 4242, epoch: 7, seq: 4, base: ab), at: 100.4), r,
+                       "an old fold's frame is refused on the collapsed page")
+        let reopened = try opened(r, session: "s2")
+        XCTAssertEqual(try applyV2(reopened, v2Wire(session: "s2", authority: ["4242": origin(7, 4), "4243": origin(900, 2)]), now: 100.4), reopened,
+                       "so is a v2 snapshot of the fold the page no longer has")
+        XCTAssertEqual(read(r, try singleton(epoch: 7, seq: 4), at: 100.4).held?.seq, 4)
+    }
+
 }
