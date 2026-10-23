@@ -2884,6 +2884,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     )
     from app.tasks.polymarket_open_contracts import (  # #9484
         FLUSH_CHUNK_ROWS, OPEN_CONTRACT_MAX_CONCURRENT_HANDSHAKES,
+        OpenContractLegs,
         book_snapshot_prices_enabled, open_contract_receiver_process_enabled,
         OPEN_CONTRACT_MAX_QUEUE, OPEN_FLUSH_CHUNKS_PER_FLUSH,
         open_contract_asset_map_cooperatively,
@@ -2954,7 +2955,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 market_rows = (
                     await session.execute(open_contract_markets_stmt())
                 ).all()
-                outcome_rows = []
+                # #10663: each leg chunk is digested into the pairing's own
+                # structures as it arrives (`OpenContractLegs.add`), so the
+                # read never holds ~71,000 result rows beside them for the
+                # whole mapping. Row order is unchanged: chunks in catalog
+                # order, legs in id order within each.
+                legs = OpenContractLegs()
                 # These markets already belong to the game arm. The mapper
                 # skips them before pairing; keep their market rows for counts,
                 # but do not read legs that cannot enter the open admission.
@@ -2962,12 +2968,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 for stmt in open_contract_outcome_stmts(
                     r[0] for r in market_rows if r[0] not in excluded
                 ):
-                    outcome_rows.extend((await session.execute(stmt)).all())
+                    await legs.add_rows_cooperatively(
+                        (await session.execute(stmt)).all()
+                    )
             # #10090: this mapping shares the loop with every PM socket.
             admission = await open_contract_asset_map_cooperatively(
-                market_rows, outcome_rows, taken_assets, excluded_market_ids,
+                market_rows, legs, taken_assets, excluded_market_ids,
                 taken_tokens_by_contract,
             )
+            # The pairing has read every leg; nothing below needs them.
+            legs = None
         except Exception:
             logger.exception(
                 "Polymarket WS: open-contract admission read failed; "

@@ -96,12 +96,17 @@ class TestTheSelector:
         assert "futures_markets.settled_at IS NULL" in sql
         # #10091: the market's own event_id / name / external_id are read as
         # columns (the bridge's inputs) — still no join and no event window.
+        # #10663: name and external_id ride only on rows WITH an event, the
+        # only rows the bridge reads them from; the other ~34,000 come back NULL.
         assert "JOIN" not in sql and "FROM events" not in sql
         assert "events." not in sql
         assert (
-            "futures_markets.event_id, futures_markets.name, "
-            "futures_markets.external_id" in sql
-        )
+            "futures_markets.event_id, "
+            "CASE WHEN (futures_markets.event_id IS NOT NULL) "
+            "THEN futures_markets.name END AS name, "
+            "CASE WHEN (futures_markets.event_id IS NOT NULL) "
+            "THEN futures_markets.external_id END AS external_id" in sql
+        ), sql
         assert "commence_time" not in sql
         # Only the three token keys, never the whole blob.
         for key in ("clob_token_ids", "clobTokenIds", "clob_yes_token_by_outcome"):
