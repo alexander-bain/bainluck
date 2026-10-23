@@ -3216,6 +3216,7 @@ class LiveBlendRefresher:
         from sqlalchemy import and_, func, literal, or_, select
         from app.models.models import Event, FuturesMarket, FuturesOutcome
         from app.utils.live_blend import MarketOutcomes
+        from app.utils.content_understanding import CONTENT_UNDERSTANDING_KEY
         from app.utils.prediction_market_matching import (
             COMBAT_FIGHT_WINNER_PREFIXES, TENNIS_MATCH_WINNER_PREFIXES,
         )
@@ -3267,6 +3268,9 @@ class LiveBlendRefresher:
             )
             # Missing JSON paths are SQL NULL: absence is never a refusal.
             outcome_join = and_(outcome_join, ~func.coalesce(known_refusal, False))
+        # Only the raw content-understanding record participates in prepared
+        # market admission. Keep that entire record, including malformed and
+        # older versions, while leaving unrelated catalog JSON in PostgreSQL.
         fields = (
             (FuturesMarket, PREPARED_MARKET_FIELDS),
             (Event, PREPARED_EVENT_FIELDS),
@@ -3294,6 +3298,11 @@ class LiveBlendRefresher:
                     select(*(
                         Event.win_probability_sources.op("->")(literal(self.source)).label(key)
                         if model is Event and key == "win_probability_sources"
+                        else func.jsonb_build_object(
+                            CONTENT_UNDERSTANDING_KEY,
+                            FuturesMarket.market_metadata[CONTENT_UNDERSTANDING_KEY],
+                        ).label(key)
+                        if model is FuturesMarket and key == "market_metadata"
                         else getattr(model, key)
                         for model, keys in fields for key in keys
                     ), *preview_columns, *(
