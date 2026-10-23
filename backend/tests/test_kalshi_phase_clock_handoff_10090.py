@@ -122,6 +122,7 @@ async def test_pending_request_preserves_failure_backoff_and_graph_allowance():
     held._graph_sample_ordinal = held._sample_failure_ordinal + 1
     try:
         for n in range(1, 525):
+            held.note_input(_mark())  # genuinely busy input, not requests alone
             held.request_phase_sample(db)
             await _run_until(clock, n / 100)
             assert db.calls == (1 if n < 25 else 2)
@@ -143,3 +144,41 @@ async def test_close_cancels_owned_read_and_refuses_future_requests():
     held.request_phase_sample(db)
     await _settle()
     assert db.active == 0 and db.calls == 1 and held._idle_task is None
+
+
+@pytest.mark.parametrize("pending", [False, True])
+@pytest.mark.parametrize("healthy", [False, True])
+async def test_pending_request_keeps_earned_quiet_graph_recovery(pending, healthy):
+    from tests.test_held_quotes_clock_recovery_10090 import BrokenDB
+
+    clock = Clock()
+    held = _held(clock)
+    broken = BrokenDB(clock)
+    assert not await held.sample_database_clock(broken)
+    clock.t = .25
+    assert not await held.sample_database_clock(broken)
+    deadline = held._sample_backoff_until
+    clock.t = .5
+    # New successful graph evidence, followed by truly quiet preview traffic.
+    held._sample_started += 1
+    held._graph_sample_ordinal = held._sample_started
+    held._sample_published = held._sample_started
+    held._database_bound = 1000.5
+    db = FakeDB(clock) if healthy else BrokenDB(clock)
+    held._sessions = db
+    held.note_input(_mark())
+    if pending:
+        held.request_phase_sample(db)
+    try:
+        await _run_until(clock, 1.6)
+        assert db.calls >= 1
+        if healthy:
+            assert held._database_bound >= 1001.5
+            assert not held._sample_failure_episode
+        else:
+            assert db.calls == 1 and held._graph_idle_recovery_used
+            assert held._sample_backoff_until == deadline
+            await _run_until(clock, deadline - .1)
+            assert db.calls == 1
+    finally:
+        await stop(held)

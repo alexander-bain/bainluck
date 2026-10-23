@@ -1537,17 +1537,22 @@ class HeldRowQuotes:
                 now = self._now()
                 requested = self._phase_sample_pending
                 graph_recovery_deadline = None
-                if not requested and (
-                        now - self._last_preview_input_at >= self.IDLE_ACTIVE_S
-                        or not self.preview_events()):
+                preview_active = (
+                    now - self._last_preview_input_at < self.IDLE_ACTIVE_S
+                    and bool(self.preview_events())
+                )
+                if not requested and not preview_active:
                     return
-                due = now if requested else self._last_sample_done + self.IDLE_SAMPLE_S
-                if not requested and self._last_input_at > self._last_sample_started:
-                    due = max(due, self._last_input_at + self.IDLE_PHASE_GRACE_S)
-                if (not requested and self._sample_failure_episode and not self._sampling
+                idle_due = self._last_sample_done + self.IDLE_SAMPLE_S
+                if self._last_input_at > self._last_sample_started:
+                    idle_due = max(idle_due, self._last_input_at + self.IDLE_PHASE_GRACE_S)
+                due = now if requested else idle_due
+                # A request may bypass phase grace, but must neither grant nor
+                # suppress recovery earned by ordinary quiet-preview traffic.
+                if (preview_active and self._sample_failure_episode and not self._sampling
                         and not self._graph_idle_recovery_used
                         and self._graph_sample_ordinal > self._sample_failure_ordinal
-                        and now >= due
+                        and now >= idle_due
                         and now < self._sample_backoff_until
                         and now - self._last_preview_input_at >= self.IDLE_PHASE_GRACE_S):
                     # A successful graph is evidence for ONE recovery probe
