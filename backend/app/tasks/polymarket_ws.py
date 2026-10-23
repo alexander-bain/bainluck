@@ -4741,8 +4741,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         and getattr(wrote, "clock_owner", None) is held_quotes
                         and getattr(blend_refresher, "held_quotes", None) is held_quotes
                     )
-                    if held_quotes is not None and not final and not write_clock_ready:
-                        await held_quotes.sample_database_clock(get_task_session)
+                    async def sample_future_clock():
+                        if held_quotes is not None and not final and not write_clock_ready:
+                            await held_quotes.sample_database_clock(get_task_session)
+
+                    # A lock-refused quote already carries its frozen input
+                    # bound. Start its eligible delivery before sampling for
+                    # FUTURE inputs, but still finish that sample in this chunk.
+                    clock_after_delivery = wrote is None and not final
+                    if not clock_after_delivery:
+                        await sample_future_clock()
                     # Only a completed unchanged acknowledgement establishes
                     # continuity. A price/heartbeat write still owes its stamp;
                     # failed/held writes never authorize observation bypass.
@@ -4944,6 +4952,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                      and headline_event_ids.get(oid) is not None]
                             refresh_events.difference_update(admitted)
                             if not ready:
+                                if clock_after_delivery:
+                                    await sample_future_clock()
                                 continue
                             admitting = getattr(blend_refresher, "admitting", None)
                             keep_owed = getattr(blend_refresher, "keep_owed", None)
@@ -4960,6 +4970,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                            if oid in batch_marks
                                            and oid not in headline_event_ids.non_speakers],
                                 )
+                                if clock_after_delivery:
+                                    await sample_future_clock()
                                 continue
                         # Refused by a call that no longer admits (it is ending):
                         # the previous joined path. No second mutable refresher
@@ -4987,6 +4999,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         # staged receipts and asks for its connection before
                         # the next write.
                         await asyncio.sleep(0)
+                    if clock_after_delivery:
+                        await sample_future_clock()
             except asyncio.CancelledError:
                 # A recycle mid-batch cancels the persistent owner and joins
                 # it before this interrupted batch ends. The refresher's cancellation path keeps
