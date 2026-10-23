@@ -24,6 +24,10 @@ struct Bain_LuckApp: App {
     #endif
     @StateObject private var authManager = AuthManager()
     @StateObject private var navCoordinator = NavigationCoordinator()
+    #if os(macOS)
+    @FocusedObject private var focusedMacNavigation: NavigationCoordinator?
+    @FocusedValue(\.macBrowsingCommandsEnabled) private var macBrowsingCommandsEnabled: Bool?
+    #endif
     #if DEBUG
     @StateObject private var pinManager = Bain_LuckApp.makePinManager()
 
@@ -114,169 +118,57 @@ struct Bain_LuckApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
-            // #10236 / #10238: a DEBUG-only synthetic host drives the real matrix through
-            // real delivery from retained local inputs. Release, and any launch
-            // without the argument, is the regular app.
-            Group {
-                #if DEBUG
-                if let directory = UserDefaults.standard.string(forKey: "launch_during_matrix_10236_directory"),
-                   !directory.isEmpty {
-                    EventPropsMatrixCurrentnessActivation10236(directory: URL(fileURLWithPath: directory, isDirectory: true))
-                } else if let directory = UserDefaults.standard.string(forKey: "launch_question_matrix_10238_directory"),
-                          !directory.isEmpty {
-                    // #10238: the same kind of host for the Game and Series sections.
-                    EventQuestionMatrixCurrentnessActivation10238(directory: URL(fileURLWithPath: directory, isDirectory: true))
-                } else {
-                    ContentView()
-                }
-                #else
-                ContentView()
-                #endif
-            }
-                .environmentObject(authManager)
-                .environmentObject(navCoordinator)
-                .environmentObject(pinManager)
-                // #10875 — the saved items (and their account) the Home/Lock Screen widget may show.
-                .savedItemWidgets10875(pins: pinManager)
-                .overlay {
-                    PinFeedbackToast()
-                        .environmentObject(pinManager)
-                }
-                #if DEBUG
-                .overlay(alignment: .topLeading) {
-                    if let runtime = PinManagementRuntime9875.shared {
-                        PinRuntime9875Setup(runtime: runtime, manager: pinManager, navigation: navCoordinator)
-                    }
-                }
-                #endif
-                // The consent ask (Queue 311 A3 / #1632). Presented when no
-                // choice has been recorded — and only then, so it never
-                // re-nags someone who declined. Nothing is collected while it
-                // is up: no-choice IS a denial, so an ignored prompt is the
-                // safe state rather than a leak with a timer on it.
-                .sheet(isPresented: $showTelemetryConsent) {
-                    TelemetryConsentPrompt { _ in
-                        showTelemetryConsent = false
-                    }
-                }
-                #if os(macOS)
-                .navigationTitle(navCoordinator.liveGameTitle)
-                .task { await pollLiveGames() }
-                #endif
-                .onChange(of: PinAccountBinding(userID: authManager.activeFeedUserId, authenticated: authManager.isAuthenticated)) { _, identity in
-                    let isAuth = identity.authenticated
-                    #if DEBUG
-                    bindPins(identity)
-                    #else
-                    pinManager.bindAccount(identity)
-                    #endif
-                    NotificationManager.shared.setUser(id: isAuth ? authManager.user?.id : nil)
-                    AnalyticsService.setCrashReportingUserId(
-                        isAuth ? ((authManager.user?.id).map { String($0) } ?? "") : ""
-                    )
-                    Task {
-                        await pinManager.loadPins()
-                    }
-                }
-                .task {
-                    #if DEBUG
-                    bindPins(PinAccountBinding(userID: authManager.activeFeedUserId, authenticated: authManager.isAuthenticated))
-                    #else
-                    pinManager.bindAccount(PinAccountBinding(userID: authManager.activeFeedUserId, authenticated: authManager.isAuthenticated))
-                    #endif
-                    await pinManager.loadPins()
-                    // Wire up notification deep linking and request permission
-                    NotificationManager.shared.navCoordinator = navCoordinator
-                    NotificationManager.shared.requestPermissionAfterDelay()
-                    if let userId = authManager.user?.id {
-                        NotificationManager.shared.setUser(id: userId)
-                        AnalyticsService.setCrashReportingUserId(String(userId))
-                    }
-                    // The LOOK rig's one way to reach a screen that is not the
-                    // default tab (#3157). Routed through `handleURL`, so it can
-                    // only ever open something a real link could open, and only
-                    // when `-launch_route` was passed. Last in this task on
-                    // purpose: nothing above it is allowed to depend on the
-                    // rig's presence.
-                    if let route = LaunchRig.route() {
-                        try? await Task.sleep(
-                            nanoseconds: UInt64(LaunchRig.routeDelay * 1_000_000_000)
-                        )
-                        _ = navCoordinator.handleURL(route)
-                    }
-                    // …and then, if asked, put that screen below its own fold so
-                    // the camera can see the maps (`-launch_scroll`). Separate
-                    // wait, because this one is for the screen's network loads
-                    // rather than for the app to mount. Works with or without a
-                    // route: the default tab is scrollable too.
-                    #if os(iOS)
-                    if let points = LaunchRig.scrollOffset() {
-                        try? await Task.sleep(
-                            nanoseconds: UInt64(LaunchRig.scrollDelay * 1_000_000_000)
-                        )
-                        LaunchRigScroll.scrollPage(to: points)
-                    }
-                    #endif
-                }
-                #if os(iOS)
-                .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
-                    authManager.checkCredentialState()
-                    authManager.retrySessionIfNeeded()
-                }
-                #elseif os(macOS)
-                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-                    authManager.checkCredentialState()
-                    authManager.retrySessionIfNeeded()
-                }
-                #endif
-                .onOpenURL { url in
-                    // Google Sign-In uses the reversed client ID scheme
-                    if url.scheme?.contains("googleusercontent") == true {
-                        GIDSignIn.sharedInstance.handle(url)
-                    } else {
-                        _ = navCoordinator.handleURL(url)
-                    }
-                }
-                .onContinueUserActivity(GameContinuation.activityType) { activity in
-                    _ = navCoordinator.handleGameContinuation(activity)
-                }
-                .onContinueUserActivity(StoryContinuation.activityType) { activity in
-                    _ = navCoordinator.handleStoryContinuation(activity)
-                }
-                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
-                    if let url = activity.webpageURL {
-                        _ = navCoordinator.handleURL(url)
-                    }
-                }
-                .preferredColorScheme(.light)
-        }
         #if os(macOS)
+        Window("Bain Luck", id: MacNotificationDelivery10878.primaryWindowID) {
+            MacSceneNavigationRoot(sharedLiveNavigation: navCoordinator) { navigation in
+                mainWindowContent(navigation: navigation)
+            }
+            .environmentObject(authManager)
+            .environmentObject(pinManager)
+        }
         .defaultSize(width: 1200, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) { }
             CommandMenu("Navigate") {
-                Button("Sports") { navCoordinator.selectedTab = .feed }
-                    .keyboardShortcut("1", modifiers: .command)
-                Button("Leagues") { navCoordinator.selectedTab = .leagues }
-                    .keyboardShortcut("2", modifiers: .command)
-                Button("Search") { navCoordinator.selectedTab = .search }
-                    .keyboardShortcut("3", modifiers: .command)
-                Button("My Stuff") { navCoordinator.selectedTab = .myStuff }
-                    .keyboardShortcut("4", modifiers: .command)
-                Divider()
-                Button("Quick Search") { navCoordinator.selectedTab = .search }
+                Group {
+                    Button("Discover") { selectMacTab(.discover) }
+                        .keyboardShortcut("5", modifiers: .command)
+                    Button("Sports") { selectMacTab(.feed) }
+                        .keyboardShortcut("1", modifiers: .command)
+                    Button("Browse") { selectMacTab(.leagues) }
+                        .keyboardShortcut("2", modifiers: .command)
+                    Button("Search") { selectMacTab(.search) }
+                        .keyboardShortcut("3", modifiers: .command)
+                    Button("My Stuff") { selectMacTab(.myStuff) }
+                        .keyboardShortcut("4", modifiers: .command)
+                    Divider()
+                    Button("Quick Search") {
+                        _ = MacSceneCommands10878.quickSearch(
+                            target: focusedMacNavigation,
+                            permitsBrowsing: macBrowsingCommandsEnabled == true
+                        )
+                    }
                     .keyboardShortcut("k", modifiers: .command)
+                }
+                .disabled(focusedMacNavigation == nil || macBrowsingCommandsEnabled != true)
             }
             CommandGroup(after: .help) {
                 Button("Report a Bug") {
-                    navCoordinator.showBugReport = true
+                    _ = MacSceneCommands10878.reportBug(target: focusedMacNavigation)
                 }
                 .keyboardShortcut("b", modifiers: [.command, .shift])
+                .disabled(focusedMacNavigation == nil)
             }
         }
-        .onChange(of: navCoordinator.liveGameTitle) { _, title in
-            NSApplication.shared.mainWindow?.title = title
+        .onChange(of: focusedMacNavigation.map { ObjectIdentifier($0) }) { _, _ in
+            bindFocusedMacNavigation()
+        }
+        .onChange(of: macBrowsingCommandsEnabled) { _, _ in
+            bindFocusedMacNavigation()
+        }
+        #else
+        WindowGroup {
+            mainWindowContent(navigation: navCoordinator)
         }
         #endif
 
@@ -296,18 +188,188 @@ struct Bain_LuckApp: App {
 
         WindowGroup(for: Int.self) { $eventId in
             if let id = eventId {
-                NavigationStack {
-                    EventDetailView(eventId: id)
-                        .environmentObject(authManager)
-                        .environmentObject(navCoordinator)
-                        .environmentObject(pinManager)
+                MacSceneNavigationRoot(
+                    sharedLiveNavigation: navCoordinator,
+                    permitsBrowsingCommands: false,
+                    initialTab: .feed
+                ) { navigation in
+                    NavigationStack {
+                        EventDetailView(eventId: id)
+                            .environmentObject(navigation)
+                    }
+                    .preferredColorScheme(.light)
                 }
-                .preferredColorScheme(.light)
+                .environmentObject(authManager)
+                .environmentObject(pinManager)
             }
         }
         .defaultSize(width: 900, height: 700)
         #endif
     }
+
+    /// iPhone/iPad keep the app coordinator; each Mac scene supplies its own.
+    @ViewBuilder
+    private func mainWindowContent(navigation navCoordinator: NavigationCoordinator) -> some View {
+        // #10236 / #10238: a DEBUG-only synthetic host drives the real matrix through
+        // real delivery from retained local inputs. Release, and any launch
+        // without the argument, is the regular app.
+        Group {
+            #if DEBUG
+            if let directory = UserDefaults.standard.string(forKey: "launch_during_matrix_10236_directory"),
+               !directory.isEmpty {
+                EventPropsMatrixCurrentnessActivation10236(directory: URL(fileURLWithPath: directory, isDirectory: true))
+            } else if let directory = UserDefaults.standard.string(forKey: "launch_question_matrix_10238_directory"),
+                      !directory.isEmpty {
+                // #10238: the same kind of host for the Game and Series sections.
+                EventQuestionMatrixCurrentnessActivation10238(directory: URL(fileURLWithPath: directory, isDirectory: true))
+            } else {
+                ContentView()
+            }
+            #else
+            ContentView()
+            #endif
+        }
+            .environmentObject(authManager)
+            .environmentObject(navCoordinator)
+            .environmentObject(pinManager)
+            // #10875 — the saved items (and their account) the Home/Lock Screen widget may show.
+            .savedItemWidgets10875(pins: pinManager)
+            .overlay {
+                PinFeedbackToast()
+                    .environmentObject(pinManager)
+            }
+            #if DEBUG
+            .overlay(alignment: .topLeading) {
+                if let runtime = PinManagementRuntime9875.shared {
+                    PinRuntime9875Setup(runtime: runtime, manager: pinManager, navigation: navCoordinator)
+                }
+            }
+            #endif
+            // The consent ask (Queue 311 A3 / #1632). Presented when no
+            // choice has been recorded — and only then, so it never
+            // re-nags someone who declined. Nothing is collected while it
+            // is up: no-choice IS a denial, so an ignored prompt is the
+            // safe state rather than a leak with a timer on it.
+            .sheet(isPresented: $showTelemetryConsent) {
+                TelemetryConsentPrompt { _ in
+                    showTelemetryConsent = false
+                }
+            }
+            #if os(macOS)
+            .navigationTitle(navCoordinator.liveGameTitle)
+            .task { await pollLiveGames() }
+            #endif
+            .onChange(of: PinAccountBinding(userID: authManager.activeFeedUserId, authenticated: authManager.isAuthenticated)) { _, identity in
+                let isAuth = identity.authenticated
+                #if DEBUG
+                bindPins(identity)
+                #else
+                pinManager.bindAccount(identity)
+                #endif
+                NotificationManager.shared.setUser(id: isAuth ? authManager.user?.id : nil)
+                AnalyticsService.setCrashReportingUserId(
+                    isAuth ? ((authManager.user?.id).map { String($0) } ?? "") : ""
+                )
+                Task {
+                    await pinManager.loadPins()
+                }
+            }
+            .task {
+                #if DEBUG
+                bindPins(PinAccountBinding(userID: authManager.activeFeedUserId, authenticated: authManager.isAuthenticated))
+                #else
+                pinManager.bindAccount(PinAccountBinding(userID: authManager.activeFeedUserId, authenticated: authManager.isAuthenticated))
+                #endif
+                await pinManager.loadPins()
+                // Wire up notification deep linking and request permission
+                #if os(macOS)
+                if focusedMacNavigation === navCoordinator {
+                    bindFocusedMacNavigation()
+                }
+                #else
+                NotificationManager.shared.navCoordinator = navCoordinator
+                #endif
+                NotificationManager.shared.requestPermissionAfterDelay()
+                if let userId = authManager.user?.id {
+                    NotificationManager.shared.setUser(id: userId)
+                    AnalyticsService.setCrashReportingUserId(String(userId))
+                }
+                // The LOOK rig's one way to reach a screen that is not the
+                // default tab (#3157). Routed through `handleURL`, so it can
+                // only ever open something a real link could open, and only
+                // when `-launch_route` was passed. Last in this task on
+                // purpose: nothing above it is allowed to depend on the
+                // rig's presence.
+                if let route = LaunchRig.route() {
+                    try? await Task.sleep(
+                        nanoseconds: UInt64(LaunchRig.routeDelay * 1_000_000_000)
+                    )
+                    _ = navCoordinator.handleURL(route)
+                }
+                // …and then, if asked, put that screen below its own fold so
+                // the camera can see the maps (`-launch_scroll`). Separate
+                // wait, because this one is for the screen's network loads
+                // rather than for the app to mount. Works with or without a
+                // route: the default tab is scrollable too.
+                #if os(iOS)
+                if let points = LaunchRig.scrollOffset() {
+                    try? await Task.sleep(
+                        nanoseconds: UInt64(LaunchRig.scrollDelay * 1_000_000_000)
+                    )
+                    LaunchRigScroll.scrollPage(to: points)
+                }
+                #endif
+            }
+            #if os(iOS)
+            .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
+                authManager.checkCredentialState()
+                authManager.retrySessionIfNeeded()
+            }
+            #elseif os(macOS)
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                authManager.checkCredentialState()
+                authManager.retrySessionIfNeeded()
+            }
+            #endif
+            .onOpenURL { url in
+                // Google Sign-In uses the reversed client ID scheme
+                if url.scheme?.contains("googleusercontent") == true {
+                    GIDSignIn.sharedInstance.handle(url)
+                } else {
+                    _ = navCoordinator.handleURL(url)
+                }
+            }
+            .onContinueUserActivity(GameContinuation.activityType) { activity in
+                _ = navCoordinator.handleGameContinuation(activity)
+            }
+            .onContinueUserActivity(StoryContinuation.activityType) { activity in
+                _ = navCoordinator.handleStoryContinuation(activity)
+            }
+            .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                if let url = activity.webpageURL {
+                    _ = navCoordinator.handleURL(url)
+                }
+            }
+            .preferredColorScheme(.light)
+    }
+
+    #if os(macOS)
+    /// Keep external notification routing on the eligible focused main scene,
+    /// rather than whichever background window happened to finish its task last.
+    private func bindFocusedMacNavigation() {
+        NotificationManager.shared.bindMacNavigation(
+            macBrowsingCommandsEnabled == true ? focusedMacNavigation : nil
+        )
+    }
+
+    private func selectMacTab(_ tab: AppTab) {
+        _ = MacSceneCommands10878.selectTab(
+            tab,
+            target: focusedMacNavigation,
+            permitsBrowsing: macBrowsingCommandsEnabled == true
+        )
+    }
+    #endif
 
     #if os(macOS)
     @MainActor

@@ -1,0 +1,1977 @@
+{
+ "_captured": "production api.bainluck.com 2026-10-20T02:27Z (Mon 10/19 7:27 PM PT): GET /api/events/14966179, /api/events/search?q=Buccaneers&status=completed, /api/events/search?q=Bruins&status=completed",
+ "detail_14966179": {
+  "id": 14966179,
+  "external_id": "27f3994841ce8081c0b7349cf3d1e3d7",
+  "sport": "americanfootball_nfl",
+  "sport_name": "NFL",
+  "home_team": "Tampa Bay Buccaneers",
+  "away_team": "Pittsburgh Steelers",
+  "commence_time": "2026-10-18T17:00:00+00:00",
+  "start_is_tbd": false,
+  "start_is_from_schedule": true,
+  "completed_at": "2026-10-18T20:44:35.333150+00:00",
+  "status": "completed",
+  "started_without_result": false,
+  "home_score": 19,
+  "away_score": 26,
+  "score_source": "espn",
+  "score_observed_at": "2026-10-18T22:59:27.445493+00:00",
+  "home_team_data": {
+   "team_id": 554,
+   "slug": "tampa-bay-buccaneers",
+   "primary_color": "#bd1c36",
+   "secondary_color": "#3e3a35",
+   "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/tb.png",
+   "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/tb.png",
+   "record": "1-5",
+   "abbreviation": "TB",
+   "standings": {
+    "pct": ".167",
+    "ties": 0,
+    "wins": 1,
+    "losses": 5,
+    "streak": "L1",
+    "div_rank": 4,
+    "division": "NFC South",
+    "conference": "National Football Conference",
+    "home_record": "0-4",
+    "road_record": "1-1"
+   }
+  },
+  "away_team_data": {
+   "team_id": 540,
+   "slug": "pittsburgh-steelers",
+   "primary_color": "#000000",
+   "secondary_color": "#ffb612",
+   "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/pit.png",
+   "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/pit.png",
+   "record": "4-2",
+   "abbreviation": "PIT",
+   "standings": {
+    "pct": ".667",
+    "ties": 0,
+    "wins": 4,
+    "losses": 2,
+    "streak": "W2",
+    "div_rank": 2,
+    "division": "AFC North",
+    "conference": "American Football Conference",
+    "home_record": "3-0",
+    "road_record": "1-2"
+   }
+  },
+  "metadata": {
+   "gender": "men",
+   "level": "professional",
+   "league": "NFL",
+   "importance": "regular_season"
+  },
+  "espn": {
+   "espn_id": "401873002",
+   "game_clock": "0:00",
+   "period": "Final/OT",
+   "broadcast": "CBS",
+   "win_probability": 0.0,
+   "probability_sources": {
+    "espn": 0.0,
+    "betting": 0.0656,
+    "stat_model": 0.0048,
+    "betting_book_count": 8.0
+   }
+  },
+  "win_probability_sources": {
+   "espn": {
+    "value": 0.0,
+    "display_name": "ESPN",
+    "type": "model",
+    "color": "#f97316",
+    "updated_at": "2026-10-18T20:43:35.190779+00:00",
+    "evidence_status": "not_applicable"
+   },
+   "betting": {
+    "value": 0.0656,
+    "display_name": "Betting Odds",
+    "type": "market",
+    "color": "#374151",
+    "updated_at": "2026-10-18T20:56:31.986341+00:00",
+    "evidence_status": "not_applicable"
+   },
+   "stat_model": {
+    "value": 0.0048,
+    "display_name": "Bain Luck Model",
+    "type": "model",
+    "color": "#8b5cf6",
+    "updated_at": "2026-10-18T20:43:35.238157+00:00",
+    "evidence_status": "not_applicable"
+   },
+   "betting_book_count": {
+    "value": 8.0,
+    "display_name": "betting_book_count",
+    "type": "model",
+    "color": "#6b7280",
+    "evidence_status": "not_applicable"
+   }
+  },
+  "ei": {
+   "score": 92,
+   "raw_score": 71,
+   "status": "incredible",
+   "label": "Incredible",
+   "emoji": "\ud83d\udd25",
+   "metadata": {
+    "raw_ei": 1.2493,
+    "lead_changes": 10,
+    "comeback_factor": 0.0928,
+    "snapshot_count": 447
+   }
+  },
+  "pulse": {
+   "score": 92,
+   "raw_score": 71,
+   "status": "incredible",
+   "label": "Incredible",
+   "emoji": "\ud83d\udd25",
+   "metadata": {
+    "raw_ei": 1.2493,
+    "lead_changes": 10,
+    "comeback_factor": 0.0928,
+    "snapshot_count": 447
+   }
+  },
+  "event_tags": [
+   "audience:local_interest",
+   "class:pro_major",
+   "competitive_structure:head_to_head",
+   "ei:exciting",
+   "gender:men",
+   "importance:regular_season",
+   "league:nfl",
+   "level:professional",
+   "narrative:david_vs_goliath",
+   "sport:football",
+   "stakes:playoff_race",
+   "status:completed",
+   "tier:1",
+   "timing:national_tv",
+   "timing:weekend"
+  ],
+  "standings_context": {
+   "home": "1-5, #4 NFC South",
+   "away": "4-2, #2 AFC North"
+  },
+  "current_odds": {
+   "captured_at": "2026-10-18T20:43:27.467794+00:00",
+   "home_probability": 0.0048,
+   "away_probability": 0.9952,
+   "away_rendered_percent": 100,
+   "home_rendered_percent": 0,
+   "spread": 4.1,
+   "over_under": 41.1,
+   "projected_home_score": 18.8,
+   "projected_away_score": 22.3,
+   "bookmaker_count": 19
+  },
+  "bookmaker_odds": [
+   {
+    "bookmaker": "ballybet",
+    "home_moneyline": 1050,
+    "away_moneyline": -10000,
+    "home_probability": 0.0807,
+    "away_probability": 0.9193,
+    "captured_at": "2026-10-18T20:39:42.507760+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "betanysports",
+    "home_moneyline": 120,
+    "away_moneyline": -140,
+    "home_probability": 0.438,
+    "away_probability": 0.562,
+    "captured_at": "2026-10-18T16:47:17.537457+00:00",
+    "spread": 2.5,
+    "over_under": 38.0,
+    "projected_home_score": 17.8,
+    "projected_away_score": 20.2
+   },
+   {
+    "bookmaker": "betmgm",
+    "home_moneyline": 1150,
+    "away_moneyline": -5000,
+    "home_probability": 0.0754,
+    "away_probability": 0.9246,
+    "captured_at": "2026-10-18T20:42:41.531789+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "betonlineag",
+    "home_moneyline": 120,
+    "away_moneyline": -140,
+    "home_probability": 0.438,
+    "away_probability": 0.562,
+    "captured_at": "2026-10-18T17:09:49.461198+00:00",
+    "spread": 2.5,
+    "over_under": 38.0,
+    "projected_home_score": 17.8,
+    "projected_away_score": 20.2
+   },
+   {
+    "bookmaker": "betparx",
+    "home_moneyline": 1200,
+    "away_moneyline": -5000,
+    "home_probability": 0.0728,
+    "away_probability": 0.9272,
+    "captured_at": "2026-10-18T20:39:42.501645+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "betrivers",
+    "home_moneyline": 1200,
+    "away_moneyline": -5000,
+    "home_probability": 0.0728,
+    "away_probability": 0.9272,
+    "captured_at": "2026-10-18T20:38:31.894024+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "betus",
+    "home_moneyline": 120,
+    "away_moneyline": -140,
+    "home_probability": 0.438,
+    "away_probability": 0.562,
+    "captured_at": "2026-10-18T17:09:49.424417+00:00",
+    "spread": 1.0,
+    "over_under": 38.0,
+    "projected_home_score": 18.5,
+    "projected_away_score": 19.5
+   },
+   {
+    "bookmaker": "bovada",
+    "home_moneyline": null,
+    "away_moneyline": null,
+    "home_probability": null,
+    "away_probability": null,
+    "captured_at": "2026-10-18T20:32:28.972306+00:00",
+    "spread": 6.5,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "courtside",
+    "home_moneyline": 1240,
+    "away_moneyline": -4100,
+    "home_probability": 0.071,
+    "away_probability": 0.929,
+    "captured_at": "2026-10-18T20:42:41.523748+00:00",
+    "spread": 6.5,
+    "over_under": 45.5,
+    "projected_home_score": 19.5,
+    "projected_away_score": 26.0
+   },
+   {
+    "bookmaker": "draftkings",
+    "home_moneyline": 1240,
+    "away_moneyline": -4100,
+    "home_probability": 0.071,
+    "away_probability": 0.929,
+    "captured_at": "2026-10-18T20:42:41.486115+00:00",
+    "spread": 6.5,
+    "over_under": 45.5,
+    "projected_home_score": 19.5,
+    "projected_away_score": 26.0
+   },
+   {
+    "bookmaker": "espnbet",
+    "home_moneyline": 600,
+    "away_moneyline": -1200,
+    "home_probability": 0.134,
+    "away_probability": 0.866,
+    "captured_at": "2026-10-18T20:38:31.938368+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "fanatics",
+    "home_moneyline": 1700,
+    "away_moneyline": -5000,
+    "home_probability": 0.0536,
+    "away_probability": 0.9464,
+    "captured_at": "2026-10-18T20:42:41.552800+00:00",
+    "spread": 6.5,
+    "over_under": 45.5,
+    "projected_home_score": 19.5,
+    "projected_away_score": 26.0
+   },
+   {
+    "bookmaker": "fanduel",
+    "home_moneyline": null,
+    "away_moneyline": null,
+    "home_probability": null,
+    "away_probability": null,
+    "captured_at": "2026-10-18T20:32:28.933040+00:00",
+    "spread": 6.5,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "fliff",
+    "home_moneyline": 470,
+    "away_moneyline": -775,
+    "home_probability": 0.1653,
+    "away_probability": 0.8347,
+    "captured_at": "2026-10-18T20:38:31.922116+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "hardrockbet",
+    "home_moneyline": 1500,
+    "away_moneyline": -4000,
+    "home_probability": 0.0602,
+    "away_probability": 0.9398,
+    "captured_at": "2026-10-18T20:43:27.467794+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "hardrockbet_fl",
+    "home_moneyline": 1500,
+    "away_moneyline": -4000,
+    "home_probability": 0.0602,
+    "away_probability": 0.9398,
+    "captured_at": "2026-10-18T20:41:56.302675+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "hardrockbet_oh",
+    "home_moneyline": 1500,
+    "away_moneyline": -4000,
+    "home_probability": 0.0602,
+    "away_probability": 0.9398,
+    "captured_at": "2026-10-18T20:43:27.464030+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "lowvig",
+    "home_moneyline": 120,
+    "away_moneyline": -140,
+    "home_probability": 0.438,
+    "away_probability": 0.562,
+    "captured_at": "2026-10-18T17:09:49.453006+00:00",
+    "spread": 2.5,
+    "over_under": 38.0,
+    "projected_home_score": 17.8,
+    "projected_away_score": 20.2
+   },
+   {
+    "bookmaker": "mybookieag",
+    "home_moneyline": -250,
+    "away_moneyline": 175,
+    "home_probability": 0.6627,
+    "away_probability": 0.3373,
+    "captured_at": "2026-10-18T19:46:28.217518+00:00",
+    "spread": -2.5,
+    "over_under": 35.5,
+    "projected_home_score": 19.0,
+    "projected_away_score": 16.5
+   },
+   {
+    "bookmaker": "rebet",
+    "home_moneyline": 800,
+    "away_moneyline": -10000,
+    "home_probability": 0.1009,
+    "away_probability": 0.8991,
+    "captured_at": "2026-10-18T20:39:42.488141+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "williamhill_us",
+    "home_moneyline": 850,
+    "away_moneyline": -1800,
+    "home_probability": 0.1,
+    "away_probability": 0.9,
+    "captured_at": "2026-10-18T20:41:56.253594+00:00",
+    "spread": 6.5,
+    "over_under": 45.5,
+    "projected_home_score": 19.5,
+    "projected_away_score": 26.0
+   }
+  ],
+  "opening_odds": {
+   "home_probability": 0.4447,
+   "away_probability": 0.5553,
+   "spread": 2.5,
+   "over_under": 37.5,
+   "favorite": "away"
+  },
+  "prematch_odds": {
+   "home_probability": 0.445,
+   "away_probability": 0.555,
+   "home_rendered_percent": 44,
+   "away_rendered_percent": 56,
+   "source": "kalshi"
+  },
+  "pregame_projection": {
+   "projected_home_score": 17.8,
+   "projected_away_score": 20.1,
+   "kind": "last_before_scheduled_start",
+   "earliest_captured_at": "2026-10-18T16:29:20.616549+00:00",
+   "latest_captured_at": "2026-10-18T16:59:13.238723+00:00",
+   "boundary": "scheduled_start",
+   "boundary_at": "2026-10-18T17:00:00+00:00",
+   "source": "sportsbooks",
+   "basis": "consensus_spread_total",
+   "bookmaker_count": 21,
+   "unit": "points",
+   "period": "full_game"
+  },
+  "hero_probability_observed_at": null,
+  "blend_fold_revision": {
+   "14966179": 16150
+  },
+  "hero_probability": 0.0,
+  "hero_probability_away": 1.0,
+  "hero_probability_source": "settled",
+  "hero_settled_result": "away",
+  "box_score_data": {
+   "players": {
+    "Ko Kieft": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 1.0,
+     "solo tackles": 1.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Vita Vea": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 3.0,
+     "solo tackles": 1.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "T.J. Watt": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 2.0,
+     "solo tackles": 0.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Cade Otton": {
+     "targets": 2.0,
+     "receptions": 1.0,
+     "long reception": 4.0,
+     "receiving yards": 4.0,
+     "receiving touchdowns": 0.0
+    },
+    "DK Metcalf": {
+     "targets": 15.0,
+     "receptions": 11.0,
+     "long reception": 17.0,
+     "receiving yards": 93.0,
+     "receiving touchdowns": 0.0
+    },
+    "Jamel Dean": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 4.0,
+     "solo tackles": 2.0,
+     "passes defended": 6.0,
+     "tackles for loss": 0.0,
+     "interception yards": 40.0,
+     "defensive touchdowns": 0.0,
+     "interceptions caught": 1.0,
+     "interception touchdowns": 0.0
+    },
+    "Yaya Diaby": {
+     "sacks": 0.0,
+     "qb hits": 2.0,
+     "tackles": 4.0,
+     "solo tackles": 3.0,
+     "passes defended": 0.0,
+     "tackles for loss": 1.0,
+     "defensive touchdowns": 0.0
+    },
+    "Bauer Sharp": {
+     "targets": 1.0,
+     "receptions": 1.0,
+     "long reception": 21.0,
+     "receiving yards": 21.0,
+     "receiving touchdowns": 0.0
+    },
+    "Jack Sawyer": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 3.0,
+     "solo tackles": 1.0,
+     "passes defended": 0.0,
+     "tackles for loss": 1.0,
+     "defensive touchdowns": 0.0
+    },
+    "Lew Nichols": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 1.0,
+     "kick returns": 2.0,
+     "solo tackles": 0.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "kick return yards": 45.0,
+     "defensive touchdowns": 0.0,
+     "kick return touchdowns": 0.0
+    },
+    "Nick Herbig": {
+     "sacks": 2.0,
+     "qb hits": 2.0,
+     "tackles": 6.0,
+     "solo tackles": 6.0,
+     "passes defended": 0.0,
+     "tackles for loss": 3.0,
+     "defensive touchdowns": 0.0
+    },
+    "Rico Dowdle": {
+     "carries": 7.0,
+     "targets": 4.0,
+     "long rush": 15.0,
+     "receptions": 3.0,
+     "rushing yards": 40.0,
+     "long reception": 5.0,
+     "receiving yards": 9.0,
+     "rushing touchdowns": 0.0,
+     "receiving touchdowns": 0.0
+    },
+    "Riley Dixon": {
+     "punts": 6.0,
+     "punt yards": 245.0,
+     "punts inside 20": 0.0
+    },
+    "Tez Johnson": {
+     "targets": 3.0,
+     "receptions": 2.0,
+     "kick returns": 1.0,
+     "punt returns": 2.0,
+     "long reception": 6.0,
+     "receiving yards": 7.0,
+     "kick return yards": 25.0,
+     "punt return yards": 13.0,
+     "receiving touchdowns": 0.0,
+     "kick return touchdowns": 0.0,
+     "punt return touchdowns": 0.0
+    },
+    "Tykee Smith": {
+     "sacks": 0.0,
+     "qb hits": 1.0,
+     "tackles": 10.0,
+     "solo tackles": 3.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Yahya Black": {
+     "sacks": 1.0,
+     "qb hits": 1.0,
+     "tackles": 2.0,
+     "solo tackles": 2.0,
+     "passes defended": 0.0,
+     "tackles for loss": 1.0,
+     "defensive touchdowns": 0.0
+    },
+    "Bucky Irving": {
+     "carries": 19.0,
+     "targets": 3.0,
+     "long rush": 13.0,
+     "receptions": 2.0,
+     "rushing yards": 46.0,
+     "long reception": 2.0,
+     "receiving yards": 3.0,
+     "rushing touchdowns": 0.0,
+     "receiving touchdowns": 0.0
+    },
+    "David Walker": {
+     "sacks": 2.0,
+     "qb hits": 3.0,
+     "tackles": 7.0,
+     "solo tackles": 4.0,
+     "passes defended": 0.0,
+     "tackles for loss": 2.0,
+     "defensive touchdowns": 0.0
+    },
+    "Emeka Egbuka": {
+     "targets": 16.0,
+     "receptions": 7.0,
+     "long reception": 16.0,
+     "receiving yards": 48.0,
+     "receiving touchdowns": 1.0
+    },
+    "Jalen Ramsey": {
+     "sacks": 2.0,
+     "qb hits": 2.0,
+     "tackles": 10.0,
+     "solo tackles": 9.0,
+     "passes defended": 0.0,
+     "tackles for loss": 4.0,
+     "defensive touchdowns": 0.0
+    },
+    "Kaden Wetjen": {
+     "kick returns": 4.0,
+     "punt returns": 2.0,
+     "kick return yards": 105.0,
+     "punt return yards": 0.0,
+     "kick return touchdowns": 0.0,
+     "punt return touchdowns": 0.0
+    },
+    "Travis Homer": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 1.0,
+     "solo tackles": 1.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Aaron Rodgers": {
+     "carries": 1.0,
+     "long rush": -1.0,
+     "completions": 33.0,
+     "sacks taken": 5.0,
+     "passing yards": 253.0,
+     "rushing yards": -1.0,
+     "passing touchdowns": 2.0,
+     "rushing touchdowns": 0.0,
+     "interceptions thrown": 1.0
+    },
+    "Alex Anzalone": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 3.0,
+     "solo tackles": 1.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Brandon Smith": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 1.0,
+     "solo tackles": 0.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Brock Hoffman": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 1.0,
+     "solo tackles": 1.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Chris Boswell": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 1.0,
+     "field goals": 4.0,
+     "extra points": 2.0,
+     "solo tackles": 1.0,
+     "kicking points": 14.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Gabriel Rubio": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 1.0,
+     "solo tackles": 0.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Jacob Parrish": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 6.0,
+     "solo tackles": 5.0,
+     "passes defended": 2.0,
+     "tackles for loss": 1.0,
+     "defensive touchdowns": 0.0
+    },
+    "Jalon Daniels": {
+     "sacks": 0.0,
+     "carries": 4.0,
+     "qb hits": 0.0,
+     "tackles": 1.0,
+     "targets": 1.0,
+     "long rush": 17.0,
+     "receptions": 1.0,
+     "completions": 22.0,
+     "sacks taken": 5.0,
+     "solo tackles": 1.0,
+     "passing yards": 164.0,
+     "rushing yards": 39.0,
+     "long reception": -3.0,
+     "passes defended": 0.0,
+     "receiving yards": -3.0,
+     "tackles for loss": 0.0,
+     "passing touchdowns": 1.0,
+     "rushing touchdowns": 0.0,
+     "defensive touchdowns": 0.0,
+     "interceptions thrown": 2.0,
+     "receiving touchdowns": 0.0
+    },
+    "Jaylen Warren": {
+     "carries": 14.0,
+     "targets": 4.0,
+     "long rush": 16.0,
+     "receptions": 2.0,
+     "rushing yards": 50.0,
+     "long reception": 16.0,
+     "receiving yards": 28.0,
+     "rushing touchdowns": 0.0,
+     "receiving touchdowns": 0.0
+    },
+    "Keeanu Benton": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 3.0,
+     "solo tackles": 2.0,
+     "passes defended": 1.0,
+     "tackles for loss": 2.0,
+     "defensive touchdowns": 0.0
+    },
+    "Keionte Scott": {
+     "sacks": 1.0,
+     "qb hits": 1.0,
+     "tackles": 8.0,
+     "solo tackles": 4.0,
+     "passes defended": 0.0,
+     "tackles for loss": 1.0,
+     "defensive touchdowns": 0.0
+    },
+    "Kevin Knowles": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 2.0,
+     "solo tackles": 1.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Patrick Queen": {
+     "sacks": 0.0,
+     "qb hits": 1.0,
+     "tackles": 3.0,
+     "solo tackles": 1.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Payton Wilson": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 11.0,
+     "solo tackles": 7.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Ted Hurst III": {
+     "targets": 6.0,
+     "receptions": 3.0,
+     "long reception": 22.0,
+     "receiving yards": 40.0,
+     "receiving touchdowns": 0.0
+    },
+    "Zyon McCollum": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 11.0,
+     "solo tackles": 7.0,
+     "passes defended": 1.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Alex Highsmith": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 2.0,
+     "solo tackles": 1.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Anthony Nelson": {
+     "sacks": 0.0,
+     "qb hits": 1.0,
+     "tackles": 0.0,
+     "solo tackles": 0.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Carson Bruener": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 1.0,
+     "solo tackles": 0.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Elijah Roberts": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 2.0,
+     "solo tackles": 1.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Elijah Simmons": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 1.0,
+     "solo tackles": 0.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Germie Bernard": {
+     "targets": 12.0,
+     "receptions": 11.0,
+     "long reception": 19.0,
+     "receiving yards": 87.0,
+     "receiving touchdowns": 1.0
+    },
+    "Jaquan Brisker": {
+     "sacks": 0.0,
+     "qb hits": 1.0,
+     "tackles": 7.0,
+     "solo tackles": 4.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Josiah Trotter": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 12.0,
+     "solo tackles": 5.0,
+     "passes defended": 1.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Kenny Gainwell": {
+     "carries": 2.0,
+     "targets": 1.0,
+     "long rush": 14.0,
+     "receptions": 1.0,
+     "kick returns": 2.0,
+     "rushing yards": 17.0,
+     "long reception": 7.0,
+     "receiving yards": 7.0,
+     "kick return yards": 51.0,
+     "rushing touchdowns": 0.0,
+     "receiving touchdowns": 0.0,
+     "kick return touchdowns": 0.0
+    },
+    "Pat Freiermuth": {
+     "targets": 3.0,
+     "receptions": 2.0,
+     "long reception": 7.0,
+     "receiving yards": 11.0,
+     "receiving touchdowns": 0.0
+    },
+    "Cameron Heyward": {
+     "sacks": 0.0,
+     "qb hits": 2.0,
+     "tackles": 3.0,
+     "solo tackles": 1.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Daylen Everette": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 3.0,
+     "solo tackles": 2.0,
+     "passes defended": 1.0,
+     "tackles for loss": 0.0,
+     "interception yards": 0.0,
+     "defensive touchdowns": 0.0,
+     "interceptions caught": 1.0,
+     "interception touchdowns": 0.0
+    },
+    "Kameron Johnson": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 2.0,
+     "kick returns": 2.0,
+     "solo tackles": 1.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "kick return yards": 64.0,
+     "defensive touchdowns": 0.0,
+     "kick return touchdowns": 0.0
+    },
+    "Miles Killebrew": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 2.0,
+     "solo tackles": 2.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Rueben Bain Jr.": {
+     "sacks": 1.0,
+     "qb hits": 1.0,
+     "tackles": 3.0,
+     "solo tackles": 1.0,
+     "passes defended": 1.0,
+     "tackles for loss": 1.0,
+     "defensive touchdowns": 0.0
+    },
+    "A'Shawn Robinson": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 3.0,
+     "solo tackles": 0.0,
+     "passes defended": 1.0,
+     "tackles for loss": 0.0,
+     "interception yards": 0.0,
+     "defensive touchdowns": 0.0,
+     "interceptions caught": 1.0,
+     "interception touchdowns": 0.0
+    },
+    "Cameron Johnston": {
+     "punts": 5.0,
+     "punt yards": 241.0,
+     "punts inside 20": 3.0
+    },
+    "Chase McLaughlin": {
+     "field goals": 4.0,
+     "extra points": 1.0,
+     "kicking points": 13.0
+    },
+    "Chris Godwin Jr.": {
+     "targets": 8.0,
+     "receptions": 4.0,
+     "long reception": 13.0,
+     "receiving yards": 37.0,
+     "receiving touchdowns": 0.0
+    },
+    "Ifeatu Melifonwu": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 4.0,
+     "solo tackles": 0.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Riley Nowakowski": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 1.0,
+     "solo tackles": 0.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Asante Samuel Jr.": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 5.0,
+     "solo tackles": 2.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Doneiko Slaughter": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 1.0,
+     "solo tackles": 1.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Al-Quadin Muhammad": {
+     "sacks": 1.0,
+     "qb hits": 1.0,
+     "tackles": 1.0,
+     "solo tackles": 1.0,
+     "passes defended": 1.0,
+     "tackles for loss": 1.0,
+     "defensive touchdowns": 0.0
+    },
+    "Christian Rozeboom": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 4.0,
+     "solo tackles": 1.0,
+     "passes defended": 1.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Darnell Washington": {
+     "targets": 6.0,
+     "receptions": 4.0,
+     "long reception": 9.0,
+     "receiving yards": 25.0,
+     "receiving touchdowns": 1.0
+    },
+    "Sebastian Joseph-Day": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 2.0,
+     "solo tackles": 0.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    },
+    "Robert Spears-Jennings": {
+     "sacks": 0.0,
+     "qb hits": 0.0,
+     "tackles": 2.0,
+     "solo tackles": 0.0,
+     "passes defended": 0.0,
+     "tackles for loss": 0.0,
+     "defensive touchdowns": 0.0
+    }
+   },
+   "home_period_scores": [
+    3,
+    10,
+    3,
+    3,
+    0
+   ],
+   "away_period_scores": [
+    0,
+    3,
+    0,
+    16,
+    7
+   ]
+  },
+  "state_read_not_before": "2026-10-20T02:27:39.783979+00:00",
+  "state_read_not_after": "2026-10-20T02:27:39.795865+00:00"
+ },
+ "search_14966179": {
+  "id": 14966179,
+  "external_id": "27f3994841ce8081c0b7349cf3d1e3d7",
+  "sport": "americanfootball_nfl",
+  "sport_name": "NFL",
+  "home_team": "Tampa Bay Buccaneers",
+  "away_team": "Pittsburgh Steelers",
+  "commence_time": "2026-10-18T17:00:00+00:00",
+  "start_is_tbd": false,
+  "start_is_from_schedule": true,
+  "completed_at": "2026-10-18T20:44:35.333150+00:00",
+  "status": "completed",
+  "started_without_result": false,
+  "home_score": 19,
+  "away_score": 26,
+  "score_source": "espn",
+  "score_observed_at": "2026-10-18T22:59:27.445493+00:00",
+  "home_team_data": {
+   "team_id": 554,
+   "slug": "tampa-bay-buccaneers",
+   "primary_color": "#bd1c36",
+   "secondary_color": "#3e3a35",
+   "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/tb.png",
+   "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/tb.png",
+   "record": "1-5",
+   "abbreviation": "TB",
+   "standings": {
+    "pct": ".167",
+    "ties": 0,
+    "wins": 1,
+    "losses": 5,
+    "streak": "L1",
+    "div_rank": 4,
+    "division": "NFC South",
+    "conference": "National Football Conference",
+    "home_record": "0-4",
+    "road_record": "1-1"
+   }
+  },
+  "away_team_data": {
+   "team_id": 540,
+   "slug": "pittsburgh-steelers",
+   "primary_color": "#000000",
+   "secondary_color": "#ffb612",
+   "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/pit.png",
+   "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/pit.png",
+   "record": "4-2",
+   "abbreviation": "PIT",
+   "standings": {
+    "pct": ".667",
+    "ties": 0,
+    "wins": 4,
+    "losses": 2,
+    "streak": "W2",
+    "div_rank": 2,
+    "division": "AFC North",
+    "conference": "American Football Conference",
+    "home_record": "3-0",
+    "road_record": "1-2"
+   }
+  },
+  "metadata": {
+   "gender": "men",
+   "level": "professional",
+   "league": "NFL",
+   "importance": "regular_season"
+  },
+  "espn": {
+   "espn_id": "401873002",
+   "game_clock": "0:00",
+   "period": "Final/OT",
+   "broadcast": "CBS",
+   "win_probability": 0.0,
+   "probability_sources": {
+    "espn": 0.0,
+    "betting": 0.0656,
+    "stat_model": 0.0048,
+    "betting_book_count": 8.0
+   }
+  },
+  "win_probability_sources": {
+   "espn": {
+    "value": 0.0,
+    "display_name": "ESPN",
+    "type": "model",
+    "color": "#f97316",
+    "updated_at": "2026-10-18T20:43:35.190779+00:00",
+    "evidence_status": "not_applicable"
+   },
+   "betting": {
+    "value": 0.0656,
+    "display_name": "Betting Odds",
+    "type": "market",
+    "color": "#374151",
+    "updated_at": "2026-10-18T20:56:31.986341+00:00",
+    "evidence_status": "not_applicable"
+   },
+   "stat_model": {
+    "value": 0.0048,
+    "display_name": "Bain Luck Model",
+    "type": "model",
+    "color": "#8b5cf6",
+    "updated_at": "2026-10-18T20:43:35.238157+00:00",
+    "evidence_status": "not_applicable"
+   },
+   "betting_book_count": {
+    "value": 8.0,
+    "display_name": "betting_book_count",
+    "type": "model",
+    "color": "#6b7280",
+    "evidence_status": "not_applicable"
+   }
+  },
+  "ei": {
+   "score": 92,
+   "raw_score": 71,
+   "status": "incredible",
+   "label": "Incredible",
+   "emoji": "\ud83d\udd25",
+   "metadata": {
+    "raw_ei": 1.2493,
+    "lead_changes": 10,
+    "comeback_factor": 0.0928,
+    "snapshot_count": 447
+   }
+  },
+  "pulse": {
+   "score": 92,
+   "raw_score": 71,
+   "status": "incredible",
+   "label": "Incredible",
+   "emoji": "\ud83d\udd25",
+   "metadata": {
+    "raw_ei": 1.2493,
+    "lead_changes": 10,
+    "comeback_factor": 0.0928,
+    "snapshot_count": 447
+   }
+  },
+  "current_odds": {
+   "captured_at": "2026-10-18T20:43:27.467794+00:00",
+   "home_probability": 0.0048,
+   "away_probability": 0.9952,
+   "spread": 4.1,
+   "over_under": 41.1,
+   "projected_home_score": 18.8,
+   "projected_away_score": 22.3,
+   "bookmaker_count": 19
+  },
+  "bookmaker_odds": [
+   {
+    "bookmaker": "ballybet",
+    "home_moneyline": 1050,
+    "away_moneyline": -10000,
+    "home_probability": 0.0807,
+    "away_probability": 0.9193,
+    "captured_at": "2026-10-18T20:39:42.507760+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "betanysports",
+    "home_moneyline": 120,
+    "away_moneyline": -140,
+    "home_probability": 0.438,
+    "away_probability": 0.562,
+    "captured_at": "2026-10-18T16:47:17.537457+00:00",
+    "spread": 2.5,
+    "over_under": 38.0,
+    "projected_home_score": 17.8,
+    "projected_away_score": 20.2
+   },
+   {
+    "bookmaker": "betmgm",
+    "home_moneyline": 1150,
+    "away_moneyline": -5000,
+    "home_probability": 0.0754,
+    "away_probability": 0.9246,
+    "captured_at": "2026-10-18T20:42:41.531789+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "betonlineag",
+    "home_moneyline": 120,
+    "away_moneyline": -140,
+    "home_probability": 0.438,
+    "away_probability": 0.562,
+    "captured_at": "2026-10-18T17:09:49.461198+00:00",
+    "spread": 2.5,
+    "over_under": 38.0,
+    "projected_home_score": 17.8,
+    "projected_away_score": 20.2
+   },
+   {
+    "bookmaker": "betparx",
+    "home_moneyline": 1200,
+    "away_moneyline": -5000,
+    "home_probability": 0.0728,
+    "away_probability": 0.9272,
+    "captured_at": "2026-10-18T20:39:42.501645+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "betrivers",
+    "home_moneyline": 1200,
+    "away_moneyline": -5000,
+    "home_probability": 0.0728,
+    "away_probability": 0.9272,
+    "captured_at": "2026-10-18T20:38:31.894024+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "betus",
+    "home_moneyline": 120,
+    "away_moneyline": -140,
+    "home_probability": 0.438,
+    "away_probability": 0.562,
+    "captured_at": "2026-10-18T17:09:49.424417+00:00",
+    "spread": 1.0,
+    "over_under": 38.0,
+    "projected_home_score": 18.5,
+    "projected_away_score": 19.5
+   },
+   {
+    "bookmaker": "bovada",
+    "home_moneyline": null,
+    "away_moneyline": null,
+    "home_probability": null,
+    "away_probability": null,
+    "captured_at": "2026-10-18T20:32:28.972306+00:00",
+    "spread": 6.5,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "courtside",
+    "home_moneyline": 1240,
+    "away_moneyline": -4100,
+    "home_probability": 0.071,
+    "away_probability": 0.929,
+    "captured_at": "2026-10-18T20:42:41.523748+00:00",
+    "spread": 6.5,
+    "over_under": 45.5,
+    "projected_home_score": 19.5,
+    "projected_away_score": 26.0
+   },
+   {
+    "bookmaker": "draftkings",
+    "home_moneyline": 1240,
+    "away_moneyline": -4100,
+    "home_probability": 0.071,
+    "away_probability": 0.929,
+    "captured_at": "2026-10-18T20:42:41.486115+00:00",
+    "spread": 6.5,
+    "over_under": 45.5,
+    "projected_home_score": 19.5,
+    "projected_away_score": 26.0
+   },
+   {
+    "bookmaker": "espnbet",
+    "home_moneyline": 600,
+    "away_moneyline": -1200,
+    "home_probability": 0.134,
+    "away_probability": 0.866,
+    "captured_at": "2026-10-18T20:38:31.938368+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "fanatics",
+    "home_moneyline": 1700,
+    "away_moneyline": -5000,
+    "home_probability": 0.0536,
+    "away_probability": 0.9464,
+    "captured_at": "2026-10-18T20:42:41.552800+00:00",
+    "spread": 6.5,
+    "over_under": 45.5,
+    "projected_home_score": 19.5,
+    "projected_away_score": 26.0
+   },
+   {
+    "bookmaker": "fanduel",
+    "home_moneyline": null,
+    "away_moneyline": null,
+    "home_probability": null,
+    "away_probability": null,
+    "captured_at": "2026-10-18T20:32:28.933040+00:00",
+    "spread": 6.5,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "fliff",
+    "home_moneyline": 470,
+    "away_moneyline": -775,
+    "home_probability": 0.1653,
+    "away_probability": 0.8347,
+    "captured_at": "2026-10-18T20:38:31.922116+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "hardrockbet",
+    "home_moneyline": 1500,
+    "away_moneyline": -4000,
+    "home_probability": 0.0602,
+    "away_probability": 0.9398,
+    "captured_at": "2026-10-18T20:43:27.467794+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "hardrockbet_fl",
+    "home_moneyline": 1500,
+    "away_moneyline": -4000,
+    "home_probability": 0.0602,
+    "away_probability": 0.9398,
+    "captured_at": "2026-10-18T20:41:56.302675+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "hardrockbet_oh",
+    "home_moneyline": 1500,
+    "away_moneyline": -4000,
+    "home_probability": 0.0602,
+    "away_probability": 0.9398,
+    "captured_at": "2026-10-18T20:43:27.464030+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "lowvig",
+    "home_moneyline": 120,
+    "away_moneyline": -140,
+    "home_probability": 0.438,
+    "away_probability": 0.562,
+    "captured_at": "2026-10-18T17:09:49.453006+00:00",
+    "spread": 2.5,
+    "over_under": 38.0,
+    "projected_home_score": 17.8,
+    "projected_away_score": 20.2
+   },
+   {
+    "bookmaker": "mybookieag",
+    "home_moneyline": -250,
+    "away_moneyline": 175,
+    "home_probability": 0.6627,
+    "away_probability": 0.3373,
+    "captured_at": "2026-10-18T19:46:28.217518+00:00",
+    "spread": -2.5,
+    "over_under": 35.5,
+    "projected_home_score": 19.0,
+    "projected_away_score": 16.5
+   },
+   {
+    "bookmaker": "rebet",
+    "home_moneyline": 800,
+    "away_moneyline": -10000,
+    "home_probability": 0.1009,
+    "away_probability": 0.8991,
+    "captured_at": "2026-10-18T20:39:42.488141+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "williamhill_us",
+    "home_moneyline": 850,
+    "away_moneyline": -1800,
+    "home_probability": 0.1,
+    "away_probability": 0.9,
+    "captured_at": "2026-10-18T20:41:56.253594+00:00",
+    "spread": 6.5,
+    "over_under": 45.5,
+    "projected_home_score": 19.5,
+    "projected_away_score": 26.0
+   }
+  ],
+  "hero_probability": 0.0,
+  "hero_probability_away": 1.0,
+  "hero_probability_source": "settled",
+  "hero_settled_result": "away",
+  "highlight": {
+   "score": 20,
+   "reasons": [
+    "tier_1",
+    "blowout",
+    "major_prob_swing"
+   ],
+   "label": null,
+   "should_feature": false,
+   "flags": {
+    "is_live": false,
+    "is_close_matchup": false,
+    "is_blowout": true,
+    "favorite_switched": false,
+    "probability_swing": "major",
+    "score_swing": "stable",
+    "is_starting_soon": false,
+    "is_recently_finished": false,
+    "is_upset": false,
+    "league_tier": 1,
+    "is_volatile": false,
+    "has_lead_changes": false,
+    "has_recent_momentum": false
+   }
+  },
+  "opening_odds": {
+   "home_probability": 0.4447,
+   "away_probability": 0.5553,
+   "spread": 2.5,
+   "over_under": 37.5,
+   "favorite": "away"
+  },
+  "pregame_projection": {
+   "projected_home_score": 17.8,
+   "projected_away_score": 20.1,
+   "kind": "last_before_scheduled_start",
+   "earliest_captured_at": "2026-10-18T16:29:20.616549+00:00",
+   "latest_captured_at": "2026-10-18T16:59:13.238723+00:00",
+   "boundary": "scheduled_start",
+   "boundary_at": "2026-10-18T17:00:00+00:00",
+   "source": "sportsbooks",
+   "basis": "consensus_spread_total",
+   "bookmaker_count": 21,
+   "unit": "points",
+   "period": "full_game"
+  }
+ },
+ "search_15331169": {
+  "id": 15331169,
+  "external_id": "ad530128f8a287b794e713643ee46757",
+  "sport": "icehockey_nhl",
+  "sport_name": "NHL",
+  "home_team": "Los Angeles Kings",
+  "away_team": "Boston Bruins",
+  "commence_time": "2026-10-18T01:00:00+00:00",
+  "start_is_tbd": false,
+  "start_is_from_schedule": true,
+  "completed_at": "2026-10-18T03:53:11.117863+00:00",
+  "status": "completed",
+  "started_without_result": false,
+  "home_score": 1,
+  "away_score": 4,
+  "score_source": "espn",
+  "score_observed_at": "2026-10-18T06:59:51.443109+00:00",
+  "home_team_data": {
+   "team_id": 64,
+   "slug": "los-angeles-kings",
+   "primary_color": "#121212",
+   "secondary_color": "#a2aaad",
+   "logo_small": "https://a.espncdn.com/i/teamlogos/nhl/500/scoreboard/la.png",
+   "logo_large": "https://a.espncdn.com/i/teamlogos/nhl/500/scoreboard/la.png",
+   "record": "0-4-2",
+   "abbreviation": "LA",
+   "standings": {
+    "pct": ".000",
+    "wins": 0,
+    "losses": 4,
+    "points": 2,
+    "streak": "L6",
+    "div_rank": 8,
+    "division": "Pacific Division",
+    "goals_for": 12,
+    "conference": "Western Conference",
+    "home_record": "0-3-0",
+    "road_record": "0-1-2",
+    "goals_against": 25,
+    "draws": 2
+   }
+  },
+  "away_team_data": {
+   "team_id": 574,
+   "slug": "boston-bruins",
+   "primary_color": "#231f20",
+   "secondary_color": "#fdb71a",
+   "logo_small": "https://a.espncdn.com/i/teamlogos/nhl/500/scoreboard/bos.png",
+   "logo_large": "https://a.espncdn.com/i/teamlogos/nhl/500/scoreboard/bos.png",
+   "record": "7-2-0",
+   "abbreviation": "BOS",
+   "standings": {
+    "pct": ".778",
+    "wins": 7,
+    "losses": 2,
+    "points": 14,
+    "streak": "W5",
+    "div_rank": 1,
+    "division": "Atlantic Division",
+    "goals_for": 34,
+    "conference": "Eastern Conference",
+    "home_record": "3-1-0",
+    "road_record": "4-1-0",
+    "goals_against": 19,
+    "draws": 0
+   }
+  },
+  "metadata": {
+   "gender": "men",
+   "level": "professional",
+   "league": "NHL",
+   "importance": "regular_season"
+  },
+  "espn": {
+   "espn_id": "401892530",
+   "game_clock": "0:00",
+   "period": "Final",
+   "broadcast": "ESPN+, ABTV, NESN",
+   "probability_sources": {
+    "betting": 0.0288,
+    "polymarket": 0.001,
+    "stat_model": 0.001,
+    "betting_book_count": 3.0
+   }
+  },
+  "win_probability_sources": {
+   "betting": {
+    "value": 0.0288,
+    "display_name": "Betting Odds",
+    "type": "market",
+    "color": "#374151",
+    "updated_at": "2026-10-18T04:01:12.006637+00:00",
+    "evidence_status": "not_applicable"
+   },
+   "polymarket": {
+    "value": 0.001,
+    "display_name": "Polymarket",
+    "type": "market",
+    "color": "#3b82f6",
+    "updated_at": "2026-10-18T09:48:02.717952+00:00",
+    "evidence_status": "verified",
+    "verified_scope": "full_event_winner",
+    "contract_version": "live_blend.admissible_as_blend_speaker@5031"
+   },
+   "stat_model": {
+    "value": 0.001,
+    "display_name": "Bain Luck Model",
+    "type": "model",
+    "color": "#8b5cf6",
+    "updated_at": "2026-10-18T03:52:10.967578+00:00",
+    "evidence_status": "not_applicable"
+   },
+   "betting_book_count": {
+    "value": 3.0,
+    "display_name": "betting_book_count",
+    "type": "model",
+    "color": "#6b7280",
+    "evidence_status": "not_applicable"
+   }
+  },
+  "ei": {
+   "score": 58,
+   "raw_score": 41,
+   "status": "competitive",
+   "label": "Competitive",
+   "emoji": "\ud83d\udcca",
+   "metadata": {
+    "raw_ei": 0.4167,
+    "lead_changes": 1,
+    "comeback_factor": 0.2812,
+    "snapshot_count": 344
+   }
+  },
+  "pulse": {
+   "score": 58,
+   "raw_score": 41,
+   "status": "competitive",
+   "label": "Competitive",
+   "emoji": "\ud83d\udcca",
+   "metadata": {
+    "raw_ei": 0.4167,
+    "lead_changes": 1,
+    "comeback_factor": 0.2812,
+    "snapshot_count": 344
+   }
+  },
+  "current_odds": {
+   "captured_at": "2026-10-18T03:51:29.560687+00:00",
+   "home_probability": 0.0288,
+   "away_probability": 0.9712,
+   "spread": 0.8,
+   "over_under": 4.6,
+   "projected_home_score": 1.9,
+   "projected_away_score": 2.7,
+   "bookmaker_count": 18
+  },
+  "bookmaker_odds": [
+   {
+    "bookmaker": "ballybet",
+    "home_moneyline": 650,
+    "away_moneyline": -1115,
+    "home_probability": 0.1269,
+    "away_probability": 0.8731,
+    "captured_at": "2026-10-18T03:41:34.441747+00:00",
+    "spread": 1.5,
+    "over_under": 4.5,
+    "projected_home_score": 1.5,
+    "projected_away_score": 3.0
+   },
+   {
+    "bookmaker": "betanysports",
+    "home_moneyline": -150,
+    "away_moneyline": 130,
+    "home_probability": 0.5798,
+    "away_probability": 0.4202,
+    "captured_at": "2026-10-18T00:47:35.925397+00:00",
+    "spread": -1.5,
+    "over_under": 5.5,
+    "projected_home_score": 3.5,
+    "projected_away_score": 2.0
+   },
+   {
+    "bookmaker": "betmgm",
+    "home_moneyline": 3300,
+    "away_moneyline": -10000,
+    "home_probability": 0.0288,
+    "away_probability": 0.9712,
+    "captured_at": "2026-10-18T03:51:29.560687+00:00",
+    "spread": 3.5,
+    "over_under": 5.5,
+    "projected_home_score": 1.0,
+    "projected_away_score": 4.5
+   },
+   {
+    "bookmaker": "betonlineag",
+    "home_moneyline": -153,
+    "away_moneyline": 135,
+    "home_probability": 0.587,
+    "away_probability": 0.413,
+    "captured_at": "2026-10-18T01:09:25.212524+00:00",
+    "spread": -1.5,
+    "over_under": 5.5,
+    "projected_home_score": 3.5,
+    "projected_away_score": 2.0
+   },
+   {
+    "bookmaker": "betparx",
+    "home_moneyline": 650,
+    "away_moneyline": -910,
+    "home_probability": 0.1289,
+    "away_probability": 0.8711,
+    "captured_at": "2026-10-18T03:41:34.450500+00:00",
+    "spread": 1.5,
+    "over_under": 4.5,
+    "projected_home_score": 1.5,
+    "projected_away_score": 3.0
+   },
+   {
+    "bookmaker": "betrivers",
+    "home_moneyline": -143,
+    "away_moneyline": 120,
+    "home_probability": 0.5642,
+    "away_probability": 0.4358,
+    "captured_at": "2026-10-18T00:38:39.717816+00:00",
+    "spread": -1.5,
+    "over_under": 5.5,
+    "projected_home_score": 3.5,
+    "projected_away_score": 2.0
+   },
+   {
+    "bookmaker": "betus",
+    "home_moneyline": -150,
+    "away_moneyline": 129,
+    "home_probability": 0.5788,
+    "away_probability": 0.4212,
+    "captured_at": "2026-10-18T01:09:25.238328+00:00",
+    "spread": -1.5,
+    "over_under": 5.5,
+    "projected_home_score": 3.5,
+    "projected_away_score": 2.0
+   },
+   {
+    "bookmaker": "bovada",
+    "home_moneyline": 1200,
+    "away_moneyline": -3300,
+    "home_probability": 0.0734,
+    "away_probability": 0.9266,
+    "captured_at": "2026-10-18T03:44:06.382954+00:00",
+    "spread": 1.5,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "courtside",
+    "home_moneyline": 650,
+    "away_moneyline": -1150,
+    "home_probability": 0.1266,
+    "away_probability": 0.8734,
+    "captured_at": "2026-10-18T03:43:17.257911+00:00",
+    "spread": 1.5,
+    "over_under": 3.5,
+    "projected_home_score": 1.0,
+    "projected_away_score": 2.5
+   },
+   {
+    "bookmaker": "draftkings",
+    "home_moneyline": 4000,
+    "away_moneyline": -100000,
+    "home_probability": 0.0238,
+    "away_probability": 0.9762,
+    "captured_at": "2026-10-18T03:47:23.781721+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "espnbet",
+    "home_moneyline": 900,
+    "away_moneyline": -2000,
+    "home_probability": 0.095,
+    "away_probability": 0.905,
+    "captured_at": "2026-10-18T03:41:34.466154+00:00",
+    "spread": 1.5,
+    "over_under": 4.5,
+    "projected_home_score": 1.5,
+    "projected_away_score": 3.0
+   },
+   {
+    "bookmaker": "fanatics",
+    "home_moneyline": 700,
+    "away_moneyline": -1300,
+    "home_probability": 0.1186,
+    "away_probability": 0.8814,
+    "captured_at": "2026-10-18T03:40:15.648438+00:00",
+    "spread": 1.5,
+    "over_under": 3.5,
+    "projected_home_score": 1.0,
+    "projected_away_score": 2.5
+   },
+   {
+    "bookmaker": "fanduel",
+    "home_moneyline": 750,
+    "away_moneyline": -1600,
+    "home_probability": 0.1111,
+    "away_probability": 0.8889,
+    "captured_at": "2026-10-18T03:40:15.669569+00:00",
+    "spread": 1.5,
+    "over_under": 4.5,
+    "projected_home_score": 1.5,
+    "projected_away_score": 3.0
+   },
+   {
+    "bookmaker": "fliff",
+    "home_moneyline": 710,
+    "away_moneyline": -1275,
+    "home_probability": 0.1175,
+    "away_probability": 0.8825,
+    "captured_at": "2026-10-18T03:43:17.336472+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   },
+   {
+    "bookmaker": "hardrockbet",
+    "home_moneyline": 700,
+    "away_moneyline": -1400,
+    "home_probability": 0.1181,
+    "away_probability": 0.8819,
+    "captured_at": "2026-10-18T03:40:15.672479+00:00",
+    "spread": 1.5,
+    "over_under": 3.5,
+    "projected_home_score": 1.0,
+    "projected_away_score": 2.5
+   },
+   {
+    "bookmaker": "lowvig",
+    "home_moneyline": -153,
+    "away_moneyline": 135,
+    "home_probability": 0.587,
+    "away_probability": 0.413,
+    "captured_at": "2026-10-18T01:09:25.215662+00:00",
+    "spread": -1.5,
+    "over_under": 5.5,
+    "projected_home_score": 3.5,
+    "projected_away_score": 2.0
+   },
+   {
+    "bookmaker": "mybookieag",
+    "home_moneyline": 475,
+    "away_moneyline": -833,
+    "home_probability": 0.163,
+    "away_probability": 0.837,
+    "captured_at": "2026-10-18T03:39:23.974608+00:00",
+    "spread": 1.5,
+    "over_under": 4.5,
+    "projected_home_score": 1.5,
+    "projected_away_score": 3.0
+   },
+   {
+    "bookmaker": "rebet",
+    "home_moneyline": 725,
+    "away_moneyline": -2500,
+    "home_probability": 0.1119,
+    "away_probability": 0.8881,
+    "captured_at": "2026-10-18T03:41:34.436354+00:00",
+    "spread": 1.5,
+    "over_under": 4.5,
+    "projected_home_score": 1.5,
+    "projected_away_score": 3.0
+   },
+   {
+    "bookmaker": "williamhill_us",
+    "home_moneyline": 650,
+    "away_moneyline": -1300,
+    "home_probability": 0.1256,
+    "away_probability": 0.8744,
+    "captured_at": "2026-10-18T03:43:17.287455+00:00",
+    "spread": null,
+    "over_under": null,
+    "projected_home_score": null,
+    "projected_away_score": null
+   }
+  ],
+  "hero_probability": 0.0,
+  "hero_probability_away": 1.0,
+  "hero_probability_source": "settled",
+  "hero_settled_result": "away",
+  "highlight": {
+   "score": 40,
+   "reasons": [
+    "tier_1",
+    "blowout",
+    "major_prob_swing",
+    "favorite_switched"
+   ],
+   "label": null,
+   "should_feature": true,
+   "flags": {
+    "is_live": false,
+    "is_close_matchup": false,
+    "is_blowout": true,
+    "favorite_switched": true,
+    "probability_swing": "major",
+    "score_swing": "minor",
+    "is_starting_soon": false,
+    "is_recently_finished": false,
+    "is_upset": false,
+    "league_tier": 1,
+    "is_volatile": false,
+    "has_lead_changes": false,
+    "has_recent_momentum": false
+   }
+  },
+  "opening_odds": {
+   "home_probability": 0.5782,
+   "away_probability": 0.4218,
+   "spread": -1.5,
+   "over_under": 5.5,
+   "favorite": "home"
+  },
+  "pregame_projection_unavailable": "format_unsupported"
+ }
+}

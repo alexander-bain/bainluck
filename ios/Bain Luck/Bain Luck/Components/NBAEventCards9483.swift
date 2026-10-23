@@ -95,9 +95,12 @@ struct NBALadderCardView9483: View {
 
     private func figure(_ label: String, value: Double) -> some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Wraps like its value at large sizes: "Pregame projection",
+            // never "Pregame proje…".
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Text(card.words(value) + (isMargin ? "" : " points"))
                 .font(.headline.monospacedDigit())
                 .fixedSize(horizontal: false, vertical: true)
@@ -138,7 +141,7 @@ struct NBALadderCardView9483: View {
         if let chance = point.chance {
             main = "\(point.label) · \(formatProbability(chance))"
         } else {
-            main = card.phase == .before ? "\(point.label) · No recent price" : point.label
+            main = card.phase == .before ? "\(point.label) · No recent probability update" : point.label
         }
         var parts: [String] = []
         if let result = point.result {

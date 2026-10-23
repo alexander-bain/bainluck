@@ -3,7 +3,8 @@
 THE SHIP: the World Series of Darts matches and the other named markets below stop
 being filed under baseball, golf and basketball. On their own pages, in search and
 on the accuracy page they sit under darts, esports, entertainment and politics,
-which is what they are.
+which is what they are. The Lakers' next-owner question (59165075) stays in
+basketball: it was on this list by mistake, and is now held OFF it (below).
 
 WHY THESE ROWS STAY WRONG WITHOUT A WRITE
 -----------------------------------------
@@ -47,7 +48,9 @@ THE POPULATION — pinned, not queried at run time
 ------------------------------------------------
 
 The 23 writes and one no-op named on #2169, measured 2026-08-24 by diffing the
-F3-fixed ``categorize_by_rules()`` against the stored value. A re-census at run
+F3-fixed ``categorize_by_rules()`` against the stored value — 22 of those writes
+stay in ``PINNED``; the 23rd was wrong and lives in ``REVERSED`` (next section),
+so every run still reads the same 24 ids. A re-census at run
 time would re-decide the population; ``\\bdarts?\\b`` alone also catches NFL QB
 Jaxson Dart and tennis player Harriet Dart, which queue 402 found and rejected.
 
@@ -56,6 +59,35 @@ already reads ``tech`` and 59520510 already reads ``politics`` (both repaired by
 the pipeline), so they skip as "already". 20 of the 21 are settled; 59165075 is
 open on Kalshi, whose upsert keeps the value once written.
 
+THE ROW THAT WAS WRONG — 59165075, applied then reversed
+--------------------------------------------------------
+
+``KXNBANEXTGOVERNOR-27JAN01LAL``, "Los Angeles L next governor before Jan 1,
+2027?" — the next owner ("governor") of the Lakers; its roster is Josh Kushner,
+Bob Iger, Mark Walter, Linda Rambis, Todd Boehly and "any other person (excluding
+Jeanie Buss)". It is basketball, and its stored ``basketball`` was right.
+
+How it got on the list: the 2026-08-24 diff ran the rules over the TITLE ALONE,
+and a bare "governor" with no other context answers ``politics``. The Kalshi
+ingest never asks that question that way: ``_categorize_kalshi_market`` reads the
+ticker first, and ``KXNBA…`` maps to ``basketball_nba``. The plan's gate repeated
+the title-only call, so it agreed with the mistake, and so did the C1 corpus.
+
+History, kept rather than erased: the attended apply ``run.3172`` (2026-10-18,
+plan ``190cf0e461b3a687``, 21 written) moved it basketball → politics with the
+other 20; the attended one-row inverse ``--restore --ids 59165075`` ``run.6083``
+(19:55:53Z, plan ``419f15edac6ddbba``, 1 written) moved it back. Its pair now sits
+in ``REVERSED``: no forward run ever plans it again, every run reads it and
+reports the value it holds, and ``--restore`` still accepts it, so the UNDO line
+``run.3172`` printed (all 21 ids) stays a valid command.
+
+And a gate, so the next row of this shape cannot get through the way this one
+did: a forward write whose own provider ticker names a sport other than its
+``after`` is skipped. A title-only answer never overrides league context the
+provider already gave. The gate reads the venue's ticker map
+(``sport_keys.get_sport_key_from_ticker``, the map the Kalshi ingest itself uses),
+not a city or team-name list, so a real governor's race keeps its politics answer.
+
 PER-ROW SKIPS (reported, never written)
 ---------------------------------------
 
@@ -63,6 +95,9 @@ PER-ROW SKIPS (reported, never written)
 * it already holds ``after`` — repaired already, by this or by the pipeline;
 * it holds neither ``before`` nor ``after`` — a writer this script does not know
   about has decided since the read, and that is not ours to overwrite;
+* the row's own provider ticker names a sport other than ``after`` — the venue
+  already said what league the row is in, and a title-only answer must not
+  overrule it (how 59165075 got onto the list);
 * the fixed classifier no longer answers ``after`` for the row's live name — the
   name moved since the plan, so the plan's evidence no longer covers the row.
 
@@ -74,20 +109,43 @@ REFUSALS (the whole run stops, nothing is written)
 * ``--apply`` whose ``--expect-plan-hash`` is not the hash of the writes decided in
   this run (the dry run prints it), so the attended apply writes exactly the plan
   the reviewer read and not one row more;
-* ``--restore`` without ``--ids``, or with an id that is not pinned;
+* ``--restore`` without ``--ids``, or with an id that is neither pinned nor reversed;
 * any statement that changes other than exactly one row — including a row whose
-  category OR name moved between the read and its write (the UPDATE re-states
-  both, the name null-safely, so the classifier's evidence still covers the row);
+  category, name, ``source`` OR ``external_id`` moved between the read and its
+  write (the UPDATE re-states all four, the last three null-safely, so both the
+  classifier's evidence and the provider gate's still cover the row);
 * the database stopping a statement: the run carries its own short lock and
   statement budgets, so a contended row refuses in seconds with the whole
   transaction rolled back, never a partial commit and never an unbounded wait.
 
+A COMMIT THAT DOES NOT RETURN IS NEITHER (exit 3)
+-------------------------------------------------
+
+The server can make the COMMIT durable and its acknowledgement still be lost
+(SQLSTATE 08006), so once an apply or restore COMMIT has been sent and not
+acknowledged, "nothing was written" is not knowable from the client, and a
+rollback issued afterwards proves nothing about it. The run then prints
+``"outcome": "UNKNOWN"`` with its mode, plan hash and the exact writes the
+transaction carried, and stops: no rollback claim, no retry, no reconnect-write,
+no restore. A cancel or interrupt that lands on the COMMIT prints the same report
+and keeps propagating as itself. The readback is a dry run: every id of an apply
+that landed reads ``already`` its ``after``; one that did not is a write again.
+
+``get_task_session`` COMMITs again on a normal exit, so the run leaves it by the
+exception path instead: the wrapper then rolls back, closes and disposes, which is
+cleanup on a dead connection and evidence of nothing. A failure in that cleanup
+is noted on stderr and changes neither the report, the exit 3, nor the type of a
+cancel or interrupt.
+
 DELIBERATELY NOT TOUCHED
 ------------------------
 
-* ``38277227`` "Asia Masters 2026 Winner" — snooker, filed ``golf``. Title-only
-  rules cannot tell it from the golf Masters; owed to F2 (#2163) or the LLM
-  fallback. Read and reported every run so the no-op is visibly honoured.
+* ``38277227`` "Asia Masters 2026 Winner" — recorded as snooker on 2026-08-24,
+  filed ``golf``. Title-only rules cannot tell it from the golf Masters; owed to
+  F2 (#2163) or the LLM fallback. Read and reported every run so the no-op is
+  visibly honoured. (2026-10-18: its served roster — Dplus, KT, NS Challengers, T1
+  Esports Academy — does not support "snooker" either; what it is needs the venue's
+  own word under #2163, not a rewrite here.)
 * ``canonical_market_key``, ``category_tags``, ``llm_league`` — F2's, or derived.
 * the 2,365 ITF rows tagged ``table_tennis`` and ``110568`` (T20 World Cup final,
   ``soccer``) — other writers, other issues.
@@ -110,9 +168,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import text  # noqa: E402
 
+from app.utils.sport_keys import (  # noqa: E402
+    SPORT_PREFIX_TO_LLM_CATEGORY,
+    get_sport_key_from_ticker,
+)
+
 PRODUCTION_APPS = frozenset({"bainluck", "bainluck-heavy"})
 
-#: market id → (``llm_sport_category`` before, after). The #2169 table, verbatim. The backup.
+#: market id → (``llm_sport_category`` before, after). The #2169 table, verbatim, less its
+#: wrong 23rd row (``REVERSED``). The backup.
 PINNED: dict[int, tuple[str, str]] = {
     59304735: ("baseball", "darts"),  # World Series of Darts: Jonny Clayton vs Ben Robb
     59304736: ("baseball", "darts"),  # World Series of Darts: Damon Heta vs Joe Comito
@@ -178,23 +242,53 @@ PINNED: dict[int, tuple[str, str]] = {
         "entertainment",
     ),  # Will "The Magic Faraway Tree" score at least 90 ...
     59520510: ("basketball", "politics"),  # Thunder Bay, ON Mayoral Election Winner
-    # A CONTROL in the F3 corpus, not an F3 specimen: rules already said politics
-    # before the fix and another writer stored basketball. In scope because the
-    # criterion is the row (stored value wrong, rules answer right), not the writer.
+}
+
+#: The #2169 table's 23rd row, which was WRONG: applied by ``run.3172``, reversed by
+#: ``run.6083`` (module docstring). Same ``(before, after)`` shape as ``PINNED`` so
+#: the record and ``--restore`` keep working; the forward plan never writes it. The
+#: stored ``basketball`` (``before``) is the truth — the Lakers' next owner.
+REVERSED: dict[int, tuple[str, str]] = {
     59165075: (
         "basketball",
         "politics",
-    ),  # Los Angeles L next governor before Jan 1, 2027?
+    ),  # Los Angeles L next governor before Jan 1, 2027? — KXNBANEXTGOVERNOR
 }
 
 #: The documented no-op: read and reported, never written.
 NO_OP: dict[int, str] = {
-    38277227: "golf",  # Asia Masters 2026 Winner — snooker, unreachable by title-only rules
+    38277227: "golf",  # Asia Masters 2026 Winner — recorded as snooker, UNVERIFIED; owed to #2163
 }
 
 
 class Refused(RuntimeError):
     """The run stops before any write."""
+
+
+class Unknown(RuntimeError):
+    """The COMMIT was sent and never acknowledged: its writes may or may not be durable."""
+
+    def __init__(self, report: dict):
+        super().__init__(report["unknown"])
+        self.report = report
+
+
+def _unknown_report(decided: dict, mode: str, written: int, exc: BaseException) -> dict:
+    orig = getattr(exc, "orig", None)
+    code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    return {
+        "outcome": "UNKNOWN",
+        "mode": mode,
+        "plan_hash": decided["plan_hash"],
+        "write": decided["write"],
+        "statements_changed": written,
+        "unknown": (
+            f"the {mode} COMMIT was sent and not acknowledged "
+            f"({type(orig or exc).__name__}, sqlstate {code}); these writes may or may "
+            "not be durable. Not retried, not restored — read the pinned rows back "
+            "with the dry run before any further step"
+        ),
+    }
 
 
 def refuse_unless_production(env: dict) -> None:
@@ -212,29 +306,48 @@ def plan_hash(writes: list[tuple[int, str, str]]) -> str:
     return hashlib.sha256(canon.encode()).hexdigest()[:16]
 
 
+def provider_category(source: str | None, external_id: str | None) -> str | None:
+    """The sport the row's own provider id names, or None when it names none.
+
+    Kalshi only: its tickers carry the league (``KXNBA…`` → ``basketball``), read
+    through the same ``sport_keys`` map ``_categorize_kalshi_market`` applies at
+    ingest before any name rule. Polymarket ids are opaque numbers or hashes and
+    name nothing, so they answer None and the title stays the only evidence.
+    """
+    if source != "kalshi" or not external_id:
+        return None
+    sport_key = get_sport_key_from_ticker(external_id)
+    if not sport_key:
+        return None
+    return SPORT_PREFIX_TO_LLM_CATEGORY.get(sport_key.split("_")[0])
+
+
 def plan(
-    rows: dict[int, tuple[str | None, str | None]],
+    rows: dict[int, tuple[str | None, str | None, str | None, str | None]],
     classify,
     *,
     restore_ids: frozenset[int] | None = None,
 ) -> dict:
     """Decide per pinned market, from what was read. Pure, so the unit file drives it.
 
-    ``rows`` maps each id that EXISTS to ``(llm_sport_category, name)``; a pinned id
-    absent from ``rows`` is a missing row. ``classify`` is ``categorize_by_rules``
-    (injected so the units can prove the gate bites). ``restore_ids`` set ⇒ undo
-    mode, over exactly those ids. Returns ``(id, from, to)`` writes, ``(id,
-    reason)`` skips, and the no-op row's observed value.
+    ``rows`` maps each id that EXISTS to ``(llm_sport_category, name, source,
+    external_id)``; a pinned id absent from ``rows`` is a missing row. ``classify``
+    is ``categorize_by_rules`` (injected so the units can prove the gate bites).
+    ``restore_ids`` set ⇒ undo mode, over exactly those ids (pinned or reversed).
+    Returns ``(id, from, to)`` writes, ``(id, reason)`` skips, and the observed
+    value of the no-op row and of the reversed row.
     """
     restore = restore_ids is not None
     write, skip = [], []
     ids = sorted(restore_ids) if restore else list(PINNED)
     for market_id in ids:
-        before, after = PINNED[market_id]
+        before, after = (
+            PINNED[market_id] if market_id in PINNED else REVERSED[market_id]
+        )
         if market_id not in rows:
             skip.append((market_id, "row missing"))
             continue
-        current, name = rows[market_id]
+        current, name, source_name, external_id = rows[market_id]
         source, target = (after, before) if restore else (before, after)
         if current == target:
             skip.append((market_id, f"already {target!r}"))
@@ -249,6 +362,17 @@ def plan(
             )
             continue
         if not restore:
+            league = provider_category(source_name, external_id)
+            if league is not None and league != after:
+                skip.append(
+                    (
+                        market_id,
+                        f"its provider id {external_id!r} names {league!r}, not "
+                        f"{after!r} — a title-only answer never overrides the league "
+                        "the venue gave",
+                    )
+                )
+                continue
             answer = classify(name or "")
             if answer != after:
                 skip.append(
@@ -264,37 +388,64 @@ def plan(
         market_id: (rows[market_id][0] if market_id in rows else None)
         for market_id in NO_OP
     }
-    return {"write": write, "skip": skip, "no_op": no_op, "plan_hash": plan_hash(write)}
+    reversed_ = {
+        market_id: (rows[market_id][0] if market_id in rows else None)
+        for market_id in REVERSED
+    }
+    return {
+        "write": write,
+        "skip": skip,
+        "no_op": no_op,
+        "reversed": reversed_,
+        "plan_hash": plan_hash(write),
+    }
 
 
-async def _read(session) -> dict[int, tuple[str | None, str | None]]:
+async def _read(
+    session,
+) -> dict[int, tuple[str | None, str | None, str | None, str | None]]:
     got = await session.execute(
         text(
-            "SELECT id, llm_sport_category, name FROM futures_markets "
-            "WHERE id = ANY(:ids)"
+            "SELECT id, llm_sport_category, name, source, external_id "
+            "FROM futures_markets WHERE id = ANY(:ids)"
         ),
-        {"ids": list(PINNED) + list(NO_OP)},
+        {"ids": list(PINNED) + list(REVERSED) + list(NO_OP)},
     )
-    return {int(r.id): (r.llm_sport_category, r.name) for r in got}
+    return {
+        int(r.id): (r.llm_sport_category, r.name, r.source, r.external_id) for r in got
+    }
 
 
 # The WHERE re-states EVERYTHING the plan decided on, so a writer landing between
 # the read and the write makes the statement change 0 rows and the run refuses
-# rather than overwriting it. Two halves:
+# rather than overwriting it. Three parts:
 #
 # * the category — the compare half of the compare-and-set. Plain `=` is enough:
 #   every pinned `before`/`after` is a non-null string, and NULL never equals one.
 # * the observed NAME — the classifier gate in ``plan()`` judged the name it read,
 #   so the write is only covered by that evidence while the name is unchanged. A
-#   rename of the open Kalshi row 59165075 between ``_read()`` and its UPDATE, with
-#   the category still ``basketball``, would otherwise land ``politics`` on a name
-#   nobody classified. Null-safe (`IS NOT DISTINCT FROM`) because ``name`` is the
-#   one compared value that can legitimately be NULL: a NULL name read must match
-#   a NULL name now, and a name set since must not.
+#   rename between ``_read()`` and its UPDATE, with the category still ``before``,
+#   would otherwise land ``after`` on a name nobody classified. Null-safe
+#   (`IS NOT DISTINCT FROM`), so a NULL name read must match a NULL name now, and a
+#   name set since must not.
+# * the observed PROVIDER IDENTITY — ``source`` and ``external_id``. The provider
+#   gate in ``plan()`` judged the ticker it read, so the write is only covered by
+#   that verdict while the identity is unchanged. An identity-only change between
+#   ``_read()`` and its UPDATE (``KXRT-PRA`` → a ``KXNBA…`` ticker, category and
+#   name intact) would otherwise land ``after`` on a row whose own provider now
+#   names another league — Root's witness on #2169. Nothing at the database
+#   boundary makes either column immutable (no migration adds a trigger on this
+#   table), so the CAS states them rather than assuming no writer moves them.
+#   Null-safe like the name: the model declares both NOT NULL, but ``plan()`` and
+#   ``provider_category()`` accept None, and a NULL read must match a NULL now.
+#   (``:source`` is the category the row moves FROM; the column ``source`` binds
+#   as ``:provider``.)
 _CAS_SQL = (
     "UPDATE futures_markets SET llm_sport_category = :target "
     "WHERE id = :id AND llm_sport_category = :source "
-    "AND name IS NOT DISTINCT FROM :name"
+    "AND name IS NOT DISTINCT FROM :name "
+    "AND source IS NOT DISTINCT FROM :provider "
+    "AND external_id IS NOT DISTINCT FROM :external_id"
 )
 
 #: The attended run's own budgets, per connection (``get_task_session`` kwargs, so
@@ -309,11 +460,11 @@ STATEMENT_TIMEOUT_MS = 10000
 
 def parse_ids(raw: str) -> frozenset[int]:
     ids = frozenset(int(x) for x in raw.split(",") if x.strip())
-    stray = sorted(ids - set(PINNED))
+    stray = sorted(ids - set(PINNED) - set(REVERSED))
     if not ids:
         raise Refused("--ids is empty")
     if stray:
-        raise Refused(f"--ids names ids that are not pinned: {stray}")
+        raise Refused(f"--ids names ids that are neither pinned nor reversed: {stray}")
     return ids
 
 
@@ -327,6 +478,7 @@ async def run(
 ) -> dict:
     rows = await _read(session)
     decided = plan(rows, classify, restore_ids=restore_ids)
+    mode = "restore" if restore_ids is not None else ("apply" if apply else "dry-run")
     if apply and expect_plan_hash != decided["plan_hash"]:
         raise Refused(
             f"plan hash is {decided['plan_hash']}, expected {expect_plan_hash!r} — "
@@ -342,22 +494,32 @@ async def run(
                     "source": source,
                     "target": target,
                     "name": rows[market_id][1],
+                    "provider": rows[market_id][2],
+                    "external_id": rows[market_id][3],
                 },
             )
             if result.rowcount != 1:
                 raise Refused(
                     f"market {market_id}: expected to change 1 row, changed "
-                    f"{result.rowcount} — its category or name moved since the read"
+                    f"{result.rowcount} — its category, name or provider identity moved "
+                    "since the read"
                 )
             written += 1
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception as exc:
+            raise Unknown(_unknown_report(decided, mode, written, exc)) from exc
+        except BaseException as exc:
+            # A cancel or interrupt landing on the COMMIT is just as unknowable. It
+            # keeps its own type and propagates; the report rides it to main().
+            exc.commit_unknown = _unknown_report(decided, mode, written, exc)
+            raise
     return {
-        "mode": (
-            "restore" if restore_ids is not None else ("apply" if apply else "dry-run")
-        ),
+        "mode": mode,
         "write": decided["write"],
         "skip": decided["skip"],
         "no_op": decided["no_op"],
+        "reversed": decided["reversed"],
         "plan_hash": decided["plan_hash"],
         "written": written,
     }
@@ -392,35 +554,81 @@ async def main() -> int:
     from app.tasks.base import get_task_session
     from app.utils.futures_categorization import categorize_by_rules
 
-    async with get_task_session(
-        statement_timeout_ms=STATEMENT_TIMEOUT_MS, lock_timeout_ms=LOCK_TIMEOUT_MS
-    ) as session:
-        try:
-            out = await run(
-                session,
-                categorize_by_rules,
-                apply=args.apply,
-                expect_plan_hash=args.expect_plan_hash,
-                restore_ids=restore_ids,
-            )
-        except Refused as exc:
-            await session.rollback()
-            print(f"REFUSED: {exc}")
-            return 2
-        except DBAPIError as exc:
-            # A budget firing (lock_timeout 55P03, statement_timeout 57014) or any
-            # other server refusal: the transaction rolls back whole, so no row of
-            # the plan is committed, and the run says so rather than tracebacking.
-            await session.rollback()
-            code = getattr(exc.orig, "sqlstate", None) or getattr(
-                exc.orig, "pgcode", None
-            )
+    readback = (
+        f"heroku run:detached -a {os.environ['HEROKU_APP_NAME']} -- "
+        "python3 scripts/repair_2169_misfiled_sport_category.py"
+    )
+    # After an unacknowledged COMMIT the session must leave ``get_task_session``
+    # ABNORMALLY. A ``return`` inside the ``async with`` is a normal exit, and the
+    # wrapper's normal exit runs ``await session.commit()`` again — a second COMMIT
+    # after the one nobody heard back from. So the UNKNOWN report is printed and
+    # the exception that carried it is re-raised out of the block; the wrapper's
+    # exception path (rollback, close, dispose) is cleanup on a dead connection and
+    # says nothing about the COMMIT. If that cleanup fails too, its failure must not
+    # turn exit 3 into a traceback, nor a cancel into some other exception.
+    unknown: dict | None = None
+    carried: BaseException | None = None
+    try:
+        async with get_task_session(
+            statement_timeout_ms=STATEMENT_TIMEOUT_MS, lock_timeout_ms=LOCK_TIMEOUT_MS
+        ) as session:
+            try:
+                out = await run(
+                    session,
+                    categorize_by_rules,
+                    apply=args.apply,
+                    expect_plan_hash=args.expect_plan_hash,
+                    restore_ids=restore_ids,
+                )
+            except Refused as exc:
+                await session.rollback()
+                print(f"REFUSED: {exc}")
+                return 2
+            except DBAPIError as exc:
+                # A budget firing (lock_timeout 55P03, statement_timeout 57014) or
+                # any other server refusal BEFORE the COMMIT was sent (``run`` turns
+                # a failure at the COMMIT into ``Unknown``): the transaction rolls
+                # back whole, so no row of the plan is committed, and the run says so.
+                await session.rollback()
+                code = getattr(exc.orig, "sqlstate", None) or getattr(
+                    exc.orig, "pgcode", None
+                )
+                print(
+                    f"REFUSED: the database stopped the run ({type(exc.orig).__name__}, "
+                    f"sqlstate {code}); rolled back, nothing committed — re-run the dry "
+                    "run when production is quieter"
+                )
+                return 2
+            except BaseException as exc:
+                # ``Unknown`` (a failure at the COMMIT), or a cancel/interrupt that
+                # landed on it and carries the same report. Anything else is not ours.
+                report = (
+                    exc.report
+                    if isinstance(exc, Unknown)
+                    else getattr(exc, "commit_unknown", None)
+                )
+                if report is not None:
+                    unknown, carried = dict(report, readback=readback), exc
+                    print(json.dumps(unknown, indent=2))
+                raise
+    except BaseException as exc:
+        if unknown is None:
+            raise
+        if exc is not carried:
             print(
-                f"REFUSED: the database stopped the run ({type(exc.orig).__name__}, "
-                f"sqlstate {code}); rolled back, nothing committed — re-run the dry "
-                "run when production is quieter"
+                f"note: the session's cleanup after the UNKNOWN report raised "
+                f"{type(exc).__name__}; it proves nothing about the COMMIT above",
+                file=sys.stderr,
             )
-            return 2
+        if isinstance(carried, Unknown):
+            if not isinstance(exc, Exception):
+                raise  # an interrupt during the cleanup keeps propagating as itself
+            return 3
+        if exc is carried:
+            raise
+        # A cancel or interrupt on the COMMIT keeps its own type even when the
+        # cleanup raised something else on the way out.
+        raise carried
     print(json.dumps(out, indent=2))
     if out["mode"] == "apply" and out["written"]:
         ids = ",".join(str(i) for i, _, _ in out["write"])

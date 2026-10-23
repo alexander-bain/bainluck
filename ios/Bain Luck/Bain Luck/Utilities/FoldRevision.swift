@@ -78,6 +78,13 @@ extension FoldRevision {
         return higher ? .newer : lower ? .older : .same
     }
 
+    /// #10090 — whether this revision is at or past `floor` on EVERY row the
+    /// floor names. A row this revision does not carry is not covered: a
+    /// missing row is never read as "past it".
+    nonisolated func covers(_ floor: FoldRevision) -> Bool {
+        floor.rows.allSatisfy { row, revision in rows[row].map { $0 >= revision } ?? false }
+    }
+
     /// A pushed frame speaks for ONE row's write. It orders against a held blend
     /// only when that blend was folded from that one row: a folded hero
     /// (canonical + duplicates) is a value the frame's raw-row `p` never

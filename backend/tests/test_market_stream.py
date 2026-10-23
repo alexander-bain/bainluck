@@ -408,11 +408,17 @@ async def test_market_and_event_streams_share_one_real_pubsub_socket(
 ):
     from app.routes import event_stream
     from app.tasks import redis_state
+    from tests._event_stream_legacy_view import install_legacy_view
     from tests.test_sse_shares_one_pubsub_connection_6515 import (
         _TinyPubSubServer,
         _live_frame,
         _until,
     )
+
+    # #10090: the event-stream half predates its owned coverage read and
+    # asserts chunk position, so reconcile controls are dropped too; see
+    # tests/_event_stream_legacy_view.py.
+    install_legacy_view(monkeypatch, drop_reconcile=True)
 
     server = _TinyPubSubServer()
     monkeypatch.setattr(

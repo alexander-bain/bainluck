@@ -8,7 +8,7 @@ import type {
 import { useMarketStream } from './useMarketStream';
 import {
   createFuturesDetailReconciler, createFuturesReadScheduler,
-  futuresDetailSettled, reconcileFuturesHistory,
+  futuresDetailSettled, historyAnswersRequest, reconcileFuturesHistory, stampHistoryRequest,
 } from '@/lib/futuresDetailStream';
 import type { HistoryRangeRequest } from '@/lib/historyRange';
 
@@ -50,20 +50,21 @@ export function useFuturesDetailStream(options: {
   }, [ready, options.market]);
 
   // Chart history has its own SWR key and can advance independently of detail.
+  // #11186: `keepPreviousData` hands us the previous rung's body while the next
+  // loads, so a parent must answer the requested RANGE too, not just the hours.
   useEffect(() => {
     const parent = options.history;
-    if (!ready || parent?.market_id !== options.marketId || parent.hours !== options.historyHours) return;
+    if (!ready || !historyAnswersRequest(parent, options.marketId, options.historyHours, options.historyRange)) return;
     if (historyParent.current !== parent) history.current = reconcileFuturesHistory(history.current, parent, reconciler.current?.current());
     historyParent.current = parent;
-  }, [ready, options.history, options.marketId, options.historyHours]);
+  }, [ready, options.history, options.marketId, options.historyHours, options.historyRange]);
 
   useEffect(() => {
     if (!ready || !callbacks.current.market) return;
     const initial = callbacks.current.market;
     if (reconciler.current?.current().id !== initial.id) reconciler.current = createFuturesDetailReconciler(initial);
-    history.current = callbacks.current.history?.market_id === initial.id && callbacks.current.history.hours === options.historyHours
-      ? callbacks.current.history : undefined;
     const marketId = options.marketId, hours = options.historyHours, range = options.historyRange;
+    history.current = historyAnswersRequest(callbacks.current.history, initial.id, hours, range) ? callbacks.current.history : undefined;
     const worker = createFuturesReadScheduler({
       now: () => Date.now(),
       read: async (signal, current) => {
@@ -87,8 +88,9 @@ export function useFuturesDetailStream(options: {
           // while the headline itself never waits for history to download.
           await detailRead.catch(() => undefined);
           if (!current() || callbacks.current.marketId !== marketId || callbacks.current.historyHours !== hours || callbacks.current.historyRange !== range || next.market_id !== marketId || next.hours !== hours) return;
+          stampHistoryRequest(next, range);
           const parent = callbacks.current.history;
-          if (parent?.market_id === marketId && parent.hours === hours && historyParent.current !== parent) {
+          if (historyAnswersRequest(parent, marketId, hours, range) && historyParent.current !== parent) {
             history.current = reconcileFuturesHistory(history.current, parent, reconciler.current?.current());
             historyParent.current = parent;
           }
@@ -99,7 +101,7 @@ export function useFuturesDetailStream(options: {
           // whole body and metadata instead of mutating its key with stale data.
           if (held && accepted.outcomes.length > 0 && accepted.outcomes.length === held.outcomes.length &&
             accepted.outcomes.every(row => heldRows.has(row))) return;
-          history.current = accepted;
+          history.current = stampHistoryRequest(accepted, range);
           await callbacks.current.setHistory(accepted);
         });
         const results = await Promise.allSettled([detailRead, historyRead]);

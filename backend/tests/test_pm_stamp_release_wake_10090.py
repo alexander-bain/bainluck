@@ -31,10 +31,11 @@ import pytest
 
 from app.tasks import live_blend_refresh as blend
 from app.tasks import polymarket_ws as pm
-from tests.test_pm_same_flush_fresh_admission_10090 import paired
+from tests.test_pm_same_flush_fresh_admission_10090 import paired, cadence_redis  # noqa: F401
+from tests.test_event_frame_batching_10659 import private_redis_socket  # noqa: F401
 from tests.test_single_event_commit_10090 import settle_until
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("cadence_redis")]
 
 #: A wake-driven publication or withdrawal lands within this of its trigger.
 #: Measured ~6-10 ms here; before this change the same paths waited 193-213 ms

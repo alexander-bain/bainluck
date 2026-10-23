@@ -1307,7 +1307,10 @@ async def _run_livescores(
     sync_session.add(sport)
     sync_session.flush()
     ids = []
-    for home, away, clock, period, scores in events:
+    # An optional sixth element seeds the row's score stamp as
+    # `(score_source, score_observed_at)` (#6056, 2026-10-21: the unplaced-feed
+    # rule reads it). Five-element rows carry none, as before.
+    for home, away, clock, period, scores, *stamp in events:
         row = Event(
             sport_id=sport.id,
             home_team_name=home,
@@ -1319,6 +1322,8 @@ async def _run_livescores(
             home_score=scores[0],
             away_score=scores[1],
         )
+        if stamp:
+            row.score_source, row.score_observed_at = stamp[0]
         sync_session.add(row)
         sync_session.flush()
         ids.append(row.id)
@@ -1874,7 +1879,8 @@ async def _run_schedules(
     sync_session.add(sport)
     sync_session.flush()
     ids = []
-    for home, away, clock, period, scores, fixture_id in events:
+    # Optional seventh element: the score stamp, as in `_run_livescores`.
+    for home, away, clock, period, scores, fixture_id, *stamp in events:
         row = Event(
             sport_id=sport.id,
             home_team_name=home,
@@ -1889,6 +1895,8 @@ async def _run_schedules(
             home_team_id=1,
             away_team_id=2,
         )
+        if stamp:
+            row.score_source, row.score_observed_at = stamp[0]
         sync_session.add(row)
         sync_session.flush()
         ids.append(row.id)

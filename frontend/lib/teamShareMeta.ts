@@ -55,7 +55,7 @@ import { accentFor, type UnfurlCardProps } from "@/components/og/UnfurlCard";
 import type { ChampionshipPathEntry, TeamFutureItem, TeamPageTeam } from "@/lib/api";
 import { withSiteSuffix } from "@/lib/eventShareMeta";
 import { formatShareProbability } from "@/lib/share";
-import { teamHeadline } from "@/lib/teamHeadline";
+import { decidedHeadlineSentence, teamHeadline } from "@/lib/teamHeadline";
 import { teamLeagueLabel } from "@/lib/teamLeagueLabel";
 import { resolveTeamForRoute } from "@/lib/teamRouteResolve";
 import { describeTeamRoute } from "@/lib/teamRouteSport";
@@ -276,13 +276,19 @@ export function buildTeamShareCopy(
   const probability = headline
     ? formatShareProbability(headline.probability)
     : null;
+  // #11493: a decided question is stated as its result, never as the price an
+  // eliminated leg still trades at (`<1% to win the championship`).
+  const lead = headline?.state
+    ? decidedHeadlineSentence(headline.label, headline.state)
+    : headline && probability
+      ? `${probability} to win the ${headline.label.toLowerCase()}`
+      : null;
 
   return {
     title: `${team.name} ${league} Odds & Probabilities — Bain Luck`,
-    description:
-      headline && probability
-        ? `${team.name}: ${probability} to win the ${headline.label.toLowerCase()}. Live win probabilities, upcoming ${league} schedule, and season futures.`
-        : `${team.name} win probabilities, upcoming ${league} schedule, and season futures.`,
+    description: lead
+      ? `${team.name}: ${lead.charAt(0).toLowerCase()}${lead.slice(1)}. Live win probabilities, upcoming ${league} schedule, and season futures.`
+      : `${team.name} win probabilities, upcoming ${league} schedule, and season futures.`,
     socialTitle: `${team.name} — ${league} — Bain Luck`,
   };
 }
@@ -427,6 +433,20 @@ export function teamCardCopy(
   const probability = headline
     ? formatShareProbability(headline.probability)
     : null;
+
+  // #11493: a decided headline takes the card's verdict slot — the one
+  // `UnfurlCard` keeps for "a settled result" — so the picture says the club is
+  // out rather than drawing a 3% bar beside `<1%`.
+  if (headline?.state) {
+    return {
+      eyebrow: teamLeagueLabel(team, routeLeague),
+      title: team.name,
+      subtitle: teamSeasonLine(team),
+      rows: [],
+      verdict: decidedHeadlineSentence(headline.label, headline.state),
+      accent: readableAccent(team.primary_color, sportAccent),
+    };
+  }
 
   return {
     eyebrow: teamLeagueLabel(team, routeLeague),

@@ -136,6 +136,94 @@ nonisolated struct CurrentOdds: Decodable, Sendable {
     // against 0.6117–0.626). Removed from the payload and from here. An optional
     // field's removal is safe in both directions for a Decodable, so an older
     // build still decodes a payload that carries it and this build ignores it.
+    /// #2920 — the producer's one marked in-play pair, decoded from
+    /// `current_odds.live_projection` (`backend/app/utils/card_projected_pair.py`
+    /// `_live_projection`). Served the same way on detail, search, feed and
+    /// leagues, so the card and the page it opens read one object. See
+    /// `LiveProjection`; decoded here, admitted nowhere — what a live surface
+    /// may print from it is the reader's rule, not the decoder's.
+    ///
+    /// Three states, and they must stay three: no key or `null` is nil (the
+    /// object was withheld, or the server predates it); a present object of
+    /// any shape is non-nil, with each field it could not read as nil. Web's
+    /// reader keys on presence (`live_projection != null` stops the bare pair),
+    /// so a malformed object must not collapse into "absent".
+    ///
+    /// `var` with a default only so the memberwise initializer keeps every
+    /// existing call shape; the synthesized decoder still reads the key.
+    var liveProjection: LiveProjection? = nil
+}
+
+/// `current_odds.live_projection`, field for field (#2920). The marked
+/// in-play projected final: the mean pair over the sportsbooks whose own
+/// spread-and-total solve to it, served only on a game served `live`.
+///
+/// Every field optional and decoding NEVER throws, as `PregameProjection`:
+/// a malformed or partial object reads as fields the reader refuses, so one
+/// odd object can never drop its `CurrentOdds` or the event around it. The
+/// labels stay raw strings so an unexpected value reaches the reader to be
+/// refused rather than vanishing in decode. Times are the server's ISO-8601
+/// strings, unparsed; the count is a `Double` so a fractional count can be
+/// refused rather than failing the decode.
+///
+/// Two clocks, never one: `earliestConfirmedAt` is the OLDEST time a
+/// contributing quote was last confirmed (`valid_until`, else `captured_at`)
+/// and is never before `boundaryAt`; `latestCapturedAt` is the NEWEST time a
+/// contributing quote first appeared, and may precede the boundary (a quote
+/// made before kickoff and still live after it). Neither stands in for the
+/// other. `boundaryAt` is the scheduled start the object was measured from
+/// (`boundary` == `commence_time`), not an observed kickoff.
+nonisolated struct LiveProjection: Decodable, Sendable, Equatable {
+    let projectedHomeScore: Double?
+    let projectedAwayScore: Double?
+    /// `in_play`.
+    let kind: String?
+    /// `commence_time`.
+    let boundary: String?
+    let boundaryAt: String?
+    let earliestConfirmedAt: String?
+    let latestCapturedAt: String?
+    /// `sportsbooks`.
+    let source: String?
+    /// `consensus_spread_total`.
+    let basis: String?
+    let bookmakerCount: Double?
+    /// `points` or `goals`.
+    let unit: String?
+    /// `full_game` or `regulation` (soccer's 90 minutes).
+    let period: String?
+
+    /// Matched after `.convertFromSnakeCase`, which every app decoder uses.
+    enum CodingKeys: String, CodingKey {
+        case projectedHomeScore, projectedAwayScore, kind, boundary, boundaryAt
+        case earliestConfirmedAt, latestCapturedAt, source, basis, bookmakerCount
+        case unit, period
+    }
+}
+
+extension LiveProjection {
+    /// In an extension so the memberwise initializer survives.
+    nonisolated init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        func field<T: Decodable>(_ type: T.Type, _ key: CodingKeys) -> T? {
+            guard let c else { return nil }
+            return try? c.decodeIfPresent(type, forKey: key)
+        }
+        self.init(
+            projectedHomeScore: field(Double.self, .projectedHomeScore),
+            projectedAwayScore: field(Double.self, .projectedAwayScore),
+            kind: field(String.self, .kind),
+            boundary: field(String.self, .boundary),
+            boundaryAt: field(String.self, .boundaryAt),
+            earliestConfirmedAt: field(String.self, .earliestConfirmedAt),
+            latestCapturedAt: field(String.self, .latestCapturedAt),
+            source: field(String.self, .source),
+            basis: field(String.self, .basis),
+            bookmakerCount: field(Double.self, .bookmakerCount),
+            unit: field(String.self, .unit),
+            period: field(String.self, .period)
+        )
+    }
 }
 
 /// Opening market probabilities and favorite metadata for an event.

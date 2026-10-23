@@ -3,6 +3,8 @@
 import Link from "next/link";
 import type { ChampionshipPathEntry } from "@/lib/api";
 import { pathSeason } from "@/lib/teamSeason";
+import { decidedHeadlineText } from "@/lib/teamHeadline";
+import { decidedState } from "@/lib/teamSeasonJourney";
 import { teamTextColor } from "@/lib/teamColors";
 import {
   formatMovementPoints,
@@ -55,9 +57,24 @@ function Step({
   // `0.001` for their division, Boston and Toronto at `0.003`. To a reader `0%`
   // does not read as "unlikely", it reads as "cannot happen", and we printed it
   // on a link to the very market pricing it as possible.
-  const pct = entry.probability !== null ? Math.round(entry.probability * 100) : null;
-  const printed =
-    entry.probability !== null ? formatProbabilityPercent(entry.probability) : null;
+  //
+  // #11493: a step the championship grid has decided prints its verdict, never
+  // its price — the eliminated club's leg trades at 0.001 until graded, and
+  // `<1%` there contradicted the grid row one tap away. Its bar is empty when
+  // out and full when won, and it carries no movement: a verdict does not move.
+  const state = decidedState(entry.state);
+  const pct = state
+    ? state === "won"
+      ? 100
+      : 0
+    : entry.probability !== null
+      ? Math.round(entry.probability * 100)
+      : null;
+  const printed = state
+    ? decidedHeadlineText(state)
+    : entry.probability !== null
+      ? formatProbabilityPercent(entry.probability)
+      : null;
   return (
     <Link
       href={`/futures/${entry.market_id}`}
@@ -68,15 +85,17 @@ function Step({
       </span>
       <div className="flex items-baseline gap-1.5">
         <span
-          className="font-mono font-bold text-2xl leading-none tabular-nums"
-          style={{ color: teamTextColor(color) || undefined }}
+          className={`${state ? "" : "font-mono "}font-bold text-2xl leading-none tabular-nums${
+            state === "eliminated" ? " text-text-muted" : ""
+          }`}
+          style={state === "eliminated" ? undefined : { color: teamTextColor(color) || undefined }}
         >
           {printed ?? "—"}
         </span>
         {/* UX-P275: `!== 0` admitted a move that rounds to nothing, so a rounding
             residue produced a coloured "+0.0". `isRenderedMove` gates on the
             printed string instead. */}
-        {isRenderedMove(entry.movement) && (
+        {!state && isRenderedMove(entry.movement) && (
           <span
             className={`text-[11px] font-mono ${
               entry.movement! > 0 ? "text-accent-live" : "text-accent-danger"

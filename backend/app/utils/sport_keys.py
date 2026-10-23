@@ -2040,6 +2040,12 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxesports": "esports",
     "kxlolworlds": "esports",
     "kxcs2major": "esports",
+    # Legacy Valorant stem from the April 2026 catalog import (b348c7f4a2); every
+    # Valorant series we can name is `kxvalorant*` and registered on its own.
+    # Kept rather than deleted because which venue series still reach esports
+    # ONLY through it is unmeasured, and deleting a stem drops those to the name
+    # rules (#7042's reason for keeping `kxpga`). Non-esports series it claims
+    # are carved out in KALSHI_TICKER_PREFIXES_NOT_A_SPORT (#11234).
     "kxval": "esports",
     "kxdota2ti": "esports",
     # Cricket
@@ -2107,12 +2113,21 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
 # `kxwta` claimed KXWTAX "Wealth tax" (`Politics`). The other non-`Sports`
 # hits (announcer *MENTION, NBA 2K cover, MLB CBA/strike, ticket prices) are
 # genuinely about the sport and stay claimed.
+#
+# #11234 added two Spanish municipal-election series claimed by the esports
+# stem `kxval`: KXVALLADOLIDCOUNCIL and KXVALENCIACOUNCIL ("Valladolid / Valencia
+# municipal election winner?"). Both were served under "More Esports" on a
+# Valorant market's page, ids taken from the served `group_id`s
+# (`kalshi:KXVALLADOLIDCOUNCIL-27MAY23`). The stem itself stays (see its line in
+# the futures map); naming the two series is the narrow form, same as #8497.
 KALSHI_TICKER_PREFIXES_NOT_A_SPORT: frozenset[str] = frozenset(
     {
         "kxpgaawards",
         "kxcodeai",
         "kxcodingmodel",
         "kxwtax",
+        "kxvalladolidcouncil",
+        "kxvalenciacouncil",
     }
 )
 

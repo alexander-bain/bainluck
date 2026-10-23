@@ -100,7 +100,8 @@ class _KalshiCallbackDispatch:
         except Exception:
             logger.exception("%s handler error", label)
 
-    async def submit(self, callback, payload, label, *, lifecycle=False, prepare=None):
+    async def submit(self, callback, payload, label, *, lifecycle=False, prepare=None,
+                     discard_if_delayed=False):
         # Callbacks without the explicit preparation contract retain their
         # original synchronous ordering. Defer only opted-in, prepared work.
         if lifecycle and prepare is None:
@@ -114,11 +115,15 @@ class _KalshiCallbackDispatch:
         )
         parts = ticker.upper().rsplit("-", 1) if isinstance(ticker, str) else []
         if len(parts) != 2 or not all(parts):
+            if discard_if_delayed:
+                return
             await self.drain()
             await self._call(callback, payload, label, prepare)
             return
         key = parts[0]
         previous = self._tails.get(key)
+        if discard_if_delayed and (previous is not None or self._closing):
+            return  # optional observations never wait behind settlement work
         if not lifecycle and previous is None:
             await self._call(callback, payload, label)
             return
@@ -225,6 +230,7 @@ class KalshiWebSocket:
         self._reconnect_count = 0
 
         self.on_ticker: Optional[Callable] = None
+        self.on_book_observation: Optional[Callable] = None
         self.on_lifecycle: Optional[Callable] = None
         self.on_lifecycle_prepare: Optional[Callable] = None
         self.on_trade: Optional[Callable] = None
@@ -255,8 +261,80 @@ class KalshiWebSocket:
         # Genuine last-trade price per ticker from this connection's ticker
         # frames, carried on book quotes for the wide-book price policy.
         self._last_trade: dict[str, str] = {}
+        self._primary_generation = object()
+        self._primary_serial = 0
+        self._primary_inputs = {}
         self._book_quotes = 0
         self._book_resnapshots = 0
+
+    def _current_book_quote(self, ticker):
+        """Current acknowledged session evidence shared by both proof types."""
+        if (
+            self._retiring or self._socket is None or not self.is_subscribed
+            or ticker not in self.book_tickers or ticker not in self._book_requested
+            or self._book is None or self._book_sid is None
+            or self._book_pending is not None
+            or self._book._owners.get(ticker) != self._book_sid
+            or ticker in self._book._awaiting
+        ):
+            return None
+        seed = {"market_ticker": ticker}
+        quote = self._book.overlay_ticker(seed)
+        if quote is seed:
+            return None
+        return quote
+
+    def current_book_midpoint(self, ticker):
+        """#10090: live sequenced-book evidence, never an observation clock."""
+        from decimal import Decimal, InvalidOperation
+        quote = self._current_book_quote(ticker)
+        if quote is None:
+            return None
+        try:
+            bid = Decimal(quote["yes_bid_dollars"])
+            ask = Decimal(quote["yes_ask_dollars"])
+            if (bid.is_finite() and ask.is_finite()
+                    and 0 < bid <= ask < 1 and ask - bid < Decimal("0.50")):
+                return (bid + ask) / 2
+        except (KeyError, TypeError, ValueError, InvalidOperation):
+            pass
+        return None
+
+    def current_book_primary_price(self, ticker):
+        """Primary-only proof; an ask/trade fallback never proves a midpoint.
+
+        The healthy current ask independently supports the same longshot cap
+        already selected by normal price policy. A cached trade away from that
+        ask is not current-price evidence and remains refused. No new clock.
+        """
+        from decimal import Decimal, InvalidOperation
+        from app.tasks.kalshi import _kalshi_yes_probability
+        from app.utils.kalshi_empty_book import ASK_ONLY_TRUSTED_MAX
+        midpoint = self.current_book_midpoint(ticker)
+        if midpoint is not None:
+            return midpoint
+        quote = self._current_book_quote(ticker)
+        if quote is None:
+            return None
+        try:
+            bid = (None if quote["yes_bid_dollars"] is None else
+                   Decimal(quote["yes_bid_dollars"]))
+            ask = Decimal(quote["yes_ask_dollars"])
+            last = self._last_trade.get(ticker)
+            trade = None if last is None else Decimal(last)
+            if (not ask.is_finite() or not 0 < ask <= Decimal(str(ASK_ONLY_TRUSTED_MAX))
+                    or (bid is not None and (not bid.is_finite() or bid != 0))
+                    or (trade is not None and not trade.is_finite())):
+                return None
+            # Preserve missing versus numeric-zero bid exactly as overlay_ticker
+            # does. In particular, an empty side without a trade still skips.
+            selected = _kalshi_yes_probability(
+                None if bid is None else float(bid), float(ask),
+                None if trade is None else float(trade),
+            )
+            return ask if selected is not None and Decimal(str(selected)) == ask else None
+        except (KeyError, TypeError, ValueError, InvalidOperation):
+            return None
 
     def _reset_subscription(self):
         self._subscribe_pending = {}
@@ -269,6 +347,8 @@ class KalshiWebSocket:
         self._book_requested = frozenset()
         self._book_commands = {}
         self._last_trade = {}
+        self._primary_generation = object()
+        self._primary_inputs = {}
 
     def _note_subscription_response(self, msg_type, data) -> None:
         """#10090 — record Kalshi's answer to one of this connection's
@@ -557,6 +637,8 @@ class KalshiWebSocket:
         added, removed = desired - requested, requested - desired
         self._book_requested = desired
         if removed:
+            for ticker in removed:
+                self._primary_inputs.pop(ticker, None)
             self._book.forget(removed)
             self._last_trade = {
                 t: p for t, p in self._last_trade.items() if t not in removed
@@ -572,12 +654,29 @@ class KalshiWebSocket:
         through the ordered price callback, before any ticker summary."""
         if self._book is None:
             return
-        quote = self._book.apply(data)
-        if data.get("type") == "orderbook_snapshot":
-            self._book_commands.pop(data.get("id"), None)
         payload = data.get("msg")
         ticker = payload.get("market_ticker") if isinstance(payload, dict) else None
         ticker = ticker.upper() if isinstance(ticker, str) else ""
+        sid, seq = data.get("sid"), data.get("seq")
+        previous = self._book._sequences.get(sid) if type(sid) is int else None
+        sequence_gap = (
+            type(sid) is int and sid >= 0 and type(seq) is int and seq >= 0
+            and previous is not None and seq > previous + 1
+        )
+        quote = self._book.apply(data, observe_unchanged=self.on_book_observation is not None)
+        # Normal frames inspect only their ticker. A real SID gap invalidates
+        # its affected books; do wider work only then, never for the full slate
+        # on every delta. Include this ticker even if this very frame rebuilt
+        # its snapshot and removed it from _awaiting.
+        if sequence_gap:
+            for invalidated in self._book._awaiting:
+                self._primary_inputs.pop(invalidated, None)
+        if (sequence_gap or ticker in self._book._awaiting
+                or ticker not in self._book._owners
+                or ticker not in self.book_tickers):
+            self._primary_inputs.pop(ticker, None)
+        if data.get("type") == "orderbook_snapshot":
+            self._book_commands.pop(data.get("id"), None)
         if ticker not in self.book_tickers:
             # Still consume the SID sequence: later wanted deltas share it.
             # A queued snapshot after removal must not recreate an overlay.
@@ -589,11 +688,19 @@ class KalshiWebSocket:
                 self.exact_trace.derived(data, quote, "ORDERBOOK_DERIVED")
             except Exception:
                 pass
+        if quote is not None and quote.pop("_observation_only", False):
+            if self.on_book_observation is not None:
+                # No last trade or primary-input identity is minted, and the
+                # ordinary price callback/write path never sees this packet.
+                await dispatch.submit(self.on_book_observation, quote, "Book observation",
+                                      discard_if_delayed=True)
+            return
         if quote is None or not self.on_ticker:
             return
         last = self._last_trade.get(quote["market_ticker"])
         if last is not None:
             quote["price_dollars"] = last  # the genuine last trade, never local
+        quote = self._with_primary_identity(quote)
         self._book_quotes += 1
         await dispatch.submit(self.on_ticker, quote, "Ticker")
 
@@ -603,7 +710,73 @@ class KalshiWebSocket:
         ticker = (payload.get("market_ticker") or "").upper()
         if payload.get("price_dollars") is not None:
             self._last_trade[ticker] = payload["price_dollars"]
-        return self._book.overlay_ticker(payload)
+        delivered = self._book.overlay_ticker(payload)
+        return self._with_primary_identity(delivered, original_ticker=True)
+
+    @staticmethod
+    def _primary_policy_price(payload):
+        import math
+        from app.tasks.kalshi import _kalshi_yes_probability
+        try:
+            fields = [None if payload.get(key) in (None, "") else float(payload[key])
+                      for key in ("yes_bid_dollars", "yes_ask_dollars", "price_dollars")]
+            if any(v is not None and not math.isfinite(v) for v in fields):
+                return None
+            value = _kalshi_yes_probability(*fields)
+            return value if value is not None and 0 < value < 1 else None
+        except (TypeError, ValueError):
+            return None
+
+    def current_primary_input(self, ticker):
+        quote = self._current_book_quote(ticker)
+        entry = self._primary_inputs.get(ticker)
+        if quote is None or entry is None:
+            return None
+        # A changed live book may refute the accepted quote. The unchanged
+        # policy decides again at proof time; no execution clock is inferred.
+        quote = {**quote, "price_dollars": self._last_trade.get(ticker)}
+        return entry if self._primary_policy_price(quote) == entry[1] else None
+
+    def _with_primary_identity(self, quote, *, original_ticker=False):
+        # This is accepted QUOTE evidence, not execution order or a trade clock.
+        # A genuine book callback may select a cached original trade under the
+        # ordinary policy. Bind that changed selection to its own observation;
+        # never wait for an unrelated new ticker to establish the same price.
+        # Keep the callback object: ExactKalshiTrace keys its receipt by id.
+        result = quote
+        result.pop("_primary_quote_identity", None)
+        result.pop("_primary_quote_probability", None)
+        ticker = quote.get("market_ticker")
+        value = self._primary_policy_price(quote)
+        current = self._current_book_quote(ticker)
+        # Only the bundled Challenger branch consumes this fallback. Other
+        # markets and independently proved midpoint/ask inputs retain ordinary
+        # SQL observation cadence instead of forcing writes for new identities.
+        supported = (isinstance(ticker, str)
+                     and ticker.startswith("KXATPCHALLENGERMATCH-")
+                     and len(ticker.split("-")) == 3)
+        selected_now = (None if current is None else self._primary_policy_price(
+            {**current, "price_dollars": self._last_trade.get(ticker)}
+        ))
+        proof = self.current_book_primary_price(ticker) if supported else None
+        # A valid tight midpoint already proves the normal-policy selection.
+        # Do not turn binary-float arithmetic (e.g. .81/.83) into forced debt.
+        independent = supported and (
+            self.current_book_midpoint(ticker) is not None
+            or (proof is not None and value is not None and float(proof) == value)
+        )
+        if (not supported or current is None or value is None
+                or selected_now != value or independent):
+            self._primary_inputs.pop(ticker, None)
+            return result
+        entry = self._primary_inputs.get(ticker)
+        if original_ticker or entry is None or entry[1] != value:
+            self._primary_serial += 1
+            entry = ((self._primary_generation, self._primary_serial,
+                      "ticker" if original_ticker else "book"), value)
+            self._primary_inputs[ticker] = entry
+        result.update(_primary_quote_identity=entry[0], _primary_quote_probability=entry[1])
+        return result
 
     async def _request_resnapshots(self, ws) -> None:
         """A gapped, malformed or crossed book asks for a fresh snapshot; until

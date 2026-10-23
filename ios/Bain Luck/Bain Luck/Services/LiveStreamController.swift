@@ -67,6 +67,65 @@ private nonisolated struct LiveStreamRecovery: Decodable {
     let generation: Int
 }
 
+/// #10090 — the named `reconcile` control: a source was withdrawn from this
+/// event's fold, and a page that has not shown an authoritative paired read at
+/// or past `removalRev` on EVERY one of its rows still owes one. Root's paired
+/// decision (reconciliation-contract-20261019): it is a coverage FLOOR, never a
+/// revision to adopt. It carries no price, source, status, clock or quote, and
+/// nothing here reads one even when a producer sends it — so it never reaches
+/// the price decoder or the replay filter.
+///
+/// `decode` refuses (returns `nil`) anything outside a small bounded envelope:
+/// a control the page cannot read whole proves nothing, and an unbounded one
+/// would let one frame grow the page's owed state without limit.
+nonisolated struct LiveStreamReconcile: Decodable, Sendable, Equatable {
+    static let maxEnvelopeBytes = 4096
+    static let maxCustodyIdBytes = 256
+    static let maxFloorRows = 16
+    /// A row id is a database id: digits only, and short enough to stay one.
+    static let maxRowIdLength = 20
+
+    let eventId: Int
+    /// The server's stable id for the original obligation. Dedup only — it
+    /// never orders anything and never stands in for coverage.
+    let custodyId: String
+    let removalRev: FoldRevision
+
+    init(eventId: Int, custodyId: String, removalRev: FoldRevision) {
+        self.eventId = eventId
+        self.custodyId = custodyId
+        self.removalRev = removalRev
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case eventId, custodyId, removalRev
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        eventId = try c.decode(Int.self, forKey: .eventId)
+        custodyId = try c.decode(String.self, forKey: .custodyId)
+        let rows = try c.decode([String: Int].self, forKey: .removalRev)
+        guard !custodyId.isEmpty, custodyId.utf8.count <= Self.maxCustodyIdBytes,
+              rows.count <= Self.maxFloorRows,
+              rows.keys.allSatisfy({ key in
+                  !key.isEmpty && key.count <= Self.maxRowIdLength && key.allSatisfy { ("0"..."9").contains($0) }
+              }),
+              let floor = FoldRevision(rows) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "unbounded reconcile control"))
+        }
+        removalRev = floor
+    }
+
+    static func decode(_ raw: String) -> LiveStreamReconcile? {
+        guard raw.utf8.count <= maxEnvelopeBytes, let data = raw.data(using: .utf8) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try? decoder.decode(LiveStreamReconcile.self, from: data)
+    }
+}
+
 /// One pushed price. Matches `backend/app/routes/event_stream.py`'s
 /// `probability` event, decoded with the app's `.convertFromSnakeCase` policy.
 nonisolated struct LiveStreamFrame: Decodable, Sendable, Equatable {
@@ -88,6 +147,11 @@ nonisolated struct LiveStreamFrame: Decodable, Sendable, Equatable {
     /// carries. `nil` for explicit null, for a malformed quote, and on every
     /// raw frame; `foldedResult` tells those apart.
     let foldedQuote: ServedFoldedQuote?
+    /// #10090 — the committed source map this row's write was published with
+    /// (Live #11264), as it arrived: `nil` when absent, `.snapshot == nil` when
+    /// refused. Both behave exactly as a legacy frame. Read it through
+    /// `validSourceSnapshot`, which also checks it against this frame.
+    let sourceSnapshot: ServedSourceSnapshot?
     /// #10090 — set by the controller, never decoded: this frame arrived as the
     /// named `folded_probability` event, the answer to a pending raw frame.
     var foldedResult = false
@@ -95,7 +159,7 @@ nonisolated struct LiveStreamFrame: Decodable, Sendable, Equatable {
     init(eventId: Int, p: Double?, source: String?, sourceValue: Double?,
          updatedAt: String?, status: String?, rev: ServedFoldRevision? = nil,
          foldedQuotePending: Bool? = nil, foldedQuote: ServedFoldedQuote? = nil,
-         foldedResult: Bool = false) {
+         sourceSnapshot: ServedSourceSnapshot? = nil, foldedResult: Bool = false) {
         self.eventId = eventId
         self.p = p
         self.source = source
@@ -105,11 +169,106 @@ nonisolated struct LiveStreamFrame: Decodable, Sendable, Equatable {
         self.rev = rev
         self.foldedQuotePending = foldedQuotePending
         self.foldedQuote = foldedQuote
+        self.sourceSnapshot = sourceSnapshot
         self.foldedResult = foldedResult
     }
 
     private enum CodingKeys: String, CodingKey {
-        case eventId, p, source, sourceValue, updatedAt, status, rev, foldedQuotePending, foldedQuote
+        case eventId, p, source, sourceValue, updatedAt, status, rev, foldedQuotePending, foldedQuote,
+             sourceSnapshot
+    }
+
+    /// The snapshot, only if it speaks for exactly this frame's write: the same
+    /// event, and the frame's own one-row revision keyed by that event. A frame
+    /// with no valid revision has no valid snapshot.
+    var validSourceSnapshot: SourceSnapshot? {
+        guard let snapshot = sourceSnapshot?.snapshot, snapshot.eventId == eventId,
+              let revision = rev?.revision, revision.rows.count == 1, revision.rows[String(eventId)] != nil,
+              snapshot.revision == revision else { return nil }
+        return snapshot
+    }
+
+    /// The controller's decode: the raw payload size rides in `userInfo`, so a
+    /// snapshot inside an oversized frame is refused before its map is read.
+    static func decode(_ raw: String) -> LiveStreamFrame? {
+        guard let data = raw.data(using: .utf8) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        decoder.userInfo[SourceSnapshot.frameBytesKey] = data.count
+        return try? decoder.decode(LiveStreamFrame.self, from: data)
+    }
+}
+
+/// #10090 — a singleton row's complete committed source map, published beside
+/// the price it produced (Live #11264, `live_push.build_source_snapshot`). It
+/// has no price and no clock of its own: the frame's `p`, `updated_at` and
+/// `rev` are those. `{}` is a complete empty map.
+///
+/// The limits below are THIS CLIENT'S refusal bounds, not the producer's: a
+/// snapshot past them is refused (read as absent), which costs only the
+/// existing paired read.
+nonisolated struct SourceSnapshot: Decodable, Sendable, Equatable {
+    static let maxFrameBytes = 16 * 1024
+    static let maxEntries = 32
+    static let maxKeyBytes = 64
+    static let frameBytesKey = CodingUserInfoKey(rawValue: "bainluck.liveStreamFrameBytes")!
+
+    let eventId: Int
+    let revision: FoldRevision
+    let sources: [String: WinProbSource]
+
+    init(eventId: Int, revision: FoldRevision, sources: [String: WinProbSource]) {
+        self.eventId = eventId
+        self.revision = revision
+        self.sources = sources
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case eventId, rev, winProbabilitySources
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        eventId = try c.decode(Int.self, forKey: .eventId)
+        let rows = try c.decode([String: Int].self, forKey: .rev)
+        let sources = try c.decode([String: WinProbSource].self, forKey: .winProbabilitySources)
+        // Same value refusals as `FoldedQuote`: a map that cannot be printed
+        // exactly as served is refused whole, never half-adopted. Unknown
+        // sibling keys inside an entry (`price_evidence`, …) are not read.
+        guard rows.count == 1, let revision = FoldRevision(rows),
+              sources.count <= Self.maxEntries,
+              sources.allSatisfy({ key, source in
+                  guard (1...Self.maxKeyBytes).contains(key.utf8.count),
+                        let value = source.value?.doubleValue, value.isFinite,
+                        source.updatedAt.map({ $0.asDate != nil }) ?? true else { return false }
+                  return WinProbSourceCatalog.realSourceKeys.contains(key) ? (0...1).contains(value) : value >= 0
+              }) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "unprintable source snapshot"))
+        }
+        self.revision = revision
+        self.sources = sources
+    }
+}
+
+/// The snapshot as it arrived. NEVER THROWS, like `ServedFoldedQuote`: a bad
+/// snapshot degrades to "no snapshot" — the legacy frame — and never drops the
+/// price around it. A frame decoded without its size (not the controller's
+/// decode) refuses it too.
+nonisolated struct ServedSourceSnapshot: Decodable, Sendable, Equatable {
+    let snapshot: SourceSnapshot?
+
+    init(_ snapshot: SourceSnapshot?) {
+        self.snapshot = snapshot
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let bytes = decoder.userInfo[SourceSnapshot.frameBytesKey] as? Int,
+              bytes <= SourceSnapshot.maxFrameBytes else {
+            snapshot = nil
+            return
+        }
+        snapshot = try? decoder.singleValueContainer().decode(SourceSnapshot.self)
     }
 }
 
@@ -290,6 +449,19 @@ final class LiveStreamController {
     private let onFrame: @MainActor (LiveStreamFrame) -> Void
     private let onDeliveringChange: @MainActor (Bool) -> Void
     private let onResync: @MainActor () -> Void
+    /// #10090 — a validated `reconcile` control. Separate from `onResync` on
+    /// purpose: a resync generation names no rows and no obligation.
+    private let onReconcile: @MainActor (LiveStreamReconcile) -> Void
+    /// #10090 — a raw `preview` event's data: a provisional blend that is NOT a
+    /// committed frame (`BlendPreview`). Touches no clock or delivery state: it
+    /// can neither keep push "delivering" nor postpone the data-silence fallback.
+    private let onPreview: @MainActor (String) -> Void
+    private let onPreviewFloor: @MainActor (String) -> Void
+    private let onPreviewOpen: @MainActor (String) -> Void
+    private let onPreviewInvalidate: @MainActor () -> Void
+    /// #10090 — previews are never replayed, so every (re)open and the end of
+    /// the match clear them.
+    private let onPreviewReset: @MainActor () -> Void
     /// #10090 — whether the owner reads `folded_probability`. Opt-in, so a
     /// surface that only needs "something moved" (Discover's cards) keeps its
     /// one refresh per raw frame instead of a second for the quote after it.
@@ -330,6 +502,12 @@ final class LiveStreamController {
         onFrame: @escaping @MainActor (LiveStreamFrame) -> Void,
         onDeliveringChange: @escaping @MainActor (Bool) -> Void,
         onResync: @escaping @MainActor () -> Void = {},
+        onReconcile: @escaping @MainActor (LiveStreamReconcile) -> Void = { _ in },
+        onPreview: @escaping @MainActor (String) -> Void = { _ in },
+        onPreviewFloor: @escaping @MainActor (String) -> Void = { _ in },
+        onPreviewOpen: @escaping @MainActor (String) -> Void = { _ in },
+        onPreviewInvalidate: (@MainActor () -> Void)? = nil,
+        onPreviewReset: @escaping @MainActor () -> Void = {},
         deliversFoldedQuotes: Bool = false,
         schedule: @escaping LiveStreamSchedule = LiveStreamController.sleepThenRun,
         healthyRolloverDelay: @escaping () -> TimeInterval = {
@@ -341,6 +519,12 @@ final class LiveStreamController {
         self.onFrame = onFrame
         self.onDeliveringChange = onDeliveringChange
         self.onResync = onResync
+        self.onReconcile = onReconcile
+        self.onPreview = onPreview
+        self.onPreviewFloor = onPreviewFloor
+        self.onPreviewOpen = onPreviewOpen
+        self.onPreviewInvalidate = onPreviewInvalidate ?? onPreviewReset
+        self.onPreviewReset = onPreviewReset
         self.deliversFoldedQuotes = deliversFoldedQuotes
         self.schedule = schedule
         self.healthyRolloverDelay = healthyRolloverDelay
@@ -524,8 +708,10 @@ final class LiveStreamController {
 
         // The transport can reopen underneath this same handle after a drop.
         // A different server process may begin its recovery generation at 1.
-        next.on("open") { [weak self, weak next] _ in
+        next.on("open") { [weak self, weak next] raw in
             guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.onPreviewReset()
+            self.onPreviewOpen(raw)
             self.lastResyncGeneration = 0
             self.lastMessageAt = self.now()
             self.lastDataAt = self.now()
@@ -536,14 +722,11 @@ final class LiveStreamController {
             { [weak self, weak next] raw in
                 guard let self, let next, !self.stopped, self.handle === next else { return }
                 self.lastMessageAt = self.now()
-                guard let data = raw.data(using: .utf8) else { return }
-                let decoder = JSONDecoder()
-                decoder.keyDecodingStrategy = .convertFromSnakeCase
                 // One bad frame is not a reason to abandon the stream. A decode
                 // failure also GUARDS THE SHAPE: a malformed frame that dropped
                 // `event_id` would otherwise be handed on and could blank a working
                 // hero.
-                guard var frame = try? decoder.decode(LiveStreamFrame.self, from: data) else { return }
+                guard var frame = LiveStreamFrame.decode(raw) else { return }
                 frame.foldedResult = foldedResult
                 LiveTimingSeam.frameReceived(frame)
                 // TRANSPORT clock only (above), exactly like a heartbeat. Decoding a
@@ -572,7 +755,34 @@ final class LiveStreamController {
                   let recovery = try? JSONDecoder().decode(LiveStreamRecovery.self, from: data),
                   recovery.generation > self.lastResyncGeneration else { return }
             self.lastResyncGeneration = recovery.generation
+            self.onPreviewInvalidate()
             self.onResync()
+        }
+
+        // #10090: a withdrawn source's coverage floor. TRANSPORT clock only,
+        // like a heartbeat: a control is not a price, so it can never renew
+        // the data-silence budget or turn delivery on. No per-connection dedup
+        // here — the owner merges floors, and a re-delivered control after a
+        // reconnect is exactly the one that must still be honoured.
+        next.on("reconcile") { [weak self, weak next] raw in
+            guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.lastMessageAt = self.now()
+            guard let control = LiveStreamReconcile.decode(raw) else { return }
+            self.onReconcile(control)
+        }
+
+        // #10090: a provisional blend, never routed through `onProbability` and
+        // never a delivery: no clock is touched, exactly as on web.
+        next.on("preview") { [weak self, weak next] raw in
+            guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.onPreview(raw)
+        }
+
+        // A raw commit invalidates folded preview authority before its slower
+        // committed quote arrives. This control earns no delivery or freshness.
+        next.on("fold_preview_floor") { [weak self, weak next] raw in
+            guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.onPreviewFloor(raw)
         }
 
         next.on("heartbeat") { [weak self, weak next] _ in
@@ -589,6 +799,7 @@ final class LiveStreamController {
         // page on the final number.
         next.on("closed") { [weak self, weak next] _ in
             guard let self, let next, self.handle === next else { return }
+            self.onPreviewReset()
             self.stop()
         }
 

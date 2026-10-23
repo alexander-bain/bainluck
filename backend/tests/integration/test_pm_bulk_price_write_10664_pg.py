@@ -210,6 +210,8 @@ async def rig():
         get_task_session=factory,
         logger=logging.getLogger(__name__),
         open_outcome_ids=set(),
+        non_blend_outcome_ids=set(),
+        catalog_boundary=module._PMCatalogFlushBoundary(),
         stats=stats,
         market_by_outcome={1: 1, 2: 1, 3: 1},
         blend_refresher=r.publisher,

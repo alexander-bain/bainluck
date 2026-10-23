@@ -155,7 +155,10 @@ describe("#4083 the win-probability card carries one source legend", () => {
     // D91(b) as Alex describes it: the aggregated line is the default and the
     // source lines are what clicking in adds. If this initialises to `true` the
     // card is back where it started — every source named before anyone asked.
-    expect(chart).toMatch(/legendExpanded[\s\S]{0,40}useState\(false\)/);
+    // #11356 — the initial state is a prop whose default is closed; only a
+    // caller carrying a reader's own choice into a second view passes `true`.
+    expect(chart).toMatch(/legendExpanded[\s\S]{0,40}useState\(defaultSourcesExpanded\)/);
+    expect(chart).toMatch(/defaultSourcesExpanded = false,/);
     // And the chips are gated on it: rendered when the reader expands, or
     // where there is no blend for them to compete with.
     //

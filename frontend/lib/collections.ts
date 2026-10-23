@@ -84,7 +84,7 @@ const themeLabel = (edition: ObjectValue, slug: string): string | null =>
 const isTheme = (value: unknown): boolean => { const edition = object(value); return edition?.kind === "theme_continuing" || edition?.kind === "theme_edition"; };
 const themeSectionTitles: Record<string, Record<string, string>> = {
   oscars: { title: "Award winners", advancement: "Nominations", side_question: "More questions" },
-  ai: { side_question: "Questions" },
+  ai: { side_question: "Markets" },
 };
 const cursorText = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 64 && /^[A-Za-z0-9_-]+$/.test(value);
 
@@ -174,6 +174,17 @@ function relate(members: CollectionMember[]): Record<string, CollectionMember[]>
     related[event.key] = members.filter((m) => m.type === "market" && ids.has(m.id) && m.eventId === event.id);
   }
   return related;
+}
+
+// #5342: a game's attached markets keep their own served routes on the hub. The
+// game page does not draw every one (Week 5's Polymarket "O/U 47.5" is reachable
+// only from here), so a game with a short served list names each as a plain
+// link, in served order, with no number, count or ranking. A longer list stays
+// behind "More on this game": hundreds of rungs never go inline (#10146).
+export const RELATED_LINK_LIMIT = 12;
+export function relatedMarketLinks(hub: CollectionHub, gameKey: string): CollectionMember[] {
+  const related = hub.related[gameKey] ?? [];
+  return related.length <= RELATED_LINK_LIMIT ? related : [];
 }
 
 export interface CollectionPageRequest { revision: number; cursor: string }

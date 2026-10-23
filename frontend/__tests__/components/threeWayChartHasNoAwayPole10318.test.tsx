@@ -84,7 +84,9 @@ describe("#10318 — a draw-priced game's chart has no away pole and counts no f
 
   it("keeps the home pole alone: the line is the home side's chance", () => {
     expect(poles(html)).toEqual(['data-pole="home"']);
-    expect(html).not.toMatch(/bottom of this axis is Ternana/);
+    expect(html).not.toMatch(/bottom of this (axis|view) is Ternana/);
+    // #11356 — and no tick claims an away side: every tick is the home side's chance.
+    expect(html).not.toContain('data-axis-tick-side="away"');
     expect(html).not.toContain("↓");
   });
 
@@ -99,7 +101,10 @@ describe("#10318 CONTROL — the same rows on a two-sided market are unchanged",
   it("still prints both poles, the away sentence and the count", () => {
     expect(html).toContain("recharts-line-curve");
     expect(poles(html)).toEqual(['data-pole="home"', 'data-pole="away"']);
-    expect(html).toMatch(/bottom of this axis is Ternana at 100%/);
+    // #11356 — the sentence names the reading at the edge actually drawn: a
+    // zoomed window's bottom is a crop, never "Ternana at 100%".
+    expect(html).toMatch(/bottom of this (axis is Ternana at 100%|view is (Ternana|Parma) at \d+%|view is 50\/50)/);
+    expect(html).toContain('data-axis-tick-side="away"');
     expect(html).toContain("Odds flipped (4)");
   });
 });

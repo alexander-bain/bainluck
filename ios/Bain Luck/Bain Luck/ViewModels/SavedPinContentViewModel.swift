@@ -157,7 +157,9 @@ final class SavedPinContentViewModel: ObservableObject {
 
 extension FeedEventData {
     /// #10011 — the game card for a pin outside the team feed, from the same
-    /// event-detail payload the canonical page reads. Card-only fields the
+    /// event-detail payload the canonical page reads — including the settled
+    /// forecast and period, so a saved final compares as it does in Sports
+    /// (#11296). Card-only fields the
     /// detail route does not serve (imagery, confidence, `ended_at`) stay nil,
     /// which every card already reads as "not said".
     nonisolated init(savedPinDetail d: EventDetail) {
@@ -167,7 +169,9 @@ extension FeedEventData {
             startIsTbd: d.startIsTbd, status: d.status, homeScore: d.homeScore, awayScore: d.awayScore,
             blendFoldRevision: d.blendFoldRevision, heroProbabilitySource: d.heroProbabilitySource,
             heroProbabilityObservedAt: d.heroProbabilityObservedAt, currentOdds: d.currentOdds,
-            openingOdds: d.openingOdds, prematchOdds: d.prematchOdds, highlight: d.highlight,
+            openingOdds: d.openingOdds, prematchOdds: d.prematchOdds,
+            pregameProjection: d.pregameProjection, finalScorePeriod: d.finalScorePeriod,
+            highlight: d.highlight,
             homeTeamData: d.homeTeamData, awayTeamData: d.awayTeamData, metadata: d.metadata,
             espn: d.espn, ei: d.ei, pulse: d.pulse, winProbabilitySources: d.winProbabilitySources,
             confidenceTier: nil, confidenceScore: nil,
@@ -202,7 +206,7 @@ extension FeedFuturesData {
             canonicalMarketKey: nil, groupId: nil, groupType: nil, imageUrl: d.imageUrl,
             hookDescription: d.hookDescription, matchedOutcomes: nil, discoverCard: nil,
             confidenceTier: nil, confidenceScore: nil, resolved: nil, winner: winner?.name,
-            winnerOpeningProbability: winner?.openingProbability, storyKey: nil,
+            winnerOpeningProbability: winner.flatMap(FuturesReadableOpening8313.of), storyKey: nil,
             priceObservedAt: nil, cardSumReason: nil
         )
     }

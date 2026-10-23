@@ -127,6 +127,45 @@ def market_ids_in_category_payload(*payloads) -> list[int]:
     return list(seen)
 
 
+#: #11251 — the page name a championship grid publishes under, ``playoffs:<slug>``.
+#: Same hash, same reader, same age bound as the four category pages: the grid
+#: is an hourly-warmed page whose futures cells nobody else re-prices.
+PLAYOFF_GRID_PAGE_PREFIX = "playoffs:"
+
+
+def market_ids_in_playoff_grid(payload) -> list[int]:
+    """Every futures market id a ``/api/playoffs/{slug}`` grid draws from. Pure.
+
+    #11251. A grid's cells carry source probabilities and no market id; the ids
+    live on its columns: ``market_ids`` (every source market a column blends,
+    one per division for the NFL Division column) beside the column's headline
+    ``market_id``, plus the top-level ``championship_market_id``.
+    :func:`market_ids_in_category_payload` cannot read this shape — it collects
+    scalars under named keys and ``market_ids`` is a list — so the grid gets its
+    own reader rather than widening the category walker.
+
+    Deduped, order kept, total: anything it does not understand yields nothing.
+    """
+    seen: dict[int, None] = {}
+
+    def _take(value) -> None:
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            seen.setdefault(value, None)
+
+    if not isinstance(payload, dict):
+        return []
+    columns = payload.get("columns")
+    for column in columns if isinstance(columns, list) else ():
+        if not isinstance(column, dict):
+            continue
+        _take(column.get("market_id"))
+        ids = column.get("market_ids")
+        for value in ids if isinstance(ids, list) else ():
+            _take(value)
+    _take(payload.get("championship_market_id"))
+    return list(seen)
+
+
 def record_category_served_market_ids(rc, page: str, market_ids) -> None:
     """Publish one category page's rendered ids, stamped with the time. Never raises.
 

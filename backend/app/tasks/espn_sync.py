@@ -5282,6 +5282,34 @@ async def _transition_event_statuses_impl() -> dict:
                     event.win_probability_sources = _released
                     stats["statpal_released_session_stamped"] += 1
 
+        # #10090: THE PROMOTION COMMITS HERE, NOT AT THE END OF THE PASS.
+        #
+        # The arms below run two `LAST_POST_COMMENCE_SNAPSHOT_SQL` history reads
+        # and four repair scans, and until this line every row promoted above
+        # stayed locked through all of them. In v5774, five cancelled stamp
+        # attempts (500 ms `lock_timeout`) on event 15331682 overlapped a 13 s
+        # status pass; the lock holder was not recorded. The real-Postgres
+        # guard proves this task can retain a promoted row's lock through its
+        # later reads, and that committing here lets a concurrent blend write
+        # finish before them — a candidate explanation for those waits, not an
+        # observed one. Every input a promotion above reads is read above; a
+        # later arm can still move the row (the repairs exist to), but it then
+        # writes a fresh, committed row rather than undoing the promotion.
+        #
+        # A CHOICE, NOT AN EQUIVALENCE: an arm below failing no longer undoes
+        # a promotion that had completed. It used to, and the next pass made
+        # the same decision again, so a failure that recurred held every game
+        # in the fleet at `scheduled`.
+        #
+        # `expunge_all` because this session does not expire on commit: an arm
+        # below that selects a row promoted here would otherwise be handed the
+        # copy loaded before the lock was released, not what a writer has
+        # committed since, and a write that matches the stale copy is never
+        # flushed (the #10300 arm reads with `populate_existing` for the same
+        # reason). Nothing below reads `started_events`.
+        await session.commit()
+        session.expunge_all()
+
         # --- live → suspended, ON THE VENUE'S WORD (rung 2 of §R) ---
         #
         # The rung `EVENT-GRAPH-DOCTRINE` §R declared on 2026-09-02 and left
@@ -5743,6 +5771,18 @@ async def _transition_event_statuses_impl() -> dict:
                         "source captured it again.",
                         event.id, event.home_team_name, event.away_team_name,
                     )
+
+        # #10090: THE SUSPEND/RESUME PHASE COMMITS HERE, as the promotion does
+        # above. A game the arm above returned to `live` otherwise stays locked
+        # through the retirement scan and the four repair scans below, and a
+        # blend write on it waits out its 500 ms `lock_timeout` (Root attempt57,
+        # real Postgres: 503.961 ms cancelled → 4.978 ms). Same choice as the
+        # promotion: an arm below failing no longer undoes a suspension or a
+        # resumption that had completed. `expunge_all` for the same stale-copy
+        # reason; nothing below reads a row loaded above (`event` is rebound
+        # by each arm's own loop, `stats` holds counts).
+        await session.commit()
+        session.expunge_all()
 
         # --- suspended → retired (the door that was never there) ---
         #

@@ -2100,6 +2100,12 @@ _tier_sink_var: ContextVar[Optional[list]] = ContextVar(
 _age_sink_var: ContextVar[Optional[list]] = ContextVar(
     "feed_shared_age_sink", default=None
 )
+# #1480: the origins of `STRICT_AGE_NAMESPACES` artifacts only. Kept apart from
+# `_age_sink_var` because the route spends it on pages with NO live card, where
+# the counted sink above is deliberately not spent.
+_strict_age_sink_var: ContextVar[Optional[list]] = ContextVar(
+    "feed_shared_strict_age_sink", default=None
+)
 
 
 def bind_reuse_sink(
@@ -2113,6 +2119,11 @@ def bind_reuse_sink(
         _tier_sink_var.set(tier_sink)
     if age_sink is not None:
         _age_sink_var.set(age_sink)
+
+
+def bind_strict_age_sink(sink: list) -> None:
+    """Bind `sink` to collect `STRICT_AGE_NAMESPACES` origins for this context."""
+    _strict_age_sink_var.set(sink)
 
 
 # LAT-P271 (#2143): the oldest artifact THIS context is willing to consume.
@@ -2177,11 +2188,17 @@ def reuse_scope(
     sink: list,
     tier_sink: Optional[list] = None,
     age_sink: Optional[list] = None,
+    strict_age_sink: Optional[list] = None,
 ) -> Iterator[None]:
     """Collect shared-artifact reuse into `sink` for the duration of this scope."""
     token = _reuse_sink_var.set(sink)
     tier_token = _tier_sink_var.set(tier_sink) if tier_sink is not None else None
     age_token = _age_sink_var.set(age_sink) if age_sink is not None else None
+    strict_token = (
+        _strict_age_sink_var.set(strict_age_sink)
+        if strict_age_sink is not None
+        else None
+    )
     try:
         yield
     finally:
@@ -2190,6 +2207,8 @@ def reuse_scope(
             _tier_sink_var.reset(tier_token)
         if age_token is not None:
             _age_sink_var.reset(age_token)
+        if strict_token is not None:
+            _strict_age_sink_var.reset(strict_token)
 
 
 #: Namespaces whose artifacts CANNOT carry live state — measured, then guarded.
@@ -2218,6 +2237,21 @@ def reuse_scope(
 #: `test_shared_artifact_total_age_lat_p230.py::TestMarketLoadCannotItselfAgeALivePrice`
 #: goes red and this set has to shrink before that card can ship.
 LIVENESS_INERT_NAMESPACES = frozenset({"market_load"})
+
+#: Namespaces whose age is counted on EVERY page, live or not (#1480, N-strict).
+#:
+#: Both hold `win_prob_snapshots` readings that a game card prints: the fallback
+#: is a card's current number when the blend has none, and the prematch prior is
+#: a settled card's "before the match" number. Before they were shared, each was
+#: read by the request that served it, so a page with no live card was at most
+#: `FEED_RESPONSE_STALE_TTL_SECONDS` old from its own build. Sharing them for up
+#: to `live_artifact_ttl_ceiling_s()` would add that much on top. Counting their
+#: origin on a non-live page too keeps that page at most 300 s old, as before.
+#:
+#: Every name here is ALSO counted on live pages, so none may be in
+#: `LIVENESS_INERT_NAMESPACES`; `concepts` / `canonical_counts` keep the
+#: live-only rule they shipped with.
+STRICT_AGE_NAMESPACES = frozenset({"event_snapshot_fallback", "event_prematch_prior"})
 
 
 def _note_age(namespace: str, age_s: float) -> None:
@@ -2249,9 +2283,14 @@ def _note_age(namespace: str, age_s: float) -> None:
     """
     if namespace in LIVENESS_INERT_NAMESPACES:
         return
+    origin = time.monotonic() - max(0.0, float(age_s))
     sink = _age_sink_var.get()
     if sink is not None:
-        sink.append(time.monotonic() - max(0.0, float(age_s)))
+        sink.append(origin)
+    if namespace in STRICT_AGE_NAMESPACES:
+        strict_sink = _strict_age_sink_var.get()
+        if strict_sink is not None:
+            strict_sink.append(origin)
 
 
 def oldest_consumed_artifact_age_s(origin_sink: Optional[Iterable[float]]) -> float:

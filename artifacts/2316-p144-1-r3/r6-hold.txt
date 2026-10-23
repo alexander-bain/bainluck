@@ -1,0 +1,22 @@
+=== in flight at 02:05:33Z:
+  pid  |           phase           |         index_relid          
+-------+---------------------------+------------------------------
+ 15778 | waiting for old snapshots | ix_fm_t14_llm_sport_category
+(1 row)
+
+=== section 4 (ON_ERROR_STOP off)
+SET
+SET
+HOLD: an index build is in flight on futures_markets. Nothing was dropped.
+  pid  |           phase           |         index_relid          
+-------+---------------------------+------------------------------
+ 15778 | waiting for old snapshots | ix_fm_t14_llm_sport_category
+(1 row)
+
+           relname            | indisvalid | indisready 
+------------------------------+------------+------------
+ ix_fm_t14_llm_sport_category | f          | t
+ ix_fm_t14_sport_id           | f          | t
+(2 rows)
+
+psql EXIT 0

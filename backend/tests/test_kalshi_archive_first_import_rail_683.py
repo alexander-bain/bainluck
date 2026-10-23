@@ -26,6 +26,7 @@ Every provider and database edge is a fake or an ``httpx.MockTransport``.
 from __future__ import annotations
 
 import asyncio
+import gc
 import inspect
 import json
 import subprocess
@@ -33,7 +34,7 @@ import sys
 import textwrap
 import time
 from pathlib import Path
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from types import SimpleNamespace
 
 import httpx
@@ -941,6 +942,30 @@ def _never_called():
     raise AssertionError("no session may open before the plan is admitted")
 
 
+def _reviewed(report, **over):
+    """A sealed input-versions document for every importable outcome of ``report``."""
+    plans = imp.verify_plan_document(report, report["plan_digest"])
+    outcomes = [
+        {
+            "outcome_id": int(p["outcome_id"]), "ticker": p["ticker"],
+            "event_ticker": p["event_ticker"], "market_id": 10, "event_id": 20,
+            "input_fingerprint": p["input_fingerprint"],
+            "outcome_xmin": "101", "market_xmin": "102", "event_xmin": "103",
+            **over,
+        }
+        for p in plans
+    ]
+    return imp.seal_input_versions(report["plan_digest"], outcomes)
+
+
+def _attended_argv(tmp_path, report):
+    """The CLI arguments an attended ``--write`` now requires."""
+    doc = _reviewed(report)
+    path = tmp_path / "V.json"
+    path.write_text(json.dumps(doc))
+    return ["--input-versions", str(path), "--expected-input-digest", doc["digest"]]
+
+
 class TestImportAdmission:
     async def test_a_plan_with_more_outcomes_than_named_is_refused_before_any_session(self):
         report = await _a_plan()
@@ -1002,6 +1027,198 @@ class TestImportAdmission:
         assert info.value.phase == "verify_plan" and progress["phase"] == "verify_plan"
 
 
+class _LockedRowSession:
+    """Answers only the write path's two locking reads; any later statement fails.
+
+    So a refusal that reaches no other statement (and no COMMIT) is proven to
+    come straight after the locks, before any evidence or interval write.
+    """
+
+    def __init__(self, head, event):
+        self.head, self.event, self.seen, self.committed = head, event, [], False
+
+    async def execute(self, clause, params=None):
+        sql = str(clause)
+        self.seen.append(sql)
+        if "FOR SHARE OF fo, fm" in sql:
+            return SimpleNamespace(first=lambda: self.head)
+        if "FROM events e" in sql and "FOR SHARE" in sql:
+            return SimpleNamespace(first=lambda: self.event)
+        raise AssertionError(f"a refused outcome reached {sql[:60]}")
+
+    async def commit(self):
+        self.committed = True
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _locked(report, **over):
+    """The stored row exactly as reviewed by :func:`_reviewed` (ids 501/900)."""
+    row = _row(1)
+    head = SimpleNamespace(
+        outcome_id=1, ticker=row.ticker, event_ticker=row.event_ticker,
+        market_id=501, event_id=900, resolution_source=None,
+        outcome_xmin="101", market_xmin="102",
+    )
+    event = SimpleNamespace(
+        commence_time=row.commence_time, commence_time_source=row.commence_time_source,
+        created_at=row.created_at, completed_at=None, event_xmin="103",
+    )
+    for k, v in over.items():
+        setattr(event if k in vars(event) else head, k, v)
+    return head, event
+
+
+class TestAttendedInputFence:
+    """The reviewed identity + row-version document, refused loose or drifted."""
+
+    async def test_the_attended_write_without_a_document_is_refused_before_any_session(self):
+        report = await _a_plan()
+        for doc, digest in ((None, None), (_reviewed(report), None), (None, "x")):
+            with pytest.raises(imp.PlanRefused) as info:
+                await imp.apply_archive_plan(
+                    report, expected_digest=report["plan_digest"], write=True,
+                    input_versions=doc, expected_input_digest=digest,
+                    require_input_versions=True, session_factory=_never_called,
+                )
+            assert info.value.reason == "input_versions_missing"
+
+    @pytest.mark.parametrize(
+        "edit,reason",
+        [
+            (lambda d: d.update(kind="other"), "input_versions_malformed"),
+            (lambda d: d.update(extra=1), "input_versions_malformed"),
+            (lambda d: d["outcomes"][0].update(outcome_xmin="1"),
+             "input_versions_digest_mismatch"),
+        ],
+    )
+    async def test_an_unsealed_or_edited_document_is_refused(self, edit, reason):
+        report = await _a_plan()
+        doc = _reviewed(report)
+        digest = doc["digest"]
+        edit(doc)
+        with pytest.raises(imp.PlanRefused) as info:
+            imp.verify_input_versions(
+                doc, digest, imp.verify_plan_document(report, report["plan_digest"]),
+                report["plan_digest"],
+            )
+        assert info.value.reason == reason
+
+    @pytest.mark.parametrize(
+        "over,reason",
+        [
+            ({"outcome_xmin": 101}, "input_versions_malformed:xmin"),
+            ({"market_xmin": ""}, "input_versions_malformed:xmin"),
+            ({"outcome_id": True}, "input_versions_malformed:ids"),
+            ({"input_fingerprint": "A" * 64}, "input_versions_malformed:input_fingerprint"),
+            ({"event_xmin": None}, "input_versions_malformed:event"),
+            ({"event_id": None}, "input_versions_malformed:event_xmin_without_event"),
+            ({"ticker": "KX-OTHER"}, "input_versions_identity_mismatch:1"),
+            ({"input_fingerprint": "0" * 64}, "input_versions_identity_mismatch:1"),
+        ],
+    )
+    async def test_a_sealed_document_that_is_malformed_or_names_another_outcome_is_refused(
+        self, over, reason
+    ):
+        report = await _a_plan()
+        doc = _reviewed(report, **over)
+        with pytest.raises(imp.PlanRefused) as info:
+            imp.verify_input_versions(
+                doc, doc["digest"], imp.verify_plan_document(report, report["plan_digest"]),
+                report["plan_digest"],
+            )
+        assert info.value.reason == reason
+
+    async def test_the_document_names_exactly_the_plans_outcomes_and_its_digest(self):
+        report = await _a_plan()
+        plans = imp.verify_plan_document(report, report["plan_digest"])
+        good = _reviewed(report)
+        assert imp.verify_input_versions(good, good["digest"], plans, report["plan_digest"])
+        extra = imp.seal_input_versions(
+            report["plan_digest"], good["outcomes"] + [dict(good["outcomes"][0], outcome_id=2)]
+        )
+        twice = imp.seal_input_versions(report["plan_digest"], good["outcomes"] * 2)
+        none = imp.seal_input_versions(report["plan_digest"], [])
+        other = imp.seal_input_versions("f" * 64, good["outcomes"])
+        for doc, reason in (
+            (extra, "input_versions_outcomes_mismatch"),
+            (twice, "input_versions_duplicate_outcome"),
+            (none, "input_versions_outcomes_mismatch"),
+            (other, "input_versions_plan_mismatch"),
+        ):
+            with pytest.raises(imp.PlanRefused) as info:
+                imp.verify_input_versions(doc, doc["digest"], plans, report["plan_digest"])
+            assert info.value.reason == reason, reason
+        with pytest.raises(imp.PlanRefused) as info:
+            imp.verify_input_versions(good, "0" * 64, plans, report["plan_digest"])
+        assert info.value.reason == "expected_input_digest_mismatch"
+
+    @pytest.mark.parametrize(
+        "over,reason",
+        [
+            ({}, None),
+            ({"outcome_xmin": "999"}, "input_version_drift:outcome"),
+            ({"market_xmin": "999"}, "input_version_drift:market"),
+            ({"event_xmin": "999"}, "input_version_drift:event"),
+            ({"market_id": 777}, "input_identity_drift"),
+            ({"completed_at": TIPOFF}, "input_drift"),
+        ],
+    )
+    async def test_the_fence_compares_the_locked_row_and_writes_nothing_on_drift(
+        self, over, reason
+    ):
+        report = await _a_plan()
+        doc = _reviewed(report, market_id=501, event_id=900)
+        session = _LockedRowSession(*_locked(report, **over))
+        out = await imp._apply_outcome(
+            report["plans"][0], archive_cutoff=report["archive_cutoff"], write=True,
+            import_id=41, session_factory=lambda: session,
+            expected_input=doc["outcomes"][0],
+        ) if reason else None
+        if reason is None:
+            row = await imp._locked_input(session, 1)
+            assert imp.input_version_refusal(row, doc["outcomes"][0]) is None
+            return
+        assert out["refused"] == reason
+        assert len(session.seen) == 2 and not session.committed
+
+    async def test_a_present_event_that_is_gone_is_refused_and_absent_is_never_a_wildcard(self):
+        report = await _a_plan()
+        expected = _reviewed(report, market_id=501, event_id=900)["outcomes"][0]
+        head, event = _locked(report)
+        gone = await imp._locked_input(_LockedRowSession(head, None), 1)
+        assert imp.input_version_refusal(gone, expected) == "input_event_missing"
+        no_event = dict(expected, event_id=None, event_xmin=None)
+        present = await imp._locked_input(_LockedRowSession(head, event), 1)
+        assert imp.input_version_refusal(present, no_event) == "input_identity_drift"
+
+    def test_the_cli_write_requires_the_document_and_dry_run_does_not(self, tmp_path, capsys):
+        report = asyncio.run(_a_plan())
+        plan = tmp_path / "P.json"
+        plan.write_text(json.dumps(report))
+        mod = _load_script("kalshi_archive_import.py")
+        base = ["apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
+                "--max-outcomes", "1", "--max-points", "26", "--deadline", "5"]
+
+        def refuse():
+            raise AssertionError("a refused attended write opened a session")
+
+        code = mod.main(base + ["--write"], session_factory=refuse)
+        assert code == 2 and "REFUSED: input_versions_missing" in capsys.readouterr().err
+        doc = _reviewed(report)
+        (tmp_path / "V.json").write_text(json.dumps(doc))
+        code = mod.main(
+            base + ["--input-versions", str(tmp_path / "V.json"),
+                    "--expected-input-digest", "0" * 64, "--write"],
+            session_factory=refuse,
+        )
+        assert code == 2 and "expected_input_digest_mismatch" in capsys.readouterr().err
+
+
 class _CommitSession:
     """Answers the apply's first two steps; COMMIT behaves as ``on_commit`` says."""
 
@@ -1020,6 +1237,38 @@ class _CommitSession:
 
     async def commit(self):
         await self.on_commit()
+
+
+class _HeldClock:
+    """The wall's clock: real time until :meth:`hold`, then that instant for good."""
+
+    def __init__(self):
+        self.held_at = None
+
+    def __call__(self) -> float:
+        return time.monotonic() if self.held_at is None else self.held_at
+
+    def hold(self) -> None:
+        if self.held_at is None:
+            self.held_at = time.monotonic()
+
+
+def _record_walls(monkeypatch) -> list:
+    """Every OperationWall the CLI builds, unchanged: real clock, real alarm."""
+    walls: list = []
+
+    class SeenWall(bounds.OperationWall):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            walls.append(self)
+
+    monkeypatch.setattr(bounds, "OperationWall", SeenWall)
+    return walls
+
+
+def _full_collections() -> int:
+    """Full (generation-2) collections this process has run. Read only."""
+    return gc.get_stats()[2]["collections"]
 
 
 class TestCommitAcknowledgement:
@@ -1042,14 +1291,53 @@ class TestCommitAcknowledgement:
         assert result["readback_owed"]["durability"] == "unknown"
         assert result["import_key"] in result["readback_owed"]["commands"][0]
 
-    def test_import_cli_wall_during_a_commit_reports_it_in_flight(self, tmp_path, capsys):
+    @pytest.mark.parametrize("artifact_stall", [0.0, 0.1])
+    def test_import_cli_wall_during_a_commit_reports_it_in_flight(
+        self, tmp_path, capsys, monkeypatch, artifact_stall
+    ):
+        """The real 0.8 s wall expires while COMMIT is in flight; the receipt says so.
+
+        The wall's clock holds still from the instant the COMMIT is sent
+        (``_HeldClock``). The work still expires on real time: the event loop
+        waits out the real work slice, then cancels the hanging COMMIT. What the
+        hold removes is the race this case never meant to test. Without it the
+        receipt file had to be sealed in the 20-60 ms between the cancel
+        (0.72 s) and ``artifact_deadline`` (0.78 s), against a real alarm, and a
+        loaded runner sometimes lost that slice (#683, three master/PR reds,
+        missing R.json). Writing the receipt inside the wall on real time is
+        ``test_import_cli_timeout_receipt_is_written_inside_the_wall``'s job.
+        ``artifact_stall`` 0.1 stalls the artifact write past the old slice:
+        without the hold that always loses R.json, so it proves the race is gone.
+        """
         report = asyncio.run(_a_plan())
         plan = tmp_path / "P.json"
         plan.write_text(json.dumps(report))
         out = tmp_path / "R.json"
+        clock = _HeldClock()
+        walls = []
+        real_wall = bounds.OperationWall
+
+        def held_wall(seconds, **kw):
+            walls.append(real_wall(seconds, monotonic=clock, **kw))
+            return walls[-1]
+
+        monkeypatch.setattr(bounds, "OperationWall", held_wall)
+        real_fsync = bounds.os.fsync
+
+        def slow_fsync(fd):
+            time.sleep(artifact_stall)
+            return real_fsync(fd)
+
+        monkeypatch.setattr(bounds.os, "fsync", slow_fsync)
+        cancelled_at = []
 
         async def hang():
-            await asyncio.sleep(10)
+            clock.hold()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled_at.append(time.monotonic())
+                raise
 
         mod = _load_script("kalshi_archive_import.py")
         t0 = time.monotonic()
@@ -1057,11 +1345,17 @@ class TestCommitAcknowledgement:
             [
                 "apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
                 "--max-outcomes", "1", "--max-points", "26", "--deadline", "0.8",
-                "--write", "--output", str(out),
+                *_attended_argv(tmp_path, report), "--write", "--output", str(out),
             ],
             session_factory=_factory(_CommitSession(hang)),
         )
         assert time.monotonic() - t0 < 3.0 and code == 3
+        # Precondition: the COMMIT was in flight and the REAL work slice ran
+        # out before the wall cancelled it (1 ms: the loop's timer tolerance).
+        # The hold changed no expiry.
+        (wall,) = walls
+        assert wall.seconds == 0.8 and clock.held_at is not None
+        assert len(cancelled_at) == 1 and cancelled_at[0] >= wall.work_deadline - 1e-3
         receipt = json.loads(out.read_text())
         assert receipt["status"] == "incomplete"
         assert receipt["stopped"] == "wall_expired:create_import"
@@ -1095,24 +1389,46 @@ class TestCommitAcknowledgement:
             return real_fsync(fd)
 
         monkeypatch.setattr(bounds.os, "fsync", slow_fsync)
+        walls = _record_walls(monkeypatch)
+        cancelled_at = []
 
         async def hang():
-            await asyncio.sleep(10)
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled_at.append(time.monotonic())
+                raise
 
         mod = _load_script("kalshi_archive_import.py")
         deadline = 0.8
-        t0 = time.monotonic()
-        code = mod.main(
-            [
-                "apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
-                "--max-outcomes", "1", "--max-points", "26", "--deadline", str(deadline),
-                "--write", "--output", str(out),
-            ],
-            session_factory=_factory(_CommitSession(hang)),
-        )
-        elapsed = time.monotonic() - t0
+        # The wall stays real (no held clock): only the pytest heap's full
+        # collection is kept out of the receipt slice, which is what took
+        # +0.09-0.11 s from this case and two 0.8 s siblings in PR #11504's CI.
+        with _a_collection_scans_only_the_cli():
+            full_before = _full_collections()
+            t0 = time.monotonic()
+            code = mod.main(
+                [
+                    "apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
+                    "--max-outcomes", "1", "--max-points", "26", "--deadline", str(deadline),
+                    *_attended_argv(tmp_path, report), "--write", "--output", str(out),
+                ],
+                session_factory=_factory(_CommitSession(hang)),
+            )
+            elapsed = time.monotonic() - t0
+            full_during = _full_collections() - full_before
         assert code == 3 and elapsed < deadline + 0.15
-        summary = json.loads(capsys.readouterr().out)
+        # Precondition: one real 0.8 s wall, and the COMMIT was cancelled no
+        # sooner than its work deadline (1 ms: the loop's timer tolerance).
+        (wall,) = walls
+        assert wall.seconds == deadline
+        assert len(cancelled_at) == 1 and cancelled_at[0] >= wall.work_deadline - 1e-3
+        console = capsys.readouterr().out
+        assert console, (
+            f"no console receipt after {elapsed:.3f}s; R.json present {out.exists()}; "
+            f"full collections during the call {full_during} (frozen heap)"
+        )
+        summary = json.loads(console)
         assert summary["stopped"] == "wall_expired:create_import"
         assert summary["uncertain_commits"][-1]["error"] == "acknowledgement_not_received"
         assert summary["readback_owed"]["never"] == [
@@ -1232,9 +1548,11 @@ class TestCommitAcknowledgement:
 def slow_console(monkeypatch):
     """Delay only the real sinks' writes that start with ``prefix`` (a stalled pipe or terminal).
 
-    The default prefix is the receipt's opening brace on stdout.
+    The default prefix is the receipt's opening brace on stdout. ``handed``
+    keeps each such write as the sink received it, delivered or not, with the
+    instant it arrived: a stalled console still shows what the receipt said.
     """
-    state = {"delay": 0.0, "refuse": None, "prefix": "{"}
+    state = {"delay": 0.0, "refuse": None, "prefix": "{", "handed": []}
     original_install = bounds.ConsoleCap.install
 
     class SlowSink:
@@ -1243,6 +1561,7 @@ def slow_console(monkeypatch):
 
         def write(self, s):
             if s.startswith(state["prefix"]):
+                state["handed"].append((time.monotonic(), s))
                 if state["refuse"] is not None:
                     raise state["refuse"]
                 time.sleep(state["delay"])
@@ -1273,9 +1592,57 @@ def _hanging_apply(tmp_path, deadline):
     argv = [
         "apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
         "--max-outcomes", "1", "--max-points", "26", "--deadline", str(deadline),
-        "--write", "--output", str(tmp_path / "R.json"),
+        *_attended_argv(tmp_path, report), "--write", "--output", str(tmp_path / "R.json"),
     ]
     return argv, _factory(_CommitSession(hang))
+
+
+@contextmanager
+def _a_collection_scans_only_the_cli():
+    """Keep the pytest process's own heap out of a sub-second wall.
+
+    A long CI shard holds ~0.6M tracked objects, and one automatic full
+    collection over them took 0.11-0.15 s locally. It is C-level, so it defers
+    the wall's ``SIGALRM``, and it lands where the CLI allocates: after the idle
+    wait, inside the 0.8 s wall's receipt slice (work ends 0.72 s, artifact
+    sealed by 0.78 s). Missing R.json in CI (#683) is that shape. ``gc.freeze``
+    moves what exists now into the permanent generation. It prevents no
+    collection: the CLI's own allocations are collected as in a fresh attended
+    process.
+
+    One collection runs first, before the caller starts its clock. It settles
+    the heap's pending promotions, so no full collection falls due inside the
+    frozen window or just after it. One inside would be cheap, but CPython
+    would then size the old generation by the few objects it scanned, and the
+    next full collection, over the whole unfrozen heap, would fall due within
+    about ten young collections: inside a sibling's wall.
+    """
+    gc.collect()
+    gc.freeze()
+    try:
+        yield
+    finally:
+        gc.unfreeze()
+
+
+def _slice_named_by_the_receipt(handed, t0):
+    """Where a missed receipt slice went, from the summary the stalled sink was handed.
+
+    A console slower than the wall swallows the summary, so a missing artifact
+    reads ``console ''`` and names no phase. The summary still reached the
+    sink: ``elapsed_s`` (wall clock when the receipt was built, after the
+    loop's shutdown) late means the slice went before serialising; on time,
+    with ``artifact_refused``, it went inside it. Read only, after the run.
+    """
+    if not handed:
+        return "nothing handed to the sink"
+    at, text = handed[-1]
+    try:
+        summary = json.loads(text)
+    except ValueError:
+        return {"handed_after_s": round(at - t0, 3), "text": text[-300:]}
+    keys = ("stopped", "elapsed_s", "cancel", "shutdown", "artifact", "artifact_refused")
+    return {"handed_after_s": round(at - t0, 3), **{k: summary.get(k) for k in keys}}
 
 
 class TestConsoleInsideTheWall:
@@ -1293,10 +1660,15 @@ class TestConsoleInsideTheWall:
         """
         slow_console["delay"] = delay
         argv, factory = _hanging_apply(tmp_path, deadline)
-        t0 = time.monotonic()
-        code = _load_script("kalshi_archive_import.py").main(argv, session_factory=factory)
-        elapsed = time.monotonic() - t0
+        with _a_collection_scans_only_the_cli():
+            t0 = time.monotonic()
+            code = _load_script("kalshi_archive_import.py").main(argv, session_factory=factory)
+            elapsed = time.monotonic() - t0
         out = capsys.readouterr().out
+        assert (tmp_path / "R.json").exists(), (
+            f"no artifact after {elapsed:.3f}s; console {out[-600:]!r}; "
+            f"the receipt's own slice {_slice_named_by_the_receipt(slow_console['handed'], t0)}"
+        )
         receipt = json.loads((tmp_path / "R.json").read_text())
         assert code == 3 and elapsed < deadline + 0.15
         assert receipt["uncertain_commits"][-1]["error"] == "acknowledgement_not_received"
@@ -1327,11 +1699,42 @@ class TestConsoleInsideTheWall:
         assert json.loads(capsys.readouterr().out)["status"] == "applied"
         out.unlink()
         slow_console["delay"] = 3.0
-        t0 = time.monotonic()
-        code = mod.main(argv)
-        assert code == 3 and time.monotonic() - t0 < 0.8 + 0.15
+        walls = []
+
+        class SeenWall(bounds.OperationWall):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                walls.append(self)
+
+        monkeypatch.setattr(bounds, "OperationWall", SeenWall)
+        gc_pauses, gc_started = [], {}
+
+        def on_gc(phase, info):  # the test process's heap, not the CLI's
+            if phase == "start":
+                gc_started["t"] = time.monotonic()
+            elif "t" in gc_started and time.monotonic() - gc_started["t"] >= 0.01:
+                gc_pauses.append((info["generation"], round(time.monotonic() - gc_started["t"], 3)))
+
+        gc.callbacks.append(on_gc)
+        try:
+            t0 = time.monotonic()
+            code = mod.main(argv)
+            ended = time.monotonic()
+        finally:
+            gc.callbacks.remove(on_gc)
+        # The record and the console first, then the clock split at the wall's
+        # start: a late finish names whether the artifact, the wall or the time
+        # before the wall existed was late, and any collection that ran. Same
+        # bounds as one clock from t0.
         assert capsys.readouterr().out == ""
         assert json.loads(out.read_text())["committed_outcomes"] == [{"outcome_id": 7}]
+        (wall,) = walls
+        assert code == 3 and ended - wall.started < 0.8 + 0.15, (
+            f"inside the wall {ended - wall.started:.3f}s, gc pauses >= 10 ms (generation, s) {gc_pauses}"
+        )
+        assert ended - t0 < 0.8 + 0.15, (
+            f"before the wall started {wall.started - t0:.3f}s, gc pauses >= 10 ms (generation, s) {gc_pauses}"
+        )
 
     @pytest.mark.parametrize("delay", [0.0, 3.0])
     def test_a_line_written_while_working_cannot_hold_the_import_past_the_wall(
@@ -1339,25 +1742,42 @@ class TestConsoleInsideTheWall:
     ):
         """A log line mid-operation is bounded by the work deadline, leaving the reserve."""
         slow_console.update(delay=delay, prefix="PROGRESS")
+        returned_at = []
 
         async def fake_apply(report, **kw):
             print("PROGRESS one outcome", file=sys.stderr)
+            returned_at.append(time.monotonic())
             return {"status": "applied", "import_key": "k", "committed_outcomes": [{"outcome_id": 7}]}
 
         monkeypatch.setattr(imp, "apply_archive_plan", fake_apply)
+        walls = _record_walls(monkeypatch)
         plan = tmp_path / "P.json"
         plan.write_text("{}")
         out = tmp_path / "R.json"
-        t0 = time.monotonic()
-        code = _load_script("kalshi_archive_import.py").main(
-            [
-                "apply", "--plan", str(plan), "--expected-digest", "d", "--max-outcomes", "1",
-                "--max-points", "1", "--deadline", "0.8", "--output", str(out),
-            ]
+        # Real wall, real alarm; only the pytest heap's full collection is kept
+        # out of the reserve (see the timeout-receipt case).
+        with _a_collection_scans_only_the_cli():
+            full_before = _full_collections()
+            t0 = time.monotonic()
+            code = _load_script("kalshi_archive_import.py").main(
+                [
+                    "apply", "--plan", str(plan), "--expected-digest", "d", "--max-outcomes", "1",
+                    "--max-points", "1", "--deadline", "0.8", "--output", str(out),
+                ]
+            )
+            elapsed = time.monotonic() - t0
+            full_during = _full_collections() - full_before
+        (wall,) = walls
+        assert wall.seconds == 0.8 and len(returned_at) == 1
+        assert out.exists(), (  # the reserve was left for the artifact
+            f"no artifact after {elapsed:.3f}s (exit {code}); the line returned "
+            f"{returned_at[0] - wall.started:.3f}s into the wall; "
+            f"full collections during the call {full_during} (frozen heap)"
         )
-        elapsed = time.monotonic() - t0
-        assert out.exists()  # the reserve was left for the artifact
         if delay:
+            # Precondition: the stalled line was cut AT the work deadline, not
+            # before it (1 ms: the alarm's tolerance).
+            assert returned_at[0] >= wall.work_deadline - 1e-3
             assert code == 3 and elapsed < 0.8 + 0.15
             assert capsys.readouterr().out == ""  # a lost console is not tried again
         else:
@@ -1379,9 +1799,10 @@ class TestConsoleInsideTheWall:
         argv = PROFILE[: PROFILE.index("--deadline") + 1] + ["1.0"] + PROFILE[
             PROFILE.index("--deadline") + 2 :
         ]
-        t0 = time.monotonic()
-        code, _ = planner_cli(argv + ["--output", str(out)], handler=handler)
-        elapsed = time.monotonic() - t0
+        with _a_collection_scans_only_the_cli():
+            t0 = time.monotonic()
+            code, _ = planner_cli(argv + ["--output", str(out)], handler=handler)
+            elapsed = time.monotonic() - t0
         assert out.exists()
         if delay:
             assert code == 3 and elapsed < 1.0 + 0.15
@@ -1598,7 +2019,7 @@ def _console_probe(tmp_path, mode: str, *, stalled: bool) -> dict:
     args = [
         "apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
         "--max-outcomes", "1", "--max-points", "26", "--deadline", str(PROBE_DEADLINE_S),
-        "--write", "--output", str(out),
+        *_attended_argv(tmp_path, report), "--write", "--output", str(out),
     ]
     cmd = [sys.executable, "-c", _CONSOLE_PROBE, str(BACKEND), str(stamp), mode, *args]
     if not stalled:

@@ -18,6 +18,11 @@ import websockets
 import app.services.polymarket_ws as service
 import app.tasks.live_blend_refresh as blend
 import app.tasks.polymarket_ws as task
+from tests.test_ws_flush_retry_q491 import (
+    is_stored_live_slate_read,
+    stored_live_batches,
+)
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 
 def _cells(callback):
@@ -56,16 +61,23 @@ async def _reconnect(monkeypatch, frame, *, flag="1", stale=False):
 
     monkeypatch.setattr(blend, "run_flush_cadence", hold_flush)
 
-    slate = iter([
+    scenario = [
         [(71, 7, "0xabc_yes", "0xabc", 900),
          (72, 7, "0xabc_no", "0xabc", 900)],
         [(7, "0xabc", {"clob_token_ids": ["111", "222"]}, "scheduled")],
         [(71, 7, "0xabc_yes"), (72, 7, "0xabc_no")],
-    ])
+    ]
+    slate = [list(batch) for batch in scenario]
 
     class Session:
-        async def execute(self, _statement):
-            rows = next(slate, [])
+        async def execute(self, statement):
+            if is_stored_live_slate_read(statement):
+                # #10090 attempt156: the stored-live load reads its own three
+                # batches; the full slate stays queued for the full read.
+                slate[:0] = stored_live_batches(*scenario)
+            rows = answer_slate_market_read(  # #10663
+                statement, slate.pop(0) if slate else []
+            )
             return SimpleNamespace(all=lambda: rows)
 
     @asynccontextmanager
@@ -134,7 +146,7 @@ async def _reconnect(monkeypatch, frame, *, flag="1", stale=False):
 
     monkeypatch.setattr(websockets, "connect", connect)
     consumer = asyncio.create_task(task._run_polymarket_ws_consumer.__wrapped__(
-        sessions=SimpleNamespace(session=session), stop=stop,
+        sessions=SimpleNamespace(session=session, observation_read=session), stop=stop,
     ))
     try:
         await asyncio.wait_for(completed.wait(), 5)

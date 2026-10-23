@@ -9,6 +9,8 @@ import { fieldIsOneQuestion } from "@/lib/combinedLinePolicy";
 import { historyRangeDataAttributes, historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
 import { PartialHistoryCaption } from "@/components/PartialHistoryCaption";
 import type { FuturesOutcomeHistory } from "@/lib/types";
+import { isSettlementPoint, splitSettlementPoints } from "@/lib/chartSettlementPoints";
+import { outcomesByLatestProb } from "@/lib/eventConceptDisplay";
 import {
   SERIES_COLORS,
   ELIMINATED_SERIES_COLOR as ELIMINATED_COLOR,
@@ -22,12 +24,6 @@ type TimeRange = "full" | "tournament" | "7d" | "24h" | "today";
  *  computed once here and handed to both FuturesChart (via outcomeColors) and the
  *  leaderboard. */
 const EVOLUTION_COLORS = SERIES_COLORS;
-
-/** Last non-null probability of a series — its current/final value. Used to rank
- *  the selected set (color order + leaderboard order stay in lockstep). */
-function lastProbOf(o: FuturesOutcomeHistory): number {
-  return o.history[o.history.length - 1]?.probability ?? 0;
-}
 
 /** Client-side time-range cutoff (epoch ms), mirroring the old EvolutionChart
  *  buildChartData cutoffs. 0 = no cutoff (full history). */
@@ -50,7 +46,10 @@ function timeRangeCutoff(timeRange: TimeRange, tournamentStart?: string | null):
 
 /** Drop history points older than the range cutoff, keeping every outcome row so
  *  color/selection stays stable. Outcomes left with <2 points simply don't draw
- *  a line (FuturesChart handles that), matching the old windowed behavior. */
+ *  a line (FuturesChart handles that), matching the old windowed behavior.
+ *  #10955 (360): a settlement point is a result, not a reading, and its timestamp
+ *  is never a market time — so it is never windowed BY TIME. Whether it stays
+ *  depends on whether the chart can mark it truthfully on this range (below). */
 function windowByTimeRange(
   outcomes: FuturesOutcomeHistory[],
   timeRange: TimeRange,
@@ -58,10 +57,22 @@ function windowByTimeRange(
 ): FuturesOutcomeHistory[] {
   const cutoff = timeRangeCutoff(timeRange, tournamentStart);
   if (!cutoff) return outcomes;
-  return outcomes.map((o) => ({
-    ...o,
-    history: o.history.filter((p) => new Date(p.timestamp).getTime() >= cutoff),
-  }));
+  return outcomes.map((o) => {
+    const inRange = (p: FuturesOutcomeHistory["history"][number]) =>
+      !isSettlementPoint(p) && new Date(p.timestamp).getTime() >= cutoff;
+    const hasReading = (p: FuturesOutcomeHistory["history"][number]) =>
+      !isSettlementPoint(p) && p.probability != null;
+    // The result is kept only where FuturesChart can mark it truthfully: on a
+    // reading this range still draws, or — for a leg with no reading anywhere —
+    // at the edge it reserves for exactly that. A leg whose readings all predate
+    // the range draws nothing here, and its mark must not claim it had none.
+    const keepResult =
+      o.history.some((p) => inRange(p) && p.probability != null) || !o.history.some(hasReading);
+    return {
+      ...o,
+      history: o.history.filter((p) => (isSettlementPoint(p) ? keepResult : inRange(p))),
+    };
+  });
 }
 
 export interface PositionOption {
@@ -277,31 +288,38 @@ export function EvolutionView({
     ? tournamentDayBoundaries
     : data?.round_boundaries ?? null;
 
-  // Auto-select top N outcomes on first load
+  // Auto-select top N outcomes on first load.
+  // #10955 (360): ranked like every settled chart — an evidenced winner first,
+  // then each leg by its last REAL reading. A settlement point is the result, not
+  // a latest chance: the old raw last value let a loser's 0 and a winner's 1 rank
+  // as prices. A winner is never left out because the current market no longer
+  // quotes it; a leg graded lost is not thereby eliminated.
   const effectiveSelectedIds = useMemo(() => {
     if (selectedOutcomeIds !== null) return selectedOutcomeIds;
     if (!data?.outcomes) return new Set<number>();
-    const sorted = [...data.outcomes].sort((a, b) => {
-      const aLast = a.history[a.history.length - 1]?.probability ?? 0;
-      const bLast = b.history[b.history.length - 1]?.probability ?? 0;
-      return bLast - aLast;
-    });
-    const active = sorted.filter((o) => !o.eliminated && o.current_price_available !== false);
+    const { results } = splitSettlementPoints(data.outcomes);
+    const sorted = outcomesByLatestProb(data.outcomes);
+    const active = sorted.filter(
+      (o) =>
+        !o.eliminated &&
+        (o.current_price_available !== false || results.get(o.outcome_id) === "won"),
+    );
     const selected = active.slice(0, defaultTopN).map((o) => o.outcome_id);
     return new Set(selected);
   }, [data, selectedOutcomeIds, defaultTopN]);
 
-  // L2-149: shared color map — rank the SELECTED outcomes by latest probability
-  // and assign the evolution palette by that rank (eliminated → grey). The same
+  // L2-149: shared color map — rank the SELECTED outcomes (#10955: winner first,
+  // then last real reading) and assign the evolution palette by that rank
+  // (eliminated → grey). The same
   // map goes to FuturesChart (line colors) and EvolutionLeaderboard (dot colors),
   // so the two can never drift. Ranking uses the full (unwindowed) history so a
   // color stays put as the range switches.
   const outcomeColors = useMemo(() => {
     const m = new Map<number, string>();
     if (!data?.outcomes) return m;
-    const sorted = data.outcomes
-      .filter((o) => effectiveSelectedIds.has(o.outcome_id))
-      .sort((a, b) => lastProbOf(b) - lastProbOf(a));
+    const sorted = outcomesByLatestProb(
+      data.outcomes.filter((o) => effectiveSelectedIds.has(o.outcome_id)),
+    );
     // #8095: a party line takes its party's colour, not its rank's.
     const colors = assignSeriesColors(sorted.map((o) => o.name), EVOLUTION_COLORS);
     sorted.forEach((o, i) => {

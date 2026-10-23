@@ -1,0 +1,76 @@
+\set ON_ERROR_STOP on
+SET statement_timeout = 0;
+DROP TABLE IF EXISTS fm_w_plain, fm_w_gin;
+CREATE TABLE fm_w_plain AS SELECT id, hex_id, 0 AS u, repeat('x', 180) AS pad FROM fm_size;
+CREATE TABLE fm_w_gin AS SELECT * FROM fm_w_plain;
+ALTER TABLE fm_w_plain ADD PRIMARY KEY (id); ALTER TABLE fm_w_gin ADD PRIMARY KEY (id);
+CREATE INDEX ON fm_w_plain (u); CREATE INDEX ON fm_w_gin (u);
+CREATE INDEX ON fm_w_gin USING gin (hex_id gin_trgm_ops) WITH (fastupdate = on);
+VACUUM ANALYZE fm_w_plain; VACUUM ANALYZE fm_w_gin;
+\timing on
+UPDATE fm_w_plain SET u = u + 1;
+UPDATE fm_w_gin SET u = u + 1;
+UPDATE fm_w_plain SET u = u + 1;
+UPDATE fm_w_gin SET u = u + 1;
+UPDATE fm_w_plain SET u = u + 1;
+UPDATE fm_w_gin SET u = u + 1;
+\timing off
+SELECT relname, n_tup_upd, n_tup_hot_upd FROM pg_stat_user_tables WHERE relname LIKE 'fm_w_%';
+SELECT pg_size_pretty(pg_relation_size(indexrelid)) FROM pg_stat_user_indexes WHERE relname = 'fm_w_gin' AND indexrelname LIKE '%hex%';
+\timing on
+SELECT count(*) FROM fm_w_gin WHERE hex_id LIKE '0xab%';
+VACUUM fm_w_gin;
+SELECT count(*) FROM fm_w_gin WHERE hex_id LIKE '0xab%';
+\timing off
+SET
+DROP TABLE
+SELECT 24000
+SELECT 24000
+ALTER TABLE
+ALTER TABLE
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+VACUUM
+VACUUM
+Timing is on.
+UPDATE 24000
+Time: 269.394 ms
+UPDATE 24000
+Time: 1574.870 ms (00:01.575)
+UPDATE 24000
+Time: 258.151 ms
+UPDATE 24000
+Time: 2210.119 ms (00:02.210)
+UPDATE 24000
+Time: 321.146 ms
+UPDATE 24000
+Time: 3085.906 ms (00:03.086)
+Timing is off.
+  relname   | n_tup_upd | n_tup_hot_upd 
+------------+-----------+---------------
+ fm_w_plain |     72000 |             0
+ fm_w_gin   |     72000 |             0
+(2 rows)
+
+ pg_size_pretty 
+----------------
+ 33 MB
+(1 row)
+
+Timing is on.
+ count 
+-------
+    75
+(1 row)
+
+Time: 14.741 ms
+VACUUM
+Time: 806.211 ms
+ count 
+-------
+    75
+(1 row)
+
+Time: 10.586 ms
+Timing is off.

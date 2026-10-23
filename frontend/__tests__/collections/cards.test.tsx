@@ -71,11 +71,12 @@ describe("a game's related mixed listing is a link, not a second winner number",
     expect(markup).toContain("3 questions on this game");
     expect(markup).not.toMatch(/\d%/);
   });
-  test("on the hub the game keeps its one number and its questions open on the game page (#10146)", () => {
+  test("on the hub the game keeps its one number; the listing is a plain named link (#10146, #5342)", () => {
     const hub = mixedHub();
     settleCollectionRead(hub.slug, { hub });
     const page = renderToStaticMarkup(<CollectionHub slug={hub.slug} />);
-    expect(page).not.toContain('href="/futures/70"');
+    expect(page).toMatch(/<a href="\/futures\/70" data-related-market="market:70"[^>]*><span[^>]*>Bills vs\. Chiefs<\/span>/);
+    expect(page).not.toContain("data-related-listing-link");
     expect(page).toMatch(/<a href="\/events\/7" data-more-on-game="event:7"[^>]*>More on this game/);
     expect(page).not.toContain("41%");
     expect(page).toContain("40%");
@@ -107,6 +108,8 @@ describe("a game's related mixed listing is a link, not a second winner number",
 // #10146 (Alex, build 34): a per-game "Related questions (363)" toggle dumped
 // every ladder rung and player row inline. The hub now draws one quiet link to
 // the game page, which applies its own display rules, so the link carries no count.
+// #5342: a short served list also names each question as a plain link to its own
+// page (no card, number or count); weekMarketLinks5342.test.tsx pins the bound.
 describe("a game's questions are one deliberate tap away, not an inline toggle", () => {
   beforeEach(() => forgetAcceptedCollections());
   const page = () => {
@@ -115,12 +118,13 @@ describe("a game's questions are one deliberate tap away, not an inline toggle",
     return renderToStaticMarkup(<CollectionHub slug={hub.slug} />);
   };
 
-  test("no toggle and no related question cards on the hub", () => {
+  test("no toggle and no related question cards on the hub; the question is a plain link", () => {
     const html = page();
     expect(html).not.toContain("<details");
     expect(html).not.toContain("Related questions");
-    expect(html).not.toContain("Josh Allen");
     expect(html).not.toContain('data-collection-member="market:70"');
+    expect(/<ul data-related-markets="event:7".*?<\/ul>/.exec(html)?.[0]).not.toMatch(/\d%/);
+    expect(html).toMatch(/<ul data-related-markets="event:7"[^>]*><li><a href="\/futures\/70" data-related-market="market:70"[^>]*><span[^>]*>Josh Allen: 2\+ passing touchdowns\?<\/span><span aria-hidden="true">›<\/span><\/a><\/li><\/ul>/);
   });
   test("the game with questions gets one link to its own game page, with no count", () => {
     const links = page().match(/<a [^>]*data-more-on-game="[^"]+"[^>]*>More on this game<span aria-hidden="true">›<\/span><\/a>/g) ?? [];

@@ -75,6 +75,7 @@ import app.tasks.live_blend_refresh as lbr
 import app.tasks.polymarket_open_contracts as open_mod
 import app.tasks.polymarket_ws as poly_task
 from app.tasks.polymarket_ws import standalone_open_outcome_ids
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 pytestmark = pytest.mark.asyncio
 
@@ -263,8 +264,8 @@ class _Recorded(poly_task._PMCatalogFlushBoundary):
 
     instances: list = []
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.handovers: list = []
         self.active_at_map: list = []
         _Recorded.instances.append(self)
@@ -300,9 +301,9 @@ def _slate_session(base):
                 str(open_mod.open_contract_outcomes_stmt()),
             ):
                 if "linked_event_id" in sql:
-                    return _Replayed(GAME_SLATE[0])
+                    return _Replayed(answer_slate_market_read(stmt, GAME_SLATE[0]))  # #10663
                 if "futures_markets.market_metadata" in sql:
-                    return _Replayed(GAME_SLATE[1])
+                    return _Replayed(answer_slate_market_read(stmt, GAME_SLATE[1]))
                 if sql.startswith(
                     "SELECT futures_outcomes.id, futures_outcomes.market_id, "
                     "futures_outcomes.external_id"

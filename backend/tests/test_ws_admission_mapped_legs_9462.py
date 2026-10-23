@@ -27,6 +27,11 @@ import app.tasks.live_blend_refresh as lbr
 import app.tasks.polymarket_token_topup as topup
 import app.tasks.polymarket_ws as poly_task
 import app.tasks.ws_admission as admission
+from tests.test_ws_flush_retry_q491 import (
+    is_stored_live_slate_read,
+    stored_live_batches,
+)
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 
 # ---------------------------------------------------------------- fakes ----
@@ -80,6 +85,12 @@ def _is_poly_open_contract_read(stmt) -> bool:
     }
 
 
+def _is_withdrawal_debt_read(stmt) -> bool:
+    """#10090: `PMWithdrawalDebt.load` reads the owed withdrawal removals at
+    start; not a slate or reread query, so it never shifts positional routing."""
+    return "FROM owed_chart_points" in str(stmt)
+
+
 def _is_clock_sample(stmt) -> bool:
     """#11138: `HeldRowQuotes.sample_database_clock` is neither slate nor
     reread; answered on its own so it never shifts the positional routing."""
@@ -100,10 +111,16 @@ def _install_session(monkeypatch, slate_batches, reread):
         async def execute(self, _stmt):
             if _is_poly_open_contract_read(_stmt):
                 return _Result([])
+            if _is_withdrawal_debt_read(_stmt):
+                return _Result([])
             if _is_clock_sample(_stmt):  # #11138: the held-quote DB-clock sample
                 return SimpleNamespace(scalar_one=lambda: datetime.now(timezone.utc))
+            if is_stored_live_slate_read(_stmt):
+                # #10090 attempt156: the stored-live load reads its own three
+                # batches ahead of the full slate, which stays queued.
+                state["slate"][:0] = stored_live_batches(*slate_batches[:3])
             if state["slate"]:
-                return _Result(state["slate"].pop(0))
+                return _Result(answer_slate_market_read(_stmt, state["slate"].pop(0)))
             state["reread_calls"] += 1
             return _Result(reread(state["reread_calls"]))
 

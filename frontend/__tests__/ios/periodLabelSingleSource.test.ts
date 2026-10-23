@@ -131,6 +131,29 @@ const NOT_PERIOD_PARSERS = new Map([
     // dodge this scan would trade a true sentence for a vaguer one.
     "holds the protected-touchdown RULE COPY ('after halftime (overtime included)') — prose stating Kalshi's settlement rule, never parses or labels a period",
   ],
+  [
+    join(IOS_ROOT, "Utilities/LivePregameComparison11296.swift"),
+    // #11296. Reader prose, like the protected-touchdown rule copy above: the
+    // information popover's basis sentence says the full-game pair includes
+    // overtime and the soccer pair excludes extra time. Nothing here reads a
+    // clock string or labels a period; the period is the admitted object's
+    // typed `ScorePeriod`. Dropping the word would make the sentence vaguer.
+    "holds the forecast BASIS COPY ('…for the full game, overtime included.') — prose keyed on the admitted object's typed period, never parses or labels a period",
+  ],
+  [
+    join(IOS_ROOT, "Utilities/LiveProjectedFinalAdmission2920.swift"),
+    // #2920. The fifth non-labelling mention: the live projected final's
+    // admission asks "is this soccer match still in regulation", because the
+    // producer's in-play object is a 90-minute forecast and extra time refuses
+    // it. `halftime` is one value of the producer's `_SOCCER_REGULATION_PHASES`
+    // (`backend/app/utils/card_projected_pair.py`), ported verbatim so native
+    // and the producer refuse the same rows. The answer is regulation / beyond
+    // / unknown — nothing a reader sees. Delegating to `PeriodLabel` would be
+    // the wrong repair: it answers what to CALL ESPN's clock string, and any
+    // drift in that display rule would silently move this refusal off the
+    // producer's.
+    "ports the producer's SOCCER REGULATION PHASES ('1st half', 'halftime', minutes) to decide whether a 90-minute forecast still applies — returns a phase, never labels a period",
+  ],
 ]);
 
 // The whole suite is meaningless if it is pointed at nothing — a path typo

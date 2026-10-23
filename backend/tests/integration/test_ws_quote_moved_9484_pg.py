@@ -95,7 +95,11 @@ def pg():
 
     engine = create_engine(DB_URL.replace("+asyncpg", "+psycopg2"))
     Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine, tables=_tables_for_outcomes())
+    # #11181: the real consumers' refreshers hold chart custody too.
+    Base.metadata.create_all(
+        engine,
+        tables=_tables_for_outcomes() + [Base.metadata.tables["owed_chart_points"]],
+    )
     try:
         yield engine
     finally:

@@ -469,3 +469,41 @@ async def test_a_catalog_arriving_while_a_refresh_cancels_is_not_reopened_after(
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_a_widened_kept_fence_still_honours_a_catalog_arriving_mid_cancel(wire):
+    """Live's review 217 of #11457: once a kept socket's fence is rebuilt only
+    when it must widen, the test above no longer reaches the rebuild. Here
+    socket 0 must widen ("a" returns) while a catalog arriving during the
+    cancel await drops "mv" — the rebuild must still filter by the latest
+    catalog."""
+    received = []
+    game = _client("game", received)
+    task = asyncio.create_task(game.run_refreshable(
+        ["mv", "a", "b", "c", "d1", "d2", "d3", "d4"]
+    ))
+    try:
+        await until(lambda: len(wire.sockets) == 2 and all(s.assets for s in wire.sockets))
+        kept = wire.carrying("mv")[0]
+        game.update_asset_ids(["mv", "b", "c", "d1", "d2", "d3", "d4"])  # fence "a" off
+        await _settled(game)
+        assert not game._routes(0, {"asset_id": "a"})
+        emptied = wire.carrying("d1")[0]
+        emptied.exit_gate, emptied.exit_started = asyncio.Event(), asyncio.Event()
+        game.update_asset_ids(["mv", "a", "b", "c"])  # A: "a" returns, socket 1 empties
+        await asyncio.wait_for(emptied.exit_started.wait(), 3)
+        game.update_asset_ids(["a", "b", "c"])  # B, while A is cancelling
+        emptied.exit_gate.set()
+        for _ in range(50):
+            assert not game._routes(0, {"asset_id": "mv"})
+            await asyncio.sleep(0)
+        await _settled(game)
+        assert game._routes(0, {"asset_id": "a"})
+        await kept.deliver(_quote("mv"))
+        await kept.deliver(_quote("a"))
+        assert received == [("game", "price", "a")]
+        assert not kept.closed
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

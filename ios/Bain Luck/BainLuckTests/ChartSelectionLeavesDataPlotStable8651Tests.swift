@@ -63,8 +63,19 @@ final class ChartSelectionLeavesDataPlotStable8651Tests: XCTestCase {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([request])
+        lastAxisTicks = (request.results ?? []).compactMap { o -> String? in
+            guard let string = o.topCandidates(1).first?.string,
+                  string.range(of: #"^\d{1,3}%$"#, options: .regularExpression) != nil,
+                  o.boundingBox.midX < 0.3 else { return nil }
+            return string
+        }
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }
+
+    /// #11356 — the focused axis prints its own numbers in the left gutter
+    /// (a window whose top is 60% has a "60%" tick), so a number the chart
+    /// prints is a readout only when it is not one of these.
+    private var lastAxisTicks: [String] = []
 
     func testActualHostedChartDoesNotRebuildMarksWhenOnlyTheFingerMoves() throws {
         let payload = try history()
@@ -151,7 +162,9 @@ final class ChartSelectionLeavesDataPlotStable8651Tests: XCTestCase {
         pump(host)
         let restingText = try visibleText(host, name: "released")
         XCTAssertFalse(restingText.contains("43%"), "the scrubbed moment outlived the finger: \(restingText)")
-        XCTAssertFalse(restingText.contains("60%"),
+        let printed60 = restingText.components(separatedBy: "60%").count - 1
+        let ticks60 = lastAxisTicks.filter { $0 == "60%" }.count
+        XCTAssertEqual(printed60, ticks60,
                        "the chart rests a readout that repeats the hero again (#9517): \(restingText)")
     }
 

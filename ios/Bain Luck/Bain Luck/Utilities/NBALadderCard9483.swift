@@ -248,8 +248,9 @@ nonisolated struct NBALadderCard9483: Equatable, Identifiable {
     /// baseline, else the option's own `pregame_reading` (#11125), which a
     /// settled option still carries. The reading must name this option's one
     /// contributor — a pin for another outcome is never borrowed — and an
-    /// exact 0 or 1 is a settlement value, not a chance.
-    private static func pin(_ option: QuestionMatrixOption) -> (probability: Double, at: String)? {
+    /// exact 0 or 1 is a settlement value, not a chance. Also the final MLB
+    /// stories' pin rule (#11284), so the two pages cannot read one differently.
+    static func pin(_ option: QuestionMatrixOption) -> (probability: Double, at: String)? {
         if let comparison = option.comparison, comparison.state == "comparable",
            let baseline = comparison.baseline, baseline.basis == "pregame_pin",
            let probability = baseline.probability, probability.isFinite, (0...1).contains(probability),

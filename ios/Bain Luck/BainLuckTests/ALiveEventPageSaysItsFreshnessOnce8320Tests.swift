@@ -145,8 +145,16 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
     }
 
     /// The Final chip is a settled-state label, not a freshness claim, and
-    /// #8320 did not ask for it to go ("settled means settled").
+    /// #8320 did not ask for it to go ("settled means settled"). #9483 v476
+    /// took away the chart heading's repeat of it (the range picker needed the
+    /// row); the hero's chip, mounted on every finished page, is the one that
+    /// stays.
     func testTheFinalChipSurvives() throws {
-        XCTAssertTrue(try chartCode().contains("Text(\"Final\")"))
+        XCTAssertFalse(try chartCode().contains("Text(\"Final\")"), "the heading repeats FINAL again (#9483)")
+        XCTAssertTrue(try code("Components", "StatusBadge.swift")
+            .contains("}elseifEventState.isFinished(status){Text(\"FINAL\")"), "the chip itself")
+        XCTAssertTrue(try pageCode()
+            .contains("}elseifEventState.isFinished(event.status){StatusBadge(status:event.status,commenceTime:event.commenceTime)"),
+            "every finished hero mounts it")
     }
 }

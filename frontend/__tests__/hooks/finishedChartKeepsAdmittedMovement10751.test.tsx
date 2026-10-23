@@ -30,7 +30,7 @@
  */
 
 import "../helpers/minimalDom";
-import React, { act, useCallback, useMemo, useRef } from "react";
+import React, { act, useCallback, useMemo, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import fs from "fs";
 import path from "path";
@@ -38,11 +38,14 @@ import useSWR, { SWRConfig } from "swr";
 
 import { useLiveEventStream, type LiveFrame } from "../../hooks/useLiveEventStream";
 import { applyLiveFrame } from "../../lib/eventLivePush";
+import { frameCarriesUnpricedSnapshot } from "../../lib/sourceSnapshot";
 import { canSubscribeEventQuotes } from "../../lib/eventQuoteStream";
 import { pinChartEdgeToHero } from "../../lib/chartEdgePin";
 import {
   admitChartFrames,
   appendHeroObservation,
+  admitCurrentSourceObservations,
+  appendAdmittedSourceObservations,
   finishedChartFrames,
   mergeLiveChartHistory,
   type AdmittedChartFrames,
@@ -172,29 +175,37 @@ function ChartPage({ net, eventId }: { net: Net; eventId: number }) {
   // ── the push callback's final branch, as the page writes it ────────────────
   const applyPushedFrame = useCallback((liveFrame: LiveFrame) => {
     if (liveFrame.event_id !== eventId) return;
-    if (liveFrame.p === null || liveFrame.p === undefined) return;
+    if (liveFrame.p === null || liveFrame.p === undefined || frameCarriesUnpricedSnapshot(liveFrame)) return;
     const frame = { ...liveFrame, p: liveFrame.p };
     refreshEvent((prev) => applyLiveFrame(prev, frame), { revalidate: false });
   }, [refreshEvent, eventId]);
 
   // ── app/events/[id]/page.tsx — the hook, as the page calls it ──────────────
   const quoteEligible = canSubscribeEventQuotes(event);
-  const { chartPoints, status: reportedStreamStatus } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame);
+  const { chartPoints, status: reportedStreamStatus } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame, undefined, event?.blend_fold_revision);
 
   // ── app/events/[id]/page.tsx — the chart composition, carried (PINNED) ─────
+  // #10090 attempt155: the page bumps this only when an accepted recovery pair
+  // adds a source reading; no finished-game path here moves it.
+  const [sourceObservationVersion] = useState(0);
   const admittedChartRef = useRef<AdmittedChartFrames | null>(null);
   const historyData = useMemo(
     () => {
       if (admittedChartRef.current?.eventId !== eventId) admittedChartRef.current = null;
-      if (quoteEligible) admittedChartRef.current = admitChartFrames(eventId, chartPoints, event);
+      if (quoteEligible) admittedChartRef.current = admitCurrentSourceObservations(
+        admitChartFrames(eventId, chartPoints, event), admittedChartRef.current, servedHistory, event,
+      );
       const frames = quoteEligible
         ? admittedChartRef.current?.points ?? []
         : finishedChartFrames(admittedChartRef.current, eventId, event, servedHistory);
-      const pushed = mergeLiveChartHistory(servedHistory, frames);
-      const joined = pushed !== servedHistory ? pushed : pinChartEdgeToHero(servedHistory, event);
-      return quoteEligible ? appendHeroObservation(joined, event, servedHistory) : joined;
+      const observed = appendAdmittedSourceObservations(servedHistory, admittedChartRef.current, event);
+      const pushed = mergeLiveChartHistory(observed, frames);
+      const joined = pushed !== observed ? pushed : pinChartEdgeToHero(observed, event);
+      return quoteEligible
+        ? appendHeroObservation(joined, event, servedHistory)
+        : joined;
     },
-    [servedHistory, event, quoteEligible, chartPoints, eventId],
+    [servedHistory, event, quoteEligible, chartPoints, eventId, sourceObservationVersion],
   );
 
   seen = {
@@ -290,25 +301,30 @@ afterEach(() => {
 describe("structural pin: the harness carries the page's own composition", () => {
   it("app/events/[id]/page.tsx still reads as the lines ChartPage mounts", () => {
     expect(PAGE).toContain("const quoteEligible = canSubscribeEventQuotes(event);");
-    expect(PAGE).toMatch(/chartPoints,\s*status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame\);/);
-    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined\) return;\s*(?:\/\/[^\n]*\n\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*refreshEvent\(/);
-    expect(PAGE.match(/\(prev\) => applyLiveFrame\(prev, frame\),/g)).toHaveLength(1);
-    expect(PAGE).toMatch(/\(prev\) => applyLiveFrame\(prev, frame\),[^]{0,300}\{ revalidate: false \}/);
+    expect(PAGE).toMatch(/chartPoints,\s*status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl, event\?\.blend_fold_revision\);/);
+    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined \|\| frameCarriesUnpricedSnapshot\(liveFrame\)\) return;\s*(?:\/\/[^\n]*\n\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*let sourceAdded = false;\s*pairJournalRef\.current\?\.record\(\(prev\) => applyLiveFrame\(prev, frame\)\);\s*void refreshEvent\(/);
+    expect(PAGE.match(/const adopted = applyLiveFrameRail\(prev, frame\);/g)).toHaveLength(1);
+    expect(PAGE).toMatch(/applyLiveFrameRail\(prev, frame\);[^]{0,600}\{ revalidate: false \}/);
     expect(PAGE).toContain('["history", eventId, fullHistoryRequested]');
     expect(PAGE).toMatch(/keepPreviousData: true,\s*\}\s*\);/);
     // The composition, line for line, in order.
     const carried = [
+      "const [sourceObservationVersion, setSourceObservationVersion] = useState(0);",
       "const admittedChartRef = useRef<AdmittedChartFrames | null>(null);",
       "const historyData = useMemo(",
       "if (admittedChartRef.current?.eventId !== eventId) admittedChartRef.current = null;",
-      "if (quoteEligible) admittedChartRef.current = admitChartFrames(eventId, chartPoints, event);",
+      "if (quoteEligible) admittedChartRef.current = admitCurrentSourceObservations(",
+      "admitChartFrames(eventId, chartPoints, event), admittedChartRef.current, servedHistory, event,",
       "const frames = quoteEligible",
       "? admittedChartRef.current?.points ?? []",
       ": finishedChartFrames(admittedChartRef.current, eventId, event, servedHistory);",
-      "const pushed = mergeLiveChartHistory(servedHistory, frames);",
-      "const joined = pushed !== servedHistory ? pushed : pinChartEdgeToHero(servedHistory, event);",
-      "return quoteEligible ? appendHeroObservation(joined, event, servedHistory) : joined;",
-      "[servedHistory, event, quoteEligible, chartPoints, eventId],",
+      "const observed = appendAdmittedSourceObservations(servedHistory, admittedChartRef.current, event);",
+      "const pushed = mergeLiveChartHistory(observed, frames);",
+      "const joined = pushed !== observed ? pushed : pinChartEdgeToHero(observed, event);",
+      "return quoteEligible",
+      "? appendHeroObservation(joined, event, servedHistory)",
+      ": joined;",
+      "[servedHistory, event, quoteEligible, chartPoints, eventId, sourceObservationVersion],",
     ];
     let from = 0;
     for (const line of carried) {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import os
@@ -335,6 +336,18 @@ def live_total_age_headroom_s(oldest_artifact_age_s: float) -> int:
     spent = math.ceil(max(0.0, oldest_artifact_age_s))
     return max(0, FEED_RESPONSE_STALE_TTL_LIVE_SECONDS - spent)
 
+
+def nonlive_total_age_headroom_s(strict_artifact_age_s: float) -> int:
+    """`live_total_age_headroom_s` for a page with no live card (#1480, N-strict).
+
+    Spent only on the age of `principal_independent_cache.STRICT_AGE_NAMESPACES`
+    artifacts — game readings a request used to read for itself — so a non-live
+    page built from one stays within `FEED_RESPONSE_STALE_TTL_SECONDS` of the
+    reading, exactly as when the request read it. Rounded up for the same reason.
+    """
+    spent = math.ceil(max(0.0, strict_artifact_age_s))
+    return max(0, FEED_RESPONSE_STALE_TTL_SECONDS - spent)
+
 # LAT-P089 operator kill switch for the inert-principal share.
 FEED_INERT_PRINCIPAL_SHARE_ENV = "FEED_INERT_PRINCIPAL_SHARE"
 _INERT_SHARE_OFF_VALUES = frozenset({"0", "false", "no", "off"})
@@ -405,6 +418,32 @@ _PAGE_BASE_OFF_VALUES = frozenset({"0", "false", "no", "off"})
 #: Where a stored base keeps its CERT-409 build time. Not ``cache.built_at``,
 #: because ``cache`` describes a serve and the base is never served as-is.
 FEED_PAGE_BASE_BUILT_AT_FIELD = "_page_base_built_at"
+
+# --- #11259: the base's durable last-good copy ---------------------------------
+# A build that misses the request budget serves process-local last-good or a
+# truthful `unavailable` (#10534). Process-local means a release wipes it on
+# every dyno, and a reader can always land on a dyno that never held one. The
+# Redis tiers above it last 300 s at most, so when every build fails for longer
+# than that — measured twice on 2026-10-19: ~2.5 min after release v5793, ~3.3
+# min under the 06:30Z retention collapse — a fresh reader is served an EMPTY
+# Discover after a 25 s wait.
+#
+# So each published base also writes one longer-lived copy, read ONLY by the
+# terminals that would otherwise serve `unavailable`. It is never a read tier:
+# an ordinary request still builds once the stale mirror lapses.
+#
+# The age bound is on the CONTENT (the base's CERT-409 origin), not the copy:
+#   * a base holding a live game: FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS, the same
+#     ceiling every other last-good tier applies;
+#   * otherwise: 30 minutes. Process-local last-good has NO age bound for a
+#     page without a live game, so this is stricter than what is already
+#     served, and covers both measured outages tenfold.
+# Under the base's own key, so `invalidate_feed_response_cache`'s
+# `feed_cache:*` scan deletes it with the base. Stored in the shared cache's
+# zlib wire form: a web Discover deck is ~0.6 MB of JSON, held six times longer
+# than its stale mirror in a 100 MB allkeys-lru Redis.
+FEED_PAGE_BASE_LAST_GOOD_SUFFIX = ":last_good"
+FEED_PAGE_BASE_LAST_GOOD_MAX_AGE_SECONDS = 1800
 
 #: #5105. Folded into BOTH cache keys when a build opted into opening seating
 #: (``discover_opening_seating.seat_opening``). A seated deck and an unseated
@@ -565,6 +604,128 @@ def feed_page_base_built_at(base: Any) -> Optional[float]:
         return None
     built_at = base.get(FEED_PAGE_BASE_BUILT_AT_FIELD)
     return float(built_at) if isinstance(built_at, (int, float)) else None
+
+
+def feed_page_base_last_good_key(base_key: str) -> str:
+    """#11259: where a page base keeps its durable last-good copy."""
+    return f"{base_key}{FEED_PAGE_BASE_LAST_GOOD_SUFFIX}"
+
+
+def feed_page_base_last_good_max_age_s(*, live: bool) -> int:
+    """#11259: the oldest CONTENT the durable copy may serve, by liveness.
+
+    Also its Redis TTL at publish: the base's origin can only be older than
+    the publish, so a copy is never kept past the age it may be served at.
+    """
+    return (
+        FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
+        if live
+        else FEED_PAGE_BASE_LAST_GOOD_MAX_AGE_SECONDS
+    )
+
+
+def encode_base_last_good(base_json: str) -> bytes:
+    """#11259: the bytes a durable copy is stored as (the shared wire form)."""
+    from app.utils.principal_independent_cache import wire_encode
+
+    return wire_encode(base_json)
+
+
+def _feed_start_epoch(raw: Any) -> Optional[float]:
+    """A card's ``commence_time`` as epoch seconds, or ``None``.
+
+    ISO-8601 as the feed serializes it; a trailing ``Z`` and a naive stamp are
+    read as UTC. Anything else is ``None``.
+    """
+    from datetime import datetime, timezone
+
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        start = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    return start.timestamp()
+
+
+def base_has_started_scheduled_game(base: Any, *, now: float) -> bool:
+    """#11259: whether a stored base calls a game ``scheduled`` after its start.
+
+    The copy was true when it was built. A game that has since kicked off still
+    reads ``scheduled`` in it, with its pre-game prices, so the card is wrong
+    from its start onward. Only cards whose start parses are counted: like
+    ``payload_contains_live_event``, this only ever SHORTENS a bound, so an
+    unparseable start keeps the ordinary one. Pure — ``now`` is the reader's.
+    """
+    if not isinstance(base, dict):
+        return False
+    items = base.get("items")
+    if not isinstance(items, list):
+        return False
+    for item in items:
+        if not isinstance(item, dict) or item.get("type") != "event":
+            continue
+        data = item.get("data")
+        if not isinstance(data, dict):
+            continue
+        if str(data.get("status") or "").strip().lower() != "scheduled":
+            continue
+        start = _feed_start_epoch(data.get("commence_time"))
+        if start is not None and start <= now:
+            return True
+    return False
+
+
+def base_from_last_good(
+    raw: Any, *, now: float
+) -> tuple[Optional[dict], Optional[float]]:
+    """#11259: ``(base, origin)`` from a durable copy, or ``(None, None)``.
+
+    Pure, so every refusal is testable without a cache. The caller renders the
+    base exactly as the page-base read tier does (sliced, or composed at its
+    own clock for a seated request). Fails closed on anything it cannot vouch
+    for:
+
+    * anything that is not ``encode_base_last_good``'s wire form (bounded
+      inflation, as ``wire_decode`` does for every shared artifact);
+    * an undecodable base, or one whose ``items`` is not a list or disagrees
+      with ``total`` (truncated, legacy or half-written — the slicer's rule);
+    * a base with no stored origin: its age cannot be bounded, so it cannot be
+      served under a bound;
+    * content older than ``feed_page_base_last_good_max_age_s``. Liveness is
+      read off the WHOLE base, the same conservative direction the publish
+      takes: a live game at position 60 bounds page 1 too. A game the copy
+      still calls ``scheduled`` whose start is at or before ``now`` counts as
+      live (``base_has_started_scheduled_game``): the copy cannot see the
+      kickoff, so it is held to the live ceiling rather than 30 minutes.
+    """
+    from app.utils.principal_independent_cache import wire_decode
+
+    text = wire_decode(raw)
+    if text is None:
+        return None, None
+    try:
+        base = json.loads(text)
+    except Exception:
+        return None, None
+    if not isinstance(base, dict):
+        return None, None
+    items = base.get("items")
+    total = base.get("total")
+    if not isinstance(items, list) or not isinstance(total, int) or total != len(items):
+        return None, None
+    origin = feed_page_base_built_at(base)
+    if origin is None:
+        return None, None
+    max_age = feed_page_base_last_good_max_age_s(
+        live=payload_contains_live_event(base)
+        or base_has_started_scheduled_game(base, now=now)
+    )
+    if now - origin > max_age:
+        return None, None
+    return base, origin
 
 
 # --- D1 clause (a) / #4110: the edition token ----------------------------------
@@ -891,6 +1052,7 @@ def feed_response_cache_ttls(
     identified: bool = False,
     live: bool = False,
     oldest_artifact_age_s: float = 0.0,
+    strict_artifact_age_s: float = 0.0,
 ) -> tuple[int, int]:
     """``(fresh_ttl, stale_ttl)`` for one feed response cache entry (#2216).
 
@@ -905,6 +1067,13 @@ def feed_response_cache_ttls(
     It applies on the same discipline: a ``min``, only when ``live``, and it can
     only ever SHORTEN. Defaulting to ``0.0`` keeps every existing caller's answer
     byte-identical, so an un-updated call site is conservative rather than wrong.
+
+    ``strict_artifact_age_s`` (#1480) is the same term for the
+    ``STRICT_AGE_NAMESPACES`` artifacts only, and it binds on EVERY page: on a
+    page with no live card it shortens both TTLs to what is left of the 300 s
+    stale window. Those artifacts are also in ``oldest_artifact_age_s``, so the
+    live branch already counts them; ``max`` keeps that true for a caller that
+    passes only this one. Same ``min``-only discipline, same ``0.0`` default.
     """
     fresh = feed_response_cache_ttl(
         my_teams_only=my_teams_only, identified=identified
@@ -914,7 +1083,13 @@ def feed_response_cache_ttls(
         fresh = min(fresh, FEED_RESPONSE_TTL_LIVE_SECONDS)
         stale = min(stale, FEED_RESPONSE_STALE_TTL_LIVE_SECONDS)
         # The inputs have already spent part of the ceiling.
-        headroom = live_total_age_headroom_s(oldest_artifact_age_s)
+        headroom = live_total_age_headroom_s(
+            max(oldest_artifact_age_s, strict_artifact_age_s)
+        )
+        fresh = min(fresh, headroom)
+        stale = min(stale, headroom)
+    else:
+        headroom = nonlive_total_age_headroom_s(strict_artifact_age_s)
         fresh = min(fresh, headroom)
         stale = min(stale, headroom)
     return fresh, stale

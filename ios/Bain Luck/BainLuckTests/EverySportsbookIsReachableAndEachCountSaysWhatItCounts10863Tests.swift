@@ -126,7 +126,7 @@ final class EverySportsbookIsReachableAndEachCountSaysWhatItCounts10863Tests: XC
 
         XCTAssertEqual(betting.label, "Sportsbooks", "no bare count in the label")
         XCTAssertEqual(betting.detail, "Based on 6 sportsbooks")
-        XCTAssertEqual(heading, "Latest price from each sportsbook (12)")
+        XCTAssertEqual(heading, "Latest probabilities from each sportsbook (12)")
         XCTAssertFalse(heading.contains("Based on"))
         XCTAssertNotEqual(betting.label + (betting.detail ?? ""), heading)
     }

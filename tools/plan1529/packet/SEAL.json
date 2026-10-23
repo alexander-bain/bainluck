@@ -1,0 +1,26 @@
+{
+  "schema": "calibration-1529-phase-a-plan-only-seal/v1",
+  "production_admitted": false,
+  "files": {
+    "MANIFEST.json": {
+      "bytes": 4739,
+      "sha256": "7995facad96825ebad420860a4553e36a70c50eb916032a533efe011f59d3577"
+    },
+    "games.plan-only.sql": {
+      "bytes": 578,
+      "sha256": "1bbeb6d018434eaa5ecaab58c08e3eaf2cdecb45982e9db9b764faa82be1d06f"
+    },
+    "markets.plan-only.sql": {
+      "bytes": 1333,
+      "sha256": "8c047f4d0c97b8def47550760cfdda00e62f2f6d690809e7dada1562e005b240"
+    },
+    "source_split.plan-only.sql": {
+      "bytes": 1218,
+      "sha256": "b409755755295fd7c45cbc1432dfd9b222ad097f1085d90dd5b2a297537dc2d4"
+    },
+    "fixture_days.plan-only.sql": {
+      "bytes": 570,
+      "sha256": "53a4eae85077f76dc0b836500e541f3c12fdf10fd8adb1b74c730f5c44f7f105"
+    }
+  }
+}

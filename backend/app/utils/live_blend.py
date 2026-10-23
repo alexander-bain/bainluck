@@ -264,7 +264,8 @@ def _is_named_two_way_devig(
 ) -> bool:
     """Prove both selected rows AND their transformations, never just the primary.
 
-    Only Kalshi's full-game NBA per-team pair is positively two-way here. A
+    Kalshi's full-game NBA per-team pair and the explicitly identified
+    bundled ATP Challenger winner pair are positively two-way here. A
     named away row alone does not prove its complement is home: an unknown
     contract or a draw-bearing game cannot borrow this proof. Other series
     retain their existing safeguards until their format is established.
@@ -273,15 +274,23 @@ def _is_named_two_way_devig(
 
     if len(contributors) != 2:
         return False
+    bundled = contributors[0][0] is contributors[1][0]
+    container = (getattr(contributors[0][0].market, "external_id", None) or "").upper()
+    bundled = (bundled and container.startswith("KXATPCHALLENGERMATCH-")
+               and len(container.split("-")) == 2
+               and len(contributors[0][0].outcomes) == 2)
     fixture = None
     suffixes = set()
     sides = set()
     for entry, home_prob, outcome, yes_prob in contributors:
-        ticker = (getattr(entry.market, "external_id", None) or "").upper().split("-")
+        identity = getattr(outcome if bundled else entry.market, "external_id", None) or ""
+        if bundled and not identity.upper().startswith(container + "-"):
+            return False
+        ticker = identity.upper().split("-")
         if (
             entry.market.source != "kalshi"
             or len(ticker) != 3
-            or ticker[0] != "KXNBAGAME"
+            or ticker[0] != ("KXATPCHALLENGERMATCH" if bundled else "KXNBAGAME")
             or not ticker[1]
             or not ticker[2]
         ):
@@ -523,6 +532,19 @@ def _last_observation(outcomes: Optional[Sequence[Any]]) -> Optional[datetime]:
         if stamp is not None and (newest is None or stamp > newest):
             newest = stamp
     return newest
+
+
+def _bundled_pair_observed_since_start(entry: MarketOutcomes) -> bool:
+    """Each new contributor must have its own observation, after kickoff
+    when kickoff has passed. Do not borrow the newest sibling's clock.
+    """
+    clocks = [_as_utc(getattr(row, "last_updated", None)) for row in entry.outcomes]
+    if not clocks or any(stamp is None for stamp in clocks):
+        return False
+    start = _as_utc(getattr(entry, "event_commence_time", None))
+    if start is not None and start <= datetime.now(timezone.utc):
+        return all(stamp >= start for stamp in clocks)
+    return True
 
 
 def speaker_unobserved_since_kickoff(
@@ -1173,10 +1195,69 @@ def _reading_for_entry(
     return matchup, home_prob, outcome, yes_prob, away_prob, draw_prob
 
 
+def _without_duplicated_pm_wrappers(
+    entries: list[MarketOutcomes], home_team_name: str, away_team_name: str
+) -> list[MarketOutcomes]:
+    """Prefer an admissible named duel to its singleton event-container copy.
+
+    PM ingest stores the condition id on the parent outcome as well as the
+    child's market. Those exact identities prove one contract, not two prices
+    to devig. Titles/group membership alone cannot prove duplication. Keep
+    multi-outcome parents (including three-way fields) and unknown identities.
+    This lives in the shared resolver so DNPL and durable writers agree.
+    """
+    def wrapper_condition(entry: MarketOutcomes) -> Optional[str]:
+        external_id = getattr(entry.market, "external_id", None)
+        if (entry.market.source != "polymarket" or not isinstance(external_id, str)
+                or not external_id.isdecimal() or len(entry.outcomes) != 1):
+            return None
+        condition = getattr(entry.outcomes[0], "external_id", None)
+        return condition.lower() if isinstance(condition, str) else None
+
+    wrapper_conditions = {wrapper_condition(entry) for entry in entries} - {None}
+    if not wrapper_conditions:
+        return entries
+
+    direct_conditions: set[str] = set()
+    for entry in entries:
+        market = entry.market
+        condition = getattr(market, "external_id", None)
+        if (market.source != "polymarket" or not isinstance(condition, str)
+                or len(condition) != 66 or not condition.startswith("0x")
+                or any(c not in "0123456789abcdefABCDEF" for c in condition[2:])
+                or len(entry.outcomes) != 2 or condition.lower() not in wrapper_conditions):
+            continue
+        if not admissible_as_blend_speaker(
+            market, is_primary=False, outcomes=entry.outcomes,
+            event_commence_time=getattr(entry, "event_commence_time", None),
+            event_has_result=getattr(entry, "event_has_result", None),
+        ):
+            continue
+        found = _reading_for_entry(entry, home_team_name, away_team_name)
+        if found is None:
+            continue
+        _matchup, home_prob, outcome, yes_prob, _away, _draw = found
+        if (home_prob != yes_prob or not _is_unique_named_home_quote(
+                entry, outcome, home_team_name, away_team_name)):
+            continue
+        if not any(row is not outcome and _is_unique_named_home_quote(
+                entry, row, away_team_name, home_team_name) for row in entry.outcomes):
+            continue
+        direct_conditions.add(condition.lower())
+
+    return [entry for entry in entries if wrapper_condition(entry) not in direct_conditions]
+
+
 def compute_source_home_probability(
     group: Sequence[MarketOutcomes],
     home_team_name: str,
     away_team_name: str,
+    *,
+    current_book_midpoint=None,
+    current_book_primary_price=None,
+    current_primary_input=None,
+    require_current_book_midpoint: bool = False,
+    current_book_refused=None,
 ) -> Optional[BlendReading]:
     """The home win probability this source asserts, or None if it asserts none.
 
@@ -1239,7 +1320,9 @@ def compute_source_home_probability(
     defect seen at three call sites is fixed here instead. See ``BlendReading``
     for the invariant and the measurement.
     """
-    entries = list(group or [])
+    entries = _without_duplicated_pm_wrappers(
+        list(group or []), home_team_name, away_team_name,
+    )
     if not entries:
         return None
 
@@ -1293,6 +1376,91 @@ def compute_source_home_probability(
     # Retain the actual pre-average transformations alongside their rows. A
     # named speaker must never confer its proof on an unproven sibling.
     orientation_contributors = [(speaker, home_prob, outcome, yes_prob)]
+
+    # #10090: Kalshi stores the two independent player YES
+    # contracts as outcome rows of one event-level market. Apply the existing
+    # mean(home YES, 1-away YES) rule to this positively identified tennis pair.
+    # Other formats, incomplete pairs and unknown identities retain their reading.
+    bundled_pair = None
+    parent_ticker = (getattr(speaker.market, "external_id", None) or "").upper()
+    # #10090: the WS owner may require present book proof for this
+    # new bundled branch. Poll/matcher callers retain their observation-clock
+    # behavior. No row timestamp or composite freshness clock is changed.
+    bundled_book_scope = (
+        speaker.market.source == "kalshi"
+        and parent_ticker.startswith("KXATPCHALLENGERMATCH-")
+        and len(parent_ticker.split("-")) == 2
+        and len(speaker.outcomes) == 2
+        and _is_unique_named_home_quote(speaker, outcome, home_team_name, away_team_name)
+        and any(row is not outcome
+                and _is_unique_named_home_quote(speaker, row, away_team_name, home_team_name)
+                for row in speaker.outcomes)
+        and len({getattr(row, "external_id", None) for row in speaker.outcomes}) == 2
+        and all((getattr(row, "external_id", None) or "").upper().startswith(parent_ticker + "-")
+                and len((getattr(row, "external_id", None) or "").split("-")) == 3
+                for row in speaker.outcomes)
+    )
+    def book_proves(row, *, primary=False):
+        if not require_current_book_midpoint or not bundled_book_scope:
+            return True
+        from decimal import Decimal, InvalidOperation
+        proven = False
+        try:
+            lookup = (current_book_primary_price if primary and current_book_primary_price is not None
+                      else current_book_midpoint)
+            midpoint = None if lookup is None else lookup(getattr(row, "external_id", None))
+            proven = (midpoint is not None
+                      and Decimal(str(row.current_probability)) == midpoint)
+            if not proven and primary and current_primary_input is not None:
+                value = current_primary_input(row)
+                proven = value is not None and Decimal(str(row.current_probability)) == Decimal(str(value))
+        except (TypeError, ValueError, InvalidOperation):
+            pass
+        if not proven and current_book_refused is not None:
+            current_book_refused()
+        return proven
+
+    if require_current_book_midpoint and bundled_book_scope:
+        # A refused pair must not fall back to the same unproved home row.
+        if (getattr(speaker, "event_has_result", None)
+                or any(getattr(row, "is_winner", None) is not None
+                       or getattr(row, "resolution_source", None) is not None
+                       for row in speaker.outcomes)
+                or not book_proves(outcome, primary=True)):
+            return None
+
+    if (
+        sum(1 for entry in entries if entry.market.source == "kalshi"
+            and feeds_win_prob_blend(getattr(entry.market, "external_id", None) or "")) == 1
+        and speaker.market.source == "kalshi"
+        and parent_ticker.startswith("KXATPCHALLENGERMATCH-")
+        and len(parent_ticker.split("-")) == 2
+        and len(speaker.outcomes) == 2
+        and _is_unique_named_home_quote(speaker, outcome, home_team_name, away_team_name)
+    ):
+        other = next(row for row in speaker.outcomes if row is not outcome)
+        tickers = [(getattr(row, "external_id", None) or "").upper() for row in speaker.outcomes]
+        if (
+            _is_unique_named_home_quote(speaker, other, away_team_name, home_team_name)
+            and len(set(tickers)) == 2
+            and all(t.startswith(parent_ticker + "-") and len(t.split("-")) == 3 for t in tickers)
+            and other.current_probability is not None
+            and 0.0 < float(other.current_probability) < 1.0
+            and 0.0 < yes_prob < 1.0
+            and abs(yes_prob + float(other.current_probability) - 1.0) <= 0.15
+            and _bundled_pair_observed_since_start(speaker)
+            and book_proves(outcome)
+            and book_proves(other)
+            and all(getattr(row, "is_winner", None) is None and getattr(row, "resolution_source", None) is None for row in speaker.outcomes)
+        ):
+            bundled_pair = other
+    if bundled_pair is not None:
+        other_yes = float(bundled_pair.current_probability)
+        home_prob = (home_prob + 1.0 - other_yes) / 2.0
+        devigged = True
+        away_prob = draw_prob = None
+        contributing_outcomes.append(bundled_pair)
+        orientation_contributors.append((speaker, 1.0 - other_yes, bundled_pair, other_yes))
 
     if len(entries) == 2:
         for sibling in entries:

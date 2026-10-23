@@ -70,10 +70,14 @@ describe("#920 actual published observations reach the main chart", () => {
     const hook=readFileSync(join(process.cwd(),"hooks/useLiveEventStream.ts"),"utf8");
     // #10751: while eligible the admitted subset; after the finish only that
     // recorded subset, through the one proof-gated selector.
-    expect(page).toContain("if (quoteEligible) admittedChartRef.current = admitChartFrames(eventId, chartPoints, event);");
+    expect(page).toContain("if (quoteEligible) admittedChartRef.current = admitCurrentSourceObservations(");
+    expect(page).toContain("admitChartFrames(eventId, chartPoints, event), admittedChartRef.current, servedHistory, event,");
     expect(page).toContain(": finishedChartFrames(admittedChartRef.current, eventId, event, servedHistory);");
-    expect(page).toContain("const pushed = mergeLiveChartHistory(servedHistory, frames);");
-    expect(page.match(/aggregateLine=\{historyData\?\.aggregate_line \?\? undefined\}/g)).toHaveLength(2);
+    expect(page).toContain("const observed = appendAdmittedSourceObservations(servedHistory, admittedChartRef.current, event);");
+    expect(page).toContain("const pushed = mergeLiveChartHistory(observed, frames);");
+    expect(page.match(/aggregateLine=\{previewChartLine\}/g)).toHaveLength(2);
+    expect(page).toContain("const previewChartLine = useMemo(() => overlayBlendPreviewLine(");
+    expect(page).toContain("event, blendPreview, blendPreviewNow, historyData?.aggregate_line ?? undefined,");
     expect(hook).toContain("rememberLiveChartFrame");
     expect(hook).toContain("chartEventId === eventId");
   });

@@ -17,8 +17,10 @@ import math
 import os
 import time
 from collections.abc import Collection, Iterable, Iterator, Mapping
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 from datetime import datetime, timezone
+
+from sqlalchemy import text
 
 from app.tasks.kalshi_ws import (
     FINAL_FLUSH_ATTEMPTS,
@@ -49,6 +51,28 @@ PRICE_CHUNK_LOCK_TIMEOUT_MS = 500
 #: in the same flush. What a held chunk costs the later chunks of its flush
 #: falls from up to 500 ms to 50 ms. Rerank and commit keep the chunk budget.
 PRICE_STATEMENT_LOCK_TIMEOUT_MS = 50
+#: #10090 (Root attempt71) — a whole GAME chunk on a game flush this fast or
+#: faster tries its price rows for only this long: the next game flush probes
+#: within one period, and the held-quote overlay publishes the newer quote
+#: about 40 ms sooner. Props, standalone/open legs, unknown or mixed chunks and
+#: any slower game cadence keep the 50 ms above: on a 250 ms loop a 1 ms try
+#: turned a 20 ms hold into a 270 ms prop/standalone wait (real PG, 50 ms: 34–49).
+FAST_GAME_PRICE_STATEMENT_LOCK_TIMEOUT_MS = 1
+FAST_GAME_FLUSH_SECONDS = 0.025
+
+# Optional DNPL game writers must not hold later arrivals inside a slow price
+# statement. Keep the separate lock budget; preserve any tighter prior cap.
+DNPL_PRICE_STATEMENT_TIMEOUT_MS = 250
+ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL = text("""
+    WITH prior AS MATERIALIZED (
+        SELECT current_setting('statement_timeout') AS value
+    )
+    SELECT value, set_config('statement_timeout', CASE
+        WHEN CAST(value AS interval) > interval '0'
+         AND CAST(value AS interval) < CAST(CAST(:ms AS text) AS interval) THEN value
+        ELSE CAST(:ms AS text) END, true)
+    FROM prior
+""")
 
 #: #10090 — after an idle input wakes the price flush, wait this long (fixed,
 #: once) before it snapshots the buffer, so the rest of an already-arriving
@@ -81,7 +105,14 @@ class _PMCatalogFlushBoundary:
     stamps, the game writer and one side writer.
     """
 
-    def __init__(self):
+    def __init__(self, *, game_period: float | None = None):
+        # #10090: the game chunks' first price-row wait, from the run's own
+        # game cadence (see FAST_GAME_PRICE_STATEMENT_LOCK_TIMEOUT_MS).
+        self.game_price_lock_timeout_ms = (
+            FAST_GAME_PRICE_STATEMENT_LOCK_TIMEOUT_MS
+            if game_period is not None and game_period <= FAST_GAME_FLUSH_SECONDS
+            else PRICE_STATEMENT_LOCK_TIMEOUT_MS
+        )
         self.condition = asyncio.Condition()
         self.active = 0
         self.standalone_active = 0
@@ -90,6 +121,14 @@ class _PMCatalogFlushBoundary:
         self.stamps: Optional["_PMStampOwner"] = None
         self.flush_wake = asyncio.Event()
         self.flush_work = 0
+        # Optional observations never own price/stamp debt. A successful
+        # unchanged acknowledgement permits only its uninterrupted input value.
+        self.observation_ack = {}
+        self.observation_pending = {}
+        self.observation_wake = asyncio.Event()
+        self.observation_writing = set()
+        self.observation_write_epoch = {}
+        self.observation_drain = None
         # #10090: the linked props' own loop (`flush_props`).
         self.prop_wake = asyncio.Event()
         self.prop_work = 0
@@ -969,6 +1008,825 @@ async def withdraw_book_refuted_prices(session, books: dict) -> list:
     return withdrawn
 
 
+#: #10090 — `owed_chart_points.source` for a committed explicit Polymarket
+#: withdrawal whose source removal is still owed. Distinct from 'polymarket':
+#: each chart drain reads only its own source exactly (`OwedChartCustody.load`),
+#: so neither drain nor any chart reader ever sees one of these rows.
+PM_WITHDRAWAL_DEBT_SOURCE = "polymarket_withdrawal"
+#: Rows memory takes per load. A fuller table is read again on the next flush.
+PM_WITHDRAWAL_DEBT_LOAD_LIMIT = 1024
+#: A failed load is tried again at most this often.
+PM_WITHDRAWAL_DEBT_RETRY_S = 30.0
+
+
+class PMWithdrawal(NamedTuple):
+    """One leg whose explicit withdrawal still owes its source removal."""
+
+    id: int  #: the `futures_outcomes` leg
+    market_id: int
+    last_updated: Optional[datetime]  #: the observation the withdrawal cleared
+    event_id: int
+    #: Its `owed_chart_points` row; None for a book-qualified stray (`strays`).
+    custody_id: Optional[int]
+    #: Stray only: the row's `price_changed_at`, which must follow the basis.
+    changed_at: Optional[float] = None
+
+
+class PMWithdrawalMarketPublisher:
+    """One market sender, coalesced pending plain frames, no retained session.
+
+    A withdrawal's market signal must not gate its event-source removal or the
+    next game price. Market signals invalidate REST reads, so the existing
+    per-market union/max/terminal coalescing also applies between flushes.
+    """
+
+    def __init__(self):
+        self.pending: list[dict] = []
+        self.task: Optional[asyncio.Task] = None
+
+    def enqueue(self, session, refresher):
+        from app.utils.market_quote_push import (
+            take_committed_market_changes, coalesce_market_changes,
+        )
+        self.pending = coalesce_market_changes(
+            self.pending + take_committed_market_changes(session),
+        )
+        self.start(refresher)
+
+    def _observe(self, task):
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("Polymarket WS: market publication owner failed", exc_info=task.exception())
+
+    def start(self, refresher):
+        if self.task is not None and self.task.done():
+            task, self.task = self.task, None
+            self._observe(task)
+        if self.task is None and self.pending:
+            self.task = asyncio.create_task(
+                self._send(refresher), name="polymarket-withdrawal-market-publish",
+            )
+
+    async def offer(self, session, refresher, *, background=False):
+        self.enqueue(session, refresher)
+        if not background:
+            await self.join()
+
+    async def _send(self, refresher):
+        from app.utils.market_quote_push import coalesce_market_changes
+
+        while self.pending:
+            changes, self.pending = self.pending, []
+            try:
+                await refresher.publish_market_frames(changes)
+            except BaseException as exc:
+                # A canceled sender still owns its detached committed batch.
+                # Newer pending observations win the ordinary coalescing rule.
+                self.pending = coalesce_market_changes(changes + self.pending)
+                if not isinstance(exc, Exception):
+                    raise
+                logger.exception("Polymarket WS: market publication owner failed")
+                return  # a later flush/final drain can start the retained work
+
+    async def join(self, *, cancel=False):
+        task = self.task
+        if task is None:
+            return
+        interrupted = None
+        if cancel and not task.done():
+            task.cancel()
+        try:
+            while not task.done():
+                try:
+                    await asyncio.wait({task})
+                except asyncio.CancelledError as exc:
+                    if not cancel:
+                        raise  # this waiter does not own the shared sender
+                    interrupted = exc
+            self._observe(task)
+        finally:
+            if task.done() and self.task is task:
+                self.task = None
+        if interrupted is not None:
+            raise interrupted
+
+
+class PMWithdrawalOwnershipDeferred(RuntimeError):
+    """Withdrawal remains owed while this consumer lacks ownership."""
+
+
+class PMWithdrawalDebt:
+    """#10090 — durable custody of committed withdrawals until removal settles.
+
+    WHY. The price withdrawal commits on its own, so it never waits on the
+    event row (attempt85), and the source removal follows in a second
+    transaction. Held only in memory, that removal was lost when the process
+    died between the two, when cancellation cut off a commit's acknowledgement,
+    or when the final drain's removal failed. So each withdrawn leg on a live
+    event is also a row in `owed_chart_points` under its own source:
+
+    * `record` INSERTs it in the price-withdrawal transaction, so the withdrawal
+      commits only with its row. No foreign key: the insert locks no event.
+    * `settle` DELETEs it first in the removal transaction, so removal and
+      settlement commit together or not at all, and a row another process
+      already settled is never attributed again.
+    * `load` reads the rows memory does not hold, oldest first, when the
+      consumer starts. Recovery needs no new book and no catalog membership.
+
+    The exact ``polymarket_withdrawal_owner`` source is a separate, persistent
+    coordination row: event_id/value are 0 and reading holds the owner token.
+    Claiming a replacement updates it under an exclusive row lock; both
+    withdrawal transaction bodies hold its shared lock through commit. It is
+    not owed chart/notification work and is excluded from drain counts by its
+    exact source, never a prefix. Do not delete it as a cleanup operation.
+
+    Startup recovery adopts both withdrawal and notification custody after
+    claiming ownership. Existing recovery stays active through worker changes;
+    completeness across old unguarded writers requires the separate transition
+    boundary and a subsequent guarded startup scan.
+
+    Only the RETURNING rows of the withdrawal UPDATE become debt. A stored NULL
+    alone never does; `strays` admits one only with a fresh untradeable book and
+    a `price_changed_at` after the observation the source carries.
+    """
+
+    def __init__(self):
+        #: custody id -> debt, mirroring the durable rows this process holds.
+        self.owed: dict[int, PMWithdrawal] = {}
+        self.loaded = False
+        self._startup_recovery_logged = False
+        self._startup_recovery_rows = [0, 0]
+        self._load_running = False
+        self._uncertain_commit = False
+        self._uncertain_xids: set[str] = set()
+        self._unknown_outcomes = 0
+        from uuid import uuid4
+        self._owner_token = str(uuid4())
+        self._owner_id = None
+        self._owner_claim_at = 0.0
+        self._owner_warning_sent = False
+        self._recovery_scan_at = 0.0
+        self.publications: dict[int, dict] = {}
+        self._publication_task: Optional[asyncio.Task] = None
+        self._peer_publication_task: Optional[asyncio.Task] = None
+        self._publication_claims: dict[asyncio.Task, dict[int, dict]] = {}
+        self._publication_attempted: set[int] = set()
+        self._publication_retry_at = 0.0
+        self._publication_failures = 0
+        # One debt owner is created per consumer; its only final drain may
+        # cross many chunk boundaries/passes. Each custody row gets one final
+        # attempt, including rows discovered or committed during that drain.
+        self._final_publication_attempted: set[int] = set()
+        self._retry_at = 0.0
+        #: stray leg -> the `price_changed_at` already judged, so a repeated
+        #: wide book on the same stored NULL is not judged again.
+        self._judged: dict[int, float] = {}
+
+    async def _claim_owner(self, sessions):
+        """Fence old withdrawal writers before this consumer's first scan."""
+        if self._owner_id is not None:
+            return True
+        if time.monotonic() < self._owner_claim_at:
+            return False
+        self._owner_claim_at = time.monotonic() + 0.25
+        from sqlalchemy import select, insert, update, text
+        from app.models.models import OwedChartPoint
+        owner_source = PM_WITHDRAWAL_DEBT_SOURCE + "_owner"
+        async with sessions() as db:
+            locked = (await db.execute(text(
+                "SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))"
+            ), {"key": owner_source})).scalar_one()
+            if not locked:
+                return False
+            row_id = (await db.execute(select(OwedChartPoint.id).where(
+                OwedChartPoint.source == owner_source
+            ).with_for_update(nowait=True))).scalar_one_or_none()
+            if row_id is None:
+                row_id = (await db.execute(insert(OwedChartPoint).values(
+                    event_id=0, source=owner_source, value=0.0,
+                    reading={"owner": self._owner_token},
+                ).returning(OwedChartPoint.id))).scalar_one()
+            else:
+                # FOR SHARE in every old transaction blocks this handoff until
+                # that transaction's commit/rollback is definitive.
+                await db.execute(update(OwedChartPoint).where(
+                    OwedChartPoint.id == row_id,
+                ).values(reading={"owner": self._owner_token}))
+            await db.commit()
+        self._owner_id = row_id  # only after the claim commit is acknowledged
+        return True
+
+    def _defer_owner(self, reason):
+        if not self._owner_warning_sent:
+            logger.warning("Polymarket WS: withdrawal ownership deferred: %s", reason)
+            self._owner_warning_sent = True
+        raise PMWithdrawalOwnershipDeferred(reason)
+
+    async def guard_owner(self, session):
+        from sqlalchemy import select
+        from app.models.models import OwedChartPoint
+        if self._owner_id is None:
+            self._defer_owner("withdrawal ownership not acquired")
+        # Look up the canonical source, not the remembered row id: deletion
+        # followed by another owner's insertion must still fence this token.
+        reading = (await session.execute(select(OwedChartPoint.reading).where(
+            OwedChartPoint.source == PM_WITHDRAWAL_DEBT_SOURCE + "_owner",
+        ).with_for_update(read=True))).scalar_one_or_none()
+        if reading is None:
+            # Only absence allows re-claim. A different token remains fenced.
+            self._owner_id = None
+            self.loaded = False
+            self._retry_at = 0.0
+            self._defer_owner("withdrawal ownership row missing")
+        if not isinstance(reading, dict) or reading.get("owner") != self._owner_token:
+            self._defer_owner("withdrawal ownership superseded")
+
+    def legs(self) -> dict[int, int]:
+        """Owed leg -> its event."""
+        return {debt.id: debt.event_id for debt in self.owed.values()}
+
+    def require_reload(self, *, uncertain=True, xid=None):
+        if not uncertain or xid is None:
+            self.loaded = False
+        if uncertain:
+            if xid is None:
+                # Unknown identity cannot be expired on a wall clock.
+                self._uncertain_commit = True
+            else:
+                self._uncertain_xids.add(str(xid))
+
+    @property
+    def _outcome_pending(self):
+        return self._uncertain_commit or bool(self._uncertain_xids)
+
+    async def load(self, sessions) -> int:
+        """Move durable rows memory does not hold into memory. Never raises."""
+        now = time.monotonic()
+        # Urgent commit discovery has its own250ms budget. An older ordinary
+        # load failure must not impose its30s gate on an uncertain outcome.
+        if self._load_running or (not self._outcome_pending and now < self._retry_at):
+            return 0
+        if self._outcome_pending:
+            if now < self._recovery_scan_at:
+                return 0
+            # Claim the next slot before awaiting so all three callers share
+            # one recovery scan budget, including when a query is slow.
+            self._recovery_scan_at = now + 0.25
+        elif self.loaded:
+            return 0
+        from sqlalchemy import select, text
+
+        from app.models.models import OwedChartPoint
+
+        query = select(
+            OwedChartPoint.id, OwedChartPoint.event_id, OwedChartPoint.reading,
+            OwedChartPoint.source,
+        ).where(OwedChartPoint.source.in_([
+            PM_WITHDRAWAL_DEBT_SOURCE, PM_WITHDRAWAL_DEBT_SOURCE + "_publish",
+        ]))
+        known = set(self.owed) | set(self.publications)
+        if known:
+            query = query.where(OwedChartPoint.id.not_in(sorted(known)))
+        self._load_running = True
+        resolved = set()
+        try:
+            if not await self._claim_owner(sessions):
+                return 0
+            async with sessions() as session:
+                pending = sorted(self._uncertain_xids)
+                if pending:
+                    try:
+                        # A rejected xid must not abort the READ COMMITTED
+                        # custody scan in this same recovery opportunity.
+                        async with session.begin_nested():
+                            statuses = (await session.execute(text(
+                                "SELECT xid, pg_xact_status(xid::xid8) "
+                                "FROM unnest(CAST(:xids AS text[])) AS xid"
+                            ), {"xids": pending})).all()
+                    except Exception:
+                        statuses = [(xid, None) for xid in pending]
+                    unknown = sum(status not in {"committed", "aborted", "in progress"}
+                                  for _, status in statuses)
+                    if unknown:
+                        if not self._unknown_outcomes:
+                            logger.warning("Polymarket WS: transaction outcome unavailable; retaining recovery")
+                        self._unknown_outcomes += unknown
+                    aborted = {xid for xid, status in statuses if status == "aborted"}
+                    resolved = {xid for xid, status in statuses if status == "committed"}
+                    self._uncertain_xids.difference_update(aborted)
+                    if not self._outcome_pending and self.loaded:
+                        return 0
+                rows = (
+                    await session.execute(
+                        query.order_by(OwedChartPoint.id)
+                        .limit(PM_WITHDRAWAL_DEBT_LOAD_LIMIT)
+                    )
+                ).all()
+        except Exception as exc:
+            if self._owner_id is None and is_lock_timeout(exc):
+                self._retry_at = time.monotonic() + 0.25
+                return 0  # expected handoff contention; do not log an outage
+            # Cancellation still propagates. The rows stay owed in the table.
+            self._retry_at = time.monotonic() + (
+                0.25 if self._outcome_pending or self._owner_id is None else PM_WITHDRAWAL_DEBT_RETRY_S
+            )
+            logger.exception("Polymarket WS: withdrawal debt not loaded; retrying")
+            return 0
+        finally:
+            self._load_running = False
+        for custody_id, event_id, reading, source in rows:
+            if source == PM_WITHDRAWAL_DEBT_SOURCE + "_publish":
+                self.publications[custody_id] = reading["frame"]
+                continue
+            observed = reading["last_updated"]
+            self.owed[custody_id] = PMWithdrawal(
+                int(reading["outcome_id"]),
+                int(reading["market_id"]),
+                None if observed is None else datetime.fromisoformat(observed),
+                event_id,
+                custody_id,
+            )
+        self.loaded = len(rows) < PM_WITHDRAWAL_DEBT_LOAD_LIMIT
+        if self.loaded:
+            # A scan after pg_xact_status reports committed sees that commit.
+            # Keep the identity through failures and LIMIT continuation pages.
+            self._uncertain_xids.difference_update(resolved)
+        if not self._startup_recovery_logged:
+            publications = sum(
+                source == PM_WITHDRAWAL_DEBT_SOURCE + "_publish"
+                for _, _, _, source in rows
+            )
+            self._startup_recovery_rows[0] += len(rows) - publications
+            self._startup_recovery_rows[1] += publications
+            if self.loaded:
+                logger.info(
+                    "Polymarket WS: startup recovery scan complete "
+                    "polymarket_withdrawal=%d polymarket_withdrawal_publish=%d",
+                    *self._startup_recovery_rows,
+                )
+                self._startup_recovery_logged = True
+        return len(rows)
+
+    async def record(self, session, rows) -> list[PMWithdrawal]:
+        """INSERT each withdrawn leg of a live event, in the withdrawal's transaction.
+
+        The caller adopts the returned debt only after that transaction commits.
+        A leg with no observation stamp is never attributable, so owes nothing.
+        """
+        stamped = [row for row in rows if row.last_updated is not None]
+        if not stamped:
+            return []
+        from sqlalchemy import insert, select
+
+        from app.models.models import Event, FuturesMarket, OwedChartPoint
+
+        event_of = dict(
+            (
+                await session.execute(
+                    select(FuturesMarket.id, FuturesMarket.event_id)
+                    .join(Event, Event.id == FuturesMarket.event_id)
+                    .where(
+                        FuturesMarket.id.in_(sorted({row.market_id for row in stamped})),
+                        FuturesMarket.source == 'polymarket',
+                        Event.status == 'live',
+                        Event.completed_at.is_(None),
+                    )
+                )
+            ).all()
+        )
+        debts = []
+        for row in stamped:
+            event_id = event_of.get(row.market_id)
+            if event_id is None:
+                continue
+            custody_id = (
+                await session.execute(
+                    insert(OwedChartPoint)
+                    .values(
+                        source=PM_WITHDRAWAL_DEBT_SOURCE,
+                        event_id=event_id,
+                        # A withdrawal owes no chart value; the column is NOT NULL.
+                        value=0.0,
+                        reading={
+                            "outcome_id": row.id,
+                            "market_id": row.market_id,
+                            "last_updated": row.last_updated.isoformat(),
+                        },
+                    )
+                    .returning(OwedChartPoint.id)
+                )
+            ).scalar_one()
+            debts.append(PMWithdrawal(
+                row.id, row.market_id, row.last_updated, event_id, custody_id,
+            ))
+        return debts
+
+    def adopt(self, debts) -> None:
+        for debt in debts:
+            self.owed[debt.custody_id] = debt
+
+    async def strays(self, session, legs) -> list[PMWithdrawal]:
+        """Stored-NULL legs of live events that a fresh untradeable book names.
+
+        For a leg another writer withdrew first (the REST poll's #9399 arm), or
+        whose debt a process lost before `record` existed. Read-only. The removal
+        additionally requires `price_changed_at` after the source's basis, so a
+        NULL that was never the withdrawal of the observed value removes nothing.
+        """
+        if not legs:
+            return []
+        from sqlalchemy import select
+
+        from app.models.models import Event, FuturesMarket, FuturesOutcome
+
+        rows = (
+            await session.execute(
+                select(
+                    FuturesOutcome.id, FuturesOutcome.market_id,
+                    FuturesOutcome.last_updated, FuturesOutcome.price_changed_at,
+                    FuturesMarket.event_id,
+                )
+                .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
+                .join(Event, Event.id == FuturesMarket.event_id)
+                .where(
+                    FuturesOutcome.id.in_(sorted(legs)),
+                    FuturesOutcome.current_probability.is_(None),
+                    FuturesOutcome.is_winner.isnot(True),
+                    FuturesOutcome.resolution_source.is_(None),
+                    FuturesMarket.source == 'polymarket',
+                    Event.status == 'live',
+                    Event.completed_at.is_(None),
+                )
+            )
+        ).all()
+        found = []
+        for oid, market_id, last_updated, changed, event_id in rows:
+            if last_updated is None or changed is None:
+                continue
+            if self._judged.get(oid) == changed.timestamp():
+                continue
+            found.append(PMWithdrawal(
+                oid, market_id, last_updated, event_id, None, changed.timestamp(),
+            ))
+        return found
+
+    async def settle(self, session, debts) -> list[PMWithdrawal]:
+        """DELETE the debts' rows first in the removal transaction.
+
+        Returns the debts this transaction now owns: those whose row was still
+        owed, and every stray. A row already gone was settled elsewhere.
+        """
+        ids = sorted({d.custody_id for d in debts if d.custody_id is not None})
+        owned: set[int] = set()
+        if ids:
+            from sqlalchemy import delete
+
+            from app.models.models import OwedChartPoint
+
+            owned = set(
+                (
+                    await session.execute(
+                        delete(OwedChartPoint)
+                        .where(
+                            OwedChartPoint.id.in_(ids),
+                            OwedChartPoint.source == PM_WITHDRAWAL_DEBT_SOURCE,
+                        )
+                        .returning(OwedChartPoint.id)
+                    )
+                ).scalars()
+            )
+        return [d for d in debts if d.custody_id is None or d.custody_id in owned]
+
+    def settled(self, debts) -> None:
+        """After the removal transaction commits: nothing here is owed now."""
+        for debt in debts:
+            if debt.custody_id is None:
+                self._judged[debt.id] = debt.changed_at
+            else:
+                self.owed.pop(debt.custody_id, None)
+
+    async def record_publications(self, session, frames):
+        """Custody commits atomically with source removal and its revision."""
+        from sqlalchemy import insert
+        from app.models.models import OwedChartPoint
+        pending = {}
+        for frame in frames:
+            cid = (await session.execute(insert(OwedChartPoint).values(
+                source=PM_WITHDRAWAL_DEBT_SOURCE + "_publish",
+                event_id=frame["event_id"], value=0.0, reading={"frame": frame},
+            ).returning(OwedChartPoint.id))).scalar_one()
+            pending[cid] = frame
+        return pending
+
+    def _defer_publication(self):
+        # Publication recovery has its own budget: the catalog/debt-load retry
+        # is 30s. First failure retries after one game period; persistent faults
+        # back off to2s without stopping healthy price delivery.
+        self._publication_failures += 1
+        delay = min(2.0, 0.25 * (2 ** min(self._publication_failures - 1, 3)))
+        self._publication_retry_at = time.monotonic() + delay
+
+    def _observe_publication(self, task):
+        """A failed recovery owner must never fail its caller's price loop."""
+        if task not in self._publication_claims:
+            return
+        self._publication_claims.pop(task)
+        if self._publication_task is task:
+            self._publication_task = None
+        if self._peer_publication_task is task:
+            self._peer_publication_task = None
+        if task.cancelled():
+            self._defer_publication()
+            return
+        error = task.exception()
+        if error is not None:
+            self._defer_publication()
+            logger.error("Polymarket WS: publication owner failed; custody retained",
+                         exc_info=error)
+
+    async def join_publications(self, *, cancel=False):
+        """Ordinary joiner cancellation leaves the shared owners running.
+
+        Teardown explicitly cancels and joins them, retaining durable custody.
+        Failed owners are observed, never raised into a healthy caller.
+        """
+        tasks = list(self._publication_claims)
+        if not tasks:
+            return
+        if cancel:
+            for task in tasks:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+        interrupted = None
+        while any(not task.done() for task in tasks):
+            try:
+                await asyncio.wait(tasks)
+            except asyncio.CancelledError as exc:
+                if not cancel:
+                    raise
+                interrupted = exc
+                for task in tasks:
+                    if not task.done() and not task.cancelling():
+                        task.cancel()
+        for task in tasks:
+            self._observe_publication(task)
+        if interrupted is not None:
+            raise interrupted
+
+    async def publish_pending(self, refresher, sessions, *, background=False, final=False):
+        """Two bounded sends; custody and event claims never overlap."""
+        for task in list(self._publication_claims):
+            if task.done():
+                self._observe_publication(task)
+        if len(self._publication_claims) < 2:
+            claimed_ids = {cid for batch in self._publication_claims.values() for cid in batch}
+            claimed_events = {frame["event_id"] for batch in self._publication_claims.values()
+                              for frame in batch.values()}
+            retry_ready = time.monotonic() >= self._publication_retry_at
+            pending = {cid: frame for cid, frame in self.publications.items()
+                       if cid not in claimed_ids and frame["event_id"] not in claimed_events
+                       and ((cid not in self._final_publication_attempted) if final else
+                            (cid not in self._publication_attempted or retry_ready))}
+            if pending:
+                self._publication_attempted.update(pending)
+                if final:
+                    self._final_publication_attempted.update(pending)
+                task = asyncio.create_task(
+                    self._publish_pending(refresher, sessions, final, pending),
+                    name="polymarket-withdrawal-publication",
+                )
+                self._publication_claims[task] = pending
+                if self._publication_task is None:
+                    self._publication_task = task
+                else:
+                    self._peer_publication_task = task
+        if not background:
+            await self.join_publications()
+
+    async def _publish_pending(self, refresher, sessions, final=False, pending=None):
+        try:
+            await self._publish_pending_once(refresher, sessions, final, pending)
+        except Exception:
+            # SELECT, DELETE, context close and unexpected transport errors
+            # all preserve durable custody. Cancellation remains cancellation.
+            self._defer_publication()
+            logger.exception("Polymarket WS: publication recovery failed; retrying")
+
+    async def _publish_pending_once(self, refresher, sessions, final=False, pending=None):
+        """Retry owed invalidations, retaining exact original revisions.
+
+        The transport makes one bounded attempt. Durable retries may duplicate
+        an acknowledged-but-unsettled frame; they never mint a new revision.
+        """
+        if pending is None:
+            pending = {cid: frame for cid, frame in self.publications.items()
+                       if not final or cid not in self._final_publication_attempted}
+        if not pending:
+            return
+        if final:
+            # Claim before any await, including a failed SELECT or send.
+            # Later final calls may attempt NEW custody, never replay this
+            # failed set while the price drain is trying to finish.
+            self._final_publication_attempted.update(pending)
+        from sqlalchemy import select
+        from app.models.models import Event
+        async with sessions() as session:
+            rows = (await session.execute(select(
+                Event.id, Event.win_probability_sources_rev,
+                Event.status, Event.completed_at,
+            ).where(Event.id.in_({f["event_id"] for f in pending.values()})))).all()
+            current = {eid: (rev, status, completed_at)
+                       for eid, rev, status, completed_at in rows}
+        # Completion can change without changing the source revision.
+        # Never replay a live invalidation for an already terminal event.
+        obsolete = {cid for cid, frame in pending.items()
+                    if current.get(frame["event_id"], (None, None, None))[1:]
+                    != ("live", None)}
+        controls = []
+        for cid, frame in pending.items():
+            if cid in obsolete:
+                continue
+            # A newer sibling price does not prove the reader adopted the
+            # removal or its history. Keep original identity and revision.
+            controls.append({**frame, "reconcile": {
+                "event_id": frame["event_id"],
+                "custody_id": f"pm-withdrawal:{cid}",
+                "removal_rev": dict(frame["rev"]),
+            }, "reconcile_only": current[frame["event_id"]][0]
+                != frame["rev"][str(frame["event_id"]) ]})
+        acknowledged = await _publish_committed_withdrawals(refresher, controls)
+        ids = [cid for cid, frame in pending.items()
+               if cid in obsolete or (frame["event_id"], frame["rev"][str(frame["event_id"])])
+               in (acknowledged or set())]
+        if not ids:
+            self._defer_publication()
+            return
+        from sqlalchemy import delete
+        from app.models.models import OwedChartPoint
+        # Deletion failure/cancellation retains the row for safe replay.
+        async with sessions() as session:
+            await session.execute(delete(OwedChartPoint).where(
+                OwedChartPoint.id.in_(ids),
+                OwedChartPoint.source == PM_WITHDRAWAL_DEBT_SOURCE + "_publish",
+            ))
+        for cid in ids:
+            self.publications.pop(cid, None)
+            self._publication_attempted.discard(cid)
+        if any(cid not in ids for cid in pending):
+            self._defer_publication()
+        elif not self.publications:
+            self._publication_retry_at = 0.0
+            self._publication_failures = 0
+
+
+async def withdraw_attributed_event_sources(session, withdrawn_rows):
+    """#10090: remove only a PM source whose speaker was explicitly withdrawn.
+
+    Runs in its own transaction after the price withdrawal committed (never
+    inside it: the price must not wait on the event row). ``withdrawn_rows``
+    are `PMWithdrawal` debts `PMWithdrawalDebt.settle` already owns in this
+    transaction. Returns frames to publish AFTER COMMIT. An ordinary missing
+    reading never reaches this path.
+    """
+    from sqlalchemy import select, update, func
+    from app.models.models import Event, FuturesMarket, WinProbSnapshot
+    from app.tasks.live_blend_refresh import LiveBlendRefresher
+    from app.utils.live_blend import compute_source_home_probability
+    from app.utils.live_push import build_frame
+
+    by_market = {}
+    withdrawn_observations = {}
+    changed_after = {}
+    for row in withdrawn_rows:
+        oid = str(row.id)
+        by_market.setdefault(row.market_id, set()).add(oid)
+        stamp = None if row.last_updated is None else row.last_updated.timestamp()
+        # Two committed withdrawals of one leg: the newer observation bounds it.
+        if stamp is None:
+            withdrawn_observations.setdefault(oid, None)
+        elif withdrawn_observations.get(oid) is None or stamp > withdrawn_observations[oid]:
+            withdrawn_observations[oid] = stamp
+        if getattr(row, "changed_at", None) is not None:
+            changed_after[oid] = row.changed_at
+    if not by_market:
+        return []
+    event_ids = set((await session.execute(
+        select(FuturesMarket.event_id).where(
+            FuturesMarket.id.in_(by_market),
+            FuturesMarket.source == 'polymarket',
+            FuturesMarket.event_id.isnot(None),
+        )
+    )).scalars())
+    if not event_ids:
+        return []
+    # Re-read the whole source population in the removal transaction, after
+    # the independent price withdrawal committed. A newly stored quote wins.
+    # This transaction helper has no consumer shutdown/drain lifecycle.
+    # It reads ordinary DNPL context but cannot own background maintenance.
+    groups = await LiveBlendRefresher(
+        'polymarket', owns_preview_maintenance=False,
+    )._read_groups(session, sorted(event_ids))
+    frames = []
+    for event_id, (event, group) in groups.items():
+        if event.status != 'live' or event.completed_at is not None:
+            continue
+        prior = (event.win_probability_sources or {}).get('polymarket')
+        if not isinstance(prior, dict):
+            continue
+        eligibility = prior.get('eligibility')
+        market_id = eligibility.get('market_id') if isinstance(eligibility, dict) else None
+        basis = prior.get('observed_basis')
+        if (market_id not in by_market or not isinstance(basis, dict)
+                or by_market[market_id].isdisjoint(basis)):
+            continue
+        # IDs alone are insufficient: the same leg may already have a newer
+        # stamped overlay. The withdrawal only owns observations no newer than
+        # the actual row it cleared. Both stamps use the database clock domain.
+        # A stray also needs its price to have changed after that observation.
+        matched = by_market[market_id].intersection(basis)
+        if any(
+            isinstance(basis[oid], bool)
+            or not isinstance(basis[oid], (int, float))
+            or not math.isfinite(basis[oid])
+            or withdrawn_observations[oid] is None
+            or basis[oid] > withdrawn_observations[oid]
+            or (oid in changed_after and not basis[oid] < changed_after[oid])
+            for oid in matched
+        ):
+            continue
+        if compute_source_home_probability(group, event.home_team_name, event.away_team_name) is not None:
+            continue
+        removed = (await session.execute(
+            update(Event).where(
+                Event.id == event_id, Event.status == 'live', Event.completed_at.is_(None),
+                Event.win_probability_sources['polymarket'] == prior,
+            ).values(
+                win_probability_sources=Event.win_probability_sources.op('-')('polymarket'),
+            ).returning(
+                Event.win_probability_sources_rev, Event.status, func.clock_timestamp(),
+            ).execution_options(synchronize_session=False)
+        )).first()
+        if removed is None:
+            continue  # newer source/terminal state won while this read was pending
+        revision, status, removed_at = removed
+        # A NULL history vertex stops carry-forward; it is not a fabricated
+        # zero probability. It commits with the source removal or neither does.
+        session.add(WinProbSnapshot(
+            event_id=event_id, source='polymarket', captured_at=removed_at,
+            home_win_probability=None, away_win_probability=None,
+            valid_until=removed_at, game_state={'live_source_withdrawal': True},
+        ))
+        frame = build_frame(event_id=event_id,
+            probability=None, source=None,
+            source_value=None, updated_at=removed_at.isoformat(), status=status, rev=revision)
+        frame['invalidation'] = True
+        frames.append(frame)
+    return frames
+
+
+async def _publish_committed_withdrawals(refresher, frames):
+    """Own one bounded event send after commit, even if the caller cancels.
+
+    No retry of an ambiguous Redis send. The existing publisher bounds its
+    attempt; this owner joins it before allowing cancellation to leave.
+    """
+    if not frames:
+        return
+    import asyncio
+
+    previews = []
+    for frame in frames:
+        if frame.get('reconcile_only'):
+            continue  # old control cannot invalidate a newer writer cache
+        event_id = frame['event_id']
+        refresher._last_written_value.pop(event_id, None)
+        refresher._last_refresh_at.pop(event_id, None)
+        refresher._last_snapshot_at.pop(event_id, None)
+        if event_id in getattr(refresher, 'preview_events', ()):
+            # #10090 (preview arm, canary events only): the withdrawn source
+            # may not keep speaking in a provisional blend.
+            from app.utils.blend_preview import registry
+
+            previews.extend(registry().refused(event_id, refresher.source, 'withdrawn'))
+    task = asyncio.create_task(
+        refresher._publish(frames), name='polymarket-withdrawal-event-publish',
+    )
+    interrupted = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            if task.cancelled():
+                raise
+            interrupted = exc
+    acknowledged = task.result()
+    if interrupted is not None:
+        raise interrupted
+    if previews:
+        # After the invalidation, whose newer revision already hides them.
+        await refresher._publish_previews(previews)
+    return acknowledged
+
+
 class _PMPriceWriteResult:
     """A committed acknowledgement; only written rows may stage fresh receipts."""
 
@@ -1006,6 +1864,29 @@ def is_price_row_lock_refusal(exc: BaseException) -> bool:
         if not isinstance(message, str):
             message = getattr(getattr(cur, "diag", None), "message_primary", None)
         if code == LOCK_NOT_AVAILABLE_SQLSTATE and message == PRICE_ROW_LOCK_REFUSAL_MESSAGE:
+            return True
+        nxt = getattr(cur, "orig", None)
+        if nxt is None or nxt is cur:
+            nxt = cur.__cause__
+        cur = nxt
+    return False
+
+
+def is_price_statement_timeout(exc: BaseException) -> bool:
+    """Require PostgreSQL's statement-timeout diagnostic, not just 57014.
+
+    Operator cancellation shares 57014. Unknown/localised messages stay on
+    the ordinary failure path; elapsed time never authorizes held admission.
+    """
+    seen = set()
+    cur = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        code = getattr(cur, "sqlstate", None) or getattr(cur, "pgcode", None)
+        message = getattr(cur, "message", None)
+        if not isinstance(message, str):
+            message = getattr(getattr(cur, "diag", None), "message_primary", None)
+        if code == "57014" and message == "canceling statement due to statement timeout":
             return True
         nxt = getattr(cur, "orig", None)
         if nxt is None or nxt is cur:
@@ -1119,8 +2000,13 @@ def _pm_lock_isolated_chunks(
     market_by_outcome: dict[int, int],
     complement_of: dict[int, int],
     chunk_rows: int,
+    *, first_events: Iterable[int] = (),
 ) -> list[list[int]]:
-    """Isolate admitted event cohorts only after their ordinary lock failure.
+    """Isolate selected admitted event cohorts without splitting questions.
+
+    Callers select lock retries or acknowledged optional observation cohorts.
+    Changed preview events may go first only when none of their indivisible
+    units shares an outside event. Selection never bypasses the ordinary writer.
 
     The caller passes separately planned headline and prop transactions. Never
     admit another buffered row or change the open cap here. Within the admitted
@@ -1129,7 +2015,8 @@ def _pm_lock_isolated_chunks(
     Unaffected rows retain their original chunks and order, ahead of the
     retried cohorts they share no event with.
     """
-    if not retry_events:
+    first_events = set(first_events).difference(retry_events)
+    if not retry_events and not first_events:
         return chunks
     admitted = [oid for chunk in chunks for oid in chunk]
     parents = {oid: oid for oid in admitted}
@@ -1157,13 +2044,29 @@ def _pm_lock_isolated_chunks(
     units = {}
     for oid in admitted:
         units.setdefault(root(oid), []).append(oid)
+    if first_events:
+        # Only promote complete events whose indivisible units share no outside
+        # event. Propagate exclusion through shared units so no sibling of a
+        # promoted event remains behind the unrelated transaction.
+        unit_events = [
+            {event_by_outcome[oid] for oid in unit if oid in event_by_outcome}
+            for unit in units.values()
+        ]
+        while True:
+            blocked = set().union(*(events for events in unit_events
+                                    if not events.issubset(first_events)))
+            kept = first_events.difference(blocked)
+            if kept == first_events:
+                break
+            first_events = kept
+    selected_events = set(retry_events) | first_events
     groups = {}
     group_by_outcome = {}
     for unit in units.values():
         events = frozenset(
             event_by_outcome[oid] for oid in unit if oid in event_by_outcome
         )
-        if events.isdisjoint(retry_events):
+        if events.isdisjoint(selected_events):
             continue
         groups.setdefault(events, []).append(unit)
         group_by_outcome.update(dict.fromkeys(unit, events))
@@ -1214,6 +2117,12 @@ def _pm_lock_isolated_chunks(
                 emitted.add(events)
     for cohort in held:
         result.extend(packed[cohort])
+    if first_events:
+        first, rest = [], []
+        for chunk in result:
+            events = {event_by_outcome[oid] for oid in chunk if oid in event_by_outcome}
+            (first if events.intersection(first_events) else rest).append(chunk)
+        result = first + rest
     return result
 
 
@@ -1719,6 +2628,60 @@ def _slate_market_filter():
     )
 
 
+def _slate_metadata_keys() -> tuple[str, ...]:
+    """The only ``market_metadata`` keys the slate's market loop reads (#10663)."""
+    from app.tasks.polymarket_token_topup import OUTCOME_TOKEN_METADATA_KEY
+    from app.utils.content_understanding import CONTENT_UNDERSTANDING_KEY
+
+    return (
+        "clob_token_ids",
+        "clobTokenIds",
+        OUTCOME_TOKEN_METADATA_KEY,
+        CONTENT_UNDERSTANDING_KEY,
+    )
+
+
+def slate_market_stmt(market_ids: Iterable[int]):
+    """The slate's market read: ``(id, external_id, <four keys>, event status)``.
+
+    #10663 — the four keys the loop reads, never the whole metadata blob, the
+    same way ``open_contract_markets_stmt`` reads its token keys. A key the row
+    does not carry (or a blob that is not an object) reads as SQL NULL.
+    """
+    from sqlalchemy import select
+
+    from app.models.models import Event, FuturesMarket
+
+    meta = FuturesMarket.market_metadata
+    return (
+        select(
+            FuturesMarket.id,
+            FuturesMarket.external_id,
+            *(meta[key] for key in _slate_metadata_keys()),
+            Event.status,
+        )
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(FuturesMarket.id.in_(list(market_ids)))
+    )
+
+
+def slate_market_rows(rows: Iterable[Any]) -> Iterator[tuple[Any, Any, dict, Any]]:
+    """``slate_market_stmt`` rows as ``(id, external_id, metadata, status)``.
+
+    ``metadata`` holds only the keys that are present, so the loop reads it as
+    it read the full blob. A row with no token key is still skipped: an empty
+    dict hits ``if not metadata``, where the full blob hit ``if not tokens``.
+    """
+    keys = _slate_metadata_keys()
+    for mid, mext, *values, event_status in rows:
+        metadata = {
+            key: value
+            for key, value in zip(keys, values, strict=True)
+            if value is not None
+        }
+        yield mid, mext, metadata, event_status
+
+
 def _format_by_shard(ws_stats: dict) -> str:
     """`0:14/500 1:26/500 …` — the per-shard shape behind the coverage ratio.
 
@@ -1908,12 +2871,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     from app.services.polymarket_ws import PolymarketWebSocket
     from app.tasks.live_blend_refresh import (
         DEFAULT_MIN_REFRESH_INTERVAL_S, HeldRowQuotes, LiveBlendRefresher, TailReceipts,
-        adopt_handed_off,
+        OwedChartCustody, adopt_handed_off,
         LOOP_REAP_TIMEOUT_S, event_ids_for_outcomes, hand_off_pending,
         reap_stopped_loops, run_flush_cadence,
     )
     from app.tasks.polymarket_token_topup import (
-        topup_clob_tokens, topup_outcome_clob_tokens,
+        topup_clob_tokens, topup_outcome_clob_tokens, condition_id_of,
     )
     from app.tasks.ws_admission import (  # #9418
         unadmitted_live_events,
@@ -1921,9 +2884,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     )
     from app.tasks.polymarket_open_contracts import (  # #9484
         FLUSH_CHUNK_ROWS, OPEN_CONTRACT_MAX_CONCURRENT_HANDSHAKES,
+        OpenContractLegs,
         book_snapshot_prices_enabled, open_contract_receiver_process_enabled,
         OPEN_CONTRACT_MAX_QUEUE, OPEN_FLUSH_CHUNKS_PER_FLUSH,
-        open_contract_asset_map, open_contract_event_candidates,
+        open_contract_asset_map_cooperatively,
+        open_contract_event_candidates_cooperatively,
         open_contract_markets_stmt, open_contract_outcome_stmts,
         open_contract_prices_enabled, plan_flush_chunks, tokens_by_contract,
     )
@@ -1931,6 +2896,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         open_contract_bridge_event_stmt, open_contract_event_bridge,
     )
     from app.tasks.ws_liveness import report as _report_liveness
+    from app.utils.heap_trim import release_free_heap  # #11218
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     # #2471: one engine for this run, a fresh session per operation; the
     # decorator disposes it after the final drain. Same call shape as the
@@ -1940,21 +2906,34 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # #10662: opt in only this consumer. Removing the override restores both
     # the legacy shared timer and the existing blend floor. A faster healthy
     # timer must not also shorten the preexisting failed-write retry period.
-    flush_period = PRICE_FLUSH_SECONDS
-    blend_floor = DEFAULT_MIN_REFRESH_INTERVAL_S
-    override = os.getenv("PM_WS_PRICE_FLUSH_SECONDS")
-    if override is not None:
+    def cadence_override(name):
+        value = os.getenv(name)
+        if value is None:
+            return None
         try:
-            flush_period = float(override)
+            seconds = float(value)
         except ValueError as invalid_cadence:
             raise ValueError(
-                "PM_WS_PRICE_FLUSH_SECONDS must be a positive finite number"
+                f"{name} must be a positive finite number"
             ) from invalid_cadence
-        if not math.isfinite(flush_period) or flush_period <= 0:
-            raise ValueError(
-                "PM_WS_PRICE_FLUSH_SECONDS must be a positive finite number"
-            )
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError(f"{name} must be a positive finite number")
+        return seconds
+
+    flush_period = PRICE_FLUSH_SECONDS
+    blend_floor = DEFAULT_MIN_REFRESH_INTERVAL_S
+    override = cadence_override("PM_WS_PRICE_FLUSH_SECONDS")
+    if override is not None:
+        flush_period = override
         blend_floor = flush_period
+    # #10090: the game flush and its blend floor alone. Linked props stay on
+    # `flush_period` and failed writes keep the legacy retry, so a faster
+    # game cadence adds no prop work. Unset, the game follows `flush_period`.
+    game_period = flush_period
+    game_override = cadence_override("PM_WS_GAME_FLUSH_SECONDS")
+    if game_override is not None:
+        game_period = game_override
+        blend_floor = game_period
 
     # #9484 — every other unsettled Polymarket contract, for PRICES only, on a
     # second client (`app.tasks.polymarket_open_contracts`). Never added to the
@@ -1976,20 +2955,38 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 market_rows = (
                     await session.execute(open_contract_markets_stmt())
                 ).all()
-                outcome_rows = []
-                for stmt in open_contract_outcome_stmts(r[0] for r in market_rows):
-                    outcome_rows.extend((await session.execute(stmt)).all())
-            admission = open_contract_asset_map(
-                market_rows, outcome_rows, taken_assets, excluded_market_ids,
+                # #10663: each leg chunk is digested into the pairing's own
+                # structures as it arrives (`OpenContractLegs.add`), so the
+                # read never holds ~71,000 result rows beside them for the
+                # whole mapping. Row order is unchanged: chunks in catalog
+                # order, legs in id order within each.
+                legs = OpenContractLegs()
+                # These markets already belong to the game arm. The mapper
+                # skips them before pairing; keep their market rows for counts,
+                # but do not read legs that cannot enter the open admission.
+                excluded = set(excluded_market_ids)
+                for stmt in open_contract_outcome_stmts(
+                    r[0] for r in market_rows if r[0] not in excluded
+                ):
+                    await legs.add_rows_cooperatively(
+                        (await session.execute(stmt)).all()
+                    )
+            # #10090: this mapping shares the loop with every PM socket.
+            admission = await open_contract_asset_map_cooperatively(
+                market_rows, legs, taken_assets, excluded_market_ids,
                 taken_tokens_by_contract,
             )
+            # The pairing has read every leg; nothing below needs them.
+            legs = None
         except Exception:
             logger.exception(
                 "Polymarket WS: open-contract admission read failed; "
                 "streaming the linked slate only this run"
             )
             return None, True, {}, False
-        candidates = open_contract_event_candidates(market_rows, admission)
+        candidates = await open_contract_event_candidates_cooperatively(
+            market_rows, admission
+        )
         if not candidates:
             return admission, False, {}, False
         try:
@@ -2023,15 +3020,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         price_book_snapshots=book_snapshot_prices_enabled(),
     )
 
-    async def load_game_slate():
+    async def load_game_slate(*, stored_live_only=False):
         # Load linked Polymarket market asset IDs
+        # #10663: one row per linked market. The outcome join still requires a
+        # market to have an outcome, but no outcome field is read here: tokens
+        # and outcomes come from the reads below. An event id belongs to its
+        # market row, so DISTINCT drops only the per-outcome repeats.
         async with get_task_session() as session:
             result = await session.execute(
                 select(
-                    FuturesOutcome.id,
                     FuturesOutcome.market_id,
-                    FuturesOutcome.external_id,
-                    FuturesMarket.external_id.label("market_ext_id"),
                     FuturesMarket.event_id.label("linked_event_id"),
                 )
                 .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
@@ -2041,21 +3039,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     FuturesMarket.event_id.isnot(None),
                     _slate_event_window(),
                     _slate_market_filter(),
+                    *([Event.status.in_(("live", "suspended"))] if stored_live_only else []),
                 )
+                .distinct()
             )
             rows = result.all()
 
-        # Polymarket outcomes store condition_id as external_id (e.g. "0xabc..._yes").
-        # But the WS needs asset_ids (token IDs), which we store in market_metadata.
-        # For now, load token IDs from the outcomes' market_metadata.
-        # Build lookup: condition_id → (market_id, outcome_id)
-        condition_to_ids: dict[str, tuple[int, int]] = {}
         market_ids = set()
         # Q460: linked event per market, so a flushed price can re-stamp the blend.
         event_id_by_market: dict[int, int] = {}
-        for outcome_id, market_id, ext_id, market_ext_id, linked_event_id in rows:
-            if ext_id:
-                condition_to_ids[ext_id] = (market_id, outcome_id)
+        for market_id, linked_event_id in rows:
             market_ids.add(market_id)
             if linked_event_id is not None:
                 event_id_by_market[market_id] = linked_event_id
@@ -2069,20 +3062,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         tokens_by_market: dict[int, list[str]] = {}
         non_blend_market_ids: set[int] = set()
         live_win_topup_ids: set[int] = set()
+        stored_outcome_tokens: dict[int, tuple[int, str]] = {}
 
         async with get_task_session() as session:
-            market_result = await session.execute(
-                select(
-                    FuturesMarket.id,
-                    FuturesMarket.external_id,
-                    FuturesMarket.market_metadata,
-                    Event.status,
-                )
-                .join(Event, FuturesMarket.event_id == Event.id)
-                .where(FuturesMarket.id.in_(list(market_ids)))
-            )
+            market_result = await session.execute(slate_market_stmt(market_ids))
             ext_by_market: dict[int, str] = {}
-            for mid, mext, metadata, event_status in market_result.all():
+            for mid, mext, metadata, event_status in slate_market_rows(
+                market_result.all()
+            ):
                 # Same authoritative refutation as shared WIN admission, using the
                 # catalog metadata this token read already owns. Missing labels
                 # remain conservative; titles and outcome names are never guessed.
@@ -2092,6 +3079,17 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # Same conservative WIN eligibility as the blend owner map.
                     # Props remain in the fleet but cannot take these ask seats.
                     live_win_topup_ids.add(mid)
+                if stored_live_only:
+                    # Same persisted per-outcome attribution read by the outcome
+                    # top-up. Parent moneylines have no market-level token array.
+                    stored = (metadata or {}).get("clob_yes_token_by_outcome")
+                    if isinstance(stored, dict):
+                        for raw_oid, token in stored.items():
+                            if token:
+                                try:
+                                    stored_outcome_tokens[int(raw_oid)] = (mid, str(token))
+                                except (TypeError, ValueError):
+                                    pass
                 if mext:
                     condition_to_market[mext] = mid
                     ext_by_market[mid] = mext
@@ -2123,7 +3121,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 for mid in market_ids
                 if mid not in tokens_by_market
             ]
-            if topup_missing:
+            if topup_missing and not stored_live_only:
                 try:
                     topped = await topup_clob_tokens(
                         session,
@@ -2183,8 +3181,19 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 if mid not in tokens_by_market
                 for oid, ext in outcomes_by_market.get(mid, [])
             ]
-            outcome_yes_token: dict[int, str] = {}
-            if outcome_topup_targets:
+            # The normal top-up reads stored metadata only for markets with
+            # at least one addressable outcome. That read returns all persisted
+            # siblings, including one whose own external ID is unparseable.
+            stored_markets = {
+                mid for mid, _oid, ext in outcome_topup_targets
+                if condition_id_of(ext) is not None
+            }
+            outcome_yes_token: dict[int, str] = {
+                oid: token
+                for oid, (mid, token) in stored_outcome_tokens.items()
+                if stored_live_only and mid in stored_markets
+            }
+            if outcome_topup_targets and not stored_live_only:
                 try:
                     outcome_yes_token = {
                         oid: token
@@ -2268,7 +3277,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             "unmapped_assets": unmapped_assets,
         }
 
-    game_slate = await load_game_slate()
+    game_slate = await load_game_slate(stored_live_only=True)
+    complete_startup_slate = bool(game_slate["asset_to_outcome"])
+    if not complete_startup_slate:
+        # Preserve the original full-slate/open-only fallback when nothing
+        # attributable can be subscribed from the stored live subset.
+        game_slate = await load_game_slate()
     asset_ids = game_slate["asset_ids"].copy()
     asset_to_outcome = game_slate["asset_to_outcome"].copy()
     asset_to_market = game_slate["asset_to_market"].copy()
@@ -2382,7 +3396,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # Buffered price updates
     price_buffer: dict[int, float] = {}
     buffer_lock = asyncio.Lock()
-    catalog_boundary = _PMCatalogFlushBoundary()
+    catalog_boundary = _PMCatalogFlushBoundary(game_period=game_period)
     lock_retry_until: dict[int, float] = {}
     lock_retry_events: set[int] = set()
     successful_price_write_at: dict[int, float] = {}
@@ -2408,12 +3422,22 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     blend_refresher = LiveBlendRefresher(
         "polymarket", min_refresh_interval_s=blend_floor,
         session_factory=get_task_session,  # #2471
+        observation_read_factory=sessions.observation_read,
+        chart_custody=OwedChartCustody(),  # #11181: no owed chart point is lost
     )
     # #11138: quotes whose price-row write a lock holds; the stamp reads them
     # in place of the older stored row. Keyed like `price_buffer`, released
     # when the write lands. Reached through the refresher: no new name.
     blend_refresher.held_quotes = HeldRowQuotes()
     await blend_refresher.held_quotes.sample_database_clock(get_task_session)
+    # #10090: withdrawals a previous run committed whose source removal it
+    # never settled. A failed read is retried by the first withdrawal flush.
+    blend_refresher.withdrawal_debt = PMWithdrawalDebt()
+    await blend_refresher.withdrawal_debt.load(get_task_session)
+    # #10090: when this arm is the named preview source, claim its display
+    # epoch before any frame (`LiveBlendRefresher.claim_preview_display`).
+    if getattr(blend_refresher, 'preview', False):
+        await blend_refresher.claim_preview_display()
     # #837 receipt — every accepted input is stamped (seq, receive instant) as
     # it is buffered, so a held price can be followed from the socket to the
     # stamp that carried it. `input_marks` is keyed like `price_buffer` (one
@@ -2435,6 +3459,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
     stats["history_pending_adopted"] = len(getattr(blend_refresher, "_history", ()))
     input_marks: dict = {}
+    # DNPL canary speaking outcomes only. Same-price successors retain their
+    # token; a move/withdrawal/routing change ends continuity, including A-B-A.
+    observation_continuity: dict[int, tuple[object, float]] = {}
 
     # #9484: filled IN PLACE by `admit_open_contracts`, which the handlers and
     # the flush read through these same objects. Separate from the game maps so
@@ -2478,7 +3505,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # Entries now leave only after the write lands, so nothing needs to be
         # "put back", because it was never taken away.
         from app.tasks.live_blend_refresh import _mono
-        from app.tasks.polymarket_ws import _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS
+        from app.tasks.polymarket_ws import (
+            _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS,
+            DNPL_PRICE_STATEMENT_TIMEOUT_MS, ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+            is_price_statement_timeout,
+        )
+        from app.utils.repair_lock_budget import SET_STATEMENT_TIMEOUT_SQL
 
         # #10090 stage trace (OFF by default): times only the chunk the game
         # flush registered for its selected outcomes; never raises. Reached
@@ -2501,6 +3533,32 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # Probe it NOWAIT instead. The first price attempt has the short
         # statement budget; rerank keeps the chunk budget, final drain waits.
         probe = not final and any(oid in lock_retry_until for oid in chunk)
+        # #10090 (Root attempt71): only a whole game chunk — every leg names
+        # its event, none is a prop or an open-catalog leg — takes the game
+        # loop's own first wait; the side loops never write such a chunk.
+        game_chunk = bool(chunk) and all(
+            event_id_by_outcome.get(oid) is not None
+            and oid not in non_blend_outcome_ids
+            and oid not in open_outcome_ids
+            for oid in chunk
+        )
+        price_lock_timeout_ms = (
+            catalog_boundary.game_price_lock_timeout_ms
+            if game_chunk else PRICE_STATEMENT_LOCK_TIMEOUT_MS
+        )
+        bound_price_statement = (
+            not final and game_chunk and getattr(blend_refresher, "preview", False)
+            and bool(getattr(blend_refresher, "preview_events", ()))
+        )
+        # Includes unrelated game B: bounding B is what lets a later DNPL A
+        # reach the same serial writer. Side loops and disabled/final stay as-is.
+        previous_statement_timeout = None
+        rolled_back_statement_timeout = None
+        price_statement_timeout_seen = False
+        # A hold that outlasts a try this short is ordinary, not news: its
+        # first timeout is counted like a probe's repeat, never logged as a
+        # flush error (one Sentry event per 1–50 ms hold otherwise).
+        short_first_wait = price_lock_timeout_ms < PRICE_STATEMENT_LOCK_TIMEOUT_MS
         probe_refused = False
         price_lock_timed_out = False
         try:
@@ -2510,17 +3568,33 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 if not final:
                     await session.execute(
                         SET_LOCK_TIMEOUT_SQL,
-                        {"ms": lock_timeout_value(PRICE_STATEMENT_LOCK_TIMEOUT_MS)},
+                        {"ms": lock_timeout_value(price_lock_timeout_ms)},
                     )
                 # #10664: the chunk's price writes in ONE statement — the same
                 # set clause, row-lock order and returned-row coverage as the
                 # per-row UPDATEs it replaces (`chunk_price_update_stmt`).
                 now = _mono()
+                # #10090: a leg the #11138 overlay holds is forced. Its events
+                # row may carry the held quote, not the stored price, so an
+                # input returning to the stored price is not "unchanged": the
+                # filter took no lock and returned nothing, the held quote was
+                # released and no stamp was owed, leaving the page on the held
+                # value (Root attempt67: 1 of 36 reversals, 24.7 s). Forced, a
+                # still-held row refuses and the overlay holds the new quote; a
+                # landed write returns the row and its event is stamped. Twin
+                # of the Kalshi socket's held-leg `forced_ids` (attempt30).
+                held_price_quotes = getattr(blend_refresher, "held_quotes", None)
                 forced = {
                     oid for oid in chunk
-                    if final or oid not in successful_price_write_at
+                    if final or (held_price_quotes is not None and oid in held_price_quotes)
+                    or oid not in successful_price_write_at
                     or now - successful_price_write_at[oid] >= PM_QUOTE_LIVENESS_SECONDS
                 }
+                if bound_price_statement:
+                    previous_statement_timeout = (await session.execute(
+                        ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+                        {"ms": lock_timeout_value(DNPL_PRICE_STATEMENT_TIMEOUT_MS)},
+                    )).scalar_one()
                 try:
                     if stage_trace is not None:
                         stage_trace.write_stage(chunk, "STATEMENT_START")
@@ -2537,7 +3611,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # for next-cadence retry; other failures keep their cooldown.
                     probe_refused = probe and is_price_row_lock_refusal(exc)
                     price_lock_timed_out = is_lock_timeout(exc)
+                    if previous_statement_timeout is not None and is_price_statement_timeout(exc):
+                        price_statement_timeout_seen = True
+                        # A server cancellation aborted this transaction. Only
+                        # a successful explicit rollback AND successful context
+                        # cleanup may hand its frozen cohort to the held path.
+                        await session.rollback()
+                        rolled_back_statement_timeout = exc
                     raise
+                if previous_statement_timeout is not None:
+                    await session.execute(
+                        SET_STATEMENT_TIMEOUT_SQL, {"ms": previous_statement_timeout},
+                    )
                 # The shorter budget belongs only to the price-row attempt.
                 # Rerank and other transaction work keep their existing budget.
                 if not final:
@@ -2591,10 +3676,26 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             if stage_trace is not None:
                 stage_trace.write_stage(
                     chunk, "FAILED",
-                    reason="LOCK_PROBE_REFUSED" if probe_refused
+                    reason="PRICE_STATEMENT_TIMEOUT" if exc is rolled_back_statement_timeout
+                    else "LOCK_PROBE_REFUSED" if probe_refused
                     else "LOCK_TIMEOUT" if is_lock_timeout(exc)
                     else type(exc).__name__,
                 )
+            if exc is rolled_back_statement_timeout:
+                # Separate from a row-lock refusal: the price statement spent
+                # its own runtime budget. Keep ordinary buffered retry/overlay
+                # admission; a cleanup replacement error never enters here.
+                stats["price_statement_timeouts"] = stats.get("price_statement_timeouts", 0) + 1
+                lock_retry_until.update({oid: lock_retry_until.get(oid, 0) for oid in chunk})
+                lock_retry_events.update(event_ids_for_outcomes(event_id_by_outcome, chunk))
+                return None
+            if price_statement_timeout_seen:
+                # Rollback/cleanup replaced the UPDATE error. It must never
+                # inherit held admission, even if cleanup itself says 55P03.
+                stats["errors"] += 1
+                stats["requeued"] += len(chunk)
+                logger.exception("Polymarket WS: price timeout cleanup failed")
+                return False
             # Q491 — THE SHIP. The chunk is still in `price_buffer`, so the next
             # flush retries it. Before Q491 the buffer was drained up front and
             # a failed write DISCARDED those prices outright: the socket only
@@ -2610,12 +3711,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # is the same known hold seen again — a table lock it queued on, or
             # an unrecognised row refusal. With no cooldown it recurs every
             # flush, once per retried event, so it is counted, not logged: the
-            # episode's first timeout (no probe yet) was the logged error.
+            # episode's first timeout (no probe yet) was the logged error — on
+            # the 50 ms budget; a fast game chunk's 1 ms first try is counted.
             # Rerank and commit failures keep their error log on every attempt.
-            probe_timed_out = probe and price_lock_timed_out
-            if probe_refused or probe_timed_out:
+            counted_timeout = (
+                (probe or (short_first_wait and not final)) and price_lock_timed_out
+            )
+            if probe_refused or counted_timeout:
                 # #10090 recovery: a refused probe waited for nothing (a timed
-                # out one at most 50 ms), so it re-arms no cooldown. Re-arming the two seconds left a pair
+                # out one at most 50 ms), so it re-arms no cooldown unless the
+                # overlay holds the whole chunk (below). Re-arming the two seconds left a pair
                 # whose holder let go 100 ms later unwritten for 2.2 s on real
                 # PostgreSQL (parent: 0.62 s). The rows stay known-held and due,
                 # so each flush probes them once, NOWAIT, at a round trip's
@@ -2629,9 +3734,28 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     else "price_lock_timeouts"
                 )
                 stats[counter] = stats.get(counter, 0) + 1
-                lock_retry_until.update(
-                    {oid: lock_retry_until.get(oid, 0) for oid in chunk}
+                # #10090 (Root attempt68): the one exception. A refused chunk
+                # whose every leg the #11138 overlay already holds is
+                # re-probed at most every 250 ms, not every 25 ms game flush.
+                # Its readers lose nothing: a cooling chunk still returns None,
+                # so each newer quote is held and stamped as above. Only the
+                # stored row waits, at most 250 ms past the holder's release.
+                # A leg the overlay lacks, an open-catalog leg, a timeout and
+                # the final drain keep the no-cooldown probe (36/36 changes
+                # kept, attempted UPDATEs 8592 -> 5121 in the same replay).
+                held_price_quotes = getattr(blend_refresher, "held_quotes", None)
+                next_probe = (
+                    _mono() + min(PRICE_FLUSH_SECONDS, 0.25)
+                    if probe_refused
+                    and held_price_quotes is not None
+                    and all(oid in held_price_quotes for oid in chunk)
+                    and not any(oid in open_outcome_ids for oid in chunk)
+                    else None
                 )
+                lock_retry_until.update({
+                    oid: next_probe if next_probe is not None else lock_retry_until.get(oid, 0)
+                    for oid in chunk
+                })
                 lock_retry_events.update(
                     event_ids_for_outcomes(event_id_by_outcome, chunk)
                 )
@@ -2697,6 +3821,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         props: Optional[bool] = None,
         final: bool = False,
         before_write=None,
+        background_publish=False,
     ) -> Optional[list[int]]:
         """#9934: withdraw the held prices the latest wide books priced out.
 
@@ -2713,13 +3838,34 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         ``before_write(books)`` sees the exact snapshot before its transaction.
         """
         from app.tasks.live_blend_refresh import _mono
+        from app.tasks.polymarket_ws import (
+            PMWithdrawalMarketPublisher, PMWithdrawalOwnershipDeferred,
+        )
+        from app.utils.kalshi_empty_book import book_refutes_price
 
+        # #10090: committed explicit withdrawals whose source removal is still
+        # owed, durable across a restart (`PMWithdrawalDebt`). Reached through
+        # the refresher: no new name.
+        market_owner = getattr(blend_refresher, "withdrawal_market_publisher", None)
+        if market_owner is None:
+            market_owner = PMWithdrawalMarketPublisher()
+            blend_refresher.withdrawal_market_publisher = market_owner
+        if final:
+            market_owner.start(blend_refresher)
+            await market_owner.join()
+        withdrawal_debt = getattr(blend_refresher, "withdrawal_debt", None)
+        if withdrawal_debt is not None:
+            await withdrawal_debt.load(get_task_session)
+            await withdrawal_debt.publish_pending(
+                blend_refresher, get_task_session, background=background_publish, final=final,
+            )
         async with buffer_lock:
+            debt_events = withdrawal_debt.legs() if withdrawal_debt is not None else {}
             held_events = (
                 {
-                    event_id_by_outcome.get(oid)
+                    event_id_by_outcome.get(oid, debt_events.get(oid))
                     for oid, until in withdrawal_retry_until.items()
-                    if oid in withdraw_buffer and until > _mono()
+                    if (oid in withdraw_buffer or oid in debt_events) and until > _mono()
                 }
                 if not final else set()
             )
@@ -2740,66 +3886,219 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 and event_id_by_outcome.get(oid) not in exclude_events
                 and event_id_by_outcome.get(oid) not in held_events
             }
-        if not books:
+            # Owed removals take the same loop and event gates as books. A leg
+            # whose newer quote is still buffered is judged after that write.
+            debts = [
+                debt
+                for debt in (withdrawal_debt.owed.values() if debt_events else ())
+                if debt.id not in price_buffer
+                and (standalone is None or (debt.id in alone) == standalone)
+                and (props is None or (debt.id in non_blend_outcome_ids) == props)
+                and (only_events is None or debt.event_id in only_events)
+                and debt.event_id not in exclude_events
+                and debt.event_id not in held_events
+            ]
+            refuted_buffer = {
+                oid: (price_buffer[oid], input_marks.get(oid))
+                for oid, (bid, ask) in books.items()
+                if oid in price_buffer
+                and book_refutes_price(bid, ask, price_buffer[oid])
+            }
+        if not books and not debts:
             return []
         if before_write is not None:
-            kept = await before_write(books)
+            # It judges legs by id only; an owed removal is ordered like a book.
+            kept = await before_write(
+                {**{debt.id: None for debt in debts}, **books} if debts else books
+            )
             if kept is not None:
                 # #10090: books on an event whose stamp is still queued or
                 # running stay buffered for a later flush (`join_stamp_reading`).
-                books = kept
-                if not books:
+                books = {oid: book for oid, book in books.items() if oid in kept}
+                debts = [debt for debt in debts if debt.id in kept]
+                if not books and not debts:
                     return []
-        try:
-            async with get_task_session() as session:
-                if not final:
-                    await session.execute(
-                        SET_LOCK_TIMEOUT_SQL,
-                        {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
+        rows = []
+        strays = []
+        if books:
+            from sqlalchemy import text
+
+            withdrawal_xid = None
+            withdrawal_commit_started = False
+            try:
+                async with get_task_session() as session:
+                    if not final:
+                        await session.execute(
+                            SET_LOCK_TIMEOUT_SQL,
+                            {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
+                        )
+                    if withdrawal_debt is not None:
+                        await withdrawal_debt.guard_owner(session)
+                        withdrawal_xid = (await session.execute(
+                            text("SELECT pg_current_xact_id()::text")
+                        )).scalar_one()
+                    rows = await withdraw_book_refuted_prices(session, books)
+                    for row in rows:
+                        if row.last_updated is None:
+                            continue  # no observation stamp to push; REST serves it
+                        queue_market_change(
+                            session,
+                            market_id=row.market_id,
+                            source="polymarket",
+                            outcome_observed_at={row.id: row.last_updated},
+                        )
+                    # #6598: a withdrawn leg leaves the field `rank` orders.
+                    markets = sorted({row.market_id for row in rows})
+                    if markets:
+                        stats["ranks_rederived"] += (
+                            await session.execute(rerank_market_fields_stmt(markets))
+                        ).rowcount
+                    if withdrawal_debt is not None:
+                        # The withdrawal commits only with its owed removal.
+                        recorded = await withdrawal_debt.record(session, rows)
+                        withdrawn_now = {row.id for row in rows}
+                        strays = await withdrawal_debt.strays(session, {
+                            oid for oid in books
+                            if oid not in withdrawn_now and oid not in debt_events
+                            and oid not in non_blend_outcome_ids
+                            and event_id_by_outcome.get(oid) is not None
+                        })
+                    withdrawal_commit_started = True
+            except BaseException as exc:
+                # The commit may have landed unacknowledged (a dropped
+                # connection, or cancellation during its await): the next
+                # flush re-reads every durable row memory does not hold.
+                if withdrawal_debt is not None:
+                    withdrawal_debt.require_reload(
+                        uncertain=withdrawal_commit_started and not is_lock_timeout(exc),
+                        xid=withdrawal_xid,
                     )
-                rows = await withdraw_book_refuted_prices(session, books)
-                for row in rows:
-                    if row.last_updated is None:
-                        continue  # no observation stamp to push; REST serves it
-                    queue_market_change(
-                        session,
-                        market_id=row.market_id,
-                        source="polymarket",
-                        outcome_observed_at={row.id: row.last_updated},
-                    )
-                # #6598: a withdrawn leg leaves the field `rank` orders.
-                markets = sorted({row.market_id for row in rows})
-                if markets:
-                    stats["ranks_rederived"] += (
-                        await session.execute(rerank_market_fields_stmt(markets))
-                    ).rowcount
-        except Exception as exc:
-            stats["errors"] += 1
-            logger.exception(
-                "Polymarket WS: withdrawal error (%d retained for retry)", len(books)
+                if not isinstance(exc, Exception):
+                    raise
+                if isinstance(exc, PMWithdrawalOwnershipDeferred):
+                    until = _mono() + min(PRICE_FLUSH_SECONDS, 0.25)
+                    withdrawal_retry_until.update(dict.fromkeys(books, until))
+                    return []
+                stats["errors"] += 1
+                logger.exception(
+                    "Polymarket WS: withdrawal error (%d retained for retry)", len(books)
+                )
+                if not final and is_lock_timeout(exc):
+                    # Keep the complete failed transaction; newer books on another
+                    # leg of its event must not bypass this eligibility cooldown.
+                    until = _mono() + PRICE_FLUSH_SECONDS
+                    withdrawal_retry_until.update(dict.fromkeys(books, until))
+                    return []
+                return None
+            if withdrawal_debt is not None:
+                withdrawal_debt.adopt(recorded)
+                # A leg whose newer quote arrived meanwhile waits for that write.
+                debts.extend(debt for debt in recorded if debt.id not in price_buffer)
+            await market_owner.offer(
+                session, blend_refresher, background=background_publish,
             )
-            if not final and is_lock_timeout(exc):
-                # Keep the complete failed transaction; newer books on another
-                # leg of its event must not bypass this eligibility cooldown.
-                until = _mono() + PRICE_FLUSH_SECONDS
-                withdrawal_retry_until.update(dict.fromkeys(books, until))
-                return []
-            return None
+        settled = []
+        invalidations = []
+        if debts or strays:
+            from app.tasks.polymarket_ws import withdraw_attributed_event_sources
+
+            from sqlalchemy import text
+
+            removal_xid = None
+            removal_commit_started = False
+            try:
+                async with get_task_session() as removal_session:
+                    if not final:
+                        await removal_session.execute(
+                            SET_LOCK_TIMEOUT_SQL,
+                            {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
+                        )
+                    await withdrawal_debt.guard_owner(removal_session)
+                    removal_xid = (await removal_session.execute(
+                        text("SELECT pg_current_xact_id()::text")
+                    )).scalar_one()
+                    # The rows settle with the removal, or neither commits.
+                    settled = await withdrawal_debt.settle(removal_session, debts + strays)
+                    invalidations = await withdraw_attributed_event_sources(
+                        removal_session, settled,
+                    )
+                    pending_publications = await withdrawal_debt.record_publications(
+                        removal_session, invalidations,
+                    )
+                    removal_commit_started = True
+            except BaseException as exc:
+                # Commit/close may have completed without acknowledgement.
+                # Reload the durable publication on the next flush or restart.
+                withdrawal_debt.require_reload(
+                    uncertain=removal_commit_started and not is_lock_timeout(exc),
+                    xid=removal_xid,
+                )
+                if not isinstance(exc, Exception):
+                    raise
+                if isinstance(exc, PMWithdrawalOwnershipDeferred):
+                    until = _mono() + min(PRICE_FLUSH_SECONDS, 0.25)
+                    withdrawal_retry_until.update(
+                        dict.fromkeys({debt.id for debt in debts + strays}, until)
+                    )
+                    return []
+                # The withdrawal is committed and its debt still owed: in
+                # memory, and durably in its row.
+                # A failed acknowledgement can follow a successful commit.
+                # Confirm via custody before paying the full failed-flush backoff.
+                await withdrawal_debt.load(get_task_session)
+                await withdrawal_debt.publish_pending(
+                    blend_refresher, get_task_session, background=background_publish, final=final,
+                )
+                stats["errors"] += 1
+                logger.exception("Polymarket WS: source withdrawal retained for retry")
+                if not final and is_lock_timeout(exc):
+                    until = _mono() + min(PRICE_FLUSH_SECONDS, 0.25)
+                    withdrawal_retry_until.update(
+                        dict.fromkeys({debt.id for debt in debts + strays}, until)
+                    )
+                    return []
+                return None
+            # A resolver/CAS refusal settles too: a valid alternative, a newer
+            # quote or a terminal result owns the source now.
+            withdrawal_debt.publications.update(pending_publications)
+            withdrawal_debt.settled(debts + strays)
+            for debt in debts:
+                withdrawal_retry_until.pop(debt.id, None)
         for oid in books:
             withdrawal_retry_until.pop(oid, None)
-        await blend_refresher.publish_market_changes(session)
+        if invalidations:
+            from app.tasks.polymarket_ws import _publish_committed_withdrawals
+
+            if withdrawal_debt is not None:
+                await withdrawal_debt.publish_pending(
+                    blend_refresher, get_task_session, background=background_publish, final=final,
+                )
+            else:
+                await _publish_committed_withdrawals(blend_refresher, invalidations)
         async with buffer_lock:
             for oid, book in books.items():
                 if withdraw_buffer.get(oid) == book:
+                    # Retire only the refuted input captured with this book.
+                    # Newer inputs, even at the same price, still own their write.
+                    refuted = refuted_buffer.get(oid)
+                    if (refuted is not None
+                            and price_buffer.get(oid) == refuted[0]
+                            and input_marks.get(oid) is refuted[1]):
+                        price_buffer.pop(oid, None)
                     del withdraw_buffer[oid]
         stats["held_prices_withdrawn"] += len(rows)
-        return [row.id for row in rows]
+        # R-A: a leg whose removal settled on this pass is returned even when
+        # an earlier pass committed its withdrawal, so its stamp is never lost.
+        return list(dict.fromkeys(
+            [row.id for row in rows] + [debt.id for debt in settled]
+        ))
 
     async def _flush_prices(flush_started=None, final=False):
         """One flush. Non-lock failures return False for the cadence retry;
         lock-held whole chunks retain their own eligibility cooldown. #10090
         ``flush_started`` is this flush's start, for the refresher's floor."""
         import asyncio  # the pipelined stamp below; executed rigs bring no globals
+        from app.tasks.polymarket_ws import PMWithdrawalMarketPublisher
         from app.tasks.live_blend_refresh import _mono
         from app.tasks.polymarket_ws import (
             _PMHeadlineEvents, _pm_lock_isolated_chunks, _pm_pure_bridged_legs,
@@ -3145,9 +4444,56 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # A typed rollback may have coupled unrelated events in one
                 # ordinary chunk. Retry only its admitted event/question units;
                 # fresh siblings then retain their own cooldown eligibility.
+                isolated_events = set(lock_retry_events)
+                changed_events = set()
+                if getattr(blend_refresher, "preview_events", ()):
+                    async with buffer_lock:
+                        held_events = (
+                            stamp_owner.held_events()
+                            if stamp_owner.task is not None and not stamp_owner.task.done()
+                            else set()
+                        )
+                        if held_events is not None:
+                            pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+                            blocked = (
+                                held_events | lock_retry_events
+                                | catalog_boundary.bridges.reserved
+                                | catalog_boundary.bridges.unstamped
+                                | event_ids_for_outcomes(event_id_by_outcome, withdraw_buffer)
+                                | (set(pending_reader()) if callable(pending_reader) else set())
+                            )
+                            held_quotes = getattr(blend_refresher, "held_quotes", None)
+                            event_legs = {}
+                            for oid, value in price_buffer.items():
+                                eid = headline_event_ids.get(oid)
+                                if eid in blend_refresher.preview_events and eid not in blocked:
+                                    event_legs.setdefault(eid, []).append((oid, value))
+                            for eid, legs in event_legs.items():
+                                if all(
+                                    oid not in open_outcome_ids
+                                    and observation_continuity.get(oid) is not None
+                                    and catalog_boundary.observation_ack.get(oid) is not None
+                                    and observation_continuity[oid][1] == round(float(value), 6)
+                                    and (held_quotes is None or oid not in held_quotes)
+                                    for oid, value in legs
+                                ):
+                                    if all(catalog_boundary.observation_ack[oid] == observation_continuity[oid]
+                                           for oid, _ in legs):
+                                        isolated_events.add(eid)
+                                    elif any(catalog_boundary.observation_ack[oid][1] != observation_continuity[oid][1]
+                                             for oid, _ in legs):
+                                        changed_events.add(eid)
+                # A known unchanged cohort need not share an unrelated SQL
+                # wait. This is a scheduling hint only: every admitted row still
+                # reaches write_chunk, including heartbeat/held-return forcing.
+                # A changed preview cohort needs its ordinary price authority
+                # first, so schedule it before unrelated waits. Its existing
+                # ready/stamp path then publishes DNPL; no preview bypass.
+                # Market/complement units remain indivisible across events.
                 chunks = _pm_lock_isolated_chunks(
-                    chunks, lock_retry_events, event_id_by_outcome,
+                    chunks, isolated_events, event_id_by_outcome,
                     market_by_outcome, open_complement_of, FLUSH_CHUNK_ROWS,
+                    first_events=changed_events,
                 )
             stats["open_contract_flush_deferred"] += len(batch) - sum(
                 len(c) for c in chunks
@@ -3193,26 +4539,27 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # chunk's stamp starts only after its own write committed;
             # its market notification may run alongside the event stamp.
             # Withdrawals still follow the stamp before them. The one owner
-            # may outlive an ordinary batch, but never catalog/shutdown/final
-            # handoff boundaries.
-            market_publishing = None
+            # may outlive an ordinary batch or catalog boundary: it retains
+            # plain frames only. Completed final/shutdown joins own its lifetime.
+            market_owner = getattr(blend_refresher, "withdrawal_market_publisher", None)
+            if market_owner is None:
+                market_owner = PMWithdrawalMarketPublisher()
+                blend_refresher.withdrawal_market_publisher = market_owner
 
             def start_market_publish(session):
-                nonlocal market_publishing
-                # The previous sender joins before the next price transaction.
-                # No publication backlog and no database session held open.
-                assert market_publishing is None
-                market_publishing = asyncio.create_task(
-                    blend_refresher.publish_market_changes(session),
-                    name="polymarket-committed-market-publish",
-                )
+                # Detach outer-commit-confirmed frames synchronously. One sender
+                # owns coalesced invalidations without retaining this session.
+                market_owner.enqueue(session, blend_refresher)
 
             async def market_publish_done(*, cancel=False):
-                nonlocal market_publishing
-                if market_publishing is None:
+                if not cancel:
+                    market_owner.start(blend_refresher)
+                    await market_owner.join()
                     return
-                task = market_publishing
-                if cancel and not task.cancelling():
+                task = market_owner.task
+                if task is None:
+                    return
+                if not task.cancelling():
                     task.cancel()
                 interrupted = None
                 while not task.done():
@@ -3222,7 +4569,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         interrupted = exc
                         if not task.cancelling():
                             task.cancel()
-                market_publishing = None
+                if market_owner.task is task:
+                    market_owner.task = None
                 if not task.cancelled() and task.exception() is not None:
                     logger.error(
                         "Polymarket WS: committed market publication failed",
@@ -3239,7 +4587,6 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         None if stage_trace is None
                         else stage_trace.chunk_begin(index, chunk_ids)
                     )
-                    await market_publish_done()
                     async with buffer_lock:
                         withdraw_cohort_ids.update(withdraw_buffer)
                         speaking_withdrawals = event_ids_for_outcomes(
@@ -3328,6 +4675,21 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # newly buffered ids still belong to a successor flush.
                     held_quotes = getattr(blend_refresher, "held_quotes", None)
                     async with buffer_lock:
+                        observation_generation = None
+                        observation_tokens = {}
+                        if getattr(blend_refresher, "preview_events", ()):
+                            observation_generation = routing_generation
+                            observation_tokens = {
+                                oid: observation_continuity.get(oid) for oid in chunk_ids
+                            }
+                            catalog_boundary.observation_writing = {
+                                eid for eid in event_ids_for_outcomes(headline_event_ids, chunk_ids)
+                                if eid in blend_refresher.preview_events
+                            }
+                            for eid in catalog_boundary.observation_writing:
+                                catalog_boundary.observation_write_epoch[eid] = (
+                                    catalog_boundary.observation_write_epoch.get(eid, 0) + 1
+                                )
                         current_chunk = {oid: price_buffer[oid] for oid in chunk_ids}
                         for oid in chunk_ids:
                             if oid in input_marks:
@@ -3356,6 +4718,25 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # AFTER it, for FUTURE inputs, never to re-date this batch.
                     if held_quotes is not None and not final:
                         await held_quotes.sample_database_clock(get_task_session)
+                    # Only a completed unchanged acknowledgement establishes
+                    # continuity. A price/heartbeat write still owes its stamp;
+                    # failed/held writes never authorize observation bypass.
+                    if (not final and observation_tokens
+                            and getattr(wrote, "written_ids", None) is not None):
+                        written_events = event_ids_for_outcomes(headline_event_ids, wrote.written_ids)
+                        async with buffer_lock:
+                            for oid, value in current_chunk.items():
+                                eid = headline_event_ids.get(oid)
+                                token = observation_tokens.get(oid)
+                                if (eid in getattr(blend_refresher, "preview_events", ())
+                                        and eid not in written_events and token is not None
+                                        and token == observation_continuity.get(oid)
+                                        and routing_generation == observation_generation):
+                                    catalog_boundary.observation_ack[oid] = token
+                                    entry = (eid, value, chunk_bounds.get(oid), batch_marks.get(oid),
+                                             token, observation_generation)
+                                    catalog_boundary.observation_pending.setdefault(oid, entry)
+                                    catalog_boundary.observation_wake.set()
                     # #11138: None is a price row a lock holds (refused, timed
                     # out or cooling down). Each event whose speaking legs here
                     # all carry their received quote is stamped from
@@ -3471,6 +4852,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         attempted_withdraw_events.update(mature)
                         early_withdrawn = await flush_withdrawals(
                             only_events=mature, final=final,
+                            background_publish=flush_started is not None and not final,
                             props=None if final else False,
                             before_write=join_stamp_reading,
                         )
@@ -3597,7 +4979,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     if final or flush_started is None:
                         await stamp_done()
                 finally:
-                    await market_publish_done()
+                    if final or flush_started is None:
+                        await market_publish_done()
         # Keep isolation beyond cooldown expiry until every failed price row
         # has committed. A newer quote on a successful row may batch normally.
         lock_retry_events.intersection_update(
@@ -3618,6 +5001,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             standalone=None if final else False,
             props=None if final else False,
             final=final,
+            background_publish=flush_started is not None and not final,
             before_write=join_stamp_reading,
         )
         if withdrawn is None:
@@ -3781,7 +5165,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 if wrote is False:
                     wrote_all = False
         async with catalog_boundary.side_writer:
-            withdrawn = await flush_withdrawals(standalone=True)
+            withdrawn = await flush_withdrawals(standalone=True, background_publish=True)
         if withdrawn is None:
             wrote_all = False
         return wrote_all
@@ -3843,15 +5227,126 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         async with catalog_boundary.side_writer:
             withdrawn = await flush_withdrawals(
                 standalone=False, props=True, exclude_events=lock_deferred_events,
+                background_publish=True,
             )
         if withdrawn is None:
             wrote_all = False
         return wrote_all
 
+    async def flush_observations():
+        """Admit frozen unchanged inputs beside an unrelated price transaction."""
+        boundary = catalog_boundary
+
+        def owners():
+            owner = boundary.stamp_owner(blend_refresher)
+            held = (owner.held_events()
+                    if owner.task is not None and not owner.task.done() else set())
+            if held is None:
+                return None
+            pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+            pending = set(pending_reader()) if callable(pending_reader) else set()
+            # PM buffers unchanged BBOs too. Only acknowledged uninterrupted
+            # values may pass; another leg's queued change owns the whole event
+            # even before its price chunk starts (including A-B-A).
+            price_owned = {
+                event_id_by_outcome.get(oid) for oid, value in price_buffer.items()
+                if oid not in non_blend_outcome_ids
+                and (observation_continuity.get(oid) is None
+                     or boundary.observation_ack.get(oid) != observation_continuity[oid]
+                     or observation_continuity[oid][1] != round(float(value), 6))
+            }
+            return (held | pending | price_owned | boundary.observation_writing
+                    | boundary.bridges.reserved | boundary.bridges.unstamped
+                    | event_ids_for_outcomes(event_id_by_outcome, withdraw_buffer))
+
+        async with buffer_lock:
+            busy = owners()
+            if busy is None:
+                return
+            snapshot = {oid: entry for oid, entry in boundary.observation_pending.items()
+                        if entry[0] not in busy}
+            if not snapshot:
+                return
+            for oid in snapshot:
+                boundary.observation_pending.pop(oid)
+            window = getattr(blend_refresher, "_admission", None)
+            releases = {entry[0]: window.released.get(entry[0], 0) if window else 0
+                        for entry in snapshot.values()}
+            epochs = {entry[0]: boundary.observation_write_epoch.get(entry[0], 0)
+                      for entry in snapshot.values()}
+        boundary.flush_work += 1
+        groups = {}
+        for oid, (eid, value, bound, mark, _token, _generation) in snapshot.items():
+            groups.setdefault(eid, {})[oid] = (value, bound, mark)
+
+        async def validate(event_ids):
+            async with buffer_lock:
+                busy = owners()
+                if busy is None or getattr(blend_refresher, "_admission", None) is not window:
+                    return set()
+                return {
+                    eid for eid in event_ids
+                    if eid not in busy and eid in getattr(blend_refresher, "preview_events", ())
+                    and boundary.observation_write_epoch.get(eid, 0) == epochs[eid]
+                    and (window is None or window.released.get(eid, 0) == releases[eid])
+                    and all(
+                        event_id_by_outcome.get(oid) == eid
+                        and oid not in non_blend_outcome_ids and oid not in open_outcome_ids
+                        and generation == routing_generation
+                        and token == observation_continuity.get(oid)
+                        and token == boundary.observation_ack.get(oid)
+                        and mark is not None and bound is not None
+                        and getattr(mark, "probability", None) == value
+                        and input_marks.get(oid) is not None
+                        and round(float(input_marks[oid].probability), 6) == round(float(value), 6)
+                        and getattr(input_marks[oid], "seq", -1) >= getattr(mark, "seq", 0)
+                        for oid, (event, value, bound, mark, token, generation) in snapshot.items()
+                        if event == eid
+                    )
+                }
+
+        async def restore():
+            async with buffer_lock:
+                for oid, entry in snapshot.items():
+                    boundary.observation_pending.setdefault(oid, entry)
+                boundary.observation_wake.set()
+
+        try:
+            accepted = await blend_refresher.preview_accepted_observations(groups, validate)
+        except asyncio.CancelledError:
+            await restore()
+            raise
+        if accepted is False:
+            await restore()
+            return
+        held = getattr(blend_refresher, "held_quotes", None)
+        if held is not None and any(entry[2] == getattr(held, "_database_bound", None)
+                                    for entry in snapshot.values()):
+            # Advance bounds for FUTURE arrivals only. Never re-date retries.
+            await held.sample_database_clock(get_task_session)
+
     async def flush_prices(flush_started=None, final=False):
-        # The final drain also writes standalone legs.
+        # The joined pump cannot outlive the catalog/routing scope or final drain.
         async with catalog_boundary.flushing(standalone=final):
-            return await _flush_prices(flush_started, final=final)
+            if (final or not getattr(blend_refresher, "preview_events", ())
+                    or not callable(getattr(blend_refresher, "preview_accepted_observations", None))):
+                return await _flush_prices(flush_started, final=final)
+            from app.tasks.ws_observation_drain import ObservationDrain
+            if catalog_boundary.observation_drain is None:
+                catalog_boundary.observation_drain = ObservationDrain(
+                    flush_observations, lambda: any(
+                        entry[0] not in catalog_boundary.observation_writing
+                        for entry in catalog_boundary.observation_pending.values()
+                    ),
+                    catalog_boundary.observation_wake, game_period,
+                )
+            async def work():
+                try:
+                    return await _flush_prices(flush_started, final=final)
+                finally:
+                    catalog_boundary.observation_writing.clear()
+                    catalog_boundary.observation_wake.set()
+            return await catalog_boundary.observation_drain.run_with(work)
 
     async def flush_standalone(flush_started=None):
         async with catalog_boundary.flushing(standalone=True):
@@ -3959,8 +5454,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             try:
                 await catalog_boundary.join_stamps()
             finally:
-                if interrupted is not None:
-                    raise interrupted
+                try:
+                    debt = getattr(blend_refresher, "withdrawal_debt", None)
+                    if debt is not None:
+                        await debt.join_publications(cancel=True)
+                finally:
+                    try:
+                        market_owner = getattr(blend_refresher, "withdrawal_market_publisher", None)
+                        if market_owner is not None:
+                            await market_owner.join(cancel=True)
+                    finally:
+                        if interrupted is not None:
+                            raise interrupted
 
     # #9418: one CLOB client for the consumer's resolutions, made on first use
     # and closed with the consumer; and the in-flight resolution tasks, held so
@@ -4024,6 +5529,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     return
                 for outcome_id, leg_bid, leg_ask in legs:
                     withdraw_buffer[outcome_id] = (leg_bid, leg_ask)
+                    if getattr(blend_refresher, "preview_events", ()):
+                        observation_continuity.pop(outcome_id, None)
                 # #11138: a held quote never outlives a book that withdraws it.
                 held_quotes = getattr(blend_refresher, "held_quotes", None)
                 if held_quotes is not None:
@@ -4121,10 +5628,28 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         except Exception:
             return
         if mark is not None:
+            if (event_id_by_outcome.get(outcome_id) in getattr(blend_refresher, "preview_events", ())
+                    and outcome_id not in non_blend_outcome_ids and outcome_id not in open_outcome_ids):
+                price = round(float(prob), 6)
+                previous = observation_continuity.get(outcome_id)
+                if previous is None or previous[1] != price:
+                    observation_continuity[outcome_id] = (object(), price)
+            elif getattr(blend_refresher, "preview_events", ()):
+                observation_continuity.pop(outcome_id, None)
             input_marks[outcome_id] = mark
             held = getattr(blend_refresher, "held_quotes", None)
             if held is not None:
                 held.note_input(mark)
+            token = observation_continuity.get(outcome_id)
+            if token is not None and catalog_boundary.observation_ack.get(outcome_id) == token:
+                catalog_boundary.observation_pending[outcome_id] = (
+                    event_id_by_outcome.get(outcome_id), prob,
+                    held.bound_for(mark) if held is not None else None,
+                    mark, token, routing_generation,
+                )
+                catalog_boundary.observation_wake.set()
+            else:
+                catalog_boundary.observation_pending.pop(outcome_id, None)
             stage_trace = getattr(tail_receipts, "exact_trace", None)
             if stage_trace is not None:
                 stage_trace.input_accepted(mark)  # never raises
@@ -4342,7 +5867,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
     async def flush_loop():
         await run_flush_cadence(
-            flush_prices, flush_period, stop=loops_stop,
+            flush_prices, game_period, stop=loops_stop,
             failed_retry_interval_s=PRICE_FLUSH_SECONDS,
             wake=catalog_boundary.flush_wake,
             work_count=lambda: catalog_boundary.flush_work,
@@ -4440,6 +5965,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             async with buffer_lock:
                 timing.enter("map")
                 routing_generation += 1
+                observation_continuity.clear()
+                catalog_boundary.observation_ack.clear()
+                catalog_boundary.observation_pending.clear()
+                catalog_boundary.observation_write_epoch.clear()
                 # Keep accepted writes' ownership through their drain even if the
                 # token has left the catalog. New inputs use ONLY the fresh maps.
                 protected = set(price_buffer) | set(withdraw_buffer)
@@ -4450,6 +5979,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 for owners in (market_by_outcome, event_id_by_outcome):
                     for oid in owners.keys() - old_debt:
                         del owners[oid]
+                # #10663: per-outcome bookkeeping keeps only the outcomes this
+                # catalog owns or a buffered write still carries. Nothing else
+                # retired an entry, so both grew by every outcome the process
+                # ever priced. A re-admitted outcome has no last-write instant
+                # and is written on its next price (never suppressed); its next
+                # accepted input records a fresh mark before any flush reads it.
+                retained = current_outcomes | protected
+                for bookkeeping in (successful_price_write_at, input_marks):
+                    for oid in bookkeeping.keys() - retained:
+                        del bookkeeping[oid]
                 asset_ids[:] = slate["asset_ids"]
                 market_ids.clear()
                 market_ids.update(slate["market_ids"])
@@ -4579,6 +6118,28 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         )
 
     async def admit_open_contracts():
+        nonlocal game_slate
+        if complete_startup_slate:
+            try:
+                started = time.monotonic()
+                full_slate = await load_game_slate()
+                # No open catalog has been admitted yet. Install the complete
+                # game maps before subscribing their new tokens; never make a
+                # recovered live token wait for the independent open read.
+                await refresh_catalog(
+                    full_slate, (None, False, {}, False),
+                    _PMCatalogHandoverTiming(
+                        "startup-games", slate_read_s=time.monotonic() - started,
+                    ),
+                )
+                ws.update_asset_ids(
+                    asset_ids.copy(), preserve_existing_shards=True,
+                )
+                game_slate = full_slate
+            except Exception:
+                logger.exception(
+                    "Polymarket WS full startup slate failed; retaining stored live subscriptions"
+                )
         open_read, open_read_s = preread, None
         if open_read is None:
             started = time.monotonic()
@@ -4688,6 +6249,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # Loading does not close either client: quotes still reach these
             # same buffers while the database/top-up prepares the next slate.
             await admission_task
+            # #10663: the startup slate/pre-read were copied into the live maps;
+            # bound here they outlived every refresh as a second catalog.
+            game_slate = preread = None
             if not open_asset_to_outcome and not open_asset_mirrors:
                 # No open fleet to retain: preserve the game-only runner's
                 # existing recycle/debt-handoff contract.
@@ -4696,6 +6260,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     stats["recycle_reason"] = "admission"
                     stats["admitted_event_ids"] = sorted(admitted)[:20]
                 break
+            # #10663: drop the previous refresh's source copies before the next
+            # read builds one, so a read never overlaps two catalogs plus the maps.
+            fresh_slate = fresh_open = None
             try:
                 read_started = time.monotonic()
                 fresh_slate = await load_game_slate()
@@ -4728,6 +6295,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     open_read_s=open_read_s,
                 ),
             )
+            # Installed: the live maps own the catalog now.
+            fresh_slate = fresh_open = None
+            # #11218: the reads' freed working set goes back to the OS now,
+            # instead of staying counted until the dyno's memory line.
+            release_free_heap("polymarket")
             if game_run_task.done():
                 # Loading/updating can yield while the retained client exits.
                 # Propagate its failure (or end this run) just as the wait above.

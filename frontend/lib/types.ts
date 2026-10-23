@@ -6,6 +6,8 @@ import type { ConfidenceSignals } from "@/lib/confidence";
 // The props section is shared with the tournament hub's match rows — one
 // definition of a prop card, not a second copy that agrees today (UX-P152).
 import type { MatchProp } from "@/lib/matchDetail";
+// #11296: the served shape is declared once, beside the one rule that reads it.
+import type { PregameProjection, PregameProjectionUnavailable } from "@/lib/finalForecastComparison";
 // Same reasoning as `MatchProp` above: the finished match the by-event route
 // serves IS a results-list row, so it is that type and not a copy of it (#2447),
 // and the hub's result rows and an event page's settled hero are the SAME fact,
@@ -229,6 +231,22 @@ export interface Event {
   bookmaker_odds?: BookmakerOddsDetail[];
   highlight?: Highlight;
   opening_odds?: OpeningOdds;
+  /**
+   * #11296 — on a settled row only: each sportsbook's last projected pair
+   * before the scheduled start (`/api/events/{id}` and search serve it), or the
+   * reason there is none. OPTIONAL: an older or cached payload carries neither.
+   * Read only through `finalForecastComparison`.
+   */
+  pregame_projection?: PregameProjection | null;
+  pregame_projection_unavailable?: PregameProjectionUnavailable | null;
+  /**
+   * #11296 — on a settled SOCCER row only, and only when the row's own stored
+   * period says the match ended at full time: the actual score is the
+   * 90-minute one. Absent for extra time, penalties, an unknown finish and
+   * every other sport. A fact about the score, served whether or not a
+   * forecast was found. Read only through `finalScorePeriod`.
+   */
+  final_score_period?: "regulation" | null;
   /**
    * THE ONE BLEND (standing ruling #1) — the single probability every surface
    * shows for this event. The backend computes it with
@@ -697,6 +715,13 @@ export interface EventHistoryResponse {
    * Absent/malformed: no claim. See `lib/foldRevision.ts`.
    */
   blend_edge_fold_revision?: Record<string, number> | null;
+  /**
+   * #10090: `{ "<row id>": rev }` — a COMPLETE fresh build read every series it
+   * draws after each listed row reached that revision. Null on a cached,
+   * partial or doubtful build. Read ordering only, whether or not an edge is
+   * pinned: never a value, clock, chart point or pin. See `lib/reconcileControl.ts`.
+   */
+  history_fold_revision?: Record<string, number> | null;
   /**
    * #6948: true iff the backend ACTUALLY removed points before kick-off, i.e. iff a second request
    * without `range=since_start` would answer with more. `false` on every payload served without the
@@ -1705,6 +1730,12 @@ export interface FeedEventData {
     away_rendered_percent?: number | null;
     bookmaker_count?: number;
     source?: string;  // "aggregate" when computed from non-sportsbook sources
+    // #2920 / #9483 — the sportsbooks' projected pair `/api/events/{id}` and
+    // search already serve. OPTIONAL: `/api/feed` does not send it yet, and a
+    // card without it prints no projected final. Read only through
+    // `cardProjectedFinal`.
+    projected_home_score?: number | null;
+    projected_away_score?: number | null;
   };
   /**
    * UX-P042 (#1640) — the feed has always sent this; the type simply omitted it,
@@ -1715,6 +1746,10 @@ export interface FeedEventData {
    * (`{"polymarket": {"value": 0.5, ...}}`). `lib/probabilityEvidence.ts` reads both.
    */
   win_probability_sources?: Record<string, number | { value?: number | null }>;
+  /** #11296 — the same settled-row keys as `Event`. */
+  pregame_projection?: PregameProjection | null;
+  pregame_projection_unavailable?: PregameProjectionUnavailable | null;
+  final_score_period?: "regulation" | null;
   opening_odds?: {
     home_probability: number;
     away_probability: number | null;
@@ -2248,6 +2283,9 @@ export interface TeamFutureItem {
    *  neither hides it behind the championship path nor labels it "Division".
    *  Absent elsewhere (My Stuff) — read `display_tier ?? market_tier`. */
   display_tier?: number | null;
+  /** #11493 — team page only: "eliminated" | "won" when the championship grid has
+   *  decided this row's column for the club. Absent when undecided or unknown. */
+  state?: "eliminated" | "won" | null;
   canonical_market_key?: string | null;
   /** Season/year for display, e.g. "2025-26" or "2026" (BR52). */
   season_year?: string | null;
@@ -3131,7 +3169,7 @@ export interface EventConceptResponse {
     // PR #6801 released (`/api/event` carries an 86400s positive mirror).
     sport_label?: string | null;
     name: string | null;
-    status: "upcoming" | "live" | "settled";
+    status: "upcoming" | "live" | "settled" | "unknown";
     start_date?: string | null;
     end_date?: string | null;
     venue?: string | null;

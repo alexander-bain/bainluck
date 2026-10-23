@@ -21,33 +21,55 @@ import {
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { matrixForStat, type DuringPlayerProps } from "@/lib/duringPlayerPropsMatrixSelection";
 import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
-import { eventPageProjectedPair } from "@/lib/projectedFinalPair";
+import { eventPageProjectedPair, projectedFinalLabel } from "@/lib/projectedFinalPair";
+import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
+import { livePregameComparison } from "@/lib/livePregameComparison";
+import FinalForecastDetails from "@/components/event/FinalForecastDetails";
+import ProjectedFinalLine from "@/components/ProjectedFinalLine";
 import { teamTextColor } from "@/lib/teamColors";
 import { heldFrameAfter, useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
 import { createReconnectCatchup } from "@/lib/reconnectCatchup";
-import { fetchEventWithLiveFrame, keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
+import {
+  createReconcileLedger,
+  createWriteJournal,
+  rebaseOnCoveringRead,
+  reconcileFloorCoverage,
+  replayJournaledPoll,
+  servedHistoryIsNewer,
+  type ReconcileControl,
+  type WriteJournal,
+} from "@/lib/reconcileControl";
+import { carryNewerHeldState, fetchEventWithLiveFrame, keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
 import {
   admitChartFrames,
   appendHeroObservation,
+  admitCurrentSourceObservations,
+  admitRecoveredSourceObservations,
+  appendAdmittedSourceObservations,
   finishedChartFrames,
   mergeLiveChartHistory,
   type AdmittedChartFrames,
 } from "@/lib/liveChartHistory";
-import { canSubscribeEventQuotes, quotePairCoversTrigger } from "@/lib/eventQuoteStream";
+import { canSubscribeEventQuotes, coversQuoteRevision, quotePairCoversTrigger } from "@/lib/eventQuoteStream";
 import FreshnessChip from "@/components/event/FreshnessChip";
 import {
   applyLiveFrame,
+  applyLiveFrameRail,
   adoptFoldedQuote,
   frameInvalidatesFoldedBlend,
   eventFeedIsStalled,
   makeEventRefreshInterval,
   pageLiveClaimIsUnbacked,
 } from "@/lib/eventLivePush";
+import { frameFoldOrder } from "@/lib/foldRevision";
+import { displayedPreview, displayedProbabilityObservedAt, overlayBlendPreview, overlayBlendPreviewLine } from "@/lib/blendPreview";
+import { frameCarriesUnpricedSnapshot, snapshotRailPaysPricelessTrigger } from "@/lib/sourceSnapshot";
 import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
 import { newestServedScore } from "@/lib/event/newestServedScore";
 import LiveSparkline from "@/components/event/LiveSparkline";
 import LiveConnectionStatus from "@/components/event/LiveConnectionStatus";
+import { useObservationCount } from "@/hooks/useObservationCount";
 import ChartFullscreenDialog from "@/components/event/ChartFullscreenDialog";
 import {
   EMPTY_CONNECTION_TRACKER,
@@ -84,6 +106,9 @@ const SpecialEventMarkets = dynamic(() => import("@/components/SpecialEventMarke
 const MarketBrowser = dynamic(() => import("@/components/event/MarketBrowser"), { ssr: false });
 const GameLineBrowser = dynamic(() => import("@/components/event/GameLineBrowser"), { ssr: false });
 const QuestionCatalog = dynamic(() => import("@/components/event/QuestionCatalog"), { ssr: false });
+// #10346 pilot: three supported takeaways, only with ?highlights=preview on an event we hold evidence for.
+const EventHighlightsPreview = dynamic(() => import("@/components/event/EventHighlightsPreview"), { ssr: false });
+import { ALL_MARKETS_ANCHOR_ID, HIGHLIGHTS_PREVIEW_PARAM, highlightsPreviewFor } from "@/lib/eventHighlightsPreview";
 const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), { ssr: false, loading: ChartSkeleton });
 // UX-P152: the tournament's sections OF this page. Dynamic and below the fold —
 // 94 events on the whole site render it and none of them should pay for it in
@@ -242,6 +267,8 @@ function heroCrestImage(
 const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
 /** #9051: floor between detail refetches a folded hero asks for on refused frames. */
 const FOLDED_FRAME_REFETCH_MS = 1000;
+/** #10090: an owed reconcile read retries 1, 2, 4 … s apart, never slower than the live poll. */
+const reconcileRetryDelayMs = (attempt: number) => Math.min(LIVE_REFRESH_INTERVAL, 1000 * 2 ** (attempt - 1));
 const SCHEDULED_REFRESH_INTERVAL = 120000;
 
 export default function EventPage({ params }: EventPageProps) {
@@ -293,6 +320,14 @@ export default function EventPage({ params }: EventPageProps) {
   // #9051: the headline the page holds (written after the hook), for the poll
   // reconcile and the refuse-and-refetch checks below.
   const heldEventRef = useRef<EventDetailResponse | undefined>(undefined);
+  // #10090 G2: the event the read last STORED. swr calls `onSuccess` in the
+  // same tick it writes the cache, before React renders that write, so this
+  // sees a result that `heldEventRef` and the quote lifetime do not see yet.
+  const storedEventRef = useRef<EventDetailResponse | undefined>(undefined);
+  // #10090: every write to the event cache while one paired read is in flight,
+  // so a read that newer prices overtook can still be adopted, by replaying
+  // them onto it (`rebaseOnCoveringRead`). Null when no pair is in flight.
+  const pairJournalRef = useRef<WriteJournal<EventDetailResponse> | null>(null);
   // #10200: the chart status's memory of what this mount has ADOPTED — advanced
   // once per render from the held result, never from a raw frame.
   const connectionTrackerRef = useRef<ConnectionTracker>(EMPTY_CONNECTION_TRACKER);
@@ -328,7 +363,13 @@ export default function EventPage({ params }: EventPageProps) {
   } = useSWR(
     ["event", eventId],
     () => fetchEventWithLiveFrame(
-      () => fetchEvent(eventId, takeFreshRead(freshNextEventReadRef)),
+      () => fetchEvent(eventId, takeFreshRead(freshNextEventReadRef)).then((polled) => {
+        // #10090: replayed onto a pair's fresher read only when final or
+        // strictly newer. A same-revision poll is not replayed, so the pair's
+        // own detail wins that tie (no game-state tiebreak here).
+        pairJournalRef.current?.record((onto) => replayJournaledPoll(polled, onto));
+        return polled;
+      }),
       () => latestLiveFrameRef.current,
       () => latestBlendEdgeRef.current,
       () => heldEventRef.current,
@@ -346,7 +387,7 @@ export default function EventPage({ params }: EventPageProps) {
       // #7621: a STABLE reference, built above. Inlining the arrow here again
       // is the bug — see the note on `eventPollInterval`.
       refreshInterval: eventPollInterval,
-      onSuccess: () => setLastRefresh(Date.now()),
+      onSuccess: (stored) => { storedEventRef.current = stored; setLastRefresh(Date.now()); },
     }
   );
   // #9051: a ref, so the push effect does not re-run — and re-apply its frame —
@@ -358,23 +399,41 @@ export default function EventPage({ params }: EventPageProps) {
   // when a client-side navigation reuses the component for another event.
   const pairedQuoteReadRef = useRef<(() => Promise<unknown>) | null>(null);
   const quoteTriggerRef = useRef<LiveFrame | null>(null);
+  // Source membership needs a pinned chart edge, not just a fresh history.
+  // Bound this obligation to the scheduler's initial pair and one retry.
+  const sourceAddedHistoryRef = useRef<{ trigger: LiveFrame; attempts: number } | null>(null);
   const recoveryIntentRef = useRef(0);
   const quoteReadLifetimeRef = useRef(0);
+  // #10090: the reconcile floors this page still owes. Bounded; see the ledger.
+  const [reconcileLedger] = useState(createReconcileLedger);
+  // #10090: a control's jitter asked for the owed pair (the ladder asks through
+  // the scheduler). An owed floor alone never turns an invalidation into a pair.
+  const reconcileIntentRef = useRef(false);
   const quoteEventIdRef = useRef(eventId);
+  // Another event's obligations are that page's; this one's own load reads it.
+  if (quoteEventIdRef.current !== eventId) reconcileLedger.clear();
   if (quoteEventIdRef.current !== eventId) recoveryIntentRef.current = 0;
   if (quoteEventIdRef.current !== eventId) quoteTriggerRef.current = null;
+  if (quoteEventIdRef.current !== eventId) sourceAddedHistoryRef.current = null;
+  if (quoteEventIdRef.current !== eventId) reconcileIntentRef.current = false;
   quoteEventIdRef.current = eventId;
   const refreshEventRef = useRef(refreshEvent);
   refreshEventRef.current = refreshEvent;
   const [foldedRefetch] = useState(() => createFoldedRefetchScheduler(
-    () => {
-      if ((quoteTriggerRef.current || recoveryIntentRef.current) && pairedQuoteReadRef.current) return pairedQuoteReadRef.current();
+    (read) => {
+      // #10090: an owed floor makes a pair only when its own jitter or ladder
+      // asks; an ordinary invalidation while owed keeps its detail read.
+      const reconcile = reconcileIntentRef.current || (read.backoff && reconcileLedger.owed());
+      reconcileIntentRef.current = false;
+      if ((quoteTriggerRef.current || recoveryIntentRef.current || reconcile) && pairedQuoteReadRef.current) return pairedQuoteReadRef.current();
       freshNextEventReadRef.current = true;
       return refreshEventRef.current();
     }, FOLDED_FRAME_REFETCH_MS, Date.now,
     // A failed/behind pair still owes this quote even if the stream goes quiet.
     // One bounded retry uses the existing scheduler; normal polling remains.
     () => (quoteTriggerRef.current !== null || recoveryIntentRef.current !== 0) && canSubscribeEventQuotes(heldEventRef.current),
+    // #10090: an owed reconcile floor has no retry cap; it is paid or retired.
+    { owed: () => reconcileLedger.owed() && canSubscribeEventQuotes(heldEventRef.current), delayMs: reconcileRetryDelayMs },
   ));
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
@@ -441,6 +500,8 @@ export default function EventPage({ params }: EventPageProps) {
   // one render, so an effect saw only the batch's last frame: a newer price
   // followed by an older invalidation left the headline on the old price until
   // history answered, while the chart (which banks every frame) moved.
+  const reconcileCatchupRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
+  const reconcileOrdinalRef = useRef(0);
   const applyPushedFrame = useCallback((liveFrame: LiveFrame) => {
     if (liveFrame.event_id !== eventId) return;
     // #9051: a FOLDED hero (canonical + twins) refuses a raw-row frame, which
@@ -453,6 +514,7 @@ export default function EventPage({ params }: EventPageProps) {
     // its explicit full fold is independently ordered against the held hero.
     const folded = adoptFoldedQuote(held, liveFrame, eventId);
     if (folded.handled) {
+      pairJournalRef.current?.record((prev) => adoptFoldedQuote(prev, liveFrame, eventId).next);
       if (folded.next !== held) {
         refreshEvent(
           (prev) => adoptFoldedQuote(prev, liveFrame, eventId).next,
@@ -465,43 +527,90 @@ export default function EventPage({ params }: EventPageProps) {
     if (held && canSubscribeEventQuotes(held) && (
       liveFrame.p === null || held.hero_probability_source !== "blend" ||
       (liveFrame.status && liveFrame.status !== held.status) ||
-      (held.status !== "live" && frameInvalidatesFoldedBlend(held, liveFrame))
+      (held.status !== "live" && frameInvalidatesFoldedBlend(held, liveFrame)) ||
+      // #10090: a newer write whose same-commit snapshot holds no real source
+      // is not a blend — its `p` is the producer's fallback. Adopt neither the
+      // number nor the map; read the authoritative pair, as for no price.
+      (frameCarriesUnpricedSnapshot(liveFrame) &&
+        frameFoldOrder(held.blend_fold_revision, liveFrame.rev) === "newer")
     )) {
       quoteTriggerRef.current = liveFrame;
+      sourceAddedHistoryRef.current = null;
       foldedRefetch.request();
       return;
     }
     if (frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)) {
-      foldedRefetch.request();
+      foldedRefetch.request({ keepBackoff: true });
       return;
     }
     // #9294: contributor notifications invalidate the fold without carrying
     // an adoptable price. Never install one as a price or replay it on a poll.
-    if (liveFrame.p === null || liveFrame.p === undefined) return;
+    if (liveFrame.p === null || liveFrame.p === undefined || frameCarriesUnpricedSnapshot(liveFrame)) return;
     // Every frame now gets here, so an older price can follow a newer one in a
     // batch. `applyLiveFrame` refuses it against the cache; the poll's replay
     // must not regress to it either.
     latestLiveFrameRef.current = heldFrameAfter(latestLiveFrameRef.current, liveFrame);
     const frame = { ...liveFrame, p: liveFrame.p };
-    refreshEvent(
+    let sourceAdded = false;
+    pairJournalRef.current?.record((prev) => applyLiveFrame(prev, frame));
+    void refreshEvent(
       // `applyLiveFrame` spreads `prev` FIRST and then only the fields a frame
       // speaks for, so a frame arriving after the background poll carries the
       // newer games line forward instead of reverting it (CERT-1994).
-      (prev) => applyLiveFrame(prev, frame),
+      // #10090: decided on the value actually stored, so a snapshot rail that
+      // lands discharges a priceless trigger it covers (no trailing pair).
+      (prev) => {
+        const adopted = applyLiveFrameRail(prev, frame);
+        const { next, snapshotRail } = adopted;
+        sourceAdded = adopted.sourceAdded === true;
+        if (sourceAdded) {
+          quoteTriggerRef.current = liveFrame;
+          sourceAddedHistoryRef.current = { trigger: liveFrame, attempts: 0 };
+        }
+        if (snapshotRail && snapshotRailPaysPricelessTrigger(quoteTriggerRef.current, frame)) {
+          quoteTriggerRef.current = null;
+        }
+        return next;
+      },
       // No revalidate: the frame IS the new value. Refetching here would put a
       // request on every tick and undo the point of pushing.
       { revalidate: false },
-    );
+    ).then(() => {
+      // Source history is persisted after publication. Reuse the existing
+      // bounded catch-up timer instead of racing that write or adding a poll.
+      // Only an actual cache adoption may request this read.
+      if (sourceAdded) reconcileCatchupRef.current?.recover(
+        ++reconcileOrdinalRef.current, 250,
+      );
+    });
     setLastRefresh(Date.now());
   }, [refreshEvent, eventId, foldedRefetch]);
+
+  // #10090: a `reconcile` control owes this page a paired read covering its
+  // floor. It is registered whatever price order the stream delivered (a newer
+  // sibling price proves nothing about the rail), and never reopens a result.
+  const applyReconcileControl = useCallback((control: ReconcileControl) => {
+    if (control.eventId !== eventId) return;
+    // A result already stored but not yet rendered needs no check here: its
+    // render ends eligibility, which clears the ledger before any jitter fires.
+    if (!canSubscribeEventQuotes(heldEventRef.current)) return;
+    if (!reconcileLedger.owe(control, Date.now())) return;
+    reconcileCatchupRef.current?.recover(
+      ++reconcileOrdinalRef.current,
+      control.custodyId.startsWith("normal-price:") ? 250 : undefined,
+    );
+  }, [eventId, reconcileLedger]);
 
   const quoteEligible = canSubscribeEventQuotes(event);
   const {
     connected: streamConnected,
+    // #10090: provisional hero overlay only (canary events).
+    blendPreview,
+    blendPreviewNow,
     chartPoints,
     status: reportedStreamStatus,
     recoveryGeneration,
-  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame);
+  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame, applyReconcileControl, event?.blend_fold_revision);
   // #10200: the transport's own observation, for the chart status only — the
   // disconnect refetch below still keys on `streamConnected`. A stream that reports only
   // `connected` (an older hook, a test double) reads as open or idle.
@@ -519,14 +628,32 @@ export default function EventPage({ params }: EventPageProps) {
       foldedRefetch.request();
     });
     recoveryRef.current = recovery;
+    // #10090: the same jittered spread for a reconcile control, its own timer
+    // (one per page, not per notification), onto the same single-flight pair.
+    const reconcile = createReconnectCatchup(() => {
+      if (!canSubscribeEventQuotes(heldEventRef.current)) return;
+      reconcileIntentRef.current = true;
+      foldedRefetch.request();
+    });
+    reconcileCatchupRef.current = reconcile;
     return () => {
       recovery.cancel();
       recoveryRef.current = null;
+      reconcile.cancel();
+      reconcileCatchupRef.current = null;
+      // Retired with named owners: a result is read whole by the terminal detail
+      // read that ended eligibility (no live rail survives it); navigation hands
+      // the new event its own load, and a return re-reads, with the server
+      // re-sending an unretired control on the new stream's open.
+      reconcileLedger.clear();
+      reconcileIntentRef.current = false;
       recoveryIntentRef.current = 0;
+      if (sourceAddedHistoryRef.current?.trigger === quoteTriggerRef.current) quoteTriggerRef.current = null;
+      sourceAddedHistoryRef.current = null;
       quoteReadLifetimeRef.current += 1;
       foldedRefetch.cancel();
     };
-  }, [eventId, quoteEligible, foldedRefetch]);
+  }, [eventId, quoteEligible, foldedRefetch, reconcileLedger]);
   useEffect(() => {
     if (quoteEligible && recoveryGeneration) recoveryRef.current?.recover(recoveryGeneration);
   }, [recoveryGeneration, quoteEligible, eventId]);
@@ -896,24 +1023,30 @@ export default function EventPage({ params }: EventPageProps) {
   // last minutes of the journey off the chart. Replaced on every eligible
   // render; after the finish only `finishedChartFrames` may read it, and it
   // admits nothing new.
+  const [sourceObservationVersion, setSourceObservationVersion] = useState(0);
   const admittedChartRef = useRef<AdmittedChartFrames | null>(null);
   const historyData = useMemo(
     () => {
       if (admittedChartRef.current?.eventId !== eventId) admittedChartRef.current = null;
-      if (quoteEligible) admittedChartRef.current = admitChartFrames(eventId, chartPoints, event);
+      if (quoteEligible) admittedChartRef.current = admitCurrentSourceObservations(
+        admitChartFrames(eventId, chartPoints, event), admittedChartRef.current, servedHistory, event,
+      );
       const frames = quoteEligible
         ? admittedChartRef.current?.points ?? []
         : finishedChartFrames(admittedChartRef.current, eventId, event, servedHistory);
-      const pushed = mergeLiveChartHistory(servedHistory, frames);
+      const observed = appendAdmittedSourceObservations(servedHistory, admittedChartRef.current, event);
+      const pushed = mergeLiveChartHistory(observed, frames);
       // A push is an observation at its own time, not permission to rewrite
       // the previous poll's endpoint with today's hero value (#920).
-      const joined = pushed !== servedHistory ? pushed : pinChartEdgeToHero(servedHistory, event);
+      const joined = pushed !== observed ? pushed : pinChartEdgeToHero(observed, event);
       // #8749: and so is the blend a detail refresh delivered — when it is
       // newer than the line's edge, the line gets it at its own clock, so the
       // headline never moves alone.
-      return quoteEligible ? appendHeroObservation(joined, event, servedHistory) : joined;
+      return quoteEligible
+        ? appendHeroObservation(joined, event, servedHistory)
+        : joined;
     },
-    [servedHistory, event, quoteEligible, chartPoints, eventId],
+    [servedHistory, event, quoteEligible, chartPoints, eventId, sourceObservationVersion],
   );
 
   // UX-P051 (#1710) — which of ESPN's two clock fields the phase badge may
@@ -933,23 +1066,104 @@ export default function EventPage({ params }: EventPageProps) {
     const trigger = quoteTriggerRef.current;
     const recovery = recoveryIntentRef.current;
     const readingLifetime = quoteReadLifetimeRef.current;
-    const [detail, history] = await Promise.all([
-      fetchEvent(readingEventId, true),
-      fetchEventHistory(readingEventId, EVENT_BOOT_HISTORY_HOURS,
-        historyRangeParam(fullHistoryRequested), true),
-    ]);
-    if (quoteReadLifetimeRef.current !== readingLifetime ||
-        quoteEventIdRef.current !== readingEventId || quoteHistoryRangeRef.current !== fullHistoryRequested ||
-        !quotePairCoversTrigger(detail, history, readingEventId, quoteTriggerRef.current?.rev) ||
-        !quotePairCoversTrigger(detail, history, readingEventId, detail.blend_fold_revision) ||
-        keepNewerHeldHeadline(detail, heldEventRef.current) !== detail) return;
-    await Promise.all([
-      refreshHistoryRef.current(history, { revalidate: false }),
-      refreshEventRef.current(keepNewerHeldHeadline(detail, heldEventRef.current), { revalidate: false }),
-    ]);
-    if (quoteTriggerRef.current === trigger) quoteTriggerRef.current = null;
-    if (recoveryIntentRef.current === recovery) recoveryIntentRef.current = 0;
-    setLastRefresh(Date.now());
+    const sourceHistory = sourceAddedHistoryRef.current?.trigger === trigger
+      ? sourceAddedHistoryRef.current : null;
+    if (sourceHistory) sourceHistory.attempts += 1;
+    try {
+      const journal = createWriteJournal<EventDetailResponse>();
+      pairJournalRef.current = journal;
+      // #10090: a pair read for an owed floor alone is paced by the scheduler's
+      // ladder (which honors a 429's wait), so each half is one request. A
+      // price-trigger or recovery pair keeps its existing retries.
+      const freshOptions = trigger || recovery ? undefined : { maxRetries: 0 };
+      let detail: EventDetailResponse;
+      let history: Awaited<ReturnType<typeof fetchEventHistory>>;
+      try {
+        [detail, history] = await Promise.all([
+          fetchEvent(readingEventId, true, freshOptions),
+          fetchEventHistory(readingEventId, EVENT_BOOT_HISTORY_HOURS,
+            historyRangeParam(fullHistoryRequested), true, freshOptions),
+        ]);
+      } finally {
+        if (pairJournalRef.current === journal) pairJournalRef.current = null;
+      }
+      // #10090 G2: a result that landed while this pair was in flight ends it,
+      // so an older live pair cannot put the game back on a live number. The
+      // stored read, not only the held one: a continuation queued behind the
+      // poll's cache write runs before React renders it.
+      const stored = storedEventRef.current;
+      if (!canSubscribeEventQuotes(heldEventRef.current) ||
+          (stored?.id === readingEventId && !canSubscribeEventQuotes(stored))) return;
+      if (quoteReadLifetimeRef.current !== readingLifetime ||
+          quoteEventIdRef.current !== readingEventId || quoteHistoryRangeRef.current !== fullHistoryRequested ||
+          !quotePairCoversTrigger(detail, history, readingEventId, quoteTriggerRef.current?.rev)) return;
+      // #10090: a pair whose detail covers an owed reconcile floor is adopted
+      // even when newer writes overtook it in flight — those writes are replayed
+      // onto it, so the rail loses the removed source without the headline going
+      // back, and the two halves need only agree on the floor (two fresh builds
+      // a write apart would otherwise refuse each other). It PAYS the floor only
+      // when the history covers it too — a pinned edge's revision, or an
+      // unpinned complete fresh build's `history_fold_revision`; otherwise the
+      // chart half stays owed and the persistent read asks again (D4). Any other
+      // pair keeps history-covers-detail and refuse-if-older.
+      const covering = reconcileLedger.floors()
+        .filter((floor) => reconcileFloorCoverage(detail, history, readingEventId, floor) !== "none");
+      const reconciling = covering.length > 0;
+      if (!reconciling && !quotePairCoversTrigger(detail, history, readingEventId, detail.blend_fold_revision)) return;
+      const adopted = reconciling
+        ? rebaseOnCoveringRead(detail, journal, heldEventRef.current)
+        : keepNewerHeldHeadline(detail, heldEventRef.current) === detail ? detail : null;
+      if (!adopted) return;
+      // Paid on what is WRITTEN, not on the detail before the replay: a replay
+      // that took the value back below a floor the detail covered is refused.
+      // Only the floors the detail itself covered are paid: a replayed frame
+      // raises the written revision but keeps the detail's rail, so it cannot
+      // vouch for a removal the detail never saw. Identity, not equality: a floor
+      // raised by `owe()` during the writes is a new object and stays owed.
+      const written = (floor: unknown) => reconcileFloorCoverage(adopted, history, readingEventId, floor);
+      if (covering.some((floor) => written(floor) === "none")) return;
+      if (reconciling) {
+        const recoveredBank = admitRecoveredSourceObservations(
+          admittedChartRef.current, history, detail, adopted,
+        );
+        if (recoveredBank !== admittedChartRef.current) {
+          admittedChartRef.current = recoveredBank;
+          // SWR may retain both newer history and identical rebased detail.
+          // The received observation still has to reach the chart's memo.
+          setSourceObservationVersion((version) => version + 1);
+        }
+      }
+      const [adoptedHistory] = await Promise.all([
+        reconciling && servedHistoryIsNewer(latestBlendEdgeRef.current, history)
+          ? undefined : refreshHistoryRef.current(history, { revalidate: false }),
+        // #10090: against what the cache holds AT the write, not the rendered
+        // value — a poll stored while this pair was out may not have rendered
+        // yet (G2), and its provably newer game state must not be put back.
+        refreshEventRef.current((cached) => carryNewerHeldState(adopted, cached), { revalidate: false }),
+      ]);
+      const sourceHistoryPaid = !sourceHistory || (
+        adoptedHistory?.blend_edge_pinned === true &&
+        coversQuoteRevision(adoptedHistory.blend_edge_fold_revision, trigger?.rev)
+      );
+      if (quoteTriggerRef.current === trigger && sourceHistoryPaid) {
+        quoteTriggerRef.current = null;
+        if (sourceAddedHistoryRef.current === sourceHistory) sourceAddedHistoryRef.current = null;
+      }
+      if (recoveryIntentRef.current === recovery) recoveryIntentRef.current = 0;
+      if (quoteReadLifetimeRef.current === readingLifetime) reconcileLedger.settle((floor) => covering.includes(floor) && written(floor) === "paid");
+      setLastRefresh(Date.now());
+    } finally {
+      // EXPIRED, not paid: after the one automatic retry, ordinary polling
+      // owns an unavailable edge. Never turn later invalidations into pairs.
+      // Identity/lifetime fences keep a newer or another page's debt intact.
+      if (sourceHistory && sourceHistory.attempts >= 2 &&
+          sourceAddedHistoryRef.current === sourceHistory &&
+          quoteReadLifetimeRef.current === readingLifetime &&
+          quoteEventIdRef.current === readingEventId) {
+        if (quoteTriggerRef.current === trigger) quoteTriggerRef.current = null;
+        sourceAddedHistoryRef.current = null;
+      }
+    }
   };
 
   const [foldedHistoryRefetch] = useState(() => createFoldedRefetchScheduler(
@@ -988,9 +1202,10 @@ export default function EventPage({ params }: EventPageProps) {
     // joined or left) is refused; only a fresh detail read can settle it, so ask
     // for one and write nothing this tick (same swr hazard as the push effect).
     if (edgeInvalidatesHeldBlend(heldEventRef.current, edge)) {
-      foldedRefetch.request();
+      foldedRefetch.request({ keepBackoff: true });
       return;
     }
+    pairJournalRef.current?.record((prev) => adoptNewerBlendEdge(prev, edge));
     refreshEvent((prev) => adoptNewerBlendEdge(prev, edge), { revalidate: false });
   }, [servedHistory, refreshEvent, foldedRefetch, holdsHeadline]);
 
@@ -1173,6 +1388,18 @@ export default function EventPage({ params }: EventPageProps) {
       ? data : null;
   }, [event?.id, event?.status, gameMarkets]);
 
+  // #10090: one disposable chart projection supplies the line and its resting
+  // probability. The adopted history/cache and source/score observations stay intact.
+  const previewChartLine = useMemo(() => overlayBlendPreviewLine(
+    event, blendPreview, blendPreviewNow, historyData?.aggregate_line ?? undefined, servedHistory,
+  ), [event, blendPreview, blendPreviewNow, historyData?.aggregate_line, servedHistory]);
+  const previewChartHistory = useMemo(() => historyData &&
+    previewChartLine !== (historyData.aggregate_line ?? undefined)
+    ? { ...historyData, aggregate_line: previewChartLine } : historyData,
+  [historyData, previewChartLine]);
+  const previewChartAt = previewChartHistory !== historyData
+    ? previewChartLine?.[previewChartLine.length - 1]?.timestamp : undefined;
+
   // Both charts read the same served + received publication history (#920).
   const sparklinePoints = useMemo(() =>
     (historyData?.aggregate_line ?? []).map(p => ({
@@ -1190,7 +1417,7 @@ export default function EventPage({ params }: EventPageProps) {
   const lastChartPoint = useMemo<ActiveChartPoint | null>(
     () =>
       computeLastChartPoint(
-        historyData,
+        previewChartHistory,
         servedScore.home_score,
         servedScore.away_score,
         // #4571 — the event row's own clock, so the helper can date the score by
@@ -1203,7 +1430,7 @@ export default function EventPage({ params }: EventPageProps) {
         // newer confirmed whole pair replace an older held history pair.
         event?.status,
       ),
-    [historyData, servedScore, event?.status, event?.espn],
+    [previewChartHistory, servedScore, event?.status, event?.espn],
   );
 
   // #4889 — ONE CLOCK ON THE PAGE. The header and the readout under the chart
@@ -1332,6 +1559,7 @@ export default function EventPage({ params }: EventPageProps) {
   // being observed lose its number on the page too.
   // #9483 NBA slice: NBA pages carry the same deck shape — winning margin and
   // scoring expectations from the served question matrix, then the projected finish.
+  const highlightsPreview = highlightsPreviewFor(event?.id, event?.status, searchParams.get(HIGHLIGHTS_PREVIEW_PARAM));
   const nflCardsOn = nflCardsApply(event?.sport);
   const storyCardsOn = storyCardsApply(event?.sport);
   const [nflCardClock, setNflCardClock] = useState(() => Date.now());
@@ -1421,8 +1649,9 @@ export default function EventPage({ params }: EventPageProps) {
         event?.sport || undefined,
         // #6158 — a late start opens "Since Start" at the observed first period.
         periodBoundaries,
+        previewChartAt,
       ),
-    [historyData, chartTimeRange, event?.commence_time, event?.status, event?.sport, periodBoundaries],
+    [historyData, chartTimeRange, event?.commence_time, event?.status, event?.sport, periodBoundaries, previewChartAt],
   );
 
   // ── #5720 — A RECORD IS NOT A SCORE, AND ON A STARTED GAME WITH NO SCORE A
@@ -1533,6 +1762,7 @@ export default function EventPage({ params }: EventPageProps) {
   const projectedFinalPair = eventPageProjectedPair({
     odds: event?.current_odds,
     sportKey: event?.sport,
+    commenceTime: event?.commence_time,
     isLive,
     ladderPair: historyData?.pm_spread_data?.projected_final,
   });
@@ -1610,6 +1840,44 @@ export default function EventPage({ params }: EventPageProps) {
         : null,
     [heroProjectedHome, heroProjectedAway]
   );
+  // #11296 — a FINISHED headline's forecast: the sportsbooks' last pair before
+  // the scheduled start, under the actual score the columns print. Only where
+  // that score is on screen (a stoppage filler prints no score to sit beside).
+  // A football or basketball final covers the full game, overtime included;
+  // soccer's forecasts are 90-minute ones, compared only when the row serves
+  // `final_score_period: "regulation"` (a full-time finish, never extra time).
+  const heroFinalForecast = useMemo(
+    () =>
+      isFinished && heroScorePairPresent && !heroScoreIsStoppageFiller
+        ? finalForecastComparison({
+            sportKey: event?.sport,
+            status: event?.status,
+            homeScore: bestHomeScore,
+            awayScore: bestAwayScore,
+            actualPeriod: finalScorePeriod(event?.sport, event?.final_score_period),
+            projection: event?.pregame_projection,
+          })
+        : null,
+    [isFinished, heroScorePairPresent, heroScoreIsStoppageFiller, event?.sport, event?.status, bestHomeScore, bestAwayScore, event?.final_score_period, event?.pregame_projection]
+  );
+  // #11296 — a LIVE headline's retained forecast: the same pre-start reading,
+  // printed beneath the current projected final it can be compared with. Only
+  // when the line above prints the producer's typed in-play pair (same unit,
+  // same period, same start); otherwise nothing is added and the current
+  // forecast prints exactly as before.
+  const heroLiveBaseline = useMemo(
+    () =>
+      livePregameComparison({
+        sportKey: event?.sport,
+        status: event?.status,
+        isLive,
+        commenceTime: event?.commence_time,
+        odds: event?.current_odds,
+        heroProjected: heroProjectedFinal,
+        projection: event?.pregame_projection,
+      }),
+    [event?.sport, event?.status, isLive, event?.commence_time, event?.current_odds, heroProjectedFinal, event?.pregame_projection]
+  );
   // #11103 — the game-story cards print the hero's projected final, never a second one.
   const nflCardsShown = useMemo(() => withPageProjection(nflCards, heroProjectedFinal), [nflCards, heroProjectedFinal]);
 
@@ -1631,6 +1899,53 @@ export default function EventPage({ params }: EventPageProps) {
     : bestHomeScore !== null || bestAwayScore !== null
       ? servedScore.score_observed_at
       : null;
+
+  const resolvedProbability = !eventLoading && event ? resolveProbability(
+    // #10090: the hero alone may show a provisional blend; with none held
+    // this is `event` itself.
+    overlayBlendPreview(event, blendPreview, blendPreviewNow),
+    historyData,
+    lastChartPoint,
+    isLive,
+    isFinished,
+    isSuspended,
+    // #5069 — the caption must not say "Live" over a number that stopped
+    // moving. Fed from `freshestSourceStamp` and NOT from `heroStamp`, and the
+    // difference is deliberate: `heroStamp` is the age of the whole GLANCE
+    // (min across price and score, #4469), while this caption is a claim about
+    // the BLEND alone, whose age is the max across its own sources. Using the
+    // glance's age here would strip "Live" off a ten-second-old probability
+    // whenever a score on a ten-minute beat happened to be the older fact —
+    // the mirror image of the bug #4469 fixed, and just as untrue.
+    //
+    // `heroStampIsStale` is the badge's own predicate, so the caption and the
+    // grey age badge above it cross the same boundary at the same instant.
+    //
+    // #2800 — OR'd with `liveClaimUnbacked`, because the age is only one of the
+    // two ways this number stops being current. A PINNED price is rewritten on
+    // schedule with an identical value, so it is permanently fresh to the stamp
+    // and permanently frozen in fact (Peliwo v Ziegann, 84 reads over 87
+    // minutes, all 0.99, badge reading `1m ago`). This is the same OR the age
+    // badge itself already takes through `claimWithdrawn` one line below, and
+    // the rule `effectivelyLive` states at :356 — everything that ASSERTS
+    // motion reads the withdrawal, and "Live · Bain Luck blend" asserts motion.
+    blendCaptionIsStale(
+      heroStampIsStale(freshestSourceStamp, "price"),
+      liveClaimUnbacked,
+    ),
+    true,
+  ) : null;
+  // Only the selected hero blend owns this observation clock. A history or
+  // opening fallback cannot borrow a timestamp from an unrelated source.
+  // Keep this owner above loading/error returns and outside both disclosures.
+  const acceptedPriceClock = resolvedProbability?.selectedProbabilitySource === "hero-blend"
+    && typeof resolvedProbability.homeProb === "number" && Number.isFinite(resolvedProbability.homeProb)
+      ? displayedProbabilityObservedAt(
+        event, blendPreview, blendPreviewNow,
+        event?.hero_probability_observed_at ?? freshestSourceStamp,
+      )
+      : null;
+  const observationCount = useObservationCount(eventId, acceptedPriceClock);
 
   // #5607 — a slow load is a slow load, not a failure.
   //
@@ -1740,38 +2055,7 @@ export default function EventPage({ params }: EventPageProps) {
     awayPct: servedAwayPct,
     openingHomePct,
     openingAwayPct: servedOpeningAwayPct,
-  } = resolveProbability(
-    event,
-    historyData,
-    lastChartPoint,
-    isLive,
-    isFinished,
-    isSuspended,
-    // #5069 — the caption must not say "Live" over a number that stopped
-    // moving. Fed from `freshestSourceStamp` and NOT from `heroStamp`, and the
-    // difference is deliberate: `heroStamp` is the age of the whole GLANCE
-    // (min across price and score, #4469), while this caption is a claim about
-    // the BLEND alone, whose age is the max across its own sources. Using the
-    // glance's age here would strip "Live" off a ten-second-old probability
-    // whenever a score on a ten-minute beat happened to be the older fact —
-    // the mirror image of the bug #4469 fixed, and just as untrue.
-    //
-    // `heroStampIsStale` is the badge's own predicate, so the caption and the
-    // grey age badge above it cross the same boundary at the same instant.
-    //
-    // #2800 — OR'd with `liveClaimUnbacked`, because the age is only one of the
-    // two ways this number stops being current. A PINNED price is rewritten on
-    // schedule with an identical value, so it is permanently fresh to the stamp
-    // and permanently frozen in fact (Peliwo v Ziegann, 84 reads over 87
-    // minutes, all 0.99, badge reading `1m ago`). This is the same OR the age
-    // badge itself already takes through `claimWithdrawn` one line below, and
-    // the rule `effectivelyLive` states at :356 — everything that ASSERTS
-    // motion reads the withdrawal, and "Live · Bain Luck blend" asserts motion.
-    blendCaptionIsStale(
-      heroStampIsStale(freshestSourceStamp, "price"),
-      liveClaimUnbacked,
-    ),
-  );
+  } = resolvedProbability!;
 
   // ═══ #6238 — THE AWAY NUMBER THIS PAGE IS ALLOWED TO PRINT ═══
   //
@@ -2090,9 +2374,16 @@ export default function EventPage({ params }: EventPageProps) {
   const connectionTerminalLabel = isFinished || venueSettledSentence
     ? "Finished"
     : stoppageLabel;
-  // The ACCEPTED price clock: the held result's own observation stamp, which a
-  // refused frame never moves and a heartbeat, reconnect or mount never touches.
-  const acceptedPriceClock = event.hero_probability_observed_at ?? freshestSourceStamp;
+  // The exact displayed probability owns this clock, including an admitted
+  // preview. An unknown preview time stays unknown until committed truth returns.
+
+  // These details compare the two clocks actually printed below. Keep the
+  // source-staleness warning policy above unchanged; an unknown preview or
+  // score clock cannot support an "oldest" claim.
+  const displayedOldestFact = acceptedPriceClock && heroStampInputs.scoreStamp
+    && Number.isFinite(Date.parse(heroStampInputs.scoreStamp))
+      ? heroFreshness({ priceStamp: acceptedPriceClock, scoreStamp: heroStampInputs.scoreStamp }).fact
+      : null;
   connectionTrackerRef.current = stepConnectionTracker(
     connectionTrackerRef.current,
     {
@@ -2129,13 +2420,18 @@ export default function EventPage({ params }: EventPageProps) {
   const connectionStatusVisible = connectionTerminalLabel
     ? connectionTrackerRef.current.sawUnfinished || showsAge
     : quoteEligible || showsAge;
+  const admittedPreviewProbability = displayedPreview(blendPreview, event, blendPreviewNow);
+  const observationDelivery = resolvedProbability?.selectedProbabilitySource === "hero-blend"
+    ? admittedPreviewProbability !== null ? "dnpl" as const : "committed" as const
+    : "unknown" as const;
   const connectionStatus = (announces: boolean) => (
     <LiveConnectionStatus
       presentation={connectionPresentation}
+      observation={{ eventId, count: observationCount, delivery: observationDelivery }}
       priceObservedAt={acceptedPriceClock}
       scoreShown={Boolean(liveGamesLine) || heroScorePairPresent}
       scoreConfirmedAt={heroStampInputs.scoreStamp}
-      oldestFact={heroStamp.fact}
+      oldestFact={displayedOldestFact}
       announces={announces}
     />
   );
@@ -2664,9 +2960,19 @@ export default function EventPage({ params }: EventPageProps) {
               Carolina's 2 a line and a half below Washington's 5. The centre
               block keeps its own vertical centring (`justify-center`), and a
               record that wraps is centred under its name (`text-center`). */}
-          <div className="flex items-stretch justify-between">
+          {/* #11301 — BELOW 360px THE ROW WRAPS INTO TWO TEAM CELLS AND A BAND.
+              At 312 the chance pair ran into both crests and at 260 the
+              forecast crossed the neighbouring names and records (Design's
+              hero3 captures): three regions no longer fit side by side. Under
+              360 the two team columns take half the row each and the centre
+              block wraps to a full-width row beneath them, where each chance
+              sits under its own team (`EventHeroProbabilityPair`) and the
+              labelled forecast stacks across the whole width. Type sizes and
+              values are unchanged; the hero grows taller instead. 360 and up
+              keep the three-column anatomy exactly (#10108 measured 360). */}
+          <div className="flex items-stretch justify-between max-[359px]:flex-wrap">
             {/* Home Team */}
-            <div className="flex flex-col items-center flex-1">
+            <div className="flex flex-col items-center flex-1 max-[359px]:basis-1/2 max-[359px]:order-1">
               {/* #2447: ONE RESOLVER, BOTH SURFACES. The ladder below is
                   `home_team_data.logo_large` -> `espnTeamLogoByName` ->
                   initials, and both of the first two are TEAM resolvers. A
@@ -2759,7 +3065,7 @@ export default function EventPage({ params }: EventPageProps) {
                 be the widest one (the probability pair at 188.5px here; the
                 `+N pts <team> since open` chip on a long club name), which is
                 why the fix bounds the BLOCK rather than any one line. */}
-            <div className="flex flex-col items-center justify-center px-1 sm:px-4 min-w-0">
+            <div className="flex flex-col items-center justify-center px-1 sm:px-4 min-w-0 max-[359px]:order-3 max-[359px]:basis-full max-[359px]:mt-3">
               {isFinished ? (
                 /* Settled: winner name + chip + the result in the sport's own
                    units, no big number (mirrors FuturesHero's resolved rule).
@@ -2822,6 +3128,101 @@ export default function EventPage({ params }: EventPageProps) {
                 // is playing. The slot goes empty, as it does for #6438.
                 stopped={stoppageLabel !== null}
               />
+              )}
+
+              {/* Projected final score — derived from spread + total, no gambling jargon.
+
+                  #2441: gated on the sport DECLARING that a derived spread is
+                  a real quantity here. The projection is a points model; on a
+                  tennis match it is a fabricated scoreline in a unit the sport
+                  does not have. An undeclared sport gets the same silence, by
+                  design — see `UNSCORED_IN_POINTS`. */}
+              {/* #5257: and gated on there still being a result to forecast.
+                  The old test was a DENYLIST of two terminal states, so a
+                  `suspended` event — and a `scheduled` one long past its own
+                  kickoff — fell straight through it and printed a projected
+                  final under this card's own "No result reported" badge. This
+                  is #5206's defect one card up, and #4018's line applies as
+                  verbatim as it did there: a forecast and a result are two
+                  questions and they get two predicates. `isSuspended` is the
+                  page's ONE `hasNoReportedResult` answer (computed above, #4015)
+                  and is the same one the badge four lines up is drawn from, so
+                  the card can no longer ask the question one way and answer it
+                  the other. */}
+              {/* #5697 AC2: and gated on the reader being able to see the state
+                  the forecast is about. `projectionHasGameStateToFrame` is
+                  computed beside the scores it reads — a live game with no score
+                  pair prints no projected final, a game that has not kicked off
+                  still does. */}
+              {/* #8156: and gated on the pair being a result the sport can
+                  produce. The `Math.round` below is applied per side, so any
+                  pair under a run apart lands on one integer and a no-tie sport
+                  printed an impossible final (`3 – 3` on live MLB).
+                  `projectedPairIsAPossibleResult` is computed beside the other
+                  projection gates and rounds exactly the way this line does —
+                  the two must never drift, which is why the rounding is not
+                  written out twice in two different expressions. */}
+              {/* #4885: and gated on the pair being reachable from the score
+                  the hero prints: `Projected final: 3 – 2` under a live `4 – 2`
+                  is always false. `projectedPairIsReachableFromTheScore` rounds
+                  the way this line does and reads `bestHomeScore`/`bestAwayScore`,
+                  the values in the score slots, never the event row. */}
+              {/* #8922: every gate above is now evaluated once, in
+                  `heroProjectedFinal`, because the margin and points maps print
+                  the same pair and must never disagree with this line about
+                  whether there is one. */}
+              {/* #2920 / #9483 — directly under the chance it explains, above
+                  the trend, opening and source lines (Alex, 2026-10-19: the 11px
+                  muted `Projected final: 30 – 22` under "11 sportsbooks" was
+                  unreadable and tied neither number to a team). Each number now
+                  sits beside its team's name, home first like the columns. */}
+              {heroProjectedFinal && (
+                <ProjectedFinalLine
+                  label={projectedFinalLabel(event.sport)}
+                  first={{ name: heroShortNames.home, score: heroProjectedFinal.home }}
+                  second={{ name: heroShortNames.away, score: heroProjectedFinal.away }}
+                  order="home-away"
+                  variant="hero"
+                  testId="event-hero-projected-final"
+                />
+              )}
+              {/* #11296 — live: the projection from before the scheduled start,
+                  directly beneath the current one, same team order, the final
+                  band's own words (90-minute basis said in the label). Where it
+                  came from sits one tap down, closed. */}
+              {heroProjectedFinal && heroLiveBaseline && (
+                <>
+                  <ProjectedFinalLine
+                    label={heroLiveBaseline.label}
+                    first={{ name: heroShortNames.home, score: heroLiveBaseline.baseline.home }}
+                    second={{ name: heroShortNames.away, score: heroLiveBaseline.baseline.away }}
+                    order="home-away"
+                    variant="hero"
+                    emphasis="secondary"
+                    testId="event-hero-live-baseline"
+                  />
+                  <FinalForecastDetails
+                    details={heroLiveBaseline.details}
+                    testId="event-hero-live-baseline-details"
+                  />
+                </>
+              )}
+              {/* #11296 — on a final, the forecast band under the result the
+                  columns print: same team order, no grade, no colour. Where it
+                  came from sits one tap down, closed. `heroProjectedFinal` is
+                  null on a final, so the two never print together. */}
+              {heroFinalForecast && (
+                <>
+                  <ProjectedFinalLine
+                    label={heroFinalForecast.label}
+                    first={{ name: heroShortNames.home, score: heroFinalForecast.forecast.home }}
+                    second={{ name: heroShortNames.away, score: heroFinalForecast.forecast.away }}
+                    order="home-away"
+                    variant="hero"
+                    testId="event-hero-final-forecast"
+                  />
+                  <FinalForecastDetails details={heroFinalForecast.details} />
+                </>
               )}
 
               {/* Trend indicator — change since opening (live/pregame only).
@@ -2976,58 +3377,10 @@ export default function EventPage({ params }: EventPageProps) {
                 </div>
               )}
 
-              {/* Projected final score — derived from spread + total, no gambling jargon.
-
-                  #2441: gated on the sport DECLARING that a derived spread is
-                  a real quantity here. The projection is a points model; on a
-                  tennis match it is a fabricated scoreline in a unit the sport
-                  does not have. An undeclared sport gets the same silence, by
-                  design — see `UNSCORED_IN_POINTS`. */}
-              {/* #5257: and gated on there still being a result to forecast.
-                  The old test was a DENYLIST of two terminal states, so a
-                  `suspended` event — and a `scheduled` one long past its own
-                  kickoff — fell straight through it and printed a projected
-                  final under this card's own "No result reported" badge. This
-                  is #5206's defect one card up, and #4018's line applies as
-                  verbatim as it did there: a forecast and a result are two
-                  questions and they get two predicates. `isSuspended` is the
-                  page's ONE `hasNoReportedResult` answer (computed above, #4015)
-                  and is the same one the badge four lines up is drawn from, so
-                  the card can no longer ask the question one way and answer it
-                  the other. */}
-              {/* #5697 AC2: and gated on the reader being able to see the state
-                  the forecast is about. `projectionHasGameStateToFrame` is
-                  computed beside the scores it reads — a live game with no score
-                  pair prints no projected final, a game that has not kicked off
-                  still does. */}
-              {/* #8156: and gated on the pair being a result the sport can
-                  produce. The `Math.round` below is applied per side, so any
-                  pair under a run apart lands on one integer and a no-tie sport
-                  printed an impossible final (`3 – 3` on live MLB).
-                  `projectedPairIsAPossibleResult` is computed beside the other
-                  projection gates and rounds exactly the way this line does —
-                  the two must never drift, which is why the rounding is not
-                  written out twice in two different expressions. */}
-              {/* #4885: and gated on the pair being reachable from the score
-                  the hero prints: `Projected final: 3 – 2` under a live `4 – 2`
-                  is always false. `projectedPairIsReachableFromTheScore` rounds
-                  the way this line does and reads `bestHomeScore`/`bestAwayScore`,
-                  the values in the score slots, never the event row. */}
-              {/* #8922: every gate above is now evaluated once, in
-                  `heroProjectedFinal`, because the margin and points maps print
-                  the same pair and must never disagree with this line about
-                  whether there is one. */}
-              {heroProjectedFinal && (
-                <div className="mt-1.5">
-                  <span className="text-[11px] text-text-muted">
-                    Projected final: {heroProjectedFinal.home}{"\u2009\u2013\u2009"}{heroProjectedFinal.away}
-                  </span>
-                </div>
-              )}
             </div>
 
             {/* Away Team */}
-            <div className="flex flex-col items-center flex-1">
+            <div className="flex flex-col items-center flex-1 max-[359px]:basis-1/2 max-[359px]:order-2">
               {/* #2447, the other side. Same ladder, same new first rung. */}
               <TournamentPlayerFace
                 eventId={eventId}
@@ -3227,7 +3580,7 @@ export default function EventPage({ params }: EventPageProps) {
               winProbSources={historyData?.win_prob_sources}
               scoringPlays={historyData?.scoring_plays}
               scoreHistory={historyData?.score_history}
-              aggregateLine={historyData?.aggregate_line ?? undefined}
+              aggregateLine={previewChartLine}
               backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
               eventId={eventId}
@@ -3356,6 +3709,12 @@ export default function EventPage({ params }: EventPageProps) {
       </div>
 
       </SectionErrorBoundary>
+      )}
+
+      {highlightsPreview && !venueVoided && (
+        <SectionErrorBoundary label="Three takeaways" resetKey={event.id}>
+          <EventHighlightsPreview preview={highlightsPreview} catalogueAvailable={!!gameMarkets} />
+        </SectionErrorBoundary>
       )}
 
       {/* #9483 — the NFL game stories, each openable full size. */}
@@ -3654,7 +4013,9 @@ export default function EventPage({ params }: EventPageProps) {
           (#9798), the same rule as the maps and quoted lines. */}
       {gameMarkets && !venueVoided && (
         <SectionErrorBoundary label="All markets" resetKey={gameMarkets}>
-          <QuestionCatalog data={gameMarkets} status={event.status} />
+          <div id={ALL_MARKETS_ANCHOR_ID} className="scroll-mt-20 empty:hidden">
+            <QuestionCatalog data={gameMarkets} status={event.status} />
+          </div>
         </SectionErrorBoundary>
       )}
 
@@ -3864,7 +4225,7 @@ export default function EventPage({ params }: EventPageProps) {
               winProbSources={historyData?.win_prob_sources}
               scoringPlays={historyData?.scoring_plays}
               scoreHistory={historyData?.score_history}
-              aggregateLine={historyData?.aggregate_line ?? undefined}
+              aggregateLine={previewChartLine}
               backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
               eventId={eventId}

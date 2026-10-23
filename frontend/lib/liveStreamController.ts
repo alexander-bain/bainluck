@@ -46,6 +46,9 @@
  * one. No test in here branches on the wall clock (gotcha #44).
  */
 
+import { parseReconcileControl, type ReconcileControl } from "./reconcileControl";
+import { snapshotFrameIsOversize } from "./sourceSnapshot";
+
 export interface LiveStreamFrame {
   event_id: number;
   p: number | null;
@@ -62,6 +65,12 @@ export interface LiveStreamFrame {
   folded_quote?: unknown;
   /** Raw actual-fold notification promises an object/null projection result. */
   folded_quote_pending?: boolean;
+  /**
+   * #10090: the same write's complete source map (`lib/sourceSnapshot.ts`).
+   * Dropped here when the raw frame is over the decoder's size bound (D3), so
+   * the frame is then exactly its legacy shape.
+   */
+  source_snapshot?: unknown;
 }
 
 /** The slice of `EventSource` this controller uses. */
@@ -89,6 +98,19 @@ export interface LiveStreamDeps {
   onDeliveringChange: (delivering: boolean) => void;
   /** #10666: local monotonic recovery ordinal, never a quote revision. */
   onRecovery?: (ordinal: number) => void;
+  /** #10090: a validated `reconcile` control — an owed read, never a price. */
+  onReconcile?: (control: ReconcileControl) => void;
+  /**
+   * #10090: a raw `preview` event's data — a
+   * provisional blend that is NOT a committed frame (`lib/blendPreview.ts`).
+   * Touches no clock, cursor or status: it can neither keep push "delivering"
+   * nor postpone the data-silence fallback.
+   */
+  onPreview?: (raw: unknown) => void;
+  /** #10090: previews are never replayed, so every (re)open and the end of the match clear them. */
+  onPreviewReset?: () => void;
+  onPreviewFloor?: (raw: unknown) => void;
+  onPreviewOpen?: (raw: unknown) => void;
   /**
    * #10200 — what the TRANSPORT is doing, for the reader-facing status only.
    *
@@ -220,7 +242,7 @@ export interface LiveStreamController {
 export function createLiveStreamController(
   deps: LiveStreamDeps,
 ): LiveStreamController {
-  const { open, now, onFrame, onDeliveringChange, onStatusChange, onRecovery, schedule } = deps;
+  const { open, now, onFrame, onDeliveringChange, onStatusChange, onRecovery, onReconcile, onPreview, onPreviewReset, schedule } = deps;
   const healthyRolloverDelay =
     deps.healthyRolloverDelay ??
     (() =>
@@ -368,14 +390,24 @@ export function createLiveStreamController(
     setStatus('connecting');
 
     let recoveryGeneration = 0;
-    next.addEventListener('open', () => {
+    let transportRecoveryPending = false;
+    next.addEventListener('open', (event) => {
       if (stopped || handle !== next) return;
+      onPreviewReset?.();
+      deps.onPreviewOpen?.((event as { data?: unknown })?.data);
       // Native retry can reopen this handle against another server worker.
       recoveryGeneration = 0;
       lastMessageAt = now();
       lastDataAt = now();
       setDelivering(true);
       setStatus('open');
+      // A failed transport may have missed the final quote beyond replay age.
+      // Reuse the page's jittered paired catch-up; an open is not a new price.
+      // Native and server 'open' events may both fire for one connection.
+      if (transportRecoveryPending) {
+        transportRecoveryPending = false;
+        onRecovery?.(++recoveryNotifications);
+      }
     });
 
     next.addEventListener('resync', (event) => {
@@ -388,8 +420,21 @@ export function createLiveStreamController(
       }
       if (typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation <= recoveryGeneration) return;
       recoveryGeneration = generation;
+      // The hub has discarded its provisional authority. Withdraw the held
+      // headline/chart/clock before requesting committed recovery coverage.
+      onPreviewReset?.();
       // Recovery signals delivery debt, never fresh data or a new quote clock.
       onRecovery?.(++recoveryNotifications);
+    });
+
+    // #10090: separate from `resync` — a named owed read with its own custody id
+    // and row-wise floor. Like `resync` it touches no clock, cursor or status,
+    // so a control can neither postpone the data-silence fallback nor pass for
+    // a price. Not deduped here: the page's ledger owns what is still owed.
+    next.addEventListener('reconcile', (event) => {
+      if (stopped || handle !== next) return;
+      const control = parseReconcileControl((event as { data?: unknown })?.data);
+      if (control) onReconcile?.(control);
     });
 
     const onProbability = (event: unknown) => {
@@ -406,6 +451,9 @@ export function createLiveStreamController(
       // Guard the shape rather than trusting it: a malformed frame that set `p`
       // to undefined would blank a working hero.
       if (typeof parsed?.event_id !== 'number') return;
+      if (parsed.source_snapshot !== undefined && snapshotFrameIsOversize(String(raw))) {
+        delete parsed.source_snapshot;
+      }
       // THE ONLY place the delivery clock is rearmed. A frame is the only
       // evidence that anything is still publishing.
       lastDataAt = now();
@@ -417,6 +465,16 @@ export function createLiveStreamController(
     // Legacy clients ignore this event. It is not deduped by raw revision:
     // the authoritative fold can arrive after the same write's invalidation.
     next.addEventListener('folded_probability', onProbability);
+
+    // #10090: a provisional blend, never routed through `onProbability`.
+    next.addEventListener('preview', (event) => {
+      if (stopped || handle !== next) return;
+      onPreview?.((event as { data?: unknown })?.data);
+    });
+    next.addEventListener('fold_preview_floor', (event) => {
+      if (stopped || handle !== next) return;
+      deps.onPreviewFloor?.((event as { data?: unknown })?.data);
+    });
 
     next.addEventListener('heartbeat', () => {
       if (stopped || handle !== next) return;
@@ -431,6 +489,7 @@ export function createLiveStreamController(
     // on the final number.
     next.addEventListener('closed', () => {
       if (handle !== next) return;
+      onPreviewReset?.();
       stop();
       setStatus('closed');
     });
@@ -449,6 +508,7 @@ export function createLiveStreamController(
         stop();
         setStatus('unavailable');
       } else {
+        transportRecoveryPending = true;
         setDelivering(false);
         setStatus('retrying');
       }

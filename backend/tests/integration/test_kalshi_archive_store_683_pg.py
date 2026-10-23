@@ -2441,10 +2441,23 @@ async def test_the_import_cli_runs_the_first_sample_profile_on_a_real_server(
     assert receipt["status"] == "applied" and receipt["mode"] == "dry_run"
     assert receipt["outcomes"][0]["would_insert"] == 11 and receipt["incomplete_reasons"] == []
     assert await _count(engine, "kalshi_archive_intervals") == 0
+    # The attended write without the reviewed versions is refused whole (exit 2):
+    # it never falls back to the fingerprint-only fence.
+    capsys.readouterr()
+    bare = await asyncio.to_thread(
+        cli.main, base + ["--write", "--output", str(tmp_path / "bare.json")]
+    )
+    assert bare == 2 and "input_versions_missing" in capsys.readouterr().err
+    assert await _count(engine, "kalshi_archive_imports") == 0
+    doc, digest = await _reviewed(engine, report)
+    versions = tmp_path / "V.json"
+    versions.write_text(_json.dumps(doc))
+    attended = ["--input-versions", str(versions), "--expected-input-digest", digest]
     wrote = await asyncio.to_thread(
-        cli.main, base + ["--write", "--output", str(tmp_path / "write.json")]
+        cli.main, base + attended + ["--write", "--output", str(tmp_path / "write.json")]
     )
     assert wrote == 0 and await _count(engine, "kalshi_archive_intervals") == 11
+    assert _json.loads((tmp_path / "write.json").read_text())["input_fence"] == "rowversion"
     key = _json.loads((tmp_path / "write.json").read_text())["import_key"]
     capsys.readouterr()
     restore_dry = await asyncio.to_thread(
@@ -2452,3 +2465,316 @@ async def test_the_import_cli_runs_the_first_sample_profile_on_a_real_server(
     )
     assert restore_dry == 0
     assert _json.loads(capsys.readouterr().out)["would_delete"] == 11
+
+
+# ── the attended input fence: reviewed identity AND row versions ──────────
+# PACKET (683-stored-identity-delta-20261016): "a later compared fingerprint OR
+# ANY ROWVERSION change refuses". Each drift case below leaves the input
+# fingerprint unchanged and proves it, then shows the fingerprint-only control
+# writing the same drifted outcome — the gap this fence closes.
+
+REVIEW_SQL = text(
+    """
+    SELECT fo.id AS outcome_id, fo.external_id AS ticker, fm.external_id AS event_ticker,
+           fo.market_id AS market_id, fm.event_id AS event_id,
+           fo.xmin::text AS outcome_xmin, fm.xmin::text AS market_xmin,
+           e.xmin::text AS event_xmin
+    FROM futures_outcomes fo
+    JOIN futures_markets fm ON fm.id = fo.market_id
+    LEFT JOIN events e ON e.id = fm.event_id
+    WHERE fo.id = ANY(:ids)
+    ORDER BY fo.id
+    """
+)
+
+
+async def _reviewed(engine, report, **over):
+    """What the operator's reviewed read returned, sealed and bound to ``report``."""
+    from app.services import kalshi_archive_apply as imp
+
+    plans = {int(p["outcome_id"]): p for p in report["plans"]}
+    async with engine.connect() as c:
+        rows = (await c.execute(REVIEW_SQL, {"ids": sorted(plans)})).mappings().all()
+    outcomes = [
+        {**dict(r), "input_fingerprint": plans[r["outcome_id"]]["input_fingerprint"], **over}
+        for r in rows
+    ]
+    doc = imp.seal_input_versions(report["plan_digest"], outcomes)
+    return doc, doc["digest"]
+
+
+async def _current_fingerprint(engine, oid):
+    from app.services import kalshi_archive_apply as imp
+    from app.utils.kalshi_archive_history import input_fingerprint
+
+    async with engine.connect() as c:
+        row = (await c.execute(text(imp.CURRENT_INPUT_SQL), {"oid": oid})).first()
+    return input_fingerprint(row)
+
+
+async def _attended(engine, report, doc, digest, **kw):
+    from app.services import kalshi_archive_apply as imp
+
+    return await imp.apply_archive_plan(
+        report, expected_digest=report["plan_digest"], write=True,
+        input_versions=doc, expected_input_digest=digest, require_input_versions=True,
+        session_factory=kw.pop("session_factory", _factory(engine)), **kw,
+    )
+
+
+async def _nothing_of(engine, oid):
+    async with engine.connect() as c:
+        for table in ("kalshi_archive_intervals", "kalshi_archive_outcome_evidence"):
+            n = (await c.execute(
+                text(f"SELECT COUNT(*) FROM {table} WHERE outcome_id = :o"), {"o": oid}
+            )).scalar_one()
+            assert n == 0, table
+
+
+async def test_the_attended_fence_applies_a_stable_reviewed_outcome(world):
+    engine, ids = world
+    report = await _plan(engine, [ids["a"], ids["b"]])
+    doc, digest = await _reviewed(engine, report)
+    assert all(o["event_xmin"] for o in doc["outcomes"])  # a real event version each
+    done = await _attended(engine, report, doc, digest, max_outcomes=2, max_points=26)
+    assert done["status"] == "applied" and done["inserted"] == 22
+    assert done["input_fence"] == "rowversion" and done["refused"] == []
+    assert done["input_versions_digest"] == digest
+    async with engine.connect() as c:
+        rep = (await c.execute(text("SELECT report FROM kalshi_archive_imports"))).scalar_one()
+    assert rep["input_fence"] == "rowversion"
+
+
+@pytest.mark.parametrize(
+    "row,sql,reason",
+    [
+        ("outcome", "UPDATE futures_outcomes SET current_probability = 0.25 WHERE id = :a",
+         "input_version_drift:outcome"),
+        # An identical-content UPDATE is still a new row version.
+        ("market", "UPDATE futures_markets SET name = name WHERE id = :m",
+         "input_version_drift:market"),
+        ("event", "UPDATE events SET home_score = 71, away_score = 64 WHERE id = :e",
+         "input_version_drift:event"),
+    ],
+)
+async def test_a_non_fingerprint_change_with_an_unchanged_fingerprint_is_refused(
+    world, row, sql, reason
+):
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    report = await _plan(engine, [ids["a"]])
+    doc, digest = await _reviewed(engine, report)
+    before = await _current_fingerprint(engine, ids["a"])
+    async with engine.begin() as c:
+        await c.execute(text(sql), {"a": ids["a"], "m": ids["market"], "e": ids["event"]})
+    after = await _current_fingerprint(engine, ids["a"])
+    assert before == after == report["plans"][0]["input_fingerprint"]
+
+    result = await _attended(engine, report, doc, digest)
+    assert result["refused"] == [{"outcome_id": ids["a"], "reason": reason}]
+    assert result["status"] == "partial" and result["inserted"] == 0
+    [out] = result["outcomes"]
+    assert out["input_fence"]["expected"][f"{row}_xmin"] != out["input_fence"]["observed"][f"{row}_xmin"]
+    await _nothing_of(engine, ids["a"])
+    async with engine.connect() as c:
+        imp_row = (await c.execute(text("SELECT status, report FROM kalshi_archive_imports"))).one()
+    assert imp_row.status == "partial"
+    assert imp_row.report["refused"] == [{"outcome_id": ids["a"], "reason": reason}]
+
+    # Control: the fingerprint-only fence writes this very drifted outcome.
+    legacy = await imp.apply_archive_plan(
+        report, expected_digest=report["plan_digest"], write=True,
+        session_factory=_factory(engine),
+    )
+    assert legacy["input_fence"] == "fingerprint_only"
+    assert legacy["status"] == "applied" and legacy["inserted"] == 11
+
+
+@pytest.mark.parametrize(
+    "sql,reason",
+    [
+        ("UPDATE futures_outcomes SET external_id = external_id || 'X' WHERE id = :a",
+         "input_identity_drift"),
+        ("UPDATE events SET commence_time = commence_time - interval '2 hours' WHERE id = :e",
+         "input_drift"),
+    ],
+)
+async def test_identity_and_fingerprint_changes_are_refused_by_the_fence(world, sql, reason):
+    engine, ids = world
+    report = await _plan(engine, [ids["a"]])
+    doc, digest = await _reviewed(engine, report)
+    async with engine.begin() as c:
+        await c.execute(text(sql), {"a": ids["a"], "e": ids["event"]})
+    result = await _attended(engine, report, doc, digest)
+    assert result["refused"] == [{"outcome_id": ids["a"], "reason": reason}]
+    await _nothing_of(engine, ids["a"])
+
+
+async def test_a_document_naming_another_stored_identity_is_refused_in_the_transaction(world):
+    engine, ids = world
+    report = await _plan(engine, [ids["a"]])
+    doc, digest = await _reviewed(engine, report, market_id=ids["other"])
+    result = await _attended(engine, report, doc, digest)
+    assert result["refused"] == [{"outcome_id": ids["a"], "reason": "input_identity_drift"}]
+    await _nothing_of(engine, ids["a"])
+
+
+@pytest.mark.parametrize("case", ["other_plan", "typed_digest", "tampered", "missing", "event_wildcard"])
+async def test_a_loose_missing_or_invalid_document_refuses_before_anything_is_written(
+    world, case
+):
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    report = await _plan(engine, [ids["a"]])
+    doc, digest = await _reviewed(engine, report)
+    if case == "other_plan":
+        other = await _plan(engine, [ids["b"]])
+        doc, digest = await _reviewed(engine, other)  # sealed, but for another plan
+        want = "input_versions_plan_mismatch"
+    elif case == "typed_digest":
+        digest = "0" * 64
+        want = "expected_input_digest_mismatch"
+    elif case == "tampered":
+        doc["outcomes"][0]["outcome_xmin"] = "1"  # edited, not resealed
+        want = "input_versions_digest_mismatch"
+    elif case == "missing":
+        doc, digest = None, None
+        want = "input_versions_missing"
+    else:
+        # A present event with no version: never a wildcard, even when sealed.
+        doc, digest = await _reviewed(engine, report, event_xmin=None)
+        want = "input_versions_malformed:event"
+    with pytest.raises(imp.PlanRefused) as info:
+        await _attended(engine, report, doc, digest)
+    assert info.value.reason == want
+    for t in ("kalshi_archive_imports", "kalshi_archive_intervals",
+              "kalshi_archive_outcome_evidence"):
+        assert await _count(engine, t) == 0, t
+
+
+async def test_a_market_with_no_event_is_fenced_explicitly(world):
+    engine, ids = world
+    async with engine.begin() as c:
+        await c.execute(text("UPDATE futures_markets SET event_id = NULL WHERE id = :m"),
+                        {"m": ids["market"]})
+    report = await _plan(engine, [ids["a"]])
+    doc, digest = await _reviewed(engine, report)
+    assert doc["outcomes"][0]["event_id"] is None and doc["outcomes"][0]["event_xmin"] is None
+    done = await _attended(engine, report, doc, digest)
+    assert done["status"] == "applied" and done["inserted"] == 11
+
+
+async def test_an_event_attached_after_a_no_event_review_is_refused(world):
+    engine, ids = world
+    async with engine.begin() as c:
+        await c.execute(text("UPDATE futures_markets SET event_id = NULL WHERE id = :m"),
+                        {"m": ids["market"]})
+    report = await _plan(engine, [ids["a"]])
+    doc, digest = await _reviewed(engine, report)
+    async with engine.begin() as c:
+        await c.execute(text("UPDATE futures_markets SET event_id = :e WHERE id = :m"),
+                        {"e": ids["event"], "m": ids["market"]})
+    result = await _attended(engine, report, doc, digest)
+    assert result["refused"] == [{"outcome_id": ids["a"], "reason": "input_identity_drift"}]
+    await _nothing_of(engine, ids["a"])
+
+
+async def test_a_no_event_expectation_is_not_a_wildcard_for_a_present_event(world):
+    engine, ids = world
+    report = await _plan(engine, [ids["a"]])  # the market HAS an event
+    doc, digest = await _reviewed(engine, report, event_id=None, event_xmin=None)
+    result = await _attended(engine, report, doc, digest)
+    assert result["refused"] == [{"outcome_id": ids["a"], "reason": "input_identity_drift"}]
+    await _nothing_of(engine, ids["a"])
+
+
+async def test_the_fence_holds_every_row_version_from_the_comparison_to_the_commit(world):
+    """Inside the outcome's transaction, a non-fingerprint write to any fenced row waits."""
+    from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    report = await _plan(engine, [ids["a"]])
+    doc, digest = await _reviewed(engine, report)
+    seen: dict = {}
+
+    class Probing(AsyncSession):
+        async def execute(self, statement, *a, **k):
+            out = await super().execute(statement, *a, **k)
+            # After the comparison, before the evidence row: the write window.
+            if statement is imp.EVIDENCE_SQL and not seen:
+                for table, sql, key in (
+                    ("futures_outcomes", "UPDATE futures_outcomes SET current_probability = 0.2"
+                                         " WHERE id = :id", "a"),
+                    ("futures_markets", "UPDATE futures_markets SET name = name WHERE id = :id",
+                     "market"),
+                    ("events", "UPDATE events SET home_score = 1 WHERE id = :id", "event"),
+                ):
+                    async with engine.connect() as other:
+                        await other.execute(text("SET lock_timeout = '300ms'"))
+                        try:
+                            await other.execute(text(sql), {"id": ids[key]})
+                            seen[table] = "changed"
+                        except DBAPIError as e:
+                            seen[table] = (
+                                "blocked" if "55P03" in str(e) or "lock timeout" in str(e).lower()
+                                else str(e)[:80]
+                            )
+            return out
+
+    result = await _attended(
+        engine, report, doc, digest,
+        session_factory=lambda: Probing(engine, expire_on_commit=False),
+    )
+    assert seen == {"futures_outcomes": "blocked", "futures_markets": "blocked",
+                    "events": "blocked"}
+    assert result["status"] == "applied" and result["inserted"] == 11
+
+
+@pytest.mark.parametrize("writer_commits", [True, False])
+async def test_the_version_is_compared_on_the_locked_row_not_a_preflight_read(
+    world, writer_commits
+):
+    """A writer holding the outcome row while the apply waits for its lock.
+
+    When the writer commits, the row the lock returns is the NEW version and
+    the outcome is refused; a comparison made before the lock (on the old,
+    still-committed version) would have written it. When the writer rolls
+    back, the reviewed version stands and the outcome applies (control).
+    """
+    import asyncio
+
+    engine, ids = world
+    report = await _plan(engine, [ids["a"]])
+    doc, digest = await _reviewed(engine, report)
+    async with engine.connect() as writer:
+        await writer.begin()
+        await writer.execute(
+            text("UPDATE futures_outcomes SET current_probability = 0.33 WHERE id = :a"),
+            {"a": ids["a"]},
+        )
+        task = asyncio.create_task(_attended(engine, report, doc, digest))
+        async with engine.connect() as watch:
+            for _ in range(200):
+                waiting = (await watch.execute(text(
+                    "SELECT COUNT(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'"
+                    " AND query LIKE '%FOR SHARE OF fo, fm%'"
+                ))).scalar_one()
+                await watch.rollback()  # pg_stat_activity is snapshotted per transaction
+                if waiting or task.done():
+                    break
+                await asyncio.sleep(0.025)
+        assert waiting == 1 and not task.done(), "the apply must be waiting on the row lock"
+        await (writer.commit() if writer_commits else writer.rollback())
+        result = await asyncio.wait_for(task, 10)
+    if writer_commits:
+        assert result["refused"] == [
+            {"outcome_id": ids["a"], "reason": "input_version_drift:outcome"}
+        ]
+        await _nothing_of(engine, ids["a"])
+    else:
+        assert result["status"] == "applied" and result["inserted"] == 11

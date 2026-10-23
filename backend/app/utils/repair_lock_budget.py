@@ -60,11 +60,26 @@ from sqlalchemy import text
 #: localised and version-dependent, the code is contractual.
 LOCK_NOT_AVAILABLE_SQLSTATE = "55P03"
 
+#: ``query_canceled`` — what ``statement_timeout`` raises.
+QUERY_CANCELED_SQLSTATE = "57014"
+
 #: Transaction-scoped ``lock_timeout``. See the module docstring for why this is
 #: ``set_config`` rather than ``SET LOCAL`` (bind params) and why it is issued
 #: per row rather than once (transaction scope).
 SET_LOCK_TIMEOUT_SQL = text(
     "SELECT set_config('lock_timeout', CAST(:ms AS text), true)"
+)
+
+#: #11138 — ``lock_timeout`` bounds each lock ACQUISITION, so one statement that
+#: queues behind a holder and then a second writer can wait past it. These add
+#: the same value as a transaction-scoped ``statement_timeout``: with the lock
+#: budget in one round trip, or alone once the lock budget is already set.
+SET_LOCK_AND_STATEMENT_TIMEOUT_SQL = text(
+    "SELECT set_config('lock_timeout', CAST(:ms AS text), true), "
+    "set_config('statement_timeout', CAST(:ms AS text), true)"
+)
+SET_STATEMENT_TIMEOUT_SQL = text(
+    "SELECT set_config('statement_timeout', CAST(:ms AS text), true)"
 )
 
 #: A contended row must never be given more than this share of what is left of
@@ -99,6 +114,21 @@ def lock_timeout_value(ms: int) -> str:
     return f"{int(ms)}ms"
 
 
+def _carries_sqlstate(exc: BaseException, sqlstate: str) -> bool:
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        for attr in ("sqlstate", "pgcode"):
+            if getattr(cur, attr, None) == sqlstate:
+                return True
+        nxt = getattr(cur, "orig", None)
+        if nxt is None or nxt is cur:
+            nxt = cur.__cause__
+        cur = nxt
+    return False
+
+
 def is_lock_timeout(exc: BaseException) -> bool:
     """True iff ``exc`` is Postgres refusing to keep WAITING for a lock.
 
@@ -109,18 +139,16 @@ def is_lock_timeout(exc: BaseException) -> bool:
     turn a genuine write failure into a row that merely "timed out", which is
     the gotcha-#36 shape one table over.
     """
-    seen: set[int] = set()
-    cur: BaseException | None = exc
-    while cur is not None and id(cur) not in seen:
-        seen.add(id(cur))
-        for attr in ("sqlstate", "pgcode"):
-            if getattr(cur, attr, None) == LOCK_NOT_AVAILABLE_SQLSTATE:
-                return True
-        nxt = getattr(cur, "orig", None)
-        if nxt is None or nxt is cur:
-            nxt = cur.__cause__
-        cur = nxt
-    return False
+    return _carries_sqlstate(exc, LOCK_NOT_AVAILABLE_SQLSTATE)
+
+
+def is_query_canceled(exc: BaseException) -> bool:
+    """True iff ``exc`` is Postgres cancelling a statement (``57014``).
+
+    ``statement_timeout`` raises this, and so does an operator's cancel. Only a
+    caller that armed its own statement bound may read it as that bound firing.
+    """
+    return _carries_sqlstate(exc, QUERY_CANCELED_SQLSTATE)
 
 
 class ApplyBudget:

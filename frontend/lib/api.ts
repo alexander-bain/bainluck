@@ -56,6 +56,7 @@ import type {
 } from "./types";
 import { getDiscoverSessionId } from "./discoverInteractions";
 import { VERIFIED_TITLE, sanitizeVerifiedTitleDetail } from "./verifiedTitleDetail";
+import { stampHistoryRequest } from "./futuresDetailStream";
 import {
   formatProbabilityPercent,
   type ProbabilityFormatOptions,
@@ -453,8 +454,13 @@ async function claimEventBooted<T>(endpoint: string): Promise<T | null> {
  * flight, issued at HTML parse time. `fetchEventsByIds` calls this in a loop and is unaffected — the
  * claim is keyed on the exact URL, so at most the one booted id can match, and only once.
  */
-export async function fetchEvent(id: number, fresh = false): Promise<EventDetailResponse> {
-  if (fresh) return apiFetch<EventDetailResponse>(`/api/events/${id}?fresh=true`, { cache: "no-store" });
+export async function fetchEvent(
+  id: number, fresh = false,
+  // #10090: a caller that paces its own fresh reads (the event page's owed
+  // reconcile pair) passes 0 so a failure is one request, not three.
+  freshOptions?: { maxRetries?: number },
+): Promise<EventDetailResponse> {
+  if (fresh) return apiFetch<EventDetailResponse>(`/api/events/${id}?fresh=true`, { cache: "no-store", ...freshOptions });
   const endpoint = `/api/events/${id}`;
   const booted = await claimEventBooted<EventDetailResponse>(endpoint);
   if (booted) return booted;
@@ -488,10 +494,12 @@ export async function fetchEventHistory(
    * chart's "All" range) pass nothing.
    */
   range?: "since_start",
-  fresh = false
+  fresh = false,
+  /** #10090: as `fetchEvent` — only a fresh read takes it. */
+  freshOptions?: { maxRetries?: number },
 ): Promise<EventHistoryResponse> {
   const endpoint = `/api/events/${id}/history?hours=${hours}${range ? `&range=${range}` : ""}`;
-  if (fresh) return apiFetch<EventHistoryResponse>(`${endpoint}&fresh=true`, { cache: "no-store" });
+  if (fresh) return apiFetch<EventHistoryResponse>(`${endpoint}&fresh=true`, { cache: "no-store", ...freshOptions });
   // LAT-P219: only the event page's own window (`EVENT_BOOT_HISTORY_HOURS`) is ever parked, so a
   // caller asking for a different `hours` simply finds no matching entry and falls through.
   const booted = await claimEventBooted<EventHistoryResponse>(endpoint);
@@ -687,7 +695,16 @@ export interface TeamFutureItem {
   is_winner?: boolean | null;
   /** #10078 — the tier the team page shows this row at (see types.ts TeamFutureItem). */
   display_tier?: number | null;
+  /** #11493 — the grid's verdict on this row's column (see ChampionshipPathEntry.state). */
+  state?: TeamDecidedState | null;
 }
+
+/**
+ * #11493 — a team's decided verdict on one season question, republished by
+ * `/api/teams/{id}` from the championship grid (`routes/teams.py::_stamp_grid_states`).
+ * Absent when the question is undecided or unknown; `probability` is unchanged.
+ */
+export type TeamDecidedState = "eliminated" | "won";
 
 export interface ChampionshipPathEntry {
   tier: number;
@@ -701,6 +718,11 @@ export interface ChampionshipPathEntry {
   // backend teams.py::_get_championship_path). Absent/null when the market carries
   // no season and the league has no current-season string.
   season?: string | null;
+  // #11493: "eliminated" when the championship grid has this club out of this
+  // step's question, "won" when it has clinched it. The probability keeps the
+  // venue's last price (an eliminated leg trades at 0.001 until graded), so a
+  // reader must be shown the verdict, not the number.
+  state?: TeamDecidedState | null;
 }
 
 /**
@@ -1078,10 +1100,19 @@ export async function fetchFuturesHistory(
   if (options?.range) params.set("range", options.range);
   if (options?.fresh) params.set("fresh", "true");
 
-  return apiFetch<FuturesHistoryResponse>(
+  const body = await apiFetch<FuturesHistoryResponse>(
     `/api/futures/${marketId}/history?${params.toString()}`,
     options?.fresh ? { cache: "no-store", maxRetries: 0, signal: options.signal } : undefined
   );
+  // #11186: privately record the range THIS request asked for, so a page body
+  // from a server that sends no `history_range` is still known to answer it
+  // (1M and All share hours on a young market). Only this request's answer is
+  // stamped: same market and hours, and no served block naming another range.
+  const served = body?.history_range;
+  if (body?.market_id === marketId && body.hours === hours && (served == null || served.requested === options?.range)) {
+    stampHistoryRequest(body, options?.range);
+  }
+  return body;
 }
 
 /**
@@ -1356,6 +1387,12 @@ export interface GameMarketsResponse {
     resolution_source?: string | null;
     /** #8596: the market id, so the page can tell which section already shows it. */
     _market_id?: number | null;
+    /**
+     * #1529: present only as `"moneyline"`, on a row of a market the server
+     * already classified as the full game's winner (never a player container).
+     * Absent means not established — the row stays an Other question.
+     */
+    market_type?: string | null;
   }[];
   pace: {
     total_scored: number;
@@ -2495,6 +2532,8 @@ export interface EntMarketRow {
   ladder?: boolean;
   /** #9803: on a cumulative ladder, the tightest rung the market still calls likely — served only when it is not `top_outcomes[0]`. */
   headline?: { name: string; prob: number } | null;
+  /** #7382: on `trending[0]` only — up to six of the same priced rungs, `top_outcomes` as its prefix; read by the web lead alone. */
+  lead_outcomes?: { name: string; prob: number; delta_24h: number }[];
 }
 
 export interface EntThresholdGroup {

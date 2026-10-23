@@ -3,9 +3,13 @@ the real KX award ticker/name shapes (verified live 2026-07-12). The adapter's
 build_event is exercised via the route test (test_route_event_concept.py)."""
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
+
+import pytest
 
 from app.utils.event_awards import (
     CEREMONIES,
+    AwardsEventAdapter,
     ceremony_end_date,
     classify_market,
     clean_category_label,
@@ -93,13 +97,18 @@ class TestCeremonyEndDate:
         assert ceremony_end_date(None) is None
         assert ceremony_end_date("2027-12-31") is None
 
-    def test_the_backstop_still_bounds_the_status_arm(self):
-        # Suppression is display-only: `build_event` keeps reading the raw
-        # resolution date for settled/upcoming, so a past backstop must remain a
-        # usable ordering signal even though it is never shown.
+    async def test_the_backstop_is_not_a_ceremony_completion_signal(self):
+        # #5349 replaces the obsolete deadline-derived status assumption with
+        # the actual build_event negative, preserving date suppression coverage.
         past = datetime(2020, 12, 31, 15, 0, tzinfo=timezone.utc)
         assert ceremony_end_date(past) is None
-        assert past < datetime(2026, 1, 1, tzinfo=timezone.utc)
+        category = _category(
+            1, "Oscar winner: Best Picture", "KXOSCARPIC-20", deadline=past
+        )
+        body = await _build([category], "oscars-2020")
+        assert body["event"]["status"] == "unknown"
+        assert body["event"]["end_date"] is None
+        assert body["children"][0]["settled"] is False
 
 
 class TestClassifyMarket:
@@ -114,6 +123,33 @@ class TestClassifyMarket:
         assert classify_market("KXOSCARNOMPIC-27", "Oscar nominations for Best Picture?") == "nominations"
         assert classify_market("KXEMMYNOMS-26-DS", "Emmy Nominations: Outstanding Drama Series") == "nominations"
         assert classify_market("KXGRAMMYNOMAOTY", "2026 Grammy nominations for Album of the Year") == "nominations"
+
+    def test_nominated_question_is_a_nomination_not_its_best_category(self):
+        # #11336: "nominated" names no "nomination"/"nominee", and "Best" made this a
+        # winner category.
+        q = "Will Julianne Moore be nominated for Best Actress at the 99th Academy Awards?"
+        assert classify_market("pm-1", q) == "nominations"
+        assert classify_market(None, "Who will get nominated for Best Director?") == "nominations"
+        assert classify_market(None, "Will Dune: Part Three be nominated?") == "nominations"
+        assert classify_market(None, "Nominated for Best Picture: Wicked?") == "nominations"
+        assert classify_market(None, "Will Wicked be Oscar-nominated for Best Picture?") == "nominations"
+
+    def test_adjectival_nominated_in_a_winner_question_stays_a_category(self):
+        assert classify_market(None, "Will a nominated film win Best Picture?") == "category"
+        assert classify_market(None, "Will the most-nominated film win Best Picture?") == "category"
+        assert classify_market(None, "Best dollar-denominated box office?") == "category"
+        assert classify_market(None, "Will the most nominated film sweep?") == "novelty"
+        # Post-noun "nominated for" describes the film; the question is still who wins.
+        assert classify_market(
+            None, "Will a film nominated for Best Picture win Best Director?") == "category"
+        # A "that/which" relative clause also describes the film (#11336 root control).
+        assert classify_market(
+            None, "Will a film that is nominated for 10+ Oscars win Best Picture?") == "category"
+        assert classify_market(
+            None, "Will the film which got nominated for Best Picture win?") == "category"
+        # A real nomination question beside a relative clause is still a nomination.
+        assert classify_market(
+            None, "Will the film that won Cannes be nominated for Best Picture?") == "nominations"
 
     def test_novelty(self):
         assert classify_market("KXOSCARGUESTS-26", "Who will attend the Oscars?") == "novelty"
@@ -177,3 +213,243 @@ class TestCeremoniesConfig:
     def test_emmy_ticker_excludes_sports_emmy(self):
         # KXEMMY is not a substring of KXSPORTSEMMY, so the Sports Emmys are excluded.
         assert "KXEMMY" not in "KXSPORTSEMMY"
+
+
+# #5349: source-only replay of independent category announcements. Synthetic
+# specimens are not ceremony-roster, calendar, provider or production acceptance.
+def _category(id_, name, ticker, *, status="open", outcomes=None, deadline=None):
+    return SimpleNamespace(
+        id=id_,
+        name=name,
+        external_id=ticker,
+        status=status,
+        source="kalshi",
+        resolution_date=deadline,
+        outcomes=[
+            SimpleNamespace(
+                name=name,
+                current_probability=probability,
+                is_winner=won,
+                last_updated=None,
+            )
+            for name, probability, won in (
+                outcomes or [("Favorite", 0.55, False), ("Other nominee", 0.45, False)]
+            )
+        ],
+    )
+
+
+class _AwardsResult:
+    def __init__(self, markets):
+        self.markets = markets
+
+    def scalars(self):
+        return self
+
+    def unique(self):
+        return self
+
+    def all(self):
+        return self.markets
+
+
+class _AwardsDB:
+    def __init__(self, markets):
+        self.markets = markets
+        self.queries = []
+
+    async def execute(self, query):
+        self.queries.append(query)
+        return _AwardsResult(self.markets)
+
+
+async def _build(markets, slug="oscars-2027"):
+    return await AwardsEventAdapter().build_event(slug, _AwardsDB(markets))
+
+
+@pytest.mark.parametrize(
+    "slug,tickers,names",
+    [
+        (
+            "oscars-2027",
+            ("KXOSCARPIC-27", "KXOSCARDIR-27"),
+            ("Oscar winner: Best Picture", "Oscar winner: Best Director"),
+        ),
+        (
+            "emmys-2028",
+            ("KXEMMYDSERIES-28", "KXEMMYCOMEDY-28"),
+            ("Emmy Award for Drama Series", "Emmy Award for Comedy Series"),
+        ),
+        # Held-out edition: same source/config, no calendar or edition declaration.
+        (
+            "oscars-2038",
+            ("KXOSCARPIC-38", "KXOSCARDIR-38"),
+            ("Oscar winner: Best Picture", "Oscar winner: Best Director"),
+        ),
+    ],
+)
+async def test_announced_marquee_never_settles_an_unannounced_category(
+    slug, tickers, names
+):
+    marquee = _category(
+        1,
+        names[0],
+        tickers[0],
+        outcomes=[("Actual winner", 0.51, True), ("Runner up", 0.49, False)],
+    )
+    sibling = _category(2, names[1], tickers[1])
+    body = await _build([marquee, sibling], slug)
+    children = {c["market_id"]: c for c in body["children"]}
+    assert children[1]["settled"] is True
+    assert children[1]["graded_winner"] == "Actual winner"
+    assert children[2]["settled"] is False
+    assert children[2]["graded_winner"] is None
+    assert body["event"]["status"] == "unknown"
+    assert [c["name"] for c in body["primary"]["competitors"] if c["won"]] == [
+        "Actual winner"
+    ]
+
+
+async def test_independent_non_marquee_result_does_not_settle_marquee():
+    marquee = _category(1, "Oscar winner: Best Picture", "KXOSCARPIC-27")
+    sibling = _category(
+        2,
+        "Oscar winner: Best Director",
+        "KXOSCARDIR-27",
+        outcomes=[("Director", None, True), ("Other director", 0.5, False)],
+    )
+    body = await _build([marquee, sibling])
+    children = {c["market_id"]: c for c in body["children"]}
+    assert children[1]["settled"] is False
+    assert children[2]["settled"] is True and children[2]["graded_winner"] == "Director"
+    assert body["event"]["status"] == "unknown"
+
+
+async def test_nomination_grade_preserves_roster_but_does_not_announce_category_winner():
+    categories = [
+        _category(1, "Oscar winner: Best Picture", "KXOSCARPIC-27"),
+        _category(2, "Oscar winner: Best Director", "KXOSCARDIR-27"),
+    ]
+    nominations = _category(
+        3,
+        "Oscar nominations for Best Picture?",
+        "KXOSCARNOMPIC-27",
+        outcomes=[("Nominee", 0.99, True), ("Other nominee", 0.7, True)],
+    )
+    novelty = _category(4, "Who will attend the Oscars?", "KXOSCARGUESTS-27")
+    wrong_edition = _category(
+        5,
+        "Oscar winner: Best Actor",
+        "KXOSCARACTOR-26",
+        outcomes=[("Prior winner", 1.0, True), ("Prior runner", 0.0, False)],
+    )
+    body = await _build(categories + [nominations, novelty, wrong_edition])
+    children = {c["market_id"]: c for c in body["children"]}
+    assert set(children) == {1, 2, 3, 4}
+    assert children[1]["settled"] is False and children[2]["settled"] is False
+    assert children[3]["settled"] is True and children[3]["prop_type"] == "nominations"
+    assert (
+        children[3]["graded_winner"] is None
+    )  # Multiple nomination results are not one award winner.
+    assert all(o["won"] for o in children[3]["outcomes"])
+    assert children[4]["prop_type"] == "occurrence" and children[4]["settled"] is False
+    assert body["sections"] == [
+        {"type": "categories", "label": "Categories", "market_ids": [1, 2]},
+        {"type": "props", "label": "Nominations & props", "market_ids": [3, 4]},
+    ]
+    assert body["event"]["status"] == "unknown"
+
+
+async def test_price_extreme_and_past_placeholder_never_complete_or_crown():
+    category = _category(
+        1,
+        "Oscar winner: Best Picture",
+        "KXOSCARPIC-20",
+        deadline=datetime(2020, 12, 31, tzinfo=timezone.utc),
+        outcomes=[("Favorite", 0.99, False), ("Long shot", 0.01, False)],
+    )
+    body = await _build([category], "oscars-2020")
+    assert body["event"]["status"] == "unknown" and body["event"]["end_date"] is None
+    assert (
+        body["children"][0]["settled"] is False
+        and body["children"][0]["graded_winner"] is None
+    )
+    assert not any(c["won"] for c in body["primary"]["competitors"])
+
+
+@pytest.mark.parametrize("status", ["closed", "resolved", "settled"])
+async def test_own_assigned_category_without_grade_stays_resolved_result_unknown(
+    status,
+):
+    category = _category(
+        1,
+        "Oscar winner: Best Picture",
+        "KXOSCARPIC-27",
+        status=status,
+        outcomes=[("Favorite", 0.99, False), ("Long shot", 0.01, False)],
+    )
+    sibling = _category(2, "Oscar winner: Best Director", "KXOSCARDIR-27")
+    body = await _build([category, sibling])
+    children = {c["market_id"]: c for c in body["children"]}
+    assert children[1]["settled"] is True and children[1]["graded_winner"] is None
+    assert not any(c["won"] for c in children[1]["outcomes"])
+    assert children[2]["settled"] is False and body["event"]["status"] == "unknown"
+    assert not any(c["won"] for c in body["primary"]["competitors"])
+
+
+@pytest.mark.parametrize("winner_name", ["Actual low-priced winner", "Other"])
+async def test_authoritative_winner_outside_preview_survives_child_and_marquee(
+    winner_name,
+):
+    nominees = [(f"Unannounced nominee {i}", 0.8 - i / 100, False) for i in range(45)]
+    category = _category(
+        1,
+        "Oscar winner: Best Picture",
+        "KXOSCARPIC-27",
+        outcomes=nominees + [(winner_name, None, True)],
+    )
+    body = await _build([category])
+    child = body["children"][0]
+    assert child["settled"] is True and child["graded_winner"] == winner_name
+    assert [o["name"] for o in child["outcomes"] if o["won"]] == [winner_name]
+    assert [o["name"] for o in body["primary"]["competitors"] if o["won"]] == [
+        winner_name
+    ]
+    assert child["outcomes"][-1]["probability"] is None
+    assert body["event"]["status"] == "unknown"
+
+
+async def test_every_known_category_resolved_is_not_a_full_ceremony_signal():
+    body = await _build(
+        [
+            _category(
+                1, "Oscar winner: Best Picture", "KXOSCARPIC-27", status="resolved"
+            ),
+            _category(
+                2, "Oscar winner: Best Director", "KXOSCARDIR-27", status="closed"
+            ),
+        ]
+    )
+    assert all(c["settled"] for c in body["children"])
+    assert all(c["graded_winner"] is None for c in body["children"])
+    assert body["event"]["status"] == "unknown"
+
+
+async def test_wrong_edition_remains_absent_and_ceremony_identity_independent():
+    markets = [
+        _category(1, "Oscar winner: Best Picture", "KXOSCARPIC-27"),
+        _category(
+            2,
+            "Oscar winner: Best Picture",
+            "KXOSCARPIC-26",
+            outcomes=[("Previous winner", 1.0, True), ("Previous runner", 0.0, False)],
+        ),
+    ]
+    current = await _build(markets)
+    previous = await _build(markets, "oscars-2026")
+    assert current["event"]["key"] != previous["event"]["key"]
+    assert [c["market_id"] for c in current["children"]] == [1]
+    assert [c["market_id"] for c in previous["children"]] == [2]
+    assert current["children"][0]["settled"] is False
+    assert await _build(markets, "oscars-2025") is None
+    assert await _build(markets, "golden-globes") is None

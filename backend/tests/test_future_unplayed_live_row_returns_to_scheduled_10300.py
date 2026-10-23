@@ -95,6 +95,11 @@ class _Session:
             return _Result(self._future_live)
         return _Result([])
 
+    def expunge_all(self):
+        # #10090: the pass drops its loaded rows once the promotion
+        # commits. A fake holds no identity map, so there is none to drop.
+        return None
+
     async def commit(self):
         pass
 

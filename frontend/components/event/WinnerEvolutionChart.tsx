@@ -20,6 +20,7 @@ import useSWR from "swr";
 import { fetchFuturesHistory } from "@/lib/api";
 import { historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
 import type { FuturesOutcomeHistory } from "@/lib/types";
+import { isSettlementPoint } from "@/lib/chartSettlementPoints";
 import { outcomesByLatestProb } from "@/lib/eventConceptDisplay";
 import { FuturesChart } from "@/components/FuturesChart";
 import ChartRangeChips from "@/components/event/ChartRangeChips";
@@ -60,7 +61,9 @@ export default function WinnerEvolutionChart({
     [data],
   );
   const hasHistory = outcomes.some(
-    (o) => o.history.filter((p) => p.probability != null).length >= 2,
+    // #10955 (U1): a settlement point is the result, not a recorded reading,
+    // so it never makes up the two readings a drawable history needs.
+    (o) => o.history.filter((p) => p.probability != null && !isSettlementPoint(p)).length >= 2,
   );
 
   // #L2-137 chart-excellence Phase 0: same time-range floor as SettledPathChart.

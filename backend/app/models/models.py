@@ -541,6 +541,42 @@ class WinProbSnapshot(Base):
     event: Mapped["Event"] = relationship()
 
 
+class OwedChartPoint(Base):
+    """#11181: one committed live stamp's chart observation, owed until written.
+
+    Chart custody is inserted in the stamp's transaction and deleted in the
+    savepoint that writes ``win_prob_snapshots``; replay pays nothing twice.
+    Those rows are never UPDATEd and exist only while the chart writer is
+    behind. No foreign key: insertion takes no lock on an event or chart row.
+
+    Source-scoped PM recovery also stores withdrawal and notification custody
+    under ``polymarket_withdrawal`` and ``polymarket_withdrawal_publish``.
+    The exact ``polymarket_withdrawal_owner`` source is different: one
+    persistent coordination row (event_id/value 0, reading.owner token),
+    updated when ownership is claimed and held FOR SHARE by withdrawal
+    transactions. It is not unpaid work. Drain checks exclude that exact
+    source; never delete it to force a zero count. PMWithdrawalDebt documents
+    the claim, guard and recovery lifecycle.
+    """
+
+    __tablename__ = "owed_chart_points"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source: Mapped[str] = mapped_column(String(30), nullable=False)
+    event_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    #: Source-specific chart scalars, withdrawal custody, or ownership token.
+    reading: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        # Source-scoped custody reads and persistent-owner lookup.
+        Index("ix_owed_chart_points_source_id", "source", "id"),
+    )
+
+
 class ProbabilityPublication(Base):
     """#4971: one committed nonvenue publication of an event's source bag.
 
