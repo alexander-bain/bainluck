@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS App Store / TestFlight export options for `tools/native-mac-upload.sh` (#10878).
+
+  Companion to `ios/ExportOptions-AppStore.plist` — leaves the working iPhone/Watch
+  export options file untouched.
+
+  manageAppVersionAndBuildNumber is NO so `xcodebuild -exportArchive` preserves the
+  exact CFBundleVersion graded in the macOS archive.
+
+  signingStyle is automatic by default (matching `CODE_SIGN_STYLE = Automatic` in
+  `project.pbxproj`). When manual `MAC_APP_STORE` `.provisionprofile` files are
+  specified via `NATIVE_MAC_EXPORT_OPTIONS`, Xcode signs `Bain Luck.app` and
+  `BainLuckWidget.appex` with `Apple Distribution` and packages `Bain Luck.pkg`
+  signed with `3rd Party Mac Developer Installer` / `Mac Installer Distribution`.
+-->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>destination</key>
+	<string>export</string>
+	<key>teamID</key>
+	<string>J893F72P4R</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>signingCertificate</key>
+	<string>Apple Distribution</string>
+	<key>installerSigningCertificate</key>
+	<string>3rd Party Mac Developer Installer</string>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+	<key>testFlightInternalTestingOnly</key>
+	<false/>
+</dict>
+</plist>
