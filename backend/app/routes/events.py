@@ -4930,6 +4930,18 @@ def _compose_futures_families(
 _SEARCH_TS_CONFIG_SQL = literal_column("'english'")
 _SEARCH_EVENT_TEAM_WEIGHT = "A"
 
+#: #10769: the futures pools' `status = 'open'`, rendered INLINE rather than bound.
+#: The reader runs these arms through asyncpg as prepared statements, where
+#: `status == "open"` becomes `status = $1::VARCHAR`; once Postgres keeps a
+#: generic plan it cannot prove `$1` implies the open-only partial's
+#: `WHERE status = 'open'`, so the arm falls back to the whole-table
+#: `ix_futures_name_trgm` and scans the settled tail. A fixed constant keeps
+#: `ix_futures_name_trgm_open` eligible under generic and custom plans alike;
+#: same truth value, no caller input. (#4506 measured this class on the
+#: last-match arm.) Not covered here: `ix_futures_name_fts_open`'s expression,
+#: whose `coalesce(name, '')` default the arm also binds.
+_FUTURES_OPEN_STATUS_SQL = literal_column("'open'", String)
+
 #: How much a last-token PREFIX match is worth against a whole-lexeme match on
 #: the Teams surface (#4126). Strictly between 0 and 1: above 0 so a prefix-only
 #: row is ORDERED rather than left to the alphabetical tiebreak, below 1 so an
@@ -12096,7 +12108,8 @@ async def search_events(
     # vs 701ms. The outer copy is deliberate redundancy — it keeps the predicate
     # correct if the pushed-down copy is ever removed.
     _futures_open_now = (
-        FuturesMarket.status == "open",
+        # #10769: inline, so a generic plan can still use the open-only trigram partial.
+        FuturesMarket.status == _FUTURES_OPEN_STATUS_SQL,
         or_(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= datetime.now(timezone.utc),
@@ -15147,7 +15160,8 @@ async def typeahead_search(
     # by construction. Filters pushed into each arm (AND distributes over UNION);
     # kept on the outer query as deliberate redundancy.
     _ta_open_now = (
-        FuturesMarket.status == "open",
+        # #10769: the same inline constant as `_futures_open_now`.
+        FuturesMarket.status == _FUTURES_OPEN_STATUS_SQL,
         or_(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
