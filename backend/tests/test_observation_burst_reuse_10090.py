@@ -270,17 +270,31 @@ async def test_shutdown_during_read_does_not_cache_connection(rig):
     assert owner._open == 0 and engine.disposed
 
 
-async def test_cancelled_writer_demand_still_owns_borrowed_connection_close(rig):
+async def test_cancelled_writer_demand_still_owns_borrowed_connection_close(
+    rig, monkeypatch
+):
+    from app.tasks import base
+
     owner, engine = rig
     await read(owner)
     engine.close_gate = asyncio.Event()
+    writer_entered = asyncio.Event()
+
+    @asynccontextmanager
+    async def waiting_writer(**kwargs):
+        writer_entered.set()
+        await asyncio.Event().wait()
+        yield object()
+
+    monkeypatch.setattr(base, "get_task_session", waiting_writer)
 
     async def writer():
         async with owner.session():
-            pytest.fail("writer must await the released connection")
+            pytest.fail("writer body must not run after cancellation")
 
     task = asyncio.create_task(writer())
     await asyncio.wait_for(engine.close_entered.wait(), 1)
+    await asyncio.wait_for(writer_entered.wait(), 1)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -288,3 +302,46 @@ async def test_cancelled_writer_demand_still_owns_borrowed_connection_close(rig)
     engine.close_gate.set()
     await owner.aclose()
     assert owner._open == 0 and engine.disposed
+
+
+@pytest.mark.parametrize("failure", ["stalled", "error"])
+async def test_optional_close_cannot_block_or_abort_writer(
+    rig, monkeypatch, caplog, failure
+):
+    from app.tasks import base
+
+    owner, engine = rig
+    await read(owner)
+    connection = engine.connections[0]
+    entered = []
+
+    @asynccontextmanager
+    async def writer(**kwargs):
+        entered.append(True)
+        yield object()
+
+    monkeypatch.setattr(base, "get_task_session", writer)
+    if failure == "stalled":
+        engine.close_gate = asyncio.Event()
+    else:
+        original_close = connection.close
+
+        async def failed_close():
+            await original_close()
+            raise RuntimeError("optional close failed")
+
+        monkeypatch.setattr(connection, "close", failed_close)
+
+    try:
+        async with asyncio.timeout(0.05), owner.session():
+            assert entered == [True]
+            if failure == "stalled":
+                assert not connection.closed
+                assert owner._open == 2  # writer + retained close
+    finally:
+        if engine.close_gate is not None:
+            engine.close_gate.set()
+        await owner.aclose()
+    assert owner._open == 0 and owner._writers == 0
+    if failure == "error":
+        assert "optional close failed" in caplog.text

@@ -138,9 +138,10 @@ class ConsumerSessions:
         self._idle.clear()
         try:
             if released is not None:
-                # Return the borrowed slot before the writer checks out. Do
-                # not create an avoidable second connection while close runs.
-                await asyncio.shield(released)
+                # Let an immediately completed close return its slot, without
+                # coupling the writer to optional cleanup latency or errors.
+                # A slow close stays owned; normal pool admission proceeds.
+                await asyncio.sleep(0)
             # Looked up at call time so the factory's transaction semantics —
             # commit, publish committed frames, rollback, close — stay the one
             # definition in `app.tasks.base`.
