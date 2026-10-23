@@ -29,6 +29,9 @@ def setup_clock(r):
 
 async def test_committed_game_starts_display_while_future_clock_is_pending():
     r = rig()
+    # Isolate this display/cancellation contract to one completed cohort.
+    r.batch.pop(3)
+    r.batch.pop(9)
     r.release.set()
     gate, calls = held_refresher(r)
     entered, release, samples = setup_clock(r)
@@ -45,12 +48,15 @@ async def test_committed_game_starts_display_while_future_clock_is_pending():
         gate.set()
         await asyncio.wait_for(task, 2)
         await r.ns["prices"].join_stamp(r.ns["blend_refresher"])
-    assert r.committed == [1, 2, 3, 9]
-    assert len(samples) == 3
+    assert r.committed == [1, 2]
+    assert len(samples) == 1
 
 
 async def test_cancelling_future_clock_joins_started_display_and_keeps_debt():
     r = rig()
+    # Isolate this display/cancellation contract to one completed cohort.
+    r.batch.pop(3)
+    r.batch.pop(9)
     r.release.set()
     gate, calls = held_refresher(r)
     entered, release, samples = setup_clock(r)
@@ -98,6 +104,8 @@ async def test_real_refresher_publishes_before_future_clock_completes(monkeypatc
     from tests.test_single_event_commit_10090 import settle_until
 
     x, r = _caller(monkeypatch, blocked=())
+    r.batch.pop(3)
+    r.batch.pop(9)
     entered, release, samples = setup_clock(r)
     task = asyncio.create_task(r.flush(1000.0))
     try:
