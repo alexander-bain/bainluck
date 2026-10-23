@@ -7,6 +7,14 @@ import re
 from datetime import datetime
 from typing import Any
 
+from app.utils.congress_control_story import (
+    US_CONGRESS_CONTROL_QUESTION,
+    US_CONGRESS_CONTROL_TITLE,
+    congress_control_bundle_members,
+    congress_control_story_key_for_item,
+    has_congress_control_story_prefix,
+    is_congress_control_story_key,
+)
 from app.utils.feed_market_quality import GOLF_TOURNAMENT_STORY_PREFIX
 from app.utils.feed_market_quality import UFC_EVENT_STORY_PREFIX
 from app.utils.feed_market_quality import _story_key as compute_story_key
@@ -202,6 +210,8 @@ def _resolve_story_title(story_key: str) -> tuple[str, str]:
     — and every reader of this function treats it exactly as it treats
     ``fallback``, so naming one of these keys moves a string and nothing else.
     """
+    if is_congress_control_story_key(story_key):
+        return US_CONGRESS_CONTROL_TITLE, "authored"
     authored = AUTHORED_STORY_TITLES.get(story_key)
     if authored:
         return authored, "authored"
@@ -315,6 +325,8 @@ def resolve_story_question(
     a group asserting a common question that does not exist. No shared phrase
     means no question means no bundle.
     """
+    if is_congress_control_story_key(story_key):
+        return US_CONGRESS_CONTROL_QUESTION, "authored"
     authored = AUTHORED_STORY_QUESTIONS.get(story_key)
     if authored:
         return authored, "authored"
@@ -708,9 +720,13 @@ def _theme_story_key(item: dict[str, Any]) -> str | None:
     data = _futures_data(item)
     if not data:
         return None
+    congress_key = congress_control_story_key_for_item(item)
+    if congress_key is not None:
+        return congress_key
     carried = item.get("_quality_story_key")
     if isinstance(carried, str) and carried.startswith("story:"):
-        return carried
+        if not has_congress_control_story_prefix(carried):
+            return carried
     name = str(data.get("name") or "")
     if not name:
         return None
@@ -951,7 +967,11 @@ _CANDIDACY_NOT_VICTORY_RE = re.compile(
 
 def _story_question_promises_a_winner(story_key: str) -> bool:
     """Whether this family's AUTHORED sentence promises the reader a winner."""
-    authored = AUTHORED_STORY_QUESTIONS.get(story_key)
+    authored = (
+        US_CONGRESS_CONTROL_QUESTION
+        if is_congress_control_story_key(story_key)
+        else AUTHORED_STORY_QUESTIONS.get(story_key)
+    )
     return bool(authored and _VICTORY_QUESTION_RE.search(authored))
 
 
@@ -1128,6 +1148,9 @@ def _make_theme_bundle_item(
     # Members ranked by feed score (most feed-worthy leads the mini-ranked-peek);
     # the bundle competes for ONE slot scored by its best member.
     ranked = sorted(items, key=lambda it: float(it.get("score") or 0), reverse=True)
+    if is_congress_control_story_key(story_key):
+        if congress_control_bundle_members(story_key, ranked) is None:
+            return None
     score = max(float(item.get("score") or 0) for item in ranked)
     sort_time = max(float(item.get("_sort_time") or 0) for item in ranked)
     label, title_source = _resolve_story_title(story_key)
@@ -1773,11 +1796,21 @@ def assemble_story_theme_bundles(
         # cap so a duplicate does not spend a member slot the next distinct
         # question could have had.
         members, folded = _dedupe_same_question_members(members)
+        if is_congress_control_story_key(story_key):
+            verified_members = congress_control_bundle_members(
+                story_key, members, folded
+            )
+            if verified_members is None:
+                continue
+            members = verified_members
         if len(members) < min_items:
             continue
         chosen = members[:max_items_per_bundle]
         if len(chosen) < min_items:
             continue
+        if is_congress_control_story_key(story_key):
+            if congress_control_bundle_members(story_key, chosen, folded) is None:
+                continue
         bundle = _make_theme_bundle_item(story_key, chosen)
         if bundle is None:
             # No statable shared question — leave the members unfolded rather
