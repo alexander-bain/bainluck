@@ -84,14 +84,20 @@ class ReadSession:
                 o for o in self.outcomes if o.market_id == market.id
             ] if eligible else []
             for outcome in outcomes or [None]:
-                rows.append(tuple(
+                row = tuple(
                     field(obj, key)
                     for obj, keys in (
                         (market, PREPARED_MARKET_FIELDS),
                         (event, PREPARED_EVENT_FIELDS),
                         (outcome, PREPARED_OUTCOME_FIELDS),
                     ) for key in keys
-                ))
+                )
+                if columns and columns[-1].name == "preview_rev":
+                    # DNPL reads the committed bag and revision alongside the
+                    # narrow restamp projection; emulate the actual SQL row.
+                    row += (copy.deepcopy(event.win_probability_sources),
+                            event.win_probability_sources_rev)
+                rows.append(row)
         return Result(rows)
 
 
@@ -210,7 +216,8 @@ async def test_read_projects_one_event_context_and_omits_only_impossible_kalshi_
             ("events", PREPARED_EVENT_FIELDS),
             ("futures_outcomes", PREPARED_OUTCOME_FIELDS),
         ) for key in fields if key != "win_probability_sources"
-    ]
+    ] + ["events.win_probability_sources", "events.win_probability_sources_rev"]
+    assert [column.name for column in columns[-2:]] == ["preview_sources", "preview_rev"]
     assert columns[source_position].element.right.value == "kalshi"
     assert session.statements[0].compile().params["event_id_1"] == [1, 999]
 
@@ -302,7 +309,7 @@ async def test_prepared_context_keeps_fallbacks_and_detaches_json_without_copyin
 
     class GuardedEvent:
         def __getattr__(self, key):
-            if key not in PREPARED_EVENT_FIELDS:
+            if key not in (*PREPARED_EVENT_FIELDS, "win_probability_sources_rev"):
                 raise AssertionError(f"unprojected Event field: {key}")
             # The scalar read selects columns, never entities: the driver
             # decodes a fresh JSON object on every execution (no identity map).
@@ -320,7 +327,13 @@ async def test_prepared_context_keeps_fallbacks_and_detaches_json_without_copyin
     refresher = LiveBlendRefresher("kalshi", session_factory=factory)
     prepared = await refresher._prepare_groups([1])
     context = prepared[1][0]
-    assert set(vars(context)) == set(PREPARED_EVENT_FIELDS)
+    assert set(vars(context)) == set(PREPARED_EVENT_FIELDS) | {
+        "preview_sources", "preview_rev", "preview_read_ticket",
+    }
+    assert context.preview_sources == e.win_probability_sources
+    assert context.preview_rev == e.win_probability_sources_rev
+    context.preview_sources["espn"]["value"] = 0.2
+    assert e.win_probability_sources["espn"]["value"] == 0.7
     assert context.espn_win_prob_home == 0.7
     assert context.opening_home_probability == 0.6
     assert set(vars(prepared[1][1][0].market)) == set(PREPARED_MARKET_FIELDS)

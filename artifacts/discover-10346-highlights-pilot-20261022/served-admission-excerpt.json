@@ -1,0 +1,80 @@
+{
+ "what": "Excerpt of served GET /api/events/15319563/game-markets as cached by discover 2026-10-21 18:50 PT (file read; no new call). The values the #10346 cards print.",
+ "source_sha256": "54d6085c1df644af8d7c2315c9353f0fc3f0171f5021ad2e53bef58ec397b053",
+ "source_bytes": 769385,
+ "contract": "10237.v1",
+ "player_props": [
+  {
+   "market_name": "Boston vs New York Yankees: Strikeouts",
+   "outcome_name": "Cam Schlittler: 10+",
+   "contributor_outcome_ids": [
+    237550446
+   ],
+   "pregame_mark": 0.185,
+   "source": "kalshi",
+   "actual": 10.0,
+   "hit": true,
+   "is_winner": true,
+   "resolution_source": "api_settlement"
+  },
+  {
+   "market_name": "Boston vs New York Yankees: Home Runs",
+   "outcome_name": "Ben Rice: 2+",
+   "contributor_outcome_ids": [
+    237550483
+   ],
+   "pregame_mark": 0.02,
+   "source": "kalshi",
+   "actual": 2.0,
+   "hit": true,
+   "is_winner": true,
+   "resolution_source": "api_settlement"
+  }
+ ],
+ "after_player_props_rice_2plus": {
+  "question_key": "s:ben rice|home_runs|full_game|ge:2|over",
+  "expectation": {
+   "state": "available",
+   "reason": null,
+   "probability": 0.0155,
+   "basis": "blend_mean",
+   "observed_at": "2026-09-29T23:50:23.519482+00:00",
+   "contributors": [
+    {
+     "source": "kalshi",
+     "market_id": 62972451,
+     "outcome_id": 237550483,
+     "outcome_name": "Ben Rice: 2+",
+     "probability": 0.02,
+     "observed_at": "2026-09-29T23:50:23.519482+00:00",
+     "admission": "pregame_pin_5509"
+    },
+    {
+     "source": "polymarket",
+     "market_id": 63312232,
+     "outcome_id": 238585485,
+     "outcome_name": "Over",
+     "probability": 0.011,
+     "observed_at": "2026-09-29T23:50:22.756553+00:00",
+     "admission": "pregame_pin_5509"
+    }
+   ],
+   "excluded": [
+    {
+     "source": "polymarket",
+     "outcome_id": 239003725,
+     "reason": "pin_after_start"
+    }
+   ]
+  },
+  "venue_grade": {
+   "is_winner": true,
+   "resolution_source": "api_settlement"
+  }
+ },
+ "agrees_with": {
+  "file": "/tmp/d10346/apicache/96f38685\u2026.json (the copy lane1b reviewed)",
+  "sha256": "2a0ac24398a526a396cbd795e97185e394b944600bd66ae8846667d37f004002",
+  "same_values": true
+ }
+}

@@ -66,6 +66,27 @@ function readSessionSeed(): string {
  */
 const HERO_MIN_MOVEMENT_POINTS = 10;
 
+/**
+ * #11499 — the darkening layer over a hero PHOTO. The old layer faded to 4% by
+ * 55% of the height, measured from the bottom, but the 38px number sits in the
+ * bottom ~35–45%, so on a light photo it was nearly gone behind the digits.
+ * The House card's white 91% over a pale wall read at ~1.4:1.
+ *
+ * The dense stops are in PIXELS from the bottom, so they follow the number
+ * block, not the card's height (16:10 at 390px is ~224px tall; a four-column
+ * desktop slot is ~187px). 88px covers padding + name line + hint line + the
+ * digits. At 0.55 the darkest photo pixel behind the digits (pure white) reads
+ * rgb(115), so white is 4.7:1 and the `opacity-80` moderate tier is 3.7:1.
+ * Above the block the layer fades back to the old 4% by 150px, so the top of a
+ * dark photo gets no darker than it was.
+ */
+export const HERO_NUMBER_BLOCK_PX = 88;
+export const PHOTO_HERO_SCRIM =
+  "linear-gradient(to top, rgba(0,0,0,0.65) 0px, rgba(0,0,0,0.55) 88px, rgba(0,0,0,0.04) 150px, rgba(0,0,0,0.04) 55%, rgba(0,0,0,0.22))";
+/** No photo: the category gradient is already dark, so its layer is unchanged. */
+export const PLAIN_HERO_SCRIM =
+  "linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0.04) 55%, rgba(0,0,0,0.22))";
+
 // A row of `discover_card.distribution_outcomes` is `FuturesBoardRow`, declared
 // beside the rule that selects the rows (#8025) rather than twice, once per card.
 
@@ -855,7 +876,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
         )}
 
         {/* Scrim gradient */}
-        <div className="absolute inset-0" style={{ background: "linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0.04) 55%, rgba(0,0,0,0.22))" }} />
+        <div className="absolute inset-0" data-testid="futures-hero-scrim" style={{ background: hasImage ? PHOTO_HERO_SCRIM : PLAIN_HERO_SCRIM }} />
 
         {/* Category pill */}
         <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-white bg-white/[0.18] backdrop-blur-sm px-2.5 py-1 rounded-full">
@@ -869,7 +890,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           <div className="relative z-10 px-3.5 pb-2.5">
             <div className="flex items-end gap-2">
               <span
-                className={`font-mono font-bold text-[38px] tracking-tight leading-none text-white tabular-nums ${authorityClass}`.trim()}
+                className={`font-mono font-bold text-[38px] tracking-tight leading-none text-white tabular-nums [text-shadow:0_1px_3px_rgba(0,0,0,0.35)] ${authorityClass}`.trim()}
                 data-testid="futures-hero-probability"
                 data-authority-tier={data.confidence_tier ?? undefined}
               >{pctDisplay}</span>

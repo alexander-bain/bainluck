@@ -249,6 +249,28 @@ class TestTheScope:
         assert not venue_settlement_is_askable(payload, live_claim_is_unbacked=False)
         assert venue_settlement_is_askable(payload, live_claim_is_unbacked=True)
 
+    def test_a_scored_live_row_is_never_asked_even_when_its_liveness_is_unbacked(self):
+        """#11296 — the native live headline prints its projected final only
+        beside an actual score, and the hero arm that prints a venue verdict
+        mounts no information control. The two never meet because a SCORED
+        row is never asked, whatever its live claim — so a forecast is never
+        printed under a verdict whose details nobody can open. The scheduled
+        rows above prove the score refusal; this proves it on the live arm,
+        where reordering the gates would otherwise pass every case above."""
+        scoreless = _event(status="live", commence_time=_now() - timedelta(hours=1))
+        assert venue_settlement_is_askable(
+            _payload(scoreless), live_claim_is_unbacked=True
+        ), "control: the same unbacked live row is asked while it has no score"
+        scored = _event(
+            status="live",
+            commence_time=_now() - timedelta(hours=1),
+            home_score=65,
+            away_score=79,
+        )
+        payload = _payload(scored)
+        assert payload["status"] == "live", "control: still served live"
+        assert not venue_settlement_is_askable(payload, live_claim_is_unbacked=True)
+
     @pytest.mark.parametrize(
         "event_kwargs, why",
         [

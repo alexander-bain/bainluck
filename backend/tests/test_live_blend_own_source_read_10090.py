@@ -62,7 +62,12 @@ async def test_actual_select_narrows_only_source_json_and_preserves_joined_graph
             ("futures_outcomes", PREPARED_OUTCOME_FIELDS),
         ) for key in fields if key != "win_probability_sources"
     ]
-    assert [str(c) for i, c in enumerate(columns) if i != position] == expected
+    assert [str(c) for i, c in enumerate(columns) if i != position] == expected + [
+        "events.win_probability_sources", "events.win_probability_sources_rev",
+    ]
+    assert [c.name for c in columns[-2:]] == ["preview_sources", "preview_rev"]
+    assert context.preview_sources == e.win_probability_sources
+    assert context.preview_rev == e.win_probability_sources_rev
     sql = str(statement.compile(dialect=postgresql.dialect()))
     assert "JOIN events" in sql and "LEFT OUTER JOIN futures_outcomes" in sql
     assert not statement._order_by_clauses and not statement._group_by_clauses

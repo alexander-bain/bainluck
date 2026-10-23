@@ -86,6 +86,9 @@ def _run(monkeypatch, grid, redis, *, seconds_per_chunk=1.0, budget_chunks=None,
         def __init__(self, payload):
             self._payload = payload
 
+        def first(self):
+            return None
+
         def all(self):
             return self._payload
 
@@ -94,6 +97,9 @@ def _run(monkeypatch, grid, redis, *, seconds_per_chunk=1.0, budget_chunks=None,
             sql = str(statement)
             if "SET LOCAL statement_timeout" in sql:
                 return _Result([])
+            # #1479: the per-transaction session tag, not a chunk.
+            if "set_config('application_name'" in sql:
+                return _Result([])
             if "date_trunc('month'" in sql:
                 return _Result(list(grid))
             clock["t"] += seconds_per_chunk
@@ -101,6 +107,9 @@ def _run(monkeypatch, grid, redis, *, seconds_per_chunk=1.0, budget_chunks=None,
             return _Result(_rows_for(params["category"], params["lo"], version))
 
         async def rollback(self):
+            return None
+
+        async def commit(self):
             return None
 
         async def __aenter__(self):

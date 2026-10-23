@@ -109,6 +109,8 @@ export interface LiveStreamDeps {
   onPreview?: (raw: unknown) => void;
   /** #10090: previews are never replayed, so every (re)open and the end of the match clear them. */
   onPreviewReset?: () => void;
+  onPreviewFloor?: (raw: unknown) => void;
+  onPreviewOpen?: (raw: unknown) => void;
   /**
    * #10200 — what the TRANSPORT is doing, for the reader-facing status only.
    *
@@ -389,9 +391,10 @@ export function createLiveStreamController(
 
     let recoveryGeneration = 0;
     let transportRecoveryPending = false;
-    next.addEventListener('open', () => {
+    next.addEventListener('open', (event) => {
       if (stopped || handle !== next) return;
       onPreviewReset?.();
+      deps.onPreviewOpen?.((event as { data?: unknown })?.data);
       // Native retry can reopen this handle against another server worker.
       recoveryGeneration = 0;
       lastMessageAt = now();
@@ -417,6 +420,9 @@ export function createLiveStreamController(
       }
       if (typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation <= recoveryGeneration) return;
       recoveryGeneration = generation;
+      // The hub has discarded its provisional authority. Withdraw the held
+      // headline/chart/clock before requesting committed recovery coverage.
+      onPreviewReset?.();
       // Recovery signals delivery debt, never fresh data or a new quote clock.
       onRecovery?.(++recoveryNotifications);
     });
@@ -464,6 +470,10 @@ export function createLiveStreamController(
     next.addEventListener('preview', (event) => {
       if (stopped || handle !== next) return;
       onPreview?.((event as { data?: unknown })?.data);
+    });
+    next.addEventListener('fold_preview_floor', (event) => {
+      if (stopped || handle !== next) return;
+      deps.onPreviewFloor?.((event as { data?: unknown })?.data);
     });
 
     next.addEventListener('heartbeat', () => {

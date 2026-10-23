@@ -155,8 +155,12 @@ describe("#6858 — OddsChart prints the LABEL at both sites", () => {
     expect(source).not.toContain("the boundary rule's answer");
   });
 
-  test("the edge callout interpolates homeLabel, not the bare integer", () => {
-    expect(source).toContain("currentCallout.homeLabel");
+  test("the edge callout interpolates a resolved LABEL, not the bare integer", () => {
+    // #11356 — the dot prints the label of the side it sits on: one of the
+    // pair's two printable labels, never an integer re-interpolated.
+    expect(source).toContain("currentCallout.label");
+    expect(source).toMatch(/\?\s*percents\.homeLabel\s*:\s*percents\.awayLabel/);
+    expect(source).toContain("currentCallout?.homeLabel");
     // The exact defect: `${currentCallout.homeProb}%`.
     expect(source).not.toMatch(/\$\{\s*currentCallout\.homeProb\s*\}%/);
   });

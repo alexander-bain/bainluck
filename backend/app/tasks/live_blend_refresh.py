@@ -68,13 +68,14 @@ from __future__ import annotations
 from asyncio import CancelledError
 import asyncio
 import contextlib
+from contextvars import ContextVar
 from collections import deque
 import logging
 import math
 import time
 from dataclasses import dataclass, replace as _replace
-from datetime import datetime
-from typing import Awaitable, Callable, Iterable, Optional
+from datetime import datetime, timezone
+from typing import Awaitable, Callable, Container, Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +243,37 @@ def _wall() -> float:
     return time.time()
 
 
+# Call-local timing for the existing optional-read failure receipt. A fetch
+# cancellation alone cannot say whether checkout/admission consumed its budget.
+# Ordinary stamp reads have no timing state; no payloads or event IDs are kept.
+_observation_read_timing: ContextVar[dict | None] = ContextVar(
+    "observation_read_timing", default=None,
+)
+
+
+@contextlib.contextmanager
+def _observation_read_step(name):
+    timing = _observation_read_timing.get()
+    if timing is None:
+        yield
+        return
+    started = _mono()
+    timing[name + "_start_ms"] = (started - timing["started_s"]) * 1000
+    timing[name + "_completed"] = False
+    try:
+        yield
+        timing[name + "_completed"] = True
+    finally:
+        timing[name + "_ms"] = (_mono() - started) * 1000
+
+
+def _observation_read_summary(timing):
+    if timing is None:
+        return None
+    return {key: round(value, 3) if type(value) is float else value
+            for key, value in timing.items() if key != "started_s"}
+
+
 def _iso(wall: Optional[float]) -> Optional[str]:
     if wall is None:
         return None
@@ -321,7 +353,7 @@ class TailReceipts:
     """
 
     COALESCIBLE = frozenset(
-        {"stamped", "unchanged", "unobserved", "no_reading", "no_row", "no_market"}
+        {"stamped", "unchanged", "preview_only", "unobserved", "no_reading", "no_row", "no_market"}
     )
 
     def __init__(self, source: str, *, coalesce_s: float = TAIL_RECEIPT_COALESCE_S) -> None:
@@ -676,7 +708,7 @@ class TailReceipts:
         value = previous = stamped_at = None
         if result == "stamped":
             _, value, stamped_at, previous = disposition[:4]
-        elif result in ("unchanged", "unobserved", "stale"):
+        elif result in ("unchanged", "preview_only", "unobserved", "stale"):
             value = disposition[1]
         moved = result == "stamped" and (previous is None or previous != value)
 
@@ -1209,6 +1241,15 @@ async def run_flush_cadence(
 #: after this is reported by name, never waited on forever.
 LOOP_REAP_TIMEOUT_S = 15.0
 
+#: #10090 idle bound: closed `HeldRowQuotes` samplers still unwinding their
+#: cancellation, by source, until that source's run reaps its loops.
+_closing_samplers: dict[Optional[str], set] = {}
+
+
+def _park_closing_sampler(source: Optional[str], task) -> None:
+    if task is not None and not task.done():
+        _closing_samplers.setdefault(source, set()).add(task)
+
 
 async def reap_stopped_loops(source: str, tasks, *, timeout_s: float = LOOP_REAP_TIMEOUT_S) -> int:
     """Wait (bounded) for a consumer run's stopped loops; return how many are
@@ -1217,22 +1258,59 @@ async def reap_stopped_loops(source: str, tasks, *, timeout_s: float = LOOP_REAP
     error because that loop outlives its run (#10657)."""
     import asyncio
 
-    pending = [t for t in tasks if t is not None and not t.done()]
-    if pending:
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    still: set = set()
+    try:
+        pending = [t for t in tasks if t is not None and not t.done()]
+        if pending:
+            try:
+                _done, still = await asyncio.wait(pending, timeout=timeout_s)
+            except Exception:
+                still = {t for t in pending if not t.done()}
+        if still:
+            logger.error(
+                "live_blend_refresh[%s]: %d consumer loop(s) still running %.0fs "
+                "after the run stopped them: %s",
+                source, len(still), timeout_s,
+                sorted(getattr(t, "get_name", lambda: "?")() for t in still),
+            )
+    finally:
+        # The run's closed idle samplers (`hand_off_pending`, replacement) join
+        # here even when a cancellation lands on this reap (812/903 review).
+        unreaped = await _join_closing_samplers(source, deadline)
+    return len(still) + unreaped
+
+
+async def _join_closing_samplers(source: Optional[str], deadline: float) -> int:
+    """Join `source`'s closed idle samplers by `deadline`; return how many still run.
+
+    A cancellation landing here is held until they finish or the budget ends,
+    then re-raised. A sampler still running stays registered (its next reap
+    owns it) and is logged; nothing is cancelled again.
+    """
+    loop = asyncio.get_running_loop()
+    interrupted: Optional[BaseException] = None
+    while True:
+        pending = {t for t in _closing_samplers.get(source, ()) if not t.done()}
+        if pending:
+            _closing_samplers[source] = pending
+        else:
+            _closing_samplers.pop(source, None)
+        remaining = deadline - loop.time()
+        if not pending or remaining <= 0:
+            break
         try:
-            _done, still = await asyncio.wait(pending, timeout=timeout_s)
-        except Exception:
-            still = {t for t in pending if not t.done()}
-    else:
-        still = set()
-    if still:
+            await asyncio.wait(pending, timeout=remaining)
+        except asyncio.CancelledError as exc:
+            interrupted = exc
+    if pending:
         logger.error(
-            "live_blend_refresh[%s]: %d consumer loop(s) still running %.0fs "
-            "after the run stopped them: %s",
-            source, len(still), timeout_s,
-            sorted(getattr(t, "get_name", lambda: "?")() for t in still),
+            "live_blend_refresh[%s]: %d idle bound sampler(s) still unwinding at the reap deadline",
+            source, len(pending),
         )
-    return len(still)
+    if interrupted is not None:
+        raise interrupted
+    return len(pending)
 
 
 # Event context needed by the prepared resolver/stamp, including aggregate
@@ -1298,48 +1376,205 @@ class HeldRowQuotes:
     """
 
     #: One optional DB round trip per nonempty game chunk. A sample that times
-    #: out backs every later sample off for this long, so a sick pool costs at
-    #: most one timeout per window however many chunks a flush plans.
+    #: out backs later samples off. Preview owners get one early recovery
+    #: opportunity; sustained failure then costs at most one timeout per long
+    #: window however many chunks a flush plans.
     SAMPLE_TIMEOUT_S = 0.15
     SAMPLE_BACKOFF_S = 5.0
+    #: One early recovery probe per preview-clock failure episode, then the
+    #: existing long backoff. A brief DB timeout must not freeze observations
+    #: for five seconds after reads recover. No accepted input is re-dated.
+    SAMPLE_RECOVERY_S = 0.25
     #: #10090 — `stored_at_or_after` waits at most this for a relation lock.
     AMBIGUITY_READ_LOCK_TIMEOUT_MS = 10
+    #: #10090 IDLE BOUND (Root page max, run 20261021T111728). Samples run only
+    #: after a phase commits, so after a quiet spell the newest completed one is
+    #: as old as the source's previous phase, and the first input after it
+    #: previews THAT time (PM venue 11:18:01.262 printed 11:17:59.866). While
+    #: an input for one of the owner's preview events arrived within
+    #: IDLE_ACTIVE_S, ONE task per instance re-reads the same sample about
+    #: every IDLE_SAMPLE_S (plus read time; grace and backoff stretch it — a
+    #: period, not a latency guarantee), with the same timeout and backoff, on
+    #: the same pool. It never starts a read while one is in flight; a phase
+    #: may still start beside an idle read, and the ordinal keeps the newer.
+    #: The semantics are unchanged: a sample that completed before
+    #: acceptance, frozen at `note_input`. Lifecycle: `close()` latches; the
+    #: owner's teardown (`hand_off_pending`) or replacement (the refresher's
+    #: `held_quotes` setter) closes it and `reap_stopped_loops` joins it.
+    IDLE_SAMPLE_S = 0.25
+    IDLE_ACTIVE_S = 30.0
+    #: An input noted after the last sample STARTED is owed its phase's own
+    #: post-commit sample; the idle task leaves that phase this long first.
+    IDLE_PHASE_GRACE_S = 1.0
 
     def __init__(self) -> None:
         self._quotes: dict[int, tuple[float, float]] = {}
         self._input_bounds: dict[int, tuple[int, float, float | None]] = {}
         self._database_bound: float | None = None
         self._sample_backoff_until = 0.0
+        self._sample_failure_episode = False
+        self._sample_failure_ordinal = 0
         self.sample_failures = 0
+        # Idle bound (class doc). The owning refresher installs its CURRENT
+        # preview events; empty means no idle sampling at all.
+        self.preview_events: Callable[[], Container[int]] = frozenset
+        self._sessions = None
+        self._idle_task: Optional[asyncio.Task] = None
+        self._closed = False
+        self._sample_started = 0  # ordinal of the newest sample started
+        self._sample_published = 0  # ordinal of the sample `_database_bound` holds
+        self._graph_sample_ordinal = 0
+        self._graph_idle_recovery_used = False
+        self._sampling = 0
+        self._last_sample_started = -math.inf
+        self._last_sample_done = -math.inf
+        self._last_input_at = -math.inf
+        self._last_preview_input_at = -math.inf
+        self.idle_samples = 0
+        self.idle_skips = 0
+
+    @staticmethod
+    def _now() -> float:
+        return time.monotonic()
+
+    @staticmethod
+    async def _sleep(seconds: float) -> None:
+        await asyncio.sleep(seconds)
 
     async def sample_database_clock(self, sessions) -> bool:
         """Bounded read; only inputs accepted AFTER it completes may use it."""
-        import asyncio
-        import time
-
         from sqlalchemy import func, select
 
-        if time.monotonic() < self._sample_backoff_until:
+        if self._now() < self._sample_backoff_until:
             return False
+        if self._sample_failure_episode:
+            if self._sampling:
+                return False
+            # Consume the recovery opportunity BEFORE the first await. A
+            # concurrent caller or cancellation cannot multiply early probes.
+            self._sample_backoff_until = self._now() + self.SAMPLE_BACKOFF_S
+        self._sessions = sessions
+        self._sample_started += 1
+        ordinal = self._sample_started
+        self._sampling += 1
+        self._last_sample_started = self._now()
         try:
             async with asyncio.timeout(self.SAMPLE_TIMEOUT_S):
                 async with sessions() as session:
                     value = (await session.execute(select(func.clock_timestamp()))).scalar_one()
-                # Publish the sample only after the session has fully exited.
-                self._database_bound = value.timestamp()
+                # Publish the sample only after the session has fully exited,
+                # and never over one that STARTED later: an idle read that
+                # overlapped a phase's post-commit read must not replace it.
+                if ordinal > self._sample_published:
+                    self._sample_published = ordinal
+                    self._database_bound = value.timestamp()
+                # A later graph may own the published timestamp, but a genuine
+                # standalone success still proves this failure episode ended.
+                if ordinal > self._sample_failure_ordinal:
+                    self._sample_failure_episode = False
+                    self._sample_backoff_until = 0.0
+                    self._graph_idle_recovery_used = False
+                self._last_sample_done = self._now()
                 return True
         except Exception:
             # The ordinary price writer stays available when the optional fast
             # path cannot establish an order. Cancellation still propagates.
             self.sample_failures += 1
-            self._sample_backoff_until = time.monotonic() + self.SAMPLE_BACKOFF_S
+            if ordinal > self._sample_published:
+                delay = (
+                    self.SAMPLE_RECOVERY_S
+                    if not self._sample_failure_episode and self.preview_events()
+                    else self.SAMPLE_BACKOFF_S
+                )
+                self._sample_failure_episode = True
+                self._sample_failure_ordinal = max(self._sample_failure_ordinal, ordinal)
+                self._sample_backoff_until = max(
+                    self._sample_backoff_until, self._now() + delay
+                )
             return False
+        finally:
+            self._sampling -= 1
 
     def note_input(self, mark) -> None:
         """Freeze the newest completed sample as this input's lower bound."""
         self._input_bounds[mark.outcome_id] = (
             mark.seq, round(float(mark.probability), 6), self._database_bound,
         )
+        now = self._now()
+        self._last_input_at = now
+        if getattr(mark, "event_id", None) in self.preview_events():
+            self._last_preview_input_at = now
+            self._start_idle_sampler()
+
+    def _start_idle_sampler(self) -> None:
+        if self._closed or self._sessions is None or (
+                self._idle_task is not None and not self._idle_task.done()):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._idle_task = loop.create_task(self._idle_sampler(), name="held-quotes-idle-bound")
+
+    async def _idle_sampler(self) -> None:
+        """Keep the bound fresh while preview inputs arrive; exits by itself."""
+        try:
+            while not self._closed:
+                now = self._now()
+                graph_recovery_deadline = None
+                if (now - self._last_preview_input_at >= self.IDLE_ACTIVE_S
+                        or not self.preview_events()):
+                    return
+                due = self._last_sample_done + self.IDLE_SAMPLE_S
+                if self._last_input_at > self._last_sample_started:
+                    due = max(due, self._last_input_at + self.IDLE_PHASE_GRACE_S)
+                if (self._sample_failure_episode and not self._sampling
+                        and not self._graph_idle_recovery_used
+                        and self._graph_sample_ordinal > self._sample_failure_ordinal
+                        and now >= due
+                        and now < self._sample_backoff_until
+                        and now - self._last_preview_input_at >= self.IDLE_PHASE_GRACE_S):
+                    # A successful graph is evidence for ONE recovery probe
+                    # after traffic quiets, not a reset on every busy read.
+                    # Consume before awaiting, including cancellation/failure.
+                    self._graph_idle_recovery_used = True
+                    graph_recovery_deadline = self._sample_backoff_until
+                    self._sample_backoff_until = min(self._sample_backoff_until, now)
+                due = max(due, self._sample_backoff_until)
+                if now < due:
+                    await self._sleep(min(due - now, self.IDLE_SAMPLE_S))
+                    continue
+                if self._sampling:
+                    self.idle_skips += 1  # a phase's read is in flight
+                    await self._sleep(self.IDLE_SAMPLE_S)
+                    continue
+                self.idle_samples += 1
+                probe_ordinal = self._sample_started + 1
+                try:
+                    await self.sample_database_clock(self._sessions)
+                finally:
+                    if (graph_recovery_deadline is not None
+                            and self._sample_failure_episode
+                            and self._sample_failure_ordinal <= probe_ordinal):
+                        # The extra attempt must not postpone the original
+                        # retry, nor shorten a newer caller's failure episode.
+                        self._sample_backoff_until = min(
+                            self._sample_backoff_until, graph_recovery_deadline,
+                        )
+        except Exception:
+            logger.warning("held quotes: idle bound sampler stopped", exc_info=True)
+
+    def close(self) -> Optional[asyncio.Task]:
+        """Latch closed and cancel the idle sampler; it never starts again.
+
+        Returns the still-running task for the owner to join (or None).
+        """
+        self._closed = True
+        task, self._idle_task = self._idle_task, None
+        if task is None or task.done():
+            return None
+        task.cancel()
+        return task
 
     def bound_for(self, mark) -> float | None:
         """This exact input's frozen bound, or None (another input, or none yet).
@@ -1408,7 +1643,7 @@ class HeldRowQuotes:
         new = self._new_bounds(quotes)
         if not new:
             return set()
-        if time.monotonic() < self._sample_backoff_until:
+        if self._now() < self._sample_backoff_until:
             return None
         try:
             async with asyncio.timeout(self.SAMPLE_TIMEOUT_S):
@@ -1425,7 +1660,9 @@ class HeldRowQuotes:
             # Shares the sample's window: a sick pool still costs one timeout
             # per window, and later sample attempts back off behind this one.
             self.sample_failures += 1
-            self._sample_backoff_until = time.monotonic() + self.SAMPLE_BACKOFF_S
+            self._sample_failure_episode = True
+            self._sample_failure_ordinal = self._sample_started
+            self._sample_backoff_until = self._now() + self.SAMPLE_BACKOFF_S
             return None
         found = set()
         for oid, last_updated in rows:
@@ -1645,10 +1882,27 @@ class LiveBlendRefresher:
     other's entries, and so a reconnect starts clean.
     """
 
+    @property
+    def held_quotes(self) -> Optional[HeldRowQuotes]:
+        return self.__dict__.get("_held_quotes")
+
+    @held_quotes.setter
+    def held_quotes(self, quotes: Optional[HeldRowQuotes]) -> None:
+        previous = self.__dict__.get("_held_quotes")
+        self.__dict__["_held_quotes"] = quotes
+        if isinstance(previous, HeldRowQuotes) and previous is not quotes:
+            # A replaced instance's idle sampler must not outlive it.
+            _park_closing_sampler(getattr(self, "source", None), previous.close())
+        if isinstance(quotes, HeldRowQuotes):
+            # #10090 idle bound: this refresher's CURRENT preview events gate
+            # the owner's idle sampler (legacy single-source and ledger alike).
+            quotes.preview_events = lambda: getattr(self, "preview_events", frozenset())
+
     def __init__(
         self,
         source: str,
         *,
+        owns_preview_maintenance: bool = True,
         min_refresh_interval_s: float = DEFAULT_MIN_REFRESH_INTERVAL_S,
         failed_retry_interval_s: float = DEFAULT_FAILED_RETRY_INTERVAL_S,
         inversion_ttl_s: float = DEFAULT_INVERSION_TTL_S,
@@ -1657,6 +1911,7 @@ class LiveBlendRefresher:
         snapshot_max_gap_s: float = DEFAULT_SNAPSHOT_MAX_GAP_S,
         stamp_lock_timeout_ms: Optional[int] = DEFAULT_STAMP_LOCK_TIMEOUT_MS,
         session_factory=None,
+        observation_read_factory=None,
         chart_custody: Optional[OwedChartCustody] = None,
     ) -> None:
         self.source = source
@@ -1676,7 +1931,7 @@ class LiveBlendRefresher:
         self._custody_ready: dict[int, asyncio.Event] = {}
         self._custody_clock: dict[int, float] = {}
         #: #11138 — the owning consumer's `HeldRowQuotes`, or None (no overlay).
-        self.held_quotes: Optional[HeldRowQuotes] = None
+        self.held_quotes = None
         #: #10090 — the Kalshi WS owner's current-book proof for the bundled
         #: Challenger pair (`compute_source_home_probability`). Off unless the
         #: owner installs all of them before its first refresh can run: the
@@ -1701,6 +1956,7 @@ class LiveBlendRefresher:
         #: the consumer's one engine instead of building a pool per batch.
         #: None ⇒ ``app.tasks.base.get_task_session``, looked up per batch.
         self._session_factory = session_factory
+        self._observation_read_factory = observation_read_factory
         self.min_refresh_interval_s = min_refresh_interval_s
         self.failed_retry_interval_s = failed_retry_interval_s
         self.inversion_ttl_s = inversion_ttl_s
@@ -1813,6 +2069,9 @@ class LiveBlendRefresher:
             # #11181 — custody rows already settled when their point came up
             # (a commit whose acknowledgement was lost, or another drain).
             "history_already_paid": 0,
+            # #10090 — owed points retired because their event row was deleted
+            # after the stamp committed (seen on a retry only; ids never reuse).
+            "history_event_gone": 0,
             # #9484 — committed market invalidations (`live:market:{id}`) this
             # consumer's writers published through the same client. Counted
             # for the same reason as `published`: a quiet market and a dead
@@ -1845,13 +2104,18 @@ class LiveBlendRefresher:
         #: socket flush loop that fenced a newer quote on those events wakes.
         self.release_wake: Optional[Callable[[Iterable[int]], None]] = None
         #: #10090 — provisional preview (`app.utils.blend_preview`): the
-        #: canary's events when THIS source is the one named to preview, else
-        #: empty. Empty (the default), every preview branch below is skipped
-        #: and the committed path runs exactly as before.
-        from app.utils.blend_preview import preview_events_for
+        #: supported sources validate every arriving event. The scope is
+        #: stateless: events arriving after startup need no enrollment.
+        from app.utils.blend_preview import PreviewEventScope, preview_events_for
 
-        self.preview_events: frozenset = preview_events_for(self.source)
+        self.preview_events: PreviewEventScope | frozenset = preview_events_for(self.source)
         self.preview = bool(self.preview_events)
+        # Short-lived transaction helpers have no task lifecycle to drain.
+        # This ownership argument does not change DNPL eligibility or reads.
+        self._owns_preview_maintenance = owns_preview_maintenance
+        self._preview_maintenance_task = None
+        self._preview_maintenance_after = 0.0
+        self._preview_maintenance_closed = False
         self.preview_stats: dict[str, int] = {
             "published": 0, "revoked": 0, "fenced": 0, "publish_errors": 0,
         }
@@ -2946,7 +3210,8 @@ class LiveBlendRefresher:
         if interrupted is not None:
             raise interrupted
 
-    async def _read_groups(self, session, event_ids: list[int]) -> dict[int, tuple]:
+    async def _read_groups(self, session, event_ids: list[int], *, overlay_held=True,
+                           clock_sample=None) -> dict[int, tuple]:
         from types import SimpleNamespace
         from sqlalchemy import and_, func, literal, or_, select
         from app.models.models import Event, FuturesMarket, FuturesOutcome
@@ -3017,26 +3282,41 @@ class LiveBlendRefresher:
             if not getattr(self, "preview_events", frozenset()).isdisjoint(event_ids)
             else ()
         )
-        rows = (
-            await session.execute(
-                select(*(
-                    Event.win_probability_sources.op("->")(literal(self.source)).label(key)
-                    if model is Event and key == "win_probability_sources"
-                    else getattr(model, key)
-                    for model, keys in fields for key in keys
-                ), *preview_columns)
-                .select_from(FuturesMarket)
-                .join(Event, Event.id == FuturesMarket.event_id)
-                .outerjoin(FuturesOutcome, outcome_join)
-                .where(
-                    FuturesMarket.source == self.source,
-                    FuturesMarket.event_id.in_(event_ids),
-                )
+        # Capture BEFORE the statement, not when a prepared plan is later
+        # published. Retirement invalidates this proof without renewing it.
+        with _observation_read_step("admission"):
+            preview_ticket = (
+                await self._preview_admission_read() if preview_columns else None
             )
-        ).all()
+        with _observation_read_step("query"):
+            rows = (
+                await session.execute(
+                    select(*(
+                        Event.win_probability_sources.op("->")(literal(self.source)).label(key)
+                        if model is Event and key == "win_probability_sources"
+                        else getattr(model, key)
+                        for model, keys in fields for key in keys
+                    ), *preview_columns, *(
+                        (func.clock_timestamp().label("observation_clock"),)
+                        if clock_sample is not None else ()
+                    ))
+                    .select_from(FuturesMarket)
+                    .join(Event, Event.id == FuturesMarket.event_id)
+                    .outerjoin(FuturesOutcome, outcome_join)
+                    .where(
+                        FuturesMarket.source == self.source,
+                        FuturesMarket.event_id.in_(event_ids),
+                    )
+                )
+            ).all()
+        if clock_sample is not None and rows:
+            # Read DB time in the existing statement, without another pool
+            # checkout. The caller may adopt it only after its scope succeeds.
+            clock_sample["value"] = min(row[-1] for row in rows)
+            rows = [row[:-1] for row in rows]
         grouped: dict[int, tuple] = {}
         entries: dict[int, MarketOutcomes] = {}
-        held = self.held_quotes
+        held = self.held_quotes if overlay_held else None
         for row in rows:
             market_id = row[0]
             entry = entries.get(market_id)
@@ -3060,6 +3340,7 @@ class LiveBlendRefresher:
                         # field name, so they never reach an outcome row.
                         context["preview_sources"] = row[-2]
                         context["preview_rev"] = row[-1]
+                        context["preview_read_ticket"] = preview_ticket
                     grouped[event_id] = (
                         SimpleNamespace(**context),
                         [],
@@ -3095,6 +3376,8 @@ class LiveBlendRefresher:
                 for entry in group:
                     for row in entry.outcomes:
                         row._primary_quote_overlaid = id(row) not in original_rows
+        if preview_ticket is not None:
+            await self._retire_terminal_preview_read(grouped, preview_ticket)
         return grouped
 
     async def _prepare_groups(self, event_ids: list[int]) -> dict[int, tuple]:
@@ -3215,6 +3498,7 @@ class LiveBlendRefresher:
                         [(eid, value, reading)],
                         observed_clock,
                         factory,
+                        verify_event=eid in self._history_retry_at,
                     ):
                         failed.add(eid)
                         self._history_retry_at[eid] = (
@@ -3297,6 +3581,10 @@ class LiveBlendRefresher:
         republishes frames or turns history-only debt into blend debt.
         """
         interrupted = None
+        try:
+            await self._close_preview_maintenance()
+        except asyncio.CancelledError as exc:
+            interrupted = exc
         try:
             await self._close_normal_recovery()
         except asyncio.CancelledError as exc:
@@ -3479,27 +3767,27 @@ class LiveBlendRefresher:
             # UPDATE, the preview seq each published, and canary events whose
             # attempt failed.
             preview_plans: dict[int, tuple] = {}
+            preview_only: set[int] = set()
             preview_seq: dict[int, int] = {}
             preview_failed: set[int] = set()
-            # #10090: every CANARY event's reading is computed and its preview
-            # published BEFORE any event's UPDATE, so one event's row-lock wait
-            # cannot hold back a canary preview. The UPDATEs keep the one
-            # sorted lock order (#837). With no canary event in the batch, the
-            # work list is one "both" step per event: the same statements in
-            # the same order as before.
+            # #10090: compute and publish eligible previews before any event's
+            # UPDATE so one row-lock wait cannot hold back a sibling display.
+            # Persistence retains the same sorted lock order (#837).
             ordered = sorted(grouped)
-            canary = [eid for eid in ordered if eid in self.preview_events]
-            if canary:
-                work = ([("compute", eid) for eid in canary] + [("preview", None)]
+            preview_ids = [eid for eid in ordered if eid in self.preview_events]
+            if preview_ids:
+                work = ([("compute", eid) for eid in preview_ids] + [("preview", None)]
                         + [("stamp" if eid in self.preview_events else "both", eid)
                            for eid in ordered])
             else:
                 work = [("both", eid) for eid in ordered]
             for phase, event_id in work:
                 if phase == "preview":
-                    await self._preview_before_stamp(grouped, preview_plans, preview_seq)
+                    await self._preview_before_stamp(
+                        grouped, preview_plans, preview_seq, observation_only=preview_only,
+                    )
                     continue
-                if phase == "stamp" and event_id not in preview_plans:
+                if phase == "stamp" and (event_id not in preview_plans or event_id in preview_only):
                     continue
                 event, group = grouped[event_id]
                 try:
@@ -3507,29 +3795,7 @@ class LiveBlendRefresher:
                         refused, proof_kwargs, reading, value, contributing = preview_plans[event_id]
                     else:
                         refused = []
-                        proof_kwargs = {}
-                        if (getattr(self, "require_current_book_proof", False)
-                                and any(getattr(entry.market, "source", None) == "kalshi"
-                                        and (getattr(entry.market, "external_id", None) or "").upper().startswith("KXATPCHALLENGERMATCH-")
-                                        for entry in group)):
-                            proof_kwargs = {
-                                "require_current_book_midpoint": True,
-                                "current_book_midpoint": getattr(self, "current_book_midpoint", None),
-                                "current_book_primary_price": getattr(self, "current_book_primary_price", None),
-                                "current_primary_input": (
-                                    lambda row: self.current_primary_input(
-                                        row, self.held_quotes,
-                                        overlaid=getattr(row, "_primary_quote_overlaid", False),
-                                    )
-                                ) if getattr(self, "current_primary_input", None) is not None else None,
-                                # Bound now: with a canary in the batch this
-                                # callback is stored in `preview_plans` and
-                                # called again by the stamp-time recheck.
-                                "current_book_refused": lambda refused=refused, event_id=event_id, group=group: (
-                                    refused.append(True)
-                                    or self._park_book_refused(event_id, group)
-                                ),
-                            }
+                        proof_kwargs = self._current_reading_proof(event_id, group, refused)
                         reading = compute_source_home_probability(
                             group, event.home_team_name, event.away_team_name,
                             **proof_kwargs,
@@ -3564,11 +3830,30 @@ class LiveBlendRefresher:
                         ):
                             self.stats["unobserved_skipped"] += 1
                             self._dispositions[event_id] = ("unobserved", value)
+                            if phase == "compute":
+                                # A periodic durable read can predate an already
+                                # accepted observation preview. Let its registry
+                                # judge that basis without requesting persistence.
+                                preview_plans[event_id] = (
+                                    refused, proof_kwargs, reading, value, contributing,
+                                )
+                                preview_only.add(event_id)
                             continue
 
                         if not self._should_write(event_id, value, now):
                             self.stats["unchanged_skipped"] += 1
                             self._dispositions[event_id] = ("unchanged", value)
+                            # Persistence cadence does not own display admission.
+                            # Only a complete contributing observation can try
+                            # this route; the registry proves it newer than the
+                            # stored reading and its pending observation. There
+                            # is no event UPDATE or lock/retry debt for this arm.
+                            if phase == "compute" and observation_basis(contributing):
+                                preview_plans[event_id] = (
+                                    refused, proof_kwargs, reading, value, contributing,
+                                )
+                                preview_only.add(event_id)
+                                self._dispositions[event_id] = ("preview_only", value)
                             continue
 
                         if phase == "compute":
@@ -3849,7 +4134,20 @@ class LiveBlendRefresher:
             # a canary whose group left beside a non-canary sibling still owes
             # its `no_group` revoke (R3).
             if not self.preview_events.isdisjoint(event_ids):
-                # After COMMIT, BEFORE the committed frames: a sibling still
+                # Only canary frames depend on preview recomposition. Release
+                # independent committed events through the existing sender
+                # before optional ledger/publication I/O can hold them up.
+                independent = [
+                    frame for frame in pending
+                    if frame["event_id"] not in self.preview_events
+                ]
+                pending = [
+                    frame for frame in pending
+                    if frame["event_id"] in self.preview_events
+                ]
+                if independent:
+                    await publish_committed(independent)
+                # After COMMIT, BEFORE the committed canary frames: a sibling still
                 # pending is recomposed on the new base and goes out first, so
                 # the committed frame (rev == that base) cannot briefly put the
                 # sibling's older stored value back on the page. Revokes go
@@ -3859,6 +4157,7 @@ class LiveBlendRefresher:
                 settled = self._preview_settlement(
                     event_ids, grouped, preview_seq, preview_failed, committed_bags,
                 )
+                settled = await self._prepare_ledger_previews(settled)
                 await self._publish_previews(
                     [f for f in settled if f["preview"]["kind"] == "blend"]
                 )
@@ -3881,6 +4180,7 @@ class LiveBlendRefresher:
 
     async def _write_owed_snapshots(
         self, owed: list[tuple], now: float, get_task_session,
+        *, verify_event: bool = False,
     ) -> bool:
         """#10090 — report whether the owed points' transaction committed.
 
@@ -3899,12 +4199,21 @@ class LiveBlendRefresher:
         UPDATE queued behind another holder of the latest snapshot row waits
         out the resting statement timeout while the history slot stays taken. `stamp_lock_timeout_ms` falsy keeps it off, as
         it does for the stamp.
+
+        `verify_event` (a retry of a point that already failed once): a point
+        whose event row is gone is retired with its custody row instead of
+        written, so a deleted event does not owe a chart write forever. The
+        check runs after the settle, inside the point's savepoint; a lookup
+        error or a failed COMMIT keeps the debt, as for any failed point.
         """
         from app.utils.repair_lock_budget import (
             SET_LOCK_TIMEOUT_SQL, lock_timeout_value,
         )
 
-        counts = {key: self.stats[key] for key in ("snapshots_written", "snapshots_deduped")}
+        counts = {
+            key: self.stats[key]
+            for key in ("snapshots_written", "snapshots_deduped", "history_event_gone")
+        }
         try:
             async with (
                 self._snapshot_slots_follow_the_commit(
@@ -3927,6 +4236,23 @@ class LiveBlendRefresher:
                         if custody_id is not None and self._chart_custody is not None:
                             if not await self._chart_custody.settle(session, custody_id):
                                 self.stats["history_already_paid"] += 1
+                                continue
+                        if verify_event:
+                            from sqlalchemy import select
+
+                            from app.models.models import Event
+
+                            if (await session.execute(
+                                select(Event.id).where(Event.id == event_id)
+                            )).first() is None:
+                                # The stamp committed against a row that has since
+                                # been deleted, and ids are never reused: nothing is
+                                # owed. The settle above commits with this savepoint.
+                                self.stats["history_event_gone"] += 1
+                                logger.warning(
+                                    "live_blend_refresh[%s]: owed chart point retired, event %s gone",
+                                    self.source, event_id,
+                                )
                                 continue
                         await self._maybe_snapshot(session, event_id, value, reading, now)
                         await session.flush()
@@ -4360,7 +4686,209 @@ class LiveBlendRefresher:
 
     # ── #10090: provisional preview (off by default; canary events only) ──
 
-    async def _preview_before_stamp(self, grouped, plans, published_seq) -> None:
+    def _current_reading_proof(self, event_id, group, refused, *, park_refused=True):
+        """Keep optional observation previews on the ordinary Kalshi proof path."""
+        proof_kwargs = {}
+        if (getattr(self, "require_current_book_proof", False)
+                and any(getattr(entry.market, "source", None) == "kalshi"
+                        and (getattr(entry.market, "external_id", None) or "").upper().startswith("KXATPCHALLENGERMATCH-")
+                        for entry in group)):
+            proof_kwargs = {
+                "require_current_book_midpoint": True,
+                "current_book_midpoint": getattr(self, "current_book_midpoint", None),
+                "current_book_primary_price": getattr(self, "current_book_primary_price", None),
+                "current_primary_input": (
+                    lambda row: self.current_primary_input(
+                        row, self.held_quotes,
+                        overlaid=getattr(row, "_primary_quote_overlaid", False),
+                    )
+                ) if getattr(self, "current_primary_input", None) is not None else None,
+                # Bound now: with a canary in the batch this
+                # callback is stored in `preview_plans` and
+                # called again by the stamp-time recheck.
+                "current_book_refused": lambda refused=refused, event_id=event_id, group=group: (
+                    refused.append(True)
+                    or (self._park_book_refused(event_id, group) if park_refused else None)
+                ),
+            }
+        return proof_kwargs
+
+    async def preview_accepted_observations(self, observations, validate) -> bool | None:
+        """Preview acknowledged unchanged venue observations without owning writes.
+
+        The consumer excludes same-event price/stamp ownership and holds its
+        scope guard until this work finishes. Graphs/sessions are call-local;
+        False asks the caller to retain frozen inputs after capacity/read failure.
+        The graph and copied input clocks are disposable. A separately selected
+        DB clock may advance held_quotes only for inputs received AFTER this
+        read scope completes; the frozen clocks in this batch never change.
+        `validate` rechecks immutable input identity and the flush's ownership
+        under its buffer lock, including at the final Redis send boundary.
+        """
+        if self.source not in ("polymarket", "kalshi") or not self.preview:
+            return
+        from app.tasks.base import get_task_session
+        from app.utils.aggregation import _coerce_timestamp
+        from app.utils.blend_preview import PREVIEW_STATUSES, registry
+        from app.utils.settledness import market_assigned_settled
+        from app.utils.live_blend import compute_source_home_probability, has_proven_home_orientation
+
+        read_timing = None
+        try:
+            event_ids = {eid for eid in observations if eid in self.preview_events}
+            event_ids.intersection_update(await validate(event_ids))
+            if not event_ids:
+                return
+            factory = (self._observation_read_factory
+                       or self._session_factory or get_task_session)
+            # Optional display work must not queue the game loop behind a
+            # contended pool/read. The caller may retain the SAME frozen input.
+            if self._session_slots.locked():
+                return False
+            grouped = None
+            read_budget = asyncio.timeout(.25)
+            read_timing = {"started_s": _mono()}
+            clock_owner = self.held_quotes if self._observation_read_factory is not None else None
+            clock_sample = None
+            if isinstance(clock_owner, HeldRowQuotes) and not clock_owner._closed:
+                clock_owner._sample_started += 1
+                clock_ordinal = clock_owner._sample_started
+                clock_owner._sampling += 1
+                clock_owner._last_sample_started = clock_owner._now()
+                clock_sample = {}
+            try:
+                token = _observation_read_timing.set(read_timing)
+                try:
+                    async with read_budget, self._session_slot(), factory() as session:
+                        grouped = await self._read_groups(
+                            session, sorted(event_ids), overlay_held=False,
+                            **({"clock_sample": clock_sample} if clock_sample is not None else {}),
+                        )
+                        read_timing["graph_ready_ms"] = (_mono() - read_timing["started_s"]) * 1000
+                    # Only normal context completion qualifies, never query or
+                    # cleanup timeout/cancellation. A late older read cannot
+                    # replace a newer sample or clear its failure episode.
+                    if (clock_sample and self.held_quotes is clock_owner
+                            and not clock_owner._closed
+                            and clock_ordinal > clock_owner._sample_published):
+                        clock_owner._database_bound = clock_sample["value"].timestamp()
+                        clock_owner._sample_published = clock_ordinal
+                        clock_owner._graph_sample_ordinal = clock_ordinal
+                        # A graph read has a longer budget than the standalone
+                        # clock probe. Its success supplies future input bounds,
+                        # but cannot prove that shorter-budget path recovered.
+                        # Only a standalone success clears its failure backoff.
+                        clock_owner._last_sample_done = clock_owner._now()
+                finally:
+                    if clock_sample is not None:
+                        clock_owner._sampling -= 1
+                    read_timing["scope_ms"] = (_mono() - read_timing["started_s"]) * 1000
+                    _observation_read_timing.reset(token)
+            except TimeoutError:
+                # A completed autocommit SELECT needs no commit acknowledgement.
+                # Its detached graph remains usable if only connection cleanup
+                # exhausts our budget. The existing context still owns cleanup;
+                # query failures, writer scopes and external cancellation do not
+                # qualify. All input/freshness/send-boundary checks below remain.
+                if (self._observation_read_factory is None or grouped is None
+                        or not read_budget.expired()):
+                    raise
+                logger.warning(
+                    "live_blend_refresh[%s]: observation read completed; cleanup exceeded budget read_timing=%s",
+                    self.source, _observation_read_summary(read_timing),
+                )
+            plans = {}
+            refusals = {}
+            for eid, (event, group) in grouped.items():
+                if event.status not in PREVIEW_STATUSES or event.completed_at is not None:
+                    refusals[eid] = "ineligible"
+                    continue
+                rows = {row.id: (entry, row) for entry in group for row in entry.outcomes}
+                snapshot = observations[eid]
+                relevant = [entry for entry in group
+                            if any(row.id in snapshot for row in entry.outcomes)]
+                if any(entry.market.status != "open"
+                       or market_assigned_settled(entry.market, entry.outcomes)
+                       or any(row.resolution_source is not None for row in entry.outcomes)
+                       for entry in relevant):
+                    refusals[eid] = "settled"
+                    continue
+                proof_kwargs = self._current_reading_proof(eid, group, [], park_refused=False)
+                reading = compute_source_home_probability(
+                    group, event.home_team_name, event.away_team_name, **proof_kwargs,
+                )
+                if reading is None or not has_proven_home_orientation(reading):
+                    continue  # optional path never invokes repairing inversion fallback
+                contributors = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
+                ids = {getattr(row, "id", None) for row in contributors}
+                if not ids or not ids.issubset(snapshot):
+                    continue
+                if any(oid not in rows for oid in snapshot):
+                    continue
+                valid = True
+                read_wall = datetime.now(timezone.utc).timestamp()
+                for oid, (value, bound, mark) in snapshot.items():
+                    entry, row = rows[oid]
+                    stored_at = _coerce_timestamp(row.last_updated)
+                    if (mark is None or getattr(mark, "probability", None) != value
+                            or type(bound) not in (float, int) or not math.isfinite(bound)
+                            or entry.market.status != "open" or row.resolution_source is not None
+                            or row.is_winner is True or stored_at is None
+                            or stored_at.timestamp() >= bound or bound > read_wall
+                            or row.current_probability is None
+                            or round(float(row.current_probability), 6) != round(float(value), 6)):
+                        valid = False
+                        break
+                if not valid:
+                    continue
+                # Keep the immutable DB-clock bounds exactly; the generic
+                # observation helper clamps future clocks to app-now. Such
+                # clamping would manufacture newer observations on retries.
+                basis = {str(row.id): float(snapshot[row.id][1]) for row in contributors}
+                if basis:
+                    plans[eid] = (event, reading, basis, group, proof_kwargs)
+            if not plans and not refusals:
+                return
+
+            async def prepare_frames():
+                allowed = await validate(set(plans) | set(refusals))
+                if not allowed:
+                    return []  # rejection/cancellation must not mutate the registry
+                preview = registry()
+                frames = preview.expire()
+                for eid in allowed:
+                    if eid in refusals:
+                        frames.extend(preview.refused(eid, self.source, refusals[eid]))
+                        continue
+                    event, reading, basis, group, proof_kwargs = plans[eid]
+                    if proof_kwargs:
+                        # Current book/custody proof may change during Redis checkout.
+                        current = compute_source_home_probability(
+                            group, event.home_team_name, event.away_team_name, **proof_kwargs,
+                        )
+                        if (current is None or not has_proven_home_orientation(current)
+                                or round(current.home_probability, 4) != round(reading.home_probability, 4)
+                                or {str(row.id) for row in (getattr(current, "contributing_outcomes", None)
+                                                            or (current.outcome,))} != set(basis)):
+                            continue
+                    frames.extend(preview.propose(
+                        eid, self.source, value=round(reading.home_probability, 4), event=event,
+                        row_sources=event.preview_sources, row_rev=event.preview_rev,
+                        eligibility=getattr(reading, "eligibility", None), observed_basis=basis,
+                        observation_only=True,
+                    ))
+                return frames
+
+            await self._publish_previews([], prepare_frames=prepare_frames)
+        except Exception:
+            self.preview_stats["publish_errors"] += 1
+            logger.warning(
+                "live_blend_refresh[%s]: optional observation preview unavailable read_timing=%s",
+                self.source, _observation_read_summary(read_timing), exc_info=True,
+            )
+            return False
+
+    async def _preview_before_stamp(self, grouped, plans, published_seq, *, observation_only=()) -> None:
         """Publish every planned reading's preview, then let the UPDATEs run.
 
         Called once per attempt after all readings were computed and before
@@ -4381,6 +4909,7 @@ class LiveBlendRefresher:
                     row_rev=getattr(event, "preview_rev", None),
                     eligibility=getattr(reading, "eligibility", None),
                     observed_basis=observation_basis(contributing),
+                    observation_only=event_id in observation_only,
                 ))
             except Exception:
                 self.preview_stats["publish_errors"] += 1
@@ -4427,6 +4956,13 @@ class LiveBlendRefresher:
                     reason = (self._dispositions.get(event_id) or ("unknown",))[0]
                     if reason == "lock":
                         continue  # still owed; the retry republishes it
+                    if reason in ("preview_only", "unobserved"):
+                        # The optional proposal already judged this observation;
+                        # absence of a newer durable row is not a withdrawal.
+                        # The event restamp was deliberately throttled. Retain
+                        # the bounded display chain, including its expiry fence,
+                        # without pretending a failed write needs retrying.
+                        continue
                 # Also ends an expired chain with nothing pending (R4).
                 frames.extend(preview.refused(event_id, self.source, reason))
             except Exception:
@@ -4443,14 +4979,25 @@ class LiveBlendRefresher:
             FENCE_CLAIM_SCRIPT, FENCE_EPOCH_KEY, fence_owner_key,
         )
 
-        await connection.send_command(
-            "EVAL", FENCE_CLAIM_SCRIPT, 2, FENCE_EPOCH_KEY, fence_owner_key(self.source),
-        )
-        preview.epoch = int(await connection.read_response())
+        if preview.ledger:
+            # TSP-1: this source's owner claim in the shared ledger.
+            await preview.claim(self._preview_call(connection), self.source)
+        else:
+            await connection.send_command(
+                "EVAL", FENCE_CLAIM_SCRIPT, 2, FENCE_EPOCH_KEY, fence_owner_key(self.source),
+            )
+            preview.epoch = int(await connection.read_response())
         logger.info(
             "live_blend_refresh[%s]: preview display claimed epoch=%s",
-            self.source, preview.epoch,
+            self.source, preview.claim_of(self.source),
         )
+
+    @staticmethod
+    def _preview_call(connection):
+        async def call(*args):
+            await connection.send_command(*args)
+            return await connection.read_response()
+        return call
 
     async def claim_preview_display(self) -> Optional[int]:
         """Claim this process's display epoch at startup, before any frame.
@@ -4473,7 +5020,7 @@ class LiveBlendRefresher:
                 if preview.claim_lock is None:
                     preview.claim_lock = asyncio.Lock()
                 async with preview.claim_lock:
-                    if preview.epoch is None:
+                    if preview.unclaimed(self.source):
                         pool = self._client().connection_pool
                         connection = await _checkout(pool)
                         try:
@@ -4484,7 +5031,7 @@ class LiveBlendRefresher:
                             raise
                         finally:
                             await pool.release(connection)
-            return preview.epoch
+            return preview.claim_of(self.source)
         except Exception:
             self.preview_stats["publish_errors"] += 1
             logger.warning(
@@ -4493,7 +5040,236 @@ class LiveBlendRefresher:
             )
             return None
 
-    async def _publish_previews(self, frames: list[dict]) -> None:
+    async def _preview_ticket(self, *, include_candidates=False):
+        from app.utils.blend_preview import registry
+        from app.utils.market_quote_push import _checkout
+
+        preview = registry()
+        if preview.claim_lock is None:
+            preview.claim_lock = asyncio.Lock()
+        pool = self._client().connection_pool
+        async with preview.claim_lock:
+            connection = await _checkout(pool)
+            try:
+                if preview.unclaimed(self.source):
+                    await self._claim_preview_epoch(connection, preview)
+                return await preview.read_ticket(self._preview_call(connection), self.source,
+                                                 include_candidates=include_candidates)
+            except BaseException:
+                self._redis = None
+                await connection.disconnect()
+                raise
+            finally:
+                await pool.release(connection)
+
+    def _start_preview_maintenance(self):
+        # One bounded pass per source per 30 seconds, independent of flush
+        # cadence. No DB candidate scan or HKEYS on the admission path.
+        if (not self._owns_preview_maintenance or self._preview_maintenance_closed or
+                time.monotonic() < self._preview_maintenance_after or
+                (self._preview_maintenance_task is not None and
+                 not self._preview_maintenance_task.done())):
+            return
+        self._preview_maintenance_after = time.monotonic() + 30.0
+        self._preview_maintenance_task = asyncio.create_task(self._maintain_preview_capacity())
+
+    @staticmethod
+    def _preview_retirable_row():
+        from sqlalchemy import and_, or_, text
+        from app.models.models import Event
+        from app.tasks.ws_slate import SUSPENDED_SLATE_MAX_AGE_HOURS
+        from app.utils.blend_preview import PREVIEW_STATUSES
+
+        return or_(Event.status.not_in(PREVIEW_STATUSES), Event.completed_at.is_not(None),
+                   and_(Event.status.in_(("scheduled", "suspended")),
+                        Event.commence_time < text(
+                            f"NOW() - INTERVAL '{int(SUSPENDED_SLATE_MAX_AGE_HOURS)} hours'")))
+
+    async def _maintain_preview_capacity(self):
+        from sqlalchemy import select
+        from app.models.models import Event
+        from app.tasks.base import get_task_session
+        from app.utils.blend_preview import registry
+
+        try:
+            async with asyncio.timeout(1):
+                ticket, candidates = await self._preview_ticket(include_candidates=True)
+                if ticket is None or not candidates:
+                    return
+                factory = self._session_factory or get_task_session
+                # Fetch existence and retirement eligibility together. This is
+                # a fresh statement after the ticket, never cached slate data.
+                async with self._session_slot(), factory() as session:
+                    rows = (await session.execute(select(
+                        Event.id, Event.win_probability_sources_rev,
+                        self._preview_retirable_row().label("retirable"),
+                    ).where(Event.id.in_(candidates)))).all()
+                present = {row[0]: row for row in rows}
+                targets = [eid for eid in sorted(candidates)
+                           if eid not in present or present[eid][2]][:32]
+                # Reclaim a bounded batch rather than allowing just one new
+                # event per cadence. Every deletion advances the barrier;
+                # each next proof therefore needs a new ticket AND DB read.
+                for index, eid in enumerate(targets):
+                    row = present.get(eid)
+                    if index:
+                        ticket, _ = await self._preview_ticket()
+                        if ticket is None:
+                            return
+                        async with self._session_slot(), factory() as session:
+                            row = (await session.execute(select(
+                                Event.id, Event.win_probability_sources_rev,
+                                self._preview_retirable_row().label("retirable"),
+                            ).where(Event.id == eid))).first()
+                    if row is None:
+                        await self._publish_previews([registry().retire_missing(eid, self.source, ticket)])
+                    elif row[2]:
+                        # The background UPDATE shares the same three DB
+                        # slots as quote reads, stamps and chart custody.
+                        # Inline terminal callers already own their slot.
+                        async with self._session_slot():
+                            await self._retire_preview_event(eid, row[1], ticket)
+        except Exception:
+            self.preview_stats["publish_errors"] += 1
+            logger.warning("live_blend_refresh[%s]: preview capacity maintenance incomplete",
+                           self.source, exc_info=True)
+
+    async def _close_preview_maintenance(self):
+        self._preview_maintenance_closed = True
+        task = self._preview_maintenance_task
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        interrupted = None
+        while not task.done():
+            try:
+                await asyncio.wait({task})
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+        if not task.cancelled():
+            task.exception()
+        if interrupted is not None:
+            raise interrupted
+
+    async def _preview_admission_read(self) -> Optional[int]:
+        """Read-before-admit ticket, without capacity scans on the flush path."""
+        from app.utils.blend_preview import registry
+        if not registry().ledger:
+            return None
+        self._start_preview_maintenance()
+        try:
+            async with asyncio.timeout(.25):
+                before, _ = await self._preview_ticket()
+                return before
+        except Exception:
+            self.preview_stats["publish_errors"] += 1
+            logger.warning("live_blend_refresh[%s]: preview admission read unavailable", self.source,
+                           exc_info=True)
+            return None
+
+    async def _retire_terminal_preview_read(self, grouped, ticket: int) -> None:
+        from app.utils.blend_preview import PREVIEW_STATUSES, registry
+
+        preview = registry()
+        for event_id, (event, _group) in grouped.items():
+            if event_id not in self.preview_events:
+                continue
+            if event.status not in PREVIEW_STATUSES or event.completed_at is not None:
+                rev = getattr(event, "preview_rev", None)
+                if type(rev) is int and rev >= 0:
+                    # One retirement per statement ticket. A racing retirement
+                    # refuses this one; it must wait for another real read.
+                    await self._retire_preview_event(event_id, rev, ticket)
+                    return
+
+    async def _retire_preview_event(self, event_id: int, read_rev: int, ticket: int) -> None:
+        """Preserve an ineligible row's floor before forgetting Redis state.
+
+        A fresh read alone is insufficient: source revisions do not change on
+        status-only updates. Under the event row lock, this conditional SQL
+        increment leaves every future read strictly above the retired floor.
+        It changes neither source values nor observation timestamps. A failed
+        or timed-out transaction leaves the existing Redis guard in place.
+        """
+        from sqlalchemy import update
+        from app.models.models import Event
+        from app.tasks.base import get_task_session
+        from app.utils.blend_preview import registry
+
+        preview = registry()
+        try:
+            async with asyncio.timeout(.25):
+                # Close the preview first, including if the durable advance
+                # cannot acquire its row. Later duplicate terminal operations
+                # carry the old ticket and cannot recreate retired state.
+                await self._publish_previews([{
+                    "ledger_op": "terminal", "event_id": event_id, "source": self.source,
+                    "ctx_rev": read_rev, "read_ticket": ticket,
+                }])
+                factory = self._session_factory or get_task_session
+                async with factory() as session:
+                    durable = (await session.execute(update(Event).where(
+                        Event.id == event_id,
+                        self._preview_retirable_row(),
+                        Event.win_probability_sources_rev >= read_rev,
+                        Event.win_probability_sources_rev < 9007199254740991,
+                    ).values(win_probability_sources_rev=Event.win_probability_sources_rev + 1)
+                      .returning(Event.win_probability_sources_rev))).scalar_one_or_none()
+                    if durable is None:
+                        return
+                    await session.commit()
+                # Only a successful COMMIT can authorize deletion. Redis
+                # still checks ticket, owners, and all event-local floors.
+                await self._publish_previews([
+                    preview.retire_read(event_id, self.source, durable - 1, ticket,
+                                        committed_rev=durable),
+                ])
+        except Exception:
+            self.preview_stats["publish_errors"] += 1
+            logger.warning("live_blend_refresh[%s]: preview retirement incomplete", self.source,
+                           exc_info=True)
+
+    async def _prepare_ledger_previews(self, items: list) -> list[dict]:
+        """TSP-1: run settlement operations now, so their frames can be ordered.
+
+        Single-source registries already return frames: unchanged. A failure
+        costs only the preview (the frames are dropped), never the commit.
+        """
+        if not items or not any("ledger_op" in item for item in items):
+            return items
+        try:
+            from app.utils.blend_preview import registry
+            from app.utils.market_quote_push import _checkout
+
+            preview = registry()
+            async with asyncio.timeout(1):
+                if preview.claim_lock is None:
+                    preview.claim_lock = asyncio.Lock()
+                pool = self._client().connection_pool
+                async with preview.claim_lock:
+                    connection = await _checkout(pool)
+                    try:
+                        if preview.unclaimed(self.source):
+                            await self._claim_preview_epoch(connection, preview)
+                        return await preview.prepare(
+                            items, self._preview_call(connection), self.preview_stats,
+                        )
+                    except BaseException:
+                        self._redis = None
+                        await connection.disconnect()
+                        raise
+                    finally:
+                        await pool.release(connection)
+        except Exception:
+            self.preview_stats["publish_errors"] += 1
+            logger.warning(
+                "live_blend_refresh[%s]: ledger preview settlement incomplete (%s operations)",
+                self.source, len(items), exc_info=True,
+            )
+            return []
+
+    async def _publish_previews(self, frames: list[dict], *, prepare_frames=None) -> None:
         """Fenced PUBLISH of provisional frames. Never raises; never retained.
 
         Not `_publish`: a preview has no revision, owes no recovery intent and
@@ -4507,7 +5283,7 @@ class LiveBlendRefresher:
         drops the blends of a process another worker has superseded. No
         epoch, no blend.
         """
-        if not frames:
+        if not frames and prepare_frames is None:
             return
         try:
             import json
@@ -4527,10 +5303,33 @@ class LiveBlendRefresher:
                 async with preview.claim_lock:
                     connection = await _checkout(pool)
                     try:
-                        if preview.epoch is None:
+                        if preview.unclaimed(self.source):
                             await self._claim_preview_epoch(connection, preview)
+                        if prepare_frames is not None:
+                            frames = await prepare_frames()
+                            if not frames:
+                                return
+                        if preview.ledger:
+                            # TSP-1: operations and prepared frames run through
+                            # the ledger CAS; nothing is relabeled here.
+                            await preview.execute(
+                                frames, self._preview_call(connection), event_channel,
+                                self.preview_stats,
+                            )
+                            return
+                        # A blend composed before this lock may be older than a
+                        # revoke another batch sent while it waited (#10090).
+                        kept = [f for f in frames if not preview.withdrawn(f)]
+                        if len(kept) < len(frames):
+                            self.preview_stats["withdrawn"] = (
+                                self.preview_stats.get("withdrawn", 0) + len(frames) - len(kept)
+                            )
+                            frames = kept
+                            if not frames:
+                                return
                         argv: list = [preview.epoch]
                         for frame in frames:
+                            preview.sending(frame)
                             frame["preview"]["epoch"] = preview.epoch
                             argv.extend((
                                 frame["preview"]["kind"],
@@ -4699,7 +5498,12 @@ def hand_off_pending(refresher) -> int:
     Returns how many blend events were handed off. Committed history scalars
     travel separately, without the blend handoff's age cutoff. Its owner must
     already be joined; a legacy/test refresher without that owner is supported.
+    Both consumers call this in their teardown `finally`, so it also closes the
+    run's idle bound sampler; their `reap_stopped_loops` then joins it.
     """
+    held = getattr(refresher, "held_quotes", None)
+    if isinstance(held, HeldRowQuotes):
+        _park_closing_sampler(getattr(refresher, "source", None), held.close())
     try:
         if refresher._history_task is not None and not refresher._history_task.done():
             raise RuntimeError("history owner must join before handing off its debt")

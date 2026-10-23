@@ -89,6 +89,55 @@ and a fight has no points (#9006). Those and any undeclared sport serve
 ``format_unsupported``. The table is the web's ``PROJECTED_FINAL_FORMATS``, so
 producer and card admit the same sports.
 
+── WHAT THE ACTUAL SCORE COVERS (soccer) ───────────────────────────────────────
+
+A forecast settles on a period, and so does a scoreboard. Football and
+basketball are simple: the final is ``full_game``, overtime included, which is
+what their lines settle on. A soccer final is not: a knockout level after 90
+minutes goes to extra time and maybe penalties, and the stored score is then
+NOT the 90-minute score the forecast is about. The forecast's own ``period`` is
+no evidence of what the scoreboard covers.
+
+So a settled soccer row also carries ``final_score_period: "regulation"`` when,
+and only when, its own stored ``period`` says the match ENDED at full time. That
+is the contract the three-way accuracy curve already grades on
+(``soccer_three_way.regulation_finish_proven``, CERT-4066): the ESPN sync writes
+``status.type.detail`` into ``period``, ``"FT"`` on a full-time finish, and the
+extra-time and shootout finishes carry other details, refused by exact
+equality. A period left at a live token, an absent period, ``AET`` or a shootout
+detail serves NO key, so the comparison is withheld rather than set against an
+extra-time total or a shootout tally. Nothing is inferred from the score, the
+clock, the competition or the forecast.
+
+The box-score status the curve also accepts is not used here: list routes do not
+load ``box_score_data``, so using it would let the event page compare a game its
+own card refuses. The key is a sibling of the forecast and is set whether or
+not a forecast was found: it is a fact about the score, not about the reading.
+Football and basketball rows serve no key; their callers pass ``full_game``.
+
+── LIVE DETAIL ─────────────────────────────────────────────────────────────────
+
+The event page of a game being played may ask the same question, so its
+headline can set the current in-play projection beside the one retained from
+before the scheduled start (``read_pregame_projections(..., live_detail=True)``).
+Only the event page passes it, and only a row that PRINTS ``"live"`` is added;
+every list, search and feed caller stays settled-only. Nothing else changes:
+the same boundary and its provenance gates, the same statement and selection,
+the same format table and refusals, the same object.
+
+* **The baseline is not the in-play reading.** The in-play pair
+  (``card_projected_pair._live_projection``) admits only rows at or after this
+  same ``commence_time``; this reads only rows strictly before it. No row can be
+  both, so the first in-play reading can never become the baseline. A live row
+  whose published start is still ahead is not asked at all.
+* **Soccer's period is the forecast's, not the scoreboard's.** The baseline
+  carries ``period: "regulation"`` because its lines settle on 90 minutes. A
+  live row never serves ``final_score_period`` (there is no final yet), and the
+  baseline is not withheld for want of one. Whether the CURRENT pair may be set
+  beside it is the in-play pair's own gate (it is withheld outside regulation
+  play), so a client compares only when both objects name the same ``unit`` and
+  ``period``.
+
 ── PROVENANCE IS ITS OWN ───────────────────────────────────────────────────────
 
 ``prematch_odds.source`` names the VENUE of the settled probability prior
@@ -111,6 +160,7 @@ from app.utils.odds_math import (
 )
 from app.utils.prematch_reading import SETTLED_STATUSES
 from app.utils.scheduled_start import loaded_commence_time_source, start_is_from_schedule
+from app.utils.soccer_three_way import is_soccer_key, regulation_finish_proven
 from app.utils.start_placeholder import (
     espn_start_placeholder_tag,
     espn_start_placeholder_tags,
@@ -121,6 +171,15 @@ from app.utils.start_placeholder import (
 #: The served object's key and its refusal's key. Siblings of ``prematch_odds``.
 PROJECTION_KEY = "pregame_projection"
 UNAVAILABLE_KEY = "pregame_projection_unavailable"
+#: What a settled row's ACTUAL score covers, when its own row proves it. A
+#: sibling of the forecast, never inside it (see "WHAT THE ACTUAL SCORE COVERS").
+SCORE_PERIOD_KEY = "final_score_period"
+#: The one value served: a soccer match that ended at full time.
+SCORE_PERIOD_REGULATION = "regulation"
+
+#: The one non-settled status the event page may ask about (``live_detail``).
+#: Exact: ``suspended``, ``scheduled`` and anything unrecognised are not asked.
+LIVE_DETAIL_STATUS = "live"
 
 #: The only kind produced, named for the boundary it actually used: each book's
 #: last reading before the PUBLISHED start. It is not ``"latest_before_play"``:
@@ -199,7 +258,8 @@ def _loaded(event: Any, name: str) -> Any:
 def pregame_boundary(event: Any) -> tuple[Optional[datetime], Optional[str]]:
     """``(boundary_at, None)`` when the row's start may bound a pregame read, else ``(None, reason)``.
 
-    Not a status check: callers decide which rows are asked (settled only).
+    Not a status check: callers decide which rows are asked (settled, plus a
+    live row on the event page: see "LIVE DETAIL").
     """
     commence = _utc(_loaded(event, "commence_time"))
     if commence is None:
@@ -393,15 +453,38 @@ PREGAME_PROJECTION_SQL = """
 """
 
 
-def plan_pregame_projections(
-    events: Iterable[Any], sport_key_of, status_of=None
-) -> tuple[Optional[dict], dict[int, dict]]:
-    """Decide every settled row's question in one pass: ``(binds, answers)``.
+def final_score_period(event: Any, sport_key: Optional[str], status: Any) -> Optional[str]:
+    """``"regulation"`` when a settled soccer row's own ``period`` proves a full-time finish, else ``None``.
 
-    ``answers`` already holds each settled row that is refused before any read
+    ``status`` is the status the card prints. Only the loaded column is read
+    (``_loaded``): a row that did not load ``period`` refuses, it never lazy-loads.
+    """
+    if status not in SETTLED_STATUSES or not is_soccer_key(sport_key):
+        return None
+    if not regulation_finish_proven(_loaded(event, "period")):
+        return None
+    return SCORE_PERIOD_REGULATION
+
+
+def plan_pregame_projections(
+    events: Iterable[Any],
+    sport_key_of,
+    status_of=None,
+    *,
+    live_detail: bool = False,
+    now: Optional[datetime] = None,
+) -> tuple[Optional[dict], dict[int, dict]]:
+    """Decide every asked row's question in one pass: ``(binds, answers)``.
+
+    ``answers`` already holds each asked row that is refused before any read
     (``{UNAVAILABLE_KEY: reason}``); ``binds`` covers the rest, or is ``None``
-    when nothing needs reading. Unsettled rows are absent from both: they are
-    not asked. ``sport_key_of(event)`` must not emit IO.
+    when nothing needs reading. Rows that are not asked are absent from both.
+    ``sport_key_of(event)`` must not emit IO.
+
+    By default only SETTLED rows are asked. ``live_detail=True`` also asks a
+    row that prints exactly ``"live"`` (see "LIVE DETAIL" below); only the
+    event page passes it, so every list and feed caller keeps settled-only
+    cost and output.
 
     ``status_of(event)`` is the status the CARD PRINTS, when the caller has
     one. Routes pass it so "settled" means what the reader sees: #11295's
@@ -415,7 +498,8 @@ def plan_pregame_projections(
     answers: dict[int, dict] = {}
     for event in events:
         status = status_of(event) if status_of is not None else _loaded(event, "status")
-        if status not in SETTLED_STATUSES:
+        live = live_detail and status == LIVE_DETAIL_STATUS
+        if status not in SETTLED_STATUSES and not live:
             continue
         event_id = _loaded(event, "id")
         if event_id is None:
@@ -427,6 +511,12 @@ def plan_pregame_projections(
         boundary, reason = pregame_boundary(event)
         if boundary is None:
             answers[event_id] = {UNAVAILABLE_KEY: reason}
+            continue
+        if live and boundary > (_utc(now) or datetime.now(timezone.utc)):
+            # A live row whose published start is still ahead: every row before
+            # that start may already be in-play, so it has no pregame side yet.
+            # Served statuses cannot reach this (`served_event_status` downgrades
+            # a live claim before its start); a stored-status caller can.
             continue
         ids.append(event_id)
         cutoffs.append(boundary)
@@ -461,8 +551,9 @@ async def read_pregame_projections(
     status_of=None,
     *,
     timeout_ms: Optional[int] = None,
+    live_detail: bool = False,
 ) -> dict[int, dict]:
-    """``{event_id: {PROJECTION_KEY: …} | {UNAVAILABLE_KEY: reason}}`` for the settled rows.
+    """``{event_id: {PROJECTION_KEY: …} | {UNAVAILABLE_KEY: reason}}`` for the asked rows.
 
     At most one statement, inside a SAVEPOINT so a failure (a statement
     timeout on a bounded route) cannot poison the caller's transaction. A
@@ -476,18 +567,39 @@ async def read_pregame_projections(
     writes nothing, and the rollback reverts the SET LOCAL so the bound cannot
     leak into a later stage on the same session. ``timeout_ms`` of zero or less
     means no budget is left: no round trip, and ``read_failed``.
+
+    ``live_detail`` is :func:`plan_pregame_projections`' opt-in, for the event
+    page only. It adds no statement: the live row joins the same one.
     """
     import logging
 
     from sqlalchemy import text
 
-    plan, answers = plan_pregame_projections(list(events), sport_key_of, status_of)
-    if plan is None:
+    events = list(events)
+    plan, answers = plan_pregame_projections(
+        events, sport_key_of, status_of, live_detail=live_detail
+    )
+    # What each settled row's actual score covers: decided from the row alone,
+    # so it is served whatever the read below answers.
+    score_periods: dict[int, str] = {}
+    for event in events:
+        status = status_of(event) if status_of is not None else _loaded(event, "status")
+        event_id = _loaded(event, "id")
+        period = final_score_period(event, sport_key_of(event), status)
+        if event_id is not None and period is not None:
+            score_periods[event_id] = period
+
+    def _answered() -> dict[int, dict]:
+        for event_id, period in score_periods.items():
+            answers.setdefault(event_id, {})[SCORE_PERIOD_KEY] = period
         return answers
+
+    if plan is None:
+        return _answered()
     failed = {event_id: {UNAVAILABLE_KEY: REASON_READ_FAILED} for event_id in plan["ids"]}
     if timeout_ms is not None and timeout_ms <= 0:
         answers.update(failed)
-        return answers
+        return _answered()
     try:
         nested = await db.begin_nested()
         try:
@@ -513,16 +625,19 @@ async def read_pregame_projections(
             exc_info=True,
         )
         answers.update(failed)
-        return answers
+        return _answered()
     answers.update(answers_from_rows(plan, rows))
-    return answers
+    return _answered()
 
 
 def attach_pregame_projection(payload: dict, answer: Optional[Mapping[str, Any]]) -> None:
-    """Put one row's answer on its served dict: one of the two keys, or neither."""
+    """Put one row's answer on its served dict: one of the two forecast keys, or
+    neither, plus the actual score's period when the row proved one."""
     if not answer:
         return
     if answer.get(PROJECTION_KEY) is not None:
         payload[PROJECTION_KEY] = dict(answer[PROJECTION_KEY])
     elif answer.get(UNAVAILABLE_KEY):
         payload[UNAVAILABLE_KEY] = answer[UNAVAILABLE_KEY]
+    if answer.get(SCORE_PERIOD_KEY) == SCORE_PERIOD_REGULATION:
+        payload[SCORE_PERIOD_KEY] = SCORE_PERIOD_REGULATION

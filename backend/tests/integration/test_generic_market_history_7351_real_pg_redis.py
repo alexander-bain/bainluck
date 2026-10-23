@@ -105,11 +105,24 @@ from app.utils.futures_chart_series import (  # noqa: E402 — after the skip ga
 #: Derived from `FINE_TIER_HOURS` rather than written as 1789357352 so the day the
 #: tier moves again this constant moves with it instead of reddening as a literal
 #: nobody can date.
+#:
+#: ⚠️ THE HOURLY BYTES TOO, SINCE #10955. `kalshi-60m-31d.json` is Kalshi's real
+#: answer for `start_ts = 1787197352` (31 days back; kept below as
+#: `recorded_start_ts`, see PROVENANCE.md). #10955 made the venue bank ask for the
+#: hourly tier over the market's whole life, so for this 32-day-old specimen the
+#: ask now starts at its LISTING — the same instant the recorded daily request
+#: starts at, `created_at` in the saved detail, truncated to a second. Read from
+#: those saved bytes, never from `candle_calls`. Same argument as the fine tier:
+#: the saved answer is a sub-window of the wider ask, so it can under-serve, never
+#: invent; it does not prove the venue serves the extra day (#10955 measured that
+#: against the venue).
+_LISTED_TS = 1787093355
 RECORDED_KALSHI_REQUESTS = [
     {"period_interval": 1, "start_ts": 1789875752 - int(_FINE_TIER_HOURS * 3600),
      "end_ts": 1789875752, "file": "kalshi-1m-24h.json"},
-    {"period_interval": 60, "start_ts": 1787197352, "end_ts": 1789875752, "file": "kalshi-60m-31d.json"},
-    {"period_interval": 1440, "start_ts": 1787093355, "end_ts": 1789875752, "file": "kalshi-1440m-life.json"},
+    {"period_interval": 60, "start_ts": _LISTED_TS, "recorded_start_ts": 1787197352,
+     "end_ts": 1789875752, "file": "kalshi-60m-31d.json"},
+    {"period_interval": 1440, "start_ts": _LISTED_TS, "end_ts": 1789875752, "file": "kalshi-1440m-life.json"},
 ]
 
 #: sha256 of every fixture byte this file replays. The first five are the brief's
@@ -825,6 +838,15 @@ def test_B1_cold_read_asks_once_the_fill_replays_the_recorded_requests_warm_read
 
     results = broker.run_enqueued()
     assert results[0]["results"][0]["status"] == "ok"
+    # #10955: the hourly ask starts at the listing the saved detail records, and
+    # the saved hourly bytes all sit inside the narrower window they answered.
+    listed = datetime.fromisoformat(_fx("59165099-detail.json")["created_at"])
+    assert int(listed.timestamp()) == _LISTED_TS
+    hourly = next(r for r in RECORDED_KALSHI_REQUESTS if r["period_interval"] == 60)
+    assert all(
+        hourly["recorded_start_ts"] <= c["end_period_ts"] <= hourly["end_ts"]
+        for c in _fx(hourly["file"])["markets"][0]["candlesticks"]
+    )
     # The fill asked the venue EXACTLY what the saved bytes answered.
     assert [
         {k: r[k] for k in ("period_interval", "start_ts", "end_ts")} for r in venue.provider_requests()

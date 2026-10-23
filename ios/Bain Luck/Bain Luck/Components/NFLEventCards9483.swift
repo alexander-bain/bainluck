@@ -312,7 +312,7 @@ struct NFLFinishCardView9483: View {
                     HStack(alignment: .firstTextBaseline) {
                         teamName(isHome: isHome)
                         Spacer(minLength: 8)
-                        number(isHome ? card.pregame.home : card.pregame.away, label: "pregame projection")
+                        number(isHome ? card.pregame.home : card.pregame.away, label: card.pregameLabel)
                         if let later, let laterLabel {
                             number(isHome ? later.home : later.away, label: laterLabel.lowercased())
                                 .frame(minWidth: 72, alignment: .trailing)
@@ -320,7 +320,7 @@ struct NFLFinishCardView9483: View {
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         teamName(isHome: isHome)
-                        number(isHome ? card.pregame.home : card.pregame.away, label: "pregame projection",
+                        number(isHome ? card.pregame.home : card.pregame.away, label: card.pregameLabel,
                                alignment: .leading)
                         if let later, let laterLabel {
                             number(isHome ? later.home : later.away, label: laterLabel.lowercased(),
@@ -330,11 +330,17 @@ struct NFLFinishCardView9483: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            Text(card.final != nil ? "Points · outline = pregame · cross = final"
-                 : card.projectedNow != nil ? "Points · outline = pregame · filled = projected now"
-                 : "Projected points")
+            Text(card.key)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+            // #9483 A3 — live with no current projection: said, so the earlier
+            // pair above is never read as the current one.
+            if let note = card.missingCurrentNote {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
@@ -389,10 +395,12 @@ struct NFLFinishCardView9483: View {
 
     private var accessibilityText: String {
         var parts = [card.kicker, card.headline(awayName: awayName, homeName: homeName),
-                     "Pregame projection \(awayName) \(Self.points(card.pregame.away)), \(homeName) \(Self.points(card.pregame.home))"]
+                     "\(card.pregameName) "
+                     + "\(awayName) \(Self.points(card.pregame.away)), \(homeName) \(Self.points(card.pregame.home))"]
         if let later, let laterLabel {
             parts.append("\(laterLabel) \(awayName) \(Self.points(later.away)), \(homeName) \(Self.points(later.home))")
         }
+        if let note = card.missingCurrentNote { parts.append(note) }
         return parts.joined(separator: ". ")
     }
 }

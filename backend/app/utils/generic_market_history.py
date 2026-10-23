@@ -855,7 +855,8 @@ def declared_hole_grains(
     fill runs for a market of this age — `candle_calls` / `clob_calls`
     (`_lifetime_hours`) — and not restated here, so a change to the plan moves
     this with it. A call counts only where its reach is DECLARED: an explicit
-    lookback (the 144 h fine tier on both venues, Kalshi's 31-day hourly tier),
+    lookback (the 144 h fine tier on both venues, Kalshi's hourly tier — whole
+    life up to ~375 days for this fill since #10955, never less than 31 days),
     or the plan's whole-life call (Kalshi daily since listing, Polymarket
     `interval=max` at 12-hourly). Polymarket's hourly tier is a NAMED range
     (`interval=1m`) with no declared lookback, so it is not counted: an
@@ -869,7 +870,7 @@ def declared_hole_grains(
     from app.utils.futures_chart_series import candle_calls, clob_calls
 
     if source == "kalshi":
-        calls = candle_calls(lifetime_hours)
+        calls = candle_calls(lifetime_hours, hourly_whole_life=True)
         tiers = [
             (None if c.lookback is None else c.lookback.total_seconds(),
              float(c.period_interval) * 60.0)

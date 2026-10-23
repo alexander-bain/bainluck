@@ -84,6 +84,7 @@ import pytest
 from sqlalchemy import text
 
 from app.tasks import polymarket_ws as pm
+from app.utils.blend_preview import is_preview_frame
 from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: F401
     DB_URL,
     rig,
@@ -211,6 +212,36 @@ def real_redis():
         "no real Redis: set EVENT_FRAME_REDIS_SERVER (a redis-server binary) or "
         "PM_WITHDRAWAL_REDIS_URL (a loopback server, dedicated db)"
     )
+
+
+@pytest.fixture
+async def default_preview_redis(monkeypatch, real_redis, consumer):
+    """Run default DNPL Lua alongside the independently checked commit sink.
+
+    The recording connection implements committed packed publications only.
+    Give preview commands a real transport instead of treating its missing
+    send_command method as a simulated Redis outage on every healthy flush.
+    Explicit _client failures in the cases still fail before this transport.
+    """
+    from app.tasks.live_blend_refresh import LiveBlendRefresher
+    from tests.integration.test_pm_stamp_release_wake_10090_pg import _Connection
+    from tests.integration.test_pm_nongame_first_wait_10090_pg import warm_price_statement
+
+    # These cases inject publication faults into a running price consumer.
+    # Prepare asyncpg's array types on its five connections before arming the
+    # unchanged 250 ms price deadline; no rows are changed by the warmup.
+    await warm_price_statement(consumer)
+    client = real_redis.client()
+    shipped = LiveBlendRefresher._preview_call
+    monkeypatch.setattr(
+        LiveBlendRefresher, "_preview_call",
+        staticmethod(lambda connection: client.execute_command
+                     if isinstance(connection, _Connection) else shipped(connection)),
+    )
+    try:
+        yield
+    finally:
+        await client.aclose()
 
 
 async def next_message(pubsub, timeout=1):
@@ -1005,7 +1036,9 @@ async def test_late_notification_does_not_override_newer_revision(
         assert not t.invalidations, result
 
 
-async def test_publish_error_retains_owed_notification(rig, consumer, monkeypatch):
+async def test_publish_error_retains_owed_notification(
+    rig, consumer, monkeypatch, default_preview_redis,
+):
     t = await setup(rig, consumer, monkeypatch)
     await prime(t)
     old = t.r._client
@@ -1112,14 +1145,22 @@ async def test_real_redis_ambiguous_ack_retains_then_replays_identical_revision(
         async def release(self, c):
             await client.connection_pool.release(c.c)
 
+    previews = []
+
     async def message():
+        # Default DNPL shares the channel with committed publications. Only
+        # its recognized preview frames lack committed revision identity.
         async with asyncio.timeout(2):
             while True:
                 value = await pubsub.get_message(
                     ignore_subscribe_messages=True, timeout=0.1
                 )
                 if value:
-                    return json.loads(value["data"])
+                    frame = json.loads(value["data"])
+                    if is_preview_frame(frame):
+                        previews.append(frame)
+                        continue
+                    return frame
 
     try:
         await client.ping()
@@ -1161,6 +1202,7 @@ async def test_real_redis_ambiguous_ack_retains_then_replays_identical_revision(
             "pending_after_ambiguous_send": pending,
             "remaining_after_ack": remaining,
             "newer": newer,
+            "previews": previews,
             "late_duplicate": replayed,
             "retained": retained,
             "vertices": (await state(rig)).vertices,
@@ -1400,7 +1442,7 @@ async def event_state(rig, eid):
 
 @pytest.mark.parametrize("setting", [None, "0"])
 async def test_recycle_adopts_both_custody_kinds_at_startup_and_settles_them(
-    rig, consumer, monkeypatch, setting
+    rig, consumer, monkeypatch, setting, default_preview_redis,
 ):
     """The outgoing consumer leaves BOTH kinds of custody: event 1's removal
     committed but its notification was refused (a ``_publish`` row), and event

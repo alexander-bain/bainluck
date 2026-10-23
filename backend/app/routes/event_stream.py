@@ -454,6 +454,11 @@ async def _stream(
     hub = fanout()
     subscription = _FoldSubscription(hub)
     preview_on = event_id in preview_route_events()
+    # Old readers treat a folded frame as a singleton claim. Require explicit
+    # vector-aware admission support before sending provisional folded values.
+    folded_preview_capable = (
+        getattr(request, "query_params", {}).get("preview_protocol") in {"folded-v1", "folded-v2"}
+    )
     started = asyncio.get_event_loop().time()
     _open_connections += 1
     initial_coverage = None
@@ -466,6 +471,40 @@ async def _stream(
     pending_quote_control = None
     active_quote_control = None
     quote_retry_at = 0.0
+    folded_projection = None
+    projection_frame = None
+    pending_projection = None
+    preview_floors = {}
+    active_preview_origin = None
+    preview_session = None
+
+    def update_preview_session(frame=None, elapsed_ms=0):
+        if preview_session is None:
+            return None
+        get_base = getattr(hub, "folded_preview_base", None)
+        base = (get_base(event_id, members=list(subscription.subscriptions))
+                if callable(get_base) else None)
+        return preview_session.update(
+            base, floors=preview_floors, now=asyncio.get_event_loop().time(),
+            frame=frame, elapsed_ms=elapsed_ms,
+        )
+
+    def note_floors(vector):
+        if not isinstance(vector, dict):
+            return
+        members = {str(eid) for eid in subscription.subscriptions}
+        for key, value in vector.items():
+            if key in members and type(value) is int and 0 <= value <= 9007199254740991:
+                preview_floors[key] = max(value, preview_floors.get(key, -1))
+
+    def covers_floors(quote):
+        if not isinstance(quote, dict):
+            return False
+        vector = quote.get("blend_fold_revision")
+        return (isinstance(vector, dict)
+                and set(vector) == {str(eid) for eid in subscription.subscriptions}
+                and all(type(vector.get(key)) is int and vector[key] >= value
+                        for key, value in preview_floors.items()))
 
     async def read_recovery(ids, confirmed):
         control = await _current_reconcile(event_id, ids)
@@ -474,8 +513,16 @@ async def _stream(
 
     try:
         await subscription.subscribe([event_id, *(contributor_ids or [])])
+        if (preview_on and len(subscription.subscriptions) > 1
+                and getattr(request, "query_params", {}).get("preview_protocol") == "folded-v2"):
+            from app.utils.folded_blend_preview_v2 import FoldedPreviewSession
+
+            preview_session = FoldedPreviewSession(event_id, list(subscription.subscriptions))
         yield f"retry: {RETRY_MS}\n\n"
-        yield sse_encode(json.dumps({"event_id": event_id}), event="open")
+        yield sse_encode(json.dumps({
+            "event_id": event_id,
+            **({"fold_session": preview_session.session} if preview_session else {}),
+        }), event="open")
         recovery_ids = list(subscription.subscriptions)
         # One owned read may finish after replay or live prices. Reconciliation
         # is an obligation, not permission to hold already committed prices.
@@ -519,12 +566,41 @@ async def _stream(
                 )
                 return
 
+            projected_preview = update_preview_session()
+            if projected_preview is not None:
+                yield sse_encode(json.dumps(projected_preview), event="preview")
+            if preview_session is not None and preview_session.reconnect_required:
+                # Withdraw the previous election before rolling over through
+                # the existing client reconnect path. Keeping this disabled
+                # session open would strand eligible previews until max-age.
+                yield sse_encode(
+                    json.dumps({"reason": "preview_election_changed"}), event="reconnect"
+                )
+                return
+
+            if folded_projection is not None and folded_projection.done():
+                quote = folded_projection.result()
+                folded_projection = None
+                if not covers_floors(quote):
+                    quote = None
+                yield sse_encode(json.dumps({
+                    **projection_frame, "folded_quote_pending": False, "folded_quote": quote,
+                }), event="folded_probability")
+                projection_frame = None
+            if folded_projection is None and pending_projection is not None:
+                projection_frame, incoming_projection = pending_projection
+                pending_projection = None
+                folded_projection = asyncio.create_task(hub.project_folded_quote(event_id, incoming_projection))
+
             if recovery_quote is not None and recovery_quote.done():
                 projected = recovery_quote.result()
                 recovery_quote = None
                 if projected is False:
                     yield sse_encode(json.dumps({"reason": "not_live"}), event="closed")
                     return
+                if (preview_on and len(subscription.subscriptions) > 1
+                        and projected is not None and not covers_floors(projected.get("folded_quote"))):
+                    projected = None
                 if projected is not None:
                     yield sse_encode(json.dumps(projected), event="folded_probability")
                 else:
@@ -544,12 +620,29 @@ async def _stream(
             if initial_coverage is not None and initial_coverage.done():
                 control = initial_coverage.result()  # Failure still closes.
                 initial_coverage = None
+                note_floors(control.get("removal_rev"))
+                if (preview_on and len(subscription.subscriptions) > 1
+                        and pending_quote_control is None):
+                    # Seed from the existing bounded recovery projector. The
+                    # open/reconcile events and live mailbox do not wait on it.
+                    pending_quote_control = ({
+                        "event_id": event_id,
+                        "rev": {str(event_id): control["removal_rev"][str(event_id)]},
+                    }, control)
                 yield sse_encode(json.dumps(control), event="reconcile")
                 last_state_control = control["custody_id"]
 
             if recovery_coverage is not None and recovery_coverage.done():
                 control, retained = recovery_coverage.result()  # Failure closes.
                 recovery_coverage = None
+                note_floors(control.get("removal_rev"))
+                if preview_on and len(subscription.subscriptions) > 1:
+                    # Rewarm even when no committed revision changed during
+                    # reconnect. Retained-frame dedup must not strand previews.
+                    origin, revision = next(iter(control["removal_rev"].items()))
+                    pending_quote_control = ({
+                        "event_id": int(origin), "rev": {origin: revision},
+                    }, control)
                 if recovery_force or control["custody_id"] != last_state_control:
                     yield sse_encode(json.dumps(control), event="reconcile")
                     last_state_control = control["custody_id"]
@@ -574,11 +667,14 @@ async def _stream(
             # `/api/feed`.
             quote_wait = (min(FRAME_WAIT_S, max(0.001, quote_retry_at - loop_now))
                           if pending_quote_control is not None and recovery_quote is None else FRAME_WAIT_S)
+            if preview_session is not None:
+                quote_wait = preview_session.wait_seconds(loop_now, quote_wait)
             from_replay = bool(replay)
             if from_replay:
                 origin_id, payload = replay.popleft()
             elif (next_frame is None and initial_coverage is None
-                  and recovery_coverage is None and recovery_quote is None):
+                  and recovery_coverage is None and recovery_quote is None
+                  and folded_projection is None):
                 # Nothing owned can complete during this wait: keep the
                 # parent's inline read, with no task or wait set per frame.
                 origin_id, payload = await _await_honouring_cancel(
@@ -593,11 +689,12 @@ async def _stream(
                         subscription.next(timeout=quote_wait)
                     )
                 waiting = {next_frame}
-                waiting.update(task for task in (initial_coverage, recovery_coverage, recovery_quote)
+                waiting.update(task for task in (initial_coverage, recovery_coverage, recovery_quote, folded_projection)
                                if task is not None)
                 done, _ = await _await_honouring_cancel(asyncio.wait(
                     waiting, return_when=asyncio.FIRST_COMPLETED,
-                    timeout=quote_wait if pending_quote_control is not None and recovery_quote is None else None
+                    timeout=quote_wait if (preview_session is not None or
+                        (pending_quote_control is not None and recovery_quote is None)) else None
                 ))
                 if next_frame not in done:
                     continue
@@ -610,6 +707,15 @@ async def _stream(
                 # Fold subscriptions share a hub generation; emit it only once.
                 if payload.generation > recovery_generation:
                     recovery_generation = payload.generation
+                    forget = getattr(hub, "forget_folded_preview", None)
+                    if callable(forget):
+                        forget(event_id)
+                    active_preview_origin = None
+                    if preview_session is not None:
+                        preview_session.reset()
+                        projected_preview = update_preview_session()
+                        if projected_preview is not None:
+                            yield sse_encode(json.dumps(projected_preview), event="preview")
                     yield sse_encode(
                         json.dumps({"generation": recovery_generation}), event="resync"
                     )
@@ -630,6 +736,9 @@ async def _stream(
             if payload is not None:
                 frame = parse_frame(payload)
                 if frame is not None and is_preview_frame(frame):
+                    from app.utils.live_fanout import mailbox_age_ms
+
+                    elapsed_ms = mailbox_age_ms(payload)
                     # #10090: a provisional blend has no revision and is
                     # never a `probability` frame. Forwarded under its own
                     # event name only for a canary event's unfolded page;
@@ -639,10 +748,48 @@ async def _stream(
                             and frame.get("event_id") == event_id
                             and len(subscription.subscriptions) == 1):
                         yield sse_encode(json.dumps(frame), event="preview")
+                    elif (preview_on and folded_preview_capable
+                          and frame.get("event_id") == origin_id
+                          and len(subscription.subscriptions) > 1):
+                        if preview_session is not None:
+                            projected_preview = update_preview_session(frame, elapsed_ms)
+                            if projected_preview is not None:
+                                yield sse_encode(json.dumps(projected_preview), event="preview")
+                            continue
+                        meta = frame.get("preview", {})
+                        if meta.get("kind") == "revoke" and active_preview_origin == origin_id:
+                            yield sse_encode(json.dumps({
+                                **frame, "event_id": event_id,
+                                "preview": {**meta, "origin_event_id": origin_id},
+                            }), event="preview")
+                        elif meta.get("kind") == "blend":
+                            project_preview = getattr(hub, "project_folded_preview", None)
+                            projected = project_preview(
+                                event_id, frame, members=list(subscription.subscriptions), floors=preview_floors,
+                                elapsed_ms=elapsed_ms,
+                            ) if callable(project_preview) else None
+                            if projected is not None:
+                                active_preview_origin = origin_id
+                                yield sse_encode(json.dumps(projected), event="preview")
                     continue
                 if frame is not None and frame.get("event_id") == origin_id:
+                    note_floors(frame.get("rev"))
+                    if (preview_on and len(subscription.subscriptions) > 1
+                            and _origin_revision(frame, origin_id) is not None):
+                        # A revision floor withdraws old provisional authority
+                        # even when this raw price is too old to replay.
+                        yield sse_encode(json.dumps({
+                            "event_id": event_id, "floor": preview_floors,
+                        }), event="fold_preview_floor")
+                        if preview_session is not None:
+                            if origin_id == event_id and frame.get("status") not in QUOTE_STATUSES:
+                                preview_session.reset()
+                            projected_preview = update_preview_session()
+                            if projected_preview is not None:
+                                yield sse_encode(json.dumps(projected_preview), event="preview")
                     control = _withdrawal_reconcile(frame, event_id, origin_id)
                     if control is not None:
+                        note_floors(control.get("removal_rev"))
                         yield sse_encode(json.dumps(control), event="reconcile")
                     if frame.get("reconcile_only") is True:
                         if (control is not None and control["custody_id"] ==
@@ -693,6 +840,11 @@ async def _stream(
                         )
                         return
                     if pending_quote:
+                        if preview_on:
+                            # One read plus latest owed trigger; keep consuming
+                            # revokes/terminal/preview while the database waits.
+                            pending_projection = (frame, incoming)
+                            continue
                         quote = await project(event_id, incoming)
                         # Every promise completes, including null on failure.
                         # Legacy clients ignore this named event; modern clients
@@ -743,7 +895,7 @@ async def _stream(
         # interrupted and cannot raise out of the generator; the hub's reader
         # sends the `UNSUBSCRIBE` on its next pass.
         subscription.release()
-        owned_reads = [task for task in (initial_coverage, recovery_coverage, next_frame, recovery_quote) if task is not None]
+        owned_reads = [task for task in (initial_coverage, recovery_coverage, next_frame, recovery_quote, folded_projection) if task is not None]
         for task in owned_reads:
             task.cancel()
         if owned_reads:

@@ -97,7 +97,10 @@ final class NFLEventCards9483Tests: XCTestCase {
         let card = try XCTUnwrap(NFLFinishCard9483.build(input(
             [pair(-30, home: 19.5, away: 23), pair(30, home: 25.5, away: 18)], floor: 0, now: 30 + 61)))
         XCTAssertNil(card.projectedNow, "a projection past the capture gap is not current")
-        XCTAssertEqual(card.headline(awayName: "Eagles", homeName: "Bears"), "Eagles projected ahead before kickoff")
+        // #9483 A3 — the history point is not proven pregame, and the old pair
+        // is never read as current.
+        XCTAssertEqual(card.headline(awayName: "Eagles", homeName: "Bears"), "Eagles led the earlier forecast")
+        XCTAssertEqual(card.missingCurrentNote, "No recent projection update")
     }
 
     func testTheFinalIsTheScoreNotAProjection() throws {

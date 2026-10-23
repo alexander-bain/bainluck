@@ -22,7 +22,8 @@ import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { matrixForStat, type DuringPlayerProps } from "@/lib/duringPlayerPropsMatrixSelection";
 import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { eventPageProjectedPair, projectedFinalLabel } from "@/lib/projectedFinalPair";
-import { finalForecastComparison } from "@/lib/finalForecastComparison";
+import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
+import { livePregameComparison } from "@/lib/livePregameComparison";
 import FinalForecastDetails from "@/components/event/FinalForecastDetails";
 import ProjectedFinalLine from "@/components/ProjectedFinalLine";
 import { teamTextColor } from "@/lib/teamColors";
@@ -61,13 +62,14 @@ import {
   pageLiveClaimIsUnbacked,
 } from "@/lib/eventLivePush";
 import { frameFoldOrder } from "@/lib/foldRevision";
-import { overlayBlendPreview } from "@/lib/blendPreview";
+import { displayedPreview, displayedProbabilityObservedAt, overlayBlendPreview, overlayBlendPreviewLine } from "@/lib/blendPreview";
 import { frameCarriesUnpricedSnapshot, snapshotRailPaysPricelessTrigger } from "@/lib/sourceSnapshot";
 import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
 import { newestServedScore } from "@/lib/event/newestServedScore";
 import LiveSparkline from "@/components/event/LiveSparkline";
 import LiveConnectionStatus from "@/components/event/LiveConnectionStatus";
+import { useObservationCount } from "@/hooks/useObservationCount";
 import ChartFullscreenDialog from "@/components/event/ChartFullscreenDialog";
 import {
   EMPTY_CONNECTION_TRACKER,
@@ -104,6 +106,9 @@ const SpecialEventMarkets = dynamic(() => import("@/components/SpecialEventMarke
 const MarketBrowser = dynamic(() => import("@/components/event/MarketBrowser"), { ssr: false });
 const GameLineBrowser = dynamic(() => import("@/components/event/GameLineBrowser"), { ssr: false });
 const QuestionCatalog = dynamic(() => import("@/components/event/QuestionCatalog"), { ssr: false });
+// #10346 pilot: three supported takeaways, only with ?highlights=preview on an event we hold evidence for.
+const EventHighlightsPreview = dynamic(() => import("@/components/event/EventHighlightsPreview"), { ssr: false });
+import { ALL_MARKETS_ANCHOR_ID, HIGHLIGHTS_PREVIEW_PARAM, highlightsPreviewFor } from "@/lib/eventHighlightsPreview";
 const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), { ssr: false, loading: ChartSkeleton });
 // UX-P152: the tournament's sections OF this page. Dynamic and below the fold —
 // 94 events on the whole site render it and none of them should pay for it in
@@ -605,7 +610,7 @@ export default function EventPage({ params }: EventPageProps) {
     chartPoints,
     status: reportedStreamStatus,
     recoveryGeneration,
-  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame, applyReconcileControl);
+  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame, applyReconcileControl, event?.blend_fold_revision);
   // #10200: the transport's own observation, for the chart status only — the
   // disconnect refetch below still keys on `streamConnected`. A stream that reports only
   // `connected` (an older hook, a test double) reads as open or idle.
@@ -1383,6 +1388,18 @@ export default function EventPage({ params }: EventPageProps) {
       ? data : null;
   }, [event?.id, event?.status, gameMarkets]);
 
+  // #10090: one disposable chart projection supplies the line and its resting
+  // probability. The adopted history/cache and source/score observations stay intact.
+  const previewChartLine = useMemo(() => overlayBlendPreviewLine(
+    event, blendPreview, blendPreviewNow, historyData?.aggregate_line ?? undefined, servedHistory,
+  ), [event, blendPreview, blendPreviewNow, historyData?.aggregate_line, servedHistory]);
+  const previewChartHistory = useMemo(() => historyData &&
+    previewChartLine !== (historyData.aggregate_line ?? undefined)
+    ? { ...historyData, aggregate_line: previewChartLine } : historyData,
+  [historyData, previewChartLine]);
+  const previewChartAt = previewChartHistory !== historyData
+    ? previewChartLine?.[previewChartLine.length - 1]?.timestamp : undefined;
+
   // Both charts read the same served + received publication history (#920).
   const sparklinePoints = useMemo(() =>
     (historyData?.aggregate_line ?? []).map(p => ({
@@ -1400,7 +1417,7 @@ export default function EventPage({ params }: EventPageProps) {
   const lastChartPoint = useMemo<ActiveChartPoint | null>(
     () =>
       computeLastChartPoint(
-        historyData,
+        previewChartHistory,
         servedScore.home_score,
         servedScore.away_score,
         // #4571 — the event row's own clock, so the helper can date the score by
@@ -1413,7 +1430,7 @@ export default function EventPage({ params }: EventPageProps) {
         // newer confirmed whole pair replace an older held history pair.
         event?.status,
       ),
-    [historyData, servedScore, event?.status, event?.espn],
+    [previewChartHistory, servedScore, event?.status, event?.espn],
   );
 
   // #4889 — ONE CLOCK ON THE PAGE. The header and the readout under the chart
@@ -1542,6 +1559,7 @@ export default function EventPage({ params }: EventPageProps) {
   // being observed lose its number on the page too.
   // #9483 NBA slice: NBA pages carry the same deck shape — winning margin and
   // scoring expectations from the served question matrix, then the projected finish.
+  const highlightsPreview = highlightsPreviewFor(event?.id, event?.status, searchParams.get(HIGHLIGHTS_PREVIEW_PARAM));
   const nflCardsOn = nflCardsApply(event?.sport);
   const storyCardsOn = storyCardsApply(event?.sport);
   const [nflCardClock, setNflCardClock] = useState(() => Date.now());
@@ -1631,8 +1649,9 @@ export default function EventPage({ params }: EventPageProps) {
         event?.sport || undefined,
         // #6158 — a late start opens "Since Start" at the observed first period.
         periodBoundaries,
+        previewChartAt,
       ),
-    [historyData, chartTimeRange, event?.commence_time, event?.status, event?.sport, periodBoundaries],
+    [historyData, chartTimeRange, event?.commence_time, event?.status, event?.sport, periodBoundaries, previewChartAt],
   );
 
   // ── #5720 — A RECORD IS NOT A SCORE, AND ON A STARTED GAME WITH NO SCORE A
@@ -1743,6 +1762,7 @@ export default function EventPage({ params }: EventPageProps) {
   const projectedFinalPair = eventPageProjectedPair({
     odds: event?.current_odds,
     sportKey: event?.sport,
+    commenceTime: event?.commence_time,
     isLive,
     ladderPair: historyData?.pm_spread_data?.projected_final,
   });
@@ -1823,9 +1843,9 @@ export default function EventPage({ params }: EventPageProps) {
   // #11296 — a FINISHED headline's forecast: the sportsbooks' last pair before
   // the scheduled start, under the actual score the columns print. Only where
   // that score is on screen (a stoppage filler prints no score to sit beside).
-  // A scoreboard final covers the full game, overtime included; soccer's
-  // forecasts are 90-minute ones, so they are refused here until a payload can
-  // say a match ended inside regulation.
+  // A football or basketball final covers the full game, overtime included;
+  // soccer's forecasts are 90-minute ones, compared only when the row serves
+  // `final_score_period: "regulation"` (a full-time finish, never extra time).
   const heroFinalForecast = useMemo(
     () =>
       isFinished && heroScorePairPresent && !heroScoreIsStoppageFiller
@@ -1834,11 +1854,29 @@ export default function EventPage({ params }: EventPageProps) {
             status: event?.status,
             homeScore: bestHomeScore,
             awayScore: bestAwayScore,
-            actualPeriod: "full_game",
+            actualPeriod: finalScorePeriod(event?.sport, event?.final_score_period),
             projection: event?.pregame_projection,
           })
         : null,
-    [isFinished, heroScorePairPresent, heroScoreIsStoppageFiller, event?.sport, event?.status, bestHomeScore, bestAwayScore, event?.pregame_projection]
+    [isFinished, heroScorePairPresent, heroScoreIsStoppageFiller, event?.sport, event?.status, bestHomeScore, bestAwayScore, event?.final_score_period, event?.pregame_projection]
+  );
+  // #11296 — a LIVE headline's retained forecast: the same pre-start reading,
+  // printed beneath the current projected final it can be compared with. Only
+  // when the line above prints the producer's typed in-play pair (same unit,
+  // same period, same start); otherwise nothing is added and the current
+  // forecast prints exactly as before.
+  const heroLiveBaseline = useMemo(
+    () =>
+      livePregameComparison({
+        sportKey: event?.sport,
+        status: event?.status,
+        isLive,
+        commenceTime: event?.commence_time,
+        odds: event?.current_odds,
+        heroProjected: heroProjectedFinal,
+        projection: event?.pregame_projection,
+      }),
+    [event?.sport, event?.status, isLive, event?.commence_time, event?.current_odds, heroProjectedFinal, event?.pregame_projection]
   );
   // #11103 — the game-story cards print the hero's projected final, never a second one.
   const nflCardsShown = useMemo(() => withPageProjection(nflCards, heroProjectedFinal), [nflCards, heroProjectedFinal]);
@@ -1861,6 +1899,53 @@ export default function EventPage({ params }: EventPageProps) {
     : bestHomeScore !== null || bestAwayScore !== null
       ? servedScore.score_observed_at
       : null;
+
+  const resolvedProbability = !eventLoading && event ? resolveProbability(
+    // #10090: the hero alone may show a provisional blend; with none held
+    // this is `event` itself.
+    overlayBlendPreview(event, blendPreview, blendPreviewNow),
+    historyData,
+    lastChartPoint,
+    isLive,
+    isFinished,
+    isSuspended,
+    // #5069 — the caption must not say "Live" over a number that stopped
+    // moving. Fed from `freshestSourceStamp` and NOT from `heroStamp`, and the
+    // difference is deliberate: `heroStamp` is the age of the whole GLANCE
+    // (min across price and score, #4469), while this caption is a claim about
+    // the BLEND alone, whose age is the max across its own sources. Using the
+    // glance's age here would strip "Live" off a ten-second-old probability
+    // whenever a score on a ten-minute beat happened to be the older fact —
+    // the mirror image of the bug #4469 fixed, and just as untrue.
+    //
+    // `heroStampIsStale` is the badge's own predicate, so the caption and the
+    // grey age badge above it cross the same boundary at the same instant.
+    //
+    // #2800 — OR'd with `liveClaimUnbacked`, because the age is only one of the
+    // two ways this number stops being current. A PINNED price is rewritten on
+    // schedule with an identical value, so it is permanently fresh to the stamp
+    // and permanently frozen in fact (Peliwo v Ziegann, 84 reads over 87
+    // minutes, all 0.99, badge reading `1m ago`). This is the same OR the age
+    // badge itself already takes through `claimWithdrawn` one line below, and
+    // the rule `effectivelyLive` states at :356 — everything that ASSERTS
+    // motion reads the withdrawal, and "Live · Bain Luck blend" asserts motion.
+    blendCaptionIsStale(
+      heroStampIsStale(freshestSourceStamp, "price"),
+      liveClaimUnbacked,
+    ),
+    true,
+  ) : null;
+  // Only the selected hero blend owns this observation clock. A history or
+  // opening fallback cannot borrow a timestamp from an unrelated source.
+  // Keep this owner above loading/error returns and outside both disclosures.
+  const acceptedPriceClock = resolvedProbability?.selectedProbabilitySource === "hero-blend"
+    && typeof resolvedProbability.homeProb === "number" && Number.isFinite(resolvedProbability.homeProb)
+      ? displayedProbabilityObservedAt(
+        event, blendPreview, blendPreviewNow,
+        event?.hero_probability_observed_at ?? freshestSourceStamp,
+      )
+      : null;
+  const observationCount = useObservationCount(eventId, acceptedPriceClock);
 
   // #5607 — a slow load is a slow load, not a failure.
   //
@@ -1970,40 +2055,7 @@ export default function EventPage({ params }: EventPageProps) {
     awayPct: servedAwayPct,
     openingHomePct,
     openingAwayPct: servedOpeningAwayPct,
-  } = resolveProbability(
-    // #10090: the hero alone may show a provisional blend; with none held
-    // this is `event` itself.
-    overlayBlendPreview(event, blendPreview, blendPreviewNow),
-    historyData,
-    lastChartPoint,
-    isLive,
-    isFinished,
-    isSuspended,
-    // #5069 — the caption must not say "Live" over a number that stopped
-    // moving. Fed from `freshestSourceStamp` and NOT from `heroStamp`, and the
-    // difference is deliberate: `heroStamp` is the age of the whole GLANCE
-    // (min across price and score, #4469), while this caption is a claim about
-    // the BLEND alone, whose age is the max across its own sources. Using the
-    // glance's age here would strip "Live" off a ten-second-old probability
-    // whenever a score on a ten-minute beat happened to be the older fact —
-    // the mirror image of the bug #4469 fixed, and just as untrue.
-    //
-    // `heroStampIsStale` is the badge's own predicate, so the caption and the
-    // grey age badge above it cross the same boundary at the same instant.
-    //
-    // #2800 — OR'd with `liveClaimUnbacked`, because the age is only one of the
-    // two ways this number stops being current. A PINNED price is rewritten on
-    // schedule with an identical value, so it is permanently fresh to the stamp
-    // and permanently frozen in fact (Peliwo v Ziegann, 84 reads over 87
-    // minutes, all 0.99, badge reading `1m ago`). This is the same OR the age
-    // badge itself already takes through `claimWithdrawn` one line below, and
-    // the rule `effectivelyLive` states at :356 — everything that ASSERTS
-    // motion reads the withdrawal, and "Live · Bain Luck blend" asserts motion.
-    blendCaptionIsStale(
-      heroStampIsStale(freshestSourceStamp, "price"),
-      liveClaimUnbacked,
-    ),
-  );
+  } = resolvedProbability!;
 
   // ═══ #6238 — THE AWAY NUMBER THIS PAGE IS ALLOWED TO PRINT ═══
   //
@@ -2322,9 +2374,16 @@ export default function EventPage({ params }: EventPageProps) {
   const connectionTerminalLabel = isFinished || venueSettledSentence
     ? "Finished"
     : stoppageLabel;
-  // The ACCEPTED price clock: the held result's own observation stamp, which a
-  // refused frame never moves and a heartbeat, reconnect or mount never touches.
-  const acceptedPriceClock = event.hero_probability_observed_at ?? freshestSourceStamp;
+  // The exact displayed probability owns this clock, including an admitted
+  // preview. An unknown preview time stays unknown until committed truth returns.
+
+  // These details compare the two clocks actually printed below. Keep the
+  // source-staleness warning policy above unchanged; an unknown preview or
+  // score clock cannot support an "oldest" claim.
+  const displayedOldestFact = acceptedPriceClock && heroStampInputs.scoreStamp
+    && Number.isFinite(Date.parse(heroStampInputs.scoreStamp))
+      ? heroFreshness({ priceStamp: acceptedPriceClock, scoreStamp: heroStampInputs.scoreStamp }).fact
+      : null;
   connectionTrackerRef.current = stepConnectionTracker(
     connectionTrackerRef.current,
     {
@@ -2361,13 +2420,18 @@ export default function EventPage({ params }: EventPageProps) {
   const connectionStatusVisible = connectionTerminalLabel
     ? connectionTrackerRef.current.sawUnfinished || showsAge
     : quoteEligible || showsAge;
+  const admittedPreviewProbability = displayedPreview(blendPreview, event, blendPreviewNow);
+  const observationDelivery = resolvedProbability?.selectedProbabilitySource === "hero-blend"
+    ? admittedPreviewProbability !== null ? "dnpl" as const : "committed" as const
+    : "unknown" as const;
   const connectionStatus = (announces: boolean) => (
     <LiveConnectionStatus
       presentation={connectionPresentation}
+      observation={{ eventId, count: observationCount, delivery: observationDelivery }}
       priceObservedAt={acceptedPriceClock}
       scoreShown={Boolean(liveGamesLine) || heroScorePairPresent}
       scoreConfirmedAt={heroStampInputs.scoreStamp}
-      oldestFact={heroStamp.fact}
+      oldestFact={displayedOldestFact}
       announces={announces}
     />
   );
@@ -3122,6 +3186,27 @@ export default function EventPage({ params }: EventPageProps) {
                   testId="event-hero-projected-final"
                 />
               )}
+              {/* #11296 — live: the projection from before the scheduled start,
+                  directly beneath the current one, same team order, the final
+                  band's own words (90-minute basis said in the label). Where it
+                  came from sits one tap down, closed. */}
+              {heroProjectedFinal && heroLiveBaseline && (
+                <>
+                  <ProjectedFinalLine
+                    label={heroLiveBaseline.label}
+                    first={{ name: heroShortNames.home, score: heroLiveBaseline.baseline.home }}
+                    second={{ name: heroShortNames.away, score: heroLiveBaseline.baseline.away }}
+                    order="home-away"
+                    variant="hero"
+                    emphasis="secondary"
+                    testId="event-hero-live-baseline"
+                  />
+                  <FinalForecastDetails
+                    details={heroLiveBaseline.details}
+                    testId="event-hero-live-baseline-details"
+                  />
+                </>
+              )}
               {/* #11296 — on a final, the forecast band under the result the
                   columns print: same team order, no grade, no colour. Where it
                   came from sits one tap down, closed. `heroProjectedFinal` is
@@ -3495,7 +3580,7 @@ export default function EventPage({ params }: EventPageProps) {
               winProbSources={historyData?.win_prob_sources}
               scoringPlays={historyData?.scoring_plays}
               scoreHistory={historyData?.score_history}
-              aggregateLine={historyData?.aggregate_line ?? undefined}
+              aggregateLine={previewChartLine}
               backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
               eventId={eventId}
@@ -3624,6 +3709,12 @@ export default function EventPage({ params }: EventPageProps) {
       </div>
 
       </SectionErrorBoundary>
+      )}
+
+      {highlightsPreview && !venueVoided && (
+        <SectionErrorBoundary label="Three takeaways" resetKey={event.id}>
+          <EventHighlightsPreview preview={highlightsPreview} catalogueAvailable={!!gameMarkets} />
+        </SectionErrorBoundary>
       )}
 
       {/* #9483 — the NFL game stories, each openable full size. */}
@@ -3922,7 +4013,9 @@ export default function EventPage({ params }: EventPageProps) {
           (#9798), the same rule as the maps and quoted lines. */}
       {gameMarkets && !venueVoided && (
         <SectionErrorBoundary label="All markets" resetKey={gameMarkets}>
-          <QuestionCatalog data={gameMarkets} status={event.status} />
+          <div id={ALL_MARKETS_ANCHOR_ID} className="scroll-mt-20 empty:hidden">
+            <QuestionCatalog data={gameMarkets} status={event.status} />
+          </div>
         </SectionErrorBoundary>
       )}
 
@@ -4132,7 +4225,7 @@ export default function EventPage({ params }: EventPageProps) {
               winProbSources={historyData?.win_prob_sources}
               scoringPlays={historyData?.scoring_plays}
               scoreHistory={historyData?.score_history}
-              aggregateLine={historyData?.aggregate_line ?? undefined}
+              aggregateLine={previewChartLine}
               backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
               eventId={eventId}

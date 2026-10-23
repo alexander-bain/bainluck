@@ -28,9 +28,9 @@ import {
 import type { HostCue } from "@/lib/sameFixtureHostCue";
 import { providerGameNumber } from "@/lib/teamGames";
 import { PinIcon } from "@/components/PinButton";
-import { cardProjectedFinal, projectedFinalLabel } from "@/lib/projectedFinalPair";
+import { cardProjectedFinal, liveCardProjectedFinal, projectedFinalLabel } from "@/lib/projectedFinalPair";
 import ProjectedFinalLine from "@/components/ProjectedFinalLine";
-import { finalForecastComparison } from "@/lib/finalForecastComparison";
+import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
 import {
   hasNoReportedResult,
   isFinishedStatus,
@@ -617,15 +617,27 @@ export default function EventCard({
   // Pre-game only, on the footer's old terms: a finished card compares results,
   // and a suspended one is stopped, not upcoming (CERT-792).
   const showProjectedFinal = !isLive && !isFinished && !isSuspended && !!projectedScore;
+  // #2920 — live: only the producer's marked in-play pair, read against the
+  // score the rows print (`liveCardProjectedFinal`). The bare pair above is
+  // never shown live: on a search row it can be the pregame reading.
+  const liveProjectedScore =
+    isLive && !isFinished && !isSuspended
+      ? liveCardProjectedFinal(odds, event.sport, event.commence_time, {
+          home: event.home_score,
+          away: event.away_score,
+        })
+      : null;
+  const bandScore = showProjectedFinal ? projectedScore : liveProjectedScore;
   // #11296 — and on a final, the sportsbooks' last pair before the scheduled
-  // start, beneath the result the score strip prints. A scoreboard final covers
-  // the full game; soccer's 90-minute forecasts are refused (see the helper).
+  // start, beneath the result the score strip prints. A football or basketball
+  // final covers the full game; a soccer final is compared only when the row
+  // serves `final_score_period: "regulation"` (see the helper).
   const finalForecast = finalForecastComparison({
     sportKey: event.sport,
     status: event.status,
     homeScore: event.home_score,
     awayScore: event.away_score,
-    actualPeriod: "full_game",
+    actualPeriod: finalScorePeriod(event.sport, event.final_score_period),
     projection: event.pregame_projection,
   });
   const showFooter = !isFinished && !isSuspended && (footerHasLead || !!event.espn?.broadcast);
@@ -1022,11 +1034,11 @@ export default function EventCard({
               per team, home first like the rows above. It was a muted `Proj
               30-22` in the footer, two unattributed numbers in the smallest type
               on the card. */}
-          {showProjectedFinal && projectedScore && (
+          {bandScore && (
             <ProjectedFinalLine
               label={projectedFinalLabel(event.sport)}
-              first={{ name: homeShort, score: projectedScore.home }}
-              second={{ name: awayShort, score: projectedScore.away }}
+              first={{ name: homeShort, score: bandScore.home }}
+              second={{ name: awayShort, score: bandScore.away }}
               order="home-away"
               variant="card"
               testId="event-card-projected-final"

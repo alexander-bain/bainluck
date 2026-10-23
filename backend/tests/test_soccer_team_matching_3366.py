@@ -111,6 +111,8 @@ ACCEPTED_LINKS: tuple[tuple[int, str], ...] = (
     (15296756, "9543349"),  # VfB Stuttgart v Viking FK  ==  Stuttgart v Viking
     (15296757, "9543350"),  # Napoli v Arsenal  ==  Napoli v Arsenal
     (15296758, "9542331"),  # Liverpool v Atlético Madrid  ==  Liverpool v Atl. Madrid
+    # #2823: the alternative-name entry, which THE MISSES deferred.
+    (15296759, "9543352"),  # Sporting Lisbon v Galatasaray  ==  Sporting CP v Galatasaray
     (
         15296760,
         "9543351",
@@ -291,11 +293,12 @@ class TestTheRuleOverTheWholePopulation:
                     SQUAD_QUALIFIERS.match(t) for t in soccer_tokens(name)
                 ), f"{fixture['home']} v {fixture['away']}"
 
-    def test_the_16_misses_are_accounted_for_by_the_boards_own_span(self, corpus):
+    def test_the_15_misses_are_accounted_for_by_the_boards_own_span(self, corpus):
         """5 past the tail, 1 before the head — read-window, not name, defects.
 
         23 before the alias table (#5829), 17 after it, and 16 since the
-        whole-name initialisms (#6022) took `Go Ahead Eagles`/`G.A. Eagles`.
+        whole-name initialisms (#6022) took `Go Ahead Eagles`/`G.A. Eagles`,
+        and 15 since #2823 took `Sporting Lisbon`/`Sporting CP`.
         Every link they closed is pinned individually in `ACCEPTED_LINKS` above.
         The read-window arms do not move with any of them: a name table cannot
         reach a fixture that is not on the board, so `after` and `before`
@@ -309,7 +312,7 @@ class TestTheRuleOverTheWholePopulation:
         ]
         head, tail = min(kickoffs), max(kickoffs)
         misses = [e for e in corpus["our_events"] if e["event_id"] not in linked]
-        assert len(misses) == 16
+        assert len(misses) == 15
         after = [e for e in misses if datetime.fromisoformat(e["commence_time"]) > tail]
         before = [
             e for e in misses if datetime.fromisoformat(e["commence_time"]) < head
@@ -664,6 +667,9 @@ class TestTheWholeNameInitialisms:
             ("LAFC", "Los Angeles FC"),
             # #3391: ESPN's 15305754 against the Odds API's 15298741, 2026-09-10.
             ("New York Red Bulls", "Red Bull New York"),
+            # #2823: StatPal's and Polymarket's against the Odds API's and ESPN's;
+            # production 15330361 / 15327076, 2026-10-21.
+            ("Sporting CP", "Sporting Lisbon"),
         ],
     )
     def test_every_entry_is_exercised_by_the_pair_that_earned_it(self, short, long):
@@ -690,6 +696,8 @@ class TestTheWholeNameInitialisms:
                 "Los Angeles FC",
                 # #3391: ESPN's name for the Red Bulls on 15305754, 2026-09-10.
                 "Red Bull New York",
+                # #2823: the Odds API's and ESPN's name, production 15330361.
+                "Sporting Lisbon",
             )
         }
         assert set(CLUB_NAME_ALIASES) <= measured

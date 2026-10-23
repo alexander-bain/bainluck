@@ -601,6 +601,14 @@ class _RecordingSession:
         if isinstance(statement, Update):
             self.updates.append(statement)
             return _Result(scalar=self._returned, rev=self.returned_rev)
+        columns = list(getattr(statement, "selected_columns", ()))
+        if [(getattr(getattr(c, "table", None), "name", None), getattr(c, "name", None))
+                for c in columns] == [("events", "id")]:
+            # #10090 — a failed chart point's retry asks whether its event row
+            # still exists; answered from the events this session holds.
+            wanted = set(statement.compile().params.values())
+            found = [event.id for _market, event in self._market_rows if event.id in wanted]
+            return _Result(scalar=found[0] if found else None)
         self._selects += 1
         from app.tasks.live_blend_refresh import (
             PREPARED_EVENT_FIELDS, PREPARED_MARKET_FIELDS, PREPARED_OUTCOME_FIELDS,
@@ -969,6 +977,7 @@ class TestTheHeadlineDoesNotWaitForItsChartPoint:
         })
         session.returned_rev = 42
         r, _ = _one_event_refresher(monkeypatch, session)
+        _refuse_redis_without_a_socket(monkeypatch)
         log = []
         sent = {eid: asyncio.Event() for eid in range(1, count + 1)}
 
@@ -1188,6 +1197,11 @@ class TestSingleEventStampTransaction:
         })
         session.returned_rev = 42
         r, _ = _one_event_refresher(monkeypatch, session)
+        # This chart-transaction control has no Redis. Fail that dependency
+        # deterministically rather than introducing network retry scheduling.
+        def unavailable_preview_client():
+            raise ConnectionError("offline chart transaction control")
+        monkeypatch.setattr(r, "_client", unavailable_preview_client)
         monkeypatch.setattr("app.tasks.live_blend_refresh.time.monotonic", lambda: 1000.0)
         if not snapshot_due:
             r._last_snapshot_at = {event_id: 999.0 for event_id in range(1, count + 1)}
@@ -1331,6 +1345,29 @@ class _LockedRowSession(_RecordingSession):
             self.updates.append(statement)
             raise _LockTimeout("canceling statement due to lock timeout")
         return await super().execute(statement, *args, **kwargs)
+
+
+def _refuse_redis_without_a_socket(monkeypatch):
+    """The ledger is always on, so a refresh reaches Redis. This rig has none.
+
+    Hand the refresher a client whose connections refuse at once, as an absent
+    local Redis does, but with no DNS lookup, no socket and no retry backoff.
+    A real lookup of ``localhost`` ran out a 0.25 s wait on CI (#11485)."""
+    import redis.asyncio as aioredis
+    from redis.backoff import NoBackoff
+    from redis.retry import Retry
+
+    class _Refused(aioredis.Connection):
+        async def _connect(self):
+            raise ConnectionRefusedError(61, "no Redis in the unit rig")
+
+    def client():
+        pool = aioredis.ConnectionPool(
+            connection_class=_Refused, retry=Retry(NoBackoff(), 0),
+        )
+        return aioredis.Redis(connection_pool=pool, retry=Retry(NoBackoff(), 0))
+
+    monkeypatch.setattr("app.tasks.redis_state.get_async_redis_client", client)
 
 
 def _one_event_refresher(monkeypatch, session, **kwargs):

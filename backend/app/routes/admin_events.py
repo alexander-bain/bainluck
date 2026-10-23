@@ -1186,6 +1186,19 @@ async def schedule_accuracy(
 ):
     """Per-sport source coverage for the admin Matching page.
 
+    The calculation is ``_compute_schedule_accuracy``; this route runs it on the
+    request clock. The Correctness Console reads the saved copy instead
+    (``/schedule/accuracy/cached``, #847).
+    """
+    _check_admin_secret(secret, request=request)
+    return await _compute_schedule_accuracy(db, days=days, now=datetime.now(timezone.utc))
+
+
+async def _compute_schedule_accuracy(db: AsyncSession, *, days: int, now: datetime) -> dict:
+    """Per-sport source coverage over events with ``commence_time >= now - days``.
+
+    The window has NO upper bound: every scheduled future event is counted.
+
     Two distinct dimensions, kept separate on purpose because they used to be
     conflated (which produced fake "0% Odds API" alarms):
 
@@ -1202,11 +1215,8 @@ async def schedule_accuracy(
        is why reading it as "Odds API coverage" wrongly reports ~0% for every
        ESPN-covered league.
     """
-    _check_admin_secret(secret, request=request)
-
     from app.models import Sport
 
-    now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
 
     # --- Dimension 1: TRUE source linkage (id columns NOT NULL) -------------
@@ -1305,3 +1315,218 @@ async def schedule_accuracy(
             ),
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# #847 — the Correctness Console's 14-day sport cards, from saved evidence.
+#
+# The legacy Matching page reads ``/schedule/accuracy?days=14`` and so runs
+# both grouped counts on every request. ``/schedule/accuracy/cached`` reads ONE
+# fixed key and never computes. Its writer is
+# ``_precompute_admin_schedule_accuracy`` in ``app.tasks.precompute_admin_health``,
+# which calls ``_compute_schedule_accuracy`` with days=14 UNCHANGED — same population
+# (``commence_time >= as_of - 14 days``, no upper bound), same counts, same
+# per-sport grouping and denominators — and saves its payload WHOLE beside the
+# clock the window was cut from. That producer is INERT: no task, no beat, no
+# caller.
+#
+# The reader goes through ``app.utils.saved_snapshot_read``: one fixed key,
+# one total deadline, a byte bound, typed states, no database dependency, no
+# window/refresh input and no write. A miss, an unreadable cache, oversized
+# bytes and a snapshot that fails the contract below each answer with their
+# own state and carry no numbers — none of them becomes a zero card.
+#
+# FRESHNESS. No policy has been reviewed, so a hit reports its age from the
+# saved ``as_of`` and says ``freshness: "unreviewed"``; a clock in the future
+# says ``"unknown"``. Nothing here calls a snapshot fresh.
+# ---------------------------------------------------------------------------
+
+SCHEDULE_ACCURACY_CACHE_KEY = "bainluck:admin:schedule_accuracy:14d:v1"
+SCHEDULE_ACCURACY_DAYS = 14
+SCHEDULE_ACCURACY_SNAPSHOT_VERSION = 1
+SCHEDULE_ACCURACY_WINDOW_COLUMN = "events.commence_time"
+# Both grouped counts must read ONE database snapshot, so the per-sport source
+# counts and the commence-time provenance describe the same events.
+SCHEDULE_ACCURACY_ISOLATION = "repeatable read"
+# The whole read — client lookup, pool wait, connect, PING, GET and its one
+# fast-fail retry — the same budget as the other console readers.
+SCHEDULE_ACCURACY_READ_DEADLINE_S = 1.0
+# One small object per sport; a real payload is a few KB. This only refuses
+# absurd bytes, and the producer refuses to publish anything larger.
+SCHEDULE_ACCURACY_MAX_BYTES = 256 * 1024
+_SCHEDULE_ACCURACY_FRESHNESS_BASIS = "age_from_as_of_the_window_was_cut_from"
+_SCHEDULE_ACCURACY_SOURCES = ("odds_api", "espn", "statpal")
+_SCHEDULE_ACCURACY_SPORT_KEYS = frozenset(
+    {"total", "sources", "commence_time_sources", "odds_api_linked_pct", "reliability"}
+)
+_SCHEDULE_ACCURACY_RATINGS = ("HIGH", "MEDIUM", "LOW")
+
+
+def _exact_dict(value, keys, reason: str) -> dict:
+    from app.utils.saved_snapshot_read import SavedPayloadInvalid
+
+    if not isinstance(value, dict) or set(value) != set(keys):
+        raise SavedPayloadInvalid(reason)
+    return value
+
+
+def check_schedule_accuracy_snapshot(snapshot) -> datetime:
+    """Check a saved snapshot against what the producer writes; return ``as_of``.
+
+    The writer runs this same check before it publishes, so a snapshot that
+    reaches a reader has passed it twice. Every type is checked before the value
+    is used and every count reconciles; nothing is defaulted.
+    """
+    from app.utils.saved_snapshot_read import (
+        SavedPayloadInvalid,
+        in_range,
+        is_count,
+        is_name,
+        parse_aware_timestamp,
+    )
+
+    _exact_dict(snapshot, {
+        "schema_version", "generated_at", "as_of", "observation_finished_at",
+        "window", "transaction", "accuracy",
+    }, "invalid_payload")
+    version = snapshot["schema_version"]
+    if type(version) is not int or version != SCHEDULE_ACCURACY_SNAPSHOT_VERSION:
+        raise SavedPayloadInvalid("unsupported_schema_version")
+    as_of = parse_aware_timestamp(snapshot["as_of"])
+    if snapshot["generated_at"] != snapshot["as_of"]:
+        raise SavedPayloadInvalid("invalid_generated_at")
+    if parse_aware_timestamp(snapshot["observation_finished_at"]) < as_of:
+        raise SavedPayloadInvalid("timestamps_out_of_order")
+
+    window = _exact_dict(
+        snapshot["window"], {"column", "days", "start", "start_inclusive", "end"}, "invalid_window"
+    )
+    if window["column"] != SCHEDULE_ACCURACY_WINDOW_COLUMN \
+            or type(window["days"]) is not int or window["days"] != SCHEDULE_ACCURACY_DAYS \
+            or window["start_inclusive"] is not True or window["end"] is not None:
+        raise SavedPayloadInvalid("invalid_window")
+    try:
+        start = parse_aware_timestamp(window["start"])
+        expected_start = as_of - timedelta(days=SCHEDULE_ACCURACY_DAYS)
+    except (SavedPayloadInvalid, OverflowError):
+        raise SavedPayloadInvalid("invalid_window") from None
+    if start != expected_start:
+        raise SavedPayloadInvalid("invalid_window")
+
+    tx = _exact_dict(snapshot["transaction"], {"isolation", "read_only"}, "invalid_transaction")
+    if tx["isolation"] != SCHEDULE_ACCURACY_ISOLATION or tx["read_only"] is not True:
+        raise SavedPayloadInvalid("invalid_transaction")
+
+    accuracy = _exact_dict(snapshot["accuracy"], {"period_days", "sports", "summary"}, "invalid_accuracy")
+    if type(accuracy["period_days"]) is not int or accuracy["period_days"] != SCHEDULE_ACCURACY_DAYS:
+        raise SavedPayloadInvalid("invalid_window")
+    sports = accuracy["sports"]
+    if not isinstance(sports, dict):
+        raise SavedPayloadInvalid("invalid_accuracy")
+    for name, card in sports.items():
+        if not is_name(name):
+            raise SavedPayloadInvalid("invalid_sport")
+        _exact_dict(card, _SCHEDULE_ACCURACY_SPORT_KEYS, "invalid_sport")
+        total = card["total"]
+        # One snapshot: a sport appears only because it has events, so a
+        # zero-denominator card is a defect here, never a measurement.
+        if not is_count(total) or total == 0:
+            raise SavedPayloadInvalid("invalid_denominator")
+        sources = _exact_dict(card["sources"], _SCHEDULE_ACCURACY_SOURCES, "invalid_sources")
+        if not all(is_count(v) for v in sources.values()):
+            raise SavedPayloadInvalid("invalid_count")
+        if any(v > total for v in sources.values()):
+            raise SavedPayloadInvalid("count_exceeds_total")
+        provenance = card["commence_time_sources"]
+        if not isinstance(provenance, dict) or not provenance \
+                or not all(is_name(k) and is_count(v) and v > 0 for k, v in provenance.items()):
+            raise SavedPayloadInvalid("invalid_commence_time_sources")
+        if sum(provenance.values()) != total:
+            raise SavedPayloadInvalid("counts_do_not_reconcile")
+        if not in_range(card["odds_api_linked_pct"], 0, 100) \
+                or card["reliability"] not in _SCHEDULE_ACCURACY_RATINGS:
+            raise SavedPayloadInvalid("invalid_rate")
+
+    summary = _exact_dict(accuracy["summary"], {
+        "total_sports", "high_reliability", "medium_reliability", "low_reliability",
+    }, "invalid_summary")
+    ratings = [card["reliability"] for card in sports.values()]
+    if summary != {
+        "total_sports": len(sports),
+        "high_reliability": ratings.count("HIGH"),
+        "medium_reliability": ratings.count("MEDIUM"),
+        "low_reliability": ratings.count("LOW"),
+    } or not all(type(v) is int for v in summary.values()):
+        raise SavedPayloadInvalid("counts_do_not_reconcile")
+    return as_of
+
+
+def _schedule_accuracy_reader_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+async def read_schedule_accuracy_saved() -> tuple[int, dict]:
+    """The whole saved-only read: ``(http_status, body)``. Never computes.
+
+    The request clock only ages the saved snapshot; nothing is written back.
+    """
+    from app.utils.saved_snapshot_read import (
+        SavedPayloadInvalid,
+        SavedReadError,
+        read_first_saved,
+        saved_reader_response,
+        strict_loads,
+    )
+
+    def respond(status, state, reason, **kw):
+        return saved_reader_response(
+            status, state, reason,
+            freshness_basis=_SCHEDULE_ACCURACY_FRESHNESS_BASIS,
+            max_bytes=SCHEDULE_ACCURACY_MAX_BYTES, **kw,
+        )
+
+    try:
+        found = await read_first_saved(
+            (SCHEDULE_ACCURACY_CACHE_KEY,), deadline_s=SCHEDULE_ACCURACY_READ_DEADLINE_S
+        )
+    except SavedReadError as exc:
+        return respond(503, "error", exc.code)
+    if found.key is None:
+        return respond(202, "miss", "no_saved_snapshot")
+    served = {"served_key": found.key, "served_from": "primary", "saved_bytes": found.size}
+    if found.size > SCHEDULE_ACCURACY_MAX_BYTES:
+        return respond(503, "oversized", "saved_snapshot_exceeds_read_bound", **served)
+    try:
+        snapshot = strict_loads(found.raw)
+        as_of = check_schedule_accuracy_snapshot(snapshot)
+    except SavedPayloadInvalid as exc:
+        return respond(503, "malformed", exc.reason, **served)
+
+    age = (_schedule_accuracy_reader_now() - as_of).total_seconds()
+    if age < 0:
+        freshness, reason = "unknown", "generated_at_in_future"
+    else:
+        freshness, reason = "unreviewed", "saved_snapshot"
+    return respond(200, "hit", reason, payload=snapshot, age_seconds=age,
+                   freshness=freshness, **served)
+
+
+@router.get("/schedule/accuracy/cached")
+async def schedule_accuracy_cached(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """#847: the 14-day sport cards from the saved snapshot ONLY.
+
+    The full legacy ``/schedule/accuracy?days=14`` payload under ``payload.
+    accuracy``, with the window and clock it was computed on. A miss is 202; an
+    unreadable cache, oversized bytes or a snapshot that fails the contract is
+    503 — each with its own ``cache_state``/``reason``. Deliberately NO
+    ``Depends(get_db)``, no ``days``/``refresh`` input and no inline fallback.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from fastapi.responses import JSONResponse
+
+    status, body = await read_schedule_accuracy_saved()
+    return JSONResponse(body, status_code=status, headers={"Cache-Control": "no-store"})

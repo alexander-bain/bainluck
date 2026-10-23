@@ -452,6 +452,16 @@ final class LiveStreamController {
     /// #10090 — a validated `reconcile` control. Separate from `onResync` on
     /// purpose: a resync generation names no rows and no obligation.
     private let onReconcile: @MainActor (LiveStreamReconcile) -> Void
+    /// #10090 — a raw `preview` event's data: a provisional blend that is NOT a
+    /// committed frame (`BlendPreview`). Touches no clock or delivery state: it
+    /// can neither keep push "delivering" nor postpone the data-silence fallback.
+    private let onPreview: @MainActor (String) -> Void
+    private let onPreviewFloor: @MainActor (String) -> Void
+    private let onPreviewOpen: @MainActor (String) -> Void
+    private let onPreviewInvalidate: @MainActor () -> Void
+    /// #10090 — previews are never replayed, so every (re)open and the end of
+    /// the match clear them.
+    private let onPreviewReset: @MainActor () -> Void
     /// #10090 — whether the owner reads `folded_probability`. Opt-in, so a
     /// surface that only needs "something moved" (Discover's cards) keeps its
     /// one refresh per raw frame instead of a second for the quote after it.
@@ -493,6 +503,11 @@ final class LiveStreamController {
         onDeliveringChange: @escaping @MainActor (Bool) -> Void,
         onResync: @escaping @MainActor () -> Void = {},
         onReconcile: @escaping @MainActor (LiveStreamReconcile) -> Void = { _ in },
+        onPreview: @escaping @MainActor (String) -> Void = { _ in },
+        onPreviewFloor: @escaping @MainActor (String) -> Void = { _ in },
+        onPreviewOpen: @escaping @MainActor (String) -> Void = { _ in },
+        onPreviewInvalidate: (@MainActor () -> Void)? = nil,
+        onPreviewReset: @escaping @MainActor () -> Void = {},
         deliversFoldedQuotes: Bool = false,
         schedule: @escaping LiveStreamSchedule = LiveStreamController.sleepThenRun,
         healthyRolloverDelay: @escaping () -> TimeInterval = {
@@ -505,6 +520,11 @@ final class LiveStreamController {
         self.onDeliveringChange = onDeliveringChange
         self.onResync = onResync
         self.onReconcile = onReconcile
+        self.onPreview = onPreview
+        self.onPreviewFloor = onPreviewFloor
+        self.onPreviewOpen = onPreviewOpen
+        self.onPreviewInvalidate = onPreviewInvalidate ?? onPreviewReset
+        self.onPreviewReset = onPreviewReset
         self.deliversFoldedQuotes = deliversFoldedQuotes
         self.schedule = schedule
         self.healthyRolloverDelay = healthyRolloverDelay
@@ -688,8 +708,10 @@ final class LiveStreamController {
 
         // The transport can reopen underneath this same handle after a drop.
         // A different server process may begin its recovery generation at 1.
-        next.on("open") { [weak self, weak next] _ in
+        next.on("open") { [weak self, weak next] raw in
             guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.onPreviewReset()
+            self.onPreviewOpen(raw)
             self.lastResyncGeneration = 0
             self.lastMessageAt = self.now()
             self.lastDataAt = self.now()
@@ -733,6 +755,7 @@ final class LiveStreamController {
                   let recovery = try? JSONDecoder().decode(LiveStreamRecovery.self, from: data),
                   recovery.generation > self.lastResyncGeneration else { return }
             self.lastResyncGeneration = recovery.generation
+            self.onPreviewInvalidate()
             self.onResync()
         }
 
@@ -746,6 +769,20 @@ final class LiveStreamController {
             self.lastMessageAt = self.now()
             guard let control = LiveStreamReconcile.decode(raw) else { return }
             self.onReconcile(control)
+        }
+
+        // #10090: a provisional blend, never routed through `onProbability` and
+        // never a delivery: no clock is touched, exactly as on web.
+        next.on("preview") { [weak self, weak next] raw in
+            guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.onPreview(raw)
+        }
+
+        // A raw commit invalidates folded preview authority before its slower
+        // committed quote arrives. This control earns no delivery or freshness.
+        next.on("fold_preview_floor") { [weak self, weak next] raw in
+            guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.onPreviewFloor(raw)
         }
 
         next.on("heartbeat") { [weak self, weak next] _ in
@@ -762,6 +799,7 @@ final class LiveStreamController {
         // page on the final number.
         next.on("closed") { [weak self, weak next] _ in
             guard let self, let next, self.handle === next else { return }
+            self.onPreviewReset()
             self.stop()
         }
 

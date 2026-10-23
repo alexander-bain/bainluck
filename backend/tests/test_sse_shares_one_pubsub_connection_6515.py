@@ -36,6 +36,7 @@ import json
 import pathlib
 import socket
 import threading
+import time
 from datetime import datetime, timezone
 
 import pytest
@@ -82,6 +83,7 @@ class _TinyPubSubServer:
         self.peak_concurrent = 0
         self.subscriptions: dict[bytes, set] = {}
         self._protocol: dict = {}
+        self._held: dict[bytes, list] = {}
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._acceptor = threading.Thread(target=self._accept_loop, daemon=True)
@@ -134,6 +136,13 @@ class _TinyPubSubServer:
 
     def _replies_to(self, conn, args):
         verb = args[0].upper() if args else b""
+        with self._lock:
+            held = self._held.get(verb)
+            pause = held[0] if held and held[1] > 0 else 0
+            if pause:
+                held[1] -= 1
+        if pause:
+            time.sleep(pause)
         if verb == b"HELLO":
             proto = int(args[1]) if len(args) > 1 else 3
             with self._lock:
@@ -184,6 +193,11 @@ class _TinyPubSubServer:
                 except OSError:
                     pass
         return len(targets)
+
+    def hold_next(self, verb: bytes, seconds: float, times: int = 1) -> None:
+        """Answer the next `times` commands named `verb` `seconds` late."""
+        with self._lock:
+            self._held[verb.upper()] = [seconds, times]
 
     def subscriber_count(self, channel: str) -> int:
         with self._lock:
@@ -271,6 +285,85 @@ def _parse_resp_command(buf: bytes):
     return pos, args
 
 
+class _PoolConnections:
+    """The request pool's connections, as the client opens and discards them.
+
+    The server's `accepted` is cumulative, and the budget is not: it caps the
+    connections a process holds AT ONCE. The two part company whenever the pool
+    discards a connection and opens its replacement — which it must after
+    `latest_frames`' 250 ms deadline cancels a read mid-reply, because redis-py
+    cannot reuse a connection whose reply is unread (#11521: a loaded CI runner
+    stalled the loop past that deadline and the server counted a fifth socket
+    while never more than four were open). The same stall can cancel a connect
+    the server has already accepted, which never becomes a connection at all.
+    So a connection is counted from the start of its connect attempt
+    (`Connection._connect`) until it is dropped — a failed attempt, or a
+    `disconnect` of a connected one — which lets the budget assertion account
+    for each replacement instead of mistaking it for a fifth connection. The
+    server stays the authority on what was accepted.
+    """
+
+    def __init__(self, port: int):
+        self.port = port
+        self.held = 0
+        self.peak = 0
+        self.discarded = 0
+
+    def install(self, monkeypatch) -> "_PoolConnections":
+        from redis.asyncio import connection as redis_connection
+
+        connect = redis_connection.Connection._connect
+        disconnect = redis_connection.AbstractConnection.disconnect
+        tally = self
+
+        async def counted_connect(conn):
+            ours = conn.port == tally.port
+            if ours:
+                tally.held += 1
+                tally.peak = max(tally.peak, tally.held)
+            try:
+                await connect(conn)
+            except BaseException:
+                if ours and not conn.is_connected:
+                    tally.held -= 1
+                    tally.discarded += 1
+                raise
+
+        async def counted_disconnect(conn, *args, **kwargs):
+            was_connected = conn.is_connected
+            await disconnect(conn, *args, **kwargs)
+            if was_connected and not conn.is_connected and conn.port == tally.port:
+                tally.held -= 1
+                tally.discarded += 1
+
+        monkeypatch.setattr(redis_connection.Connection, "_connect", counted_connect)
+        monkeypatch.setattr(
+            redis_connection.AbstractConnection, "disconnect", counted_disconnect
+        )
+        return self
+
+    def __repr__(self) -> str:
+        return (
+            f"<request pool: held={self.held} peak={self.peak} "
+            f"discarded={self.discarded}>"
+        )
+
+
+def _assert_request_pool_within_budget(wired) -> None:
+    """The replays used the request pool, and it never exceeded its cap.
+
+    Two clauses, both needed. The pool never held more than the cap at once;
+    and every socket the SERVER accepted past the cap replaced one the pool had
+    already discarded — so a socket opened by any path the client-side tally
+    cannot see still shows up here, unexplained.
+    """
+    server, pool = wired.request_server, wired.request_pool
+    cap = redis_state._REDIS_MAX_CONNECTIONS
+    assert server.accepted >= 1, "no replay read reached the request pool"
+    assert pool.peak <= cap, (pool, server.accepted)
+    assert server.accepted <= cap + pool.discarded, (pool, server.accepted)
+
+
 # ---------------------------------------------------------------------------
 # Rig
 # ---------------------------------------------------------------------------
@@ -309,9 +402,13 @@ async def wired(request, pubsub_server, monkeypatch):
 
     request_server = _TinyPubSubServer()
     pubsub_server.request_server = request_server
+    pubsub_server.request_pool = _PoolConnections(request_server.port).install(
+        monkeypatch
+    )
     request_url = (
         f"redis://127.0.0.1:{request_server.port}/0?protocol={request.param}"
     )
+    pubsub_server.request_url = request_url
     shared = []
 
     async def shared_request_client():
@@ -420,12 +517,115 @@ class TestTheBudgetHoldsAcrossConcurrentStreams:
             assert live_fanout.fanout().subscriber_count == 12
             assert live_fanout.fanout().redis_connections == 1
             # The twelve opening replays share the process's one request pool.
-            assert 1 <= wired.request_server.accepted <= (
-                redis_state._REDIS_MAX_CONNECTIONS
-            ), wired.request_server.accepted
+            _assert_request_pool_within_budget(wired)
         finally:
             for reader in readers:
                 await reader.stop()
+
+    async def test_a_replay_read_cancelled_at_its_deadline_is_replaced_not_added(
+        self, wired
+    ):
+        """#11521 — the false red, reproduced on purpose.
+
+        One replay read is answered past `latest_frames`' 250 ms deadline, as a
+        loop stall on a loaded runner does. The read is cancelled mid-reply,
+        the pool discards that connection and a later read opens its
+        replacement: the server accepts a fifth socket while the pool never
+        holds more than four. The cumulative bound this arm replaced reads that
+        as a breach; the budget assertion must not.
+        """
+        wired.request_server.hold_next(b"MGET", 0.5)
+        readers = [_Reader(4050 + n) for n in range(12)]
+        try:
+            for reader in readers:
+                await reader.opened()
+            assert await _until(
+                lambda: wired.request_pool.discarded >= 1
+                and wired.request_server.accepted > wired.request_pool.peak
+            ), (
+                "no replay read was replaced after its deadline, so this arm "
+                f"reproduces nothing: {wired.request_pool!r}, "
+                f"accepted={wired.request_server.accepted}"
+            )
+            _assert_request_pool_within_budget(wired)
+        finally:
+            for reader in readers:
+                await reader.stop()
+
+    async def test_a_loop_stall_past_the_replay_deadline_stays_within_budget(
+        self, wired, monkeypatch
+    ):
+        """#11521 — the CI shape: the event loop itself stalls.
+
+        The first replay read starts its connect, then the loop blocks for
+        longer than the 250 ms deadline. Every read and connect in flight is
+        cancelled when the loop resumes — including connects the server has
+        already accepted, which never become connections. The server's
+        cumulative count passes the cap; the pool's does not.
+        """
+        from app.routes import event_stream as route
+
+        real_latest_frames = route.latest_frames
+        stalled = []
+
+        async def stalling_latest_frames(ids):
+            read = asyncio.ensure_future(real_latest_frames(ids))
+            if not stalled:
+                stalled.append(True)
+                await asyncio.sleep(0)
+                time.sleep(0.3)
+            return await read
+
+        monkeypatch.setattr(route, "latest_frames", stalling_latest_frames)
+        readers = [_Reader(4080 + n) for n in range(12)]
+        try:
+            for reader in readers:
+                await reader.opened()
+            assert await _until(
+                lambda: wired.request_pool.discarded >= 1
+                and wired.request_server.accepted > wired.request_pool.peak
+            ), (
+                "the stall replaced no connection, so this arm reproduces "
+                f"nothing: {wired.request_pool!r}, "
+                f"accepted={wired.request_server.accepted}"
+            )
+            _assert_request_pool_within_budget(wired)
+        finally:
+            for reader in readers:
+                await reader.stop()
+
+    async def test_a_pool_per_reader_breaks_the_request_budget_in_this_rig(
+        self, wired, monkeypatch
+    ):
+        """THE REQUEST POOL'S NEGATIVE CONTROL: the budget assertion can fail.
+
+        Twelve readers each on a pool of their own, every read cut off at a
+        deadline. Each pool discards its connection, so the server's
+        accepted count is fully explained by discards — only the at-once
+        clause catches it, which is why the server clause is not enough alone.
+        """
+        from app.tasks.redis_state import get_async_redis_client
+
+        cap = redis_state._REDIS_MAX_CONNECTIONS
+        with monkeypatch.context() as patch:
+            patch.setattr(redis_state, "REDIS_URL", wired.request_url)
+            clients = [get_async_redis_client() for _ in range(12)]
+        try:
+            wired.request_server.hold_next(b"MGET", 2.0, times=12)
+            results = await asyncio.gather(
+                *(asyncio.wait_for(client.mget(["k"]), 1.0) for client in clients),
+                return_exceptions=True,
+            )
+            assert all(isinstance(r, asyncio.TimeoutError) for r in results), results
+            assert wired.request_server.accepted > cap
+            assert wired.request_pool.peak == 12
+            assert wired.request_pool.discarded == 12
+            assert wired.request_server.accepted <= cap + wired.request_pool.discarded
+            with pytest.raises(AssertionError):
+                _assert_request_pool_within_budget(wired)
+        finally:
+            for client in clients:
+                await client.aclose()
 
     async def test_the_pre_hub_shape_opens_one_socket_per_stream(self, wired):
         """THE NEGATIVE CONTROL, and the reason to believe the arm above.

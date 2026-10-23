@@ -56,6 +56,7 @@ from app.utils.futures_verified_title import (
     title_team_index,
 )
 from app.utils.generic_market_history import captures_are_coarse, captures_cover_cell
+from app.utils.grid_out_division_legs import drop_out_division_legs, out_legs_by_market
 from app.utils.kalshi_archive_reader import (
     BASIS_HOURS as ARCHIVE_BASIS_HOURS,
     LIFETIME_FLOOR as ARCHIVE_LIFETIME_FLOOR,
@@ -102,6 +103,7 @@ from app.utils.lifecycle import served_event_status
 from app.utils.resolution_authority import CALIBRATION_TRUTH_ELIGIBLE_SOURCES
 from app.utils.settled_hero import FINISHED_STATUSES
 from app.utils.settlement_stamp import (
+    BASIS_LAST_OBSERVATION,
     last_charted_timestamp as _last_charted_timestamp,
     settled_point_timestamp,
 )
@@ -178,6 +180,7 @@ def _apply_settled_winner_freeze(
     champion_name=None,
     *,
     settle_ts=None,
+    settle_basis=None,
 ):
     """Settled-means-settled evolution freeze (#1177, Queue #230/#232).
 
@@ -232,6 +235,12 @@ def _apply_settled_winner_freeze(
     otherwise take the FIRST arm's synthesized point as its evidence — the
     self-evidence trap ``last_charted_timestamp`` is annotated in red about.
     Omit it and this function reads the ladder itself, exactly as before.
+
+    ``settle_basis`` (#10955 Step 1) is WHICH witness answered that ladder, and
+    it is served on the point as ``settlement_basis`` — see
+    ``_served_settlement_basis``. It rides with ``settle_ts`` and means nothing
+    without it: when ``settle_ts`` is omitted this function reads the pair
+    itself and a lone ``settle_basis`` is ignored.
     """
     winners = [o for o in (market.outcomes or []) if getattr(o, "is_winner", False)]
     champs = []
@@ -283,7 +292,7 @@ def _apply_settled_winner_freeze(
             return
 
     if settle_ts is None:
-        settle_ts = _settled_chart_stamp(market, outcome_history)
+        settle_ts, settle_basis = _settled_chart_stamp_basis(market, outcome_history)
 
     for champ in champs:
         _freeze_one_winner_line(
@@ -292,6 +301,7 @@ def _apply_settled_winner_freeze(
             outcome_names,
             settle_ts,
             allow_synthesis=allow_synthesis,
+            settle_basis=settle_basis,
         )
 
 
@@ -303,12 +313,43 @@ def _settled_chart_stamp(market, outcome_history):
     board's winners and losers resolve at the SAME instant rather than a second
     apart, and so neither arm's injected point can become the other's witness.
     """
+    return _settled_chart_stamp_basis(market, outcome_history)[0]
+
+
+def _settled_chart_stamp_basis(market, outcome_history):
+    """`_settled_chart_stamp` plus WHICH witness answered: `(stamp, basis)`.
+
+    #10955 Step 1. The basis is one of the four `settlement_stamp` constants
+    and is what the freeze arms serve as `settlement_basis`. The stamp is read
+    exactly as `_settled_chart_stamp` reads it, once, before either arm
+    appends.
+    """
     return settled_point_timestamp(
         resolution_date=getattr(market, "resolution_date", None),
         last_observed=_last_charted_timestamp(outcome_history),
         settled_at=getattr(market, "settled_at", None),
         now=datetime.now(timezone.utc),
-    )[0]
+    )
+
+
+def _served_settlement_basis(settle_basis, nudged: bool):
+    """The `settlement_basis` a terminal settlement point serves, or None.
+
+    #10955 Step 1. The point says which witness ACTUALLY placed it, as one of
+    the four `settlement_stamp` constants, raw. Whether that witness is a known
+    time is the reader's decision, not this route's.
+
+    * Nudged to one second after the leg's own last real point: the time now
+      comes from that observation, whatever the ladder said, so it serves
+      `last_observation`.
+    * Otherwise it serves the ladder's basis as given.
+    * A caller that passed a bare `settle_ts` with no basis named no witness,
+      so a point that was not nudged carries no key at all. Production always
+      passes the pair.
+    """
+    if nudged:
+        return BASIS_LAST_OBSERVATION
+    return settle_basis
 
 
 def _co_winners_are_legitimate(market) -> bool:
@@ -325,7 +366,13 @@ def _co_winners_are_legitimate(market) -> bool:
 
 
 def _freeze_one_winner_line(
-    champ, outcome_history, outcome_names, settle_ts, *, allow_synthesis: bool
+    champ,
+    outcome_history,
+    outcome_names,
+    settle_ts,
+    *,
+    allow_synthesis: bool,
+    settle_basis=None,
 ):
     """End ONE graded winner's charted line at 1.0. See the caller's docstring."""
     entry = outcome_history.get(champ.id)
@@ -347,39 +394,46 @@ def _freeze_one_winner_line(
             entry["eliminated_at"] = None
             return
         term_ts = settle_ts
+        nudged = False
         if last_ts is not None and term_ts <= last_ts:
             term_ts = last_ts + timedelta(seconds=1)
-        entry["history"].append(
-            {
-                "timestamp": term_ts.isoformat(),
-                "probability": 1.0,
-                "american_odds": None,
-                "bookmaker": "settlement",
-            }
-        )
+            nudged = True
+        point = {
+            "timestamp": term_ts.isoformat(),
+            "probability": 1.0,
+            "american_odds": None,
+            "bookmaker": "settlement",
+        }
+        served_basis = _served_settlement_basis(settle_basis, nudged)
+        if served_basis is not None:
+            point["settlement_basis"] = served_basis
+        entry["history"].append(point)
         entry["eliminated"] = False
         entry["eliminated_at"] = None
     elif allow_synthesis:
         # Champion carried no charted snapshots at all — synthesize a minimal
         # terminal resolve point so the winner line exists and resolves.
+        # Never nudged (there is no own point), so it serves the ladder's basis.
+        point = {
+            "timestamp": settle_ts.isoformat(),
+            "probability": 1.0,
+            "american_odds": None,
+            "bookmaker": "settlement",
+        }
+        served_basis = _served_settlement_basis(settle_basis, False)
+        if served_basis is not None:
+            point["settlement_basis"] = served_basis
         outcome_history[champ.id] = {
             "outcome_id": champ.id,
             "name": outcome_names.get(champ.id, getattr(champ, "name", None) or "Unknown"),
-            "history": [
-                {
-                    "timestamp": settle_ts.isoformat(),
-                    "probability": 1.0,
-                    "american_odds": None,
-                    "bookmaker": "settlement",
-                }
-            ],
+            "history": [point],
             "eliminated": False,
             "eliminated_at": None,
         }
 
 
 def _apply_settled_loser_freeze(
-    market, outcome_history, settle_ts, outcome_id_filter=None
+    market, outcome_history, settle_ts, outcome_id_filter=None, *, settle_basis=None
 ):
     """End an EVIDENCED graded loser's charted line at 0.0 (#7927).
 
@@ -442,9 +496,13 @@ def _apply_settled_loser_freeze(
 
     Read-side only (gotcha #21): appends a terminal CHART point and writes
     nothing — not ``is_winner``, not a snapshot.
+
+    ``settle_basis`` (#10955 Step 1) is served as ``settlement_basis`` exactly
+    as on the winner arm (``_served_settlement_basis``); with ``settle_ts``
+    omitted the pair is read here and a lone ``settle_basis`` is ignored.
     """
     if settle_ts is None:
-        settle_ts = _settled_chart_stamp(market, outcome_history)
+        settle_ts, settle_basis = _settled_chart_stamp_basis(market, outcome_history)
     for outcome in market.outcomes or []:
         if not _is_evidenced_loss(outcome):
             continue
@@ -470,16 +528,20 @@ def _apply_settled_loser_freeze(
         except Exception:
             last_ts = None
         term_ts = settle_ts
+        nudged = False
         if last_ts is not None and term_ts <= last_ts:
             term_ts = last_ts + timedelta(seconds=1)
-        entry["history"].append(
-            {
-                "timestamp": term_ts.isoformat(),
-                "probability": 0.0,
-                "american_odds": None,
-                "bookmaker": "settlement",
-            }
-        )
+            nudged = True
+        point = {
+            "timestamp": term_ts.isoformat(),
+            "probability": 0.0,
+            "american_odds": None,
+            "bookmaker": "settlement",
+        }
+        served_basis = _served_settlement_basis(settle_basis, nudged)
+        if served_basis is not None:
+            point["settlement_basis"] = served_basis
+        entry["history"].append(point)
 
 
 def _is_evidenced_loss(outcome) -> bool:
@@ -5488,6 +5550,10 @@ async def get_futures_market(
         leg_sides=leg_sides,
         # #8892: and the one leg that answers "who wins" is named.
         lead_leg=await _game_container_lead_leg(db, market, leg_sides),
+        # #11493: the division legs the playoff grid has put out of the title —
+        # the card's rule (`feed._score_futures`), so the tap lands on the board
+        # the card showed. Cached grid only; a miss keeps every leg.
+        out_division_labels=(await out_legs_by_market([market])).get(market.id),
     )
     if len(bookmakers) > 1 and source_breakdown:
         detail["source_breakdown"] = source_breakdown
@@ -9084,12 +9150,21 @@ async def get_futures_history(
     # — the identity that lets one pass serve both.
     _chartable_ids = {r.outcome_id for r in _supported_field}
 
+    # #11493: a division the playoff grid has put out is not DRAWN (the legend
+    # listed "AL Central" beside the two live divisions). Both selections below
+    # choose from this list; `charted_outcomes` stays the whole field, so the
+    # scale contract divides and validates exactly as before. An explicit
+    # `outcome_id` is the caller's ask and is served.
+    drawable_outcomes = drop_out_division_legs(
+        charted_outcomes, (await out_legs_by_market([market])).get(market.id)
+    )
+
     # Get outcome IDs to chart
     if outcome_id:
         outcome_ids = [outcome_id]
     else:
         outcome_ids = _select_charted_outcome_ids(
-            charted_outcomes, _chartable_ids, top_n, champion
+            drawable_outcomes, _chartable_ids, top_n, champion
         )
 
     charted_ids = set(outcome_ids)
@@ -9236,7 +9311,7 @@ async def get_futures_history(
                 ext_outcome_ids = outcome_ids
             else:
                 ext_outcome_ids = _select_charted_outcome_ids(
-                    charted_outcomes,
+                    drawable_outcomes,
                     {r.outcome_id for r in extended_supported},
                     top_n,
                     champion,
@@ -9653,16 +9728,19 @@ async def get_futures_history(
     # that read it after the other had appended would take a synthesized point
     # as its evidence. Reading once here also means a settled board's winners
     # and losers resolve at the same instant, not a second apart.
-    _settle_ts = _settled_chart_stamp(market, outcome_history)
+    # #10955 Step 1 — the witness that answered is read in the same call and
+    # served on each settlement point as `settlement_basis`.
+    _settle_ts, _settle_basis = _settled_chart_stamp_basis(market, outcome_history)
     _apply_settled_winner_freeze(
         market, outcome_history, outcome_names, outcome_id, champion,
-        settle_ts=_settle_ts,
+        settle_ts=_settle_ts, settle_basis=_settle_basis,
     )
     # And the mirror: a leg the grader says LOST ends at 0.0, not at the last
     # price the field happened to be trading it at (two golfers who missed the
     # BMW PGA cut had their lines end at 84%).
     _apply_settled_loser_freeze(
-        market, outcome_history, _settle_ts, outcome_id_filter=outcome_id
+        market, outcome_history, _settle_ts, outcome_id_filter=outcome_id,
+        settle_basis=_settle_basis,
     )
 
     response: dict = {
@@ -10112,8 +10190,13 @@ def _format_market_detail(
     fleet_newest_observation: "datetime | None" = None,
     leg_sides: "dict[str, str] | None" = None,
     lead_leg: "str | None" = None,
+    out_division_labels: "frozenset[str] | None" = None,
 ) -> dict:
     """Format a market for detail view with all outcomes.
+
+    ``out_division_labels`` is `grid_out_division_legs.out_legs_by_market`'s set
+    for this board (#11493): a division leg every one of whose clubs the playoff
+    grid has put out leaves the page, as it leaves the Discover card.
 
     ``leg_sides`` is `_game_container_leg_sides`'s map (#8664). A leg named in it
     is served as ``"<side> — <question>"``, because its price is that side's.
@@ -10206,6 +10289,10 @@ def _format_market_detail(
         )
         if not is_placeholder_outcome_name(o.name)
     ]
+    # #11493: before the divisor, as the card drops it before its own. "AL Central
+    # <1%" read as a live chance with all five clubs eliminated; the venue's graded
+    # divisions carry no price, but this one kept its last quote until graded.
+    valid_outcomes = drop_out_division_legs(valid_outcomes, out_division_labels)
     sorted_outcomes = sorted(
         valid_outcomes,
         key=lambda o: o.current_probability or 0,

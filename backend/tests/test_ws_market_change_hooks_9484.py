@@ -67,9 +67,12 @@ import app.services.kalshi_ws as kalshi_svc
 import app.services.polymarket_api as polymarket_api
 import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.live_blend_refresh as blend_mod
+import app.tasks.polymarket_ws as poly_task
 from app.models.models import FuturesOutcome
 from app.utils.market_quote_push import market_channel, parse_market_frame
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, SET_STATEMENT_TIMEOUT_SQL
 from tests._kalshi_price_session import bind_sessions
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 pytestmark = pytest.mark.asyncio
 
@@ -134,6 +137,15 @@ def _routes_to_the_database(stmt) -> bool:
     features' statements (and the re-rank is Postgres SQL); they get the
     replayed result, exactly as in the #5411 file.
     """
+    # DNPL arms and restores the real price transaction's statement budget.
+    # These statements must neither consume a replayed slate nor fake the
+    # prior timeout value that the writer restores after its price UPDATE.
+    if any(stmt is control for control in (
+        poly_task.ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+        SET_STATEMENT_TIMEOUT_SQL,
+        SET_LOCK_TIMEOUT_SQL,
+    )):
+        return True
     if isinstance(stmt, Select):
         # The Polymarket resolution reads back the `settled_at` its own UPDATE
         # stored. Only that read; the slate SELECTs stay replayed.
@@ -188,7 +200,8 @@ class _HybridSession:
             # #10090 attempt156: the stored-live load reads its own three
             # batches; the full slate stays queued for the full read.
             self._batches[:0] = self._stored_live()
-        return _Replayed(self._batches.pop(0) if self._batches else [])
+        rows = self._batches.pop(0) if self._batches else []
+        return _Replayed(answer_slate_market_read(stmt, rows))  # #10663
 
 
 class _PipelinedPublish:

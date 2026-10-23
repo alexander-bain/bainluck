@@ -10,7 +10,8 @@ favourite a 1.5-run favourite, and never used the opening price at all.
 
 The fix: baseball's stored spread is never the model's prior
 (`model_pregame_spread`); the opening price is, and the prior is solved so the
-model opens AT that price. Every other sport's spread is a real point spread
+model opens AT that price. NHL's puck line is the same kind of handicap and
+joined the rule under #11462. Every other sport's spread is a real point spread
 and still wins over the price. Both stat-model writers normalise the spread
 before the #8522 priorless check, so a run line alone is "no prior" there too.
 """
@@ -74,11 +75,19 @@ def test_a_baseball_run_line_is_never_the_models_prior_8613(sport_key, run_line)
     [
         ("americanfootball_nfl", -7.0),
         ("basketball_nba", 4.5),
-        ("icehockey_nhl", -1.5),  # the puck line looks like a run line; not ours to drop
     ],
 )
 def test_every_other_sports_spread_passes_through_8613(sport_key, spread):
     assert model_pregame_spread(sport_key, spread) == spread
+
+
+# #11462 overrode this file's original scope note ("the puck line looks like a
+# run line; not ours to drop"): the NHL puck line is a handicap too, so the
+# opening price is its prior. Both the Odds API key and the win-prob key.
+@pytest.mark.parametrize("puck_line", [-1.5, 1.5, "-1.5"])
+@pytest.mark.parametrize("sport_key", ["icehockey_nhl", "hockey_nhl"])
+def test_an_nhl_puck_line_is_never_the_models_prior_11462(sport_key, puck_line):
+    assert model_pregame_spread(sport_key, puck_line) is None
 
 
 def test_no_spread_is_no_spread_8613():

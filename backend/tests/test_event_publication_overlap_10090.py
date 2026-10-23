@@ -87,6 +87,22 @@ def rig(monkeypatch, *, count=12, block_db=False, fail_db=False):
     r._read_groups = read
     r._session_factory = factory
     r._publish = publish
+    publication_ready = set()
+    refresh_batch = r._refresh_batch
+
+    async def track_publication_ready(*args, **kwargs):
+        publish_committed = kwargs.get("publish_committed")
+        if publish_committed is not None:
+            async def queued(frames):
+                # The default ledger settles after COMMIT and before this
+                # callback. Observe the real sender boundary, not the earlier
+                # transaction exit, for tests interrupting queued frames.
+                publication_ready.update(frame["event_id"] for frame in frames)
+                await publish_committed(frames)
+            kwargs["publish_committed"] = queued
+        return await refresh_batch(*args, **kwargs)
+
+    r._refresh_batch = track_publication_ready
     return SimpleNamespace(**locals())
 
 
@@ -160,7 +176,8 @@ async def test_cancel_joins_sender_and_only_uncommitted_groups_remain_owed(monke
     try:
         await x.entered.wait()
         await x.second_db.wait()
-        await settle_until(lambda: len(x.committed) >= 2)
+        await settle_until(lambda: len(x.committed) >= 2 and
+                           x.publication_ready == set(x.committed_events))
         task.cancel()
         await asyncio.wait_for(x.cleaning.wait(), 1)
         assert not task.done()

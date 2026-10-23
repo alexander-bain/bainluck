@@ -719,12 +719,24 @@ def merge_probability_sources(
     Twins are consumed in ascending id order so that a hero, its confidence bars
     and its age stamp do not depend on the order the database returned rows in.
     """
+    merged, _owners = merge_probability_sources_with_owners(
+        0, canonical_sources, folded_rows,
+    )
+    return merged
+
+
+def merge_probability_sources_with_owners(
+    canonical_id: int, canonical_sources: dict | None,
+    folded_rows: list[tuple[int, dict | None]],
+) -> tuple[dict, dict[str, int]]:
+    """The same gap-fill, retaining which row supplies each weighted source."""
     from app.utils.aggregation import SOURCE_WEIGHTS, parse_source_entry
 
     merged = dict(canonical_sources or {})
     held = {k for k, v in merged.items() if parse_source_entry(v)[0] is not None}
+    owners = {key: canonical_id for key in held if key in SOURCE_WEIGHTS}
 
-    for _twin_id, twin_sources in sorted(folded_rows, key=lambda row: row[0]):
+    for twin_id, twin_sources in sorted(folded_rows, key=lambda row: row[0]):
         for key, entry in (twin_sources or {}).items():
             if key in held or key not in SOURCE_WEIGHTS:
                 continue
@@ -732,7 +744,8 @@ def merge_probability_sources(
                 continue
             merged[key] = entry
             held.add(key)
-    return merged
+            owners[key] = twin_id
+    return merged, owners
 
 
 def merge_opening_line(
@@ -902,14 +915,20 @@ async def folded_probability_sources_with_revision(
     the vector is ``None``: a fold that is not one snapshot makes no claim.
     Orientation and the tagged-then-absorbed order are unchanged.
     """
+    merged, _owners, revision = await folded_probability_state(db, event, absorbed)
+    return merged, revision
+
+
+async def folded_probability_state(db, event, absorbed: Sequence = ()):
+    """Raw policy bag, source owners and revisions from the same fold read."""
     canonical_sources, oriented, revision = await _read_fold(
-        db, event, absorbed, bags=True
+        db, event, absorbed, bags=True,
     )
-    merged = merge_probability_sources(
-        canonical_sources,
+    merged, owners = merge_probability_sources_with_owners(
+        event.id, canonical_sources,
         [(twin_id, sources) for twin_id, sources, _ in oriented],
     )
-    return merged, revision
+    return merged, owners, revision
 
 
 async def folded_revision_vector(

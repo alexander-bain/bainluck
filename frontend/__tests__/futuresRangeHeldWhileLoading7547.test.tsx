@@ -279,14 +279,14 @@ describe("#7547 the chart names the range it is drawing while a new one loads", 
 
   it("the coverage sentence never compares the new request with the held answer", async () => {
     // The held All body (5800h) against a pending 1M request (720h) read
-    // "Too few prices in 30 days — showing 242 days": a widening that never
+    // "Limited history for 30 days — showing 242 days": a widening that never
     // happened, about a range that had not answered yet.
     await mountOnWeek();
     await tap("All");
     await answer("all", ALL());
     await tap("1M");
     expect(drawnFrom()).toBe(ALL_FIRST);
-    expect(text()).not.toMatch(/Too few prices/);
+    expect(text()).not.toMatch(/Limited history/);
     // Control: the week, served from cache, is the current answer — no line.
     await tap("1W");
     expect(drawnFrom()).toBe(WEEK_FIRST);

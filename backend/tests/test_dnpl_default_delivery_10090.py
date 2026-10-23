@@ -1,0 +1,135 @@
+"""TRUTH: eligible probabilities reach held pages before persistence by default."""
+from __future__ import annotations
+
+import json
+
+import pytest
+from sqlalchemy.sql.dml import Update
+
+from app.tasks.live_blend_refresh import LiveBlendRefresher
+from app.utils import blend_preview
+from tests.test_blend_preview_ledger_tsp1_10090 import redis_kwargs  # noqa: F401
+from tests.test_blend_preview_display_before_persist_195 import _PreviewSession, _event, STORED
+from tests.test_live_blend_refresh import _one_event_refresher
+
+
+@pytest.fixture(autouse=True)
+def clean_registry():
+    blend_preview.reset_registry_for_tests()
+    yield
+    blend_preview.reset_registry_for_tests()
+
+
+@pytest.mark.parametrize("old_setting", [None, "", "7", "malformed", "kalshi"])
+def test_old_settings_cannot_exclude_new_events(monkeypatch, old_setting):
+    for key in (blend_preview.SOURCE_ENV, blend_preview.EVENT_IDS_ENV, blend_preview.LEDGER_SOURCES_ENV):
+        if old_setting is None:
+            monkeypatch.delenv(key, raising=False)
+        else:
+            monkeypatch.setenv(key, old_setting)
+    workers = [LiveBlendRefresher(source) for source in ("kalshi", "polymarket")]
+    assert isinstance(blend_preview.registry(), blend_preview.LedgerRegistry)
+    assert blend_preview.registry().ledger_sources == {"kalshi", "polymarket"}
+    for eid in (7, 15333395, 15333999):
+        assert eid in blend_preview.preview_route_events()
+        for worker in workers:
+            assert worker.preview and eid in worker.preview_events
+
+
+@pytest.mark.parametrize("eid", [None, True, False, 0, -1, "7", 7.0, 9007199254740992])
+def test_invalid_event_identity_is_excluded(eid):
+    assert eid not in blend_preview.preview_route_events()
+    assert eid not in blend_preview.preview_events_for("kalshi")
+
+
+@pytest.mark.parametrize("source", ["espn", "betting", "", "Kalshi"])
+def test_unsupported_producers_keep_committed_delivery(source):
+    assert not blend_preview.preview_events_for(source)
+
+
+def test_scope_selects_finite_arriving_batches():
+    scope = blend_preview.preview_route_events()
+    with pytest.raises(TypeError):
+        iter(scope)
+    assert scope.isdisjoint([])
+    assert not scope.isdisjoint([1, 2])
+    assert scope.isdisjoint([0, None])
+    assert [eid for eid in (0, 7, 15333999) if eid in scope] == [7, 15333999]
+
+
+@pytest.mark.parametrize("source", ["kalshi", "polymarket"])
+async def test_new_events_publish_before_locked_persistence_without_enrollment(
+    monkeypatch, redis_kwargs, source,
+):
+    from redis.asyncio import Redis
+    from app.utils.live_push import event_channel
+
+    for key in (blend_preview.SOURCE_ENV, blend_preview.EVENT_IDS_ENV, blend_preview.LEDGER_SOURCES_ENV):
+        monkeypatch.delenv(key, raising=False)
+    client = Redis(**redis_kwargs)
+    listener_client = Redis(**redis_kwargs)
+    listener = listener_client.pubsub()
+    seen = []
+
+    class Session(_PreviewSession):
+        async def execute(self, statement, *args, **kwargs):
+            if isinstance(statement, Update):
+                message = await listener.get_message(ignore_subscribe_messages=True, timeout=1)
+                assert message is not None, "event UPDATE began before DNPL publication"
+                seen.append(json.loads(message["data"]))
+            return await super().execute(statement, *args, **kwargs)
+
+    session = Session([], None, stored=STORED, rev=10)
+    worker, committed = _one_event_refresher(monkeypatch, session)
+    worker.source = source
+    monkeypatch.setattr(worker, "_client", lambda: client)
+    try:
+        # Same worker, new events after construction; no event-list mutation.
+        for eid in (15333395, 15333999):
+            event, market = _event(eid)
+            session._market_rows = [(market, event)]
+            await listener.subscribe(event_channel(eid))
+            await listener.get_message(timeout=1)
+            await worker._refresh_batch([eid], 0.)
+            assert seen[-1]["event_id"] == eid
+            assert seen[-1]["preview"]["kind"] == "blend"
+            assert seen[-1]["preview"]["pending"] == {source: .9}
+            assert 0 < seen[-1]["preview"]["ttl_ms"] <= 60000
+        assert len(seen) == 2
+        assert not committed
+        assert worker._lock_retry == {15333395, 15333999}
+    finally:
+        for item in (listener, listener_client, client):
+            await item.aclose()
+
+
+def test_commit_only_events_do_not_accumulate_when_admission_is_unavailable():
+    from tests.test_blend_preview_ledger_tsp1_10090 import _ev, BASE10
+    reg = blend_preview.LedgerRegistry(sources=blend_preview.PREVIEW_SOURCES, max_events=2)
+    event = _ev()
+    event.preview_read_ticket = None
+    for eid in range(1, 514):
+        assert reg.propose(eid, 'kalshi', value=.7, event=event, row_sources=BASE10, row_rev=10) == []
+        [op] = reg.committed(eid, 'kalshi', seq=None, sources=BASE10, rev=11, event=event)
+        assert op['ledger_op'] == 'settle' and op['base_rev'] == 11
+        assert json.loads(op['base'])['sources'] == BASE10
+        assert len(reg._events) == 0
+
+
+@pytest.mark.parametrize('kind', ['terminal', 'unobserved'])
+def test_early_return_admission_stays_bounded_and_settles_displaced_chains(kind):
+    from tests.test_blend_preview_ledger_tsp1_10090 import _ev, _propose, BASE10
+    reg = blend_preview.LedgerRegistry(sources=blend_preview.PREVIEW_SOURCES, max_events=2)
+    _propose(reg, 'kalshi', .7, event_id=1)
+    pending_seq = reg.pending_seq(1, 'kalshi')
+    assert pending_seq is not None
+    evicted = []
+    for eid in range(2, 20):
+        event = _ev('completed' if kind == 'terminal' else 'live')
+        ops = reg.propose(eid, 'kalshi', value=.5, event=event, row_sources=BASE10,
+                          row_rev=10, observation_only=(kind == 'unobserved'))
+        evicted.extend(op for op in ops if op.get('reason') == 'evicted')
+        assert len(reg._events) <= 2
+    assert len(evicted) == 1
+    assert evicted[0]['event_id'] == 1 and evicted[0]['through'] == pending_seq
+    assert not reg._chains
