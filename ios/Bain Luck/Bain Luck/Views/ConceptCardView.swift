@@ -16,6 +16,12 @@ struct ConceptCardView: View {
     let displayName: String
 
     @StateObject private var vm: ConceptCardViewModel
+    #if os(macOS)
+    @EnvironmentObject private var pinManager: PinManager
+    private var macPinManager: PinManager? { pinManager }
+    #else
+    private var macPinManager: PinManager? { nil }
+    #endif
 
     init(key: String, displayName: String) {
         self.key = key
@@ -111,6 +117,7 @@ struct ConceptCardView: View {
             // feed where the reader left it.
             NavigationLink(value: route) { boutBody(bout) }
                 .buttonStyle(.plain)
+                .macHubAndGridRowMenu(route, pinManager: macPinManager)
         } else {
             boutBody(bout)
         }

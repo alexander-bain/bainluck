@@ -4,6 +4,12 @@ import SwiftUI
 
 struct FuturesListView: View {
     @StateObject private var viewModel = FuturesListViewModel()
+    #if os(macOS)
+    @EnvironmentObject private var pinManager: PinManager
+    private var macPinManager: PinManager? { pinManager }
+    #else
+    private var macPinManager: PinManager? { nil }
+    #endif
 
     private var categoryOptions: [FuturesCategoryOption] {
         FuturesCategoryOption.makeOptions(from: viewModel.categoryFacets)
@@ -103,6 +109,7 @@ struct FuturesListView: View {
                                     MoverCardView(mover: mover)
                                 }
                                 .buttonStyle(.plain)
+                                .macHubAndGridRowMenu(.futuresDetail(id: mover.marketId), pinManager: macPinManager)
                             }
                         }
                         .padding(.horizontal, 4)
@@ -128,6 +135,7 @@ struct FuturesListView: View {
                     NavigationLink(value: Route.futuresDetail(id: market.id)) {
                         FuturesBrowseMarketRow(market: market)
                     }
+                    .macHubAndGridRowMenu(.futuresDetail(id: market.id), pinManager: macPinManager)
                 }
             } header: {
                 HStack {
