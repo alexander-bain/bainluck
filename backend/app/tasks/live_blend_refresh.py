@@ -5367,13 +5367,20 @@ class LiveBlendRefresher:
                         self._redis = None
                         try:
                             await connection.disconnect()
-                        except BaseException:
-                            pass  # Preserve the first cancellation/error for the locked caller.
-                        raise
+                        except BaseException as cleanup_error:
+                            # A shutdown may arrive while cleaning up an ordinary
+                            # transport failure. Preserve the first cancellation.
+                            if (isinstance(cleanup_error, asyncio.CancelledError)
+                                    and not isinstance(first_error, asyncio.CancelledError)):
+                                first_error = cleanup_error
+                        raise first_error
                     finally:
                         try:
                             await pool.release(connection)
-                        except BaseException:
+                        except BaseException as cleanup_error:
+                            if (isinstance(cleanup_error, asyncio.CancelledError)
+                                    and not isinstance(first_error, asyncio.CancelledError)):
+                                first_error = cleanup_error
                             if first_error is not None:
                                 raise first_error
                             raise
