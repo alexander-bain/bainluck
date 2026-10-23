@@ -955,6 +955,7 @@ struct SearchView: View {
                                 searchEventRow(event)
                             }
                             .macKeyboardRow(.eventDetail(id: event.id), in: keyboardSelection)
+                            .macResultMenu(.eventDetail(id: event.id))
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     } else {
@@ -963,6 +964,7 @@ struct SearchView: View {
                                 searchEventRow(event)
                             }
                             .macKeyboardRow(.eventDetail(id: event.id), in: keyboardSelection)
+                            .macResultMenu(.eventDetail(id: event.id))
                         }
                     }
                 } header: {
@@ -999,11 +1001,13 @@ struct SearchView: View {
                         searchFamilyRow(family.headline, prominent: true)
                     }
                     .macKeyboardRow(.futuresDetail(id: family.headline.id), in: keyboardSelection)
+                    .macResultMenu(.futuresDetail(id: family.headline.id))
                     ForEach(family.members) { member in
                         NavigationLink(value: Route.futuresDetail(id: member.id)) {
                             searchFamilyRow(member, prominent: false)
                         }
                         .macKeyboardRow(.futuresDetail(id: member.id), in: keyboardSelection)
+                        .macResultMenu(.futuresDetail(id: member.id))
                     }
                 } header: {
                     HStack(spacing: 6) {
@@ -1049,6 +1053,7 @@ struct SearchView: View {
                                 searchConceptRow(concept)
                             }
                             .macKeyboardRow(.futuresDetail(id: marketId), in: keyboardSelection)
+                            .macResultMenu(.futuresDetail(id: marketId))
                         }
                     }
                 } header: {
@@ -1073,6 +1078,7 @@ struct SearchView: View {
                                 searchFuturesRow(market)
                             }
                             .macKeyboardRow(.futuresDetail(id: market.id), in: keyboardSelection)
+                            .macResultMenu(.futuresDetail(id: market.id))
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     } else {
@@ -1081,6 +1087,7 @@ struct SearchView: View {
                                 searchFuturesRow(market)
                             }
                             .macKeyboardRow(.futuresDetail(id: market.id), in: keyboardSelection)
+                            .macResultMenu(.futuresDetail(id: market.id))
                         }
                     }
                 } header: {
@@ -1527,6 +1534,20 @@ private extension View {
         #endif
     }
 
+    /// #10878 — right-click on a game or market result: Copy Link, Share, and
+    /// for a game Open in New Window. Attached where `macKeyboardRow` is, so the
+    /// right-click target is the keyboard-highlight area; a right-click never
+    /// navigates and never moves the pick. iPhone and iPad get the row back
+    /// untouched.
+    @ViewBuilder
+    func macResultMenu(_ route: Route) -> some View {
+        #if os(macOS)
+        modifier(MacSearchResultMenu(route: route))
+        #else
+        self
+        #endif
+    }
+
     /// Keeps the picked row on screen as the arrows move past the visible edge.
     @ViewBuilder
     func macKeyboardScroll(to route: Route?) -> some View {
@@ -1542,3 +1563,44 @@ private extension View {
         #endif
     }
 }
+
+#if os(macOS)
+/// #10878 — the right-click menu `macResultMenu` attaches. Every item comes
+/// from `MacSearchResultAction10878`, so a route with no actions gets no menu
+/// and the links are exactly the ones Sports and My Stuff copy.
+private struct MacSearchResultMenu: ViewModifier {
+    let route: Route
+    @Environment(\.openWindow) private var openWindow
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let actions = MacSearchResultAction10878.actions(for: route)
+        if actions.isEmpty {
+            content
+        } else {
+            content.contextMenu {
+                ForEach(actions, id: \.self) { action in
+                    switch action {
+                    case .copyLink(let link):
+                        Button {
+                            copyToClipboard(link)
+                        } label: {
+                            Label(action.title, systemImage: action.systemImage)
+                        }
+                    case .share(let url):
+                        ShareLink(item: url) {
+                            Label(action.title, systemImage: action.systemImage)
+                        }
+                    case .openInNewWindow(let eventID):
+                        Button {
+                            openWindow(value: eventID)
+                        } label: {
+                            Label(action.title, systemImage: action.systemImage)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+#endif
