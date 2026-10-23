@@ -530,6 +530,24 @@ _KICKOFF_SQL = f"""
                END
 """
 
+#: #4983, THE DRAIN'S OWN CANDIDATES. The LIMIT is applied PER CLASS — the
+#: kickoff class and everything else each get up to ``:limit`` rows — because a
+#: single ``ORDER BY kickoff ... LIMIT`` hands the whole candidate window to the
+#: kickoff class whenever that class alone exceeds it, and then
+#: :data:`DRAIN_RESERVE_IDS` has nothing to admit. Measured on production
+#: 2026-09-27 05:08Z (Saturday night PT): ``candidates 3600``, every one of them
+#: kickoff (663 headline due + 1,031 headline shortfall + 1,906 ladder
+#: shortfall = 3,600), ``drain_due 0``, ``conditions_requested 800`` of 1,000 —
+#: the reserve was held back from the kickoff class and then spent on nothing.
+#: The reader-visible cost: ``/search?q=dodgers`` printing "Dodgers win more
+#: than 99.5 games — O 99.5 48%" off a leg last written six days earlier while
+#: the venue read 71.5%.
+#:
+#: The final ORDER BY is unchanged, so the kickoff class still leads and each
+#: class keeps its own order; the window rank only decides how far into each
+#: class the candidate list reaches. ``stale_markets`` is still counted before
+#: any limit.
+
 _CANDIDATE_SQL = f"""
     WITH pool AS MATERIALIZED (
         SELECT fm.id,
@@ -549,6 +567,9 @@ _CANDIDATE_SQL = f"""
            AND {_ADDRESSABLE_LEG_SQL.strip()}
            AND {LIVE_MARKET_SQL}
     )
+    SELECT c.id, c.request_ids, c.priority, c.stale_markets, c.served_markets,
+           c.imminent, c.name, c.external_id
+      FROM (
     SELECT p.id,
            s.request_ids,
            p.priority,
@@ -562,7 +583,13 @@ _CANDIDATE_SQL = f"""
            -- name is the only signal that separates a game's own number from a
            -- prop on the same game.
            p.name,
-           p.external_id
+           p.external_id,
+           p.kickoff,
+           s.stalest,
+           ROW_NUMBER() OVER (
+               PARTITION BY (p.kickoff IS NOT NULL)
+               ORDER BY p.kickoff ASC NULLS LAST, p.priority DESC, s.stalest ASC, p.id
+           ) AS class_rank
       FROM pool p
       JOIN LATERAL (
             SELECT MIN(COALESCE(fo.last_updated, TIMESTAMP WITH TIME ZONE 'epoch')) AS stalest,
@@ -582,8 +609,9 @@ _CANDIDATE_SQL = f"""
                                  ELSE make_interval(hours => :stale_hours)
                                END
        AND COALESCE(ARRAY_LENGTH(s.request_ids, 1), 0) > 0
-     ORDER BY p.kickoff ASC NULLS LAST, p.priority DESC, s.stalest ASC
-     LIMIT :limit
+      ) c
+     WHERE c.class_rank <= :limit
+     ORDER BY c.kickoff ASC NULLS LAST, c.priority DESC, c.stalest ASC, c.id
 """
 
 
