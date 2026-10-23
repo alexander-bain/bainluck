@@ -82,6 +82,114 @@ export function drawOptions(rows: Array<{ draw?: string | null } | null | undefi
  */
 export const OPENING_DRAW_FALLBACK = DRAWS[0].id;
 
+export const TOURNAMENT_DRAW_PARAM = "draw";
+
+export function tournamentDrawStorageKey(slug: string): string {
+  return `bainluck:tournament-draw:${slug}`;
+}
+
+export function isValidDrawSelection(
+  value: string | null | undefined,
+  allowed: ReadonlyArray<DrawOption> = [...DRAWS, DOUBLES_DRAW]
+): value is string {
+  return typeof value === "string" && allowed.some((entry) => entry.id === value);
+}
+
+export interface DrawPersistenceWindow {
+  location?: {
+    href?: string;
+    search?: string;
+  };
+  history?: {
+    state?: unknown;
+    replaceState?: (data: unknown, unused: string, url?: string | URL | null) => void;
+  };
+  sessionStorage?: Pick<Storage, "getItem" | "setItem">;
+}
+
+function writeDrawUrlParam(target: DrawPersistenceWindow, drawId: string): void {
+  try {
+    const href = target.location?.href;
+    if (!href || typeof target.history?.replaceState !== "function") return;
+    const url = new URL(href);
+    url.searchParams.set(TOURNAMENT_DRAW_PARAM, drawId);
+    target.history.replaceState(
+      target.history.state ?? null,
+      "",
+      `${url.pathname}${url.search}${url.hash}`
+    );
+  } catch {
+    // URL persistence is best-effort in restricted environments.
+  }
+}
+
+/**
+ * Persist an explicit draw pill selection (#11424) so opening a match and
+ * hitting browser Back returns to the draw the reader was browsing instead of
+ * snapping back to `defaultDraw` / `OPENING_DRAW_FALLBACK`.
+ */
+export function rememberDrawChoice(
+  slug: string,
+  drawId: string,
+  win?: DrawPersistenceWindow | null
+): void {
+  const target =
+    win === undefined ? (typeof window !== "undefined" ? window : null) : win;
+  if (!slug || !isValidDrawSelection(drawId) || !target) return;
+
+  writeDrawUrlParam(target, drawId);
+
+  try {
+    target.sessionStorage?.setItem(tournamentDrawStorageKey(slug), drawId);
+  } catch {
+    // Storage access can fail in private browsing or sandboxed contexts.
+  }
+}
+
+/**
+ * Restore a previously selected draw for `slug` (#11424). Reads `?draw=` from
+ * the URL first (so deep links and history entries win), then falls back to
+ * `sessionStorage` for the same tournament slug.
+ */
+export function readRememberedDrawChoice(
+  slug: string,
+  allowed: ReadonlyArray<DrawOption> = [...DRAWS, DOUBLES_DRAW],
+  win?: DrawPersistenceWindow | null
+): string | null {
+  const target =
+    win === undefined ? (typeof window !== "undefined" ? window : null) : win;
+  if (!slug || !target) return null;
+
+  try {
+    const search = target.location?.search ?? "";
+    const fromUrl = new URLSearchParams(search).get(TOURNAMENT_DRAW_PARAM);
+    if (isValidDrawSelection(fromUrl, allowed)) {
+      try {
+        target.sessionStorage?.setItem(tournamentDrawStorageKey(slug), fromUrl);
+      } catch {
+        // Ignore storage write errors when syncing from URL.
+      }
+      return fromUrl;
+    }
+  } catch {
+    // Ignore malformed location state and fall through to sessionStorage.
+  }
+
+  try {
+    const fromStorage = target.sessionStorage?.getItem(
+      tournamentDrawStorageKey(slug)
+    );
+    if (isValidDrawSelection(fromStorage, allowed)) {
+      writeDrawUrlParam(target, fromStorage);
+      return fromStorage;
+    }
+  } catch {
+    // Ignore storage read errors.
+  }
+
+  return null;
+}
+
 /**
  * Symmetric padding, and the same 12px the tab row uses under its labels, so
  * the two strips read as one rhythm instead of one strip crowding the other.
