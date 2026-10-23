@@ -5291,6 +5291,7 @@ jobs:
           export EVENT_FRAME_REDIS_SERVER="$dir/redislite/bin/redis-server" EVENT_FRAME_REDIS_REQUIRED=1
           if python -m pytest tests/integration/test_pm_held_price_row_stamps_received_quote_11138_pg.py \
             tests/integration/test_live_blend_source_projection_10090_pg.py \
+            tests/integration/test_live_blend_metadata_projection_10090_pg.py \
             tests/integration/test_pm_price_statement_deadline_10090_pg.py \
             tests/integration/test_dnpl_default_committed_fallback_10090_pg.py \
             tests/integration/test_dnpl_capacity_lifecycle_10090_pg.py \
@@ -5306,8 +5307,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]31 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row/default-DNPL gate did not run all 31 cases"
+          grep -qE "[^0-9]33 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row/default-DNPL gate did not run all 33 cases"
             exit 1
           }
 

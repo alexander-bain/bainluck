@@ -215,14 +215,18 @@ async def test_read_projects_one_event_context_and_omits_only_impossible_kalshi_
     source_position = len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
         "win_probability_sources"
     )
-    assert [str(column) for i, column in enumerate(columns) if i != source_position] == [
+    assert [str(column) for i, column in enumerate(columns) if i not in (source_position, PREPARED_MARKET_FIELDS.index("market_metadata"))] == [
         f"{table}.{key}"
         for table, fields in (
             ("futures_markets", PREPARED_MARKET_FIELDS),
             ("events", PREPARED_EVENT_FIELDS),
             ("futures_outcomes", PREPARED_OUTCOME_FIELDS),
-        ) for key in fields if key != "win_probability_sources"
+        ) for key in fields if key not in ("win_probability_sources", "market_metadata")
     ] + ["events.win_probability_sources", "events.win_probability_sources_rev"]
+    metadata_projection = columns[PREPARED_MARKET_FIELDS.index("market_metadata")]
+    assert metadata_projection.name == "market_metadata"
+    assert metadata_projection.element.name == "jsonb_build_object"
+    assert list(metadata_projection.element.clauses)[0].value == "content_understanding_v1"
     assert [column.name for column in columns[-2:]] == ["preview_sources", "preview_rev"]
     from sqlalchemy.sql.elements import Cast, Null
     from sqlalchemy.dialects.postgresql import JSONB
