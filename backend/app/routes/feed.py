@@ -56,6 +56,10 @@ from app.routes.futures import withheld_price_outcome_ids_for_markets
 from app.utils import candidate_base as _cb_limits
 from app.utils import championship_probs_cache as champ_cache
 from app.utils.canonical_market_key import canonical_key_identifies_one_question
+from app.utils.graded_out_field_legs import (
+    drop_graded_out_legs,
+    graded_out_leg_ids_by_market,
+)
 from app.utils.grid_out_division_legs import (
     drop_out_division_legs,
     out_legs_by_market,
@@ -12683,6 +12687,8 @@ async def _score_sports_mode_futures(
     # #11493: and the grid's out divisions, for #4610's reason — see the twin
     # read in `_score_futures`.
     grid_out_legs = await out_legs_by_market(markets)
+    # #11493: and the open-field legs the venue has graded out — the twin read.
+    graded_out_legs = await graded_out_leg_ids_by_market(db, markets)
 
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
@@ -12711,6 +12717,10 @@ async def _score_sports_mode_futures(
         # #11493: the twin of `_score_futures`' out-division drop.
         sorted_outcomes = drop_out_division_legs(
             sorted_outcomes, grid_out_legs.get(market.id)
+        )
+        # #11493: and of its graded-out leg drop.
+        sorted_outcomes = drop_graded_out_legs(
+            sorted_outcomes, graded_out_legs.get(market.id)
         )
         # #7537: the same membership rule as `_score_futures`, and it has to be
         # here too for #4610's reason — both serializers print the same card
@@ -14170,6 +14180,12 @@ async def _score_futures(
     grid_out_legs = await out_legs_by_market(markets)
     mark_timing("grid_out_legs")
 
+    # #11493: the open-field legs the venue has already graded out (Astros 1% on
+    # the World Series card), read once per pass — the cached legs carry no
+    # grade. See `graded_out_field_legs`.
+    graded_out_legs = await graded_out_leg_ids_by_market(db, markets)
+    mark_timing("graded_out_legs")
+
     # --- Load precomputed interestingness scores from Redis ---
     if not price_refresh:
         try:
@@ -14311,6 +14327,12 @@ async def _score_futures(
             # a live chance with all five clubs eliminated).
             sorted_outcomes = drop_out_division_legs(
                 sorted_outcomes, grid_out_legs.get(market.id)
+            )
+            # #11493: and a club the venue graded out of a still-open field
+            # ("Houston Astros 1%" on the World Series card, stored is_winner
+            # false + api_settlement over a 0.005 residue quote).
+            sorted_outcomes = drop_graded_out_legs(
+                sorted_outcomes, graded_out_legs.get(market.id)
             )
 
             # UX-P004 classes (b) + (e): drop ladder rungs whose OWN deadline has
