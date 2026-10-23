@@ -25,6 +25,7 @@ from sqlalchemy.dialects import postgresql
 from app.models.models import Event, FuturesMarket, FuturesOutcome
 import app.tasks.polymarket_token_topup as topup
 import app.tasks.polymarket_ws as ws
+from tests._pm_slate_link_read_10663 import answer_slate_link_read
 from tests._pm_slate_market_read_10663 import (
     answer_slate_market_read,
     is_slate_market_read,
@@ -109,7 +110,7 @@ def real_loader(stored, **overrides):
             executed.append(stmt)
             sql = str(stmt)
             if "linked_event_id" in sql:
-                rows = SLATE
+                rows = answer_slate_link_read(stmt, SLATE)  # #10663
             elif is_slate_market_read(stmt):
                 rows = answer_slate_market_read(stmt, stored)
             elif sql.startswith("SELECT futures_outcomes.id, futures_outcomes.market_id"):

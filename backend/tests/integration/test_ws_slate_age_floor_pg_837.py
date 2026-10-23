@@ -498,6 +498,97 @@ class TestASettledMarketLeavesTheSubscription:
         assert selected_markets["the_suspended_market"] is True
 
 
+# ---------------------------------------------------------------------------
+# #10663: the slate's LINK read returns each linked market once.
+#
+# It used to select five columns per OUTCOME, and three of them only fed a map
+# nothing read. It now selects (market_id, linked_event_id) with DISTINCT. That
+# is the same answer only if the outcome join and every filter are untouched
+# and an event id belongs to its market row, so both reads run here over the
+# same rows: repeated outcomes, a blank outcome id, a market with no outcome,
+# and one market for each filter to drop. The shipped read is the one the real
+# loader issues, not a copy of it.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_link_cases(session):
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
+
+    now = datetime.now(timezone.utc)
+    sport = Sport(key="tennis_atp", name="ATP")
+    session.add(sport)
+    await session.flush()
+
+    live = Event(sport_id=sport.id, home_team_name="Live Home",
+                 away_team_name="Live Away", commence_time=now - timedelta(hours=1),
+                 status="live")
+    soon = Event(sport_id=sport.id, home_team_name="Soon Home",
+                 away_team_name="Soon Away", commence_time=now + timedelta(hours=2),
+                 status="scheduled")
+    session.add_all([live, soon])
+    await session.flush()
+
+    # case: (event, source, status, outcome external ids)
+    cases = {
+        "repeated_outcomes": (live.id, "polymarket", "open",
+                              ["0xrep", "0xrep_side1", "0xrep_yes"]),
+        "blank_outcome_id": (soon.id, "polymarket", "open", ["", "0xblank"]),
+        "no_outcomes": (live.id, "polymarket", "open", []),
+        "settled": (live.id, "polymarket", "resolved", ["0xset", "0xset_side1"]),
+        "other_venue": (live.id, "kalshi", "open", ["KX-A", "KX-B"]),
+        "unlinked": (None, "polymarket", "open", ["0xunl", "0xunl_side1"]),
+    }
+    market_ids = {}
+    for case, (event_id, source, status, outcome_ids) in cases.items():
+        market = FuturesMarket(source=source, external_id=f"0x{case}",
+                               name=f"{case} moneyline", event_id=event_id,
+                               status=status)
+        session.add(market)
+        await session.flush()
+        market_ids[case] = market.id
+        for ext in outcome_ids:
+            session.add(FuturesOutcome(market_id=market.id, name=ext or "blank",
+                                       external_id=ext))
+    await session.commit()
+    return market_ids, live.id, soon.id
+
+
+async def _link_reads(stored_live_only):
+    from tests._pm_slate_link_read_10663 import (
+        parent_slate_link_stmt,
+        shipped_slate_link_stmt,
+    )
+
+    shipped_stmt = await shipped_slate_link_stmt(stored_live_only=stored_live_only)
+    engine, maker = await _engine_with_tables()
+    async with maker() as session:
+        seeded = await _seed_link_cases(session)
+    async with maker() as session:
+        parent = (await session.execute(
+            parent_slate_link_stmt(stored_live_only=stored_live_only))).all()
+        shipped = (await session.execute(shipped_stmt)).all()
+    await engine.dispose()
+    return seeded, parent, shipped
+
+
+@needs_postgres
+class TestTheLinkReadKeepsEveryMarketOnce:
+    async def test_the_full_slate_matches_the_parent_read(self):
+        (ids, live, soon), parent, shipped = await _link_reads(False)
+        expected = {(ids["repeated_outcomes"], live), (ids["blank_outcome_id"], soon)}
+        # The parent answers per outcome: 3 + 2 rows for two markets.
+        assert len(parent) == 5
+        assert {(r.market_id, r.linked_event_id) for r in parent} == expected
+        assert sorted(tuple(r) for r in shipped) == sorted(expected)
+
+    async def test_the_stored_live_subset_matches_the_parent_read(self):
+        (ids, live, _soon), parent, shipped = await _link_reads(True)
+        expected = {(ids["repeated_outcomes"], live)}
+        assert len(parent) == 3
+        assert {(r.market_id, r.linked_event_id) for r in parent} == expected
+        assert sorted(tuple(r) for r in shipped) == sorted(expected)
+
+
 def test_the_consumer_actually_applies_both_halves_of_the_slate():
     """The predicates are WIRED into the query the socket runs.
 
