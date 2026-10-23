@@ -132,11 +132,13 @@ final class RealPageCorrections9483Tests: XCTestCase {
 
     /// Packers 14780562's shape: home GB, away DAL; the history's last point
     /// before play favours GB 27.5–26.5, the final is GB 23–13.
-    private func packersInput(final: Bool = true, sport: String = "americanfootball_nfl")
+    private func packersInput(final: Bool = true, sport: String = "americanfootball_nfl",
+                              score: (home: Double, away: Double) = (23, 13))
         -> ProjectedFinalPointsSeries.Input {
         .init(sportKey: sport, sourceKey: "draftkings", basis: .sameBookSameCaptureFullGameSpreadAndTotal,
               pairs: [pair(-30, home: 27.5, away: 26.5), pair(60, home: 25, away: 17)],
-              actuals: final ? [.init(at: Self.start.addingTimeInterval(200 * 60), home: 23, away: 13)] : [],
+              actuals: final ? [.init(at: Self.start.addingTimeInterval(200 * 60),
+                                      home: score.home, away: score.away)] : [],
               kickoffAt: nil, scoreObservationStartAt: Self.start,
               finalAt: final ? Self.start.addingTimeInterval(200 * 60) : nil,
               asOf: Self.start.addingTimeInterval((final ? 200 : 65) * 60),
@@ -168,6 +170,28 @@ final class RealPageCorrections9483Tests: XCTestCase {
         XCTAssertEqual(card.ladderPregame?.away, 27.6, "the NBA margin and total read the same pair")
         XCTAssertEqual(card.ladderPregame?.home, 26.5)
         XCTAssertEqual(card.withoutProjectedNow.pregameBasis, .scheduledStart, "expiry keeps the basis")
+    }
+
+    /// #11536 F1 (lane1 1847Z) — football can end level, so the headline may
+    /// qualify a pair less than a point apart that prints level (21.75 / 22.25
+    /// → 22 · 22). The sentence grades the pair as printed: no "won as
+    /// projected" or "beat the forecast" from a leader the reader cannot see.
+    func testAFinishedCardOnAPairPrintedLevelGradesNoInvisibleLeader() throws {
+        let level = (away: 21.75, home: 22.25)
+        let homeWin = try XCTUnwrap(NFLFinishCard9483.build(packersInput(), finalBaseline: level))
+        XCTAssertTrue(homeWin.printsPregameWhole)
+        XCTAssertEqual(NFLFinishCardView9483.pregameText(homeWin.pregame.away, whole: homeWin.printsPregameWhole), "22")
+        XCTAssertEqual(NFLFinishCardView9483.pregameText(homeWin.pregame.home, whole: homeWin.printsPregameWhole), "22")
+        XCTAssertEqual(homeWin.headline(awayName: "Cowboys", homeName: "Packers"), "Packers won",
+                       "not \"won as projected\" from the unrounded 22.25")
+        XCTAssertEqual(homeWin.pregame, .init(away: 21.75, home: 22.25, at: nil), "the marks keep the served halves")
+        let awayWin = try XCTUnwrap(NFLFinishCard9483.build(packersInput(score: (home: 17, away: 20)),
+                                                           finalBaseline: level))
+        XCTAssertEqual(awayWin.headline(awayName: "Cowboys", homeName: "Packers"), "Cowboys won",
+                       "not \"beat the forecast\" from the unrounded 22.25")
+        // Control: the history point keeps its half point and its graded sentence.
+        let history = try XCTUnwrap(NFLFinishCard9483.build(packersInput(score: (home: 17, away: 20))))
+        XCTAssertEqual(history.headline(awayName: "Cowboys", homeName: "Packers"), "Cowboys beat the forecast")
     }
 
     func testWithoutTheHeadlinesForecastTheCardNamesItsOtherBasis() throws {

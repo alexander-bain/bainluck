@@ -164,6 +164,14 @@ nonisolated struct NFLFinishCard9483: Equatable {
     /// the served halves stay unrounded for the marks and the sentence.
     var printsPregameWhole: Bool { phase == .after && pregameBasis == .scheduledStart }
 
+    /// #11536 F1 — the pregame pair the reader is shown: whole per side when it
+    /// prints whole, so a pair printed level (22 · 22) is never graded with a
+    /// leader the reader cannot see. The marks keep the served halves.
+    private var printedPregame: Pair {
+        guard printsPregameWhole else { return pregame }
+        return Pair(away: pregame.away.rounded(), home: pregame.home.rounded(), at: pregame.at)
+    }
+
     /// The pregame pair's name as a sentence starts it: in the spoken card,
     /// and lowercased under each number.
     var pregameName: String {
@@ -239,7 +247,7 @@ nonisolated struct NFLFinishCard9483: Equatable {
             return before == nowLeads ? "\(name(nowLeads)) still projected ahead" : "The projected finish has flipped"
         case .after:
             guard let final, let winner = final.homeLeads else { return "Final vs forecast" }
-            guard let before = pregame.homeLeads else { return "\(name(winner)) won" }
+            guard let before = printedPregame.homeLeads else { return "\(name(winner)) won" }
             return before == winner ? "\(name(winner)) won as projected" : "\(name(winner)) beat the forecast"
         }
     }
