@@ -42,6 +42,45 @@ OPERATIONS = 4
 
 
 @needs_postgres
+async def test_burst_reads_see_new_commits_without_another_checkout(
+    counted, scratch_table,
+):
+    from sqlalchemy import column, select, table as sql_table
+    from app.tasks.ws_consumer_sessions import ConsumerSessions
+
+    name, admin = scratch_table
+    rows = sql_table(name, column("op"))
+    sessions = ConsumerSessions("burst-snapshot-test")
+    engine = sessions._engine_here()
+    checkouts, in_transactions = [], []
+
+    @event.listens_for(engine.sync_engine, "checkout")
+    def checkout(dbapi, record, proxy):
+        checkouts.append(record)
+
+    @event.listens_for(engine.sync_engine, "after_cursor_execute")
+    def transaction_state(connection, *args):
+        in_transactions.append(
+            connection.connection.driver_connection.is_in_transaction()
+        )
+
+    try:
+        async with sessions.observation_read() as reader:
+            assert list((await reader.execute(select(rows.c.op))).scalars()) == []
+        async with admin.begin() as writer:
+            await writer.execute(text(f"INSERT INTO {name} VALUES (17)"))
+        async with sessions.observation_read() as reader:
+            assert list((await reader.execute(select(rows.c.op))).scalars()) == [17]
+        assert len(checkouts) == 1
+        assert in_transactions == [False, False]
+        assert engine.pool.size() == 5
+        assert engine.pool._max_overflow == 0
+    finally:
+        await sessions.aclose()
+    assert engine.pool.checkedout() == 0
+
+
+@needs_postgres
 async def test_observation_read_has_no_commit_and_writer_pool_stays_transactional(
     counted, scratch_table, monkeypatch,
 ):

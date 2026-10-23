@@ -474,6 +474,11 @@ async def test_observation_cleanup_owned_until_real_connection_close_finishes(mo
     from sqlalchemy.ext.asyncio import AsyncConnection
     from app.tasks.ws_consumer_sessions import ConsumerSessions
 
+    # Exercise synchronous scope cleanup, not the new idle-reuse path. Burst
+    # idle/shutdown ownership is covered separately; these deadline and
+    # external-cancellation assertions must still hold when we close here.
+    monkeypatch.setattr("app.tasks.ws_consumer_sessions.OBSERVATION_IDLE_S", 0)
+
     r, session, frames, committed, _, _, observations, validate, _ = acknowledged_rig(monkeypatch)
     entered, release, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
     disposals = []

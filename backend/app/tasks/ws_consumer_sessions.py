@@ -54,6 +54,10 @@ logger = logging.getLogger(__name__)
 #: bound, not an expected wait.
 CLOSE_WAIT_S = 10.0
 
+# Reuse only during a short burst; never reserve an extra pool connection.
+OBSERVATION_IDLE_S = 0.25
+OBSERVATION_MAX_AGE_S = 1.0
+
 
 class _SingleRead:
     """Only one SQLAlchemy SELECT may use the autocommit connection."""
@@ -61,12 +65,20 @@ class _SingleRead:
     def __init__(self, connection):
         self._connection = connection
         self._used = False
+        self.completed = False
+        self.failed = False
 
     async def execute(self, statement):
         if self._used or not getattr(statement, "is_select", False):
             raise ValueError("observation read scope permits exactly one SELECT")
         self._used = True
-        return await self._connection.execute(statement)
+        try:
+            result = await self._connection.execute(statement)
+        except BaseException:
+            self.failed = True
+            raise
+        self.completed = True
+        return result
 
 
 class ConsumerSessions:
@@ -84,6 +96,9 @@ class ConsumerSessions:
         self._closing = False
         self._disposed = False
         self._observation_closers: set[asyncio.Task] = set()
+        self._observation_cached = None
+        self._observation_idle_handle = None
+        self._writers = 0
 
     def _engine_here(self):
         from app.tasks import base as task_base
@@ -116,15 +131,23 @@ class ConsumerSessions:
                 "use get_task_session() directly for that operation"
             )
         engine = self._engine_here()
+        # Writers take priority over keeping an idle observation connection.
+        released = self._release_observation()
+        self._writers += 1
         self._open += 1
         self._idle.clear()
         try:
+            if released is not None:
+                # Return the borrowed slot before the writer checks out. Do
+                # not create an avoidable second connection while close runs.
+                await asyncio.shield(released)
             # Looked up at call time so the factory's transaction semantics —
             # commit, publish committed frames, rollback, close — stay the one
             # definition in `app.tasks.base`.
             async with task_base.get_task_session(engine=engine) as session:
                 yield session
         finally:
+            self._writers -= 1
             self._open -= 1
             if not self._open:
                 self._idle.set()
@@ -135,31 +158,99 @@ class ConsumerSessions:
 
         Only the observation-preview graph SELECT uses this scope. Writers
         still use session(), including its commit and publication hooks.
+        Consecutive successful reads may reuse one connection for a bounded
+        burst. AUTOCOMMIT gives each SELECT a fresh database snapshot; no graph
+        or result is cached. Concurrent readers use separate pool connections.
+        Idle, writer demand, age, errors and shutdown end reuse.
         The connection shares this consumer's pool. A close exceeding the
         caller's budget stays owned and counted until it completes; shutdown
         drains it under the existing close bound.
         """
         engine = self._engine_here()
-        self._open += 1
-        self._idle.clear()
+        loop = asyncio.get_running_loop()
+        cached = self._observation_cached
+        if cached is not None and loop.time() - cached[1] >= OBSERVATION_MAX_AGE_S:
+            self._release_observation()
+            cached = None
+        self._observation_cached = None
+        if self._observation_idle_handle is not None:
+            self._observation_idle_handle.cancel()
+            self._observation_idle_handle = None
         connection = None
+        reader = None
+        reusable = False
+        discard = False
+        opened_at = loop.time()
+        if cached is None:
+            self._open += 1
+            self._idle.clear()
         try:
-            connection = await engine.connect().__aenter__()
-            connection = await connection.execution_options(
-                isolation_level="AUTOCOMMIT",
-            )
-            yield _SingleRead(connection)
+            if cached is None:
+                connection = await engine.connect().__aenter__()
+                connection = await connection.execution_options(
+                    isolation_level="AUTOCOMMIT",
+                )
+            else:
+                connection, opened_at = cached
+            reader = _SingleRead(connection)
+            yield reader
+            reusable = reader.completed and not reader.failed
+        except BaseException:
+            discard = True
+            raise
         finally:
             if connection is None:
                 self._observation_finished()
+            elif (
+                reusable
+                and not self._closing
+                and not self._writers
+                and OBSERVATION_IDLE_S > 0
+                and not connection.invalidated
+                and not connection.closed
+                and self._observation_cached is None
+                and loop.time() - opened_at < OBSERVATION_MAX_AGE_S
+            ):
+                self._observation_cached = (connection, opened_at)
+                delay = min(
+                    OBSERVATION_IDLE_S,
+                    OBSERVATION_MAX_AGE_S - (loop.time() - opened_at),
+                )
+                self._observation_idle_handle = loop.call_later(
+                    max(0, delay),
+                    self._release_observation,
+                )
             else:
                 # Match AsyncConnection.__aexit__'s shielded close, but retain
                 # the task and open count if the caller's deadline interrupts
                 # the await. A late exception must also be retrieved.
-                close_task = asyncio.create_task(connection.close())
-                self._observation_closers.add(close_task)
-                close_task.add_done_callback(self._observation_closed)
+                close_task = self._close_observation(
+                    connection,
+                    discard=discard or (reader is not None and reader.failed),
+                )
                 await asyncio.shield(close_task)
+
+    def _close_observation(self, connection, *, discard=False):
+        async def close():
+            try:
+                if discard:
+                    await connection.invalidate()
+            finally:
+                await connection.close()
+
+        task = asyncio.create_task(close())
+        self._observation_closers.add(task)
+        task.add_done_callback(self._observation_closed)
+        return task
+
+    def _release_observation(self):
+        if self._observation_idle_handle is not None:
+            self._observation_idle_handle.cancel()
+            self._observation_idle_handle = None
+        cached, self._observation_cached = self._observation_cached, None
+        if cached is not None:
+            return self._close_observation(cached[0])
+        return None
 
     def _observation_finished(self) -> None:
         self._open -= 1
@@ -172,7 +263,8 @@ class ConsumerSessions:
             error = task.exception()
             if error is not None:
                 logger.warning(
-                    "%s: observation connection cleanup failed", self.label,
+                    "%s: observation connection cleanup failed",
+                    self.label,
                     exc_info=(type(error), error, error.__traceback__),
                 )
         self._observation_finished()
@@ -180,6 +272,7 @@ class ConsumerSessions:
     async def aclose(self) -> None:
         """Refuse new sessions, let open ones finish (bounded), dispose once."""
         self._closing = True
+        self._release_observation()
         if self._disposed or self._engine is None:
             return
         try:
@@ -190,7 +283,9 @@ class ConsumerSessions:
                     logger.warning(
                         "%s: %d session(s) still open %.0fs after the consumer "
                         "returned; disposing the engine anyway",
-                        self.label, self._open, self._close_wait_s,
+                        self.label,
+                        self._open,
+                        self._close_wait_s,
                     )
         finally:
             if not self._disposed:
