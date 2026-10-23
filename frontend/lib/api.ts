@@ -695,7 +695,16 @@ export interface TeamFutureItem {
   is_winner?: boolean | null;
   /** #10078 — the tier the team page shows this row at (see types.ts TeamFutureItem). */
   display_tier?: number | null;
+  /** #11493 — the grid's verdict on this row's column (see ChampionshipPathEntry.state). */
+  state?: TeamDecidedState | null;
 }
+
+/**
+ * #11493 — a team's decided verdict on one season question, republished by
+ * `/api/teams/{id}` from the championship grid (`routes/teams.py::_stamp_grid_states`).
+ * Absent when the question is undecided or unknown; `probability` is unchanged.
+ */
+export type TeamDecidedState = "eliminated" | "won";
 
 export interface ChampionshipPathEntry {
   tier: number;
@@ -709,6 +718,11 @@ export interface ChampionshipPathEntry {
   // backend teams.py::_get_championship_path). Absent/null when the market carries
   // no season and the league has no current-season string.
   season?: string | null;
+  // #11493: "eliminated" when the championship grid has this club out of this
+  // step's question, "won" when it has clinched it. The probability keeps the
+  // venue's last price (an eliminated leg trades at 0.001 until graded), so a
+  // reader must be shown the verdict, not the number.
+  state?: TeamDecidedState | null;
 }
 
 /**

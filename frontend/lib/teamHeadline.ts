@@ -23,16 +23,48 @@
  * would invite a reader to compare a 6% and a 62% that are not comparable.
  */
 
-import type { ChampionshipPathEntry, TeamFutureItem } from "@/lib/api";
-import { headlinePathEntry, pickJourneyFuture } from "@/lib/teamSeasonJourney";
+import type { ChampionshipPathEntry, TeamDecidedState, TeamFutureItem } from "@/lib/api";
+import { legendStateLabel } from "@/lib/contenderChart";
+import { decidedState, headlinePathEntry, pickJourneyFuture } from "@/lib/teamSeasonJourney";
 
 export interface TeamHeadline {
   /** "Championship", "Conference", "Division", or the path entry's own label. */
   label: string;
   /** 0..1. Never null — a headline with no number is no headline. */
   probability: number;
-  /** Points of 24h movement, when the source carries one. */
+  /** Points of 24h movement, when the source carries one. Null when decided. */
   movement: number | null;
+  /**
+   * #11493 — the championship grid's verdict on this question. When set, every
+   * surface prints `decidedHeadlineText` instead of `probability`: an
+   * eliminated club's title leg keeps trading at 0.001 until the venue grades
+   * it, and "<1%" says the season is still alive.
+   */
+  state: TeamDecidedState | null;
+}
+
+/**
+ * The word a decided headline prints in place of its number: "Out" / "Won".
+ * The championship grid's own legend word (`legendStateLabel`), so the team
+ * page and the grid it links to say the same thing about the same club.
+ */
+export function decidedHeadlineText(state: TeamDecidedState): string {
+  return legendStateLabel(state) ?? (state === "won" ? "Won" : "Out");
+}
+
+/**
+ * The sentence a decided headline reads as where there is room for one (the
+ * share card's verdict, the link description): "Out of the championship",
+ * "Won the division". The label is the page's own word for the question.
+ */
+export function decidedHeadlineSentence(label: string, state: TeamDecidedState): string {
+  const question = label.toLowerCase();
+  return state === "won" ? `Won the ${question}` : `Out of the ${question}`;
+}
+
+/** A decided headline's bar fraction: nothing left for "Out", all of it for "Won". */
+function decidedFraction(state: TeamDecidedState): number {
+  return state === "won" ? 1 : 0;
 }
 
 /**
@@ -61,13 +93,28 @@ export function teamHeadline(
   championshipPath: ChampionshipPathEntry[] | null | undefined,
   futures: TeamFutureItem[] | null | undefined,
 ): TeamHeadline | null {
+  // #11493: `headlinePathEntry` keeps a step that carries a verdict, so an
+  // eliminated club's title step stays the headline — it is never skipped into
+  // the futures fallback below, where a tier-1 award board would answer.
   const pathEntry = headlinePathEntry(championshipPath);
-  if (pathEntry && pathEntry.probability !== null) {
-    return {
-      label: pathEntry.label,
-      probability: pathEntry.probability,
-      movement: pathEntry.movement,
-    };
+  if (pathEntry) {
+    const state = decidedState(pathEntry.state);
+    if (state) {
+      return {
+        label: pathEntry.label,
+        probability: pathEntry.probability ?? decidedFraction(state),
+        movement: null,
+        state,
+      };
+    }
+    if (pathEntry.probability !== null) {
+      return {
+        label: pathEntry.label,
+        probability: pathEntry.probability,
+        movement: pathEntry.movement,
+        state: null,
+      };
+    }
   }
 
   const pick = pickJourneyFuture(futures);
@@ -78,6 +125,7 @@ export function teamHeadline(
   return {
     label: TIER_LABEL[item?.market_tier ?? 1] ?? "Championship",
     probability: pick.probability,
-    movement: item?.probability_change_24h ?? null,
+    movement: pick.state ? null : item?.probability_change_24h ?? null,
+    state: pick.state,
   };
 }

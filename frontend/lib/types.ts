@@ -2283,6 +2283,9 @@ export interface TeamFutureItem {
    *  neither hides it behind the championship path nor labels it "Division".
    *  Absent elsewhere (My Stuff) — read `display_tier ?? market_tier`. */
   display_tier?: number | null;
+  /** #11493 — team page only: "eliminated" | "won" when the championship grid has
+   *  decided this row's column for the club. Absent when undecided or unknown. */
+  state?: "eliminated" | "won" | null;
   canonical_market_key?: string | null;
   /** Season/year for display, e.g. "2025-26" or "2026" (BR52). */
   season_year?: string | null;
