@@ -40,7 +40,13 @@ holds up to `maxRetiredMembers` previously retired rows plus every row that
 left in that transition (`maxRetiredMembers + 1` only for a single departure),
 then freezes; the rows that can leave at once are the distinct rows the visit
 recorded a fence or commit floor for, which the reader does not cap
-(`testRowsThatLeaveTogetherAreAllRetainedAndCanExceedCapacityPlusOne`). At the
+(`testRowsThatLeaveTogetherAreAllRetainedAndCanExceedCapacityPlusOne`). A v1
+tuple shown at a boundary keeps a lease only on the display that boundary
+interrupted: a later accepted v1 blend of another row spends it into the row's
+v1 order (an away row's travels in its retired evidence and returns with it), so
+a replay after the flap back is refused on the legacy path while the fence v2
+reads keeps the lease (`testACarriedV1LeaseIsSpentByALaterBlendOfAnotherRow`,
+the reader sequence of f211's page test). At the
 v1→v2 bridge the v1 order is merged monotonically into any existing fence of
 its origin — a returning origin's restored fence can be older than the order
 accepted since, or than its revocation — so an older v2 tuple is refused, a

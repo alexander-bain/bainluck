@@ -1036,6 +1036,84 @@ final class FoldedBlendPreview10090Tests: XCTestCase {
                            .held?.seq, 4)
     }
 
+    /// Native's step 4 on f1da49c1 (f211's page test
+    /// `AMembershipChangeReopensTheV1FoldedPreview10090Tests`, L135): a v1
+    /// tuple shown when its row leaves carries its first-seen deadline away
+    /// with it, and returning at once it continues under it
+    /// (`testAV1OriginThatLeavesAndReturnsKeepsItsOrderAsAFence`). That lease
+    /// only continues the display the boundary interrupted. v1 shows one frame
+    /// at a time, so once a later v1 blend of another row is accepted the
+    /// lease is spent: a replay of the tuple after the flap back is refused
+    /// (v1 never replays), a newer tuple still leads, and the fence v2 reads
+    /// keeps the lease. The page test's reader sequence, flap after advance.
+    func testACarriedV1LeaseIsSpentByALaterBlendOfAnotherRow() throws {
+        var r = try adopt(.empty, ab)
+        r = read(r, try folded(origin: 4243, epoch: 900, seq: 1, base: ab), at: 100)
+        r = BlendPreview.readerAfterCommitFloor(r, FoldRevision(["4243": 21]))
+        XCTAssertNil(r.held)
+        r = try adopt(r, ac)
+        r = read(r, try folded(origin: 4244, epoch: 12, seq: 1, base: ac), at: 100.1)
+        XCTAssertEqual(r.held?.originEventId, 4244)
+        r = try adopt(r, ab) // a cached detail flaps back while 4244's tuple is shown
+        let lease = BlendPreviewReader.OriginFence(epoch: 12, seq: 1, retired: false, deadline: 101.1)
+        XCTAssertEqual(r.retiredMembers.first { $0.row == "4244" }?.fence, lease)
+        let atOnce = try adopt(r, ac)
+        XCTAssertEqual(read(atOnce, try folded(origin: 4244, epoch: 12, seq: 1, base: ac), at: 100.3).held?.expiresAt, 101.1,
+                       "back at once, the same tuple continues under its first-seen deadline")
+        XCTAssertEqual(read(r, try folded(origin: 4243, epoch: 900, seq: 1, base: ab), at: 100.2), r,
+                       "the returned row's old identity gets no new lease")
+        r = read(r, try folded(origin: 4243, epoch: 900, seq: 3, base: ab), at: 100.2)
+        XCTAssertNil(r.held, "a later 4243 blend is accepted, and withdrawn by its kept commit floor")
+        r = BlendPreview.readerAfterCommitFloor(r, FoldRevision(["4244": 30])) // the away row's floor merges into its evidence
+        r = try adopt(r, ac) // the fresh detail returns
+        XCTAssertEqual(read(r, try folded(origin: 4244, epoch: 12, seq: 1, base: ac), at: 100.3), r,
+                       "the replayed identity stays fenced across the flap")
+        XCTAssertEqual(read(r, try folded(origin: 4244, epoch: 12, seq: 2, base: ac), at: 100.3).held?.expiresAt, 101.3,
+                       "a newer tuple of the row still leads")
+        XCTAssertEqual(r.originFences["4244"], lease, "the fence v2 reads is untouched")
+        XCTAssertEqual(try applyV2(opened(r, session: "s2"), v2Wire(session: "s2", authority: ["4244": origin(12, 1)], base: ac),
+                                   now: 100.3).held?.expiresAt, 101.1, "and v2 keeps the same-tuple lease")
+
+        // A surviving row's lease is spent the same way. 4242's tuple is shown
+        // at the boundary; back at once it continues, after 4244's blend it is
+        // a replay.
+        var s = try adopt(.empty, ab)
+        s = read(s, try folded(origin: 4242, epoch: 5, seq: 7, base: ab), at: 100)
+        s = try adopt(s, ac)
+        XCTAssertEqual(s.originFences["4242"], BlendPreviewReader.OriginFence(epoch: 5, seq: 7, retired: false, deadline: 101))
+        XCTAssertEqual(read(s, try folded(origin: 4242, epoch: 5, seq: 7, base: ac), at: 100.2).held?.expiresAt, 101,
+                       "the surviving row's shown tuple continues under its deadline")
+        s = read(s, try folded(origin: 4244, epoch: 12, seq: 1, base: ac), at: 100.1)
+        XCTAssertEqual(s.held?.originEventId, 4244)
+        XCTAssertEqual(read(s, try folded(origin: 4242, epoch: 5, seq: 7, base: ac), at: 100.2), s,
+                       "after another row's blend the surviving row's tuple is a replay")
+        XCTAssertEqual(read(s, try folded(origin: 4242, epoch: 5, seq: 8, base: ac), at: 100.2).held?.seq, 8)
+        XCTAssertEqual(s.originFences["4242"], BlendPreviewReader.OriginFence(epoch: 5, seq: 7, retired: false, deadline: 101))
+        // Another row's withdrawal says nothing about the lease (`previewAfter`).
+        let three = ["4242": 10, "4243": 20, "4245": 50], next = ["4242": 10, "4243": 20, "4244": 30]
+        var w = read(read(try adopt(.empty, three), try folded(origin: 4243, epoch: 900, seq: 1, base: three), at: 100),
+                     try folded(origin: 4242, epoch: 5, seq: 7, base: three), at: 100.1)
+        w = try adopt(w, next)
+        w = read(w, try v1Revoke(origin: 4243, epoch: 900, seq: 2, through: 1), at: 100.2)
+        XCTAssertEqual(w.legacyOrders["4243"], BlendPreviewReader.FoldedSequence(epoch: 900, seq: 2, originEventId: 4243))
+        XCTAssertEqual(read(w, try folded(origin: 4242, epoch: 5, seq: 7, base: next), at: 100.3).held?.expiresAt, 101.1)
+        // A spent lease never lowers a newer v1 order the row already holds.
+        var o = BlendPreview.readerAfterMembership(read(try adopt(.empty, ["4242": 10]), try singleton(epoch: 12, seq: 3), at: 100),
+                                                   members: ["4242", "4244"])
+        o = read(o, try folded(origin: 4242, epoch: 12, seq: 4, base: ac), at: 100.1)
+        o = read(o, try folded(origin: 4244, epoch: 7, seq: 1, base: ac), at: 100.2)
+        XCTAssertEqual(o.legacyOrders["4242"], BlendPreviewReader.FoldedSequence(epoch: 12, seq: 4, originEventId: 4242))
+        XCTAssertEqual(read(o, try folded(origin: 4242, epoch: 12, seq: 4, base: ac), at: 100.3), o)
+        // After v2 authority the fences are v2's: a singleton the folded-down
+        // page row accepts spends nothing, and a row that returns keeps its v2
+        // lease across a later flap.
+        var v = try applyV2(try adopt(opened(), ab), v2Wire(authority: ["4242": origin(7, 2), "4243": origin(900, 1)]), now: 100.1)
+        v = read(try adopt(v, ["4242": 10]), try singleton(epoch: 7, seq: 3), at: 100.3)
+        XCTAssertEqual(v.held?.seq, 3)
+        v = try adopt(try adopt(try adopt(v, ab), ac), ab)
+        XCTAssertEqual(try applyV2(opened(v, session: "s2"), v2Wire(session: "s2", authority: ["4243": origin(900, 1)]), now: 100.4)
+                           .held?.expiresAt, 101.1)
+    }
     /// Remaining blocker 3: two-source probabilities can elect a different
     /// origin pair while a membership of three or more rows stays fixed. The
     /// server retires every origin of a session whose owner set changed and

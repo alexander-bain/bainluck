@@ -38,6 +38,7 @@ do {
     try tests.testRetiredEvidenceIsNeverEvictedAndCapacityRefusesInsteadOfForgetting()
     try tests.testAFoldDownToThePageRowResumesItsSingletonUnderItsOwnFence()
     try tests.testAV1OriginThatLeavesAndReturnsKeepsItsOrderAsAFence()
+    try tests.testACarriedV1LeaseIsSpentByALaterBlendOfAnotherRow()
     try tests.testAnElectionChangeInsideAnUnchangedMembershipResumesOnTheFreshStream()
     try tests.testNewerV1AuthorityMergesIntoARestoredFenceBeforeV2Validation()
     try tests.testRowsThatLeaveTogetherAreAllRetainedAndCanExceedCapacityPlusOne()

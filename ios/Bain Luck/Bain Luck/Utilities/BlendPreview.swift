@@ -346,6 +346,9 @@ nonisolated struct BlendPreviewReader: Sendable, Equatable {
         let row: String
         let fence: OriginFence?
         let floor: Int?
+        /// The row's v1 order once its carried lease was spent while it was
+        /// away (`readerAfter`); it returns to `legacyOrders` with the row.
+        var legacyOrder: FoldedSequence? = nil
     }
 
     static let empty = BlendPreviewReader(held: nil, epoch: -1)
@@ -483,7 +486,7 @@ nonisolated enum BlendPreview {
                 ownFence(prior?.fence, epoch: $0.epoch, seq: $0.seq, retired: $0.retired, deadline: $0.deadline)
             } ?? prior?.fence
             let floor = [prior?.floor, reader.floors?.rows[row]].compactMap { $0 }.max()
-            retired.append(.init(row: row, fence: fence, floor: floor))
+            retired.append(.init(row: row, fence: fence, floor: floor, legacyOrder: prior?.legacyOrder))
         }
         if retired.count > BlendPreviewReader.maxRetiredMembers {
             // Never forget safety evidence. COVERAGE LIMIT: this visit admits
@@ -496,6 +499,7 @@ nonisolated enum BlendPreview {
         for entry in reader.retiredMembers where members.contains(entry.row) {
             if fences[entry.row] == nil, let fence = entry.fence { fences[entry.row] = fence }
             if let floor = entry.floor { floors[entry.row] = max(floors[entry.row] ?? 0, floor) }
+            if let order = entry.legacyOrder { next.legacyOrders[entry.row] = newer(next.legacyOrders[entry.row], order) }
         }
         next.originFences = fences
         next.floors = FoldRevision(floors)
@@ -528,6 +532,20 @@ nonisolated enum BlendPreview {
                          deadline: [old.deadline, deadline].compactMap { $0 }.min())
         }
         return .init(epoch: epoch, seq: seq, retired: retired, deadline: deadline)
+    }
+
+    /// The v1 order a row's fence stands for while it holds a carried lease
+    /// (pending, with a first-seen deadline), or nil.
+    private static func lease(_ fence: BlendPreviewReader.OriginFence, row: String) -> BlendPreviewReader.FoldedSequence? {
+        guard !fence.retired, fence.deadline != nil, let origin = Int(row) else { return nil }
+        return .init(epoch: fence.epoch, seq: fence.seq, originEventId: origin)
+    }
+
+    /// The later of two v1 orders of one row.
+    private static func newer(_ old: BlendPreviewReader.FoldedSequence?,
+                              _ order: BlendPreviewReader.FoldedSequence) -> BlendPreviewReader.FoldedSequence {
+        guard let old, old.epoch > order.epoch || (old.epoch == order.epoch && old.seq >= order.seq) else { return order }
+        return old
     }
 
     /// All validation precedes fence mutation. A bad snapshot cannot poison
@@ -640,7 +658,8 @@ nonisolated enum BlendPreview {
                 guard !reader.evidenceSaturated else { continue }
                 if let i = next.retiredMembers.firstIndex(where: { $0.row == id }) {
                     let entry = next.retiredMembers[i]
-                    next.retiredMembers[i] = .init(row: id, fence: entry.fence, floor: max(entry.floor ?? 0, rev))
+                    next.retiredMembers[i] = .init(row: id, fence: entry.fence, floor: max(entry.floor ?? 0, rev),
+                                                   legacyOrder: entry.legacyOrder)
                 } else {
                     next.retiredMembers.append(.init(row: id, fence: nil, floor: rev))
                     if next.retiredMembers.count > BlendPreviewReader.maxRetiredMembers { next.evidenceSaturated = true }
@@ -749,6 +768,24 @@ nonisolated enum BlendPreview {
         if frame.kind == .revoke || frame.originEventId != nil {
             next.legacyOrders[row] = .init(epoch: frame.epoch, seq: max(frame.seq, frame.throughSeq ?? 0),
                                            originEventId: frame.originEventId ?? eventId)
+        }
+        // A carried lease — a tuple shown at a membership boundary, kept with
+        // its first-seen deadline (`readerAfterMembership`) — only continues
+        // the display that boundary interrupted. v1 shows one frame at a time,
+        // so a later accepted blend of another row supersedes it: the lease is
+        // spent into that row's v1 order — a member's in `legacyOrders`, an
+        // away row's in its retired evidence, restored on its return — and a
+        // replay of the tuple is refused on the legacy path (f211). The fence
+        // v2 reads keeps the lease. After v2 authority the fences are v2's.
+        if frame.kind == .blend, !reader.enteredV2 {
+            for (other, fence) in reader.originFences where other != row {
+                if let order = lease(fence, row: other) { next.legacyOrders[other] = newer(next.legacyOrders[other], order) }
+            }
+            next.retiredMembers = next.retiredMembers.map { entry in
+                guard entry.row != row, let order = entry.fence.flatMap({ lease($0, row: entry.row) }) else { return entry }
+                return .init(row: entry.row, fence: entry.fence, floor: entry.floor,
+                             legacyOrder: newer(entry.legacyOrder, order))
+            }
         }
         if let base = frame.baseFoldRevision, let floors = reader.floors, !base.covers(floors) {
             next.held = nil
