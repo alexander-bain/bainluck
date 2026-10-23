@@ -41,7 +41,9 @@ import Foundation
 /// - Before the game there is no score floor, no actual score and no final
 ///   boundary, whatever markers or scores the history retains. During and
 ///   after, the score floor is the first first-period boundary (Q1, or 1H in
-///   men's college basketball) a named instrument OBSERVED. It is not a kickoff, so `kickoffAt` stays nil; without it
+///   men's college basketball) a named instrument OBSERVED, or — with no such
+///   marker served — the same history's first ESPN sighting of that period
+///   (`observedHistoryFloor`). It is not a kickoff, so `kickoffAt` stays nil; without it
 ///   nothing mounts.
 /// - After the game the final score is the page's own (the pair the hero
 ///   prints), appended as the last ACTUAL step at completion. `score_history`'s
@@ -103,9 +105,9 @@ enum ProjectedFinalPointsMount {
         var scoreFloor: Date?
         if pagePhase != .before {
             // A floor after the reader's clock is not yet a game state they can see.
-            guard let observed = firstRecordedGameStateAt(history.periodMarkers, sportKey: sportKey),
-                  observed <= asOf else { return nil }
-            scoreFloor = observed
+            guard let observed = observedHistoryFloor(history, sportKey: sportKey),
+                  observed.at <= asOf else { return nil }
+            scoreFloor = observed.at
         }
         var actuals: [ProjectedFinalPointsSeries.Actual] = []
         if pagePhase != .before {
@@ -182,6 +184,62 @@ enum ProjectedFinalPointsMount {
             if count > bestCount { best = key; bestCount = count }
         }
         return best
+    }
+
+    /// Where the during/after score floor came from. Neither is a kickoff.
+    enum FloorBasis: Equatable {
+        /// A served `period_markers` start of the first period that a named
+        /// instrument observed (`firstRecordedGameStateAt`).
+        case periodMarkerStart
+        /// #9483 / 403 — no such marker was served, and the earliest
+        /// period-bearing ESPN reading on this history already shows the first
+        /// period in progress: when we first SAW play, at the reading's own
+        /// time. It says nothing about when play began.
+        case espnFirstPeriodSighting
+    }
+
+    /// The score floor and the evidence it stands on.
+    struct ObservedFloor: Equatable {
+        let at: Date
+        let basis: FloorBasis
+    }
+
+    /// The observed-history floor (Design, MISSING-SURFACE-DISPOSITION,
+    /// 2026-10-23). A served first-period start marker wins, exactly as before.
+    /// Without one, the same history's first ESPN sighting of the first period
+    /// may stand in — 15195971: `11:55 - 1st Quarter` first seen
+    /// 01:50:48.082085Z, while the markers held only the 2nd Quarter boundary,
+    /// Halftime and the 3rd Quarter. Its time is the reading's own: never
+    /// moved back by the clock it shows, never the scheduled start, never a
+    /// relabelled later boundary, and `kickoffAt` stays nil. A floor is not a
+    /// mount: the picker and the series still have to admit real pairs.
+    static func observedHistoryFloor(_ history: EventHistoryResponse, sportKey: String?) -> ObservedFloor? {
+        if let marker = firstRecordedGameStateAt(history.periodMarkers, sportKey: sportKey) {
+            return ObservedFloor(at: marker, basis: .periodMarkerStart)
+        }
+        return firstPeriodSighting(history.espnHistory, sportKey: sportKey)
+            .map { ObservedFloor(at: $0, basis: .espnFirstPeriodSighting) }
+    }
+
+    /// The time of the earliest ESPN reading that names a period, when that
+    /// period is the league's first. A history whose earliest period is any
+    /// other — we started watching mid-game — has no sighting, and a later
+    /// first-period reading never outranks an earlier later-period one. Rows
+    /// that name no period (pre-game, `Final`) are not readings of play.
+    static func firstPeriodSighting(_ points: [ESPNHistoryPoint]?, sportKey: String?) -> Date? {
+        guard let firstPeriod = sportKey.flatMap({ ProjectedFinalPointsSeries.leagues[$0]?.firstPeriod })
+        else { return nil }
+        let readings = (points ?? []).compactMap { point -> (at: Date, period: String)? in
+            guard let raw = point.period, let at = point.timestamp.asDate else { return nil }
+            let period = PeriodLabel.normalize(raw, sport: sportKey)
+            return period.isEmpty ? nil : (at, period)
+        }
+        guard let earliest = readings.min(by: { $0.at < $1.at }),
+              earliest.period == firstPeriod,
+              // Two readings at the earliest instant must agree on the period.
+              !readings.contains(where: { $0.at == earliest.at && $0.period != firstPeriod })
+        else { return nil }
+        return earliest.at
     }
 
     /// Earliest `not_before` of an OBSERVED start marker of the league's first
