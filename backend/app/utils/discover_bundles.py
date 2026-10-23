@@ -1288,13 +1288,56 @@ _FIELD_MIN_PRICED = 3
 _FIELD_MIN_SHARED = 2
 
 
+#: Central-bank rate-decision outcome synonyms (#4082). Kalshi's FOMC board
+#: (``KXFEDDECISION-*``) names its legs "Hike 25bps", "Fed maintains rate",
+#: "Hike >25bps", "Cut 25bps", "Cut >25bps"; Polymarket's twin names the same
+#: legs "25 bps increase", "No change", "50+ bps increase", "25 bps decrease",
+#: "50+ bps decrease". A closed vocabulary of policy-rate legs so Removal 3's
+#: outcome gate sees that both venues are pricing the same FOMC decision without
+#: loosening outcome matching on any other market.
+_RATE_DECISION_OUTCOME_ALIASES: dict[str, str] = {
+    "fed maintains rate": "no change",
+    "maintain current rate": "no change",
+    "unchanged": "no change",
+    "25 bps increase": "hike 25bps",
+    "25bps increase": "hike 25bps",
+    "hike 25 bps": "hike 25bps",
+    "raise 25bps": "hike 25bps",
+    "raise 25 bps": "hike 25bps",
+    "25 bps decrease": "cut 25bps",
+    "25bps decrease": "cut 25bps",
+    "cut 25 bps": "cut 25bps",
+    "lower 25bps": "cut 25bps",
+    "lower 25 bps": "cut 25bps",
+    "50+ bps increase": "hike >25bps",
+    "50+bps increase": "hike >25bps",
+    "50 bps increase": "hike >25bps",
+    "50bps increase": "hike >25bps",
+    "hike more than 25bps": "hike >25bps",
+    "hike 50bps": "hike >25bps",
+    "hike 50 bps": "hike >25bps",
+    "50+ bps decrease": "cut >25bps",
+    "50+bps decrease": "cut >25bps",
+    "50 bps decrease": "cut >25bps",
+    "50bps decrease": "cut >25bps",
+    "cut more than 25bps": "cut >25bps",
+    "cut 50bps": "cut >25bps",
+    "cut 50 bps": "cut >25bps",
+}
+
+
+def _canonical_outcome_name(raw: Any) -> str:
+    name = str(raw or "").strip().lower()
+    return _RATE_DECISION_OUTCOME_ALIASES.get(name, name)
+
+
 def _priced_leader(data: dict[str, Any]) -> str | None:
     """The name of the highest-priced outcome, lowercased, or None."""
     best: tuple[float, str] | None = None
     for outcome in data.get("top_outcomes") or ():
         if not isinstance(outcome, dict) or outcome.get("probability") is None:
             continue
-        name = str(outcome.get("name") or "").strip().lower()
+        name = _canonical_outcome_name(outcome.get("name"))
         if not name:
             continue
         try:
@@ -1344,6 +1387,47 @@ _CEREMONY_PLURAL_RE = re.compile(
     r"\b(oscar|grammy|emmy|tony|golden globe|bafta)s\b", re.IGNORECASE
 )
 
+#: Standard English month abbreviations (#4082). Kalshi's FOMC board writes
+#: "Fed decision in Sep 2026?" ("Jul", "Oct", "Nov", "Dec") where Polymarket
+#: writes "Fed Decision in September?" ("July", "October", "November",
+#: "December"). Expanded pairwise — ONLY when the other title already spells the
+#: same month out in full — so a title whose partner does not name that full
+#: month is untouched.
+_MONTH_ABBREV_TO_FULL: dict[str, str] = {
+    "jan": "January",
+    "feb": "February",
+    "mar": "March",
+    "apr": "April",
+    "jun": "June",
+    "jul": "July",
+    "aug": "August",
+    "sep": "September",
+    "sept": "September",
+    "oct": "October",
+    "nov": "November",
+    "dec": "December",
+}
+_MONTH_ABBREV_RE = re.compile(
+    r"\b(" + "|".join(_MONTH_ABBREV_TO_FULL) + r")\.?(?=\s|[?.,;:!)]|$)",
+    re.IGNORECASE,
+)
+
+
+def _expand_shared_month_abbreviations(title: str, other_title: str) -> str:
+    """Expand a month abbreviation in ``title`` only when ``other_title`` names
+    that same month in full (#4082)."""
+    if not title or not other_title:
+        return title
+    other_lower = other_title.lower()
+
+    def _replace(match: re.Match[str]) -> str:
+        full = _MONTH_ABBREV_TO_FULL[match.group(1).lower()]
+        if re.search(rf"\b{full.lower()}\b", other_lower):
+            return full
+        return match.group(0)
+
+    return _MONTH_ABBREV_RE.sub(_replace, title)
+
 
 def _priced_outcome_names(data: dict[str, Any]) -> frozenset[str]:
     """The names of the outcomes a card actually PRICES, lowercased (#6537).
@@ -1358,7 +1442,7 @@ def _priced_outcome_names(data: dict[str, Any]) -> frozenset[str]:
     for outcome in data.get("top_outcomes") or ():
         if not isinstance(outcome, dict) or outcome.get("probability") is None:
             continue
-        name = str(outcome.get("name") or "").strip().lower()
+        name = _canonical_outcome_name(outcome.get("name"))
         if name:
             names.add(name)
     return frozenset(names)
@@ -1431,6 +1515,12 @@ def _comparison_title(data: dict[str, Any], other: dict[str, Any]) -> str:
        below the near arm's 3, so the prefilter still never hides a pair this
        rewrite lets the matcher pair.
 
+    5. **A month abbreviation whose partner spells that same month out in full**
+       (#4082): ``Sep`` -> ``September`` when the other title already contains
+       ``September`` ("Fed decision in Sep 2026?" beside "Fed Decision in
+       September?"). Pairwise, so a title whose partner names a different month
+       or no month at all is untouched.
+
     WHY THIS IS NOT A THRESHOLD MOVE, measured on the 23 same-bundle pairs served
     on page one at 13:30 PT 2026-09-09:
 
@@ -1482,6 +1572,7 @@ def _comparison_title(data: dict[str, Any], other: dict[str, Any]) -> str:
             ):
                 title = _ANY_YEAR_RE.sub("", title).strip()
 
+    title = _expand_shared_month_abbreviations(title, other_stripped)
     return _CEREMONY_PLURAL_RE.sub(lambda m: m.group(1), title)
 
 
