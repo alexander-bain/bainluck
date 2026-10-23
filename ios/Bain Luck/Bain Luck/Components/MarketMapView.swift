@@ -128,21 +128,64 @@ struct MarketMapView: View {
 
     // MARK: - The full-game margin map's own rungs and unit (#3552 / #3533)
 
-    /// The full-match spread legs, before anything is read out of them.
-    private var fullGameSpreadLegs: [SpreadRungs.Leg] {
-        (gameMarkets.spreads ?? [])
-            .filter { isFullGameSpread($0.marketName) }
-            .map(Self.leg)
+    /// #9483 — ONE PROBABILITY FAMILY PER DRAWN LADDER (Authority 0655Z, Root
+    /// 0704Z). A family is one venue's one original market: `source` +
+    /// `_market_id`, the question catalog's own grouping. On 15195971 the
+    /// full-game spreads were three families — kalshi/66190657 (28 rows),
+    /// polymarket/66873535 and polymarket/66832951 — merged into one rung set,
+    /// so the density and the ladder read Polymarket's DEN by 3.5+ at 33% above
+    /// Kalshi's DEN by 2.5+ at 29.5%: a distribution no venue quoted.
+    struct SpreadFamilyKey: Hashable, Comparable {
+        /// The served `source`, "" where none is served.
+        let source: String
+        /// The served `_market_id`, nil where none is served.
+        let marketId: Int?
+
+        /// Source, then id; an unserved id sorts after every served one.
+        static func < (a: Self, b: Self) -> Bool {
+            if a.source != b.source { return a.source < b.source }
+            switch (a.marketId, b.marketId) {
+            case let (x?, y?): return x < y
+            case (.some, nil): return true
+            default: return false
+            }
+        }
     }
 
-    /// What the full margin map may draw, and the unit it is drawn in.
+    /// The families in draw order: the one with the most rungs first — the
+    /// one the card draws — ties to key order, then every other family in key
+    /// order. Deterministic whatever order the payload served the rows in.
+    static func familyDrawOrder(_ rungCounts: [SpreadFamilyKey: Int]) -> [SpreadFamilyKey] {
+        rungCounts.keys.sorted { a, b in
+            let (ca, cb) = (rungCounts[a] ?? 0, rungCounts[b] ?? 0)
+            return ca != cb ? ca > cb : a < b
+        }
+    }
+
+    /// Every full-game spread family, each read out on its own, in draw order.
+    /// Internal so tests can ask which family the card draws.
+    var fullMarginFamilies: [(key: SpreadFamilyKey, map: SpreadRungs.Map)] {
+        let rows = (gameMarkets.spreads ?? []).filter { isFullGameSpread($0.marketName) }
+        let maps = Dictionary(grouping: rows) {
+            SpreadFamilyKey(source: $0.source ?? "", marketId: $0._marketId)
+        }.mapValues {
+            SpreadRungs.map(from: $0.map(Self.leg), home: homeTeam, away: awayTeam, sportUnit: vocab.unit)
+        }
+        return Self.familyDrawOrder(maps.mapValues(\.rungs.count)).compactMap { key in
+            maps[key].map { (key: key, map: $0) }
+        }
+    }
+
+    /// What the full margin map may draw, and the unit it is drawn in: the
+    /// drawn family's rungs and nothing from any other family.
     ///
     /// Read once and passed down, because three things have to agree about it —
     /// the card, the empty-chrome gate that decides whether the card exists,
     /// and the footnote that explains what the card withheld. That is #3503's
     /// rule, and computing it three times is how it gets broken.
     private var fullMarginData: SpreadRungs.Map {
-        SpreadRungs.map(from: fullGameSpreadLegs, home: homeTeam, away: awayTeam, sportUnit: vocab.unit)
+        fullMarginFamilies.first?.map
+            ?? SpreadRungs.map(from: [], home: homeTeam, away: awayTeam, sportUnit: vocab.unit)
     }
 
     /// The unit the FULL totals map is drawn in, read from the markets on it
@@ -407,6 +450,7 @@ struct MarketMapView: View {
     }
 
     private var marginMapCard: some View {
+        let families = fullMarginFamilies
         let data = fullMarginData
         let parsed = data.rungs
         let allMargins = parsed.map(\.margin)
@@ -429,12 +473,13 @@ struct MarketMapView: View {
         // margin is the `scoreboardCounts` class of error, so this asks the
         // question the totals card's `settledTotal` asks: does the scoreboard
         // count what THIS map's rungs are quoted in.
-        let settledMargin: Int? = {
-            guard isDone, scoreboardCounts(data.unit),
+        func gradingMargin(quotedIn unit: String) -> Int? {
+            guard isDone, scoreboardCounts(unit),
                   let homeScoreValue = scoredHomeScore,
                   let awayScoreValue = scoredAwayScore else { return nil }
             return homeScoreValue - awayScoreValue
-        }()
+        }
+        let settledMargin = gradingMargin(quotedIn: data.unit)
 
         // `Int(abs(margin))` truncated: a `-5.5` game line printed "+5", and on
         // the set maps this change introduces `-1.5` printed "+1" — a
@@ -451,6 +496,17 @@ struct MarketMapView: View {
         // `limit: nil` is every line, for the card's "All N lines".
         let ladder = marginLadders(parsed, settledMargin: settledMargin)
         let fullLadder = marginLadders(parsed, settledMargin: settledMargin, limit: nil)
+        // #9483 — the drawn family names its venue; every other family stays a
+        // separately identified market behind "All N lines", never merged into
+        // the ladder or the density above it.
+        let drawnSource = parsed.isEmpty ? nil : families.first.flatMap { SourceLabels.label(for: $0.key.source) }
+        let otherFamilies: [(title: String, rows: [LadderRow])] = families.dropFirst().compactMap {
+            family -> (title: String, rows: [LadderRow])? in
+            guard !family.map.rungs.isEmpty else { return nil }
+            let rows = marginLadders(family.map.rungs, settledMargin: gradingMargin(quotedIn: family.map.unit), limit: nil)
+            let venue = SourceLabels.label(for: family.key.source)
+            return (title: venue.map { "Also quoted on \($0)" } ?? "Also quoted", rows: rows)
+        }
 
         // #9483 — NO HEADER. It printed the blended winner (`OKC 56%`) over a
         // ladder of individually sourced venue rungs (`OKC by 1.5+ 62%`): two
@@ -520,7 +576,9 @@ struct MarketMapView: View {
                 id: "proj",
                 value: pv,
                 type: .proj,
-                label: "PROJECTION",
+                // Live, the sportsbooks' projected final — not the ladder's
+                // median, and not from the ladder's venue.
+                label: isLive ? Self.liveProjectionTileLabel : "PROJECTION",
                 displayValue: projLabel
             ))
         }
@@ -579,9 +637,14 @@ struct MarketMapView: View {
             axisRight: MarketMapRail.marginThresholdLabel(teamAbbr: hAbbr, threshold: axisEnds.right),
             markers: markers,
             ladder: ladder,
-            fullLadder: fullLadder
+            fullLadder: fullLadder,
+            sourceNote: drawnSource.map { "Lines from \($0)" },
+            otherFamilies: otherFamilies
         )
     }
+
+    /// The live PROJECTION tile's label: whose projection it is.
+    static let liveProjectionTileLabel = "SPORTSBOOK PROJECTION"
 
     /// #3852 — each SIDE is its own one-sided cover ladder: positive lines
     /// ascending, graded against the margin that side won by. Both sides sort
@@ -1281,7 +1344,9 @@ struct MarketMapView: View {
         markers: [MapMarker],
         ladder: [LadderRow],
         fullLadder: [LadderRow] = [],
-        periodIsOver: Bool? = nil
+        periodIsOver: Bool? = nil,
+        sourceNote: String? = nil,
+        otherFamilies: [(title: String, rows: [LadderRow])] = []
     ) -> some View {
         // #10830 — after the final the rail compares the markers on a plain
         // number line: a resolved price is not a distribution (web's compact
@@ -1294,6 +1359,8 @@ struct MarketMapView: View {
             && (showsShape || !markers.isEmpty)
         let ladderOpen = expandedLadders.contains(title) || Self.rigOpensLadders
         let drawnLadder = ladderOpen && fullLadder.count > ladder.count ? fullLadder : ladder
+        let otherLineCount = otherFamilies.reduce(0) { $0 + $1.rows.count }
+        let hasMoreLines = fullLadder.count > ladder.count || otherLineCount > 0
         return VStack(alignment: .leading, spacing: 10) {
             // Header
             HStack(alignment: .top) {
@@ -1306,6 +1373,11 @@ struct MarketMapView: View {
                     Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if let sourceNote {
+                        Text(sourceNote)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
                 if !headline.isEmpty {
@@ -1383,15 +1455,26 @@ struct MarketMapView: View {
             if !drawnLadder.isEmpty {
                 ladderView(entries: drawnLadder)
             }
+            // #9483 — other venues' markets, each on its own, only when open.
+            if ladderOpen {
+                ForEach(Array(otherFamilies.enumerated()), id: \.offset) { _, family in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(family.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ladderView(entries: family.rows)
+                    }
+                }
+            }
             // #10830 — the full ladder is one tap away, never a second page.
-            if fullLadder.count > ladder.count {
+            if hasMoreLines {
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) {
                         if ladderOpen { expandedLadders.remove(title) }
                         else { expandedLadders.insert(title) }
                     }
                 } label: {
-                    Text(ladderOpen ? "Show fewer lines" : "All \(fullLadder.count) lines")
+                    Text(ladderOpen ? "Show fewer lines" : "All \(max(fullLadder.count, ladder.count) + otherLineCount) lines")
                         .font(.subheadline.weight(.semibold))
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
