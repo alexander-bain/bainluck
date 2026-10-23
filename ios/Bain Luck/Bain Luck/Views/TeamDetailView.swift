@@ -126,6 +126,7 @@ struct TeamDetailView: View {
                                 }
                             }
                         }
+                        .macBrowseRowMenu(.futuresDetail(id: entry.marketId))
                     }
                 }
             }
@@ -137,6 +138,7 @@ struct TeamDetailView: View {
                         NavigationLink(value: Route.eventDetail(id: event.id)) {
                             gameRow(event, teamName: team.name)
                         }
+                        .macBrowseRowMenu(.eventDetail(id: event.id))
                     }
                 }
             }
@@ -148,6 +150,7 @@ struct TeamDetailView: View {
                         NavigationLink(value: Route.eventDetail(id: event.id)) {
                             gameRow(event, teamName: team.name)
                         }
+                        .macBrowseRowMenu(.eventDetail(id: event.id))
                     }
                 }
             }
@@ -198,6 +201,7 @@ struct TeamDetailView: View {
                                 }
                             }
                         }
+                        .macBrowseRowMenu(.futuresDetail(id: future.marketId))
                     }
                 }
             }
