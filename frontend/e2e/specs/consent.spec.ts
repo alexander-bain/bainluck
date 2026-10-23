@@ -482,18 +482,45 @@ test("consent.storage_failure — honoured now, and not claimed as saved", async
 }) => {
   // Make `setItem` a silent no-op BEFORE any app code runs: the dangerous
   // variant, because it is indistinguishable from success without a readback.
+  //
+  // #3961 — the fault is installed on `Storage.prototype`, NEVER as an own
+  // property of `window.localStorage`. Storage is a WebIDL object with a named
+  // property setter, so defining `setItem` as an own property of the instance
+  // does not shadow the method: it STORES AN ITEM called "setItem" (value: the
+  // function's source) and the app's real write goes straight through. Measured
+  // in Chromium 1.48.2: the old installation left `storeConsent` returning
+  // `'saved'` with "none" persisted — exactly this journey's daily red since at
+  // least 9/2, which read as a product defect and was a dead fault.
   await page.addInitScript(() => {
-    const real = window.localStorage.setItem.bind(window.localStorage);
-    Object.defineProperty(window.localStorage, "setItem", {
+    const proto = Object.getPrototypeOf(window.localStorage) as Storage;
+    const real = proto.setItem;
+    Object.defineProperty(proto, "setItem", {
       configurable: true,
-      value: (k: string, v: string) => {
-        if (k === "bainluck_consent") return; // swallow
-        real(k, v);
+      writable: true,
+      value: function (this: Storage, k: string, v: string) {
+        if (this === window.localStorage && String(k) === "bainluck_consent") return; // swallow
+        return real.call(this, k, v);
       },
     });
   });
 
   await go(journey, page, "/preferences#telemetry");
+
+  // Positive control, on the SAME write path the app uses (`localStorage.setItem`
+  // with the consent key, then an exact readback — `lib/analytics/config.ts`
+  // `storeConsent`). A fault proven only by its syntax is how the dead one above
+  // survived; if this fails, the journey below measures nothing.
+  const fault = await page.evaluate((k) => {
+    window.localStorage.setItem(k, "none");
+    const consentAfterWrite = window.localStorage.getItem(k);
+    window.localStorage.setItem("bainluck_fault_probe", "1");
+    const otherKeyAfterWrite = window.localStorage.getItem("bainluck_fault_probe");
+    window.localStorage.removeItem("bainluck_fault_probe");
+    return { consentAfterWrite, otherKeyAfterWrite };
+  }, CONSENT_KEY);
+  expect(fault.consentAfterWrite, "storage fault is not installed: a consent write landed").toBeNull();
+  expect(fault.otherKeyAfterWrite, "storage fault is too wide: it broke every key").toBe("1");
+
   await page.getByRole("button", { name: TURN_OFF }).click();
 
   journey.resetTelemetryWindow();
@@ -504,7 +531,10 @@ test("consent.storage_failure — honoured now, and not claimed as saved", async
   // …and the UI must NOT say the choice was saved.
   const status = (await page.locator(PREFS_SECTION).innerText()) || "";
   expect(status).toContain("would not save");
-  expect(status).not.toMatch(/^Analytics is OFF\. Neither of those loads\.$/m);
+  // The SAVED sentence (`telemetryStatusText`, durable denial). The old pattern
+  // here pinned copy retired by LAT-P197, so it could never match and guarded
+  // nothing.
+  expect(status).not.toContain("Analytics is OFF. Google Analytics does not load.");
 
   await journey.finish({
     allowedNavigationAborts: [RSC_PREFETCH_ABORT, INSTRUMENT_NAVIGATION_ABORT],

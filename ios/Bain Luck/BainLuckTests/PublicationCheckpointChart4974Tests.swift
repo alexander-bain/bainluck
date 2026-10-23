@@ -675,13 +675,17 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
         XCTAssertTrue(zip(today[0], today[0].dropFirst()).contains { $0.probability < 0.5 && $1.probability > 0.5 })
     }
 
-    /// The balance ink colors the line home above 50% and away below; under a
+    /// The balance ink colored the line home above 50% and away below; under a
     /// mount it would redraw the blend uncut and color a crossing nobody
-    /// recorded. The body is not rendered in tests, so this reads the source.
+    /// recorded. #11356 retired the ink on every chart (one line, one
+    /// identity), so no chart can run it, mounted or not; the live split still
+    /// stays off a mount. The body is not rendered in tests, so this reads the
+    /// source.
     func testTheMountedChartRunsNoBalanceInkAndNoLiveSplit() throws {
         let chart = try code("Bain Luck/Components/OddsChartView.swift")
         XCTAssertTrue(chart.contains("letliveSplit=checkpoints==nil?liveEdgeSplit(dataPoints:dataPoints,domain:domain):nil"))
-        XCTAssertTrue(chart.contains("letbalance=checkpoints==nil?balancePlan(dataPoints:dataPoints,liveSplit:liveSplit,domain:domain):nil"))
+        XCTAssertFalse(chart.contains("BinaryWinChartBalanceInkLayer("), "the balance ink is drawn again")
+        XCTAssertFalse(chart.contains("balancePlan("), "the balance ink is planned again")
         XCTAssertTrue(chart.contains("ifletcheckpoints{PublicationCheckpointLayer4974(plan:checkpoints.plan,"))
     }
 
@@ -720,10 +724,14 @@ final class PublicationCheckpointChart4974Tests: XCTestCase {
             .filter { !$0.isWhitespace }
     }
 
-    /// Inline and fullscreen take one mount, built the same way.
+    /// Inline and fullscreen take one mount, built the same way. #11356 — so
+    /// does the finished line's key reading, which names the mount's resting
+    /// end: three sites, one builder.
     func testInlineAndFullscreenShareOneIntegration() throws {
         let chart = try code("Bain Luck/Components/OddsChartView.swift")
-        XCTAssertEqual(chart.components(separatedBy: "letcheckpoints=checkpointMount(for:dataPoints)").count - 1, 2)
+        XCTAssertEqual(chart.components(separatedBy: "letcheckpoints=checkpointMount(for:dataPoints)").count - 1, 3)
+        XCTAssertTrue(chart.contains("privatefuncfinishedEndKeyReading9483(dataPoints:[ChartDataPoint])->(text:String,ink:Color)?{letcheckpoints=checkpointMount(for:dataPoints)"),
+                      "the third mount is the finished key's, not a third chart")
         XCTAssertEqual(chart.components(separatedBy: "periodMarkers:periodMarkers,moments:moments,checkpoints:checkpoints,").count - 1, 2)
         XCTAssertTrue(chart.contains("pageGaveCard:readout!=nil).publicationCheckpoints(checkpoints)"))
         XCTAssertTrue(chart.contains("gameFinished:EventState.isFinished(status),checkpoints:checkpoints,"))

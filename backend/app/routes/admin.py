@@ -565,6 +565,30 @@ async def operations_dashboard(
     }
 
 
+@router.get("/event-source-coverage/cached")
+async def event_source_coverage_cached(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """#847: the dashboard's event-source coverage, from saved evidence ONLY.
+
+    For the Correctness Console, which must open without starting the live
+    coverage query that ``/dashboard`` runs. One cache key is read; a miss, an
+    unreadable cache, a broken or expired envelope each come back as their own
+    typed state. Deliberately NO ``Depends(get_db)``, no ``?bust=``/``?refresh=``
+    and no cold-cache fallback — unlike the admin-health reads, nothing on this
+    path computes coverage, enqueues work or writes the cache.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from fastapi.responses import JSONResponse
+
+    from app.tasks.precompute_admin_health import read_event_source_coverage_cache
+
+    status, body = await read_event_source_coverage_cache()
+    return JSONResponse(body, status_code=status, headers={"Cache-Control": "no-store"})
+
+
 # ---------------------------------------------------------------------------
 # Latency stats (production observability)
 # ---------------------------------------------------------------------------

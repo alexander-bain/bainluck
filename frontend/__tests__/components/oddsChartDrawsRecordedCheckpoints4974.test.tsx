@@ -169,7 +169,9 @@ const at = (offsetMin: number, offsetSec: number) => new Date(KICKOFF + offsetMi
 describe("the rig is not vacuous", () => {
   it("draws the chart, the blend, and one dot per checkpoint", () => {
     const control = draw();
-    expect(lineCurves(control)).toBeGreaterThanOrEqual(3);
+    // #11356 — Sources closed draws the blend alone; opened, the sources too.
+    expect(lineCurves(control)).toBe(1);
+    expect(lineCurves(draw({ defaultSourcesExpanded: true }))).toBeGreaterThanOrEqual(3);
     expect(subpaths(blendPath(control))).toBe(1);
     expect(checkpointLayer(control)).toBeNull();
 

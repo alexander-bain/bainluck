@@ -77,8 +77,12 @@ describe("#10092 the chart's end callout is drawn on its one row", () => {
 
   it("still draws the callout exactly once, labelled with the number the wrapper exports", () => {
     expect(glows(html)).toHaveLength(1);
-    const label = /data-callout-label="([^"]+)"/.exec(html)?.[1];
+    // #11356 — the painted string is `data-callout-text` (below 50/50 it is
+    // the away side's chance); `data-callout-label` stays the home side's.
+    const label = /data-callout-text="([^"]+)"/.exec(html)?.[1];
     expect(label).toMatch(/^\d+%$/);
+    const home = /data-callout-label="([^"]+)"/.exec(html)?.[1];
+    expect([home, `${100 - Number(home!.replace("%", ""))}%`]).toContain(label);
     // The painted text the #10092 harness reads (`.recharts-scatter text`).
     expect(html).toMatch(new RegExp(`class="recharts-layer recharts-scatter"[^]*?<text[^>]*>${label}</text>`));
   });

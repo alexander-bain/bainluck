@@ -1,0 +1,94 @@
+{
+  "schema": "calibration-847-query3-local-seal/v1",
+  "production_admitted": false,
+  "files": {
+    "ADMISSION.md": {
+      "bytes": 12955,
+      "sha256": "06bc34f15c26de7c71decf5391dd34f980ae4627c4f92cc3e8d77dd3ae2c3c3a"
+    },
+    "COMMAND-REVIEW.txt": {
+      "bytes": 1452,
+      "sha256": "bffc7296ea4171f588a9322e691e8b449a32dbbc71c61045adf32132439bbcfc"
+    },
+    "MANIFEST.json": {
+      "bytes": 10813,
+      "sha256": "34d0e506522f791378bb387456c9f403a2d25998ab4a286f77178d2ad13eaf5c"
+    },
+    "OFFLINE-VERIFICATION.json": {
+      "bytes": 3993,
+      "sha256": "9acd373b21f957b72ac69ef26b1767f1667756d9fc49ba5e53683a5d40f2ea58"
+    },
+    "candidateC.plan-only.sql": {
+      "bytes": 2236,
+      "sha256": "7d5f57e5c0685fc1e62505215dc3d98af674f5ad1bb2f69e4d71b98be4095a1a"
+    },
+    "candidateC.statement.txt": {
+      "bytes": 2031,
+      "sha256": "628a449c0ea16b368aabafec6ea436a1319879699e422de4dc4dab115a91e052"
+    },
+    "provenance/ASSESSMENT.md": {
+      "bytes": 19167,
+      "sha256": "634d36dc2744a4fc0e96a9671305b2e767d90c0f1aacabb835e24e2930de5877"
+    },
+    "provenance/ROOT-ASSESSMENT-REVIEW.md": {
+      "bytes": 4660,
+      "sha256": "149c26c648083c366e76e5758ea1d86299275bd21a5725fcc4660f98f5f4b5ed"
+    },
+    "provenance/ROOT-PROPOSAL-C-ALGEBRA.json": {
+      "bytes": 701,
+      "sha256": "35f688eb189ccd5be64a091a6a3d9883667923331162f995cd552b761ceb92dc"
+    },
+    "provenance/native683-ROOT-ADMISSION.template.json": {
+      "bytes": 568,
+      "sha256": "34cb8f23113261db24111e775b985b2b7d4f9dd28f09a44c902cbe2e68fc4b03"
+    },
+    "provenance/native683-ROOT-FIXED-REFUSAL-WALL.json": {
+      "bytes": 610,
+      "sha256": "114bd98bc4fccf0f2be8ca3c70d344c61881bb89d17ca28008fa4938a6e9dd6a"
+    },
+    "provenance/native683-ROOT-READINESS.json": {
+      "bytes": 852,
+      "sha256": "748059d838a279f2c05fb34ef2444518429c797f2d7ebc3021466da4fc6084f3"
+    },
+    "provenance/native683-child.py.txt": {
+      "bytes": 5032,
+      "sha256": "9d41f5ce73a7d14afc4f0b7616c871006c89540368820c47cd26f89f79113d1d"
+    },
+    "provenance/native683-contract.py.txt": {
+      "bytes": 4922,
+      "sha256": "a031ea16d951da53698b963cdd12a7406a61864d7c94c061a15d70ebb075be2a"
+    },
+    "provenance/native683-supervisor.py.txt": {
+      "bytes": 13321,
+      "sha256": "79fc02cbe580d0e6a67136d6f94c220b4b587efb174657a66d22e9e3be138929"
+    },
+    "provenance/producer-task-bounds.json": {
+      "bytes": 2021,
+      "sha256": "d63bdab1196d9a5dc910eda047fefedb9fcbc8352fe3e72f4a83afad7737040f"
+    },
+    "query3-vs-candidateC.diff": {
+      "bytes": 2555,
+      "sha256": "c818c776f7a57275843ff4244769b5af27529fc84802a6bcdbf544fa42fafae5"
+    },
+    "query3.plan-only.sql": {
+      "bytes": 943,
+      "sha256": "bd54471ec2279ae71bfb358efbf7fadd11586cd0dd1265619d0786393cb2fc72"
+    },
+    "query3.statement.txt": {
+      "bytes": 738,
+      "sha256": "050cf5664d5575f1034c6caf9d818e74c72975475305221c497d6deab389887c"
+    },
+    "source/precompute_backfill_winners_status.py": {
+      "bytes": 21473,
+      "sha256": "5f89657110d59b144637e84c522ce9dce1ab11517052dd21cc2ad925a07f01d8"
+    },
+    "source/query3.literal.txt": {
+      "bytes": 974,
+      "sha256": "509696140860f4b7d14671571a97e4958a3c5ef3aa37dadc00b3bfea8c7d6dc4"
+    },
+    "source/resolution_authority.py": {
+      "bytes": 27044,
+      "sha256": "10ed6fbf1b548486e4fb5f872eb2d343f3db0cf1d20ea10b2fae8ffec6fc1348"
+    }
+  }
+}

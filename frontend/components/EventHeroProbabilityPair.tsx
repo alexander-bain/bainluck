@@ -366,6 +366,14 @@ export default function EventHeroProbabilityPair({
     );
   }
 
+  // #11301 — below 360px the page wraps this pair onto its own full-width
+  // row under the two team cells, and each figure must sit under its own
+  // team. Four auto margins do it — the pair's first span, its last span and
+  // both sides of the dash — so the free width splits a quarter, a half, a
+  // quarter. The dash keeps its box but is not drawn: two figures in two cells
+  // are not a pair read across a gap. Set from the CONTAINER, so the numeral
+  // and `%` spans keep their exact class lists for every reader that finds
+  // them by those (#2085's duel invariant, #6064, the capture probes).
   return (
     // UX-P003: the hero's half of "card == hero == chart". The rail reads
     // `data-probability` here and on the Discover card that links to this page,
@@ -373,7 +381,7 @@ export default function EventHeroProbabilityPair({
     // percent — #2085 changed what is drawn, not what is asserted.
     <div
       ref={cueRef}
-      className="flex items-baseline"
+      className="flex items-baseline max-[359px]:w-full max-[359px]:[&>:first-child]:ml-auto max-[359px]:[&>:last-child]:mr-auto"
       data-testid="event-hero-probability"
       data-probability={homeProb ?? ""}
       data-probability-source={probSourceLabel ?? ""}
@@ -411,7 +419,7 @@ export default function EventHeroProbabilityPair({
           Leaving a dangling en-dash after a withheld away side would read as a
           number that failed to draw, which is the thing being avoided. */}
       {!awayWithheld && (
-      <span className="text-lg font-light text-text-muted mx-1.5 self-center">
+      <span className="text-lg font-light text-text-muted mx-1.5 self-center max-[359px]:mx-auto max-[359px]:invisible">
         {"–"}
       </span>
       )}

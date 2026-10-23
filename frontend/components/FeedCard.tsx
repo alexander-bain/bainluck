@@ -51,6 +51,9 @@ import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { probabilityBarPair, SEGMENT_OPACITY } from "@/lib/probabilityBarPair";
 import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import TeamNameLink from "./TeamNameLink";
+import ProjectedFinalLine from "./ProjectedFinalLine";
+import { cardProjectedFinal, liveCardProjectedFinal, projectedFinalLabel } from "@/lib/projectedFinalPair";
+import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
 
 interface FeedCardProps {
   item: FeedItem;
@@ -375,6 +378,39 @@ function EventFeedCard({
   // live-style probability split for one nothing is reporting on.
   const isSuspended = isSuspendedStatus(data.status);
   const isScheduled = data.status === "scheduled";
+  // #2920 / #9483 — the projected final the league/search card and the event
+  // headline print, admitted by the same rule (`cardProjectedFinal`). Before
+  // play: a scheduled row whose kickoff has passed is no longer "before".
+  // Live: only the producer's marked in-play pair, read against the score this
+  // card prints (`liveCardProjectedFinal`) — never the bare pair, which can be
+  // a pregame reading on a live row. Live means started too, as on the league
+  // card and the page: a live row whose start is still ahead by this clock is
+  // where the page prints its pregame pair. Never a second, card-local calculation.
+  const projectedNames = teamShortNames(
+    { name: data.home_team, abbreviation: data.home_team_data?.abbreviation },
+    { name: data.away_team, abbreviation: data.away_team_data?.abbreviation },
+    data.sport,
+  );
+  const projectedFinal =
+    isScheduled && Date.parse(data.commence_time) > Date.now()
+      ? cardProjectedFinal(data.current_odds, data.sport)
+      : isLive && Date.parse(data.commence_time) <= Date.now()
+        ? liveCardProjectedFinal(data.current_odds, data.sport, data.commence_time, {
+            home: data.home_score,
+            away: data.away_score,
+          })
+        : null;
+  // #11296 — on a final, the sportsbooks' last pair before the scheduled start,
+  // by the same rule as the league card and the headline; empty while a row
+  // carries no `pregame_projection`. Soccer reads the row's served period.
+  const finalForecast = finalForecastComparison({
+    sportKey: data.sport,
+    status: data.status,
+    homeScore: data.home_score,
+    awayScore: data.away_score,
+    actualPeriod: finalScorePeriod(data.sport, data.final_score_period),
+    projection: data.pregame_projection,
+  });
   // #8635: the server's last-resort highlight for a live game is the word
   // "Live", which repeats the green LIVE chip beside it. Drop only that echo; a
   // live label that says something new ("Odds moved", "Wild game") still shows.
@@ -994,6 +1030,30 @@ function EventFeedCard({
               data-bar-segment="home"
             />
           </div>
+        )}
+
+        {/* #2920 / #9483 — the projected final, named per team, away first
+            like this card's rows. Live, it sits under the score the rows
+            print, which stays the card's first statement. */}
+        {projectedFinal && (
+          <ProjectedFinalLine
+            label={projectedFinalLabel(data.sport)}
+            first={{ name: projectedNames.away, score: projectedFinal.away }}
+            second={{ name: projectedNames.home, score: projectedFinal.home }}
+            order="away-home"
+            variant="card"
+            testId="feed-card-projected-final"
+          />
+        )}
+        {finalForecast && (
+          <ProjectedFinalLine
+            label={finalForecast.label}
+            first={{ name: projectedNames.away, score: finalForecast.forecast.away }}
+            second={{ name: projectedNames.home, score: finalForecast.forecast.home }}
+            order="away-home"
+            variant="card"
+            testId="feed-card-final-forecast"
+          />
         )}
 
         {/* Bottom row: reason + context + thumbs.

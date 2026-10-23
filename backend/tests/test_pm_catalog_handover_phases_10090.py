@@ -20,6 +20,7 @@ from app.tasks import live_blend_refresh as blend
 from app.tasks import polymarket_ws as task
 from tests.test_pm_open_cycle_lifetime_10090 import CatalogRig, until
 from tests.test_ws_consumer_session_lifetime_2471 import _install
+from tests.test_ws_flush_retry_q491 import POLY_SLATE_LIVE
 
 LOGGER = "app.tasks.polymarket_ws"
 PREFIX = "Polymarket WS catalog handover: "
@@ -334,6 +335,9 @@ async def test_an_untimed_boundary_stays_silent(caplog):
 async def test_real_consumer_writes_one_line_per_catalog_handover(monkeypatch, caplog):
     caplog.set_level(logging.INFO, logger=LOGGER)
     rig, stop, sockets = CatalogRig(), asyncio.Event(), []
+    # #10090 attempt156: the rig answers every slate read with this slate, the
+    # stored-live read included, so its event must be stored live.
+    rig.slate = POLY_SLATE_LIVE
 
     class Socket:
         def __init__(self):
@@ -373,7 +377,9 @@ async def test_real_consumer_writes_one_line_per_catalog_handover(monkeypatch, c
     monkeypatch.setenv("WS_OPEN_CONTRACT_PRICES", "1")
 
     async def stop_after_refreshes():
-        await until(lambda: rig.catalog_reads >= 4)
+        # #10090 attempt156: one more slate read than before, the stored-live
+        # subset ahead of the startup full read, so the same three timer reads.
+        await until(lambda: rig.catalog_reads >= 5)
         stop.set()
 
     stopper = asyncio.create_task(stop_after_refreshes())
@@ -383,9 +389,14 @@ async def test_real_consumer_writes_one_line_per_catalog_handover(monkeypatch, c
     lines = handover_lines(caplog)
     initial = [line for line in lines if "reason=initial " in line]
     timer = [line for line in lines if "reason=timer " in line]
+    # #10090 attempt156: exactly one startup-games handover, the full slate
+    # installed after the stored-live subset and before any open read.
+    startup = [line for line in lines if "reason=startup-games " in line]
     assert len(initial) == 1 and "slate_read=- " in initial[0]
+    assert len(startup) == 1 and "open_read=- " in startup[0]
+    assert "slate_read=- " not in startup[0]
     assert stats["catalog_refreshes"] >= 2
-    assert len(timer) == stats["catalog_refreshes"] == len(lines) - 1
+    assert len(timer) == stats["catalog_refreshes"] == len(lines) - 2
     for line in lines:
         assert "outcome=ok " in line
         fields = dict(part.split("=", 1) for part in line[len(PREFIX) :].split())

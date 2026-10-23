@@ -13,6 +13,7 @@ from sqlalchemy.sql.dml import Update
 from app.models.models import Event, FuturesMarket, FuturesOutcome
 import app.tasks.polymarket_token_topup as topup
 import app.tasks.polymarket_ws as ws
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 
 class Service:
@@ -43,7 +44,7 @@ class Session:
             self.updates.append(stmt)
             rows = []
         else:
-            rows = next(self.batches)
+            rows = answer_slate_market_read(stmt, next(self.batches))  # #10663
         return SimpleNamespace(all=lambda: rows)
 
 
@@ -119,6 +120,7 @@ async def test_real_slate_prioritizes_live_win_and_keeps_both_token_orientations
         get_task_session=context,
         topup_clob_tokens=capped,
         topup_outcome_clob_tokens=outcome_topup,
+        condition_id_of=topup.condition_id_of,
     )
     exec(
         compile(ast.Module(body=[loader], type_ignores=[]), "real_pm_slate", "exec"),

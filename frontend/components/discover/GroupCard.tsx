@@ -6,8 +6,10 @@ import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverIntera
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { BundleActionBar } from "./BundleActionBar";
 import { BundleHeader } from "./BundleHeader";
-import { bundleSeatCount } from "./constants";
+import { bundleExpandLabel, bundleSeatCount } from "./constants";
 import { FuturesCompactRow } from "./FuturesCard";
+import { rottenTomatoesComparison } from "@/lib/discover/rottenTomatoesComparison";
+import { RottenTomatoesComparison } from "./RottenTomatoesComparison";
 
 interface GroupCardProps {
   items: FeedItem[];
@@ -37,7 +39,7 @@ interface GroupCardProps {
  * "2 markets". It now carries the question the members are all answers to, on
  * its own line for the same reason ThemeBundleCard does — a question is a
  * sentence and does not fit beside the chip at 390px. The count is not lost:
- * the member rows are underneath and "All N questions" still prints it whenever
+ * the member rows are underneath and "All N markets" (#10877) prints it whenever
  * there is more behind the chevron than the card already seats.
  *
  * #7492: it used to seat `items[0]` and nothing else, so a card whose own
@@ -61,6 +63,8 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
   // same lie as the `Show 1 more` this fix removes.
   const canExpand = items.length > peek.length;
   const shown = expanded ? items : peek;
+  const scoreComparison = rottenTomatoesComparison(items);
+  const displayedQuestion = scoreComparison ? "Rotten Tomatoes score forecasts" : sharedQuestion;
   const cat = primary.type === "futures" ? (primary.data as FeedFuturesData).llm_sport_category : null;
   const analytics = getDiscoverItemAnalytics(primary);
 
@@ -82,7 +86,7 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
     <div className="rounded-2xl border border-surface-border bg-surface-card shadow-lg overflow-hidden">
       <BundleHeader
         title={title}
-        sharedQuestion={sharedQuestion}
+        sharedQuestion={displayedQuestion}
         fallbackCount={`${items.length} markets`}
         category={cat}
         expanded={expanded}
@@ -93,13 +97,17 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
       {/* The members: the first `bundleSeatCount` of them collapsed, all of them
           expanded. Both are the same compact row — the header's question is
           answered by the rows, so the rows are what the card is for. */}
-      <div className="divide-y divide-surface-border border-t border-surface-border">
+      {scoreComparison ? (
+        <RottenTomatoesComparison comparison={{ ...scoreComparison, rows: scoreComparison.rows.slice(0, shown.length) }} />
+      ) : (
+        <div className="divide-y divide-surface-border border-t border-surface-border">
         {shown.map((item, i) => (
           <div key={i} className="px-4 py-3">
             <FuturesCompactRow item={item} data={item.data as FeedFuturesData} />
           </div>
         ))}
       </div>
+      )}
 
       {!expanded && canExpand && (
         <button
@@ -107,7 +115,7 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
           onClick={() => setExpandedWithTracking(true)}
           className="w-full text-center py-2.5 text-xs font-medium text-accent-brand hover:text-accent-brand/80 border-t border-surface-border"
         >
-          All {items.length} questions
+          {bundleExpandLabel(items)}
         </button>
       )}
 
@@ -119,7 +127,7 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
       <BundleActionBar
         items={items}
         title={title}
-        sharedQuestion={sharedQuestion}
+        sharedQuestion={displayedQuestion}
         positionIndex={positionIndex}
       />
     </div>

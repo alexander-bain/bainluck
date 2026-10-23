@@ -72,6 +72,44 @@ OPEN_FLUSH_CHUNKS_PER_FLUSH = 2
 #: markets are about ten statements.
 OUTCOME_READ_MARKETS = 2_000
 
+#: #10090: rows the open-catalog mapping handles per event-loop turn. The
+#: mapping runs on the loop that receives every Polymarket socket. Measured
+#: 2026-10-20 (worker-ws v5827): after the 50 s admission read, mapping the
+#: ~62,600 open assets held that loop 1.43 s (heartbeat max_at
+#: 21:14:39.899-21:14:41.329Z, gc_overlap 0), and every game's quotes waited
+#: behind it. A turn of this many rows is a few milliseconds.
+OPEN_MAP_ROWS_PER_TURN = 1_000
+
+
+def _pause(i: int) -> bool:
+    """True before row ``i`` when the mapping should give the loop a turn."""
+    return i > 0 and i % OPEN_MAP_ROWS_PER_TURN == 0
+
+
+def _finish(steps):
+    """Run step generator ``steps`` to its result without pausing."""
+    while True:
+        try:
+            next(steps)
+        except StopIteration as done:
+            return done.value
+
+
+async def _finish_cooperatively(steps):
+    """The same steps and result, with an event-loop turn at every pause.
+
+    The inputs are the caller's own fresh read, not the live maps, so the
+    quotes handled during a turn change nothing the steps read.
+    """
+    import asyncio
+
+    while True:
+        try:
+            next(steps)
+        except StopIteration as done:
+            return done.value
+        await asyncio.sleep(0)
+
 
 def open_contract_prices_enabled() -> bool:
     """False when either undo flag is set to ``0``."""
@@ -125,20 +163,27 @@ def open_contract_markets_stmt():
     last three are the market's own row, read so a game winner can be bridged
     to its event's blend (:func:`open_contract_event_candidates`, #10091)
     without re-imposing the window.
+
+    #10663: ``name`` and ``external_id`` are read only for a market that HAS an
+    event (``NULL`` otherwise). The bridge is the one reader of either column
+    and it skips every event-less row first, so the result is the same; what
+    changes is that ~34,000 names and condition ids no longer arrive, are
+    decoded and are held for the whole pairing on every catalog refresh.
     """
-    from sqlalchemy import select
+    from sqlalchemy import case, select
 
     from app.models.models import FuturesMarket
 
     meta = FuturesMarket.market_metadata
+    bridged = FuturesMarket.event_id.isnot(None)
     return select(
         FuturesMarket.id,
         meta["clob_token_ids"],
         meta["clobTokenIds"],
         meta[OUTCOME_TOKEN_METADATA_KEY],
         FuturesMarket.event_id,
-        FuturesMarket.name,
-        FuturesMarket.external_id,
+        case((bridged, FuturesMarket.name)).label("name"),
+        case((bridged, FuturesMarket.external_id)).label("external_id"),
     ).where(*_open_market_clauses())
 
 
@@ -202,6 +247,49 @@ def _token_list(raw: Any) -> list[str]:
     if not isinstance(raw, list):
         return []
     return [str(t) for t in raw if t is not None and str(t)]
+
+
+@dataclass
+class OpenContractLegs:
+    """The leg read, digested row by row into what the pairing reads (#10663).
+
+    ``open_contract_asset_map`` used to receive the leg read as one flat list
+    of result rows — ~71,000 ``Row`` objects at today's catalog, each holding
+    its own ``market_id`` int and a reference the pairing never uses after the
+    first pass — and rebuild exactly these three structures from it, so during
+    the pairing the catalog refresh held both. The reader now adds each chunk's
+    rows here as they arrive and passes this instead; the flat list is never
+    built. ``add`` is the one place a leg row is read, in both paths.
+    """
+
+    #: market → ``[(outcome_id, external_id)]`` in leg-read order
+    by_market: dict[int, list[tuple[int, str]]] = field(default_factory=dict)
+    #: outcome → its ``external_id`` (``""`` when stored NULL), every leg
+    ext_by_outcome: dict[int, str] = field(default_factory=dict)
+    #: outcomes already graded (``is_winner`` or a resolution source)
+    graded: set[int] = field(default_factory=set)
+    #: leg rows digested, for the read's own line
+    rows: int = 0
+
+    def add(self, outcome_id: int, market_id: int, ext: "str | None", is_graded: Any) -> None:
+        ext = ext or ""
+        self.by_market.setdefault(market_id, []).append((outcome_id, ext))
+        self.ext_by_outcome[outcome_id] = ext
+        if is_graded:
+            self.graded.add(outcome_id)
+        self.rows += 1
+
+    async def add_rows_cooperatively(self, rows: Iterable[tuple]) -> "OpenContractLegs":
+        """Add one leg chunk, giving the socket loop a turn every
+        ``OPEN_MAP_ROWS_PER_TURN`` rows — the turns the mapping's own first
+        pass used to take over the same rows (#10090)."""
+        import asyncio
+
+        for i, (outcome_id, market_id, ext, is_graded) in enumerate(rows):
+            if _pause(i):
+                await asyncio.sleep(0)
+            self.add(outcome_id, market_id, ext, is_graded)
+        return self
 
 
 @dataclass
@@ -269,8 +357,14 @@ def tokens_by_contract(
 
     Keys are ``"<condition>:<index>"`` strings so the map stays plain data.
     """
+    return _finish(_tokens_by_contract_steps(asset_to_outcome, ext_by_outcome))
+
+
+def _tokens_by_contract_steps(asset_to_outcome, ext_by_outcome):
     out: dict[str, str] = {}
-    for token, oid in asset_to_outcome.items():
+    for i, (token, oid) in enumerate(asset_to_outcome.items()):
+        if _pause(i):
+            yield
         key = contract_key(ext_by_outcome.get(oid, ""))
         if key is not None:
             out.setdefault(f"{key[0]}:{key[1]}", token)
@@ -279,7 +373,7 @@ def tokens_by_contract(
 
 def open_contract_asset_map(
     market_rows: Iterable[tuple],
-    outcome_rows: Iterable[tuple],
+    outcome_rows: "Iterable[tuple] | OpenContractLegs",
     taken_assets: Iterable[str] = (),
     excluded_market_ids: Iterable[int] = (),
     taken_tokens_by_contract: Optional[Mapping[str, str]] = None,
@@ -318,7 +412,37 @@ def open_contract_asset_map(
     whose id names the same ``(condition, token index)`` (``contract_key``):
     an open owner here, or the game socket's (``taken_tokens_by_contract``).
     Matched by id, never by position, so a shape it cannot read stays unpriced.
+
+    #10663: ``outcome_rows`` is the leg read either as rows ``(outcome_id,
+    market_id, external_id, graded)`` or already digested into
+    :class:`OpenContractLegs` by the reader, chunk by chunk, so the whole read
+    is never held as one list of rows beside the pairing's own structures.
     """
+    return _finish(_open_contract_asset_map_steps(
+        market_rows, outcome_rows, taken_assets, excluded_market_ids,
+        taken_tokens_by_contract,
+    ))
+
+
+async def open_contract_asset_map_cooperatively(
+    market_rows: Iterable[tuple],
+    outcome_rows: "Iterable[tuple] | OpenContractLegs",
+    taken_assets: Iterable[str] = (),
+    excluded_market_ids: Iterable[int] = (),
+    taken_tokens_by_contract: Optional[Mapping[str, str]] = None,
+) -> OpenContractAdmission:
+    """:func:`open_contract_asset_map`, giving the socket loop a turn every
+    ``OPEN_MAP_ROWS_PER_TURN`` rows (#10090). Same steps, same result."""
+    return await _finish_cooperatively(_open_contract_asset_map_steps(
+        market_rows, outcome_rows, taken_assets, excluded_market_ids,
+        taken_tokens_by_contract,
+    ))
+
+
+def _open_contract_asset_map_steps(
+    market_rows, outcome_rows, taken_assets, excluded_market_ids,
+    taken_tokens_by_contract,
+):
     from app.tasks.polymarket_ws import legs_in_token_order
 
     out = OpenContractAdmission()
@@ -326,18 +450,25 @@ def open_contract_asset_map(
     taken = set(taken_assets)
     excluded = set(excluded_market_ids)
 
-    legs_by_market: dict[int, list[tuple[int, str]]] = {}
-    graded: set[int] = set()
-    ext_by_outcome: dict[int, str] = {}
-    for outcome_id, market_id, ext, is_graded in outcome_rows:
-        legs_by_market.setdefault(market_id, []).append((outcome_id, ext or ""))
-        ext_by_outcome[outcome_id] = ext or ""
-        if is_graded:
-            graded.add(outcome_id)
+    # #10663: the consumer digests the leg read as it arrives and passes the
+    # result; a flat list of rows (every other caller, and the tests) is
+    # digested here, through the same `add`, so both paths read a row once.
+    if isinstance(outcome_rows, OpenContractLegs):
+        legs = outcome_rows
+    else:
+        legs = OpenContractLegs()
+        for i, (outcome_id, market_id, ext, is_graded) in enumerate(outcome_rows):
+            if _pause(i):
+                yield
+            legs.add(outcome_id, market_id, ext, is_graded)
+    legs_by_market, ext_by_outcome, graded = legs.by_market, legs.ext_by_outcome, legs.graded
+    legs = None
     #: markets with no usable tokens, for the by-condition pass below
     tokenless: list[int] = []
 
-    for row in market_rows:
+    for i, row in enumerate(market_rows):
+        if _pause(i):
+            yield
         market_id, tokens_a, tokens_b, by_outcome = row[:4]
         counts["markets"] += 1
         if market_id in excluded:
@@ -397,11 +528,13 @@ def open_contract_asset_map(
 
     if tokenless:
         by_contract = dict(taken_tokens_by_contract or {})
-        for key, token in tokens_by_contract(
+        for key, token in (yield from _tokens_by_contract_steps(
             out.asset_to_outcome, ext_by_outcome
-        ).items():
+        )).items():
             by_contract.setdefault(key, token)
-        for market_id in tokenless:
+        for i, market_id in enumerate(tokenless):
+            if _pause(i):
+                yield
             admitted = False
             seen: set[str] = set()
             for outcome_id, ext in legs_by_market.get(market_id, []):
@@ -424,7 +557,7 @@ def open_contract_asset_map(
             if admitted:
                 counts["markets_admitted"] += 1
 
-    out.complement_of = complement_pairs(
+    out.complement_of = yield from _complement_pairs_steps(
         legs_by_market,
         set(out.asset_to_outcome.values()) | set(out.mirrored_outcomes()),
         graded,
@@ -460,8 +593,14 @@ def complement_pairs(
     does not carry, a suffix naming no token) has no complement. Those legs
     are priced exactly as before.
     """
+    return _finish(_complement_pairs_steps(legs_by_market, admitted, graded, excluded))
+
+
+def _complement_pairs_steps(legs_by_market, admitted, graded, excluded=frozenset()):
     out: dict[int, int] = {}
-    for market_id, legs in legs_by_market.items():
+    for i, (market_id, legs) in enumerate(legs_by_market.items()):
+        if _pause(i):
+            yield
         if market_id in excluded or len(legs) != 2:
             continue
         (a, ext_a), (b, ext_b) = legs
@@ -508,12 +647,27 @@ def open_contract_event_candidates(
     market's event — never a sibling's, never one inferred from the token.
     A row without the bridge columns (or without an event) bridges nothing.
     """
+    return _finish(_open_contract_event_candidates_steps(market_rows, admission))
+
+
+async def open_contract_event_candidates_cooperatively(
+    market_rows: Iterable[tuple], admission: OpenContractAdmission,
+) -> dict[int, int]:
+    """:func:`open_contract_event_candidates` with loop turns (#10090)."""
+    return await _finish_cooperatively(
+        _open_contract_event_candidates_steps(market_rows, admission)
+    )
+
+
+def _open_contract_event_candidates_steps(market_rows, admission):
     from types import SimpleNamespace
 
     from app.utils.live_blend import _class_says_game_winner
 
     event_by_winner_market: dict[int, int] = {}
-    for row in market_rows:
+    for i, row in enumerate(market_rows):
+        if _pause(i):
+            yield
         if len(row) < 7:
             continue
         market_id, event_id, name, external_id = row[0], row[4], row[5], row[6]
@@ -526,7 +680,9 @@ def open_contract_event_candidates(
         event_by_winner_market[market_id] = event_id
 
     out: dict[int, int] = {}
-    for token, outcome_id in admission.asset_to_outcome.items():
+    for i, (token, outcome_id) in enumerate(admission.asset_to_outcome.items()):
+        if _pause(i):
+            yield
         market_id = admission.asset_to_market.get(token)
         if market_id in event_by_winner_market:
             out[outcome_id] = event_by_winner_market[market_id]

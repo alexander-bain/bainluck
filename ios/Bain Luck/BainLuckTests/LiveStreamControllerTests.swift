@@ -59,6 +59,19 @@ final class LiveStreamControllerTests: XCTestCase {
         /// a price it actually adopted. Defaults to adopting every frame, which
         /// is what the cases written before #10468 describe.
         var adopts: (LiveStreamFrame) -> Bool = { _ in true }
+        /// #10090 — reopen deadlines the controller armed, fired on THIS clock.
+        final class Deadline {
+            let at: TimeInterval
+            let action: @MainActor () -> Void
+            var cancelled = false
+            init(at: TimeInterval, action: @escaping @MainActor () -> Void) {
+                self.at = at
+                self.action = action
+            }
+        }
+        var deadlines: [Deadline] = []
+        /// The healthy-rollover jitter, pinned so `reopenAt` is exact.
+        var healthyDelay: TimeInterval = 0.3
         private(set) var controller: LiveStreamController!
 
         var current: FakeHandle? { handles.last }
@@ -82,16 +95,33 @@ final class LiveStreamControllerTests: XCTestCase {
                     deliveringChanges.append(d)
                     log.append("delivering:\(d)")
                 },
-                onResync: { [self] in resyncs += 1 }
+                onResync: { [self] in resyncs += 1 },
+                schedule: { [self] delay, action in
+                    let deadline = Deadline(at: clock + delay, action: action)
+                    deadlines.append(deadline)
+                    return { deadline.cancelled = true }
+                },
+                healthyRolloverDelay: { [self] in healthyDelay }
             )
         }
 
         /// Advance the clock and let the controller observe it, the way its
-        /// owner's timer does.
+        /// owner's timer does. Armed deadlines that fall due fire first, as
+        /// they would in production, where they are not waiting on the tick.
         @MainActor
         func advance(_ seconds: TimeInterval) {
-            clock += seconds
+            elapse(seconds)
             controller.tick()
+        }
+
+        /// Advance the clock WITHOUT a tick: only the armed deadlines run.
+        @MainActor
+        func elapse(_ seconds: TimeInterval) {
+            clock += seconds
+            for deadline in deadlines where !deadline.cancelled && deadline.at <= clock {
+                deadline.cancelled = true
+                deadline.action()
+            }
         }
 
         /// The happy path every case that is not about connecting starts from.
@@ -250,9 +280,135 @@ final class LiveStreamControllerTests: XCTestCase {
         rig.clock += 120                                   // a HEALTHY stream
         rig.current?.fire("reconnect")
         XCTAssertEqual(
-            rig.controller.state.reopenAt, rig.clock + 1,
+            rig.controller.state.reopenAt, rig.clock + rig.healthyDelay,
             "a healthy stream's rollover must not inherit the backoff"
         )
+        rig.elapse(rig.healthyDelay)
+        rig.current?.fire("open")
+
+        rig.current?.fire("reconnect")                     // fast again: starts at 1 s
+        XCTAssertEqual(rig.controller.state.reopenAt, rig.clock + 1)
+    }
+
+    // MARK: - #10090: a rollover reopens at its deadline, not at the next tick
+
+    func testAHealthyRolloverReopensAtItsDeadlineWithoutATick10090() {
+        // The server rolls a healthy stream at its age ceiling (or every
+        // stream when its hub fails) and replays only the latest frame on the
+        // new one. The owner ticks every 5 s; a reopen left to the tick held
+        // the page on a number no socket was updating for 1–6 s.
+        let rig = Rig()
+        rig.startDelivering()
+        rig.clock += 120
+        rig.current?.fire("reconnect")
+        XCTAssertEqual(rig.controller.state.reopenAt, rig.clock + 0.3)
+
+        rig.elapse(0.29)
+        XCTAssertEqual(rig.controller.state.connections, 1, "reopened before its own deadline")
+        rig.elapse(0.01)
+        XCTAssertEqual(rig.controller.state.connections, 2, "the deadline did not reopen without a tick")
+        XCTAssertNil(rig.controller.state.reopenAt)
+        rig.current?.fire("open")
+        rig.current?.fire("probability", frameJSON(p: 0.7))
+        XCTAssertTrue(rig.controller.state.delivering)
+        XCTAssertEqual(rig.frames.last?.p, 0.7, "the new socket's replay reached the owner")
+    }
+
+    func testTheShippedHealthyDelayIsAQuickJitteredRetry10090() {
+        // Not zero (a hub failure rolls every stream at once), and under the
+        // old 1 s floor.
+        XCTAssertEqual(LiveStreamTiming.healthyRolloverDelay.lowerBound, 0.25)
+        XCTAssertEqual(LiveStreamTiming.healthyRolloverDelay.upperBound, 0.5)
+        XCTAssertLessThan(LiveStreamTiming.healthyRolloverDelay.upperBound, LiveStreamTiming.reconnectBaseDelay)
+    }
+
+    func testAFastRolloverStillWaitsItsWholeBackoff10090() {
+        // A server rolling streams over at once is in trouble. The deadline
+        // replaces the tick, never the backoff: no reopen before 1 s, 2 s.
+        let rig = Rig()
+        rig.startDelivering()
+        rig.current?.fire("reconnect")
+        rig.elapse(0.99)
+        XCTAssertEqual(rig.controller.state.connections, 1, "a fast rollover reopened early")
+        rig.elapse(0.01)
+        XCTAssertEqual(rig.controller.state.connections, 2)
+        rig.current?.fire("open")
+
+        rig.current?.fire("reconnect")
+        rig.elapse(1.99)
+        XCTAssertEqual(rig.controller.state.connections, 2, "the second fast rollover lost its backoff")
+        rig.elapse(0.01)
+        XCTAssertEqual(rig.controller.state.connections, 3)
+    }
+
+    func testALateDeadlineAfterATickReopenedOpensNothing10090() {
+        // Whichever of the tick and the deadline gets there first reopens;
+        // the second must find nothing to do, or one rollover is two sockets.
+        let rig = Rig()
+        rig.startDelivering()
+        rig.clock += 120
+        rig.current?.fire("reconnect")
+        let armed = rig.deadlines.last
+        rig.clock += 1
+        rig.controller.tick()                              // the tick wins
+        XCTAssertEqual(rig.controller.state.connections, 2)
+        XCTAssertEqual(armed?.cancelled, true, "the reopen did not retire its own deadline")
+
+        armed?.action()                                    // a timer that ran anyway
+        XCTAssertEqual(rig.controller.state.connections, 2, "a late deadline opened a second socket")
+        XCTAssertEqual(rig.handles.first?.closeCount, 1)
+        XCTAssertEqual(rig.handles.last?.closeCount, 0, "the live socket was disturbed")
+    }
+
+    func testAStaleDeadlineCannotOpenTheNextRolloverEarly10090() {
+        // A deadline from the PREVIOUS rollover firing late must not stand in
+        // for the next one's backoff.
+        let rig = Rig()
+        rig.startDelivering()
+        rig.clock += 120
+        rig.current?.fire("reconnect")
+        let first = rig.deadlines.last
+        rig.elapse(rig.healthyDelay)
+        rig.current?.fire("open")
+        rig.current?.fire("reconnect")                     // fast: 1 s backoff
+        XCTAssertEqual(rig.controller.state.connections, 2)
+
+        first?.action()
+        XCTAssertEqual(rig.controller.state.connections, 2, "an old deadline opened the next rollover early")
+        rig.elapse(1)
+        XCTAssertEqual(rig.controller.state.connections, 3)
+    }
+
+    func testStopCancelsAnArmedReopen10090() {
+        // Leaving the page (or `closed`) between a rollover and its reopen.
+        let rig = Rig()
+        rig.startDelivering()
+        rig.clock += 120
+        rig.current?.fire("reconnect")
+        let armed = rig.deadlines.last
+        rig.controller.stop()
+        XCTAssertEqual(armed?.cancelled, true, "stop left the reopen armed")
+
+        armed?.action()
+        rig.advance(60)
+        XCTAssertEqual(rig.controller.state.connections, 1, "a stopped stream reopened")
+        XCTAssertTrue(rig.controller.state.stopped)
+    }
+
+    func testARefusedReopenAtTheDeadlineIsStillTerminal10090() {
+        // The deadline reopens through the same `connect()`: an open that
+        // throws there is a refusal, and nothing retries it.
+        let rig = Rig()
+        rig.startDelivering()
+        rig.clock += 120
+        rig.current?.fire("reconnect")
+        rig.openFailure = URLError(.badServerResponse)
+        rig.elapse(rig.healthyDelay)
+        XCTAssertTrue(rig.controller.state.stopped)
+        XCTAssertFalse(rig.controller.state.delivering)
+        rig.openFailure = nil
+        rig.advance(60)
+        XCTAssertEqual(rig.controller.state.connections, 1, "a refused reopen was retried")
     }
 
     func testClosedIsTerminalAndNeverReopens() {
@@ -481,4 +637,37 @@ final class LiveStreamControllerTests: XCTestCase {
 
         XCTAssertEqual(rig.deliveringChanges, [true])
     }
+    func testFoldedPreviewFloorAndResyncDoNotCreateDelivery() {
+        let handle = FakeHandle()
+        var floors: [String] = []
+        var callbacks: [String] = []
+        var clock: TimeInterval = 100
+        let controller = LiveStreamController(
+            open: { handle }, now: { clock }, onFrame: { _ in XCTFail("control is not a price") },
+            onDeliveringChange: { _ in }, onResync: { callbacks.append("resync") },
+            onPreviewFloor: { floors.append($0) },
+            onPreviewOpen: { callbacks.append("open:" + $0) },
+            onPreviewInvalidate: { callbacks.append("invalidate") },
+            onPreviewReset: { callbacks.append("reset") },
+            schedule: { _, _ in {} })
+        controller.start()
+        let open = #"{"event_id":4242,"fold_session":"session-one"}"#
+        handle.fire("open", open)
+        XCTAssertEqual(callbacks, ["reset", "open:" + open], "session is installed after reset")
+        callbacks.removeAll()
+        let floor = #"{"event_id":4242,"floor":{"4243":21}}"#
+        handle.fire("fold_preview_floor", floor)
+        XCTAssertEqual(floors, [floor])
+        XCTAssertEqual(callbacks, [])
+        handle.fire("resync", #"{"generation":1}"#)
+        XCTAssertEqual(callbacks, ["invalidate", "resync"], "withdraw before requesting the new quote")
+        handle.fire("resync", #"{"generation":1}"#)
+        XCTAssertEqual(callbacks, ["invalidate", "resync"], "dedup is retained")
+        clock += LiveStreamTiming.dataSilenceTimeout + 1
+        handle.fire("fold_preview_floor", floor)
+        controller.tick()
+        XCTAssertFalse(controller.state.delivering, "floor controls cannot renew data freshness")
+        controller.stop()
+    }
+
 }

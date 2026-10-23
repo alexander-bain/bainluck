@@ -102,12 +102,20 @@ async def settle(r, until, turns=50):
 
 
 async def test_the_next_chunk_writes_while_the_previous_stamp_runs():
+    # Covers the write/stamp overlap only: chunk 900's price write commits while
+    # event 10's stamp is held, and its refused cohort then joins that older
+    # owner (one refresh at a time, below). #10090: market notifications go
+    # through the shared withdrawal market publisher, not a per-chunk join, and
+    # this rig's sessions commit no market change, so notification order is not
+    # observed here.
     r = rig(books={})
     r.release.set()
     gate, calls = held_refresher(r)
     flush = asyncio.create_task(r.ns["flush_prices"](flush_started=100))
     await asyncio.wait_for(r.entered.wait(), 2)
-    await settle(r, lambda: ("publish", None) in r.trace[r.trace.index(("write", [900])):])
+    # The rig's write retires its inputs only once that write returned True.
+    await settle(r, lambda: 900 not in r.ns["price_buffer"])
+    assert 900 not in r.ns["price_buffer"], "chunk 900's write never committed"
     # Event 10's stamp is still held, and the bridged leg's chunk was written.
     assert calls["started"] == [(10,)] and calls["finished"] == []
     assert ("write", [900]) in r.trace
@@ -228,7 +236,19 @@ async def test_unfinished_pending_cohort_stays_owed_while_independent_stamp_over
         assert calls["admitted"] == [(10,)]
         assert r.ns["blend_refresher"].pending_event_ids() == frozenset({90})
         assert ("write", [900]) in r.trace, "independent stamp must not stop price progress"
-        assert ("write", [901]) not in r.trace
+        # #10090: the chunk loop no longer joins each chunk's market notification
+        # before the next price write, so 901 may be written while stamp 10 is
+        # held. The loop at 4a10d5f01f also wrote it, three loop turns after 900.
+        # Writing event 90's rows is not reading them. Held-state invariant at
+        # 901: stamp 10 admitted only event 10, event 90 stays owed, one refresh
+        # runs, and nothing has refreshed event 90.
+        await settle(r, lambda: ("write", [901]) in r.trace)
+        assert ("write", [901]) in r.trace, "independent stamp must not stop price progress"
+        assert not gate.is_set() and calls["finished"] == []
+        assert calls["admitted"] == [(10,)]
+        assert r.ns["blend_refresher"].pending_event_ids() == frozenset({90})
+        assert calls["running"] == 1
+        assert ("refresh", [90]) not in r.trace
         gate.set()
         assert await asyncio.wait_for(flush, 2) is True
         assert r.trace.index(("write", [900])) < r.trace.index(("refresh", [10]))

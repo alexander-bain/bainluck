@@ -44,6 +44,7 @@ from sqlalchemy import text
 
 from app.tasks.base import get_task_session
 from app.tasks.precompute_calibration import (
+    SOURCE_LIQUIDITY_EXCLUSIONS,
     _compute_horizon_mce,
     binary_is_malformed,
     kalshi_prop_threshold_exclude_sql,
@@ -104,6 +105,24 @@ KNOWN_CLASS_KEYS: tuple[str, ...] = (
 # when picking the dominant class. `poly_placeholder` is absent from it by
 # construction: it comes from a bounded snapshot sample, not the mining scan.
 _UNION_KEY = "__any_known__"
+
+# #1057 — the placeholder-price SUB-COHORT. `poly_placeholder` was the one known
+# class the backtest could not rediscover: a placeholder break lives only in the
+# near-0.50 band, and every other view mixes that band with the rest of the
+# source, so the band's error was diluted under the flag threshold. The band is
+# the curve's own (POLY_PLACEHOLDER_EXCLUDE: polymarket, cp in [0.45, 0.55],
+# inclusive), restated as numbers because the curve writes it as SQL text, and
+# pinned against that text by test_calibration_sentinel_placeholder_band_1057.py.
+#
+# The band is a CANDIDATE, never a verdict: a near-0.50 price does not prove
+# nobody traded. Confirmation is the existing bounded snapshot census
+# (`_placeholder_fraction`) restricted to the band, inside the same evidence
+# budget. A band cohort that census did not read is UNKNOWN, not a placeholder.
+POLY_PLACEHOLDER_BAND: tuple[float, float] = (0.45, 0.55)
+PRICE_BAND_PLACEHOLDER: str = SOURCE_LIQUIDITY_EXCLUSIONS["polymarket"]["never_traded_excluded"]
+# Only Polymarket's curve exclusion is band-scoped. Kalshi's liquidity filter is
+# all-bands, so a mid-band Kalshi cohort is not this class.
+_PLACEHOLDER_BAND_SOURCES: tuple[str, ...] = ("polymarket",)
 # Bound the number of flagged cohorts we build a (snapshot-touching) evidence
 # census for, so a pathological run can't grind the snapshot table.
 SENTINEL_MAX_EVIDENCE_COHORTS = 40
@@ -525,6 +544,52 @@ def coverage_band(overlap_fractions: dict[str, float]) -> str:
     return COVERAGE_UNEXPLAINED
 
 
+PLACEHOLDER_ARTIFACT = "placeholder_artifact"
+PLACEHOLDER_PARTIAL = "placeholder_partial"
+PLACEHOLDER_NOT_PLACEHOLDER = "not_placeholder"
+PLACEHOLDER_UNKNOWN = "evidence_unavailable"
+
+
+def placeholder_band_diagnosis(
+    dims: dict, overlap_fractions: dict[str, float], evidence: str
+) -> dict | None:
+    """#1057 — what a flagged placeholder-band cohort's evidence supports.
+
+    ``None`` for any cohort not keyed by ``price_band``. Otherwise the verdict
+    reads ONLY the snapshot census's no-bid/no-trade fraction, judged with the
+    same threshold and margin as every other coverage decision (no number of its
+    own):
+
+    * ``placeholder_artifact`` — at least the coverage threshold of a bounded
+      sample of the band never showed a bid or trade: the explanation policy's
+      bar is met. A policy label, not an all-cohort finding — the traded
+      remainder's error and the published curve are not measured by it.
+    * ``placeholder_partial`` — within the margin under it.
+    * ``not_placeholder`` — below the margin: missing trading evidence does not
+      meet the bar to explain the miss, though a nonzero fraction is still a
+      measurement. It does NOT by itself call the cohort a forecast failure:
+      the overall diagnosis (other classes, published curve) still decides that.
+    * ``evidence_unavailable`` — the census did not read this band (``evidence``
+      says why). Price alone is never promoted to a placeholder verdict.
+    """
+    if "price_band" not in dims:
+        return None
+    ph = overlap_fractions.get("poly_placeholder")
+    if ph is None:
+        verdict = PLACEHOLDER_UNKNOWN
+    else:
+        verdict = {
+            COVERAGE_EXPLAINED: PLACEHOLDER_ARTIFACT,
+            COVERAGE_PARTIAL: PLACEHOLDER_PARTIAL,
+        }.get(coverage_band({"poly_placeholder": ph}), PLACEHOLDER_NOT_PLACEHOLDER)
+    return {
+        "band": dims["price_band"],
+        "verdict": verdict,
+        "no_bid_fraction": ph,
+        "evidence": evidence,
+    }
+
+
 # The cohort "views" — each maps a fine-grained scan row to a cohort key, or None
 # to skip. Mining folds the fine rows into every view so a break is caught at
 # whatever granularity it lives (a whole source, a single series, a structure ×
@@ -535,7 +600,7 @@ def _cohort_views(row: dict) -> list[tuple[tuple[str, str], ...]]:
     fam = row["series_family"]
     struct = row["structure_class"]
     prov = row["provenance"]
-    return [
+    views = [
         (("provenance", prov), ("source", src)),
         (("provenance", prov), ("category", cat)),
         (("provenance", prov), ("source", src), ("category", cat)),
@@ -543,6 +608,12 @@ def _cohort_views(row: dict) -> list[tuple[tuple[str, str], ...]]:
         (("provenance", prov), ("category", cat), ("structure", struct)),
         (("provenance", prov), ("source", src), ("series", fam)),
     ]
+    # #1057: one source-level view per eligible source, so the band costs one
+    # cohort per source rather than one per category of the evidence budget.
+    band = row.get("price_band")
+    if band and src in _PLACEHOLDER_BAND_SOURCES:
+        views.append((("provenance", prov), ("source", src), ("price_band", band)))
+    return views
 
 
 # ---------------------------------------------------------------------------
@@ -589,6 +660,11 @@ SELECT
          WHEN n_outcomes >= 3 THEN 'multi_nonmex'
          ELSE 'single' END AS structure_class,
     LEAST(FLOOR(cp * 10)::int, 9) AS bucket,
+    -- #1057: the placeholder-band CANDIDATE, by price alone (no snapshot join
+    -- here). NULL outside the band and for every other source, so it splits only
+    -- the Polymarket rows of buckets 4 and 5.
+    CASE WHEN source IN {band_sources} AND {band_predicate}
+         THEN '{band_label}' END AS price_band,
     COUNT(*) AS n,
     SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
     SUM(cp) AS sum_prob,
@@ -624,7 +700,7 @@ SELECT
     SUM(CASE WHEN {known_union} THEN 0 ELSE cp END) AS pub_sum_prob,
     MIN(created_at) AS min_created_at
 FROM base
-GROUP BY 1, 2, 3, 4, 5, 6
+GROUP BY 1, 2, 3, 4, 5, 6, 7
 """
 
 #: The shipped-exclusion union, as ONE expression. Interpolated four times into
@@ -770,6 +846,14 @@ def _in_list(items: tuple[str, ...]) -> str:
     return "(" + ", ".join("'" + x.replace("'", "''") + "'" for x in items) + ")"
 
 
+def _band_predicate(price_expr: str) -> str:
+    """#1057: ``price_expr`` inside the placeholder band, inclusive at both ends
+    as the curve writes it. Inline literals from the module constant, like
+    ``_in_list``; the mining scan, the cohort WHERE and the census all use it."""
+    lo, hi = POLY_PLACEHOLDER_BAND
+    return f"{price_expr} BETWEEN {lo!r} AND {hi!r}"
+
+
 # Bake the trusted resolution-source lists into the futures scan (inline literals,
 # matching the main calibration scan's NOT IN (...) style — avoids asyncpg
 # array-param type ambiguity).
@@ -791,6 +875,9 @@ _FUTURES_MINING_SQL = _FUTURES_MINING_SQL.format(
         calibration_probability="fo.calibration_probability",
         opening_probability="fo.opening_probability",
     ),
+    band_sources=_in_list(_PLACEHOLDER_BAND_SOURCES),
+    band_predicate=_band_predicate("cp"),
+    band_label=PRICE_BAND_PLACEHOLDER,
 )
 
 
@@ -950,6 +1037,15 @@ def _cohort_where(dims: dict) -> tuple[str, dict]:
     if "series" in dims:
         clauses.append(f"{_SERIES_FAMILY_SQL} = :series")
         params["series"] = dims["series"]
+    # #1057: a band cohort's evidence is the band. An unrecognised band refuses
+    # (the caller records the evidence as unavailable) rather than silently
+    # sampling the whole source, which is #1903 again.
+    if "price_band" in dims:
+        if dims["price_band"] != PRICE_BAND_PLACEHOLDER:
+            raise ValueError(f"unknown price_band {dims['price_band']!r}")
+        clauses.append(
+            _band_predicate("COALESCE(fo.calibration_probability, fo.opening_probability)")
+        )
     return " AND ".join(clauses), params
 
 
@@ -1020,7 +1116,7 @@ async def _placeholder_fraction(session, dims: dict) -> float | None:
         )
         SELECT
             COUNT(*) AS total,
-            SUM(CASE WHEN cp BETWEEN 0.45 AND 0.55
+            SUM(CASE WHEN {_band_predicate('cp')}
                       AND NOT EXISTS (
                           SELECT 1 FROM futures_odds_snapshots fos
                           WHERE fos.outcome_id = cohort.oid
@@ -1056,6 +1152,12 @@ async def _sample_rows(session, dims: dict, limit: int = 12) -> list[dict]:
     # runaway the cap exists to prevent.
     struct_pred = _structure_predicate(dims)
     struct_where = f"WHERE {struct_pred}" if struct_pred else ""
+    # #1057: a band cohort's rows sit in [0.45, 0.55] (its WHERE says so); the
+    # high-cp floor would leave it with no sample at all.
+    price_floor = (
+        "" if "price_band" in dims
+        else "AND COALESCE(fo.calibration_probability, fo.opening_probability) >= 0.6"
+    )
     # Bound the candidate set before the top-N sort so a huge cohort can't force a
     # full-category sort (same inner-op-bounding discipline as the placeholder census).
     sql = text(f"""
@@ -1068,7 +1170,7 @@ async def _sample_rows(session, dims: dict, limit: int = 12) -> list[dict]:
             FROM futures_outcomes fo
             JOIN futures_markets fm ON fm.id = fo.market_id
             WHERE {where}
-              AND COALESCE(fo.calibration_probability, fo.opening_probability) >= 0.6
+              {price_floor}
             LIMIT :cap
         ), sized AS (
             SELECT s.*, (
@@ -1149,7 +1251,7 @@ def build_issue_title(cohort: dict) -> str:
     return title[:256]
 
 
-def sample_rows_section(samples: list[dict]) -> list[str]:
+def sample_rows_section(samples: list[dict], heading: str = "high-cp") -> list[str]:
     """The sample-row table, shared by the filed body and every re-observation.
 
     #10516: non-winners first (see ``_sample_rows``), ``winner`` three-valued —
@@ -1160,7 +1262,7 @@ def sample_rows_section(samples: list[dict]) -> list[str]:
         return []
     lines = [
         "",
-        "### Sample high-cp rows (non-winners first)",
+        f"### Sample {heading} rows (non-winners first)",
         "| source | market | outcome | cp | winner | resolution_source | outcome_id | market_id |",
         "|--------|--------|---------|---:|:------:|-------------------|-----------:|----------:|",
     ]
@@ -1215,6 +1317,76 @@ def _published_statement(cohort: dict) -> tuple[str, str | None]:
     )
 
 
+def _sample_heading(cohort: dict) -> str:
+    # #1057: a band cohort's sample is drawn from the band, not the high-cp tail.
+    return "placeholder-band" if "price_band" in cohort.get("dims", {}) else "high-cp"
+
+
+def placeholder_band_lines(cohort: dict) -> list[str]:
+    """#1057 — the placeholder-price check, for a body or a recurrence.
+
+    Empty for a cohort that is not a placeholder-band sub-cohort. Says where the
+    bounded sample's no-bid fraction sits against the explanation threshold, and
+    never lets a price-band candidate read as a confirmed placeholder.
+
+    The census answers ONE question: what fraction of a bounded sample lacked
+    trading evidence. It does not measure the error of the rows that traded, nor
+    the published curve, so no state here clears the cohort of a forecast
+    failure (or convicts it of one): meeting the threshold names its fraction and
+    leaves the traded remainder and the published error unresolved, and falling
+    below it keeps its measured nonzero no-bid fraction."""
+    diag = cohort.get("placeholder_band")
+    if not diag:
+        return []
+    lo, hi = POLY_PLACEHOLDER_BAND
+    ph = diag.get("no_bid_fraction")
+    pct = f"{ph*100:.1f}%" if ph is not None else None
+    rest = f"{(1 - ph)*100:.1f}%" if ph is not None else None
+    bar = f"{SENTINEL_COVERAGE_THRESHOLD*100:.0f}%"
+    unresolved = (
+        f"The other {rest} of the sample did show a bid or a trade; this check "
+        f"does not measure whether those rows missed, and it does not measure the "
+        f"published curve's error (see Disposition). Both stay unresolved unless "
+        f"separately measured."
+    )
+    verdict = diag.get("verdict")
+    if verdict == PLACEHOLDER_ARTIFACT:
+        head = f"no-bid fraction MEETS the {bar} explanation threshold ({pct} of a bounded sample)"
+        why = (
+            f"{pct} of a bounded sample of this band's outcomes never showed a bid "
+            f"or a trade in any snapshot (#151's rule), meeting the {bar} explanation "
+            f"threshold. The published curve already excludes those rows. {unresolved}"
+        )
+    elif verdict == PLACEHOLDER_PARTIAL:
+        head = f"no-bid fraction NEAR the {bar} explanation threshold ({pct} of a bounded sample)"
+        why = (
+            f"{pct} of a bounded sample never showed a bid or a trade, within "
+            f"{SENTINEL_COVERAGE_MARGIN*100:.0f} points under the {bar} threshold. "
+            f"{unresolved}"
+        )
+    elif verdict == PLACEHOLDER_NOT_PLACEHOLDER:
+        head = f"no-bid fraction BELOW the {bar} explanation threshold ({pct} of a bounded sample)"
+        why = (
+            f"{pct} of a bounded sample never showed a bid or a trade — measured, "
+            f"and below the {bar} threshold, so missing trading evidence does not "
+            f"meet the bar to explain this miss. {unresolved} The diagnosis below "
+            f"decides whether another class does."
+        )
+    else:
+        head = "UNKNOWN — trading evidence was not read"
+        why = (
+            f"The snapshot census did not read this band "
+            f"(`{diag.get('evidence', 'unknown')}`). The cohort is selected by price "
+            f"alone; a near-0.50 price does not prove nobody traded, so it is not "
+            f"reported as a placeholder artifact and is not suppressed."
+        )
+    return [
+        f"### Placeholder-price check (Polymarket, cp in [{lo}, {hi}]): {head}",
+        why,
+        "",
+    ]
+
+
 #: The mask line's label: it says what it is NOT, so it cannot be misread.
 _MASK_LABEL = "Limited-mask survivors (the scan's own counted exclusions only — NOT the published curve)"
 
@@ -1253,10 +1425,11 @@ def build_reobservation_comment(cohort: dict) -> str:
         *([f"- **{_MASK_LABEL}:** {mask}"] if mask else []),
         f"- **Disposition:** `{cohort.get('disposition', DISP_PUBLISHED_UNKNOWN)}` — "
         f"{cohort.get('disposition_why', 'not evaluated')}",
+        *(["", *placeholder_band_lines(cohort)] if cohort.get("placeholder_band") else []),
         # #10516: the body's sample table was printed once, at filing, and never
         # again — so a cohort whose filing-day sample held only winners never got
         # a traceable row. Each sweep's fresh sample rides its recurrence.
-        *sample_rows_section(cohort.get("sample_rows") or []),
+        *sample_rows_section(cohort.get("sample_rows") or [], _sample_heading(cohort)),
     ])
 
 
@@ -1319,6 +1492,7 @@ def build_issue_body(cohort: dict, explained_by: str | None, coverage: float) ->
             f"compared against the {SENTINEL_COVERAGE_THRESHOLD*100:.0f}% coverage threshold"
         )
     parts.append("")
+    parts += placeholder_band_lines(cohort)
 
     if cohort.get("disposition") == DISP_EXCLUSION_HARMS:
         parts += [
@@ -1413,7 +1587,7 @@ def build_issue_body(cohort: dict, explained_by: str | None, coverage: float) ->
                 "assume-our-bug + verify-before-regrade (gotcha #21).",
             ]
 
-    parts += sample_rows_section(cohort.get("sample_rows") or [])
+    parts += sample_rows_section(cohort.get("sample_rows") or [], _sample_heading(cohort))
 
     parts += [
         "",
@@ -1806,11 +1980,19 @@ async def _run_calibration_sentinel(
                         f"cohorts; every flagged cohort still carries its disposition"
                     )
                 })
+            # #1057: why the placeholder census did or did not read this cohort,
+            # so an unread band is reported UNKNOWN with its reason.
+            evidence = (
+                "deadline" if evidence_stopped_at is not None
+                else "outside_evidence_budget"
+            )
             try:
                 if i < SENTINEL_MAX_EVIDENCE_COHORTS and evidence_stopped_at is None:
+                    evidence = "error"
                     ph = await _placeholder_fraction(session, c["dims"])
                     if ph is not None:
                         c["overlap_fractions"]["poly_placeholder"] = ph
+                    evidence = "read" if ph is not None else "no_sample"
                     c["sample_rows"] = await _sample_rows(session, c["dims"])
             except Exception as exc:
                 logger.warning("Sentinel evidence census failed (%s): %s", c["fingerprint"], exc)
@@ -1824,6 +2006,9 @@ async def _run_calibration_sentinel(
             )
             c["explained_by"] = explained_by
             c["coverage"] = coverage
+            c["placeholder_band"] = placeholder_band_diagnosis(
+                c["dims"], c["overlap_fractions"], evidence
+            )
 
             # #1911 — the published curve, beside the raw number that flagged.
             # Deliberately computed AFTER classify_coverage and kept separate
@@ -1877,6 +2062,9 @@ async def _run_calibration_sentinel(
                 "explained_by": explained_by,
                 "coverage": round(coverage, 3),
                 "overlap_fractions": c["overlap_fractions"],
+                # #1057: candidate-vs-confirmed for a placeholder-band cohort;
+                # None on every other cohort.
+                "placeholder_band": c["placeholder_band"],
                 # #10516: the sampled rows (<= 12, ids included) ride the durable
                 # evidence too, so a row-level driver is retained with the run's
                 # own timestamp instead of living only in an issue body.

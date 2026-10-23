@@ -70,7 +70,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Team, FuturesMarket, FuturesOutcome, Sport
-from app.routes.futures import withheld_price_outcome_ids_for_markets
+from app.routes.futures import (
+    _board_has_a_verdict,
+    _fleet_newest_observation,
+    withheld_price_outcome_ids_for_markets,
+)
 from app.services import get_db
 from app.utils.event_concept_cache import (
     AVAILABILITY_LIVE,
@@ -183,7 +187,21 @@ _BRANCH_MARKET_ROSTER = "market_roster"
 #: market page runs. It reports through the same two reason prefixes so the
 #: completion path treats it exactly like a branch: `branch_deferred:` is an IOU
 #: the unbudgeted rebuild pays, `branch_timeout:` is a real expiry.
+#:
+#: #11534: and unlike a branch it FAILS CLOSED. A missing branch is content the
+#: page lacks; a missing screen is a price the page should not print. So a screen
+#: that is deferred, times out or fails withholds every market it would have
+#: judged — the IOU is then owed for content, never paid in wrong numbers.
 _BRANCH_PRICE_SCREEN = "price_screen"
+
+#: #11534: the slice of `_READER_BUDGET_MS` the fetch branches leave for the
+#: screen. Without it the roster probe — started, then cancelled by whatever is
+#: LEFT — spent the whole budget on every rostered team, so every cold NFL build
+#: deferred the screen (Steelers, Patriots, Chiefs, 2026-10-23, all
+#: `branch_deferred:price_screen`). The screen is a reload of the family markets
+#: by id plus at most four indexed reads (`withheld_price_outcome_ids_for_markets`);
+#: the roster probe it is taken from never finishes inside the budget anyway.
+_PRICE_SCREEN_RESERVE_MS = 750
 
 #: #9610: the side screen, also a step after the fetch branches. It reports a
 #: failure through `branch_timeout:` like the price screen, and it never defers.
@@ -290,7 +308,15 @@ def _roster_player_names(team: Team) -> list[str]:
 # mirror, same single-flight refresh lock, same "an empty build never overwrites
 # a good mirror" ordering.
 
-PROP_FAMILIES_CACHE_PREFIX = "bainluck:prop_families:"
+#: 🔴 VERSIONED, AND BUMPED WHEN WHAT A BUILD MAY SERVE NARROWS (#11534). The
+#: 24h mirror outlives the 15-minute primary, and a partial build never replaces
+#: a mirror that reads `full` (CERT-480). So a mirror written BEFORE a withholding
+#: rule shipped is served again on every primary miss for up to a day — on
+#: 2026-10-23 the Patriots' 17:22Z mirror still carried `KXNFLSBMVP-26` (last
+#: season's Super Bowl MVP, 18 legs) after the fix went live, because every
+#: rebuild since loses its roster branches and lands `partial`. A new prefix
+#: makes every pre-fix entry a miss; the old keys expire on their own TTL.
+PROP_FAMILIES_CACHE_PREFIX = "bainluck:prop_families:v2:"
 
 #: How fresh a *live* hit is. Prop families are season-long questions ("Next
 #: Team", MVP races, threshold ladders) whose probabilities move on the futures
@@ -640,11 +666,15 @@ async def build_prop_families(
     # None` is the background path — nobody is waiting, so the per-branch bound
     # is the only bound and behaviour is byte-for-byte what it was.
     _t0 = time.monotonic()
+    # #11534: the branches stop short of the budget by the screen's reserve.
+    _fetch_budget_ms = (
+        None if budget_ms is None else budget_ms - _PRICE_SCREEN_RESERVE_MS
+    )
 
     for _name, _cond in branches:
         _timeout_ms = _BRANCH_TIMEOUT_MS
-        if budget_ms is not None:
-            _remaining = budget_ms - int((time.monotonic() - _t0) * 1000)
+        if _fetch_budget_ms is not None:
+            _remaining = _fetch_budget_ms - int((time.monotonic() - _t0) * 1000)
             if _remaining < _MIN_BRANCH_MS:
                 # NOT started. A cancelled statement still costs its full wait,
                 # so a branch we already know cannot finish is skipped outright
@@ -877,10 +907,16 @@ async def _withhold_refused_prices(
     ("Malik Willis — Philadelphia") leaves the card instead of printing a dash,
     and a family left with fewer than two entities is not emitted at all.
 
-    Returns a loss reason, or None. A failed screen FAILS OPEN — the page keeps
-    today's numbers — and says so in the envelope, so the build is partial and
-    never mistaken for full. A board the helper could not read is omitted from
-    its map and served as-is, its own documented failure direction.
+    Returns a loss reason, or None. A screen that did not run FAILS CLOSED
+    (#11534): deferred by the reader budget, expired or failed, it withholds
+    every market it would have judged, and says so in the envelope, so the build
+    is partial and never mistaken for full. It used to fail open, and on every
+    cold build of a rostered team the budget was already spent, so the Steelers
+    page printed ``KXNFLSBMVP-26`` — last season's game — at 50% a leg while
+    ``/api/futures/479`` withheld all 79 legs. A blank Prop Races is the honest
+    answer to "we could not check these prices"; the rebuild scheduled behind a
+    partial fills it in. A board the helper could not read is omitted from its
+    map and served as-is, its own documented failure direction.
     """
     ids = sorted(mid for mid, m in by_market.items() if resolve_family_key(m))
     if not ids:
@@ -889,6 +925,7 @@ async def _withhold_refused_prices(
     if budget_ms is not None:
         remaining = budget_ms - int((time.monotonic() - t0) * 1000)
         if remaining < _MIN_BRANCH_MS:
+            _withhold_unscreened(by_market, ids)
             return f"{_REASON_DEFERRED}{_BRANCH_PRICE_SCREEN}"
         timeout_ms = min(remaining, _BRANCH_TIMEOUT_MS)
     try:
@@ -901,6 +938,10 @@ async def _withhold_refused_prices(
             )
         ).scalars().all()
         withheld = await withheld_price_outcome_ids_for_markets(db, markets)
+        for market in markets:
+            stopped = await _board_staleness_withheld(db, market)
+            if stopped:
+                withheld[market.id] = withheld.get(market.id, set()) | stopped
     except Exception as exc:  # noqa: BLE001 — classified below, then contained
         try:
             await db.rollback()
@@ -916,6 +957,7 @@ async def _withhold_refused_prices(
             )
         else:
             logger.exception("prop-families: price screen FAILED for team %s", team_id)
+        _withhold_unscreened(by_market, ids)
         return f"{_REASON_TIMEOUT}{_BRANCH_PRICE_SCREEN}"
 
     for mid, refused in withheld.items():
@@ -928,6 +970,53 @@ async def _withhold_refused_prices(
         if not entry["outcomes"]:
             del by_market[mid]
     return None
+
+
+async def _board_staleness_withheld(db: AsyncSession, market) -> set[int]:
+    """The two board-level refusals the market page adds outside the six arms (#11534).
+
+    ``withheld_price_outcome_ids_for_markets`` is the shared six arms, and
+    ``get_futures_market`` unions two more terms outside them: per-leg staleness
+    on an open board (#7537) and the stopped-board rule on an open or resolved
+    board (#8011). ``league_futures._page_withheld_outcome_ids`` (#8972) found
+    the same gap on league and hub pages; this is that composition, same calls,
+    same gates, same order.
+
+    WHAT A READER SAW, 2026-10-23 18:40Z. The Patriots page, a FULL build with
+    the screen run to completion, printed ``KXNFLSBMVP-26`` — last season's
+    Super Bowl MVP board — as "Drake Maye 26.5%" plus seventeen more legs. Every
+    leg was last written 2026-02-04 with a real bid/ask, so none of the six arms
+    refuse it; ``/api/futures/479`` serves all 79 legs ``null`` with
+    ``prices_withheld: 79`` on #8011 alone.
+
+    Both helpers fail open on a row with no stamp, and ``_fleet_newest_observation``
+    skips its single index-only read for any board whose own stamp is recent.
+    """
+    from app.utils.market_staleness import (
+        stale_observation_keys,
+        unobserved_board_keys,
+    )
+
+    outcomes = getattr(market, "outcomes", None) or []
+    observations = [(o.id, getattr(o, "last_updated", None)) for o in outcomes]
+    status = getattr(market, "status", None)
+    withheld: set[int] = set()
+    if status == "open":
+        withheld |= stale_observation_keys(observations)
+    if status in ("open", "resolved"):
+        withheld |= unobserved_board_keys(
+            observations,
+            board_touched_at=getattr(market, "updated_at", None),
+            fleet_newest_observation=await _fleet_newest_observation(db, market),
+            board_has_a_verdict=_board_has_a_verdict(outcomes),
+        )
+    return withheld
+
+
+def _withhold_unscreened(by_market: dict[int, dict], ids: list[int]) -> None:
+    """Remove every market the price screen was owed and did not judge (#11534)."""
+    for mid in ids:
+        by_market.pop(mid, None)
 
 
 def _stored_mirror(rc, keys: ConceptCacheKeys) -> tuple[Any, bool]:

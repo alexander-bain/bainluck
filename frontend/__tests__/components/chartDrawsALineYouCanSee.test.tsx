@@ -103,11 +103,13 @@ describe("#3151/#3111 — the settled single-source chart draws a line you can s
     expect(lines.some(isLegible)).toBe(true);
   });
 
-  test("the control: with a backend blend, the sources stay faint under it", () => {
-    // "The blend is the product" — a source line is de-emphasised precisely
+  test("the control: with a backend blend, the sources wait behind the blend", () => {
+    // "The blend is the product" — a source line is subordinate precisely
     // because the blend dominates it. This arm fails if the fix above is
-    // written as "always draw sources boldly".
-    const html = renderChart({
+    // written as "always draw sources boldly". #11356: subordinate now means
+    // NOT DRAWN until the reader opens Sources (it was a faint line under the
+    // blend, which the axis was also sized to).
+    const props = {
       winProbHistory: {
         kalshi: KALSHI,
         espn: KALSHI.map((p) => ({ ...p, home_probability: p.home_probability - 0.05 })),
@@ -120,11 +122,17 @@ describe("#3151/#3111 — the settled single-source chart draws a line you can s
         timestamp: p.timestamp,
         home_probability: p.home_probability,
       })),
-    });
+    };
+    const html = renderChart(props);
 
     const lines = drawnLines(html);
     expect(lines.some(isLegible)).toBe(true); // the blend itself
-    // and at least one source is still drawn subordinate to it
-    expect(lines.some((l) => !isLegible(l))).toBe(true);
+    // and nothing else: no source line is painted while Sources is closed
+    expect(lines.filter((l) => !isLegible(l))).toEqual([]);
+    expect(html).toMatch(/\+\s*2\s*sources/);
+    // Opened, both sources draw beside the blend, which keeps its weight.
+    const opened = drawnLines(renderChart({ ...props, defaultSourcesExpanded: true }));
+    expect(opened.length).toBeGreaterThanOrEqual(lines.length + 2);
+    expect(opened.filter(isLegible).length).toBe(lines.filter(isLegible).length);
   });
 });

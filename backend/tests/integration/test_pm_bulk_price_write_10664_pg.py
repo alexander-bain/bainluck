@@ -9,6 +9,7 @@ import asyncio
 import inspect
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from types import SimpleNamespace
@@ -209,6 +210,8 @@ async def rig():
         get_task_session=factory,
         logger=logging.getLogger(__name__),
         open_outcome_ids=set(),
+        non_blend_outcome_ids=set(),
+        catalog_boundary=module._PMCatalogFlushBoundary(),
         stats=stats,
         market_by_outcome={1: 1, 2: 1, 3: 1},
         blend_refresher=r.publisher,
@@ -220,6 +223,7 @@ async def rig():
         event_id_by_outcome={1: 10, 2: 10, 3: 10},
         event_ids_for_outcomes=lambda mapping, ids: {mapping[oid] for oid in ids if oid in mapping},
         PRICE_CHUNK_LOCK_TIMEOUT_MS=module.PRICE_CHUNK_LOCK_TIMEOUT_MS,
+        PRICE_STATEMENT_LOCK_TIMEOUT_MS=module.PRICE_STATEMENT_LOCK_TIMEOUT_MS,
         PRICE_FLUSH_SECONDS=module.PRICE_FLUSH_SECONDS,
         SET_LOCK_TIMEOUT_SQL=SET_LOCK_TIMEOUT_SQL,
         is_lock_timeout=is_lock_timeout,
@@ -452,11 +456,12 @@ async def test_a_row_a_lock_already_refused_is_probed_nowait_and_a_fresh_chunk_s
         )
         fresh = None
         try:
-            # The first refusal keeps the ordinary budget (actual lock timeout).
+            # The first attempt waits the short statement budget (actual lock timeout).
             assert await asyncio.wait_for(_write(rig, {1: 0.6, 2: 0.7}), 5) is None
             assert set(rig.ns["lock_retry_until"]) == {1, 2}
             # Any wait is now unmistakable: only NOWAIT can return in time.
             rig.ns["PRICE_CHUNK_LOCK_TIMEOUT_MS"] = 60_000
+            rig.ns["PRICE_STATEMENT_LOCK_TIMEOUT_MS"] = 60_000
             rig.ns["lock_retry_until"].update({1: 0, 2: 0})  # cooldown expired
             rig.price_started.clear()
             written = await asyncio.wait_for(rig.write({1: 0.6, 2: 0.7}), 5)
@@ -597,12 +602,54 @@ async def test_a_probe_whose_rerank_times_out_keeps_the_cooldown(rig):
     assert (await _prices(rig))[1] == Decimal(".300000")
 
 
-async def test_a_probe_queued_behind_a_table_lock_keeps_the_cooldown(rig):
+async def test_a_first_attempt_waits_only_the_statement_budget_and_the_next_flush_writes(rig):
+    # #10090 fast retry: a row no lock has refused yet waits the short price
+    # statement budget, not the 500 ms chunk budget, and its lock timeout arms
+    # no cooldown. A 150 ms holder used to be waited out and written in the
+    # same flush; now it costs one failed attempt and the write lands at the
+    # next flush (probed NOWAIT) after it lets go. In exchange the wait later
+    # chunks of the flush pay for a held one falls from up to 500 ms to 50 ms.
+    budget_s = module.PRICE_CHUNK_LOCK_TIMEOUT_MS / 1000
+    assert module.PRICE_STATEMENT_LOCK_TIMEOUT_MS / 1000 < budget_s
+    async with rig.engine.connect() as holder:
+        txn = await holder.begin()
+        await holder.execute(text("SELECT id FROM futures_outcomes WHERE id = 1 FOR UPDATE"))
+        try:
+            began = time.monotonic()
+            assert await asyncio.wait_for(_write(rig, {1: 0.6, 2: 0.4}), 5) is None
+            assert time.monotonic() - began < budget_s, "the chunk budget was waited out"
+            (exc,) = rig.price_errors
+            assert is_lock_timeout(exc) and not module.is_price_row_lock_refusal(exc)
+            assert rig.stats["errors"] == 1 and rig.stats["requeued"] == 2
+            assert set(rig.ns["lock_retry_until"]) == {1, 2}
+            assert max(rig.ns["lock_retry_until"].values()) <= time.monotonic(), (
+                "a price-statement lock timeout arms no cooldown"
+            )
+            # Still held: the next flush probes NOWAIT, refused at once.
+            rig.price_started.clear()
+            retried = await rig.write(dict(rig.buffer))
+            assert retried is None
+            assert rig.price_started.is_set(), "the next flush retries the pair"
+            assert rig.stats["price_lock_probes_refused"] == 1
+        finally:
+            await txn.rollback()
+    written = await rig.write(dict(rig.buffer))
+    assert written.written_ids == (1, 2)
+    assert rig.buffer == {} and rig.ns["lock_retry_until"] == {}
+    assert rig.stats["errors"] == 1
+    assert (await _prices(rig))[1] == Decimal(".600000")
+
+
+async def test_a_probe_queued_behind_a_table_lock_is_an_error_retried_next_flush(rig):
     # #10090: NOWAIT covers row locks only; the statement's table lock is still
-    # queued for, and the 500 ms budget ends it as "canceling statement due to
-    # lock timeout" — the same SQLSTATE as a row refusal, but real time spent.
-    # Retried every 250 ms flush it would repeat that wait, so it keeps the
-    # cooldown and counts as an error.
+    # queued for, and the statement budget ends it as "canceling statement due
+    # to lock timeout" — the same SQLSTATE as a row refusal, but real time
+    # spent. It is never a refusal. Fast retry: it arms no cooldown, so the
+    # next flush retries at the cost of one short statement budget and the
+    # pair is written by the first flush after the table lock is released
+    # (parent: a 500 ms wait, then a two-second cooldown). The rows were
+    # already known-held, so each repeat is counted in `price_lock_timeouts`,
+    # not logged as a fresh error (lane1 R1).
     rig.buffer.update({1: 0.6, 2: 0.4})
     rig.ns["lock_retry_until"].update({1: 0, 2: 0})
     rig.ns["lock_retry_events"].add(10)
@@ -614,13 +661,20 @@ async def test_a_probe_queued_behind_a_table_lock_keeps_the_cooldown(rig):
             assert written is None
             (exc,) = rig.price_errors
             assert is_lock_timeout(exc) and not module.is_price_row_lock_refusal(exc)
-            assert rig.stats["errors"] == 1 and rig.stats["requeued"] == 2
+            assert rig.stats["price_lock_timeouts"] == 1
+            assert rig.stats["errors"] == 0 and rig.stats["requeued"] == 0
             assert not rig.stats.get("price_lock_probes_refused")
-            assert min(rig.ns["lock_retry_until"].values()) > 0, "the cooldown is re-armed"
+            assert max(rig.ns["lock_retry_until"].values()) <= time.monotonic(), (
+                "no cooldown is armed"
+            )
             rig.price_started.clear()
             written = await rig.write(dict(rig.buffer))
             assert written is None
-            assert not rig.price_started.is_set(), "the next flush skips the pair"
+            assert rig.price_started.is_set(), "the next flush retries the pair"
+            assert rig.stats["price_lock_timeouts"] == 2 and rig.stats["errors"] == 0
         finally:
             await txn.rollback()
     assert rig.buffer == {1: 0.6, 2: 0.4} and not rig.publisher.frames
+    written = await rig.write(dict(rig.buffer))
+    assert written.written_ids == (1, 2)
+    assert rig.buffer == {} and rig.ns["lock_retry_until"] == {}

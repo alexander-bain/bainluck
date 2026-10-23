@@ -68,7 +68,12 @@ def test_fresh_history_bypasses_another_workers_cached_hero_without_rewriting_it
     fresh = history(current, fresh=True)
     assert fresh["aggregate_line"][-1]["home_probability"] == pytest.approx(0.15)
     assert fresh["blend_edge_fold_revision"] == _vector(5, 10)
-    assert current.blend_fold_lookups == 1
+    # #10090: the coverage prefix (read before any history) and the pin's own
+    # read (beside its value) are two statements; neither borrows the other.
+    assert current.blend_fold_lookups == 2
+    # Called outside the cached route there are no build marks, so nobody
+    # could have recorded a swallowed read: completeness unknown, no claim.
+    assert fresh["history_fold_revision"] is None
     assert routes.cache[CANON_ID][2] is old
     assert fresh["aggregate_line"][:-1] == ordinary["aggregate_line"][:-1]
 
@@ -120,7 +125,8 @@ def test_http_fresh_query_is_explicit_and_false_preserves_cache(routes, path, is
         assert current.blend_fold_lookups == 0
         advanced = client.get(path + sep + "fresh=true")
     assert advanced.status_code == 200
-    assert current.blend_fold_lookups == 1
+    # History's fresh build also reads the #10090 coverage prefix.
+    assert current.blend_fold_lookups == (2 if is_history else 1)
     payload = advanced.json()
     key = "blend_edge_fold_revision" if is_history else "blend_fold_revision"
     assert payload[key] == _vector(5, 10)

@@ -55,6 +55,7 @@ from app.utils.start_placeholder import (
 )
 from app.utils.score_observation import (
     SCORE_SOURCE_STATPAL,
+    authority_score_age_seconds,
     score_write_stamp_values,
     stamp_score_observation,
 )
@@ -196,6 +197,22 @@ def statpal_live_position(fixture) -> tuple[Optional[str], Optional[str]]:
     # A bare "live" says the game is running and says nothing about WHERE — the
     # unplaceable case, which `live_write_would_revert` treats as no evidence.
     return None, clock
+
+
+def loaded_authority_score_age(event, *, at) -> Optional[float]:
+    """How long ago ESPN observed this row's score, read off the LOADED row.
+
+    #6056, 2026-10-21. Read from the instance's own ``__dict__``, never through
+    the attribute: a compare-and-write carrying the stamp's forward-only
+    ``CASE`` EXPIRES ``score_source``/``score_observed_at`` on the instance
+    (`score_write_stamp_values`), and in an async session the next attribute
+    read lazy-loads and raises ``MissingGreenlet``. An expired or absent stamp
+    is no evidence, so the guard keeps the verdict it gave before this rule.
+    """
+    loaded = getattr(event, "__dict__", {})
+    return authority_score_age_seconds(
+        loaded.get("score_source"), loaded.get("score_observed_at"), at=at
+    )
 
 
 async def _write_start_placeholder_tags(session, event_id: int, desired: list[str]) -> None:
@@ -847,6 +864,11 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             stored_away_score=_observed_away_score,
                             incoming_home_score=live_data.home_score,
                             incoming_away_score=live_data.away_score,
+                            # #6056, 2026-10-21: same rule as the 30-second
+                            # writer, on this pass's clock.
+                            stored_authority_score_age_seconds=(
+                                loaded_authority_score_age(event, at=now)
+                            ),
                         ):
                             schedule_reverting_live_skipped += 1
                             logger.warning(
@@ -1872,6 +1894,10 @@ async def _sync_statpal_livescores() -> dict:
                     # compare-and-write below re-asserts them.
                     _observed_home_score = event.home_score
                     _observed_away_score = event.away_score
+                    # #6056, 2026-10-21: a board that cannot say where the game
+                    # is may not take a point off a score ESPN read moments ago
+                    # (Spurs at Thunder, 31-44 -> 30-42 at an unchanged clock).
+                    _authority_age = loaded_authority_score_age(event, at=_read_at)
 
                     live_state_is_stale = live_write_would_revert(
                         _observed_period, _observed_clock,
@@ -1886,6 +1912,7 @@ async def _sync_statpal_livescores() -> dict:
                         stored_away_score=_observed_away_score,
                         incoming_home_score=fixture.home_score,
                         incoming_away_score=fixture.away_score,
+                        stored_authority_score_age_seconds=_authority_age,
                     )
                     if live_state_is_stale:
                         reverting_live_skipped += 1

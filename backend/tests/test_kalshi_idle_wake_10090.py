@@ -10,6 +10,9 @@ empty probe waited up to a whole period before its write began.
 Now the ticker handler sets the wake for an accepted, linked winner leg (the
 predicate that already marks an event quoting), and the run counts a flush as
 work when it snapshots prices or actually refreshes owed stamps.
+Root attempt32: of a snapshot with prices, only a price attempt, a new held
+quote's admission or a stamp start/admit counts; a probe over a cooled or
+fenced cohort is an empty probe.
 
 The decisive control runs the actual consumer: a winner quote right after an
 empty probe is written well inside the period (the parent waits for the next
@@ -46,10 +49,11 @@ def _recording(monkeypatch, cadence=(PERIOD, 2, None, 4)):
             super().__init__(scope)
             owners.append(self)
 
-        async def phase(self, session, values, *, force_observation=False):
+        async def phase(self, session, values, *, force_observation=False, forced_ids=()):
             writes.append((time.monotonic(), dict(values)))
             async for result in super().phase(
                 session, values, force_observation=force_observation,
+                forced_ids=forced_ids,
             ):
                 yield result
 
@@ -181,6 +185,121 @@ async def test_owed_stamp_work_spends_the_budget_and_a_quote_waits_for_it(
         await game.deliver("ticker", {"market_ticker": GAME_A, "price_dollars": "0.61"})
         await _until(lambda: _written(writes, WINNER), "the next actual flush")
         assert _written(writes, WINNER)[0][0] - owed >= PERIOD - 0.1
+    finally:
+        await _stop(running)
+
+
+
+class _LockTimeout(Exception):
+    sqlstate = "55P03"
+
+
+@pytest.mark.asyncio
+async def test_a_quote_after_a_cooled_held_cohorts_deadline_is_written_on_its_wake(
+    monkeypatch,
+):
+    """Root attempt32: a cohort cooling down after a lock timeout stays
+    buffered, and each timer probe that skipped it used to count as actual
+    work. So a new quote arriving just after the retry deadline waited out the
+    rest of that probe's period (the parent: ~197 ms of 250 ms). A probe that
+    attempts nothing now spends no budget; the attempt that failed still did.
+    The live phase's first refusal is its short probe, retried at the next
+    flush start; the cooldown follows its ordinary attempt's refusal."""
+    period, cooldown = 1.0, 2.5
+    (scope, running, socket_for, opened_sockets,
+     flushes, writes, owners) = _recording(monkeypatch, cadence=(period, 2, None, 4))
+    monkeypatch.setattr(task, "PRICE_FLUSH_SECONDS", cooldown)
+    attempts = []
+    recording = continuity.Prices
+    original_phase = recording.phase
+
+    async def refused_once(self, session, values, **kwargs):
+        attempts.append((time.monotonic(), dict(values)))
+        if len(attempts) <= 2:
+            raise _LockTimeout("canceling statement due to lock timeout")
+        async for result in original_phase(self, session, values, **kwargs):
+            yield result
+
+    monkeypatch.setattr(recording, "phase", refused_once)
+    try:
+        await _until(lambda: opened_sockets() == 3, "startup sockets")
+        game = socket_for({GAME_A})
+        await _right_after_a_probe(flushes)
+        await game.deliver("ticker", {"market_ticker": GAME_A, "price_dollars": "0.61"})
+        await _until(
+            lambda: len(attempts) == 2
+            and owners[0].lock_retry_until.get(WINNER, 0) > attempts[1][0],
+            "the refused short probe, then its refused ordinary attempt",
+        )
+        until = owners[0].lock_retry_until[WINNER]
+        work_after_refusal = owners[0].flush_work
+        # The deadline falls between two timer phases (one period apart from
+        # the refused flush's start), so at least one probe ran while cooled.
+        await _until(lambda: blend._mono() > until + 0.05, "the retry deadline")
+        assert len(attempts) == 2 and writes == []
+        assert len(flushes) >= 4  # both refused flushes + probes over the cooled cohort
+        # Probes that attempted nothing spent nothing.
+        assert owners[0].flush_work == work_after_refusal
+
+        sent = time.monotonic()
+        await game.deliver("ticker", {"market_ticker": GAME_A, "price_dollars": "0.62"})
+        await _until(lambda: _written(writes, WINNER), "the woken retry")
+        written_at, value = _written(writes, WINNER)[0]
+        # Counting the cooled probe as work (the parent), the write waits for
+        # the next timer phase, ~0.45 s here. Woken, it starts at once.
+        assert written_at - sent < period / 5, written_at - sent
+        assert value[0] == pytest.approx(0.62)  # the newest quote, not the refused one
+        assert owners[0].flush_work == work_after_refusal + 1
+    finally:
+        await _stop(running)
+
+
+
+@pytest.mark.asyncio
+async def test_ticks_on_a_cooled_cohort_attempt_nothing_and_keep_the_work_ceiling(
+    monkeypatch,
+):
+    """The cost side of the change above: an uncounted probe leaves the wake
+    live, so each winner tick on a cooled cohort may wake a flush. Such a flush
+    attempts no price write while the cohort cools, and counted work still
+    starts at most once per period."""
+    period, cooldown = 0.5, 2.0
+    (scope, running, socket_for, opened_sockets,
+     flushes, writes, owners) = _recording(monkeypatch, cadence=(period, 2, None, 4))
+    monkeypatch.setattr(task, "PRICE_FLUSH_SECONDS", cooldown)
+    attempts = []
+    recording = continuity.Prices
+    original_phase = recording.phase
+
+    async def refused_once(self, session, values, **kwargs):
+        attempts.append((time.monotonic(), dict(values)))
+        if len(attempts) == 1:
+            raise _LockTimeout("canceling statement due to lock timeout")
+        async for result in original_phase(self, session, values, **kwargs):
+            yield result
+
+    monkeypatch.setattr(recording, "phase", refused_once)
+    try:
+        await _until(lambda: opened_sockets() == 3, "startup sockets")
+        game = socket_for({GAME_A})
+        await _right_after_a_probe(flushes)
+        await game.deliver("ticker", {"market_ticker": GAME_A, "price_dollars": "0.61"})
+        await _until(lambda: attempts, "the refused write")
+        until = owners[0].lock_retry_until[WINNER]
+        refused_at, work = time.monotonic(), owners[0].flush_work
+        seen = len(flushes)
+        ticks = 0
+        while blend._mono() < until - 0.2:
+            await game.deliver("ticker", {"market_ticker": GAME_A, "price_dollars": "0.61"})
+            ticks += 1
+            await asyncio.sleep(0.05)
+        elapsed = time.monotonic() - refused_at
+        woken = len(flushes) - seen
+        print(f"EVIDENCE cooled ticks: {ticks} ticks, {woken} flushes in {elapsed:.2f}s, "
+              f"counted work +{owners[0].flush_work - work}")
+        assert len(attempts) == 1  # nothing written while the cohort cools
+        assert owners[0].flush_work - work <= int(elapsed / period) + 1
+        await _until(lambda: _written(writes, WINNER), "the retry after the deadline")
     finally:
         await _stop(running)
 

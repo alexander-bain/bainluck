@@ -151,7 +151,12 @@ describe("#10093 a live within-minute spike and reversal stays on the web chart"
     const refused = [SPIKE[0], SPIKE[1], frame("2026-10-01T17:43:25Z", 0.55, 220), SPIKE[3]];
     const html = render(pageHistory(refused));
     expect(ranges(html).map(r => r.label)).toEqual(["42%-43%"]);
-    expect(html).not.toContain("55%");
+    // #11356 — read the axis, not a "55%" substring: a tick below 50/50 now
+    // prints the away side's chance, so axis 45 is labelled "55%". The refused
+    // frame is still nowhere: nothing inked reaches 55 on the home side's axis.
+    const axisTop = Math.max(...[...html.matchAll(/data-axis-value="(\d+)"/g)].map(m => Number(m[1])));
+    expect(axisTop).toBeLessThan(55);
+    expect(html).not.toMatch(/data-minute-range-hi="55"/);
   });
 
   it("a single-source live line (no served blend) gets the range on its own source series", () => {
@@ -216,8 +221,10 @@ describe("#10751 a finished chart keeps the distinct-minute movement it drew", (
       chartStartTime={domain?.start} chartEndTime={domain?.end}
     />);
   };
+  // #11356 — the axis VALUE of each tick (the home side's 0–100), not its
+  // printed text: below 50/50 a tick prints the away side's chance.
   const yTicks = (html: string) =>
-    [...html.matchAll(/<tspan[^>]*>(\d+)%<\/tspan>/g)].map(m => Number(m[1]));
+    [...html.matchAll(/data-axis-value="(\d+(?:\.\d+)?)"/g)].map(m => Number(m[1]));
 
   it("live: the three minutes are drawn — the axis reaches 55%, the line ends on 43%", () => {
     const html = draw(mergeLiveChartHistory(served, admitted.points)!, "live");

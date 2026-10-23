@@ -335,6 +335,10 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     @TolerantNumeric var contributingSources: [String]? = nil
     @TolerantNumeric var observedAt: String? = nil
     @TolerantNumeric var aggregationRule: String? = nil
+    /// #698, resolved Polymarket markets only: what this row may say about its
+    /// own result (`{"verdict","basis"}`). Absent on every other market and on
+    /// older servers. Read only through ``SettledResultDisplay698``.
+    @LenientDecode var settlementDisplay: SettlementDisplay698? = nil
 
     private enum CodingKeys: String, CodingKey {
         case id, name, probability, americanOdds, rank
@@ -342,6 +346,7 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
         case probabilityChange24h = "probabilityChange24H"
         case openingProbability, openingAmericanOdds, isWinner, resolutionSource, lastUpdated
         case contributingSources, observedAt, aggregationRule
+        case settlementDisplay
     }
 }
 
@@ -474,15 +479,39 @@ nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
     let isWinner: Bool?
     let matchedTeam: TeamFutureTeam?
     let canonicalMarketKey: String?
+    /// `state` — the championship grid's verdict for this club on this market
+    /// (#11493). Only `/api/teams/{id}` serves it, and only on a row whose market
+    /// a decided grid column lists. Read it through ``gridVerdict``.
+    let state: String?
 
     var id: Int { outcomeId }
+
+    /// #11493 — the grid says the club is out of (or has won) this question.
+    var gridVerdict: TeamGridVerdict? { state.flatMap(TeamGridVerdict.init(rawValue:)) }
 
     private enum CodingKeys: String, CodingKey {
         case outcomeId, outcomeName, marketId, marketName, marketTier
         case category, source, probability
         case probabilityChange24h = "probabilityChange24H"
         case rank, totalOutcomes, resolutionDate, isWinner, matchedTeam, canonicalMarketKey
+        case state
     }
+}
+
+/// #11493 — the championship grid's verdict, republished on the team page.
+///
+/// The Braves' page said "Championship 0%" two weeks after the Dodgers put them
+/// out, beside a Division Race whose Champion cell already printed ✕: an
+/// eliminated club's leg keeps trading at 0.001 until the venue grades the
+/// series, so a price can never say "out". The server stamps the grid's own
+/// verdict as `state`; the probability is left exactly as it was.
+///
+/// Absent means undecided OR unknown — today's rendering, never a result. An
+/// unrecognised value decodes and is ignored, so a new server word cannot
+/// blank the page.
+nonisolated enum TeamGridVerdict: String, Sendable {
+    case eliminated
+    case won
 }
 
 /// Team metadata attached to a team futures item.
@@ -532,6 +561,10 @@ nonisolated struct ProbabilityTimelineResponse: Decodable, Sendable {
     @TolerantNumeric var questionIdentity: FuturesQuestionIdentity? = nil
     @TolerantNumeric var contributingSources: [String]? = nil
     @TolerantNumeric var historyBasis: TimelineHistoryBasis? = nil
+    /// #683 — only on a `range=full` read: where the drawn history begins and how
+    /// much of the venue's record was recovered (`EvolutionFullRange683.swift`).
+    /// `var` so a verified chart can carry `/history`'s block with its lines.
+    @LenientDecode var historyRange: FuturesHistoryRange? = nil
 }
 
 /// #9387 — `{kind: "single_source", source: "odds_api", market_id: 86832}`.
@@ -545,6 +578,26 @@ nonisolated struct TimelineHistoryBasis: Codable, Sendable {
 nonisolated struct TimelineEntry: Decodable, Sendable {
     let timestamp: String
     let outcomes: [String: Double]
+    /// #683 — the values at this instant that are a recorded venue interval, not a
+    /// capture: `{"<outcome name>": {provenance, interval_start, period_minutes,
+    /// price_basis}}`, keyed like `outcomes`. Absent on every live entry. Tolerant,
+    /// so an unreadable block never costs the chart its lines.
+    @TolerantNumeric var archive: [String: TimelineArchiveMark]? = nil
+}
+
+/// #683 — what one archived value says about itself. Every field is tolerant: a
+/// mark that is present but unreadable still marks its value as archived, so the
+/// chart can never pass it off as a live reading.
+nonisolated struct TimelineArchiveMark: Codable, Equatable, Sendable {
+    @TolerantNumeric var provenance: String? = nil
+    @TolerantNumeric var intervalStart: String? = nil
+    @TolerantNumeric var periodMinutes: Int? = nil
+    @TolerantNumeric var priceBasis: String? = nil
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.provenance == rhs.provenance && lhs.intervalStart == rhs.intervalStart
+            && lhs.periodMinutes == rhs.periodMinutes && lhs.priceBasis == rhs.priceBasis
+    }
 }
 
 /// Display metadata for an outcome included in a probability timeline.

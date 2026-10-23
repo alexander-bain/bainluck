@@ -473,7 +473,7 @@ describe("teamHeadline is the page's rule and nothing else", () => {
       ] as never,
       RED_SOX.futures as never,
     );
-    expect(headline).toEqual({ label: "World Series", probability: 0.11, movement: -1 });
+    expect(headline).toEqual({ label: "World Series", probability: 0.11, movement: -1, state: null });
   });
 
   it("falls back to the best tier-1 future when the path is empty — the live case", () => {
@@ -481,7 +481,7 @@ describe("teamHeadline is the page's rule and nothing else", () => {
     // 0.0575 "Pro Baseball Champion", not the 0.9975 tier-5 postseason market
     // and not the 0.135 tier-2 one: tier order first, probability only to break
     // a tie inside a tier.
-    expect(headline).toEqual({ label: "Championship", probability: 0.0575, movement: null });
+    expect(headline).toEqual({ label: "Championship", probability: 0.0575, movement: null, state: null });
   });
 
   it("is null when nothing carries a probability", () => {

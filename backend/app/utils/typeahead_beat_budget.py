@@ -2069,7 +2069,13 @@ def free_background_slots(
 #: Cost: one dispatch/hour; flag-off exits before DB/Redis writes. When enabled,
 #: one bounded theme pass has a200s budget /240s soft limit; publication remains
 #: separate. This count describes scheduled arrivals, not active theme work.
-BACKGROUND_BEAT_COUNT = 139
+#: 🔴 RE-DERIVED at live (2026-10-16, #11152): 139 → 140, explicit 99 → 100,
+#: fall-through UNMOVED at 40. `unplayed-series-game-sweep`
+#: (`crontab(minute="54")`) names `background` explicitly. Cost: hourly, one
+#: indexed MLB window read; ESPN boards (11 reads, no quota) only when the
+#: window holds an unanchored, unscored row. The census RUN over the tree
+#: branched from `8c641f6f48` printed `explicit 100 implicit 40 total 140`.
+BACKGROUND_BEAT_COUNT = 140
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

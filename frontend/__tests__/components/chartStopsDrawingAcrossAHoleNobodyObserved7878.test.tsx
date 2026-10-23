@@ -303,10 +303,12 @@ describe("#7878 — REAL healthy control: a completed MLB game with five dense s
         chartEndTime={domain!.end}
         sharedTicks={domain!.ticks}
         chartLabelFormat={domain!.labelFormat}
+        defaultSourcesExpanded
       />,
     );
     const all = curves(html);
-    // Blend + 5 sources + sportsbooks = 7 lines, as production draws today.
+    // Blend + 5 sources + sportsbooks = 7 lines with Sources open (#11356:
+    // closed, the blend is drawn alone — that arm is the collapsed check below).
     expect(all.length).toBe(7);
     for (const c of all) {
       expect(isConnector(c)).toBe(false);
@@ -319,6 +321,30 @@ describe("#7878 — REAL healthy control: a completed MLB game with five dense s
     const maxX = Math.max(...subpaths(kalshi.d)[0].map((p) => p[0]));
     const rightmost = Math.max(...all.flatMap((c) => subpaths(c.d)[0].map((p) => p[0])));
     expect(maxX).toBe(rightmost);
+
+    // #11356 — the same page with Sources closed is one line: the blend.
+    const closed = curves(renderToStaticMarkup(
+      <OddsChart
+        history={HEALTHY.history}
+        bookmakerHistory={HEALTHY.bookmaker_history}
+        winProbHistory={HEALTHY.win_prob_history}
+        winProbSources={HEALTHY.win_prob_sources}
+        aggregateLine={HEALTHY.aggregate_line}
+        homeTeam={HEALTHY.home_team}
+        awayTeam={HEALTHY.away_team}
+        commenceTime={HEALTHY.commence_time}
+        completedAt={HEALTHY.completed_at}
+        isLive={false}
+        eventStatus={HEALTHY.status}
+        externalTimeRange="live"
+        chartStartTime={domain!.start}
+        chartEndTime={domain!.end}
+        sharedTicks={domain!.ticks}
+        chartLabelFormat={domain!.labelFormat}
+      />,
+    ));
+    expect(closed.length).toBe(1);
+    expect(subpaths(closed[0].d).length).toBe(1);
   });
 });
 

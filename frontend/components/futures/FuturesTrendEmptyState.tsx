@@ -35,6 +35,13 @@ interface FuturesTrendEmptyStateProps {
   createdAt?: string | null;
   /** #683: the full read left older prices out (`servedPartialHistory`). */
   historyWithheld?: boolean;
+  /** #7547 — the rung this empty answer is FOR, when the reader has already
+   *  picked another (`range`) that is still loading or failed. Defaults to
+   *  `range`. The sentence names this one; the lit chip stays the pick. */
+  shownRange?: FuturesRangeKey;
+  /** #7547 — `futuresRangeHeldNote` while `shownRange` differs from `range`. */
+  heldNote?: string | null;
+  onRetry?: () => void;
 }
 
 export default function FuturesTrendEmptyState({
@@ -44,10 +51,14 @@ export default function FuturesTrendEmptyState({
   actualHours,
   createdAt,
   historyWithheld = false,
+  shownRange,
+  heldNote,
+  onRetry,
 }: FuturesTrendEmptyStateProps) {
+  const emptyRange = shownRange ?? range;
   // On "all" there is no wider rung to send anyone to, so an empty result here
   // really is an empty market — the original sentence, unchanged.
-  const marketIsEmpty = range === "all";
+  const marketIsEmpty = emptyRange === "all";
 
   return (
     <div className="bg-surface-card rounded-card shadow-card p-6">
@@ -65,7 +76,7 @@ export default function FuturesTrendEmptyState({
           </>
         ) : (
           <>
-            <span>No prices in {futuresRangeSpanWords(range, createdAt)}</span>
+            <span>No prices in {futuresRangeSpanWords(emptyRange, createdAt)}</span>
             <span className="text-xs text-text-muted">Try a longer range.</span>
           </>
         )}
@@ -79,6 +90,8 @@ export default function FuturesTrendEmptyState({
           onSelect={onSelect}
           requestedHours={requestedHours}
           actualHours={actualHours}
+          heldNote={heldNote}
+          onRetry={onRetry}
         />
       )}
     </div>

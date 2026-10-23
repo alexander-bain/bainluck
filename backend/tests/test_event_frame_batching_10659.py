@@ -90,7 +90,7 @@ async def test_exact_frames_order_zero_listener_success_and_bounded_sends(n):
     batch = frames(n)
     await r._publish(batch)
     assert client.commands == [
-        frame_publish_command(f) for f in batch
+        frame_publish_command(f, require_replay=True) for f in batch
     ]
     assert client.batch_sizes == [min(32, n - start) for start in range(0, n, 32)]
     assert client.reads_before_send == list(range(0, n, 32))
@@ -198,6 +198,10 @@ async def test_checkout_accepts_modern_and_redis_5_0_pool_signatures(legacy):
 def private_redis_socket():
     binary = os.environ.get("EVENT_FRAME_REDIS_SERVER") or shutil.which("redis-server")
     if not binary:
+        if os.environ.get("EVENT_FRAME_REDIS_REQUIRED"):
+            # CI provides the binary; its absence there is a failure, never a
+            # silent skip of the deciding real-Redis controls (#10090 163).
+            pytest.fail("EVENT_FRAME_REDIS_REQUIRED is set but no redis-server was found")
         pytest.skip(
             "set EVENT_FRAME_REDIS_SERVER for private real-Redis event publication controls"
         )

@@ -1,6 +1,6 @@
 "use client";
 
-import type { FuturesOutcome } from "@/lib/types";
+import type { FuturesOutcome, SettlementDisplay } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import EntityImage from "@/components/EntityImage";
@@ -10,9 +10,10 @@ import {
   isNumericLadder,
   flagUrl,
 } from "@/lib/images";
-import { boardOutcomeLabel } from "@/lib/futuresDetailDisplay";
+import { boardOutcomeLabel, readableOpeningProbability } from "@/lib/futuresDetailDisplay";
 import { SHAPE_QUANTITY, type MarketShape } from "@/lib/marketShape";
 import { isAuthoritativeResolution } from "@/lib/resolutionAuthority";
+import { isResultUnknown } from "@/lib/settledResultDisplay";
 
 /**
  * The verdict this row is allowed to state: `"won"`, `"lost"`, or `null` for
@@ -115,6 +116,9 @@ export const RETRACTED_RESOLUTION_SOURCE = "ungradeable_result";
 export interface GradedRow {
   is_winner?: boolean | null;
   resolution_source?: string | null;
+  /** #698 — the settled-result contract (`lib/settledResultDisplay`). Optional:
+   *  only futures detail rows carry it, so every other caller is unchanged. */
+  settlement_display?: SettlementDisplay | null;
 }
 
 export function outcomeRowVerdict(
@@ -135,6 +139,19 @@ export function outcomeRowVerdict(
   // Unconditional in BOTH directions: a row that is both retracted and crowned is
   // a contradiction, and the honest render for a contradiction is the live one.
   if (outcome.resolution_source === RETRACTED_RESOLUTION_SOURCE) return null;
+  // #698 — THE SETTLED-RESULT CONTRACT, WHEN THE ROW CARRIES ONE, IS THE ANSWER.
+  //
+  // `/futures/62134744` served both legs `0.5 / false / clob_authoritative` and
+  // the last line of this function made each a `lost` — printed `Lost · 0%` —
+  // because nothing below reads the price. The server now states, from the
+  // STORED row, whether a result exists; `unknown` returns no verdict and never
+  // falls through to `is_winner`, or a `false` would restore the two losses.
+  // The contract is only ever attached on a RESOLVED market, so an open board
+  // (#6082's settled leg) never reaches this branch and keeps its rule below.
+  const contract = outcome.settlement_display;
+  if (contract && isResolved) {
+    return contract.verdict === "unknown" ? null : contract.verdict;
+  }
   // A SERVED null means the payload looked and found no grader ⇒ say nothing.
   //
   // `=== null`, never `== null`, and this is the load-bearing line of the whole
@@ -426,10 +443,18 @@ export default function OutcomeRow({
   const change = outcome.probability_change_24h;
   const rankChange = outcome.rank_change_24h;
   const printsMove = outcomeRowPrintsMove(outcome, isResolved);
+  const openingShown = readableOpeningProbability(outcome);
   // #4788: the ONE settled-state decision for this row. Every branch below reads
   // it — never `isResolved && outcome.is_winner === X`, which counts a defaulted
   // `false` as a grader's verdict.
   const verdict = outcomeRowVerdict(outcome, isResolved);
+  // #698 — a settled row with NO result to state. Not the ungraded/live
+  // fallback below: it says "Result unknown", labels a finite price as the LAST
+  // RECORDED one, never prints a final 0%/100%, a win/loss tint or a move, and
+  // stops wearing the leader's amber — on `/futures/62134744` the "leader" was
+  // one side of a 50/50 tie on a finished match.
+  const resultUnknown = isResultUnknown(outcome, isResolved);
+  const leads = isLeader && !resultUnknown;
 
   // #6325 — A SETTLED BOARD DOES NOT NUMBER ITSELF.
   //
@@ -509,7 +534,7 @@ export default function OutcomeRow({
           ? "bg-emerald-50 border border-emerald-200"
           : verdict === "lost"
           ? "bg-slate-50/50"
-          : isLeader
+          : leads
           ? "bg-amber-50 border border-amber-200"
           : "bg-charcoal/5 hover:bg-charcoal/10"
       }`}
@@ -585,7 +610,7 @@ export default function OutcomeRow({
             data-testid="outcome-name"
             title={outcome.name}
             className={`text-sm truncate block ${
-              isLeader ? "font-semibold text-text-primary" : "text-text-primary"
+              leads ? "font-semibold text-text-primary" : "text-text-primary"
             }`}
           >
             {outcomeLabel}
@@ -610,6 +635,16 @@ export default function OutcomeRow({
               className="text-xs text-red-400 font-medium"
             >
               Lost
+            </span>
+          )}
+          {/* #698 — its own testid, NOT `outcome-verdict`: probes count that id
+              as "rows stating a result", and this row states that it has none. */}
+          {resultUnknown && (
+            <span
+              data-testid="outcome-result-unknown"
+              className="text-xs text-text-secondary font-medium"
+            >
+              Result unknown
             </span>
           )}
         </div>
@@ -638,13 +673,15 @@ export default function OutcomeRow({
         {/* Opening price. UX-P233 (board item 11): this column was the ONLY one of
             the row's three numbers that named its own baseline, which is exactly why
             the other two read as if they shared it. All three are labelled now. */}
-        {outcome.opening_probability !== null && (
+        {/* #8313: an opening whose own odds name the other side's price is not
+            printed, the same as a missing one (`readableOpeningProbability`). */}
+        {openingShown !== null && (
           <div className="text-xs text-text-secondary text-right shrink-0">
             <div className="text-[10px] uppercase tracking-wide text-text-muted">
               Open
             </div>
             <div data-testid="outcome-open">
-              {formatProbability(outcome.opening_probability, { rendered: renderedOpening })}
+              {formatProbability(openingShown, { rendered: renderedOpening })}
             </div>
           </div>
         )}
@@ -702,9 +739,9 @@ export default function OutcomeRow({
               settlement is self-justifying), so `verdict` is no longer always
               null when `!isResolved` — keyed off `isResolved` this label would
               now print "Latest" directly above a `100% / Settled` cell. */}
-          {verdict === null && (
+          {verdict === null && !(resultUnknown && outcome.probability == null) && (
             <div className="text-[10px] uppercase tracking-wide text-text-muted">
-              Latest
+              {resultUnknown ? "Last recorded" : "Latest"}
             </div>
           )}
           {verdict === "won" ? (
@@ -725,11 +762,12 @@ export default function OutcomeRow({
                 Settled
               </div>
             </>
-          ) : (
+          ) : resultUnknown && outcome.probability == null ? null : (
             <>
               <div
+                data-testid="outcome-price"
                 className={`font-mono text-base tabular-nums ${
-                  isLeader ? "font-bold text-text-primary" : "font-semibold text-text-primary"
+                  leads ? "font-bold text-text-primary" : "font-semibold text-text-primary"
                 }`}
               >
                 {formatProbability(outcome.probability, { rendered })}

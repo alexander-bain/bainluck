@@ -205,8 +205,8 @@ export default function RootLayout({
               <EmbedGate>
               <header className="bg-surface-card/80 backdrop-blur-lg border-b border-surface-border sticky top-0 z-50">
                 <div className="max-w-content mx-auto px-4 md:px-6 py-3">
-                  <div className="flex items-center justify-between gap-4">
-                    <Link href="/" className="flex items-center gap-2.5">
+                  <div className="flex items-center justify-between gap-3 lg:gap-4">
+                    <Link href="/" className="flex items-center gap-2.5 shrink-0 whitespace-nowrap">
                       <span className="text-xl">🍀</span>
                       <span className="text-lg font-semibold text-text-primary tracking-tight">
                         Bain Luck
@@ -219,8 +219,8 @@ export default function RootLayout({
                       <MobileSearchTrigger />
                     </div>
 
-                    <div className="flex items-center gap-3">
-                      <div className="hidden md:block w-64 lg:w-80">
+                    <div className="flex items-center justify-end gap-3 min-w-0 shrink-0 md:shrink md:flex-1 lg:flex-initial">
+                      <div className="hidden md:block w-full md:max-w-[16rem] lg:max-w-none lg:w-80 min-w-[9rem]">
                         <SearchBar compact />
                       </div>
                       <UserMenu />

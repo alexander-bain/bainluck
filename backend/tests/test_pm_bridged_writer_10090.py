@@ -37,6 +37,7 @@ from tests.test_pm_same_flush_fresh_admission_10090 import paired
 from tests.test_polymarket_withdrawal_speed_10651 import ROOT, compile_functions
 from tests.test_polymarket_withdrawal_speed_10651 import rig as pm_rig
 from tests.test_single_event_commit_10090 import rig as stamp_rig, settle_until
+from tests.test_pm_cross_batch_fresh_admission_10090 import preview_redis, redis_kwargs
 
 pytestmark = pytest.mark.asyncio
 PERIOD = 0.25
@@ -600,7 +601,7 @@ async def test_a_new_bridged_pair_waits_while_its_events_stamp_is_running(monkey
 
 
 async def test_repeated_cancellation_of_a_catalog_handover_keeps_the_bridged_stamp_owed(
-    monkeypatch,
+    monkeypatch, preview_redis,
 ):
     """Composition with the real refresher (Root's coverage #2, bridged): a
     committed bridged cohort's stamp is running and held in its session
@@ -608,6 +609,10 @@ async def test_repeated_cancellation_of_a_catalog_handover_keeps_the_bridged_sta
     enters before that cleanup ends, no second writer or refresh starts, the
     debt survives with no admission or reservation left, and the final drain
     writes the newer pair and publishes it."""
+    # Periodic flushes and final drain share one deterministic clock. An
+    # import-time anchor plus the runner's current clock can age game 1 into
+    # a heartbeat during earlier tests and append it after the newer pair.
+    monkeypatch.setattr(blend, "_mono", lambda: _T0 + 2)
     p, x = paired(monkeypatch, blocked=(2,))
     p.ns["open_outcome_ids"].update({900, 901})
     unwinding, finish_unwind, handed_over = asyncio.Event(), asyncio.Event(), asyncio.Event()
@@ -619,7 +624,7 @@ async def test_repeated_cancellation_of_a_catalog_handover_keeps_the_bridged_sta
             try:
                 yield session
             finally:
-                if 2 in session.event_ids and asyncio.current_task().cancelling():
+                if 2 in getattr(session, "event_ids", ()) and asyncio.current_task().cancelling():
                     unwinding.set()
                     await finish_unwind.wait()
 
@@ -637,6 +642,10 @@ async def test_repeated_cancellation_of_a_catalog_handover_keeps_the_bridged_sta
         writer = boundary.bridges.task
         assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=_T0 + 1), 2) is True
         await asyncio.wait_for(x.second_stamp.wait(), 2)  # its stamp holds
+        # Establish that only the bridged game's publication remains owed.
+        # Default DNPL's ledger I/O can leave game 1's sender still running
+        # after game 2 enters its held transaction.
+        await settle_until(lambda: 1 in x.published)
         p.ns["price_buffer"].update({900: 0.72, 901: 0.28})
         update = asyncio.create_task(handover())
         await asyncio.sleep(0)

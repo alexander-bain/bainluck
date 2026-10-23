@@ -211,5 +211,37 @@ export function rangeCoverageNote(
   // Round both before comparing: a sub-hour difference is not a widening, and
   // reporting "showing 7 days" against a requested 7 days is noise, not truth.
   if (Math.round(actualHours) <= Math.round(requestedHours)) return null;
-  return `Too few prices in ${spanWords(requestedHours)} — showing ${spanWords(actualHours)}.`;
+  return `Limited history for ${spanWords(requestedHours)} — showing ${spanWords(actualHours)}.`;
+}
+
+/**
+ * #7547 — the line the Probability Trend card prints while the chart on screen
+ * is NOT the rung the reader picked.
+ *
+ * The page holds the last chart that arrived while a newly tapped rung loads
+ * (`keepPreviousData`), because unmounting it would take the chips down with it.
+ * But the chip lights at the tap, so on /futures/199045 a week of prices sat
+ * under a lit "All" for the whole >6 s request, with nothing saying so. A held
+ * chart is useful; an unnamed one is a wrong range. This names both halves:
+ * what was asked for, and what is still drawn.
+ *
+ * `failed` is a request that did not come back. It never reads as "no history"
+ * — that is a different claim about the market, and the held chart is still a
+ * true picture of the range it names.
+ *
+ * Returns null when the drawn rung IS the picked one: nothing to reconcile.
+ */
+export function futuresRangeHeldNote(
+  picked: FuturesRangeKey,
+  shown: FuturesRangeKey,
+  state: "loading" | "failed",
+  createdAt?: string | null,
+  now: number = Date.now(),
+): string | null {
+  if (picked === shown) return null;
+  const wanted = futuresRangeSpanWords(picked, createdAt, now);
+  const drawn = futuresRangeSpanWords(shown, createdAt, now);
+  return state === "failed"
+    ? `Couldn't load ${wanted}. Showing ${drawn}.`
+    : `Loading ${wanted} — showing ${drawn} until it arrives.`;
 }

@@ -55,6 +55,15 @@ final class FeedViewModel: ObservableObject {
     /// non-blocking "couldn't refresh" state instead of silently presenting stale
     /// content as freshly loaded. Cleared on the next successful main response.
     @Published private(set) var refreshFailed = false
+    /// #11288 — true once THIS load's main request has answered, with content, empty
+    /// or a real failure. A quietly cancelled main leaves it false: a superseding
+    /// load is already on its way, so the tab must not flash "nothing to show" first.
+    @Published private(set) var mainAnswered = false
+    /// #11288 — true from a successful main response until this load's optional
+    /// requests (backfill + grouped) have all answered or been given up on at the
+    /// sibling deadline. An empty main is not the end of the load while these can
+    /// still add cards, so the tab keeps saying it is loading instead of going blank.
+    @Published private(set) var siblingsPending = false
 
     /// Immutable snapshot of the successful-main generation that FIRST became
     /// renderable this load (L2-211 Item 2 / C73). Stamped once at data-ready and
@@ -270,6 +279,8 @@ final class FeedViewModel: ObservableObject {
         // Re-arm the immutable render-generation token for this load (L2-211 Item 2):
         // the next successful non-empty main stamps it once, frozen for this load.
         firstRenderGeneration = nil
+        mainAnswered = false
+        siblingsPending = false
 
         // === 1. Main feed — gates first paint ===
         do {
@@ -279,6 +290,10 @@ final class FeedViewModel: ObservableObject {
             total = max(feed.total, items.count)
             error = nil
             refreshFailed = false
+            mainAnswered = true
+            // Set in the same main-actor turn as `loading = false` so an empty main
+            // never renders a frame of "nothing to show" before the siblings start.
+            siblingsPending = true
             loading = false
             liveCount = Self.tabBadgeLiveCount(items)
             // Stamp the immutable render token from THIS main response (L2-211 Item
@@ -319,6 +334,7 @@ final class FeedViewModel: ObservableObject {
                 return
             }
             loading = false
+            mainAnswered = true
             if isInitial {
                 // Cold load: nothing on screen → the error/retry screen.
                 self.error = error.localizedDescription
@@ -391,6 +407,7 @@ final class FeedViewModel: ObservableObject {
         inFlightSiblings = []
 
         guard generation == loadGeneration else { return }
+        siblingsPending = false
         // Recompute the refresh interval after the merges: the backfill can carry a
         // live game main did not (#10001), and that game must arm live refresh too.
         configureAutoRefresh()
@@ -525,6 +542,7 @@ final class FeedViewModel: ObservableObject {
         loadTask?.cancel()
         loadTask = nil
         cancelInFlightSiblings()
+        siblingsPending = false
         stopRefresh()
     }
 
@@ -575,6 +593,70 @@ final class FeedViewModel: ObservableObject {
     func filteredTopMarkets(for categoryID: String) -> [FeedItem] {
         filteredItems(for: categoryID).filter { $0.type == "futures" }
     }
+
+    // MARK: - What the tab shows (#11288)
+
+    /// True when at least one `FeedView` section would draw a card for this
+    /// category. Grouped props are not chip-filtered, so they count everywhere.
+    func showsCards(for categoryID: String) -> Bool {
+        !groupedItems.isEmpty
+            || !filteredLiveNow(for: categoryID).isEmpty
+            || !filteredJustHappened(for: categoryID).isEmpty
+            || !filteredUpcoming(for: categoryID).isEmpty
+            || !filteredTopMarkets(for: categoryID).isEmpty
+    }
+
+    /// The live inputs to `tabState`. Pinned rows live in `PinManager`, so the
+    /// view says whether any pinned card would draw.
+    func tabState(for categoryID: String, pinnedAnywhere: Bool, pinnedInCategory: Bool) -> SportsTabState {
+        Self.tabState(
+            loading: loading,
+            error: error,
+            itemsEmpty: items.isEmpty,
+            refreshFailed: refreshFailed,
+            mainAnswered: mainAnswered,
+            siblingsPending: siblingsPending,
+            showsAnything: pinnedAnywhere || showsCards(for: "all"),
+            showsInCategory: pinnedInCategory || showsCards(for: categoryID)
+        )
+    }
+
+    /// #11288 — one decision for every state the Sports tab can land in. Before
+    /// this, a successful main with nothing to render fell through to a list holding
+    /// only the chip row: no message, no retry, and on a slow backfill a blank screen.
+    static func tabState(
+        loading: Bool,
+        error: String?,
+        itemsEmpty: Bool,
+        refreshFailed: Bool,
+        mainAnswered: Bool,
+        siblingsPending: Bool,
+        showsAnything: Bool,
+        showsInCategory: Bool
+    ) -> SportsTabState {
+        if loading { return .loading }
+        if let error, itemsEmpty { return .failed(error) }
+        if showsInCategory { return .content }
+        let stillLoading = !mainAnswered || siblingsPending
+        if showsAnything { return .nothingInCategory(stillLoading: stillLoading) }
+        return stillLoading ? .loading : .nothingToShow(refreshFailed: refreshFailed)
+    }
+}
+
+/// #11288 — what the Sports tab draws. See `FeedViewModel.tabState`.
+nonisolated enum SportsTabState: Equatable, Sendable {
+    /// Cold load, or a load that can still produce cards: the labelled placeholder.
+    case loading
+    /// The cold main failed: the existing error screen with Try Again.
+    case failed(String)
+    /// Cards to show for the selected chip.
+    case content
+    /// The selected chip has nothing while other sports do. `stillLoading` while
+    /// this load's requests may yet add some.
+    case nothingInCategory(stillLoading: Bool)
+    /// Every request has answered and nothing would draw: a message and Retry.
+    /// `refreshFailed` when the latest main failed rather than came back empty.
+    case nothingToShow(refreshFailed: Bool)
 }
 
 // MARK: - Production fetch conformance

@@ -105,7 +105,7 @@ class Prices(task._KalshiPriceOwner):
         self.lock_retry_until = {}
         self.committed_outcome_ids = set()
 
-    async def phase(self, session, values, *, force_observation=False):
+    async def phase(self, session, values, *, force_observation=False, forced_ids=()):
         self.scope.written.update(values)
         rows = [SimpleNamespace(id=oid, market_id=7 if oid in (71, 72) else 8,
                                 quote_moved=False, last_updated=STORED)

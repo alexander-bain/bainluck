@@ -41,6 +41,7 @@ from app.models.models import (
 )
 from app.services.database import Base
 from app.tasks.live_blend_refresh import LiveBlendRefresher, TailReceipts
+from tests.test_live_blend_refresh import is_normal_recovery_owner
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
 pytestmark = [
@@ -72,6 +73,8 @@ async def rig():
             "futures_outcomes",
             "win_prob_snapshots",
             "odds_snapshots",
+            # #11181: the consumers' refreshers hold chart custody here.
+            "owed_chart_points",
         )
     ]
     try:
@@ -150,6 +153,12 @@ def refresher(
 
     @contextlib.asynccontextmanager
     async def factory():
+        if is_normal_recovery_owner(r):
+            # attempt151: the publication-recovery owner, not a stamp.
+            async with rig.maker() as session:
+                yield session
+                await session.commit()
+            return
         async with rig.maker() as session:
             attempt = len(calls) + 1
             calls.append(attempt)
@@ -174,6 +183,7 @@ def refresher(
         "polymarket", session_factory=factory, min_refresh_interval_s=0
     )
     r.slot_at_cancel = []
+    r.controls = []
     real_batch = r._refresh_batch
 
     async def batch(event_ids, *args, **kwargs):
@@ -201,6 +211,12 @@ def refresher(
         async with rig.maker() as observer:
             for frame in batch:
                 eid = frame["event_id"]
+                if frame.get("reconcile_only"):
+                    # attempt151's price-free recovery control: its own list,
+                    # acknowledged like any send, never a KeyError on the price
+                    # readback that recovery would log and swallow.
+                    r.controls.append(frame)
+                    continue
                 event = await observer.get(Event, eid)
                 assert (
                     event.win_probability_sources["polymarket"]["value"]
@@ -209,6 +225,8 @@ def refresher(
                 assert event.win_probability_sources_rev == frame["rev"][str(eid)]
                 assert eid in r._last_written_value
                 frames.append(frame)
+        # Acknowledged as Redis does (attempt151): delivered, nothing owed.
+        return {(f["event_id"], f["rev"][str(f["event_id"])]) for f in batch}
 
     r._publish = publish
     return r, frames, calls, resolved, publish

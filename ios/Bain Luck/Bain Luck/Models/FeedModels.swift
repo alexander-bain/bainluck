@@ -571,6 +571,13 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     /// because an older server or cache omits it; absent reads as `false` — read
     /// it as `startIsTbd == true`, never as a third state.
     let startIsTbd: Bool?
+    /// #10880 — the server's word that `commenceTime` was written by a sports
+    /// schedule provider (ESPN, StatPal, The Odds API), decoded from
+    /// `start_is_from_schedule`. False for a market's time: a Kalshi
+    /// expiration, a Polymarket listing stamp. Absent (an older server, a
+    /// cached payload, a card built from the detail route) reads as false.
+    /// "Add to Calendar" is offered only on `true` (`CalendarEntry10880`).
+    var startIsFromSchedule: Bool? = nil
     let status: String?
     var homeScore: Int?
     var awayScore: Int?
@@ -584,6 +591,24 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     let openingOdds: OpeningOdds?
     /// #8622 — see `PrematchOdds`. Read through `PrematchReading.resolve`.
     let prematchOdds: PrematchOdds?
+    /// #11296 — the sportsbooks' last pair before the SCHEDULED start, decoded
+    /// from `pregame_projection`; served on settled rows only. Read through
+    /// `FinalForecastComparison11296.resolve`, never printed raw. Absent (an
+    /// older server, a cached payload, a card built from the detail route)
+    /// prints nothing.
+    var pregameProjection: PregameProjection? = nil
+    /// #11296 — the producer's reason a settled row has no `pregame_projection`
+    /// (`format_unsupported`, `no_pregame_reading`, …). Decoded, and rendered
+    /// NOWHERE: a card without a forecast looks exactly as it did (notice 34).
+    var pregameProjectionUnavailable: String? = nil
+    /// #11296 — the producer's word on what a settled row's actual score
+    /// covers, decoded from `final_score_period`. Its one value is
+    /// `"regulation"` (a soccer match the row's own period says ended at full
+    /// time); extra time, penalties and an unknown finish serve no key. Read
+    /// only through `FinalForecastComparison11296.actualPeriod`, never printed.
+    /// Lenient: a value this build cannot read is nil — it withholds the
+    /// forecast line, never the card.
+    @LenientDecode var finalScorePeriod: String? = nil
     let highlight: Highlight?
     let homeTeamData: TeamData?
     let awayTeamData: TeamData?

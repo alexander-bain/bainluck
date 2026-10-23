@@ -19,11 +19,13 @@ final class SSEFrameAssemblyOverTheRealTransport10090Tests: XCTestCase {
         private static let lock = NSLock()
         nonisolated(unsafe) private static var replies: [Reply] = []
         nonisolated(unsafe) private static var served = 0
+        nonisolated(unsafe) private static var urls: [URL] = []
         private let queue = DispatchQueue(label: "chunked-stream")
         private var stopped = false
 
-        static func script(_ r: [Reply]) { lock.lock(); replies = r; served = 0; lock.unlock() }
+        static func script(_ r: [Reply]) { lock.lock(); replies = r; served = 0; urls = []; lock.unlock() }
         static var requests: Int { lock.lock(); defer { lock.unlock() }; return served }
+        static var requestedURLs: [URL] { lock.lock(); defer { lock.unlock() }; return urls }
         private static func next() -> Reply {
             lock.lock(); defer { lock.unlock() }
             let r = replies[min(served, replies.count - 1)]
@@ -37,6 +39,9 @@ final class SSEFrameAssemblyOverTheRealTransport10090Tests: XCTestCase {
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
         override func startLoading() {
+            Self.lock.lock()
+            if let url = request.url { Self.urls.append(url) }
+            Self.lock.unlock()
             let reply = Self.next()
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
                                            headerFields: ["Content-Type": "text/event-stream"])!
@@ -208,4 +213,19 @@ final class SSEFrameAssemblyOverTheRealTransport10090Tests: XCTestCase {
                        "the replacement delivers its own frames from the first, once each, in order")
         XCTAssertEqual(ChunkedStream.requests, 2)
     }
+    func testFoldedPreviewCapabilityIsExplicitAndDefaultIsUnchanged() async throws {
+        for enabled in [false, true] {
+            ChunkedStream.script([.init(body: Data("event: heartbeat\ndata: {}\n\n".utf8),
+                                        chunkSize: 64, interval: 0, finish: false)])
+            let transport = try LiveEventStreamTransport(eventId: 4242, foldedPreviews: enabled,
+                baseURL: "https://stub.invalid", session: session())
+            transport.connect()
+            await waitUntil(1) { !ChunkedStream.requestedURLs.isEmpty }
+            transport.close()
+            let url = try XCTUnwrap(ChunkedStream.requestedURLs.first)
+            XCTAssertEqual(url.path, "/api/events/4242/stream")
+            XCTAssertEqual(url.query, enabled ? "preview_protocol=folded-v2" : nil)
+        }
+    }
+
 }

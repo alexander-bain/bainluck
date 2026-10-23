@@ -32,6 +32,15 @@ from starlette.requests import Request
 
 from app.utils import live_fanout, request_cache
 from app.utils.live_push import build_frame, event_channel
+from tests._event_stream_legacy_view import install_legacy_view
+
+
+@pytest.fixture(autouse=True)
+def _legacy_wire_view(monkeypatch):
+    """#10090: these tests predate the stream's owned coverage read and its
+    reconcile controls; see tests/_event_stream_legacy_view.py."""
+    install_legacy_view(monkeypatch)
+
 
 pytestmark = pytest.mark.asyncio
 
@@ -314,7 +323,9 @@ class TestAStreamNobodyLeftKeepsRunning:
             await gone.wait()
             return {"type": "http.disconnect"}
 
-        request = Request({"type": "http", "method": "GET", "headers": []}, receive)
+        request = Request(
+            {"type": "http", "method": "GET", "headers": [], "query_string": b""}, receive,
+        )
         reader = _Reader(4704, request)
         await reader.opened()
         await asyncio.sleep(0.4)  # ~8 passes, each probing the disconnect
@@ -355,3 +366,25 @@ class TestTheRigCanSeeTheRace:
         await _leave_in_the_mailbox_turn(reader, 4711)
         assert await reader.ended(within=0.5) == "still running"
         await reader.stop()
+
+    async def test_owned_mailbox_releases_reader_even_with_guard_removed(
+        self, rig, py311_wait_for, unguarded, monkeypatch,
+    ):
+        # While a coverage read is held the route owns the mailbox wait in a
+        # task; that path must release the reader without the inline guard.
+        from app.routes import event_stream as route
+
+        held = asyncio.Event()
+
+        async def coverage(event_id, ids):
+            await held.wait()
+
+        monkeypatch.setattr(route, "_current_reconcile", coverage)
+        reader = _Reader(4712)
+        try:
+            await _leave_in_the_mailbox_turn(reader, 4712)
+            assert await reader.ended(within=.5) == "cancelled"
+            assert live_fanout.fanout().subscriber_count == 0
+        finally:
+            held.set()
+            await reader.stop()  # port: a reader still running is never abandoned

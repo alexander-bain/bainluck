@@ -53,11 +53,15 @@ nonisolated struct LiveBlendPoint: Sendable, Equatable {
     let homeProbability: Double
     let source: String?
     let sourceProbability: Double?
+    /// Disposable projection authority; never placed in the committed buffer.
+    let previewAuthority: BlendPreviewChartAuthority?
 
     init(date: Date, homeProbability: Double,
-         source: String? = nil, sourceProbability: Double? = nil) {
+         source: String? = nil, sourceProbability: Double? = nil,
+         previewAuthority: BlendPreviewChartAuthority? = nil) {
         self.date = date
         self.homeProbability = homeProbability
+        self.previewAuthority = previewAuthority
         if let source, !source.isEmpty,
            let value = sourceProbability, value.isFinite, (0...1).contains(value) {
             self.source = source
@@ -118,20 +122,7 @@ nonisolated enum EventHistoryFreshness {
     /// wrong in, since the backfilled points are already behind the edge and the
     /// next poll that does advance the edge brings them along.
     static func lastReading(in history: EventHistoryResponse) -> Date? {
-        var latest: Date?
-        func offer(_ stamp: String) {
-            guard let date = stamp.asDate else { return }
-            if let current = latest, current >= date { return }
-            latest = date
-        }
-
-        for point in history.aggregateLine ?? [] { offer(point.timestamp) }
-        for point in history.history { offer(point.timestamp) }
-        for point in history.espnHistory ?? [] { offer(point.timestamp) }
-        for series in (history.winProbHistory ?? [:]).values {
-            for point in series { offer(point.timestamp) }
-        }
-        return latest
+        EventHistoryEdges(history).latest
     }
 
     /// Whether `fresh` may replace `current` on screen.
@@ -144,11 +135,104 @@ nonisolated enum EventHistoryFreshness {
     ///
     /// A payload with no readings at all never wins, so an empty or errored
     /// refresh cannot blank a chart that is drawing.
+    ///
+    /// One exception, `adoptsSourceRemoval`: a complete fresh build that drops
+    /// a series the drawn payload holds.
     static func shouldAdopt(_ fresh: EventHistoryResponse, over current: EventHistoryResponse?) -> Bool {
+        shouldAdopt(EventHistoryEdges(fresh), over: current.map(EventHistoryEdges.init))
+    }
+
+    /// The same rule over edges already read (`EventHistoryDigest.edges`).
+    /// `nil` is "nothing held".
+    static func shouldAdopt(_ fresh: EventHistoryEdges, over current: EventHistoryEdges?) -> Bool {
         guard let current else { return true }
-        guard let freshEdge = lastReading(in: fresh) else { return false }
-        guard let currentEdge = lastReading(in: current) else { return true }
+        return shouldAdopt(freshEdge: fresh.latest, over: .some(current.latest))
+            || adoptsSourceRemoval(fresh, over: current)
+    }
+
+    /// #10090 §3 — a withdrawn source whose series held the drawn payload's
+    /// latest reading kept every later payload behind that edge, so the chart
+    /// went on drawing the withdrawn line until another series passed its
+    /// last stamp (on a sparse pre-match chart, possibly never), and the
+    /// reconcile floor stayed owed against a payload it could not show.
+    ///
+    /// A payload missing a held series is taken here only when it is provably
+    /// not older:
+    ///   - It is a COMPLETE fresh build: it carries `history_fold_revision`,
+    ///     which the producer serves only on a complete fresh build. A
+    ///     cacheable, partial or doubtful build makes no membership claim, so a
+    ///     series absent from it proves nothing.
+    ///   - It is unpinned. A pinned edge is a claim about now and is never
+    ///     rescued here.
+    ///   - It is the same event.
+    ///   - No series both payloads hold is behind the drawn one. Every
+    ///     retained endpoint stays where it is or moves forward.
+    ///   - If the drawn payload also carries a complete-build revision, the
+    ///     fresh one read later on the rows both carry: at or past it on every
+    ///     row and past it on at least one.
+    /// It never makes a point, a stamp or a clock. The withdrawn series is
+    /// simply the one the later complete build does not have.
+    static func adoptsSourceRemoval(_ fresh: EventHistoryEdges, over held: EventHistoryEdges) -> Bool {
+        guard fresh.eventId == held.eventId, !fresh.pinned,
+              let freshRead = fresh.completeRead else { return false }
+        let retained = held.series.keys.filter { fresh.series[$0] != nil }
+        guard !retained.isEmpty, retained.count < held.series.count,
+              retained.allSatisfy({ fresh.series[$0]! >= held.series[$0]! }) else { return false }
+        guard let heldRead = held.completeRead else { return true }
+        let rows = heldRead.rows.keys.filter { freshRead.rows[$0] != nil }
+        return !rows.isEmpty
+            && rows.allSatisfy { freshRead.rows[$0]! >= heldRead.rows[$0]! }
+            && rows.contains { freshRead.rows[$0]! > heldRead.rows[$0]! }
+    }
+
+    /// The same rule over edges already read (`EventHistoryDigest.edge`). The
+    /// outer `nil` of `current` is "nothing held"; an inner `nil` is a held
+    /// payload with no readings.
+    static func shouldAdopt(freshEdge: Date?, over current: Date??) -> Bool {
+        guard let current else { return true }
+        guard let freshEdge else { return false }
+        guard let currentEdge = current else { return true }
         return freshEdge >= currentEdge
+    }
+}
+
+/// What the adoption rule reads off one payload: the latest reading of each
+/// series the match chart can draw, and the two producer claims
+/// `adoptsSourceRemoval` needs.
+nonisolated struct EventHistoryEdges: Sendable, Equatable {
+    let eventId: Int
+    /// The latest parseable stamp per series: `aggregate`, `odds`, `espn` and
+    /// `wp:<source>`. A series with no parseable stamp is absent.
+    let series: [String: Date]
+    /// `history_fold_revision`: the producer's complete-build read order.
+    /// `nil` is no claim.
+    let completeRead: FoldRevision?
+    let pinned: Bool
+
+    /// `EventHistoryFreshness.lastReading(in:)`.
+    var latest: Date? { series.values.max() }
+
+    init(_ history: EventHistoryResponse) {
+        var series: [String: Date] = [:]
+        func offer(_ key: String, _ stamps: some Sequence<String>) {
+            var latest: Date?
+            for stamp in stamps {
+                guard let date = stamp.asDate else { continue }
+                if let current = latest, current >= date { continue }
+                latest = date
+            }
+            if let latest { series[key] = latest }
+        }
+        offer("aggregate", (history.aggregateLine ?? []).lazy.map(\.timestamp))
+        offer("odds", history.history.lazy.map(\.timestamp))
+        offer("espn", (history.espnHistory ?? []).lazy.map(\.timestamp))
+        for (source, points) in history.winProbHistory ?? [:] {
+            offer("wp:" + source, points.lazy.map(\.timestamp))
+        }
+        self.eventId = history.eventId
+        self.series = series
+        self.completeRead = history.historyFoldRevision?.revision
+        self.pinned = history.blendEdgePinned == true
     }
 }
 
@@ -170,8 +254,10 @@ nonisolated enum EventHistoryFreshness {
 /// freeze per update, measured in a simulator on a Mac. Both scans grow with
 /// the game's history. Neither depends on anything but the payload, so the page holds them here.
 nonisolated struct EventHistoryDigest {
+    /// The adoption rule's read of the payload (`EventHistoryFreshness`).
+    let edges: EventHistoryEdges
     /// `EventHistoryFreshness.lastReading(in:)` of the payload.
-    let edge: Date?
+    var edge: Date? { edges.latest }
     /// The latest win-probability reading across every source. Sources are
     /// walked in name order and a tie keeps the first, so a tie on the latest
     /// time resolves the same way on every open (#8509) — the same reading the
@@ -179,7 +265,7 @@ nonisolated struct EventHistoryDigest {
     let latestWinProb: WinProbHistoryPoint?
 
     init(_ history: EventHistoryResponse) {
-        edge = EventHistoryFreshness.lastReading(in: history)
+        edges = EventHistoryEdges(history)
         latestWinProb = Self.latestWinProb(in: history)
     }
 

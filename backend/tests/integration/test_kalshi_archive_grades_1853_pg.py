@@ -428,3 +428,148 @@ async def test_without_drift_the_cycle_round_trips_every_changed_nullable_field(
     regrades, _ = await mod.build_plan(session, legs)
     await session.rollback()
     assert mod.plan_digest(regrades) == digest
+
+
+# --- the read-only status packet: how an UNKNOWN receipt is resolved -------
+#
+# Each phase commits as ONE transaction with its markers, so after a COMMIT
+# whose acknowledgement was lost, ``--status`` answers whether it landed. Here
+# every COMMIT is acknowledged; the status read after it is what an operator
+# would read after the same COMMIT went unacknowledged.
+
+
+async def _status(session, mod):
+    before = await _legs(session)
+    out = await mod.status_report(session)
+    await session.rollback()
+    assert await _legs(session) == before, "status writes nothing"
+    return out
+
+
+async def test_status_before_any_backup_says_no_backup_committed(session):
+    mod = _script()
+    assert await _status(session, mod) == {"backup_table": "absent", "digests": {}}
+    exists = (await session.execute(text(mod.SQL["bak_exists"]))).scalar_one()
+    await session.rollback()
+    assert not exists, "status creates no table"
+
+
+async def test_status_resolves_each_phase_of_the_cycle(session):
+    mod, legs, grades, _, digest = await _plan_and_backup(session)
+    backed = (await _status(session, mod))["digests"][digest]
+    assert (backed["frozen"], backed["applied"], backed["holds_before"]) == (22, 0, 22)
+    assert backed["holds_after"] == 0 and backed["restored"] == 0
+    assert sorted(r["outcome_id"] for r in backed["rows"]) == sorted(UNGRADED)
+
+    await _apply(session, mod, legs, digest)
+    applied = (await _status(session, mod))["digests"][digest]
+    assert (applied["applied"], applied["holds_after"], applied["holds_before"]) == (22, 22, 0)
+    assert all(r["applied_at"] is not None for r in applied["rows"])
+
+    await _restore(session, mod)
+    restored = (await _status(session, mod))["digests"][digest]
+    assert (restored["applied"], restored["restored"], restored["holds_before"]) == (0, 22, 22)
+    assert restored["ownership_lost"] == 0
+
+
+async def test_status_names_a_row_a_later_writer_moved(session):
+    mod, legs, grades, _, digest = await _plan_and_backup(session)
+    await _apply(session, mod, legs, digest)
+    moved = sorted(UNGRADED)[0]
+    await session.execute(
+        text("UPDATE futures_outcomes SET last_updated = NOW() + interval '1 hour' WHERE id = :i"),
+        {"i": moved},
+    )
+    await session.commit()
+    d = (await _status(session, mod))["digests"][digest]
+    assert (d["applied"], d["holds_after"]) == (22, 21)
+    row = next(r for r in d["rows"] if r["outcome_id"] == moved)
+    assert row["applied"] and not row["holds_after"] and row["row_exists"]
+
+
+# --- CERT-4237's follow-up: a lost acknowledgement, landed or not ----------
+#
+# Each phase runs through the operator's own ``Progress`` phase and COMMIT
+# boundary on a real transaction; only the COMMIT's acknowledgement is lost —
+# after a real COMMIT (landed) or before one is sent (not landed, the rollback
+# discards it). Both print the same UNKNOWN receipt, and the real markers the
+# status packet reads tell them apart. Coverage limit: this injects the failure
+# around real SQL; it is not an end-to-end network loss through the session
+# wrapper (the wrapper's half is pinned in ``tests/test_repair_1853_commit_ack.py``).
+
+
+class _LostAck:
+    def __init__(self, session, landed):
+        self.session, self.landed = session, landed
+
+    async def commit(self):
+        if self.landed:
+            await self.session.commit()
+        raise ConnectionError("acknowledgement lost")
+
+
+@pytest.mark.parametrize("phase", ["backup", "apply", "restore"])
+@pytest.mark.parametrize("landed", [False, True], ids=["not-landed", "landed"])
+async def test_status_tells_a_landed_unknown_from_one_that_never_landed(
+    session, phase, landed, capsys
+):
+    mod = _script()
+    legs = mod.load_archive_legs()
+    grades, _ = await mod.build_plan(session, legs)
+    await session.rollback()
+    digest = mod.plan_digest(grades)
+    if phase != "backup":
+        assert await mod.backup(session, grades, digest) == 0
+        await session.commit()
+    if phase == "restore":
+        await _apply(session, mod, legs, digest)
+    capsys.readouterr()
+
+    progress = mod.Progress()
+    progress.mode = phase
+    progress.out["plan_digest"] = digest
+    with pytest.raises(ConnectionError) as caught:
+        with progress.phase(phase):
+            if phase == "backup":
+                assert await mod.backup(session, grades, digest) == 0
+            elif phase == "apply":
+                progress.out["applied"] = await mod.apply(session, legs, digest)
+            else:
+                progress.out.update(await mod.restore_report(session))
+            await progress.commit(_LostAck(session, landed), phase)
+    await session.rollback()  # what the wrapper's exception exit does
+    assert mod._ended_abnormally(progress, caught.value) == 3
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["outcome"] == "UNKNOWN" and receipt["phases"] == {phase: "UNKNOWN"}
+    assert "undo" not in receipt and receipt["readback"] == mod.STATUS_COMMAND
+
+    status = await _status(session, mod)
+    if phase == "backup" and not landed:
+        assert status == {"backup_table": "absent", "digests": {}}
+        return
+    d = status["digests"][digest]
+    assert d["frozen"] == 22
+    if phase == "backup":
+        assert (d["applied"], d["holds_before"]) == (0, 22)
+    elif phase == "apply":
+        assert (d["applied"], d["holds_after"]) == ((22, 22) if landed else (0, 0))
+    else:
+        assert (d["restored"], d["applied"]) == ((22, 0) if landed else (0, 22))
+
+
+async def test_status_runs_under_a_server_enforced_read_only_transaction(session):
+    from sqlalchemy.exc import DBAPIError
+
+    mod, legs, grades, _, digest = await _plan_and_backup(session)
+    await session.execute(text("SET TRANSACTION READ ONLY"))
+    assert (await session.execute(text("SHOW transaction_read_only"))).scalar_one() == "on"
+    d = (await mod.status_report(session))["digests"][digest]
+    assert d["frozen"] == 22 and d["holds_before"] == 22
+    # The control: the same transaction really refuses a write, so the read
+    # above passed because it writes nothing, not because nothing was enforced.
+    with pytest.raises(DBAPIError, match="read-only transaction"):
+        await session.execute(
+            text("UPDATE futures_outcomes SET volume = volume WHERE market_id = :m"),
+            {"m": MARKET_ID},
+        )
+    await session.rollback()

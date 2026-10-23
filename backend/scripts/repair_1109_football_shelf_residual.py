@@ -108,6 +108,27 @@ exactly that value a moment earlier, and the artifact restores it. Keep the arti
 * ``--readback`` reads every artifact row and reports which hold ``after``, which
   still hold ``before``, which hold something else and which are missing. Read-only.
 
+A COMMIT THAT DOES NOT RETURN IS UNKNOWN (exit 3)
+-------------------------------------------------
+
+The server can make the COMMIT durable and its acknowledgement still be lost
+(SQLSTATE 08006), and a rollback sent afterwards proves nothing about it. So once
+an apply or restore COMMIT has been sent and not acknowledged, the run prints
+``"outcome": "UNKNOWN"`` with its mode, artifact, plan hash and the exact writes
+the transaction carried, plus the ``--readback`` command, and stops: no rollback
+claim, no retry, no undo line. The readback answers it without a write. A cancel
+or interrupt that lands on the COMMIT prints the same report and keeps
+propagating as itself.
+
+Only a refusal BEFORE the COMMIT was sent (a gate, a moved row, a budget firing)
+says "nothing committed", and it says it before anything rolls back, so a
+rollback failing on a dead connection never replaces it or its exit 2. After an
+UNKNOWN the session leaves ``get_task_session`` by its exception path, so the
+wrapper's normal-exit COMMIT is never sent behind the unacknowledged one. A
+failure in the wrapper's cleanup — after a refusal, an UNKNOWN, or an
+acknowledged COMMIT — is noted on stderr and changes neither the printed result,
+its undo line nor its exit; an interrupt there still propagates as itself.
+
 The dry run also prints ``movement`` — the per-shelf counts the apply would move
 (``football->tennis: n``). These are graded cohorts (ruling 060): the after-check
 reads both curves against that declared movement.
@@ -160,6 +181,33 @@ _VENUE_FIELDS = {"series_ticker": str, "resolved": bool, "tags": list, "read_at"
 
 class Refused(RuntimeError):
     """The run stops before any write."""
+
+
+class Unknown(RuntimeError):
+    """The COMMIT was sent and never acknowledged: its writes may or may not be durable."""
+
+    def __init__(self, report: dict):
+        super().__init__(report["unknown"])
+        self.report = report
+
+
+def _unknown_report(decided: dict, mode: str, written: int, exc: BaseException) -> dict:
+    orig = getattr(exc, "orig", None)
+    code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    return {
+        "outcome": "UNKNOWN",
+        "mode": mode,
+        "artifact": decided["artifact"],
+        "plan_hash": decided["plan_hash"],
+        "write": decided["write"],
+        "statements_changed": written,
+        "unknown": (
+            f"the {mode} COMMIT was sent and not acknowledged "
+            f"({type(orig or exc).__name__}, sqlstate {code}); these writes may or may "
+            "not be durable. Not retried, not undone — read the artifact rows back "
+            "with --readback before any further step"
+        ),
+    }
 
 
 def refuse_unless_production(env: dict) -> None:
@@ -511,7 +559,15 @@ async def run(
                     f"{result.rowcount} — it moved since the read"
                 )
             written += 1
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception as exc:
+            raise Unknown(_unknown_report(decided, mode, written, exc)) from exc
+        except BaseException as exc:
+            # A cancel or interrupt landing on the COMMIT is just as unknowable. It
+            # keeps its own type and propagates; the report rides it to main().
+            exc.commit_unknown = _unknown_report(decided, mode, written, exc)
+            raise
     return {"mode": mode, **decided, "written": written}
 
 
@@ -567,33 +623,118 @@ async def main() -> int:
 
     from app.tasks.base import get_task_session
 
-    async with get_task_session(
-        statement_timeout_ms=STATEMENT_TIMEOUT_MS, lock_timeout_ms=LOCK_TIMEOUT_MS
-    ) as session:
-        try:
-            out = await run(
-                session,
-                artifact,
-                mode=mode,
-                now=datetime.now(timezone.utc),
-                expect_plan_hash=args.expect_plan_hash,
-                restore_ids=restore_ids,
-            )
-        except Refused as exc:
-            await session.rollback()
-            print(f"REFUSED: {exc}")
+    readback = (
+        f"heroku run --no-tty -a {os.environ['HEROKU_APP_NAME']} -- python3 "
+        "scripts/repair_1109_football_shelf_residual.py --plan - --readback "
+        "< <the same artifact>"
+    )
+    # Every way out of the session is decided INSIDE it, and nothing the session
+    # wrapper's cleanup raises afterwards (its rollback, its normal-exit COMMIT,
+    # close or dispose on a dead connection) changes the decision:
+    # * a refusal comes before any COMMIT was sent, and is printed before the
+    #   rollback, so a failing rollback can replace neither it nor its exit 2;
+    # * an unacknowledged COMMIT is UNKNOWN and leaves the block by RAISING. A
+    #   ``return`` is a normal exit, and the wrapper's normal exit runs
+    #   ``await session.commit()`` again — a second COMMIT behind the one nobody
+    #   heard back from;
+    # * an acknowledged COMMIT is the result, printed with its undo line even if
+    #   the wrapper's exit then raises.
+    out: dict | None = None
+    refused = False
+    unknown: dict | None = None
+    carried: BaseException | None = None
+    try:
+        async with get_task_session(
+            statement_timeout_ms=STATEMENT_TIMEOUT_MS, lock_timeout_ms=LOCK_TIMEOUT_MS
+        ) as session:
+            try:
+                out = await run(
+                    session,
+                    artifact,
+                    mode=mode,
+                    now=datetime.now(timezone.utc),
+                    expect_plan_hash=args.expect_plan_hash,
+                    restore_ids=restore_ids,
+                )
+            except Refused as exc:
+                refused = True
+                print(f"REFUSED: {exc}")
+                await session.rollback()
+                return 2
+            except DBAPIError as exc:
+                # A budget firing (lock_timeout 55P03, statement_timeout 57014) or
+                # any other server refusal BEFORE the COMMIT was sent (``run`` turns
+                # a failure at the COMMIT into ``Unknown``): the transaction never
+                # committed, so no row of the plan is durable, and the run says so.
+                refused = True
+                code = getattr(exc.orig, "sqlstate", None) or getattr(
+                    exc.orig, "pgcode", None
+                )
+                print(
+                    f"REFUSED: the database stopped the run ({type(exc.orig).__name__}, "
+                    f"sqlstate {code}) before its COMMIT was sent; nothing committed — "
+                    "re-run the dry run when production is quieter"
+                )
+                await session.rollback()
+                return 2
+            except BaseException as exc:
+                # ``Unknown`` (a failure at the COMMIT), or a cancel/interrupt that
+                # landed on it and carries the same report. Anything else is not ours.
+                report = (
+                    exc.report
+                    if isinstance(exc, Unknown)
+                    else getattr(exc, "commit_unknown", None)
+                )
+                if report is not None:
+                    unknown, carried = dict(report, readback=readback), exc
+                    print(json.dumps(unknown, indent=2, default=str))
+                raise
+    except BaseException as exc:
+        if refused:
+            _cleanup_note(exc, "after the refusal above; no COMMIT was sent")
+            if not isinstance(exc, Exception):
+                raise
             return 2
-        except DBAPIError as exc:
-            await session.rollback()
-            code = getattr(exc.orig, "sqlstate", None) or getattr(
-                exc.orig, "pgcode", None
-            )
-            print(
-                f"REFUSED: the database stopped the run ({type(exc.orig).__name__}, "
-                f"sqlstate {code}); rolled back, nothing committed — re-run the dry "
-                "run when production is quieter"
-            )
-            return 2
+        if unknown is not None:
+            if exc is not carried:
+                _cleanup_note(exc, "after the UNKNOWN report above")
+            if isinstance(carried, Unknown):
+                if not isinstance(exc, Exception):
+                    raise  # an interrupt during the cleanup keeps propagating as itself
+                return 3
+            if exc is carried:
+                raise
+            # A cancel or interrupt on the COMMIT keeps its own type even when the
+            # cleanup raised something else on the way out.
+            raise carried
+        if out is None:
+            raise
+        _print_result(out)
+        _cleanup_note(
+            exc,
+            f"after the {out['mode']} above "
+            + (
+                "had its COMMIT acknowledged"
+                if out["mode"] in ("apply", "restore")
+                else "completed"
+            ),
+        )
+        if not isinstance(exc, Exception):
+            raise
+        return 0
+    _print_result(out)
+    return 0
+
+
+def _cleanup_note(exc: BaseException, after: str) -> None:
+    print(
+        f"note: the task session's cleanup raised {type(exc).__name__} {after}; "
+        "it changes none of it",
+        file=sys.stderr,
+    )
+
+
+def _print_result(out: dict) -> None:
     print(json.dumps(out, indent=2, default=str))
     if out["mode"] == "apply" and out["written"]:
         ids = ",".join(str(i) for i, _, _ in out["write"])
@@ -602,7 +743,6 @@ async def main() -> int:
             "scripts/repair_1109_football_shelf_residual.py --plan - --restore "
             f"--ids {ids} < <the same artifact>"
         )
-    return 0
 
 
 if __name__ == "__main__":

@@ -102,8 +102,12 @@ test('the page derives historyData through appendHeroObservation on the live arm
   const memo = page.slice(page.indexOf('const historyData = useMemo('), page.indexOf('const backendBlendServed'));
   // #10751: the live arm merges the subset `admitChartFrames` admits (the same
   // `quoteChartFrames` filter); the finished arm is `finishedChartFrames`.
-  expect(memo).toContain('if (quoteEligible) admittedChartRef.current = admitChartFrames(eventId, chartPoints, event);');
-  expect(memo).toContain('const pushed = mergeLiveChartHistory(servedHistory, frames);');
-  expect(memo).toContain('quoteEligible ? appendHeroObservation(joined, event, servedHistory) : joined');
-  expect(memo).toMatch(/\[servedHistory, event, quoteEligible, chartPoints, eventId\]/);
+  // #10090 attempt149: recovered source readings join the admitted bank and
+  // the served history before the merge; the hero still reads servedHistory.
+  expect(memo).toMatch(/if \(quoteEligible\) admittedChartRef\.current = admitCurrentSourceObservations\(\s*admitChartFrames\(eventId, chartPoints, event\),/);
+  expect(memo).toContain('const pushed = mergeLiveChartHistory(observed, frames);');
+  expect(memo).toMatch(/quoteEligible\s*\? appendHeroObservation\(joined, event, servedHistory\)\s*: joined/);
+  // #10090 attempt155: an accepted recovery pair that only changes the bank
+  // still reaches the memo.
+  expect(memo).toMatch(/\[servedHistory, event, quoteEligible, chartPoints, eventId, sourceObservationVersion\]/);
 });

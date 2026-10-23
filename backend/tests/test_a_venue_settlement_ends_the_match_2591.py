@@ -446,6 +446,11 @@ class _NetSession:
         rows = self._selects.pop(0)
         return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows))
 
+    def expunge_all(self):
+        # #10090: the pass drops its loaded rows once the promotion
+        # commits. A fake holds no identity map, so there is none to drop.
+        return None
+
     async def commit(self):
         pass
 

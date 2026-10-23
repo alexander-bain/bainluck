@@ -183,27 +183,79 @@ async def test_the_screen_judges_the_whole_market_not_the_team_legs():
     assert "futures_markets.id IN" in db.market_loads[0]
 
 
-async def test_a_failed_screen_fails_open_and_says_so():
+async def test_a_failed_screen_fails_closed_and_says_so():
+    """#11534: a screen that did not run prints NO price it could not check.
+    It used to fail open, which is how the Steelers page printed last season's
+    Super Bowl MVP at 50% a leg."""
     async def _boom(_db, _markets):
         raise RuntimeError("screen down")
 
     with patch.object(route, "withheld_price_outcome_ids_for_markets", _boom):
         payload, unusable, _db = await _build()
     assert unusable is False
-    # Today's numbers, and a partial stamp so the build is never taken for full.
-    assert "Josh Allen" in _entities(_families(payload)["next team"])
+    assert payload["families"] == []
+    # A partial stamp, so the build is never taken for full and is rebuilt.
     assert f"{route._REASON_TIMEOUT}{route._BRANCH_PRICE_SCREEN}" in str(payload)
 
 
-async def test_an_exhausted_reader_budget_defers_the_screen_as_an_iou():
+async def test_an_exhausted_reader_budget_defers_the_screen_and_withholds():
+    """#11534: the deferral is still an IOU the rebuild pays — but for CONTENT.
+    Nothing the screen did not judge reaches the page meanwhile."""
     db = _DB(_fk_rows())
     # t0 and the three branch checks read 0 s; by the screen, 10 s have gone.
     ticks = iter([0.0] * 4 + [10.0] * 50)
     with patch.object(route.time, "monotonic", lambda: next(ticks)):
         payload, _u = await route.build_prop_families(_team(), db, 400, budget_ms=2500)
     assert db.market_loads == []
+    assert payload["families"] == []
     assert f"{route._REASON_DEFERRED}{route._BRANCH_PRICE_SCREEN}" in str(payload)
     assert route._deferral_reasons([f"{route._REASON_DEFERRED}{route._BRANCH_PRICE_SCREEN}"])
+
+
+async def test_a_screen_timeout_withholds_only_what_it_would_have_judged():
+    """Fail-closed is scoped to the screen's own markets: a market with no
+    family key never reaches the page and is not the screen's to drop."""
+    by_market = {
+        479: {"market_id": 479, "name": SB_MVP.name, "outcomes": []},
+        7: {"market_id": 7, "name": "zzz no family", "outcomes": []},
+    }
+    route._withhold_unscreened(by_market, [479])
+    assert list(by_market) == [7]
+
+
+async def test_the_reader_budget_leaves_the_screen_its_reserve():
+    """#11534, the production shape: a rostered team's roster probe is STARTED
+    and spends whatever the branches are given. It used to be given the whole
+    budget, so the screen found nothing left and deferred on every cold build.
+    The branches now stop short by the reserve, and the screen runs."""
+    team = SimpleNamespace(id=EAGLES, name="Philadelphia Eagles",
+                           slug="philadelphia-eagles",
+                           roster_players=[{"name": "Jalen Hurts"}])
+    db = _DB(_fk_rows())
+    now = {"t": 0.0}
+    timeouts: list[int] = []
+    real_execute = db.execute
+
+    async def execute(stmt, *a, **k):
+        sql = str(stmt)
+        if "statement_timeout" in sql:
+            timeouts.append(int("".join(c for c in sql if c.isdigit())))
+        elif "futures_outcomes" in sql and "futures_markets" in sql:
+            # Each branch runs to its own bound — the roster probe never
+            # finishes, exactly as on production.
+            now["t"] += timeouts[-1] / 1000.0
+        return await real_execute(stmt, *a, **k)
+
+    db.execute = execute
+    with patch.object(route.time, "monotonic", lambda: now["t"]):
+        payload, _u = await route.build_prop_families(team, db, 400, budget_ms=2500)
+    assert len(db.market_loads) == 1, "the screen was deferred again"
+    assert timeouts[-1] == route._PRICE_SCREEN_RESERVE_MS
+    assert now["t"] * 1000 <= 2500, "the reader overran the budget"
+    reasons = str(payload)
+    assert f"{route._REASON_DEFERRED}{route._BRANCH_PRICE_SCREEN}" not in reasons
+    fams = _families(payload)
+    assert "Josh Allen" not in _entities(fams["next team"])
 
 
 async def test_no_family_markets_means_no_reload():

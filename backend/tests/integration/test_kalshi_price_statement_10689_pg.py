@@ -23,6 +23,7 @@ from app.tasks import base as task_base, kalshi_ws
 from app.tasks.live_blend_refresh import TailReceipts, event_ids_for_outcomes
 from app.utils import market_quote_push
 from app.utils.futures_rank import rerank_market_fields_stmt
+from app.utils.kalshi_primary_quote import PrimaryQuoteCustody
 from app.utils.kalshi_price_statement import (
     KALSHI_PRICE_STATEMENTS,
     KALSHI_REPEAT_REFRESH_SECONDS,
@@ -36,6 +37,18 @@ from tests.pm_bulk_test_support import fail_price_trigger, pg_engine
 
 pytestmark = pytest.mark.asyncio
 PRIOR = datetime(2026, 1, 1, tzinfo=timezone.utc)
+#: The frozen flush's per-phase lock budget in THIS rig. The held arms test what
+#: follows a released wait (declined, settled, vanished, newer tick, cancelled,
+#: statement parity), never the budget: every one requires the flush to succeed
+#: or be cancelled, so a timeout can only turn an arm red. The rig polls for the
+#: wait from a new connection, commits a competing write, then releases; at
+#: production's 50 ms (504e6b7650, #10090) that round trip races the budget (CI
+#: 39064254455: `vanished` timed out on held row 1). Like the #10661 rig
+#: (`test_kalshi_price_lock_budget_pg_10661.py`, 10_000 "so the cancel always
+#: lands inside the wait"), the rig owns its budget; the 50 ms production
+#: budget stays pinned by the #10661 unit and PG gates. The frozen non-final
+#: SET still runs, so the transaction-local lock path is still exercised.
+HELD_RELEASE_LOCK_BUDGET_MS = 10_000
 
 
 class _Pool:
@@ -311,12 +324,15 @@ async def _run(control, candidate):
         SET_LOCK_TIMEOUT_SQL=kalshi_ws.SET_LOCK_TIMEOUT_SQL,
         lock_timeout_value=kalshi_ws.lock_timeout_value,
         is_lock_timeout=kalshi_ws.is_lock_timeout,
-        PRICE_PHASE_LOCK_TIMEOUT_MS=kalshi_ws.PRICE_PHASE_LOCK_TIMEOUT_MS,
+        PRICE_PHASE_LOCK_TIMEOUT_MS=HELD_RELEASE_LOCK_BUDGET_MS,
         event_ids_for_outcomes=event_ids_for_outcomes,
         get_task_session=factory,
         buffer_lock=asyncio.Lock(),
         price_buffer=buffer,
         input_marks={},
+        # #10090: the worker's primary-quote custody (bundled pair).
+        primary_quote_custody=PrimaryQuoteCustody(),
+        ticker_to_ids={},
         market_id_by_outcome={i: 1 for i in incoming},
         event_id_by_outcome={i: 100 for i in incoming},
         blend_refresher=Refresher(),
@@ -415,6 +431,11 @@ async def _run(control, candidate):
             assert "commit" not in trace
             if control != "cancellation":
                 assert "rollback" in trace
+            else:
+                # Ended by the cancel, not by a lock timeout or a DB error,
+                # whose assertions above would read the same.
+                assert pending.cancelled()
+                assert stats["errors"] == 0
         else:
             assert succeeded
             assert buffer == ({1: (0.9, 0.8, 1.0)} if control == "newer_tick" else {})

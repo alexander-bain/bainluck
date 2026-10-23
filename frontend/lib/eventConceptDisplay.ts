@@ -3,6 +3,7 @@
 // D1 binds: probabilities only, never odds.
 
 import { renderedOutcomeRowPercents } from "./renderedPercent";
+import { isSettlementPoint, splitSettlementPoints } from "./chartSettlementPoints";
 import type {
   EventConceptCompetitor,
   EventConceptChild,
@@ -259,12 +260,15 @@ export function stagePendingLabel(child: EventConceptChild): string {
  *  dead-extreme leader as a fallback. */
 export function splitChildren(
   children: EventConceptChild[],
+  domain?: string | null,
 ): { live: EventConceptChild[]; settled: EventConceptChild[] } {
   const live: EventConceptChild[] = [];
   const settled: EventConceptChild[] = [];
   for (const c of children || []) {
     const p = c.probability;
-    const decided = c.settled === true || (p != null && (p >= 0.97 || p <= 0.03));
+    const decided = domain === "awards"
+      ? c.settled === true || (c.outcomes ?? []).some((outcome) => outcome.won === true)
+      : c.settled === true || (p != null && (p >= 0.97 || p <= 0.03));
     (decided ? settled : live).push(c);
   }
   return { live, settled };
@@ -652,11 +656,14 @@ export function seriesFromCompetitor(c: EventConceptCompetitor): number[] {
 
 /** The latest (most recent) non-null probability in an outcome's history, or -1
  *  when it has none. Walks from the end so sparse tails don't hide the last real
- *  price. */
+ *  price. #10955: a settlement point is the result, not a reading, so it is
+ *  skipped — every evidenced loser's 0 would otherwise tie and hand the order
+ *  back to the endpoint. */
 export function latestOutcomeProb(o: FuturesOutcomeHistory): number {
   for (let i = o.history.length - 1; i >= 0; i--) {
-    const p = o.history[i]?.probability;
-    if (p != null) return p;
+    const point = o.history[i];
+    if (!point || isSettlementPoint(point)) continue;
+    if (point.probability != null) return point.probability;
   }
   return -1;
 }
@@ -669,8 +676,12 @@ export function latestOutcomeProb(o: FuturesOutcomeHistory): number {
 export function outcomesByLatestProb(
   outcomes: FuturesOutcomeHistory[],
 ): FuturesOutcomeHistory[] {
+  // #10955: an evidenced winner leads AS A RESULT — an upset winner whose last
+  // real price was low must never fall out of the drawn set.
+  const { results } = splitSettlementPoints(outcomes || []);
+  const won = (o: FuturesOutcomeHistory) => (results.get(o.outcome_id) === "won" ? 1 : 0);
   return [...(outcomes || [])].sort(
-    (a, b) => latestOutcomeProb(b) - latestOutcomeProb(a),
+    (a, b) => won(b) - won(a) || latestOutcomeProb(b) - latestOutcomeProb(a),
   );
 }
 
@@ -1125,4 +1136,30 @@ export function conceptCountdownHeadline(
   if (days === 1) return "Tomorrow";
   if (days <= 7) return "This week";
   return null;
+}
+
+// #5349: trading closed is not a category announcement. Read only own grades;
+// never the price-ranked leader or a standalone convenience winner string.
+export function awardsResult(child: EventConceptChild): { state: "announced" | "closed" | "pending"; names: string[]; prop: boolean } {
+  const names = Array.from(new Set((child.outcomes ?? []).filter((outcome) => outcome.won === true && outcome.name.trim()).map((outcome) => outcome.name.trim())));
+  return { state: names.length ? "announced" : child.settled === true ? "closed" : "pending", names, prop: child.kind === "prop" };
+}
+
+export function awardsRefreshInterval(latest: { event?: { domain?: string; key?: string; status?: string | null; end_date?: string | null }; children?: EventConceptChild[] } | null | undefined, openedAt: number, now = Date.now(), routeKey?: string): number {
+  if (latest === null || (latest && latest.event?.domain !== "awards") || (!latest && !routeKey) || latest?.event?.status === "settled" || now < openedAt || now - openedAt >= 30 * 60 * 1000) return 0;
+  const edition = /^event:awards:[a-z-]+-(20\d{2})$/.exec(latest?.event?.key ?? routeKey ?? "");
+  const year = new Date(now).getUTCFullYear();
+  if (!edition || Number(edition[1]) < year || Number(edition[1]) > year + 1) return 0;
+  const date = latest?.event?.end_date ? Date.parse(latest.event.end_date) : NaN;
+  if (Number.isFinite(date) && (date - now > 24 * 60 * 60 * 1000 || now - date > 12 * 60 * 60 * 1000)) return 0;
+  // SWR computes its first interval before asynchronous data exists. A zero at
+  // that point never starts polling. Arm only this eligible route's bounded
+  // reading window; the first real envelope then supplies all stop conditions.
+  if (latest === undefined) return 30000;
+  const children = latest.children ?? [];
+  if (!children.length || children.every((child) => awardsResult(child).state === "announced")) return 0;
+  // Existing live cadence, only while this current/next edition is being read;
+  // stop at the30minute reading window, complete own grades, or date/edition exit.
+  // Historical unknown editions never acquire perpetual polling.
+  return 30000;
 }

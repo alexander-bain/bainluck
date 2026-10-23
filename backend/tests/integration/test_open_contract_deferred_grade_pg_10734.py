@@ -65,6 +65,8 @@ SPLIT_X, SPLIT_Y = "KXSPLITA-26-X", "KXSPLITB-26-Y"
 TABLES = (
     "sports", "teams", "venues", "events", "futures_markets", "futures_outcomes",
     "futures_odds_snapshots",
+    # #11181: the real consumer's refresher holds chart custody here.
+    "owed_chart_points",
 )
 
 

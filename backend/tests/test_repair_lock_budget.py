@@ -714,3 +714,30 @@ class TestBindingRailIsBoundedToo:
         assert out["contended_row"]["event_id"] == 7
         assert state["commits"] == 0
         assert state["rollbacks"] == 1
+
+
+class TestQueryCanceled:
+    """#11138: the stamp's statement bound raises 57014, not 55P03."""
+
+    def test_classifies_57014_through_the_wrapper_chain(self):
+        from app.utils.repair_lock_budget import is_lock_timeout, is_query_canceled
+
+        class Inner(Exception):
+            sqlstate = "57014"
+
+        class Wrapped(Exception):
+            def __init__(self, orig):
+                super().__init__("wrapped")
+                self.orig = orig
+
+        exc = Wrapped(Inner("canceling statement due to statement timeout"))
+        assert is_query_canceled(exc) and not is_lock_timeout(exc)
+
+    def test_a_lock_timeout_is_not_a_cancel(self):
+        from app.utils.repair_lock_budget import is_lock_timeout, is_query_canceled
+
+        class Inner(Exception):
+            sqlstate = "55P03"
+
+        assert is_lock_timeout(Inner()) and not is_query_canceled(Inner())
+        assert not is_query_canceled(RuntimeError("57014 in the message only"))

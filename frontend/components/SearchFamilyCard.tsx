@@ -23,6 +23,7 @@ import {
 } from "@/components/searchFamilyDisplay";
 import { spreadSideLabels } from "@/lib/gamePropCardContext";
 import { relatedGameListingText } from "@/lib/relatedGameListing";
+import { openFieldLegIsOut } from "@/lib/openFieldLegOut";
 
 function AnswerRow({
   market,
@@ -52,7 +53,10 @@ function AnswerRow({
   // only the authoritative `won` arm, a retraction or a served-null source
   // earns nothing, and an absent `resolution_source` (an older payload) keeps
   // today's price.
-  const verdict = ld ? outcomeRowVerdict(ld, market.status === "resolved") : null;
+  // #11493: and a leader the venue has knocked out of a still-open field reads
+  // Out, the same rule Search's futures cards use (`lib/openFieldLegOut`).
+  const graded = ld ? outcomeRowVerdict(ld, market.status === "resolved") : null;
+  const verdict = graded ?? (ld && openFieldLegIsOut(market, ld) ? "out" : null);
   const arrow = ld && verdict === null ? movementArrow(ld.movement) : null;
   // #8906: a row about a game is dated by its kickoff, not its settlement.
   const reso = answerDateLabel(market);
@@ -174,6 +178,8 @@ function AnswerRow({
             <span className="flex-shrink-0 text-accent-live font-medium">Won</span>
           ) : verdict === "lost" ? (
             <span className="flex-shrink-0 text-text-muted">Lost</span>
+          ) : verdict === "out" ? (
+            <span className="flex-shrink-0 text-text-muted" data-open-field-out>Out</span>
           ) : (
             <span className="flex-shrink-0 text-text-primary font-medium">
               {formatProbabilityPercent(ld.probability)}

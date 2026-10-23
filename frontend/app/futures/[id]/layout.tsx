@@ -20,6 +20,7 @@ import {
   unresolvedPath,
   type ResolutionFailure,
 } from "@/lib/unresolvedShareMeta";
+import { withSettledResultCertainty } from "@/lib/settledResultDisplay";
 
 type FuturesMarketMetadata = FuturesMarketDetailResponse & {
   image_url?: string | null;
@@ -132,7 +133,9 @@ export async function generateMetadata({
     );
   }
 
-  const market = lookup.market;
+  // #698 — the same effective settled verdicts as the page, so a row whose
+  // result is unknown cannot be named the winner in a shared link either.
+  const market = withSettledResultCertainty(lookup.market);
   const leader = topOutcome(market);
   // #6127 — the same call, now made through the shared name. The condition below
   // (`leader && probability`, else the market name alone) is unchanged and is the

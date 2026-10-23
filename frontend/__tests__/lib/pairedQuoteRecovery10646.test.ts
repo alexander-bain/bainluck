@@ -27,9 +27,10 @@ import vm from "vm";
 import ts from "typescript";
 import { createFoldedRefetchScheduler } from "@/lib/foldedRefetchScheduler";
 import { canSubscribeEventQuotes, quotePairCoversTrigger } from "@/lib/eventQuoteStream";
-import { keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
+import { carryNewerHeldState, keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
 import { historyRangeParam } from "@/lib/event/historyRange";
 import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
+import { createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer } from "@/lib/reconcileControl";
 
 const PAGE_PATH = path.join(__dirname, "../../app/events/[id]/page.tsx");
 const PAGE = fs.readFileSync(PAGE_PATH, "utf8");
@@ -79,9 +80,16 @@ function setup(detailRevisions: Array<() => Promise<number>>) {
   const pairedQuoteReadRef: { current: (() => Promise<unknown>) | null } = { current: null };
   const context: Record<string, unknown> = {
     createFoldedRefetchScheduler, canSubscribeEventQuotes, quotePairCoversTrigger,
-    keepNewerHeldHeadline, historyRangeParam, EVENT_BOOT_HISTORY_HOURS, FOLDED_FRAME_REFETCH_MS,
+    keepNewerHeldHeadline, carryNewerHeldState, historyRangeParam, EVENT_BOOT_HISTORY_HOURS, FOLDED_FRAME_REFETCH_MS,
     pairedQuoteReadRef, quoteTriggerRef, heldEventRef,
+    sourceAddedHistoryRef: { current: null }, // Existing quote recovery owes no source-join edge.
+    storedEventRef: { current: undefined }, // #10090 G2: no poll result stored here
+    // #10090 G1: no reconcile control is owed in these cases.
+    reconcileLedger: createReconcileLedger(), reconcileRetryDelayMs: () => 1000,
+    createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef: { current: null },
+    pairJournalRef: { current: null },
     recoveryIntentRef: { current: 0 }, quoteReadLifetimeRef: { current: 0 },
+    reconcileIntentRef: { current: false },
     eventId: EVENT_ID, fullHistoryRequested: false,
     quoteEventIdRef: { current: EVENT_ID }, quoteHistoryRangeRef: { current: false },
     freshNextEventReadRef: { current: false },
@@ -100,7 +108,10 @@ function setup(detailRevisions: Array<() => Promise<number>>) {
     fetchEventHistory: async (): Promise<History> => ({ event_id: EVENT_ID, blend_edge_pinned: true,
       blend_edge_fold_revision: { 7: 12 }, aggregate_line: [{ home_probability: 0.52 }] }),
     refreshHistoryRef: { current: async (h: History) => { historyRef.current = h; } },
-    refreshEventRef: { current: async (d: Detail) => { heldEventRef.current = d; applied += 1; } },
+    // swr's mutate: a function is called with the cached value (#10090 state carry).
+    refreshEventRef: { current: async (d: Detail | ((cached: Detail | undefined) => Detail)) => {
+      heldEventRef.current = typeof d === "function" ? d(heldEventRef.current) : d; applied += 1;
+    } },
     setLastRefresh: () => {},
     Date,
   };
@@ -129,7 +140,7 @@ afterEach(() => {
 describe("#10646 the page's scheduler opts the quote pair into one bounded retry", () => {
   it("the factory passes the page clock and an unresolved-quote predicate", () => {
     const code = EXPR.factory.replace(/\/\/[^\n]*/g, "");
-    expect(code).toMatch(/\}, FOLDED_FRAME_REFETCH_MS, Date\.now,\s*\(\) => \(quoteTriggerRef\.current !== null \|\| recoveryIntentRef\.current !== 0\) && canSubscribeEventQuotes\(heldEventRef\.current\),\s*\)$/);
+    expect(code).toMatch(/\}, FOLDED_FRAME_REFETCH_MS, Date\.now,\s*\(\) => \(quoteTriggerRef\.current !== null \|\| recoveryIntentRef\.current !== 0\) && canSubscribeEventQuotes\(heldEventRef\.current\),\s*\{ owed: \(\) => reconcileLedger\.owed\(\) && canSubscribeEventQuotes\(heldEventRef\.current\), delayMs: reconcileRetryDelayMs \},\s*\)$/);
     expect(FOLDED_FRAME_REFETCH_MS).toBe(1000);
   });
 });

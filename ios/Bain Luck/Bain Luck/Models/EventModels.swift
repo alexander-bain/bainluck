@@ -17,6 +17,12 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     /// because an older server or cache omits it; absent reads as `false` — read
     /// it as `startIsTbd == true`, never as a third state.
     let startIsTbd: Bool?
+    /// #10880 — the server's word that `commenceTime` was written by a sports
+    /// schedule provider (ESPN, StatPal, The Odds API), decoded from
+    /// `start_is_from_schedule`. False for a market's time and for a held row's
+    /// StatPal session start. Absent (an older server or cache) reads as false.
+    /// "Add to Calendar" is offered only on `true` (`CalendarEntry10880`).
+    var startIsFromSchedule: Bool? = nil
     // #2687 — a `closed` frame means the match ended under the stream; the
     // status has to be able to follow it without a full refetch.
     var status: String?
@@ -38,6 +44,14 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     let openingOdds: OpeningOdds?
     /// #8622 — see `PrematchOdds`. Read through `PrematchReading.resolve`.
     let prematchOdds: PrematchOdds?
+    /// #11296 — the same two settled-row fields the feed card decodes
+    /// (`FeedEventData.pregameProjection` / `.finalScorePeriod`), so the
+    /// headline compares a final with the forecast before it by the cards' one
+    /// rule. Absent (an older server, a cached payload) or unreadable prints
+    /// nothing and fails nothing: the projection never throws, and the period
+    /// is lenient.
+    var pregameProjection: PregameProjection? = nil
+    @LenientDecode var finalScorePeriod: String? = nil
     let bookmakerOdds: [BookmakerOdds]?
     let highlight: Highlight?
     let espn: ESPNData?

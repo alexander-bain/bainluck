@@ -153,10 +153,19 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     (
         "M-REDIS",
         "let a dead Redis 500 the page instead of degrading to a query",
+        # The statement after the handler rides in BOTH halves: a bare `raise`
+        # alone is a PREFIX of every typed `raise X(...)` in a sibling handler,
+        # and Pass B read the cache reader's genuine
+        # `raise _CoverageCacheReadError("redis_unavailable") from None` in
+        # precompute_admin_health.py as this mutant copied out of its target.
         """    except Exception:
-        logger.debug("futures detail source cache read failed", exc_info=True)""",
+        logger.debug("futures detail source cache read failed", exc_info=True)
+
+    source_breakdown = await _get_source_breakdown(db, outcome_ids)""",
         """    except Exception:
-        raise""",
+        raise
+
+    source_breakdown = await _get_source_breakdown(db, outcome_ids)""",
     ),
     (
         "M-SETRAISE",

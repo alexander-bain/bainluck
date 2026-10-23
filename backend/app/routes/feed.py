@@ -20,6 +20,7 @@ import time
 import unicodedata
 import weakref
 from collections import Counter
+from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any, Optional, Union
@@ -40,7 +41,7 @@ from sqlalchemy import (
     String,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm import aliased, defer, selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.dependencies.auth import get_optional_user
@@ -55,6 +56,14 @@ from app.routes.futures import withheld_price_outcome_ids_for_markets
 from app.utils import candidate_base as _cb_limits
 from app.utils import championship_probs_cache as champ_cache
 from app.utils.canonical_market_key import canonical_key_identifies_one_question
+from app.utils.graded_out_field_legs import (
+    drop_graded_out_legs,
+    graded_out_leg_ids_by_market,
+)
+from app.utils.grid_out_division_legs import (
+    drop_out_division_legs,
+    out_legs_by_market,
+)
 from app.utils.discover_provenance import PROVENANCE_HEADER, normalize_provenance
 # The state vocabulary has ONE definition (live/048). Discovery imports the name
 # rather than spelling the literal so a widened vocabulary is a rename here, not
@@ -63,6 +72,7 @@ from app.utils.event_completion import EVENT_SUSPENDED, finished_event_end_time
 from app.utils.event_rails import started_live
 from app.utils.lifecycle import served_event_status
 from app.utils.score_observation import score_observation_fields
+from app.utils.scheduled_start import loaded_commence_time_source
 from app.utils.external_curator_freshness import (
     recall_cutoff as _curator_recall_cutoff,
 )
@@ -126,9 +136,10 @@ from app.utils.graded_card import (
     rendered_card_percents,
 )
 from app.utils.prematch_reading import (
-    PREMATCH_PRIOR_SQL,
+    PREMATCH_PRIOR_SHARED_NAMESPACE,
     prematch_prior_binds,
-    prematch_row_to_reading,
+    prematch_prior_share_key,
+    read_prematch_priors,
     resolve_prematch_reading,
 )
 from app.utils.discover_bundles import (
@@ -228,11 +239,15 @@ from app.utils.feed_cache import (
     FEED_RESPONSE_STALE_TTL_SECONDS,
     FEED_EDITION_FIELD,
     FEED_PAGE_BASE_BUILT_AT_FIELD,
+    base_from_last_good,
     build_feed_cache_metadata,
+    encode_base_last_good,
     feed_edition_token,
     feed_page_base_built_at,
     feed_page_base_cache_key,
     feed_page_base_enabled,
+    feed_page_base_last_good_key,
+    feed_page_base_last_good_max_age_s,
     feed_response_cache_key,
     feed_response_cache_ttl,
     feed_response_cache_ttls,
@@ -3731,6 +3746,11 @@ async def get_feed(
     # 60s response TTL while carrying 60s-old inputs. This is the missing term;
     # `live_total_age_headroom_s()` is the arithmetic that spends it.
     _shared_origins: list[float] = []
+    # #1480 (N-strict): the origins of the shared GAME READINGS only
+    # (`STRICT_AGE_NAMESPACES`). Their age is spent on non-live pages too, at
+    # the two seams where this build publishes, so a page with no live card
+    # stays within the 300 s stale window of the readings it shows.
+    _strict_origins: list[float] = []
     # Bind it as this request's ambient sink. The second shared artifact
     # (`canonical_counts`) is resolved three frames down inside `_score_futures`;
     # a contextvar avoids threading a diagnostic through a scoring signature,
@@ -3739,6 +3759,7 @@ async def get_feed(
     # and therefore its own context copy, so the binding does not need an
     # explicit reset to stay request-scoped.
     _bind_shared_reuse_sink(_shared_reuse, _shared_tiers, _shared_origins)
+    _pic.bind_strict_age_sink(_strict_origins)
 
     if (debug or exclude_reviewed) and not await _check_admin_auth(secret, request, db):
         _set_feed_timing_header(response, _started_at)
@@ -3931,7 +3952,7 @@ async def get_feed(
             return None
         return value if isinstance(value, dict) else None
 
-    def _live_ttls(payload, *, oldest_artifact_age_s=None):
+    def _live_ttls(payload, *, oldest_artifact_age_s=None, strict_artifact_age_s=0.0):
         """#2216: the ``(fresh, stale)`` TTLs THIS payload actually earns.
 
         ``_cache_ttl`` above is the principal's baseline and is computed before
@@ -3982,6 +4003,8 @@ async def get_feed(
             live=payload_contains_live_event(payload),
             # LAT-P230: the age the payload's INPUTS had already spent.
             oldest_artifact_age_s=oldest_artifact_age_s,
+            # #1480: passed only by the build seam that consumed them.
+            strict_artifact_age_s=strict_artifact_age_s,
         )
 
     def _payload_built_at(payload):
@@ -4052,6 +4075,119 @@ async def get_feed(
                 key, max_age_s=FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
             )
         return lg
+
+    def _identity_anonymous_base_key():
+        """#11259: the page base key for a waiter that is anonymous by IDENTITY.
+
+        A waiter returns before the personalization context is loaded, so it
+        cannot ask the base's own question (``ctx == PersonalizationContext()``).
+        A request with no user and no session always loads exactly that empty
+        context (LAT-P113), so for it the answer is already known. Any other
+        waiter gets ``None`` and keeps its existing terminal. Same exclusion as
+        the base read below; ``test_feed_shared_last_good_11259.py`` pins that a
+        waiter and its leader name the same key.
+        """
+        if (
+            _cache_shape is None
+            or my_teams_only
+            or feed_user is not None
+            or feed_session_id
+            or not feed_page_base_enabled()
+        ):
+            return None
+        return feed_page_base_cache_key(
+            **{k: v for k, v in _cache_shape.items() if k not in ("offset", "edition")}
+        )
+
+    async def _serve_shared_last_good(base_key, reason, *, singleflight, **finalize):
+        """#11259: the base's durable copy, served as THIS page, or ``None``.
+
+        Read only by a terminal that would otherwise serve ``unavailable`` —
+        never as a read tier — after process-local last-good came up empty.
+        The copy is the base's own body, so it is rendered exactly as the
+        page-base read tier renders a base: sliced, or — for a SEATED request —
+        composed at THIS request's clock first. #5105 refuses an offset page
+        because a page cannot prove its opening still holds; a full deck
+        composed now can, which is why the base tier may serve seated readers
+        and so may this. ``None`` (the caller keeps its existing terminal) for:
+        a request that is not the anonymous build, the warmer (it must
+        genuinely build, LAT-P001), an unseated pinned request, a deck the
+        composer will not vouch for, any Redis failure, and any copy
+        ``base_from_last_good`` refuses. No DB work: the session may be the one
+        a deadline cancelled. Not remembered process-locally either: that store
+        has no age bound for a page without a live game, and this copy's must
+        hold.
+        """
+        if (
+            not base_key
+            or _shared_redis is None
+            or _prewarm_rebuild
+            or (_edition_request and not _opening_seating)
+        ):
+            return None
+        _read_at = time.perf_counter()
+        try:
+            raw = await _rc.bounded_redis_call(
+                lambda: _shared_redis.get(feed_page_base_last_good_key(base_key))
+            )
+        except Exception:
+            return None
+        if not getattr(raw, "is_ok", False):
+            return None
+        _now = time.time()
+        base, origin = base_from_last_good(raw.value, now=_now)
+        if base is None:
+            return None
+        if _opening_seating:
+            _lg_opening = compose_opening_edition(
+                base["items"],
+                await _read_edition_manifest() if _edition_request else None,
+                requested_token=_edition_request,
+                requested_policy=_edition_policy,
+                now=_request_now,
+            )
+            if not _lg_opening.usable:
+                return None
+            page = render_feed_page_from_base(
+                {**base, "items": _lg_opening.items, "total": len(_lg_opening.items)},
+                limit=limit,
+                offset=offset,
+            )
+            if page is None:
+                return None
+            _apply_opening_envelope(
+                page, _lg_opening, requested=bool(_edition_request)
+            )
+        else:
+            page = render_feed_page_from_base(base, limit=limit, offset=offset)
+            if page is None:
+                return None
+        _record_feed_timing(_timings, _started_at, _read_at, "cache_shared_last_good")
+        _fresh_ttl, _stale_ttl = _live_ttls(
+            page, oldest_artifact_age_s=max(0.0, _now - origin)
+        )
+        page["cache"] = build_feed_cache_metadata(
+            "last_good",
+            ttl_seconds=_fresh_ttl,
+            stale_ttl_seconds=_stale_ttl,
+            reason=reason,
+            live=payload_contains_live_event(page),
+            built_at=origin,
+        )
+        _finalize_feed_response(
+            response,
+            cache_status="last_good",
+            singleflight=singleflight,
+            timings=_timings,
+            started_at=_started_at,
+            counts=_feed_obs_counts(
+                page.get("items"),
+                total=page.get("total", 0),
+                returned=len(page.get("items") or []),
+            ),
+            **finalize,
+        )
+        return page
 
     def _opening_refusal(reason, *, singleflight="none"):
         """#5105: the seated route's truthful availability refusal.
@@ -4528,6 +4664,16 @@ async def get_feed(
                     ),
                 )
                 return out
+            # #11259: no process-local last-good — this dyno may have just
+            # started — so the anonymous base's durable copy comes before an
+            # empty page. Same bounds and label; still no build of its own.
+            _shared_lg = await _serve_shared_last_good(
+                _identity_anonymous_base_key(),
+                "leader_unavailable",
+                singleflight="waiter_last_good",
+            )
+            if _shared_lg is not None:
+                return _shared_lg
             # No last-good and no budget left: truthful, empty degraded response
             # below the router cutoff. A waiter never becomes a second build owner.
             _previous_at = _record_feed_timing(
@@ -5133,7 +5279,7 @@ async def get_feed(
             if session_cancelled:
                 await _release_cancelled_review_session(db, stage=reason)
 
-        def _serve_incomplete_build(reason: str) -> dict:
+        async def _serve_incomplete_build(reason: str, *, durable: bool = True) -> dict:
             # This is the input-age ceiling's terminal (below) with one
             # difference — the prior payload is bounded by the ordinary live
             # ceiling only, as every other last-good tier is, because nothing
@@ -5189,6 +5335,21 @@ async def get_feed(
                     shared_tiers=_shared_tiers,
                 )
                 return _prior_out
+            # #11259: this process holds nothing (a release wipes every dyno's
+            # store), so the anonymous base's durable copy before an empty page.
+            # `durable=False` is the one caller whose build FINISHED but whose
+            # deck cannot be seated: that is a content outcome, not a missed
+            # budget, and keeps its existing refusal.
+            _shared_lg = await _serve_shared_last_good(
+                _page_base_key if durable else None,
+                reason,
+                singleflight="none",
+                golf_provenance=_golf_provenance,
+                shared_reuse=_shared_reuse,
+                shared_tiers=_shared_tiers,
+            )
+            if _shared_lg is not None:
+                return _shared_lg
             _finalize_feed_response(
                 response,
                 cache_status="unavailable",
@@ -5257,6 +5418,11 @@ async def get_feed(
                             tag_filter=dynamic_tag_filter or None,
                             static_tag_filter=static_tag_filter or None,
                             sports_mode=(mode or "").lower() == "sports",
+                            # #1480: reuse the reader-independent game readings.
+                            share_inputs=True,
+                            # #11295: the optional pair read is bounded inside
+                            # what is left of this budget.
+                            projection_budget_s=_feed_budget_remaining_s,
                         )
                     feed_items.extend(event_items)
                 except Exception as e:
@@ -5282,7 +5448,7 @@ async def get_feed(
             )
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "events")
         if _event_stage_incomplete is not None:
-            return _serve_incomplete_build(_event_stage_incomplete)
+            return await _serve_incomplete_build(_event_stage_incomplete)
 
         # === ENRICH EVENTS WITH TEAM DATA, inside the same budget (#10534) ===
         # Not cosmetic: `_filter_discover_event_noise` drops live games with no
@@ -5318,7 +5484,7 @@ async def get_feed(
                 _previous_at = _record_feed_timing(
                     _timings, _started_at, _previous_at, "team_enrichment"
                 )
-                return _serve_incomplete_build(_event_stage_incomplete)
+                return await _serve_incomplete_build(_event_stage_incomplete)
         # #6567 — and immediately after it, because the records the caption
         # prints are what that pass just attached.
         apply_pregame_record_caption(feed_items)
@@ -5438,7 +5604,7 @@ async def get_feed(
             )
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "golf")
         if _golf_stage_incomplete is not None:
-            return _serve_incomplete_build(_golf_stage_incomplete)
+            return await _serve_incomplete_build(_golf_stage_incomplete)
 
         # === SCORE EVENT CONCEPTS (UFC cards, …) ===  #999 B3 / L2-84
         # Additive candidate plumbing — UFC cards surface on the sports tab/feed as
@@ -5639,7 +5805,7 @@ async def get_feed(
             )
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "concepts")
         if _concept_stage_incomplete is not None:
-            return _serve_incomplete_build(_concept_stage_incomplete)
+            return await _serve_incomplete_build(_concept_stage_incomplete)
 
         # === SCORE FUTURES ===
         # Queue 271 (#1459): futures scoring is the slow, DB-bound stage that hangs a
@@ -5870,7 +6036,7 @@ async def get_feed(
 
         if _review_incomplete is not None:
             # The unreviewed build goes nowhere: see `_serve_incomplete_build`.
-            return _serve_incomplete_build(_review_incomplete)
+            return await _serve_incomplete_build(_review_incomplete)
 
         # === QUALITY FLOOR: drop all-0% cards (#240 Item 4) ===
         # A card whose every outcome reads 0% is never interesting (stale/settled
@@ -6056,7 +6222,9 @@ async def get_feed(
                 await _release_incomplete_build(
                     "opening_unsupported", session_cancelled=False
                 )
-                return _serve_incomplete_build("opening_unsupported")
+                return await _serve_incomplete_build(
+                    "opening_unsupported", durable=False
+                )
             _served_items = _opening.items
             _continuation_start = _opening.continuation_start
             _edition_status = _opening.edition_status if _edition_request else None
@@ -6289,8 +6457,12 @@ async def get_feed(
         # opposite sides of the ceiling — the serve/refuse decision and the TTL
         # stamped on what is served have to come from the same instant.
         _consumed_age_s = _pic.oldest_consumed_artifact_age_s(_shared_origins)
+        # #1480 (N-strict): read once here too and spent on both publications.
+        _strict_age_s = _pic.oldest_consumed_artifact_age_s(_strict_origins)
         _publish_fresh_ttl, _publish_stale_ttl = _live_ttls(
-            payload, oldest_artifact_age_s=_consumed_age_s
+            payload,
+            oldest_artifact_age_s=_consumed_age_s,
+            strict_artifact_age_s=_strict_age_s,
         )
 
         # --- CERT-1864: past the ceiling the page is REBUILT, not served -----
@@ -6680,9 +6852,17 @@ async def get_feed(
                         # so the age its inputs already spent travels with it.
                         # CERT-1864: the same reading as the decision above.
                         oldest_artifact_age_s=_consumed_age_s,
+                        strict_artifact_age_s=_strict_age_s,
                     )
                     _page_base_json = _json_module.dumps(
                         _page_base_body, default=str
+                    )
+                    # #11259: the durable copy the incomplete-build terminals
+                    # fall back to. Kept no longer than it may be served at —
+                    # the bound is on content age, and the origin is never
+                    # younger than this publish.
+                    _base_last_good_ttl = feed_page_base_last_good_max_age_s(
+                        live=payload_contains_live_event(_page_base_body)
                     )
 
                     async def _publish_feed_page_base(
@@ -6691,6 +6871,7 @@ async def get_feed(
                         _key=_page_base_key,
                         _fresh_ttl=_base_fresh_ttl,
                         _stale_ttl=_base_stale_ttl,
+                        _last_good_ttl=_base_last_good_ttl,
                     ):
                         await _rc.bounded_redis_call(
                             lambda: _client.setex(_key, _fresh_ttl, _json)
@@ -6698,6 +6879,14 @@ async def get_feed(
                         await _rc.bounded_redis_call(
                             lambda: _client.setex(
                                 f"{_key}:stale", _stale_ttl, _json
+                            )
+                        )
+                        _last_good_wire = encode_base_last_good(_json)
+                        await _rc.bounded_redis_call(
+                            lambda: _client.setex(
+                                feed_page_base_last_good_key(_key),
+                                _last_good_ttl,
+                                _last_good_wire,
                             )
                         )
 
@@ -11137,6 +11326,8 @@ async def _score_events(
     static_tag_filter: Optional[list[str]] = None,
     price_refresh_events: list | None = None,
     sports_mode: bool = False,
+    share_inputs: bool = False,
+    projection_budget_s: Callable[[], float] | None = None,
 ) -> list[dict]:
     """Score and format events for the feed.
 
@@ -11157,6 +11348,11 @@ async def _score_events(
     earlier from his iPhone Sports tab, including one that was live and that he
     had swiped. The sports-mode futures half (`_score_sports_mode_futures`)
     already reads neither set.
+
+    ``share_inputs`` (#1480): the snapshot fallback and the prematch prior are
+    read through `principal_independent_cache`, so readers of the same candidate
+    set reuse one answer. Only `/api/feed`'s build passes it, and it is ignored
+    for My Teams and for a price refresh, which read directly as before.
     """
     # Wider time windows for my_teams_only — users want to see all their
     # team's upcoming games and recent results.
@@ -11238,6 +11434,16 @@ async def _score_events(
         select(Event)
         .join(Sport, Event.sport_id == Sport.id)
         .options(selectinload(Event.sport))
+        # #1480: THE BOX SCORE STAYS IN THE DATABASE, as it does for the live
+        # poll since #9047. This read hands back up to 500 candidate rows on
+        # every Sports/Discover miss and on every My Teams build, and the
+        # asyncpg dialect json-decodes every JSONB value on every row at fetch
+        # time, on the event loop. Nothing on this path reads `box_score_data`:
+        # the cards, the scoring, the twin fold and the two snapshot reads use
+        # the other columns, all still selected. `raiseload` so a future reader
+        # fails by name instead of lazy-loading inside the async session.
+        # Pinned by `test_feed_candidate_unread_columns_1480.py`.
+        .options(defer(Event.box_score_data, raiseload=True))
         .where(*candidate_conditions)
     )
 
@@ -11401,26 +11607,37 @@ async def _score_events(
     # Batch fallback: for events where _compute_aggregate_probability() returns
     # None, query the latest win_prob_snapshot per event. This catches
     # Kalshi/Polymarket pregame data that's only in snapshots (not on Event model).
+    # #11254: a source's explicit withdrawal row retires that source's earlier
+    # readings here, so a withdrawn venue's last price is not served as current.
+    # #1459: read recent history first, full history only for the ids it left
+    # unanswered; same answer (see `feed_snapshot_fallback`).
     snapshot_fallbacks: dict[int, float] = {}
     events_needing_fallback = [] if price_refresh_events is not None else [
         e for e in events if _compute_aggregate_probability(e) is None
     ]
+    # #1480: both id sets below come from the candidates alone — after the twin
+    # fold, before any per-reader suppression — so every reader of one candidate
+    # set presents the same key. A followed-teams page is never shared.
+    _share_inputs = share_inputs and not my_teams_only and price_refresh_events is None
     if events_needing_fallback:
         fallback_ids = [e.id for e in events_needing_fallback]
-        from sqlalchemy import text
-
-        fb_result = await db.execute(
-            text("""
-                SELECT DISTINCT ON (event_id) event_id, home_win_probability
-                FROM win_prob_snapshots
-                WHERE event_id = ANY(:ids)
-                  AND home_win_probability IS NOT NULL
-                ORDER BY event_id, captured_at DESC
-            """),
-            {"ids": fallback_ids},
+        from app.utils.feed_snapshot_fallback import (
+            SNAPSHOT_FALLBACK_SHARED_NAMESPACE,
+            read_snapshot_fallback_artifact,
+            read_snapshot_fallbacks,
+            snapshot_fallback_share_key,
         )
-        for row in fb_result.all():
-            snapshot_fallbacks[row.event_id] = round(float(row.home_win_probability), 6)
+
+        if _share_inputs:
+            _fallback_answer = await _pic.get_or_build(
+                SNAPSHOT_FALLBACK_SHARED_NAMESPACE,
+                snapshot_fallback_share_key(fallback_ids),
+                lambda: read_snapshot_fallback_artifact(db, fallback_ids, now=now),
+            )
+        else:
+            _fallback_answer = await read_snapshot_fallbacks(db, fallback_ids, now=now)
+        for event_id, home in _fallback_answer.items():
+            snapshot_fallbacks[event_id] = round(float(home), 6)
 
     # ── WHAT EACH PREDICTION MARKET SAID BEFORE THE MATCH (ux/1036 Tier A) ──
     #
@@ -11452,20 +11669,21 @@ async def _score_events(
     # production dyno: **p50 1,126.9 ms -> 117.5 ms, 1,075,139 buffers -> 19,859,
     # and the same 53 rows**. Equivalence is a CI gate, not a claim:
     # `tests/integration/test_prematch_prior_lateral_equivalence_pg.py`.
+    #
+    # #6277 — the row's shape is defined once, beside the statement that
+    # produced it (`read_prematch_priors`), so a member cannot be dropped here
+    # without a test noticing.
     prematch_by_event: dict[int, dict[str, tuple]] = {}
     pm_binds = prematch_prior_binds(events)
     if pm_binds is not None:
-        from sqlalchemy import text
-
-        pm_result = await db.execute(text(PREMATCH_PRIOR_SQL), pm_binds)
-        for row in pm_result.all():
-            # #6277 — the row's shape is defined once, beside the statement that
-            # produced it, so a member cannot be dropped here without a test
-            # noticing. It was inline, and inline made this the one link in the
-            # chain no unit test could reach.
-            prematch_by_event.setdefault(row.event_id, {})[
-                row.source
-            ] = prematch_row_to_reading(row)
+        if _share_inputs:
+            prematch_by_event = await _pic.get_or_build(
+                PREMATCH_PRIOR_SHARED_NAMESPACE,
+                prematch_prior_share_key(pm_binds),
+                lambda: read_prematch_priors(db, pm_binds),
+            )
+        else:
+            prematch_by_event = await read_prematch_priors(db, pm_binds)
 
     # Score each event using aggregate probabilities from all available sources
     scored_items = []
@@ -12009,6 +12227,10 @@ async def _score_events(
                 # #8954 / #8841 — the STORED tags, where the start-placeholder mark
                 # lives; `inline_tags` above are recomputed and never carry it.
                 stored_tags=event.event_tags,
+                # #10880 — where the stored start came from, read only from
+                # loaded state and through the price door's FoldedBlendView
+                # (see `loaded_commence_time_source`).
+                commence_time_source=loaded_commence_time_source(event),
                 prematch_by_source=prematch_by_event.get(event.id),
                 # #4971 / D136 rung 3 — the card carries the one number, resolved
                 # by the same cascade the event page calls. `event` and not a
@@ -12189,7 +12411,131 @@ async def _score_events(
             )
             continue
 
+    # #11295 — the sportsbooks' projected final, read once for the cards built
+    # above (see `card_projected_pair`). After the loop, so only cards that were
+    # admitted are read. `projection_budget_s` is the request budget still left
+    # (the events stage passes it), so the optional read is bounded inside it.
+    await _attach_card_projected_pairs(
+        db,
+        scored_items,
+        events,
+        remaining_s=projection_budget_s() if projection_budget_s else None,
+    )
+    # #11296 — a finished card's pregame projection, by the same served status,
+    # so no card carries both pairs, under its own bound inside what is left
+    # AFTER the pair read (see `_attach_pregame_projections`).
+    await _attach_pregame_projections(
+        db,
+        scored_items,
+        events,
+        remaining_s=projection_budget_s() if projection_budget_s else None,
+    )
+
     return scored_items
+
+
+async def _attach_card_projected_pairs(
+    db: AsyncSession,
+    items: list[dict],
+    events: list,
+    *,
+    remaining_s: float | None = None,
+) -> None:
+    """Add the detail page's projected pair to each scheduled/live game card.
+
+    One statement for the whole build, inside a SAVEPOINT: the pair is an
+    addition to a card, so a failed read costs the cards their pair and nothing
+    else (gotcha #42). Without the savepoint, a failed statement would abort the
+    transaction and every later stage on this session with it.
+
+    The read carries its own server-side bound, strictly inside ``remaining_s``
+    (the request budget left; None = the cap alone). The cards are already
+    scored when this runs, so running out must cost the pair and never the
+    events stage: an expired events deadline serves last-good or nothing
+    (#10534, #11259). A statement that times out is an ordinary failure and is
+    caught below; it never touches the events deadline. A cancellation from
+    outside is not caught and propagates as itself.
+    """
+    from app.utils.card_projected_pair import (
+        attach_card_projected_pair,
+        card_projection_card,
+        card_projection_read_timeout_ms,
+        read_card_projected_pairs_bounded,
+    )
+
+    by_id = {e.id: e for e in events}
+    cards: list[dict] = []
+    for item in items:
+        data = item.get("data") if item.get("type") == "event" else None
+        if not isinstance(data, dict) or not isinstance(data.get("current_odds"), dict):
+            continue
+        event = by_id.get(data.get("id"))
+        if event is None:
+            continue
+        cards.append(
+            card_projection_card(
+                event, served_status=data.get("status"), sport_key=data.get("sport")
+            )
+        )
+    if not cards:
+        return
+    try:
+        pairs = await read_card_projected_pairs_bounded(
+            db, cards, timeout_ms=card_projection_read_timeout_ms(remaining_s)
+        )
+    except Exception:  # noqa: BLE001 — see the docstring
+        logger.exception("Feed: projected-pair read failed; cards keep no pair")
+        return
+    for item in items:
+        data = item.get("data") if item.get("type") == "event" else None
+        if isinstance(data, dict):
+            attach_card_projected_pair(data.get("current_odds"), pairs.get(data.get("id")))
+
+
+async def _attach_pregame_projections(
+    db: AsyncSession,
+    items: list[dict],
+    events: list,
+    *,
+    remaining_s: float | None = None,
+) -> None:
+    """Add the pregame projection to each finished game card (#11296).
+
+    The same object `/api/events/{id}` and search serve, chosen by the status
+    the card PRINTS, the key `_attach_card_projected_pairs` uses for the current
+    pair, so a card carries at most one of the two. One statement for the
+    build; the helper runs it in a SAVEPOINT and answers ``read_failed`` rather
+    than raising, so a failed read costs the cards this key and nothing else
+    (gotcha #42). A cancellation propagates as itself.
+
+    The SAME server-side bound as the pair read (lane1b's C1 on #11295): the
+    cards are already scored, so running out must cost this key and never the
+    events stage, whose expiry serves last-good or nothing (#10534, #11259).
+    ``remaining_s`` is read after the pair read, so the two never overspend.
+    """
+    from app.utils.card_projected_pair import card_projection_read_timeout_ms
+    from app.utils.pregame_projection import (
+        attach_pregame_projection,
+        read_pregame_projections,
+    )
+
+    by_id = {e.id: e for e in events}
+    served: dict[int, dict] = {}
+    for item in items:
+        data = item.get("data") if item.get("type") == "event" else None
+        if isinstance(data, dict) and data.get("id") in by_id:
+            served[data["id"]] = data
+    if not served:
+        return
+    answers = await read_pregame_projections(
+        db,
+        [by_id[event_id] for event_id in served],
+        lambda e: served[e.id].get("sport"),
+        status_of=lambda e: served[e.id].get("status"),
+        timeout_ms=card_projection_read_timeout_ms(remaining_s),
+    )
+    for event_id, data in served.items():
+        attach_pregame_projection(data, answers.get(event_id))
 
 
 def _futures_feed_load_options() -> list:
@@ -12338,6 +12684,11 @@ async def _score_sports_mode_futures(
     # are loaded here. That is not luck: it is the ONE-list contract in
     # `_futures_feed_load_options`'s own docstring paying out.
     withheld_by_market = await withheld_price_outcome_ids_for_markets(db, markets)
+    # #11493: and the grid's out divisions, for #4610's reason — see the twin
+    # read in `_score_futures`.
+    grid_out_legs = await out_legs_by_market(markets)
+    # #11493: and the open-field legs the venue has graded out — the twin read.
+    graded_out_legs = await graded_out_leg_ids_by_market(db, markets)
 
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
@@ -12362,6 +12713,14 @@ async def _score_sports_mode_futures(
             drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
             key=lambda o: float(o.current_probability) if o.current_probability else 0,
             reverse=True,
+        )
+        # #11493: the twin of `_score_futures`' out-division drop.
+        sorted_outcomes = drop_out_division_legs(
+            sorted_outcomes, grid_out_legs.get(market.id)
+        )
+        # #11493: and of its graded-out leg drop.
+        sorted_outcomes = drop_graded_out_legs(
+            sorted_outcomes, graded_out_legs.get(market.id)
         )
         # #7537: the same membership rule as `_score_futures`, and it has to be
         # here too for #4610's reason — both serializers print the same card
@@ -13815,6 +14174,18 @@ async def _score_futures(
     team_names = await _team_names_by_id(db, [o for m in markets for o in m.outcomes])
     mark_timing("team_names")
 
+    # #11493: the division legs the playoff grid has put out of the title, read
+    # once per build from the grid's CACHED payload (never built here; a miss
+    # keeps every leg). See `grid_out_division_legs`.
+    grid_out_legs = await out_legs_by_market(markets)
+    mark_timing("grid_out_legs")
+
+    # #11493: the open-field legs the venue has already graded out (Astros 1% on
+    # the World Series card), read once per pass — the cached legs carry no
+    # grade. See `graded_out_field_legs`.
+    graded_out_legs = await graded_out_leg_ids_by_market(db, markets)
+    mark_timing("graded_out_legs")
+
     # --- Load precomputed interestingness scores from Redis ---
     if not price_refresh:
         try:
@@ -13950,6 +14321,18 @@ async def _score_futures(
                 drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
                 key=lambda o: float(o.current_probability) if o.current_probability else 0,
                 reverse=True,
+            )
+            # #11493: a division the grid has put out leaves the card the way
+            # the venue's graded divisions already do ("AL Central <1%" read as
+            # a live chance with all five clubs eliminated).
+            sorted_outcomes = drop_out_division_legs(
+                sorted_outcomes, grid_out_legs.get(market.id)
+            )
+            # #11493: and a club the venue graded out of a still-open field
+            # ("Houston Astros 1%" on the World Series card, stored is_winner
+            # false + api_settlement over a 0.005 residue quote).
+            sorted_outcomes = drop_graded_out_legs(
+                sorted_outcomes, graded_out_legs.get(market.id)
             )
 
             # UX-P004 classes (b) + (e): drop ladder rungs whose OWN deadline has

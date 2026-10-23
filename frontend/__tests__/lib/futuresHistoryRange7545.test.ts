@@ -170,7 +170,7 @@ describe("#7545 rangeCoverageNote reconciles the chip with what arrived", () => 
   // /futures/171, read at hours=168, answered actual_hours=720.
   it("names both windows when the backend widened past the chosen rung", () => {
     expect(rangeCoverageNote(168, 720)).toBe(
-      "Too few prices in 7 days — showing 30 days."
+      "Limited history for 7 days — showing 30 days."
     );
   });
 

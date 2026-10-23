@@ -3,11 +3,8 @@ name: CI
 on:
   # NO `branches:` FILTER ON pull_request — deliberate, and load-bearing.
   #
-  # It used to read `pull_request: branches: [master]`, which does NOT mean
-  # "PRs into master get CI". It means "ONLY PRs into master get CI" — a PR
-  # based on any other branch matches no trigger and gets NO RUN AT ALL. Not a
-  # pending check, not a red one: an empty checks list, which reads as "nothing
-  # to wait for" in exactly the place a reviewer looks for permission to merge.
+  # `branches: [master]` suppresses CI entirely for stacked PRs targeting
+  # another branch. Empty checks are not a pending or successful run.
   #
   # Two named failures, both in one week, both on stacked lane branches:
   #
@@ -285,6 +282,30 @@ jobs:
       - name: Install dependencies
         if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
         run: pip install -r requirements.txt
+
+      # #10090 attempt163 — the real-Redis publication controls (every
+      # `private_redis_socket` case in test_event_frame_batching_10659.py and
+      # the 163 retention files) skipped on these shards: the runner has no
+      # redis-server. A pinned, hash-checked redislite wheel supplies ONLY the
+      # binary: it is not pip-installed and not put on PATH, so nothing listens
+      # on 6379 and `shutil.which("redis-server")` callers are unchanged. Only
+      # EVENT_FRAME_REDIS_SERVER readers see it, and EVENT_FRAME_REDIS_REQUIRED
+      # turns that fixture's skip into a failure, so a broken step reddens the
+      # shard instead of silently testing less. Every shard gets it because
+      # ci_shard.py assigns files by measured duration, not by name.
+      - name: Private redis-server binary for the real-Redis publication controls (#10090)
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/redislite"
+          wheel=redislite-6.2.912183-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          pip download --no-deps --only-binary=:all: redislite==6.2.912183 -d "$dir"
+          echo "d5ed8af4d03225a9b19e279d40f8d8feae872f87a9cd9f017751864fe7b224c6  $dir/$wheel" | sha256sum -c -
+          python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract('redislite/bin/redis-server', sys.argv[2])" "$dir/$wheel" "$dir"
+          chmod +x "$dir/redislite/bin/redis-server"
+          "$dir/redislite/bin/redis-server" --version
+          echo "EVENT_FRAME_REDIS_SERVER=$dir/redislite/bin/redis-server" >> "$GITHUB_ENV"
+          echo "EVENT_FRAME_REDIS_REQUIRED=1" >> "$GITHUB_ENV"
 
       - name: Run tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
         if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
@@ -1602,6 +1623,21 @@ jobs:
             exit 1
           fi
 
+      - name: "#11152 an unplayed series game is voided only while unchanged, undone only while still voided, and never by a table the sweep made (real Postgres)"
+        # CERT-4179 follow-up 11152-PERSIST-REAL-PG-CAS-UNDO-GUARDS: the sweep's
+        # UPDATE re-asserts status / no ESPN id / scores / start, the undo
+        # re-asserts voided + its tag, and the sweep runs no DDL (notice 47(c)).
+        # SQL only a server runs; named here because a `*_pg.py` nobody adds runs nowhere.
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_unplayed_series_game_sweep_11152_pg.py \
+            -v -rs 2>&1 | tee /tmp/unplayed11152.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/unplayed11152.txt; then
+            echo "::error::#11152 unplayed-series-game write/undo gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#7345 a listing both of whose teams played someone else at that kick-off stops printing (real Postgres)"
         # Two LATERAL joins on exact `commence_time` equality with NULL-false
         # team-id `<>` — SQL only a server runs. Same skip detection.
@@ -1967,6 +2003,38 @@ jobs:
             -v -rs 2>&1 | tee /tmp/stale5024.txt
           if grep -qiE "[0-9]+ skipped" /tmp/stale5024.txt; then
             echo "::error::#5024 stale-touch reach SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#11254 a withdrawn venue is not a feed card's fallback (real Postgres)"
+        # #11254. The change is one SQL statement (`SNAPSHOT_FALLBACK_SQL`): a
+        # source's explicit withdrawal row retires that source's earlier
+        # readings. JSONB equality, DISTINCT ON and the per-source join only
+        # mean anything on a server. Named here because a `*_pg.py` nobody adds
+        # runs nowhere.
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_feed_snapshot_fallback_withdrawal_11254_pg.py \
+            -v -rs 2>&1 | tee /tmp/fallback11254.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/fallback11254.txt; then
+            echo "::error::#11254 snapshot fallback gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#11295 a game card carries the event page's projected final (real Postgres)"
+        # #11295. `/api/feed` and `/api/leagues/{sport}` read the latest row per
+        # sportsbook for their scheduled/live game cards and must serve the SAME
+        # projected pair `/api/events/{id}` serves. The recursive per-book walk
+        # and the detail route's own read only mean anything on a server. Named
+        # here because a `*_pg.py` nobody adds runs nowhere.
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_card_projected_pair_11295_pg.py \
+            -v -rs 2>&1 | tee /tmp/cardpair11295.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/cardpair11295.txt; then
+            echo "::error::#11295 card projected pair gate SKIPPED — the gate did not run"
             exit 1
           fi
 
@@ -2726,6 +2794,25 @@ jobs:
             exit 1
           fi
 
+      - name: "#2316 related-futures name match: one lowercase per row (real Postgres)"
+        # PILLAR: DISCOVER / FORMATTING. SHIP: a game's Bigger Picture panel
+        # stops spending seconds matching outcome names. Step 5 ORed one
+        # `name ILIKE` per roster player (167-210 arms for college football);
+        # on UTF8 each ILIKE lowercases both sides per call, and a 210-arm
+        # production build ran past a 25 s timeout. `lower(name) LIKE ANY`
+        # over database-lowered patterns ran 119-277 ms. The two SQL texts
+        # share no code, so only a server can grade that they select the same
+        # rows under PostgreSQL's case mapping and LIKE escapes. Skip = red.
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_ilike_any_lowered_once_2316_pg.py \
+            -v -rs 2>&1 | tee /tmp/ilike_any_2316.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ilike_any_2316.txt; then
+            echo "::error::#2316 one-lowercase equivalence SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#6757 a no-result marker cannot protect an unsupported price (real Postgres)"
         # `/futures/2951399` printed thirteen identical 49s on an open market
         # resolving in 2027 because every leg carried `ungradeable_result` — the
@@ -2940,6 +3027,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#11296 a final's pregame projection is read from before the start (real Postgres)"
+        # A final's newest odds row is in-play; this pins the read of each
+        # book's last row before the listed start, and that the event page,
+        # league rail and feed serve the same object. Skip detection + count.
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_pregame_projection_pg_11296.py \
+            tests/integration/test_pregame_projection_lists_pg_11296.py \
+            -v -rs 2>&1 | tee /tmp/pregame11296.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/pregame11296.txt; then
+            echo "::error::#11296 pregame projection SKIPPED"; exit 1
+          fi
+          grep -qE "[^0-9]10 passed[,[:space:]]" /tmp/pregame11296.txt || {
+            echo "::error::#11296 pregame projection did not run every case"; exit 1; }
+
       - name: Kalshi cliff-drain bind contract (real Postgres)
         # #1884. The drain shipped with 39 green unit tests and threw
         # asyncpg.DataError on the FIRST statement of every run: it bound its
@@ -3059,6 +3162,37 @@ jobs:
             echo "::error::calibration fair-fight prop-threshold contract SKIPPED — the gate did not run"
             exit 1
           fi
+
+      - name: "#683 Kalshi archive store, attended import and chart readers (real Postgres)"
+        # #683. The archive store's claims all belong to PostgreSQL: the CHECK and
+        # UNIQUE constraints that refuse a post-settlement or doubled interval, the
+        # migration building the models' exact schema, an apply that writes only
+        # with the typed digest and restores only its own rows, the two chart
+        # routes joining the archive (live wins actual overlap only; the clients'
+        # actual Full request, range=full, reaching a 189-day archive AND our own
+        # 189-day captures, which keep their precedence — Root's control), and the
+        # dormant forecast lateral revalidating at consumption; and the first
+        # attended import's operational bounds (archive statement/lock timeouts
+        # on every connection across COMMIT and reconnect, the FOR SHARE identity
+        # fence, lost-COMMIT receipts, partial/zero-point plans never "applied");
+        # and the attended input fence (reviewed identity AND outcome/market/event
+        # row versions bound to the plan digest, compared on the locked row in
+        # the writing transaction: a non-fingerprint change with an unchanged
+        # fingerprint is refused, the fingerprint-only control writes it).
+        # Drops and creates the full schema, like #6757 above.
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_archive_store_683_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/archive683.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/archive683.txt; then
+            echo "::error::#683 archive store gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "(^|[^0-9])79 passed([,[:space:]]|$)" /tmp/archive683.txt || {
+            echo "::error::#683 archive store gate did not run all seventy-nine cases"
+            exit 1
+          }
 
       - name: Calibration DataGolf symmetric exclusion (real Postgres)
         # #6211. `market_info` withholds a DataGolf market whose field we cannot
@@ -4353,6 +4487,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#2644 the Oscars Best Original Song row settles through its own exact, undoable channel of the #2722 repair (real Postgres)"
+        # Row 109548 / KXOSCARSONG-26: the nine-row rail's plan, whole-row CAS and
+        # after-image undo, pointed at its own frozen member, retained evidence,
+        # digest and backup table. Proves the reviewed 006 transition from the
+        # retained bytes, drift refused, legs/prices/history unmoved, each
+        # channel's undo blind to the other's rows, and the budgets on the wire.
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_oscar_song_repair_2644_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/kalshi_oscar_song_2644.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/kalshi_oscar_song_2644.txt; then
+            echo "::error::#2644 Oscars repair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4444 the census caps do not move the numbers (real Postgres)"
         # The two `precompute_backfill_progress` tiles ran an uncapped
         # per-outcome `COUNT(*)` over `futures_odds_snapshots` and became the two
@@ -4826,11 +4976,17 @@ jobs:
         # the wrong-number face is visible on base. Plus an anchorless seed
         # where the qualified spelling has no ticker and must stay unbound.
         #
+        # #11148 rides the same step: the unbound `Miami (OH)` row looked its
+        # metadata up with the qualifier stripped (`miami`, a Hurricanes alias),
+        # so the grid served two rows claiming the Hurricanes and the event
+        # page's Season outcomes printed Miami (OH)'s 3%.
+        #
         # Same skip detection as every gate in this job.
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_grid_miami_identity_7829_pg.py \
+            tests/integration/test_grid_miami_oh_row_identity_11148_pg.py \
             -v -rs 2>&1 | tee /tmp/miamiidentity7829.txt
           if grep -qiE "[0-9]+ skipped" /tmp/miamiidentity7829.txt; then
             echo "::error::#7829 Miami identity grid gate SKIPPED — the gate did not run"
@@ -4911,8 +5067,29 @@ jobs:
             echo "::error::#10090 next-quote history gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/next-quote10090.txt || {
-            echo "::error::#10090 next-quote history gate did not run all six cases"
+          grep -qE "[^0-9]8 passed[,[:space:]]" /tmp/next-quote10090.txt || {
+            echo "::error::#10090 next-quote history gate did not run all eight cases"
+            exit 1
+          }
+
+      - name: "#11181 owed chart points: atomic custody, replay and restart (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_owed_chart_custody_11181_pg.py \
+            -v -rs > /tmp/owed-chart11181.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/owed-chart11181.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/owed-chart11181.txt; then
+            echo "::error::#11181 owed chart custody gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/owed-chart11181.txt || {
+            echo "::error::#11181 owed chart custody gate did not run all twelve cases"
             exit 1
           }
 
@@ -4934,6 +5111,271 @@ jobs:
           fi
           grep -qE "[^0-9]15 passed[,[:space:]]" /tmp/release-wake10090.txt || {
             echo "::error::#10090 PM release-wake gate did not run all fifteen cases"
+            exit 1
+          }
+
+      - name: "#10090 a withdrawn PM price leaves the page through contention, cancellation and restart (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_pm_withdrawal_debt_10090_pg.py \
+            -v -rs > /tmp/withdrawal-debt10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/withdrawal-debt10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/withdrawal-debt10090.txt; then
+            echo "::error::#10090 PM withdrawal-debt gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]8 passed[,[:space:]]" /tmp/withdrawal-debt10090.txt || {
+            echo "::error::#10090 PM withdrawal-debt gate did not run all eight cases"
+            exit 1
+          }
+
+      - name: "#10090 a live price frame's source snapshot comes from its own committed stamp (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_live_blend_source_snapshot_10090_pg.py \
+            -v -rs > /tmp/source-snapshot10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/source-snapshot10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/source-snapshot10090.txt; then
+            echo "::error::#10090 source-snapshot gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/source-snapshot10090.txt || {
+            echo "::error::#10090 source-snapshot gate did not run all four cases"
+            exit 1
+          }
+
+      - name: "#10090 restarts and transaction errors never strand a PM source removal; a due withdrawal never slows a healthy quote (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_pm_withdrawal_recovery_regression_10090_pg.py \
+            -v -rs > /tmp/withdrawal-recovery10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/withdrawal-recovery10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/withdrawal-recovery10090.txt; then
+            echo "::error::#10090 withdrawal-recovery gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]24 passed[,[:space:]]" /tmp/withdrawal-recovery10090.txt || {
+            echo "::error::#10090 withdrawal-recovery gate did not run all twenty-four cases"
+            exit 1
+          }
+
+      - name: "#10090 a slow removal notification never stalls another game or a healthy price; a recycled worker adopts every owed removal (real Postgres + Redis)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        env:
+          # The job-local redis:7 service (#7351's, port 56379). Logical db 13 is
+          # this gate's alone: the fixture refuses a non-loopback URL or db 0 and
+          # FLUSHES db 13 around each case. #7351 uses 15, its sibling 14.
+          PM_WITHDRAWAL_REDIS_URL: redis://localhost:56379/13
+        run: |
+          if python -m pytest tests/integration/test_pm_withdrawal_peer_publication_and_startup_10090_pg.py \
+            -v -rs > /tmp/withdrawal-peer10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/withdrawal-peer10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/withdrawal-peer10090.txt; then
+            echo "::error::#10090 peer-publication/startup gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]27 passed[,[:space:]]" /tmp/withdrawal-peer10090.txt || {
+            echo "::error::#10090 peer-publication/startup gate did not run all twenty-seven cases"
+            exit 1
+          }
+
+      - name: "#10090 an open page receives a committed price while its recovery read is held (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_event_stream_recovery_read_price_flow_10090_pg.py \
+            -v -rs > /tmp/recovery-read10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/recovery-read10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/recovery-read10090.txt; then
+            echo "::error::#10090 recovery-read price-flow gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed[,[:space:]]" /tmp/recovery-read10090.txt || {
+            echo "::error::#10090 recovery-read price-flow gate did not run both cases"
+            exit 1
+          }
+
+      - name: "#10090 an open or reopened page always learns the source removals it owes, never via an old price (real Postgres + Redis)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        env:
+          # The job-local redis:7 service (#7351's, port 56379). Logical db 12 is
+          # this gate's alone: the reused fixture refuses a non-loopback URL or db 0
+          # and FLUSHES db 12 around each case. 13 is the peer-publication gate's.
+          PM_WITHDRAWAL_REDIS_URL: redis://localhost:56379/12
+        run: |
+          if python -m pytest tests/integration/test_event_stream_reconcile_route_10090_pg.py \
+            -v -rs > /tmp/reconcile-route10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/reconcile-route10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/reconcile-route10090.txt; then
+            echo "::error::#10090 reconcile-route gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]11 passed[,[:space:]]" /tmp/reconcile-route10090.txt || {
+            echo "::error::#10090 reconcile-route gate did not run all eleven cases"
+            exit 1
+          }
+
+      - name: "#10090 a held page receives the last committed price after a publication outage, without a new venue tick (real Postgres + Redis)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        env:
+          # Private loopback DB 11, flushed per case; peers use 12/13.
+          PM_WITHDRAWAL_REDIS_URL: redis://localhost:56379/11
+          # F3 capacity case: own random schema, dropped after.
+          BLEND_DEADLOCK_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
+        run: |
+          if python -m pytest tests/integration/test_live_normal_publication_recovery_10090_pg.py \
+            tests/test_blend_preview_ledger_tsp1_10090.py \
+            -v -rs > /tmp/normal-recovery10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/normal-recovery10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/normal-recovery10090.txt; then
+            echo "::error::#10090 normal-publication recovery gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]90 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
+            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 90 cases"
+            exit 1
+          }
+
+      - name: "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/held-row-redis"
+          wheel=redislite-6.2.912183-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          pip download --no-deps --only-binary=:all: redislite==6.2.912183 -d "$dir"
+          echo "d5ed8af4d03225a9b19e279d40f8d8feae872f87a9cd9f017751864fe7b224c6  $dir/$wheel" | sha256sum -c -
+          python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract('redislite/bin/redis-server', sys.argv[2])" "$dir/$wheel" "$dir"
+          chmod +x "$dir/redislite/bin/redis-server"
+          "$dir/redislite/bin/redis-server" --version
+          export EVENT_FRAME_REDIS_SERVER="$dir/redislite/bin/redis-server" EVENT_FRAME_REDIS_REQUIRED=1
+          if python -m pytest tests/integration/test_pm_held_price_row_stamps_received_quote_11138_pg.py \
+            tests/integration/test_live_blend_source_projection_10090_pg.py \
+            tests/integration/test_live_blend_metadata_projection_10090_pg.py \
+            tests/integration/test_pm_price_statement_deadline_10090_pg.py \
+            tests/integration/test_dnpl_default_committed_fallback_10090_pg.py \
+            tests/integration/test_dnpl_capacity_lifecycle_10090_pg.py \
+            -v -rs > /tmp/held-row11138.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/held-row11138.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/held-row11138.txt; then
+            echo "::error::#11138 held-row gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]33 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row/default-DNPL gate did not run all 33 cases"
+            exit 1
+          }
+
+      - name: "#10090 a held PM quote returning to its stored price is published, held or just released (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_pm_return_to_stored_10090_pg.py \
+            -v -rs > /tmp/return-to-stored10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/return-to-stored10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/return-to-stored10090.txt; then
+            echo "::error::#10090 return-to-stored gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed[,[:space:]]" /tmp/return-to-stored10090.txt || {
+            echo "::error::#10090 return-to-stored gate did not run both cases"
+            exit 1
+          }
+
+      - name: "#10090 a brief hold on a PM prop or standalone price never costs a whole retry period (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_pm_nongame_first_wait_10090_pg.py \
+            -v -rs > /tmp/nongame-first-wait10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/nongame-first-wait10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/nongame-first-wait10090.txt; then
+            echo "::error::#10090 non-game first-wait gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed[,[:space:]]" /tmp/nongame-first-wait10090.txt || {
+            echo "::error::#10090 non-game first-wait gate did not run both cases"
+            exit 1
+          }
+
+      - name: "#10090 a lock-held KALSHI price row stamps the received quote; a restart cannot undo it (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        env:
+          EVENT_FRAME_REDIS_SERVER: ${{ runner.temp }}/held-row-redis/redislite/bin/redis-server
+          EVENT_FRAME_REDIS_REQUIRED: '1'
+        run: |
+          if python -m pytest tests/integration/test_kalshi_held_price_row_10090_pg.py \
+            tests/integration/test_kalshi_floor_deferred_owed_held_stamp_10090_pg.py \
+            -v -rs > /tmp/kalshi-held10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/kalshi-held10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/kalshi-held10090.txt; then
+            echo "::error::#10090 Kalshi held-row gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]5 passed[,[:space:]]" /tmp/kalshi-held10090.txt || {
+            echo "::error::#10090 Kalshi held-row gate did not run all five cases"
             exit 1
           }
 
@@ -4989,6 +5431,8 @@ jobs:
         # #837 tail adds two: a foreign transaction holding one game's row must
         # not freeze the other games' stamps (500ms lock_timeout, retry next
         # flush), plus its control with the timeout off.
+        # #11138 adds two: a stamp queued behind a holder and then a writer is
+        # cut at its budget as a whole statement, plus the lock-only control.
         # Skip detection plus a count, as for #7617.
         if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
@@ -4999,8 +5443,8 @@ jobs:
             echo "::error::#837 stamp deadlock gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/deadlock837.txt || {
-            echo "::error::#837 stamp gate did not run all four cases"
+          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/deadlock837.txt || {
+            echo "::error::#837 stamp gate did not run all six cases"
             exit 1
           }
 
@@ -5032,20 +5476,9 @@ jobs:
           }
 
       - name: "#10090 a live quote is written beside a slow non-live transaction (real Postgres)"
-        # A Kalshi flush decided live preemption only BEFORE a non-live phase
-        # opened; a live quote arriving once that transaction ran waited for all
-        # of it (production 2026-10-12: one 200-row non-live phase held 3.50 s).
-        # The live input is now written beside it, on its own pooled session.
-        # Only real transactions show it: a pg_sleep trigger holds the non-live
-        # UPDATE open while live quotes enter through the shipped handle_ticker,
-        # the shipped cadence and flush write them, and publication reads the
-        # committed rows on an independent connection. Cases: promptness before
-        # the non-live commit (with strawman), continuing input without
-        # starvation, an in-flight event never split, cancellation inside both
-        # transactions then the final drain, and Root's three liveness cases:
-        # the last quote inside the stamp floor, a quote fenced behind its own
-        # running stamp, a bridged open-contract winner. Reuses the #837
-        # database; same skip detection plus a count.
+        # A live Kalshi quote is written beside a running non-live transaction,
+        # on its own session (2026-10-12: a 200-row phase held 3.50 s). 14
+        # cases with strawmen; reuses the #837 database; skip check + count.
         if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -5055,8 +5488,25 @@ jobs:
             echo "::error::#10090 live-beside gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]8 passed[,[:space:]]" /tmp/livebeside10090.txt || {
-            echo "::error::#10090 live-beside gate did not run all eight cases"
+          grep -qE "[^0-9]14 passed[,[:space:]]" /tmp/livebeside10090.txt || {
+            echo "::error::#10090 live-beside gate did not run all fourteen cases"
+            exit 1
+          }
+
+      - name: "#10090 a live game's prop publishes while an unrelated future is locked (real Postgres)"
+        # A live prop publishes while a #10661 holder locks an unrelated future
+        # (v5771: one 55P03 held ~78 s of total-points lines). Same fixture.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_live_prop_beside_locked_future_10090_pg.py \
+            -v -rs 2>&1 | tee /tmp/liveprop10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/liveprop10090.txt; then
+            echo "::error::#10090 live-prop isolation gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]1 passed[,[:space:]]" /tmp/liveprop10090.txt || {
+            echo "::error::#10090 live-prop isolation gate did not run its case"
             exit 1
           }
 
@@ -6812,6 +7262,41 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 the status task lets go of a row it has just promoted (real Postgres)"
+        # A blend stamp on a game that had just gone live was cancelled five
+        # times at its 500 ms lock budget while the status pass held the row
+        # through its later history reads (v5774). Whether a second session's
+        # UPDATE is admitted or refused, and whether a later arm reads the row
+        # another session committed, are properties of real row locks and a
+        # real identity map. Reuses the #7617 database: this file drops and
+        # creates its own tables.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_status_task_releases_started_rows_pg_10090.py \
+            -v -rs 2>&1 | tee /tmp/statusrelease10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/statusrelease10090.txt; then
+            echo "::error::#10090 status-release contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]7 passed[,[:space:]]" /tmp/statusrelease10090.txt || {
+            echo "::error::#10090 status-release contract did not run all seven cases (four promoted, three resumed)"
+            exit 1
+          }
+          # CERT-4214's witnesses for the same commit: a genuine settlement
+          # written while the later arms run is kept, and the publication
+          # hooks keep committed frames across the commit and expunge.
+          python -m pytest tests/integration/test_status_promotion_commit_settlement_and_hooks_pg_10090.py \
+            -v -rs 2>&1 | tee /tmp/statussettlehooks10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/statussettlehooks10090.txt; then
+            echo "::error::#10090 settlement and hook contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed[,[:space:]]" /tmp/statussettlehooks10090.txt || {
+            echo "::error::#10090 settlement and hook contract did not run both cases"
+            exit 1
+          }
+
       - name: "#10022 an open-contract leg the socket sees finalize is graded alone (real Postgres)"
         # A finished CHC–SD series kept pricing scorelines that could no longer
         # happen because the socket left open contracts' results to the REST
@@ -6899,6 +7384,52 @@ jobs:
           fi
           grep -qE "[^0-9]22 passed[,[:space:]]" /tmp/evidence7878.txt || {
             echo "::error::#7878 evidence collapse did not run all twenty-two cases (#8514 added the backfilled-row case; the retention-selection blocker added seven selector cases)"
+            exit 1
+          }
+
+      - name: "#11286 odds retention — provision the disposable database"
+        # Its own database for the reason the #7878 step above gives: the file
+        # drops and creates the five tables it touches.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python - <<'PY' >> "$GITHUB_ENV"
+          import asyncio, asyncpg
+
+          DB = "bl_odds_retention_11286"
+
+          async def go():
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database="postgres",
+                  host="localhost", port=5432)
+              await c.execute(f'DROP DATABASE IF EXISTS {DB}')
+              await c.execute(f'CREATE DATABASE {DB}')
+              await c.close()
+
+          asyncio.run(go())
+          print(
+              "ODDS_RETENTION_DATABASE_URL="
+              f"postgresql+asyncpg://postgres:postgres@localhost:5432/{DB}"
+          )
+          PY
+          echo "provisioned bl_odds_retention_11286"
+
+      - name: "#11286 odds retention keeps a spread/total move under a flat home price (real Postgres)"
+        # The 48h odds collapse merged runs of equal HOME price, so a book's
+        # spread/total/projected-pair move under a flat moneyline was deleted
+        # and the projected-points chart lost it for good. The run boundary is
+        # now the whole observed row. Skip detection plus a count, as for #7878.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_odds_retention_tuple_pg_11286.py \
+            -v -rs 2>&1 | tee /tmp/oddsretention11286.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/oddsretention11286.txt; then
+            echo "::error::#11286 odds retention SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]14 passed[,[:space:]]" /tmp/oddsretention11286.txt || {
+            echo "::error::#11286 odds retention did not run all fourteen cases"
             exit 1
           }
 
@@ -7123,7 +7654,7 @@ jobs:
         # file reddens this gate until the number below moves with it. That is
         # the point (it is how a silently-dropped case gets caught), but it means
         # the number is part of the test file's contract, not CI boilerplate.
-        # 12 = 7 age-floor cases + 4 settled-market cases + 1 consumer wiring case.
+        # 14 = 7 age-floor + 4 settled-market + 2 link-read (#10663) + 1 wiring case.
         if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -7133,12 +7664,12 @@ jobs:
             echo "::error::#837 slate contract SKIPPED — the gate did not run"
             exit 1
           fi
-          # `[^0-9]` so a future `112 passed` cannot satisfy a gate asking for 12.
+          # `[^0-9]` so a future `114 passed` cannot satisfy a gate asking for 14.
           # `[,[:space:]]` because pytest drops the comma when a run emits no
           # warnings (`12 passed in 3.4s`) — the old `passed,` form was green
           # only by the accident of this file currently raising warnings.
-          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/slate837.txt || {
-            echo "::error::#837 slate contract did not run all twelve cases"
+          grep -qE "[^0-9]14 passed[,[:space:]]" /tmp/slate837.txt || {
+            echo "::error::#837 slate contract did not run all 14 cases"
             exit 1
           }
 
@@ -7548,20 +8079,8 @@ jobs:
           }
 
       - name: "#11007 an undecided Polymarket leg stops reading as settled and Lost, and the undo round-trips (real Postgres)"
-        # PILLAR TRUTH. SHIP: the Fed rate-cut page stops calling the
-        # still-undecided October and December 2026 meetings Lost or the whole
-        # question Settled, while its genuinely decided legs keep their results.
-        # From production's poisoned rows (113883 / Gamma 106884): the attended
-        # rail's exact-id plan bound to every written row version, FOR UPDATE
-        # compare-and-set, one transaction per parent, D51 before-images in the
-        # write's own transaction, and a whole-parent restore that refuses a
-        # same-value later writer, which a session double reads green on, and
-        # that applies only to the one plan_hash named. Plus
-        # the reader's own detail route, the REAL poll writer and the REAL gated
-        # Gamma grader re-run over the repaired rows (with controls that
-        # reproduce the defect), and the REAL sunk-recovery selector reaching the
-        # parent it could not reach before. Runs in its own throwaway database on
-        # the real ORM schema.
+        # Attended repair rail, real ORM schema; what each case proves is in the
+        # test file's docstring (bytes here count toward GitHub's workflow cap).
         if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -7590,6 +8109,59 @@ jobs:
             echo "::error::#1911 events parity gate SKIPPED — the gate did not run"
             exit 1
           fi
+
+      - name: "#1057 the sentinel's placeholder-band candidate and census (real Postgres)"
+        # The futures mining scan gained a price_band column and a seventh
+        # GROUP BY key; a mistake there fails the whole scan and the sentinel
+        # mines no futures cohort. Runs the real scan and the real band census
+        # over CTE-shadowed rows, read-only.
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_calibration_sentinel_placeholder_band_1057_pg.py \
+            -v -rs 2>&1 | tee /tmp/sentinel_placeholder_band_1057.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/sentinel_placeholder_band_1057.txt; then
+            echo "::error::#1057 placeholder-band gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/sentinel_placeholder_band_1057.txt || {
+            echo "::error::#1057 placeholder-band gate did not run all four cases"
+            exit 1
+          }
+
+      - name: "#1912 the per-market never-graded census counts exactly what the grouped census did (real Postgres)"
+        # The full census gating the reviewed recovery wave timed out at 20 s on
+        # production; `_CENSUS_SQL` now states the cohort per market (EXISTS /
+        # NOT EXISTS) instead of grouping every outcome. Old SQL, new SQL and a
+        # Python oracle must return identical rows over every leg multiset up to
+        # three legs x every market-filter shape, and the never-graded work
+        # selection must page exactly the ids the census counts.
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_pm_never_graded_census_equivalence_1912_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/census_equivalence_1912.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/census_equivalence_1912.txt; then
+            echo "::error::#1912 census equivalence gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/census_equivalence_1912.txt || {
+            echo "::error::#1912 census equivalence gate did not run all six cases"
+            exit 1
+          }
+
+      - name: "#10090 bundled pair proof (real Postgres)"
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          python -m pytest \
+            tests/integration/test_bundled_pair_current_book_overlay_10090_pg.py \
+            tests/integration/test_bundled_pair_held_overlay_concurrency_10090_pg.py \
+            tests/integration/test_bundled_pair_offask_trade_10090_pg.py \
+            tests/integration/test_bundled_pair_quote_transition_10090_pg.py \
+            tests/integration/test_bundled_pair_thin_book_10090_pg.py \
+            -rs > /tmp/bp.txt 2>&1 || s=$?
+          cat /tmp/bp.txt; echo "EXIT CODE: ${s:-0}"; test "${s:-0}" -eq 0
+          ! grep -qiE "[0-9]+ skipped" /tmp/bp.txt && grep -qE "[^0-9]16 passed" /tmp/bp.txt || exit 1
 
       - name: "#8910 a newer WebSocket stamp survives the two-minute poll (real Postgres)"
         # #8910 / CERT-3585's required guard. The REAL live poll against real
@@ -7705,6 +8277,60 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 a tagged-twin page's stream removal floor equals its detail's revision vector; each fold path holds alone; a reversed twin is in neither (real Postgres)"
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_tagged_twin_stream_detail_removal_floor_10090_pg.py \
+            -v -rs > /tmp/twin-floor10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/twin-floor10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/twin-floor10090.txt; then
+            echo "::error::#10090 tagged-twin removal-floor gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]7 passed[,[:space:]]" /tmp/twin-floor10090.txt || {
+            echo "::error::#10090 tagged-twin removal-floor gate did not run all seven cases"
+            exit 1
+          }
+
+      - name: "#10090 history_fold_revision certifies only what a fresh build read past (real Postgres)"
+        # #10090 producer. 15 = C1 a removal committed before the build is
+        # certified with NO pinned edge (and an ordinary read claims nothing) +
+        # C2 a removal between prefix and series is drawn but not certified +
+        # C3 a removal after the series read is neither + C4 an in-flight
+        # removal is neither until it commits + C5 a twin's removal per row +
+        # C6 a twin tagged after membership: no claim + C7 the canonical bag
+        # moving after its load: no claim + C7b an absorbed fold that raised
+        # or hit its cap: the route makes no claim + C8 a swallowed read: body, no
+        # claim + C9/C9b empty and single-source charts covered + C10 a reader
+        # arriving mid-build gets a build that read its removal + C11 a
+        # cancelled builder's waiter gets its own claim + C12 the lean prefix
+        # vector equals the bag fold's on six real-row cases + C13 the prefix
+        # statement selects no price bag (lean coverage prefix). Mutants: vector read
+        # at the end (C2, C3 red), membership unchecked (C6), canonical bag
+        # unchecked (C7), route ignores fold completeness (C7b), partial ignored (C8), ordinary build claims (C1),
+        # pin vector borrowed (10 red), barrier accepts an older build (C10).
+        # drop_all/create_all, so isolated; named here because a `*_pg.py`
+        # nobody adds runs nowhere.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_history_fold_revision_10090_pg.py \
+            -v -rs 2>&1 | tee /tmp/historycoverage10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/historycoverage10090.txt; then
+            echo "::error::#10090 history coverage gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]15 passed[,[:space:]]" /tmp/historycoverage10090.txt || {
+            echo "::error::#10090 history coverage gate did not run all fifteen cases"
+            exit 1
+          }
+
       - name: "#10542 ActivityKit registration ownership (real Postgres)"
         # Random disposable schema; independent transactions exercise ownership CAS.
         if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
@@ -7789,6 +8415,44 @@ jobs:
           fi
           grep -qE "[^0-9]5 passed([,[:space:]]|$)" /tmp/activitykit-runtime10542.txt || {
             echo "::error::#10542 runtime cursor gate did not execute all five cases"
+            exit 1
+          }
+
+      - name: "#10090 event detail state read window on the database clock (real Postgres)"
+        # Random disposable schema. A committed kickoff makes the next window
+        # strictly later; two open reads overlap (unordered); a long transaction
+        # widens the window but never lies.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          python -m pytest tests/integration/test_event_state_read_window_10090_pg.py -v -rs > /tmp/state-read-window10090.txt 2>&1 || {
+            cat /tmp/state-read-window10090.txt
+            exit 1
+          }
+          cat /tmp/state-read-window10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/state-read-window10090.txt; then
+            echo "::error::#10090 state read window gate skipped"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed([,[:space:]]|$)" /tmp/state-read-window10090.txt || {
+            echo "::error::#10090 state read window gate did not execute all three cases"
+            exit 1
+          }
+
+      - name: "#11315 the exact-market grade's roster locks hold a concurrent writer out (real Postgres)"
+        # Real row locks vs a second connection; an e892 arm must let it in.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          python -m pytest tests/integration/test_repair_11315_roster_lock_pg.py -v -rs > /tmp/roster11315.txt 2>&1 || {
+            cat /tmp/roster11315.txt
+            exit 1
+          }
+          cat /tmp/roster11315.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/roster11315.txt; then
+            echo "::error::#11315 roster lock gate skipped"
+            exit 1
+          fi
+          grep -qE "[^0-9]19 passed([,[:space:]]|$)" /tmp/roster11315.txt || {
+            echo "::error::#11315 roster lock gate did not run all nineteen cases"
             exit 1
           }
 

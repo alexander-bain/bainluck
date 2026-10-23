@@ -30,6 +30,8 @@ import { isQuoteStreamStatus } from "./eventQuoteStream";
  */
 
 import { compareFoldRevision, frameFoldOrder, parseFoldRevision } from "./foldRevision";
+import { readSourceSnapshot } from "./sourceSnapshot";
+import { PROBABILITY_SOURCE_KEYS } from "./confidence";
 
 /**
  * How often an open event page revalidates, given what the stream is doing.
@@ -363,6 +365,9 @@ export interface LiveFrame {
   /** #9051: the written row's revision — see `lib/foldRevision.ts`. */
   rev?: Record<string, number> | null;
   status?: string | null;
+  /** #10090: the frame's event and its optional same-commit source map (`lib/sourceSnapshot.ts`). */
+  event_id?: number;
+  source_snapshot?: unknown;
 }
 
 /**
@@ -501,7 +506,22 @@ export function frameInvalidatesFoldedBlend(held: unknown, frame: Pick<LiveFrame
 }
 
 export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | undefined {
-  if (!prev) return prev;
+  return applyLiveFrameRail(prev, frame).next;
+}
+
+/**
+ * `applyLiveFrame`, also saying whether the write replaced the rail with the
+ * frame's `source_snapshot` (#10090) rather than merging its one source.
+ */
+export function applyLiveFrameRail<T>(
+  prev: T | undefined, frame: LiveFrame,
+): { next: T | undefined; snapshotRail: boolean; sourceAdded?: boolean } {
+  const refused = { next: prev, snapshotRail: false };
+  if (!prev) return refused;
+  // #10090: a valid snapshot with no real source says this `p` is the
+  // producer's fallback (opening or ESPN), not a blend: no hero, clock or rail.
+  const snapshot = readSourceSnapshot(frame);
+  if (snapshot.state === "valid" && !snapshot.priced) return refused;
   // #8749: history or detail can reach this cache before an older SSE frame.
   // Arrival order is not observation order. Keep the newer paired value/clock
   // and its source metadata; the transport still records the frame separately.
@@ -509,7 +529,7 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
   if (!isQuoteStreamStatus(current.status) ||
       (current.hero_probability_source !== undefined && current.hero_probability_source !== "blend") ||
       (frame.status && frame.status !== current.status) ||
-      !Number.isFinite(frame.p) || frame.p < 0 || frame.p > 1) return prev;
+      !Number.isFinite(frame.p) || frame.p < 0 || frame.p > 1) return refused;
   const currentAt = Date.parse(current.hero_probability_observed_at ?? "");
   const frameAt = Date.parse(frame.updated_at);
   const liveBlend = holdsLiveBlend(current);
@@ -520,10 +540,10 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
   // write to the one row the hero reads lands; a frame with no vector cannot be
   // ordered against a held one. No held vector: the clocks decide.
   const foldOrder = liveBlend ? frameFoldOrder(current.blend_fold_revision, frame.rev) : null;
-  if (foldOrder !== null && foldOrder !== "newer") return prev;
+  if (foldOrder !== null && foldOrder !== "newer") return refused;
   if (foldOrder === null && liveBlend && Number.isFinite(currentAt) && Number.isFinite(frameAt) &&
       frameAt < currentAt) {
-    return prev;
+    return refused;
   }
   // The revision travels with the value it dates: the applied frame's own, or
   // none. Never the held one — that dated the value this frame replaces.
@@ -537,7 +557,15 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
   const sources = ((prev as { win_probability_sources?: Record<string, Record<string, unknown>> })
     .win_probability_sources ?? {}) as Record<string, Record<string, unknown>>;
   const existing = sources[frame.source] ?? {};
-  return {
+  // #10090: a strictly newer write to the one row the held blend reads, whose
+  // snapshot is that write's complete map, replaces the rail WHOLE — a
+  // withdrawn source leaves with the price that no longer folds it, and every
+  // entry's metadata (price_evidence included) is the snapshot's, never a held
+  // stamp kept because a value looks the same. Singleton only: a folded hero
+  // never orders a raw frame as newer, and a refused snapshot is legacy.
+  const snapshotRail = snapshot.state === "valid" && foldOrder === "newer" &&
+    (prev as { id?: unknown }).id === frame.event_id;
+  const next = {
     ...prev,
     // `resolveProbability` reads `hero_probability` first on the live branch, so
     // this is the number the hero actually renders.
@@ -548,7 +576,7 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
     hero_probability_observed_at: frame.updated_at,
     // #9051: the held blend is now this write's; keep its revision with it.
     ...(revision || heldRevision ? { blend_fold_revision: revision ?? undefined } : {}),
-    win_probability_sources: {
+    win_probability_sources: snapshotRail ? { ...snapshot.sources } : {
       ...sources,
       [frame.source]: {
         ...existing,
@@ -557,4 +585,10 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
       },
     },
   } as unknown as T;
+  // A valid adopted membership change can reveal a source with no served
+  // history yet. It authorizes a fresh history read, never a synthetic series.
+  const sourceAdded = snapshotRail && Object.keys(snapshot.sources).some(
+    key => key !== "final_result" && PROBABILITY_SOURCE_KEYS.has(key) && !(key in sources),
+  );
+  return { next, snapshotRail, ...(sourceAdded ? { sourceAdded: true } : {}) };
 }

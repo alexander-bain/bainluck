@@ -57,7 +57,7 @@ EVERYTHING HERE IS PURE. No DB, no HTTP, no Redis, no clock: the I/O half is
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -159,9 +159,19 @@ class VenuePoint:
     yes_ask: float | None = None
     last_price: float | None = None
     tier: str = ""
+    #: #11157 — set only on a half of an identity-admitted Yes/No pair, by the
+    #: fill (`async_binary_pair.pair_observations`). `peer_at` is the OTHER
+    #: token's raw instant; `pair_at` is the later of the two — KNOWLEDGE time,
+    #: never an observation time. `observed_at` is never touched by pairing.
+    pair_at: datetime | None = None
+    peer_at: datetime | None = None
+    #: Why a stored annotation on this point was DROPPED at parse, or "". Only
+    #: `/history`'s pair path reads it (and then refuses the series); every
+    #: other reader keeps the point exactly as master did (lane1's R1).
+    pair_dropped: str = ""
 
     def as_row(self) -> list:
-        return [
+        row = [
             self.observed_at.isoformat(),
             round(self.probability, 6),
             self.yes_bid,
@@ -169,6 +179,12 @@ class VenuePoint:
             self.last_price,
             self.tier,
         ]
+        # An optional seventh column, written only on a paired half, so every
+        # unpaired row — and every bank of every other market — keeps its bytes,
+        # and a reader that predates it reads the first six and ignores it.
+        if self.pair_at is not None and self.peer_at is not None:
+            row.append([self.pair_at.isoformat(), self.peer_at.isoformat()])
+        return row
 
 
 @dataclass
@@ -188,6 +204,16 @@ class VenueSnapshotRow:
     yes_ask: float | None = None
     last_price: float | None = None
     tier: str = ""
+    #: #11157 — the point's verified pair annotation (`VenuePoint`), carried so
+    #: the reader keys a pair's column on its knowledge time and serves each half
+    #: at its own `captured_at`.
+    pair_at: datetime | None = None
+    peer_at: datetime | None = None
+    #: The OTHER leg's outcome id, set by the reader only when the bank's two
+    #: series are one condition's identity-admitted Yes/No tokens AND its pair
+    #: annotations verified (`routes/futures._tag_venue_pair`). None otherwise —
+    #: and then pairing does not exist for this row.
+    pair_partner: int | None = None
 
 
 def _finite_prob(value: Any) -> float | None:
@@ -471,6 +497,20 @@ def parse_points(rows: Any, *, not_after: datetime | None) -> tuple[list[VenuePo
         if not_after is not None and stamp > not_after:
             return [], "timestamp_after_build"
         previous = stamp
+        tier = str(row[5]) if len(row) > 5 and row[5] is not None else ""
+        pair_at = peer_at = None
+        pair_dropped = ""
+        if len(row) > 6 and row[6] is not None:
+            # 🔴 A BAD ANNOTATION NEVER REFUSES THE LEG (lane1's R1). This parser
+            # is shared: `/probability-timeline` and the fill's last-good read go
+            # through it too, and neither pairs. Refusing here blanked the native
+            # chart and erased carried history whenever S tightened. The point is
+            # kept as master kept it; the annotation is dropped and its reason
+            # recorded for the one reader that does pair.
+            pair_at, peer_at, pair_dropped = _parse_pair_annotation(
+                row[6], stamp, tier, not_after
+            )
+            pair_dropped = pair_dropped or ""
         points.append(
             VenuePoint(
                 observed_at=stamp,
@@ -478,10 +518,36 @@ def parse_points(rows: Any, *, not_after: datetime | None) -> tuple[list[VenuePo
                 yes_bid=_opt_float(row[2]) if len(row) > 2 else None,
                 yes_ask=_opt_float(row[3]) if len(row) > 3 else None,
                 last_price=_opt_float(row[4]) if len(row) > 4 else None,
-                tier=str(row[5]) if len(row) > 5 and row[5] is not None else "",
+                tier=tier,
+                pair_at=pair_at,
+                peer_at=peer_at,
+                pair_dropped=pair_dropped,
             )
         )
     return points, None
+
+
+def _parse_pair_annotation(
+    raw: Any, own: datetime, tier: str, not_after: datetime | None
+) -> tuple[datetime | None, datetime | None, str | None]:
+    """`(pair_at, peer_at, None)` or `(None, None, reason)` — lane1's I2 checks
+    that one point can answer alone. The peer's PRESENCE in the other leg is a
+    cross-series fact and is checked where both legs are in hand (the reader).
+    A reason drops the annotation; it never refuses the point or its series."""
+    from app.utils.async_binary_pair import pair_skew_bound_seconds
+
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        return None, None, "pair_annotation_malformed"
+    pair_at, peer_at = _parse_aware(raw[0]), _parse_aware(raw[1])
+    if pair_at is None or peer_at is None:
+        return None, None, "pair_annotation_malformed"
+    if pair_at != max(own, peer_at):
+        return None, None, "pair_at_is_not_the_later_raw_instant"
+    if abs((own - peer_at).total_seconds()) > pair_skew_bound_seconds(tier):
+        return None, None, "pair_skew_exceeds_bound"
+    if not_after is not None and pair_at > not_after:
+        return None, None, "pair_at_after_build"
+    return pair_at, peer_at, None
 
 
 def validate_payload(
@@ -628,21 +694,44 @@ def unclaimed_instants(
     `compact_by_band` before it is stored — measured on the largest production
     bank, `generic-history:108599`, whose busiest leg holds 392 points — so
     admitting minute resolution here cannot flood the serve path: the flood was
-    already spent at bank time, by budget, keeping the biggest moves.
+    already spent at bank time, by budget, keeping the biggest moves. One
+    exception (#11157): a Polymarket `_yes`/`_no` pair also keeps every raw
+    instant both legs share that EITHER leg kept, so a paired leg is bounded by
+    2 × 400 = 800 (measured worst 741), not 400 — the pair as a whole still holds
+    no more than two capped legs' worth, well under a 12-outcome board at cap.
     """
     venue = sorted({ts for ts in venue_times if ts is not None})
     if not venue:
         return set()
-    from app.utils.futures_chart_series import (
-        MAX_CLAIM_RADIUS_SECONDS,
-        claim_radius_seconds,
-        finest_declared_resolution_seconds,
-        layer_tiers,
-    )
+    from app.utils.futures_chart_series import layer_tiers
 
     captures = sorted({ts for ts in capture_times if ts is not None})
     # The values are irrelevant to the claim; the instants are what is layered.
     venue_tier = [(ts, 0.0) for ts in venue]
+    merged = layer_tiers(
+        [[(ts, 0.0) for ts in captures], venue_tier],
+        cap_s=capture_claim_cap_seconds(venue, venue_tiers=venue_tiers),
+    )
+    capture_set = set(captures)
+    return {ts for ts, _ in merged if ts not in capture_set}
+
+
+def capture_claim_cap_seconds(
+    venue_times: Sequence[datetime],
+    *,
+    venue_tiers: Iterable[str | None] = (),
+) -> float:
+    """The most a capture may claim of these venue instants (see above).
+
+    Also asked by ``full_range_live`` (#683): a capture a thinned Full read
+    skipped claims a venue instant within this radius and no further.
+    """
+    from app.utils.futures_chart_series import (
+        MAX_CLAIM_RADIUS_SECONDS,
+        claim_radius_seconds,
+        finest_declared_resolution_seconds,
+    )
+
     declared = finest_declared_resolution_seconds(venue_tiers)
     if declared is not None:
         # NARROWS ONLY. The declared grain of the COARSE tiers is enormous — a
@@ -651,15 +740,9 @@ def unclaimed_instants(
         # last resort a twelve-hour veto and re-open the staleness
         # `MAX_CLAIM_RADIUS_SECONDS` exists to stop. The declaration may make the
         # claim finer than the default; it may never make it coarser.
-        cap_s = min(declared / 2.0, float(MAX_CLAIM_RADIUS_SECONDS))
-    else:
-        cap_s = claim_radius_seconds(venue_tier)
-    merged = layer_tiers(
-        [[(ts, 0.0) for ts in captures], venue_tier],
-        cap_s=cap_s,
-    )
-    capture_set = set(captures)
-    return {ts for ts, _ in merged if ts not in capture_set}
+        return min(declared / 2.0, float(MAX_CLAIM_RADIUS_SECONDS))
+    venue = sorted({ts for ts in venue_times if ts is not None})
+    return claim_radius_seconds([(ts, 0.0) for ts in venue])
 
 
 #: How much coarser than the venue's fine tier our own captures must be spaced
@@ -763,6 +846,176 @@ def captures_are_coarse(
     return densest >= coarse_at
 
 
+def declared_hole_grains(
+    source: str | None, lifetime_hours: float
+) -> list[tuple[float | None, float]] | None:
+    """What the fill's own plan can put into a hole, by how far back it sits.
+
+    ``[(reach_seconds or None, grain_seconds), ...]``, read off the SAME calls the
+    fill runs for a market of this age — `candle_calls` / `clob_calls`
+    (`_lifetime_hours`) — and not restated here, so a change to the plan moves
+    this with it. A call counts only where its reach is DECLARED: an explicit
+    lookback (the 144 h fine tier on both venues, Kalshi's hourly tier — whole
+    life up to ~375 days for this fill since #10955, never less than 31 days),
+    or the plan's whole-life call (Kalshi daily since listing, Polymarket
+    `interval=max` at 12-hourly). Polymarket's hourly tier is a NAMED range
+    (`interval=1m`) with no declared lookback, so it is not counted: an
+    undeclared reach is not evidence of one, and the whole-life grain stands
+    there instead.
+
+    None when the source has no venue history, or when the plan's last call no
+    longer declares whole-life reach — then nothing can be said about an old
+    hole, and the caller asks nothing.
+    """
+    from app.utils.futures_chart_series import candle_calls, clob_calls
+
+    if source == "kalshi":
+        calls = candle_calls(lifetime_hours, hourly_whole_life=True)
+        tiers = [
+            (None if c.lookback is None else c.lookback.total_seconds(),
+             float(c.period_interval) * 60.0)
+            for c in calls
+        ]
+        whole_life = calls[-1].lookback is None
+    elif source == "polymarket":
+        calls = clob_calls(lifetime_hours)
+        tiers = [
+            (c.lookback.total_seconds(), float(c.fidelity) * 60.0)
+            for c in calls if c.lookback is not None
+        ] + [(None, float(c.fidelity) * 60.0) for c in calls if c.interval == "max"]
+        whole_life = calls[-1].interval == "max" and calls[-1].lookback is None
+    else:
+        return None
+    if not whole_life:
+        return None
+    return sorted(tiers, key=lambda tier: tier[1])
+
+
+def leg_absent_beside_dense_sibling(
+    capture_times_by_line: Mapping[Any, Sequence[datetime]],
+    *,
+    fillable_lines: Iterable[Any],
+    graded_lines: Iterable[Any] = (),
+    min_reference: int,
+    declared_grains: Sequence[tuple[float | None, float]] | None,
+    window_end: datetime,
+) -> bool:
+    """Is one fillable line ABSENT for most of the stretch a sibling was observed?
+
+    #11162. The two existing triggers both read the chart through its densest
+    part. The thin gate counts POOLED rows, so a sibling with 160 captures clears
+    it for a leg with 17. `captures_are_coarse` takes the DENSEST line's median —
+    on purpose, so one abandoned outcome cannot make a well-captured market look
+    coarse — and refuses every window the fine tier cannot half cover. So a leg
+    that vanished for five weeks on the long bands, and a leg polled every six
+    hours beside a two-minute sibling on 1D, are both invisible to both.
+    Measured on `futures_markets` 31519211 ("All", 2026-10-12): Under 17 useful
+    captures then a 908-hour hole, Over 162, `venue_history.fill=chart_not_thin`.
+
+    WHY A SIBLING IS EVIDENCE AND A GAP ALONE IS NOT. Our pollers write every
+    priced outcome of a market on every poll, with no change-only dedup
+    (`tasks/kalshi.py`, `tasks/polymarket.py`): a quiet market's legs accrue rows
+    at the same rate as a busy one's. So two legs of one market diverge only when
+    one leg's rows were refused or lost — the sibling's instants prove the market
+    was being observed there. A gap with no sibling behind it is a quiet market,
+    a new one or a dead one, and is never read as missing history here.
+
+    A line counts as absent at a sibling instant only when ALL of:
+
+      * the line is FILLABLE — the fill would fetch it (`fillable_outcomes`);
+      * the line has at least one useful capture in the window. A line with none
+        is not drawn (#7546) and is the missing-side case, which a fill cannot
+        make visible on this reader;
+      * the sibling it is compared with holds at least `min_reference` instants
+        on its own — the caller passes the thin gate's own threshold, so the
+        sibling is exactly the density that hid this line from that gate;
+      * the instant is AFTER the line's first capture. The head before it may
+        predate the contract's listing, and no venue holds history for a
+        contract that did not exist;
+      * for a GRADED line, before its last capture too: a settled leg's tail is
+        its settlement, not a loss;
+      * the line has no capture within `COARSE_CAPTURE_MULTIPLE` × the fine
+        interval (ten minutes) of it. That is the codebase's one line between
+        "our captures are fine" and not (`captures_are_coarse`,
+        `captures_cover_cell`), and it is what keeps two legs of ONE poll —
+        written a second apart — from reading as each other's absence;
+      * the line's hole around it is at least the grain of the finest declared
+        call that reaches that far back (:func:`declared_hole_grains`) — the
+        fine tier's minute for a recent hole, the whole-life tier's for an old
+        one, never one grain for both (#11162 F1). A hole shorter than the
+        plan's grain where it sits is one the fill cannot put a single bucket
+        into. No separate floor is needed: the ten-minute cover above already
+        makes every counted hole longer than twenty minutes.
+
+    Fires when absent instants are at least `COARSE_TRIGGER_MIN_WINDOW_COVERAGE`
+    of the sibling's countable instants — the same "most of what is on screen"
+    bar the coarse trigger uses, not a new number.
+
+    🪤 THIS DECIDES WHETHER TO ASK, AND NOTHING ELSE. It does not establish that
+    the venue still holds the history (Kalshi purges at ≥74 days, gotcha #35),
+    and it neither draws, smooths nor complements anything. The answer is the
+    existing bounded planner's, under its claim, budgets and negative cache.
+
+    Instants are de-duplicated per line, so a repeated row at one instant is
+    one observation; the caller hands in captures only — no settlement markers,
+    no venue points.
+    """
+    if not declared_grains:
+        return False
+    from app.utils.futures_chart_series import KALSHI_FINE_INTERVAL
+
+    cover = KALSHI_FINE_INTERVAL * 60.0 * COARSE_CAPTURE_MULTIPLE
+    fillable = set(fillable_lines)
+    graded = set(graded_lines)
+    # POSIX seconds, sorted and de-duplicated per line: this runs on a public GET
+    # whose bank is cold, so one merge-walk per line and no datetime arithmetic.
+    lines = {
+        key: stamps
+        for key, raw in capture_times_by_line.items()
+        if key in fillable
+        and (stamps := sorted({ts.timestamp() for ts in (raw or ()) if ts is not None}))
+    }
+    if len(lines) < 2:
+        return False
+    end = window_end.timestamp()
+
+    def hole_grain(t: float) -> float:
+        age = end - t
+        reaching = [g for reach, g in declared_grains if reach is None or age <= reach]
+        return min(reaching) if reaching else float("inf")
+
+    by_size = sorted(lines, key=lambda k: len(lines[k]), reverse=True)
+    for key, stamps in lines.items():
+        reference = lines[by_size[1] if by_size[0] == key else by_size[0]]
+        if len(reference) < min_reference:
+            continue
+        first = stamps[0]
+        if key in graded:
+            last_bound, edges = stamps[-1], stamps
+        else:
+            last_bound = end
+            edges = stamps + [end] if end > stamps[-1] else stamps
+        countable = absent = 0
+        j = 0
+        for t in reference:
+            if t <= first or t > last_bound:
+                continue
+            countable += 1
+            while j < len(edges) and edges[j] <= t:
+                j += 1
+            # `edges[j - 1]` is the line's last capture at/before t (t > first,
+            # so j ≥ 1); `edges[j]` the next one, or the window's end.
+            before = t - edges[j - 1]
+            after = edges[j] - t if j < len(edges) else float("inf")
+            if min(before, after) <= cover:
+                continue
+            if j < len(edges) and edges[j] - edges[j - 1] >= hole_grain(t):
+                absent += 1
+        if absent and absent >= COARSE_TRIGGER_MIN_WINDOW_COVERAGE * countable:
+            return True
+    return False
+
+
 def captures_cover_cell(
     instants: Iterable[datetime],
     *,
@@ -829,6 +1082,8 @@ def as_snapshot_rows(
             yes_ask=p.yes_ask,
             last_price=p.last_price,
             tier=p.tier,
+            pair_at=p.pair_at,
+            peer_at=p.peer_at,
         )
         for p in points
     ]

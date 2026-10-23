@@ -1,0 +1,356 @@
+{
+  "phone": {
+    "timezoneId": "America/Los_Angeles",
+    "cards": [
+      {
+        "id": "schlittler-10k",
+        "top": 118,
+        "left": 12,
+        "w": 284,
+        "text": "CAM SCHLITTLER Schlittler struck out 10 6⅓ scoreless innings, two hits allowed 10 strikeouts needed 10+ Chance of 10+ strikeouts Pregame 18.5% Sources"
+      },
+      {
+        "id": "rice-2hr",
+        "top": 118,
+        "left": 308,
+        "w": 284,
+        "text": "BEN RICE Rice homered twice 4 hits · 6 RBI 5th 8th · grand slam 2 home runs needed 2+ Chance of 2+ home runs Pregame 2% Sources"
+      },
+      {
+        "id": "nyy-series-g1",
+        "top": 118,
+        "left": 604,
+        "w": 284,
+        "text": "YANKEES Series win chance rose Yankees led 1–0 after Game 1 Chance of the Yankees winning the series Pregame 56% After Game 1 80.5% Recorded 29 Sep Sources"
+      }
+    ],
+    "row": {
+      "scrollWidth": 908,
+      "clientWidth": 366
+    },
+    "sectionOrder": {
+      "winProbabilityCard": 360,
+      "highlights": 970,
+      "catalogue": 5377,
+      "pageHeight": 8070
+    },
+    "catalogueOpenBefore": false,
+    "cardHeights": [
+      253,
+      253,
+      253
+    ],
+    "closed": {
+      "railH": 257,
+      "railToButton": 12,
+      "cards": [
+        {
+          "id": "schlittler-10k",
+          "h": 253,
+          "innerGapAboveSources": 30,
+          "sourcesTopFromCardTop": 219,
+          "blankBelowCard": 4,
+          "fontPx": "16px"
+        },
+        {
+          "id": "rice-2hr",
+          "h": 253,
+          "innerGapAboveSources": 12,
+          "sourcesTopFromCardTop": 219,
+          "blankBelowCard": 4,
+          "fontPx": "16px"
+        },
+        {
+          "id": "nyy-series-g1",
+          "h": 253,
+          "innerGapAboveSources": 13,
+          "sourcesTopFromCardTop": 219,
+          "blankBelowCard": 4,
+          "fontPx": "16px"
+        }
+      ]
+    },
+    "naturalHeights": [
+      235,
+      253,
+      252
+    ],
+    "open": {
+      "railH": 346,
+      "railToButton": 12,
+      "cards": [
+        {
+          "id": "schlittler-10k",
+          "h": 342,
+          "innerGapAboveSources": 99,
+          "sourcesTopFromCardTop": 288,
+          "blankBelowCard": 4,
+          "fontPx": "16px"
+        },
+        {
+          "id": "rice-2hr",
+          "h": 342,
+          "innerGapAboveSources": 48,
+          "sourcesTopFromCardTop": 255,
+          "blankBelowCard": 4,
+          "fontPx": "16px"
+        },
+        {
+          "id": "nyy-series-g1",
+          "h": 342,
+          "innerGapAboveSources": 12,
+          "sourcesTopFromCardTop": 218,
+          "blankBelowCard": 4,
+          "fontPx": "16px"
+        }
+      ]
+    },
+    "sourcesText": [
+      "Sources Pregame 18.5% · Kalshi · 29 Sep, 4:52 PM PDT",
+      "Sources Pregame 2% combines: Kalshi 2% · 29 Sep, 4:50 PM PDT Polymarket 1.1% · 29 Sep, 4:50 PM PDT",
+      "Sources Game 1 of the best-of-three: Yankees 9, Red Sox 0 Pregame 56% · Kalshi · 29 Sep, 4:51 PM PDT After Game 1 80.5% · Kalshi · 29 Sep, 8:55 PM PDT"
+    ],
+    "catalogueOpenAfter": true,
+    "catalogueTopAfter": 80,
+    "catalogueText": "All markets Game lines Team scoring Periods Player props Other Boston vs New York Yankees: Total Runs Kalshi Over 1.5 runs scored Over 2.5 runs scored Over 3.5 runs scored Over 4.5 runs scored Over 5.5 runs scored Over 6.5 runs scored Show all 10 outcomes About this market Spread: Boston Red Sox (-1",
+    "controlHighlights": 0,
+    "controlCatalogue": 13
+  },
+  "consentClicked": true,
+  "misses": [
+    "https://api.bainluck.com/api/telemetry/client-timing",
+    "https://api.bainluck.com/api/telemetry/client-timing",
+    "https://api.bainluck.com/api/telemetry/client-timing",
+    "https://api.bainluck.com/api/telemetry/client-timing",
+    "https://api.bainluck.com/api/telemetry/client-timing"
+  ],
+  "desktop": {
+    "timezoneId": "America/New_York",
+    "cards": [
+      {
+        "id": "schlittler-10k",
+        "top": 118,
+        "left": 40,
+        "w": 392,
+        "text": "CAM SCHLITTLER Schlittler struck out 10 6⅓ scoreless innings, two hits allowed 10 strikeouts needed 10+ Chance of 10+ strikeouts Pregame 18.5% Sources"
+      },
+      {
+        "id": "rice-2hr",
+        "top": 118,
+        "left": 444,
+        "w": 392,
+        "text": "BEN RICE Rice homered twice 4 hits · 6 RBI 5th 8th · grand slam 2 home runs needed 2+ Chance of 2+ home runs Pregame 2% Sources"
+      },
+      {
+        "id": "nyy-series-g1",
+        "top": 118,
+        "left": 848,
+        "w": 392,
+        "text": "YANKEES Series win chance rose Yankees led 1–0 after Game 1 Chance of the Yankees winning the series Pregame 56% After Game 1 80.5% Recorded 29 Sep Sources"
+      }
+    ],
+    "row": {
+      "scrollWidth": 1200,
+      "clientWidth": 1200
+    },
+    "sectionOrder": {
+      "winProbabilityCard": 376,
+      "highlights": 974,
+      "catalogue": 4951,
+      "pageHeight": 6597
+    },
+    "catalogueOpenBefore": false,
+    "cardHeights": [
+      253,
+      253,
+      253
+    ],
+    "closed": {
+      "railH": 257,
+      "railToButton": 12,
+      "cards": [
+        {
+          "id": "schlittler-10k",
+          "h": 253,
+          "innerGapAboveSources": 30,
+          "sourcesTopFromCardTop": 219,
+          "blankBelowCard": 4,
+          "fontPx": "16px"
+        },
+        {
+          "id": "rice-2hr",
+          "h": 253,
+          "innerGapAboveSources": 12,
+          "sourcesTopFromCardTop": 219,
+          "blankBelowCard": 4,
+          "fontPx": "16px"
+        },
+        {
+          "id": "nyy-series-g1",
+          "h": 253,
+          "innerGapAboveSources": 13,
+          "sourcesTopFromCardTop": 219,
+          "blankBelowCard": 4,
+          "fontPx": "16px"
+        }
+      ]
+    },
+    "naturalHeights": [
+      235,
+      253,
+      252
+    ],
+    "open": {
+      "railH": 313,
+      "railToButton": 12,
+      "cards": [
+        {
+          "id": "schlittler-10k",
+          "h": 309,
+          "innerGapAboveSources": 66,
+          "sourcesTopFromCardTop": 255,
+          "blankBelowCard": 4,
+          "fontPx": "16px"
+        },
+        {
+          "id": "rice-2hr",
+          "h": 309,
+          "innerGapAboveSources": 15,
+          "sourcesTopFromCardTop": 222,
+          "blankBelowCard": 4,
+          "fontPx": "16px"
+        },
+        {
+          "id": "nyy-series-g1",
+          "h": 309,
+          "innerGapAboveSources": 12,
+          "sourcesTopFromCardTop": 218,
+          "blankBelowCard": 4,
+          "fontPx": "16px"
+        }
+      ]
+    },
+    "sourcesText": [
+      "Sources Pregame 18.5% · Kalshi · 29 Sep, 7:52 PM EDT",
+      "Sources Pregame 2% combines: Kalshi 2% · 29 Sep, 7:50 PM EDT Polymarket 1.1% · 29 Sep, 7:50 PM EDT",
+      "Sources Game 1 of the best-of-three: Yankees 9, Red Sox 0 Pregame 56% · Kalshi · 29 Sep, 7:51 PM EDT After Game 1 80.5% · Kalshi · 29 Sep, 11:55 PM EDT"
+    ],
+    "catalogueOpenAfter": true,
+    "catalogueTopAfter": 80,
+    "catalogueText": "All markets Game lines Team scoring Periods Player props Other Boston vs New York Yankees: Total Runs Kalshi Over 1.5 runs scored Over 2.5 runs scored Over 3.5 runs scored Over 4.5 runs scored Over 5.5 runs scored Over 6.5 runs scored Show all 10 outcomes About this market Spread: Boston Red Sox (-1",
+    "controlHighlights": 0,
+    "controlCatalogue": 13
+  },
+  "phone-largetext": {
+    "timezoneId": "America/Los_Angeles",
+    "cards": [
+      {
+        "id": "schlittler-10k",
+        "top": 142,
+        "left": 18,
+        "w": 260,
+        "text": "CAM SCHLITTLER Schlittler struck out 10 6⅓ scoreless innings, two hits allowed 10 strikeouts needed 10+ Chance of 10+ strikeouts Pregame 18.5% Sources"
+      },
+      {
+        "id": "rice-2hr",
+        "top": 142,
+        "left": 296,
+        "w": 260,
+        "text": "BEN RICE Rice homered twice 4 hits · 6 RBI 5th 8th · grand slam 2 home runs needed 2+ Chance of 2+ home runs Pregame 2% Sources"
+      },
+      {
+        "id": "nyy-series-g1",
+        "top": 142,
+        "left": 574,
+        "w": 260,
+        "text": "YANKEES Series win chance rose Yankees led 1–0 after Game 1 Chance of the Yankees winning the series Pregame 56% After Game 1 80.5% Recorded 29 Sep Sources"
+      }
+    ],
+    "row": {
+      "scrollWidth": 864,
+      "clientWidth": 354
+    },
+    "sectionOrder": {
+      "winProbabilityCard": 526,
+      "highlights": 1420,
+      "catalogue": 8344,
+      "pageHeight": 12158
+    },
+    "catalogueOpenBefore": false,
+    "cardHeights": [
+      493,
+      493,
+      493
+    ],
+    "closed": {
+      "railH": 499,
+      "railToButton": 18,
+      "cards": [
+        {
+          "id": "schlittler-10k",
+          "h": 493,
+          "innerGapAboveSources": 59,
+          "sourcesTopFromCardTop": 451,
+          "blankBelowCard": 6,
+          "fontPx": "24px"
+        },
+        {
+          "id": "rice-2hr",
+          "h": 493,
+          "innerGapAboveSources": 93,
+          "sourcesTopFromCardTop": 451,
+          "blankBelowCard": 6,
+          "fontPx": "24px"
+        },
+        {
+          "id": "nyy-series-g1",
+          "h": 493,
+          "innerGapAboveSources": 18,
+          "sourcesTopFromCardTop": 451,
+          "blankBelowCard": 6,
+          "fontPx": "24px"
+        }
+      ]
+    },
+    "naturalHeights": [
+      452,
+      418,
+      493
+    ],
+    "open": {
+      "railH": 610,
+      "railToButton": 18,
+      "cards": [
+        {
+          "id": "schlittler-10k",
+          "h": 604,
+          "innerGapAboveSources": 131,
+          "sourcesTopFromCardTop": 523,
+          "blankBelowCard": 6,
+          "fontPx": "24px"
+        },
+        {
+          "id": "rice-2hr",
+          "h": 604,
+          "innerGapAboveSources": 132,
+          "sourcesTopFromCardTop": 490,
+          "blankBelowCard": 6,
+          "fontPx": "24px"
+        },
+        {
+          "id": "nyy-series-g1",
+          "h": 604,
+          "innerGapAboveSources": 18,
+          "sourcesTopFromCardTop": 451,
+          "blankBelowCard": 6,
+          "fontPx": "24px"
+        }
+      ]
+    },
+    "sourcesText": [
+      "Sources Pregame 18.5% · Kalshi · 29 Sep, 4:52 PM PDT",
+      "Sources Pregame 2% combines: Kalshi 2% · 29 Sep, 4:50 PM PDT Polymarket 1.1% · 29 Sep, 4:50 PM PDT",
+      "Sources Game 1 of the best-of-three: Yankees 9, Red Sox 0 Pregame 56% · Kalshi · 29 Sep, 4:51 PM PDT After Game 1 80.5% · Kalshi · 29 Sep, 8:55 PM PDT"
+    ]
+  }
+}

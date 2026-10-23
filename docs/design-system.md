@@ -35,6 +35,7 @@ Bain Luck copy is **quiet, declarative, and trusting the numbers**. The data is 
 - **Never anthropomorphizes the user** ("You'd love this market!"). Brief second-person only in toasts and empty states ("Check back soon — we surface the best stuff automatically").
 - **No betting-industry argot.** Never "juice," "vig," "chalk," "sharp," "action." Say "probability," "favorite," "underdog," "market," "movement."
 - **Confidence without hedging.** "Opened 55/45" > "It looks like this might have opened around 55/45."
+- **Name the thing, not "questions"** (#10877). "Question" is not the product's umbrella noun, and no single word replaces it: a heading or control says what is behind it, or drops the noun. Game page: "All markets", "Prop lines", "See all 411 props". Discover bundle footer: "All 6 markets" (each member is one market; the count never counts outcomes), "All N games" when every member is a game, "See all N" for a mix. Venue titles phrased as questions stay as served, and internal keys (`shared_question`, `QuestionCatalog`) are not renamed.
 
 **Source Attribution**
 - Source attribution is always quiet — small tags/chips at the data row level, never in headlines, blurbs, or section copy. The product's voice is the aggregate, not the vendors. Individual market rows may show a source chip (Kalshi, Polymarket) for transparency.

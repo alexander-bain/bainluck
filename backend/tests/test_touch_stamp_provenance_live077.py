@@ -101,6 +101,9 @@ _PREDICATE = re.compile(r"^\s*(AND|OR|WHERE)\b", re.I)
 _CLOCK_VALUES = frozenset({
     "func.now()", "now()", "NOW()", "now", "at",
     ":applied_version", ":restored_version",
+    # #11138: `HeldRowQuotes.overlay` dates a held quote by its frozen DB-clock
+    # sample (`clock_timestamp()`, the same domain as `now()`), beside the price.
+    "datetime.fromtimestamp(bound, timezone.utc)",
 })
 
 #: Values that hand the stored stamp back out — serialisers, not writes. Matched

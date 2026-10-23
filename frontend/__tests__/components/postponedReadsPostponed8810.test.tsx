@@ -171,9 +171,13 @@ describe("the event page feeds the authority's word from the payload", () => {
     expect(src).toContain("authorityStoppageDescription(stoppageLabel)");
     expect(src).toContain("stopped={stoppageLabel !== null}");
     // Both hero scores, the score chart, (#10239) the final score handed to the projected final
-    // points module, and (#9483) the NFL card reader's match line: a postponed match's 0–0 filler
+    // points module, (#9483) the NFL card reader's match line, and (#11296) the actual score the
+    // final's "Before scheduled start" band is admitted against: a postponed match's 0–0 filler
     // is never passed in as a final or printed as a score.
-    expect(src.match(/!heroScoreIsStoppageFiller/g)?.length).toBe(5);
+    expect(src.match(/!heroScoreIsStoppageFiller/g)?.length).toBe(6);
+    expect(src).toMatch(
+      /isFinished && heroScorePairPresent && !heroScoreIsStoppageFiller\s*\?\s*finalForecastComparison\(/,
+    );
   });
 });
 

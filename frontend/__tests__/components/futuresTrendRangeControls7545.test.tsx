@@ -126,7 +126,7 @@ describe("#7545 the coverage line", () => {
     // the chip still reads 1W and is still the reader's choice...
     expect(html).toMatch(/aria-pressed="true"[^>]*>1W</);
     // ...and the page does not let that stand as the whole truth.
-    expect(text(node)).toContain("Too few prices in 7 days — showing 30 days.");
+    expect(text(node)).toContain("Limited history for 7 days — showing 30 days.");
   });
 
   it("joins the coverage line and the cadence note into one line", () => {
@@ -138,7 +138,7 @@ describe("#7545 the coverage line", () => {
       />
     );
     expect(text(node)).toContain(
-      "Too few prices in 7 days — showing 30 days. · Prices update hourly"
+      "Limited history for 7 days — showing 30 days. · Prices update hourly"
     );
   });
 
@@ -154,7 +154,7 @@ describe("#7545 the coverage line", () => {
     );
     const t = text(node);
     expect(t).toContain("Prices update hourly");
-    expect(t).not.toContain("Too few prices");
+    expect(t).not.toContain("Limited history");
   });
 
   it("never prints machine vocabulary at the reader", () => {

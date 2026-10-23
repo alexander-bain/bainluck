@@ -79,6 +79,9 @@ function render(history: Specimen) {
       chartEndTime={domain!.end}
       sharedTicks={domain!.ticks}
       chartLabelFormat={domain!.labelFormat}
+      // #11356 — the caption describes a DRAWN line, and over a served blend
+      // the source lines are drawn only with Sources open.
+      defaultSourcesExpanded
     />,
   );
 }

@@ -9,9 +9,11 @@
 // probability), not fight-card outcome lists — they render via MatchupDuel. The
 // combat/golf outcome-card path is unchanged for non-matchup children.
 
+import Link from "next/link";
 import { formatProbability } from "@/lib/api";
 import {
   childLeader,
+  awardsResult,
   childReactKey,
   isMatchupChild,
   splitChildren,
@@ -167,6 +169,22 @@ function RailBody({
   );
 }
 
+export function AwardsCategoryCard({ child }: { child: EventConceptChild }) {
+  const result = awardsResult(child);
+  const display = (name: string) => name.toLowerCase() === "other" ? "Another nominee" : name;
+  const title = child.market_name || child.name || "Category";
+  return <article id={`awards-category-${child.market_id}`} className="scroll-mt-20 min-w-0 rounded-card border border-surface-border bg-surface-card p-4 space-y-2">
+    <h3 className="text-sm font-semibold text-text-primary">{typeof child.market_id === "number" ? <Link href={`/futures/${child.market_id}`} className="hover:underline">{title}</Link> : title}</h3>
+    {result.state === "announced" ? <>
+      <p className="text-xs font-semibold text-text-secondary">{result.prop ? "Result" : result.names.length > 1 ? "Joint winners" : "Winner"}</p>
+      <ul className="space-y-1 text-base font-semibold text-text-primary">{result.names.map((name) => <li key={name}>{display(name)}</li>)}</ul>
+    </> : result.state === "closed" ? <p className="text-sm text-text-secondary">Trading closed · Result not yet confirmed</p> : <>
+      <p className="text-xs font-semibold text-text-secondary">Not announced</p>
+      <ul className="space-y-1 text-sm text-text-secondary">{topOutcomes(child).map((outcome) => <li key={outcome.name} className="flex justify-between gap-3"><span>{display(outcome.name)}</span><span className="shrink-0 font-mono">{formatProbability(outcome.probability)}</span></li>)}</ul>
+    </>}
+  </article>;
+}
+
 interface MatchupsRailProps {
   items: EventConceptChild[];
   /** L2-130: a child already shown in the container hero — excluded from the rail
@@ -182,7 +200,11 @@ interface MatchupsRailProps {
 export default function MatchupsRail({ items, exclude, title, sport }: MatchupsRailProps) {
   const shown = (items || []).filter((c) => c !== exclude);
   if (shown.length === 0) return null;
-  const { live, settled } = splitChildren(shown);
+  if (sport === "awards") return <section id={title === "Nominations and more" ? "props" : "matchups"} className="scroll-mt-20 rounded-card bg-surface-card p-4 sm:p-6 space-y-4">
+    <h2 className="text-title-3 font-semibold text-text-primary">{title || "Categories"}</h2>
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">{shown.map((child, index) => <AwardsCategoryCard key={childReactKey(child, index)} child={child} />)}</div>
+  </section>;
+  const { live, settled } = splitChildren(shown, sport);
 
   return (
     <section id="matchups" className="bg-surface-card rounded-card shadow-card p-6">

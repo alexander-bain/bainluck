@@ -15,6 +15,9 @@
    decided writes; a statement changing other than one row rolls the run back.
 6. **The undo and the readback** work from the artifact alone.
 7. **The attended run is bounded** by its own lock and statement budgets.
+8. **A COMMIT that does not return is UNKNOWN** (exit 3), landed or not, with no
+   rollback claim, undo line or second COMMIT; a refusal before the COMMIT and an
+   acknowledged COMMIT each keep their output and exit through a failing cleanup.
 """
 
 from __future__ import annotations
@@ -630,3 +633,395 @@ def test_a_lock_timeout_refuses_and_rolls_back_without_commit(
     assert out.startswith("REFUSED:") and "55P03" in out and "nothing committed" in out
     assert "UNDO" not in out
     assert s.rolled_back and not s.committed
+
+
+# ── 8. a COMMIT that does not return is UNKNOWN, never "nothing committed" ───
+#
+# Root's finding (2026-10-18, blob 7b2ab2dc): ``main()`` caught a DBAPIError raised
+# by the COMMIT itself and printed "rolled back, nothing committed" — false when the
+# server made the COMMIT durable and only the acknowledgement was lost. And its
+# ``return 2`` was a NORMAL exit from ``get_task_session``, whose normal exit sends
+# a second COMMIT behind the unacknowledged one. These arms drive the PRODUCTION
+# ``app.tasks.base.get_task_session``; only the engine and session factory it
+# builds are inert, so its normal-exit COMMIT is real (the rig control proves it).
+# Each session keeps ``durable`` (what the server holds) apart from ``live`` (what
+# this transaction sees), and its COMMIT either lands before losing the
+# acknowledgement or never lands at all.
+
+
+class _ConnectionFailure(Exception):
+    sqlstate = "08006"
+
+
+def _lost_ack():
+    from sqlalchemy.exc import OperationalError
+
+    return OperationalError("COMMIT", {}, _ConnectionFailure("connection lost"))
+
+
+class WireSession(FakeSession):
+    """``commit_fails`` maps the Nth COMMIT (1-based) to (exception, landed)."""
+
+    def __init__(
+        self,
+        live,
+        calls,
+        *,
+        commit_fails=None,
+        rollback_raises=None,
+        close_raises=None,
+        moved_after_read=False,
+    ):
+        super().__init__(live)
+        self.durable = copy.deepcopy(self.live)
+        self.calls = calls
+        self.commits = 0
+        self._commit_fails = commit_fails or {}
+        self._rollback_raises = rollback_raises
+        self._close_raises = close_raises
+        self._moved_after_read = moved_after_read
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def after_read(self):
+        if self._moved_after_read:  # the poller touched 901: its UPDATE changes 0 rows
+            self.live[901][4] = V_ITF + timedelta(seconds=1)
+
+    async def commit(self):
+        self.calls.append("commit")
+        self.commits += 1
+        exc, landed = self._commit_fails.get(self.commits, (None, True))
+        if landed:
+            self.durable = copy.deepcopy(self.live)
+            self.committed = True
+        if exc is not None:
+            raise exc
+
+    async def rollback(self):
+        # A client rollback cannot reach a COMMIT the server already made durable.
+        self.calls.append("rollback")
+        self.rolled_back = True
+        self.live = copy.deepcopy(self.durable)
+        if self._rollback_raises is not None:
+            raise self._rollback_raises
+
+    async def close(self):
+        self.calls.append("close")
+        if self._close_raises is not None:
+            raise self._close_raises
+
+
+class _InertEngine:
+    def __init__(self, calls, raises=None):
+        self._calls, self._raises = calls, raises
+
+    async def dispose(self):
+        self._calls.append("dispose")
+        if self._raises is not None:
+            raise self._raises
+
+
+AFTER = {
+    901: ("kalshi", ITF["external_id"], "tennis", ITF_NAME, V_ITF),
+    902: ("kalshi", OTD["external_id"], "basketball", OTD_NAME, V_OTD),
+}
+
+
+def _durable(session):
+    return {i: v[2] for i, v in session.durable.items()}
+
+
+BEFORE_STATE = {901: "football", 902: "football"}
+AFTER_STATE = {901: "tennis", 902: "basketball"}
+
+
+def _wire_main(
+    repair, monkeypatch, session, mode, *, dispose_raises=None, artifact=None
+):
+    """Run the real ``main()`` through the real ``get_task_session``; return its code."""
+    import app.tasks.base as base
+
+    assert base.get_task_session.__module__ == "app.tasks.base"
+    assert base.get_task_session.__wrapped__.__qualname__ == "get_task_session"
+    seen: list[dict] = []
+
+    def engine_factory(**kwargs):
+        seen.append(kwargs)
+        return _InertEngine(session.calls, dispose_raises)
+
+    monkeypatch.setattr(base, "_get_task_engine", engine_factory)
+    monkeypatch.setattr(base, "async_sessionmaker", lambda bound, **kw: lambda: session)
+    artifact = artifact or _fresh_artifact()
+    argv = ["repair_1109", "--plan", "-"]
+    if mode == "apply":
+        h = _run(
+            repair,
+            FakeSession(LIVE),
+            artifact,
+            mode="dry-run",
+            now=datetime.now(timezone.utc),
+        )["plan_hash"]
+        argv += ["--apply", "--expect-plan-hash", h]
+    elif mode == "restore":
+        argv += ["--restore", "--ids", "901,902"]
+    monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(artifact)))
+    code = asyncio.run(repair.main())
+    assert seen == [
+        {
+            "statement_timeout_ms": repair.STATEMENT_TIMEOUT_MS,
+            "lock_timeout_ms": repair.LOCK_TIMEOUT_MS,
+        }
+    ]
+    return code
+
+
+_START = {"apply": LIVE, "restore": AFTER}
+_MOVED = {"apply": AFTER_STATE, "restore": BEFORE_STATE}
+_UNMOVED = {"apply": BEFORE_STATE, "restore": AFTER_STATE}
+
+
+def _report(out: str) -> dict:
+    return json.loads(out[out.index("{") :])
+
+
+def test_rig_control_the_production_wrapper_commits_again_on_a_normal_exit(
+    repair, monkeypatch, capsys
+):
+    """Without this the no-second-COMMIT arms below would be vacuous."""
+    s = WireSession(LIVE, [])
+    assert _wire_main(repair, monkeypatch, s, "apply") == 0
+    assert s.calls == ["commit", "commit", "close", "dispose"]
+    assert _durable(s) == AFTER_STATE
+    out = capsys.readouterr().out
+    assert '"written": 2' in out and "UNDO (keep the artifact)" in out
+    assert "--restore --ids 901,902" in out
+
+
+@pytest.mark.parametrize("mode", ["apply", "restore"])
+@pytest.mark.parametrize("landed", [True, False], ids=["landed", "never-landed"])
+def test_a_lost_commit_acknowledgement_is_unknown_never_nothing_committed(
+    repair, monkeypatch, capsys, mode, landed
+):
+    s = WireSession(_START[mode], [], commit_fails={1: (_lost_ack(), landed)})
+    assert _wire_main(repair, monkeypatch, s, mode) == 3
+    # The specimen: the server holds the writes exactly when the COMMIT landed.
+    assert _durable(s) == (_MOVED if landed else _UNMOVED)[mode]
+    captured = capsys.readouterr()
+    out = captured.out
+    for claim in ("nothing committed", "rolled back", "REFUSED", "UNDO", "--restore"):
+        assert claim not in out
+    assert "re-run" not in out and "retry" not in out.replace("Not retried", "")
+    report = _report(out)
+    assert report["outcome"] == "UNKNOWN" and report["mode"] == mode
+    applied = [(901, "football", "tennis"), (902, "football", "basketball")]
+    expected = applied if mode == "apply" else [(i, t, f) for i, f, t in applied]
+    assert [tuple(w) for w in report["write"]] == expected
+    assert report["statements_changed"] == 2 and "08006" in report["unknown"]
+    assert "--readback" in report["readback"] and "--plan -" in report["readback"]
+    # The wrapper left by its exception path: no second COMMIT behind the lost one.
+    assert s.commits == 1 and s.calls == ["commit", "rollback", "close", "dispose"]
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize("mode", ["apply", "restore"])
+def test_the_unknown_report_is_the_same_whether_or_not_the_commit_landed(
+    repair, monkeypatch, capsys, mode
+):
+    """The client cannot tell the two worlds apart, so its words must not differ."""
+    outs, durables = [], []
+    artifact = _fresh_artifact()
+    for landed in (True, False):
+        s = WireSession(_START[mode], [], commit_fails={1: (_lost_ack(), landed)})
+        assert _wire_main(repair, monkeypatch, s, mode, artifact=artifact) == 3
+        outs.append(capsys.readouterr().out)
+        durables.append(_durable(s))
+    assert durables[0] != durables[1]
+    assert outs[0] == outs[1] and _report(outs[0])["outcome"] == "UNKNOWN"
+
+
+class LockedWire(WireSession):
+    async def execute(self, stmt, params):
+        if str(stmt).lstrip().upper().startswith("UPDATE") and len(self.updates) == 1:
+            from sqlalchemy.exc import OperationalError
+
+            self.updates.append(dict(params))
+            raise OperationalError(str(stmt), params, _LockNotAvailable("lock timeout"))
+        return await super().execute(stmt, params)
+
+
+@pytest.mark.parametrize("failing", ["rollback", "close", "dispose"])
+def test_unknown_survives_a_failing_cleanup(repair, monkeypatch, capsys, failing):
+    s = WireSession(
+        LIVE,
+        [],
+        commit_fails={1: (_lost_ack(), True)},
+        rollback_raises=_lost_ack() if failing == "rollback" else None,
+        close_raises=_lost_ack() if failing == "close" else None,
+    )
+    dispose = _lost_ack() if failing == "dispose" else None
+    assert _wire_main(repair, monkeypatch, s, "apply", dispose_raises=dispose) == 3
+    captured = capsys.readouterr()
+    assert _report(captured.out)["outcome"] == "UNKNOWN"
+    assert "nothing committed" not in captured.out and "UNDO" not in captured.out
+    assert "cleanup raised OperationalError after the UNKNOWN report" in captured.err
+    assert s.commits == 1
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_a_cancel_on_the_commit_prints_unknown_and_stays_a_cancel(
+    repair, monkeypatch, capsys, cleanup_fails
+):
+    s = WireSession(
+        LIVE,
+        [],
+        commit_fails={1: (asyncio.CancelledError(), True)},
+        rollback_raises=_lost_ack() if cleanup_fails else None,
+    )
+    with pytest.raises(asyncio.CancelledError):
+        _wire_main(repair, monkeypatch, s, "apply")
+    out = capsys.readouterr().out
+    assert _report(out)["outcome"] == "UNKNOWN" and "nothing committed" not in out
+    assert s.commits == 1 and _durable(s) == AFTER_STATE
+
+
+@pytest.mark.parametrize("failing", ["rollback", "exit-commit", "dispose"])
+@pytest.mark.parametrize("refusal", ["moved-row", "lock-timeout"])
+def test_a_refusal_before_the_commit_survives_a_failing_helper(
+    repair, monkeypatch, capsys, failing, refusal
+):
+    """Primary error first: a dead connection's cleanup never replaces the refusal."""
+    kw = {
+        "rollback_raises": _lost_ack() if failing == "rollback" else None,
+        # Nothing was committed by the run, so the wrapper's exit COMMIT is the 1st.
+        "commit_fails": {1: (_lost_ack(), True)} if failing == "exit-commit" else None,
+    }
+    if refusal == "moved-row":
+        s = WireSession(LIVE, [], moved_after_read=True, **kw)
+    else:
+        s = LockedWire(LIVE, [], **kw)
+    dispose = _lost_ack() if failing == "dispose" else None
+    assert _wire_main(repair, monkeypatch, s, "apply", dispose_raises=dispose) == 2
+    captured = capsys.readouterr()
+    assert captured.out.startswith("REFUSED:") and "UNDO" not in captured.out
+    assert ("901" if refusal == "moved-row" else "55P03") in captured.out
+    if refusal == "lock-timeout":
+        assert "nothing committed" in captured.out
+    assert "cleanup raised OperationalError after the refusal" in captured.err
+    assert _durable(s) == BEFORE_STATE and s.rolled_back
+    assert "commit" not in s.calls[: s.calls.index("rollback") + 1]
+
+
+@pytest.mark.parametrize("failing", ["exit-commit", "close", "dispose"])
+def test_an_acknowledged_commit_survives_a_later_helper_error(
+    repair, monkeypatch, capsys, failing
+):
+    s = WireSession(
+        LIVE,
+        [],
+        commit_fails={2: (_lost_ack(), False)} if failing == "exit-commit" else None,
+        close_raises=_lost_ack() if failing == "close" else None,
+    )
+    dispose = _lost_ack() if failing == "dispose" else None
+    assert _wire_main(repair, monkeypatch, s, "apply", dispose_raises=dispose) == 0
+    captured = capsys.readouterr()
+    assert _durable(s) == AFTER_STATE
+    assert '"written": 2' in captured.out and "--restore --ids 901,902" in captured.out
+    assert "UNKNOWN" not in captured.out and "REFUSED" not in captured.out
+    assert "after the apply above had its COMMIT acknowledged" in captured.err
+
+
+def test_an_interrupt_in_the_cleanup_after_an_acknowledged_commit_keeps_its_type(
+    repair, monkeypatch, capsys
+):
+    s = WireSession(LIVE, [])
+    with pytest.raises(asyncio.CancelledError):
+        _wire_main(
+            repair, monkeypatch, s, "apply", dispose_raises=asyncio.CancelledError()
+        )
+    out = capsys.readouterr().out
+    assert '"written": 2' in out and "--restore --ids 901,902" in out
+    assert _durable(s) == AFTER_STATE
+
+
+# CERT-4239's independent extension, made permanent (its fifteen cases, Root
+# directive 015): restore through the same lost-acknowledgement and cleanup paths
+# apply already pins, and the ORIGINAL cancellation object surviving every primary
+# path. Same rig, same coverage limit: synthetic transport and server controls over
+# the production session helper — not real PostgreSQL, not production.
+
+
+@pytest.mark.parametrize("landed", [True, False], ids=["landed", "never-landed"])
+@pytest.mark.parametrize("failing", ["rollback", "close", "dispose"])
+def test_restore_unknown_survives_a_failing_cleanup_in_both_durable_worlds(
+    repair, monkeypatch, capsys, landed, failing
+):
+    s = WireSession(
+        AFTER,
+        [],
+        commit_fails={1: (_lost_ack(), landed)},
+        rollback_raises=_lost_ack() if failing == "rollback" else None,
+        close_raises=_lost_ack() if failing == "close" else None,
+    )
+    dispose = _lost_ack() if failing == "dispose" else None
+    assert _wire_main(repair, monkeypatch, s, "restore", dispose_raises=dispose) == 3
+    captured = capsys.readouterr()
+    report = _report(captured.out)
+    assert report["outcome"] == "UNKNOWN" and report["mode"] == "restore"
+    assert s.commits == 1
+    assert _durable(s) == (BEFORE_STATE if landed else AFTER_STATE)
+    for claim in ("REFUSED", "nothing committed", "UNDO", "--restore"):
+        assert claim not in captured.out
+
+
+@pytest.mark.parametrize("failing", ["exit-commit", "close", "dispose"])
+def test_an_acknowledged_restore_survives_a_later_helper_error(
+    repair, monkeypatch, capsys, failing
+):
+    s = WireSession(
+        AFTER,
+        [],
+        commit_fails={2: (_lost_ack(), False)} if failing == "exit-commit" else None,
+        close_raises=_lost_ack() if failing == "close" else None,
+    )
+    dispose = _lost_ack() if failing == "dispose" else None
+    assert _wire_main(repair, monkeypatch, s, "restore", dispose_raises=dispose) == 0
+    captured = capsys.readouterr()
+    assert _report(captured.out)["written"] == 2
+    assert _durable(s) == BEFORE_STATE
+    assert "UNKNOWN" not in captured.out and "REFUSED" not in captured.out
+    assert "after the restore above had its COMMIT acknowledged" in captured.err
+
+
+@pytest.mark.parametrize("mode", ["apply", "restore"])
+@pytest.mark.parametrize(
+    "path",
+    ["commit-cancel-close-error", "unknown-cleanup-cancel", "refused-cleanup-cancel"],
+)
+def test_the_original_cancel_object_survives_every_primary_path(
+    repair, monkeypatch, capsys, mode, path
+):
+    cancel = asyncio.CancelledError("the original cancel")
+    dispose = None
+    if path == "commit-cancel-close-error":
+        s = WireSession(
+            _START[mode], [], commit_fails={1: (cancel, True)}, close_raises=_lost_ack()
+        )
+    elif path == "unknown-cleanup-cancel":
+        s = WireSession(_START[mode], [], commit_fails={1: (_lost_ack(), False)})
+        dispose = cancel
+    else:
+        s = LockedWire(_START[mode], [], rollback_raises=cancel)
+    with pytest.raises(asyncio.CancelledError) as raised:
+        _wire_main(repair, monkeypatch, s, mode, dispose_raises=dispose)
+    assert raised.value is cancel
+    out = capsys.readouterr().out
+    if path == "refused-cleanup-cancel":
+        assert out.startswith("REFUSED:") and s.commits == 0
+    else:
+        assert _report(out)["outcome"] == "UNKNOWN" and s.commits == 1

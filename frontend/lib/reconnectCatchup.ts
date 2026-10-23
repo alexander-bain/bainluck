@@ -9,13 +9,27 @@ export function createReconnectCatchup(
   let latest = 0;
   let retired = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let dueAt = 0;
   return {
-    recover(generation: number) {
+    recover(generation: number, maximumDelayMs?: number) {
       if (retired || !Number.isSafeInteger(generation) || generation <= latest) return;
       latest = generation;
-      if (timer !== null) return;
+      if (timer !== null && maximumDelayMs === undefined) return;
       const chosen = delayMs();
-      const wait = Number.isFinite(chosen) ? Math.max(100, Math.min(4999, chosen)) : 4999;
+      const regular = Number.isFinite(chosen) ? Math.max(100, Math.min(4999, chosen)) : 4999;
+      const cap = typeof maximumDelayMs === "number" && Number.isFinite(maximumDelayMs)
+        ? Math.max(100, Math.min(4999, maximumDelayMs)) : 4999;
+      // Rescale the full ordinary draw into the prompt interval: clamping
+      // would put almost every viewer on exactly the maximum delay.
+      const wait = cap < 4999
+        ? 100 + Math.floor(((regular - 100) / 4900) * (cap - 99))
+        : regular;
+      const nextDue = Date.now() + wait;
+      if (timer !== null) {
+        if (dueAt <= nextDue) return;
+        clearTimeout(timer);
+      }
+      dueAt = nextDue;
       timer = setTimeout(() => {
         timer = null;
         if (!retired) requestPair(latest);

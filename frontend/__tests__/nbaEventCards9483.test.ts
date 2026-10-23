@@ -8,10 +8,11 @@
  *   - `nbaPregameMatrix15327183.json`: Raptors @ Knicks before tip-off, every
  *     option `quoted` at 18:2xZ with `no_pregame_pin`.
  *
- * Root's selected fallback (10/15): no admitted settled baseline exists, so the
+ * Both bodies predate the producer's `pregame_reading` field (PR #11125), so the
  * final cards keep their shape and confirmed results and say the pregame chance
- * is unavailable. They never read the terminal 0/100 as a chance and never
- * rebuild 82.5% from movement. Fixed clocks only (gotcha #44).
+ * is unavailable — the old-server fallback. They never read the terminal 0/100
+ * as a chance and never rebuild 82.5% from movement. The field's own cases are
+ * in `nbaPregameReading9483.test.ts`. Fixed clocks only (gotcha #44).
  */
 
 import finalBody from "./fixtures/nbaFinalMatrix15320337.json";
@@ -101,13 +102,13 @@ describe("#9483 NBA journey 10 — the exact final total (15320337)", () => {
     expect(card.points[defaultLadderIndex(card)!].x).toBe(204.5);
   });
 
-  it("no pregame chance is drawn: the settled option serves no pin, and 0/100 is never a chance", () => {
+  it("no pregame chance is drawn: this body predates pregame_reading, and 0/100 is never a chance", () => {
     expect(card.points.every((p) => p.chance === null && p.now === null)).toBe(true);
     expect(ladderCaption(card)).toBe("Pregame chance unavailable for these lines");
     expect(card.points.find((p) => p.x === 206.5)!.detail.baseline).toBeNull();
   });
 
-  it("a supplied, admitted pin would be drawn — the 82.5% waits for the field, not for code", () => {
+  it("a comparison pin on a settled option is NOT drawn: a final reads only the producer's pregame_reading", () => {
     const pinned = JSON.parse(JSON.stringify(finalBody.game_question_matrix));
     for (const q of pinned.questions) {
       for (const o of q.options) {
@@ -121,8 +122,8 @@ describe("#9483 NBA journey 10 — the exact final total (15320337)", () => {
       }
     }
     const withPin = totalLadderCard(finalInputs({ questions: decodeQuestionMatrix(pinned) }))!;
-    expect(withPin.points.find((p) => p.x === 206.5)!.chance).toBe(0.825);
-    expect(ladderCaption(withPin)).toBe("Chance before tip-off of finishing above each line");
+    expect(withPin.points.every((p) => p.chance === null)).toBe(true);
+    expect(ladderCaption(withPin)).toBe("Pregame chance unavailable for these lines");
   });
 });
 
