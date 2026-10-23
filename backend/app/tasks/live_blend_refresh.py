@@ -3180,7 +3180,8 @@ class LiveBlendRefresher:
         if interrupted is not None:
             raise interrupted
 
-    async def _read_groups(self, session, event_ids: list[int], *, overlay_held=True) -> dict[int, tuple]:
+    async def _read_groups(self, session, event_ids: list[int], *, overlay_held=True,
+                           clock_sample=None) -> dict[int, tuple]:
         from types import SimpleNamespace
         from sqlalchemy import and_, func, literal, or_, select
         from app.models.models import Event, FuturesMarket, FuturesOutcome
@@ -3265,7 +3266,10 @@ class LiveBlendRefresher:
                         if model is Event and key == "win_probability_sources"
                         else getattr(model, key)
                         for model, keys in fields for key in keys
-                    ), *preview_columns)
+                    ), *preview_columns, *(
+                        (func.clock_timestamp().label("observation_clock"),)
+                        if clock_sample is not None else ()
+                    ))
                     .select_from(FuturesMarket)
                     .join(Event, Event.id == FuturesMarket.event_id)
                     .outerjoin(FuturesOutcome, outcome_join)
@@ -3275,6 +3279,11 @@ class LiveBlendRefresher:
                     )
                 )
             ).all()
+        if clock_sample is not None and rows:
+            # Read DB time in the existing statement, without another pool
+            # checkout. The caller may adopt it only after its scope succeeds.
+            clock_sample["value"] = min(row[-1] for row in rows)
+            rows = [row[:-1] for row in rows]
         grouped: dict[int, tuple] = {}
         entries: dict[int, MarketOutcomes] = {}
         held = self.held_quotes if overlay_held else None
@@ -4680,8 +4689,9 @@ class LiveBlendRefresher:
         The consumer excludes same-event price/stamp ownership and holds its
         scope guard until this work finishes. Graphs/sessions are call-local;
         False asks the caller to retain frozen inputs after capacity/read failure.
-        The graph and copied observation clocks are disposable: none
-        enters `held_quotes`, a stamp plan, a receipt or the history queue.
+        The graph and copied input clocks are disposable. A separately selected
+        DB clock may advance held_quotes only for inputs received AFTER this
+        read scope completes; the frozen clocks in this batch never change.
         `validate` rechecks immutable input identity and the flush's ownership
         under its buffer lock, including at the final Redis send boundary.
         """
@@ -4708,13 +4718,38 @@ class LiveBlendRefresher:
             grouped = None
             read_budget = asyncio.timeout(.25)
             read_timing = {"started_s": _mono()}
+            clock_owner = self.held_quotes if self._observation_read_factory is not None else None
+            clock_sample = None
+            if isinstance(clock_owner, HeldRowQuotes) and not clock_owner._closed:
+                clock_owner._sample_started += 1
+                clock_ordinal = clock_owner._sample_started
+                clock_owner._sampling += 1
+                clock_owner._last_sample_started = clock_owner._now()
+                clock_sample = {}
             try:
                 token = _observation_read_timing.set(read_timing)
                 try:
                     async with read_budget, self._session_slot(), factory() as session:
-                        grouped = await self._read_groups(session, sorted(event_ids), overlay_held=False)
+                        grouped = await self._read_groups(
+                            session, sorted(event_ids), overlay_held=False,
+                            **({"clock_sample": clock_sample} if clock_sample is not None else {}),
+                        )
                         read_timing["graph_ready_ms"] = (_mono() - read_timing["started_s"]) * 1000
+                    # Only normal context completion qualifies, never query or
+                    # cleanup timeout/cancellation. A late older read cannot
+                    # replace a newer sample or clear its failure episode.
+                    if (clock_sample and self.held_quotes is clock_owner
+                            and not clock_owner._closed
+                            and clock_ordinal > clock_owner._sample_published):
+                        clock_owner._database_bound = clock_sample["value"].timestamp()
+                        clock_owner._sample_published = clock_ordinal
+                        if clock_ordinal > clock_owner._sample_failure_ordinal:
+                            clock_owner._sample_failure_episode = False
+                            clock_owner._sample_backoff_until = 0.0
+                        clock_owner._last_sample_done = clock_owner._now()
                 finally:
+                    if clock_sample is not None:
+                        clock_owner._sampling -= 1
                     read_timing["scope_ms"] = (_mono() - read_timing["started_s"]) * 1000
                     _observation_read_timing.reset(token)
             except TimeoutError:
