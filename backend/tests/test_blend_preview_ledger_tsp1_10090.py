@@ -1288,3 +1288,238 @@ class TestLifecycleCaller:
         assert await rig.hget('nevents') == '1'
         assert await rig.hget('retired') == '0'
         assert refresher.preview_stats['publish_errors'] == 1
+
+
+# Tier 1 / #10090: an advancing landed commit may renew its own live chain.
+# This is persistence progress, never permission to refresh observation dates.
+class TestLandedCommitRenewal:
+    @pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+    async def test_advancing_landed_commits_keep_a_trailing_chain_visible(self, rig):
+        local = [0.0]
+        rig.k._clock = lambda: local[0]
+        reader = Reader()
+        [first] = _blends(await rig.run(rig.k, _propose(rig.k, "kalshi", 0.60)))
+        reader.after(first, 1_000_000)
+        committed_seq = rig.k.pending_seq(EV, "kalshi")
+        for tick, elapsed in enumerate((30, 60, 90), 1):
+            local[0] = elapsed
+            await rig.clock(1_000_000 + elapsed * 1000)
+            [latest] = _blends(await rig.run(rig.k, _propose(
+                rig.k, "kalshi", 0.60 + tick / 100, basis_s=1 + tick,
+            )))
+            reader.after(latest, 1_000_000 + elapsed * 1000)
+            newer_seq = rig.k.pending_seq(EV, "kalshi")
+            [renewed] = _blends(await rig.run(rig.k, rig.k.committed(
+                EV, "kalshi", seq=committed_seq, sources=BASE10, rev=10 + tick,
+            )))
+            reader.after(renewed, 1_000_000 + elapsed * 1000)
+            assert renewed["preview"]["ttl_ms"] == 60_000
+            assert reader.held["expires"] == 1_060_000 + elapsed * 1000
+            assert renewed["preview"]["pending"] == {"kalshi": 0.60 + tick / 100}
+            assert rig.k.expire() == []
+            committed_seq = newer_seq
+        local[0] = 151
+        await rig.clock(1_151_000)
+        frames = await rig.run(rig.k, rig.k.expire())
+        assert not _blends(frames)
+        assert await rig.hget(f"e:{EV}:m:kalshi") is None
+
+
+    async def _trailing(self, rig):
+        await rig.run(rig.k, _propose(rig.k, "kalshi", 0.60, basis_s=1))
+        first = rig.k.pending_seq(EV, "kalshi")
+        await rig.run(rig.k, _propose(rig.k, "kalshi", 0.61, basis_s=2))
+        return first
+
+    @pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+    async def test_duplicate_sequence_or_revision_never_renews(self, rig):
+        first = await self._trailing(rig)
+        await rig.clock(1_020_000)
+        ops = rig.k.committed(EV, "kalshi", seq=first, sources=BASE10, rev=11)
+        await rig.run(rig.k, ops)
+        deadline = (await rig.hget(f"e:{EV}:m:kalshi")).split()[3]
+        assert deadline == "1080000"
+        await rig.clock(1_040_000)
+        await rig.run(rig.k, ops)  # identical operation replay
+        await rig.run(rig.k, rig.k.committed(EV, "kalshi", seq=first, sources=BASE10, rev=12))
+        assert (await rig.hget(f"e:{EV}:m:kalshi")).split()[3] == deadline
+        second = rig.k.pending_seq(EV, "kalshi")
+        await rig.run(rig.k, _propose(rig.k, "kalshi", 0.62, basis_s=3))
+        await rig.run(rig.k, rig.k.committed(EV, "kalshi", seq=second, sources=BASE10, rev=11))
+        assert (await rig.hget(f"e:{EV}:m:kalshi")).split()[3] == deadline
+        # Neither crossed receipt may be reused as though both were new.
+        await rig.run(rig.k, rig.k.committed(EV, "kalshi", seq=second, sources=BASE10, rev=12))
+        assert (await rig.hget(f"e:{EV}:m:kalshi")).split()[3] == deadline
+
+    @pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+    async def test_expired_or_missing_chain_never_revives(self, rig):
+        first = await self._trailing(rig)
+        ops = rig.k.committed(EV, "kalshi", seq=first, sources=BASE10, rev=11)
+        await rig.clock(1_060_000)
+        assert not _blends(await rig.run(rig.k, ops))
+        assert await rig.hget(f"e:{EV}:m:kalshi") is None
+        assert not _blends(await rig.run(rig.k, ops))
+        assert await rig.hget(f"e:{EV}:m:kalshi") is None
+
+    @pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+    async def test_sibling_and_old_owner_cannot_renew(self, rig):
+        first = await self._trailing(rig)
+        ops = rig.k.committed(EV, "kalshi", seq=first, sources=BASE10, rev=11)
+        await rig.clock(1_030_000)
+        sibling = [{**ops[0], "owner": rig.p.claims["polymarket"]}]
+        await rig.run(rig.p, sibling)
+        assert (await rig.hget(f"e:{EV}:m:kalshi")).split()[3] == "1060000"
+        replacement = rig.registry()
+        await replacement.claim(rig.call, "kalshi")
+        await rig.run(replacement, _propose(replacement, "kalshi", 0.70, basis_s=3))
+        before = await rig.hget(f"e:{EV}:m:kalshi")
+        await rig.run(rig.k, ops)
+        assert await rig.hget(f"e:{EV}:m:kalshi") == before
+
+    @pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+    async def test_old_chain_and_unknown_commit_sequence_do_not_renew(self, rig):
+        first = await self._trailing(rig)
+        old = rig.k.committed(EV, "kalshi", seq=first, sources=BASE10, rev=11)
+        await rig.run(rig.k, rig.k.refused(EV, "kalshi", "error"))
+        await rig.clock(1_010_000)
+        await rig.run(rig.k, _propose(rig.k, "kalshi", 0.70, basis_s=3))
+        before = await rig.hget(f"e:{EV}:m:kalshi")
+        await rig.clock(1_030_000)
+        await rig.run(rig.k, old)
+        assert await rig.hget(f"e:{EV}:m:kalshi") == before
+        # Even a fabricated higher revision cannot make the prior sequence
+        # identify a member of the new chain.
+        await rig.run(rig.k, rig.k.committed(EV, "kalshi", seq=first, sources=BASE10, rev=12))
+        assert await rig.hget(f"e:{EV}:m:kalshi") == before
+        await rig.run(rig.k, rig.k.committed(EV, "kalshi", seq=None, sources=BASE10, rev=13))
+        assert await rig.hget(f"e:{EV}:m:kalshi") is None
+
+    @pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+    async def test_prepared_expiry_rechecks_renewal_and_lost_reply(self, rig):
+        import asyncio
+        first = await self._trailing(rig)
+        local = [60.0]
+        rig.k._clock = lambda: local[0]
+        expiry = rig.k.expire()  # prepared locally while Redis chain is live
+        assert len(expiry) == 1
+        local[0] = 30.0
+        await rig.clock(1_030_000)
+        commit = rig.k.committed(EV, "kalshi", seq=first, sources=BASE10, rev=11)
+        before = rig.k._events[EV].pending["kalshi"].since
+
+        async def lost_reply(*args):
+            await rig.call(*args)
+            raise asyncio.CancelledError
+
+        with pytest.raises(asyncio.CancelledError):
+            await rig.k.prepare(commit, lost_reply, rig.stats)
+        assert rig.k._events[EV].pending["kalshi"].since == before
+        assert (await rig.hget(f"e:{EV}:m:kalshi")).split()[3] == "1090000"
+        local[0] = 60.0
+        await rig.clock(1_060_000)
+        assert await rig.run(rig.k, expiry) == []
+        assert rig.k._events[EV].pending["kalshi"].since == 30.0
+        assert rig.k.expire() == []
+        local[0] = 90.0
+        await rig.clock(1_090_000)
+        await rig.run(rig.k, rig.k.expire())
+        assert await rig.hget(f"e:{EV}:m:kalshi") is None
+        assert rig.k.pending_seq(EV, "kalshi") is None
+
+    @pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+    async def test_failed_renewal_does_not_advance_local_deadline(self, rig):
+        first = await self._trailing(rig)
+        rig.k._clock = lambda: 30.0
+        await rig.clock(1_030_000)
+        before = rig.k._events[EV].pending["kalshi"].since
+        async def fail(*args):
+            raise ConnectionError("not delivered")
+        with pytest.raises(ConnectionError):
+            await rig.k.prepare(rig.k.committed(
+                EV, "kalshi", seq=first, sources=BASE10, rev=11,
+            ), fail, rig.stats)
+        assert rig.k._events[EV].pending["kalshi"].since == before
+        assert (await rig.hget(f"e:{EV}:m:kalshi")).split()[3] == "1060000"
+
+    @pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+    async def test_legacy_payload_disables_renewal_without_losing_observation_bytes(self, rig):
+        first = await self._trailing(rig)
+        raw = await rig.hget(f"e:{EV}:p:kalshi")
+        payload = json.loads(raw)
+        assert "_commit_progress" in payload
+        payload.pop("_commit_progress")
+        legacy = json.dumps(payload)
+        await rig.client.hset(blend_preview.LEDGER_KEY, f"e:{EV}:p:kalshi", legacy)
+        await rig.clock(1_030_000)
+        await rig.run(rig.k, rig.k.committed(EV, "kalshi", seq=first, sources=BASE10, rev=11))
+        assert (await rig.hget(f"e:{EV}:m:kalshi")).split()[3] == "1060000"
+        assert await rig.hget(f"e:{EV}:p:kalshi") == legacy
+
+    @pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+    async def test_renewal_preserves_basis_bytes_and_fences_old_publication(self, rig):
+        first = await self._trailing(rig)
+        frames = await rig.k.prepare(_propose(rig.k, "kalshi", 0.62, basis_s=3), rig.call, rig.stats)
+        old_raw = await rig.hget(f"e:{EV}:p:kalshi")
+        await rig.clock(1_030_000)
+        await rig.run(rig.k, rig.k.committed(EV, "kalshi", seq=first, sources=BASE10, rev=11))
+        raw = await rig.hget(f"e:{EV}:p:kalshi")
+        assert raw.split(',"_commit_progress":')[0] == old_raw.split(',"_commit_progress":')[0]
+        assert await rig.run(rig.k, frames) == []
+        await rig.run(rig.k, rig.k.refused(EV, "kalshi", "error"))
+        assert await rig.hget(f"e:{EV}:p:kalshi") is None
+
+
+    @pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+    async def test_new_committed_floor_still_excludes_stale_basis(self, rig):
+        first = await self._trailing(rig)
+        newer_base = stamp_source_reading(
+            BASE10, "kalshi", 0.71, now=_stamp(4),
+            observed_basis={"kalshi-1": NOW.timestamp() - 26},
+        )
+        await rig.clock(1_030_000)
+        frames = await rig.run(rig.k, rig.k.committed(
+            EV, "kalshi", seq=first, sources=newer_base, rev=11,
+        ))
+        assert not _blends(frames)
+        assert (await rig.hget(f"e:{EV}:base_rev")) == "11"
+        # Renewing a persistence bound does not change the held basis/date.
+        raw = json.loads(await rig.hget(f"e:{EV}:p:kalshi"))
+        assert raw["observed_basis"] == {"kalshi-1": NOW.timestamp() - 28}
+
+    @pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+    async def test_a_siblings_commit_preserves_this_sources_deadline(self, rig):
+        await self._trailing(rig)
+        await rig.run(rig.p, _propose(rig.p, "polymarket", 0.65))
+        seq = rig.p.pending_seq(EV, "polymarket")
+        await rig.run(rig.p, _propose(rig.p, "polymarket", 0.66, basis_s=2))
+        await rig.clock(1_030_000)
+        [frame] = _blends(await rig.run(rig.p, rig.p.committed(
+            EV, "polymarket", seq=seq, sources=BASE10, rev=11,
+        )))
+        assert (await rig.hget(f"e:{EV}:m:kalshi")).split()[3] == "1060000"
+        assert (await rig.hget(f"e:{EV}:m:polymarket")).split()[3] == "1090000"
+        assert frame["preview"]["ttl_ms"] == 30_000
+
+    @pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+    async def test_legacy_settlement_and_terminal_remove_progress_with_payload(self, rig):
+        first = await self._trailing(rig)
+        await rig.clock(1_030_000)
+        # The legacy mode still has its original through-sequence semantics.
+        await rig.run(rig.k, [rig.k._settle_op(EV, "kalshi", first, "unorderable")])
+        assert (await rig.hget(f"e:{EV}:m:kalshi")).split()[3] == "1060000"
+        await rig.run(rig.k, _propose(rig.k, "kalshi", 0.61, rev=11, status="final"))
+        assert await rig.hget(f"e:{EV}:p:kalshi") is None
+        fields = [key.decode() for key in await rig.client.hkeys(blend_preview.LEDGER_KEY)]
+        assert not any("commit_progress" in key for key in fields)
+
+
+    @pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+    async def test_old_landed_commit_cannot_reopen_a_newer_expired_value(self, rig):
+        first = await self._trailing(rig)
+        rig.k._clock = lambda: 60.0
+        await rig.clock(1_060_000)
+        await rig.run(rig.k, rig.k.expire())
+        assert rig.k.pending_seq(EV, "kalshi") is None
+        await rig.run(rig.k, rig.k.committed(EV, "kalshi", seq=first, sources=BASE10, rev=11))
+        assert _propose(rig.k, "kalshi", 0.61, basis_s=3) == []
+        assert await rig.hget(f"e:{EV}:m:kalshi") is None
