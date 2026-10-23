@@ -23311,6 +23311,29 @@ def _match_scope_tennis_totals(
     return _match_scope_totals(game_totals, sport_prefix)
 
 
+def _game_total_leg_prices_a_period(outcome_name: Optional[str]) -> bool:
+    """True when a `game_total` row's own LEG names a period (#11488).
+
+    A row is typed by its MARKET's name, and a Polymarket game container is
+    named for the matchup alone, with one leg per sub-market
+    (`_parent_outcome_data`). "Nuggets vs. Thunder" types as `game_total`
+    because th·UNDER·r holds the word the Over/Under arm looks for, so every
+    leg that carries a number became a full-game rung — including the
+    container's copy of "1H O/U 122.5". Basketball's band admits 122.5, the
+    rung sorts below the whole ladder, and step 7b capped all 36 full-game rungs
+    on `/events/15195971` to that answered first-half line's 0.0005 and its
+    clock. The donor then left the payload, so no served row showed where the
+    number came from.
+
+    The projection pool already asks the leg this question for the same reason
+    (`_PM_SCOPES_DEFERRING_TO_OUTCOMES`); this is the same shipped classifier
+    asked of the leg with no ticker, since the ticker describes the market. A
+    leg naming no period ("Over 204.5 points", "Under", "O/U 221.5") is
+    untouched.
+    """
+    return _classify_game_market(outcome_name or "", None) in _PM_PERIOD_SCOPES
+
+
 # ---- Queue #190 Item 3: settled player-prop grading ------------------------
 # For completed/closed events we compute each player prop's ACTUAL stat value
 # and hit/miss from event.box_score_data, mirroring the authoritative resolver
@@ -27251,6 +27274,13 @@ async def _build_game_markets(
 
     for t in totals_thresholds:
         if t["market_type"] == "game_total":
+            # #11488: a leg that prices a period is not a rung of the game's
+            # ladder. Left out HERE, before the one-row-per-threshold pick, so
+            # it can neither evict a real rung at its line nor cap the rungs
+            # above it in 7b and then leave the payload with its price still
+            # on them.
+            if _game_total_leg_prices_a_period(t.get("outcome_name")):
+                continue
             key = t["threshold"]
             incumbent = seen_thresholds.get(key)
             if incumbent is None:
