@@ -108,12 +108,20 @@ class _Session:
         column = columns[len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
             "win_probability_sources"
         )] if columns else None
-        source = column.element.right.value if hasattr(column, "element") else None
+        from copy import deepcopy
+        from sqlalchemy.sql.elements import Cast, Null
+
+        expression = getattr(column, "element", None)
+        null_source = isinstance(expression, Cast) and isinstance(expression.clause, Null)
+        source = expression.right.value if hasattr(expression, "right") else None
+        preview = [c.name for c in columns[-2:]] == ["preview_sources", "preview_rev"]
 
         def field(obj, key):
             raw = getattr(obj, key, None)
+            if key == "win_probability_sources" and null_source:
+                return None
             if key == "win_probability_sources" and source is not None:
-                return raw.get(source) if isinstance(raw, dict) else None
+                return deepcopy(raw.get(source)) if isinstance(raw, dict) else None
             return raw
 
         rows = [
@@ -124,7 +132,9 @@ class _Session:
                     (event, PREPARED_EVENT_FIELDS),
                     (None, PREPARED_OUTCOME_FIELDS),
                 ) for key in fields
-            ) for market, event in self._market_rows
+            ) + ((deepcopy(event.win_probability_sources),
+                  getattr(event, "win_probability_sources_rev", None)) if preview else ())
+            for market, event in self._market_rows
         ]
         return SimpleNamespace(all=lambda: rows)
 

@@ -253,8 +253,57 @@ async def test_actual_route_expiry_recomposes_sibling_while_sql_stays_blocked(mo
         await stream.aclose()
 
 
-@pytest.mark.parametrize('pending', [False, True])
-async def test_election_change_reconnects_then_new_stream_delivers_new_owner(monkeypatch, pending):
+async def _preview_after_heartbeats(stream):
+    # An idle read already completed before offer may legitimately be first.
+    # One total deadline: heartbeats cannot renew the delivery budget, and any
+    # other unexpected event fails immediately rather than being skipped.
+    async def read():
+        while True:
+            chunk = await anext(stream)
+            if chunk.startswith('event: heartbeat\n'):
+                continue
+            assert chunk.startswith('event: preview\n'), chunk
+            return chunk
+
+    return await asyncio.wait_for(read(), 1)
+
+
+@pytest.mark.parametrize('event', ['reconcile', 'reconnect'])
+async def test_preview_wait_never_skips_other_control_events(event):
+    async def chunks():
+        yield 'event: heartbeat\ndata: {}\n\n'
+        yield f'event: {event}\ndata: {{}}\n\n'
+        yield 'event: preview\ndata: {}\n\n'
+
+    stream = chunks()
+    try:
+        with pytest.raises(AssertionError, match=f'event: {event}'):
+            await _preview_after_heartbeats(stream)
+    finally:
+        await stream.aclose()
+
+
+async def test_preview_wait_missing_preview_expires_and_cancels_read():
+    closed = asyncio.Event()
+
+    async def chunks():
+        try:
+            yield 'event: heartbeat\ndata: {}\n\n'
+            await asyncio.Event().wait()
+        finally:
+            closed.set()
+
+    with pytest.raises(asyncio.TimeoutError):
+        await _preview_after_heartbeats(chunks())
+    assert closed.is_set()
+
+
+@pytest.mark.parametrize('pending,idle_before_offer', [
+    (False, False), (True, False), (True, True),
+], ids=['no-pending', 'pending', 'pending-idle-first'])
+async def test_election_change_reconnects_then_new_stream_delivers_new_owner(
+    monkeypatch, pending, idle_before_offer
+):
     from app.routes import event_stream as route
     from app.utils import live_fanout
     from tests.test_folded_event_stream_invalidation_837 import Hub, Request
@@ -282,6 +331,16 @@ async def test_election_change_reconnects_then_new_stream_delivers_new_owner(mon
     # its production heartbeat or treating a timeout as a product result.
     monkeypatch.setattr(route, 'HEARTBEAT_INTERVAL_S', 0)
     monkeypatch.setattr(route, 'FRAME_WAIT_S', .001)
+    idle_read_completed = asyncio.Event()
+    real_next = route._FoldSubscription.next
+
+    async def observe_next(subscription, timeout):
+        result = await real_next(subscription, timeout)
+        if result[1] is None:
+            idle_read_completed.set()
+        return result
+
+    monkeypatch.setattr(route._FoldSubscription, 'next', observe_next)
     request = Request()
     request.query_params = {'preview_protocol': 'folded-v2'}
     connections_before = route._open_connections
@@ -294,10 +353,15 @@ async def test_election_change_reconnects_then_new_stream_delivers_new_owner(mon
         await anext(stream)
         old_open = decode(await anext(stream))
         assert 'event: reconcile' in await asyncio.wait_for(anext(stream), 1)
+        if idle_before_offer:
+            # Let the already-owned mailbox read time out while the generator
+            # is suspended at reconcile. This legal ordering must deliver the
+            # queued preview after the completed idle read, without loss.
+            await asyncio.wait_for(idle_read_completed.wait(), 1)
         if pending:
             for frame in (kalshi, pm):
                 hub.subscriptions[f'live:event:{frame["event_id"]}'].offer(json.dumps(frame))
-                assert 'event: preview' in await asyncio.wait_for(anext(stream), 1)
+                assert 'event: preview' in await _preview_after_heartbeats(stream)
         else:
             assert 'event: heartbeat' in await asyncio.wait_for(anext(stream), 1)
             # Resume the generator after its first idle yield so the owned
@@ -333,7 +397,7 @@ async def test_election_change_reconnects_then_new_stream_delivers_new_owner(mon
         successor['event_id'] = 1
         successor['preview'].update(base_rev=11, epoch=4, seq=1)
         hub.subscriptions['live:event:1'].offer(json.dumps(successor))
-        delivered = decode(await asyncio.wait_for(anext(stream), 1))
+        delivered = decode(await _preview_after_heartbeats(stream))
         assert delivered['preview']['kind'] == 'blend'
         assert delivered['preview']['fold_session'] == new_open['fold_session']
         assert set(auth(delivered)) == {'1'}
