@@ -138,6 +138,8 @@ import DrawToggle, {
   DRAWS,
   OPENING_DRAW_FALLBACK,
   drawOptions,
+  readRememberedDrawChoice,
+  rememberDrawChoice,
 } from "@/components/tournament/DrawToggle";
 import { drawIsPriced, selectionDraws } from "@/lib/tournamentResults";
 import { TOURNAMENT_COLUMNS, TOURNAMENT_SHELL } from "@/components/tournament/layout";
@@ -298,6 +300,7 @@ export default function TournamentPage() {
         setDrawChoice(
           (current) =>
             current ??
+            readRememberedDrawChoice(slug) ??
             defaultDraw(payload.slate?.matches ?? [], DRAWS) ??
             OPENING_DRAW_FALLBACK
         );
@@ -510,6 +513,7 @@ export default function TournamentPage() {
             draw={draw}
           draws={drawPills}
           onSelect={(id) => {
+            rememberDrawChoice(slug, id);
             setDrawChoice(id);
             setSelection(null);
           }}
