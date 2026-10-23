@@ -393,6 +393,18 @@ final class MacHubAndGridRowActions10878Tests: XCTestCase {
         let snapshotDir = ProcessInfo.processInfo.environment["MAC_HUB_GRID_SNAPSHOT_DIR"]
 
         for scenario in scenarios {
+            let pm = PinManager()
+            if let isPinned = scenario.isPinned {
+                let target = try XCTUnwrap(MacHubAndGridRowAction10878.pinTarget(for: scenario.route))
+                if isPinned {
+                    if target.type == "event" {
+                        pm.pinnedEventIDs.insert(target.id)
+                    } else {
+                        pm.pinnedFuturesIDs.insert(target.id)
+                    }
+                }
+                XCTAssertEqual(pm.isPinned(type: target.type, id: target.id), isPinned)
+            }
             let actions = MacHubAndGridRowAction10878.actions(for: scenario.route, isPinned: scenario.isPinned)
             XCTAssertFalse(actions.isEmpty)
 
@@ -425,7 +437,7 @@ final class MacHubAndGridRowActions10878Tests: XCTestCase {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .strokeBorder(Color.accentColor.opacity(0.45), lineWidth: 1)
                 )
-                .macHubAndGridRowMenu(scenario.route)
+                .macHubAndGridRowMenu(scenario.route, pinManager: pm)
 
                 // Rendered representation of the right-click context menu items produced by MacHubAndGridRowAction10878
                 VStack(alignment: .leading, spacing: 0) {
