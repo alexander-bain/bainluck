@@ -8,6 +8,7 @@ import pytest
 from tests.test_live_blend_refresh import (
     NormalRecoverySession,
     TestTheHeadlineDoesNotWaitForItsChartPoint as _HeadlineRig,
+    _refuse_redis_without_a_socket,
     is_normal_recovery_owner,
 )
 
@@ -885,6 +886,7 @@ async def test_real_consumer_joins_history_before_engine_disposal_under_repeated
     monkeypatch.setattr(blend.LiveBlendRefresher, "__init__", with_committed_history)
     monkeypatch.setattr(blend.LiveBlendRefresher, "_refresh_batch", quote)
     monkeypatch.setattr(blend.LiveBlendRefresher, "_write_owed_snapshots", history)
+    _refuse_redis_without_a_socket(monkeypatch)
     if source == "kalshi":
         p = _Rig(KALSHI_SLATE)
         task = asyncio.create_task(
