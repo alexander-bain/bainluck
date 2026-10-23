@@ -126,9 +126,12 @@ async def test_completed_graph_recovers_failed_clock_without_retrying_pool(monke
     held._sample_failure_episode = True
     held._sample_failure_ordinal = held._sample_started
     held._sample_backoff_until = held._now() + 5
+    until = held._sample_backoff_until
     await r.preview_accepted_observations(obs, validate)
     assert held._database_bound == now.timestamp()
-    assert not held._sample_failure_episode and held._sample_backoff_until == 0
+    # The graph's longer read budget does not prove the standalone sampler's
+    # shorter budget is healthy. It supplies future bounds without rearming it.
+    assert held._sample_failure_episode and held._sample_backoff_until == until
     assert len(calls) == 1
 
 

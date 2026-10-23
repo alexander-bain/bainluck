@@ -1423,6 +1423,8 @@ class HeldRowQuotes:
         self._closed = False
         self._sample_started = 0  # ordinal of the newest sample started
         self._sample_published = 0  # ordinal of the sample `_database_bound` holds
+        self._graph_sample_ordinal = 0
+        self._graph_idle_recovery_used = False
         self._sampling = 0
         self._last_sample_started = -math.inf
         self._last_sample_done = -math.inf
@@ -1466,9 +1468,12 @@ class HeldRowQuotes:
                 if ordinal > self._sample_published:
                     self._sample_published = ordinal
                     self._database_bound = value.timestamp()
-                    if ordinal > self._sample_failure_ordinal:
-                        self._sample_failure_episode = False
-                        self._sample_backoff_until = 0.0
+                # A later graph may own the published timestamp, but a genuine
+                # standalone success still proves this failure episode ended.
+                if ordinal > self._sample_failure_ordinal:
+                    self._sample_failure_episode = False
+                    self._sample_backoff_until = 0.0
+                    self._graph_idle_recovery_used = False
                 self._last_sample_done = self._now()
                 return True
         except Exception:
@@ -1516,12 +1521,26 @@ class HeldRowQuotes:
         try:
             while not self._closed:
                 now = self._now()
+                graph_recovery_deadline = None
                 if (now - self._last_preview_input_at >= self.IDLE_ACTIVE_S
                         or not self.preview_events()):
                     return
-                due = max(self._last_sample_done + self.IDLE_SAMPLE_S, self._sample_backoff_until)
+                due = self._last_sample_done + self.IDLE_SAMPLE_S
                 if self._last_input_at > self._last_sample_started:
                     due = max(due, self._last_input_at + self.IDLE_PHASE_GRACE_S)
+                if (self._sample_failure_episode and not self._sampling
+                        and not self._graph_idle_recovery_used
+                        and self._graph_sample_ordinal > self._sample_failure_ordinal
+                        and now >= due
+                        and now < self._sample_backoff_until
+                        and now - self._last_preview_input_at >= self.IDLE_PHASE_GRACE_S):
+                    # A successful graph is evidence for ONE recovery probe
+                    # after traffic quiets, not a reset on every busy read.
+                    # Consume before awaiting, including cancellation/failure.
+                    self._graph_idle_recovery_used = True
+                    graph_recovery_deadline = self._sample_backoff_until
+                    self._sample_backoff_until = min(self._sample_backoff_until, now)
+                due = max(due, self._sample_backoff_until)
                 if now < due:
                     await self._sleep(min(due - now, self.IDLE_SAMPLE_S))
                     continue
@@ -1530,7 +1549,18 @@ class HeldRowQuotes:
                     await self._sleep(self.IDLE_SAMPLE_S)
                     continue
                 self.idle_samples += 1
-                await self.sample_database_clock(self._sessions)
+                probe_ordinal = self._sample_started + 1
+                try:
+                    await self.sample_database_clock(self._sessions)
+                finally:
+                    if (graph_recovery_deadline is not None
+                            and self._sample_failure_episode
+                            and self._sample_failure_ordinal <= probe_ordinal):
+                        # The extra attempt must not postpone the original
+                        # retry, nor shorten a newer caller's failure episode.
+                        self._sample_backoff_until = min(
+                            self._sample_backoff_until, graph_recovery_deadline,
+                        )
         except Exception:
             logger.warning("held quotes: idle bound sampler stopped", exc_info=True)
 
@@ -4743,9 +4773,11 @@ class LiveBlendRefresher:
                             and clock_ordinal > clock_owner._sample_published):
                         clock_owner._database_bound = clock_sample["value"].timestamp()
                         clock_owner._sample_published = clock_ordinal
-                        if clock_ordinal > clock_owner._sample_failure_ordinal:
-                            clock_owner._sample_failure_episode = False
-                            clock_owner._sample_backoff_until = 0.0
+                        clock_owner._graph_sample_ordinal = clock_ordinal
+                        # A graph read has a longer budget than the standalone
+                        # clock probe. Its success supplies future input bounds,
+                        # but cannot prove that shorter-budget path recovered.
+                        # Only a standalone success clears its failure backoff.
                         clock_owner._last_sample_done = clock_owner._now()
                 finally:
                     if clock_sample is not None:
