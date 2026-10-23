@@ -345,6 +345,12 @@ struct EventDetailView: View {
             // Its own modifier so the existing disappearance block is untouched:
             // a load still in flight can no longer reopen readiness.
             .onDisappear { publicationCaller.suspend() }
+            // #10874 — a viewed game joins Spotlight's recent entries.
+            .spotlightViewed10874(vm.event.flatMap { event in
+                event.id == eventId ? SpotlightSubject10874.game(
+                    id: event.id, away: event.awayTeam, home: event.homeTeam,
+                    sportKey: event.sport, commenceTime: event.commenceTime) : nil
+            })
             .task {
                 marketPageVisible = true
                 vm.setMarketPageVisible(scenePhase == .active)
