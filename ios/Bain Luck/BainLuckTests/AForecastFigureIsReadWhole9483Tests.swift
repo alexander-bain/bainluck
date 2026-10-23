@@ -9,7 +9,11 @@ import XCTest
 /// * the margin map's summary tiles printed "OKC by abo…" at XXXL and "DEN…" /
 ///   "OK…" at AX5 (`frames/393-xxxl-scroll6.png`, Root + Design 2026-10-23);
 /// * a live prop cell too old to be current printed "No upda…" at the default
-///   size (`finding-393-default-no-upda-truncated.png`).
+///   size (`finding-393-default-no-upda-truncated.png`);
+/// * at AX5 the props grid's player column printed "Chet Holmg…" / "Isaiah
+///   Harten…" (`frames/393-ax5-scroll13.png`), and the winning-margin card's
+///   label printed "Pregame proje…" (`frames/393-ax5-scroll4.png`; Design R3
+///   disposition 2026-10-23).
 ///
 /// Each is hosted in a window at a phone's width, photographed, and read with
 /// Vision. The rig is checked against the defect it exists to catch: the old
@@ -151,6 +155,110 @@ final class AForecastFigureIsReadWhole9483Tests: XCTestCase {
             XCTAssertFalse(cells.isEmpty, "\(name): no cell reads \"No update\" whole: \(lines)")
             XCTAssertFalse(lines.contains { isCut($0) && $0.contains("upd") },
                            "\(name): a cell is cut off: \(lines)")
+        }
+    }
+
+    // MARK: - Player names at accessibility sizes
+
+    /// The specimen's names, written over the fixture's two grid players:
+    /// "Hartenstein" alone is wider at AX5 than any column that leaves room
+    /// for a cell, and "Gilgeous-Alexander" is wider than the card.
+    private static let specimenNames = [
+        "Aaron Judge": "Isaiah Hartenstein",
+        "Juan Soto": "Shai Gilgeous-Alexander",
+    ]
+
+    /// Every word of `name` appears whole on some read line — a surname broken
+    /// mid-word ("Harten" / "stein") or cut ("Harten…") does not.
+    private func isReadWhole(_ name: String, in lines: [String]) -> Bool {
+        let tokens = Set(lines.flatMap {
+            $0.split(whereSeparator: { $0 == " " || $0 == "-" }).map(String.init)
+        })
+        return name.split(whereSeparator: { $0 == " " || $0 == "-" }).allSatisfy { tokens.contains(String($0)) }
+    }
+
+    func testEveryPlayerNameReadsWholeAtAccessibilitySizes() throws {
+        var body = try String(contentsOf: Self.fixtureURL, encoding: .utf8)
+        for (fixture, specimen) in Self.specimenNames {
+            XCTAssertTrue(body.contains(fixture), "control: the fixture names \(fixture)")
+            body = body.replacingOccurrences(of: fixture, with: specimen)
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let props = try XCTUnwrap(try decoder.decode(
+            GameMarketsResponse.self, from: Data(body.utf8)).duringPlayerProps)
+        for (width, phone) in [(CGFloat(393 - 32), "393"), (CGFloat(375 - 32), "375")] {
+            for (size, label) in [(DynamicTypeSize.accessibility3, "ax3"), (.accessibility5, "ax5")] {
+                let name = "names-\(phone)-\(label)"
+                let lines = try read(EventPropsMatrixView(props: props, displayAsOf: Self.staleNow),
+                                     width: width, height: 2400, at: size, name: name)
+                for specimen in Self.specimenNames.values {
+                    XCTAssertTrue(isReadWhole(specimen, in: lines), "\(name): \"\(specimen)\" is not read whole: \(lines)")
+                }
+                XCTAssertFalse(lines.contains(where: isCut), "\(name): a line is cut off: \(lines)")
+                // The cells are still there beneath the names. Vision reads
+                // side-by-side cells as one line ("update update"); the legend
+                // reads "update:".
+                XCTAssertTrue(lines.contains { $0.split(separator: " ").contains("update") },
+                              "\(name): no cell reads \"No update\": \(lines)")
+            }
+        }
+    }
+
+    /// The rig can see the defect: the player column the grid drew before this
+    /// repair — two lines in a 150pt column — read at AX5 is NOT whole.
+    func testControlTheOldPlayerColumnIsCutAtAX5() throws {
+        let lines = try read(OldPlayerColumn(name: "Isaiah Hartenstein"),
+                             width: 393 - 32, at: .accessibility5, name: "control-old-names-393-ax5")
+        XCTAssertFalse(isReadWhole("Isaiah Hartenstein", in: lines),
+                       "control: the pre-repair column reads whole, so this rig cannot see a cut: \(lines)")
+    }
+
+    private struct OldPlayerColumn: View {
+        let name: String
+        @ScaledMetric(relativeTo: .subheadline) private var rowHeight: CGFloat = 46
+        @ScaledMetric(relativeTo: .subheadline) private var nameWidth: CGFloat = 112
+        var body: some View {
+            Text(name)
+                .font(.subheadline)
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
+                .frame(width: min(nameWidth, 150), height: rowHeight, alignment: .leading)
+        }
+    }
+
+    // MARK: - The winning-margin card's figure labels
+
+    /// The specimen's card mid-game: Nuggets up 3, the pregame projection
+    /// Thunder by 8 (`frames/393-ax5-scroll4.png`).
+    private static var specimenMarginCard: NBALadderCard9483 {
+        let detail = NBALadderCard9483.Detail(label: "Thunder by 8+", marketName: "Thunder winning margin",
+                                              source: nil, quoted: nil, observedAt: nil,
+                                              baseline: 0.5, baselineObservedAt: nil, result: nil)
+        let point = NBALadderCard9483.Point(optionKey: "o:1", x: 7.5, label: "Thunder by 8+", side: .home,
+                                            chance: 0.5, now: nil, observedAt: nil, result: nil, detail: detail)
+        return NBALadderCard9483(family: .margin, phase: .during, points: [point],
+                                 actual: -3, forecast: 8, awayShort: "Nuggets", homeShort: "Thunder")
+    }
+
+    func testTheMarginFigureLabelsReadWholeAtEverySize() throws {
+        // The deck's card content: its ~310pt card on a 393 phone less 17pt
+        // padding each side, and the same on a 375.
+        for (width, phone) in [(CGFloat(276), "393"), (CGFloat(258), "375")] {
+            // Each canvas just holds the card: Vision misses small type on a
+            // canvas many times taller than its text.
+            for (size, label, height) in [(DynamicTypeSize.large, "large", CGFloat(700)), (.xxxLarge, "xxxl", 900),
+                                          (.accessibility3, "ax3", 1800), (.accessibility5, "ax5", 2400)] {
+                let name = "margin-figures-\(phone)-\(label)"
+                let lines = try read(NBALadderCardView9483(card: Self.specimenMarginCard, awayColor: .blue,
+                                                           homeColor: .orange, state: NFLCardDeckState9483()),
+                                     width: width, height: height, at: size, name: name)
+                for words in ["So far", "Pregame projection"] {
+                    XCTAssertTrue(isReadWhole(words, in: lines), "\(name): \"\(words)\" is not read whole: \(lines)")
+                }
+                XCTAssertFalse(lines.contains { isCut($0) && ($0.contains("Preg") || $0.contains("proj")) },
+                               "\(name): the label is cut off: \(lines)")
+            }
         }
     }
 }

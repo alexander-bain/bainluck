@@ -40,6 +40,8 @@ struct EventPropsMatrixView: View {
     @ScaledMetric(relativeTo: .subheadline) private var cellWidth: CGFloat = 58
     @ScaledMetric(relativeTo: .subheadline) private var nameWidth: CGFloat = 112
     private let maxNameWidth: CGFloat = 150
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var matrixWidth: CGFloat = 0
 
     var body: some View {
         let statKey = selection.resolvedStat(in: props)
@@ -140,7 +142,16 @@ struct EventPropsMatrixView: View {
 
     // MARK: - Matrix
 
+    @ViewBuilder
     private func matrix(_ grid: EventPropsMatrixLayout.Grid, now: Date) -> some View {
+        if typeSize.isAccessibilitySize {
+            stackedMatrix(grid, now: now)
+        } else {
+            sideBySideMatrix(grid, now: now)
+        }
+    }
+
+    private func sideBySideMatrix(_ grid: EventPropsMatrixLayout.Grid, now: Date) -> some View {
         HStack(alignment: .top, spacing: 0) {
             // Fixed identity column.
             VStack(alignment: .leading, spacing: 4) {
@@ -185,6 +196,58 @@ struct EventPropsMatrixView: View {
             }
             .id(grid.stat.statKey)
         }
+    }
+
+    /// At accessibility sizes a surname alone outgrows any column that leaves
+    /// room for one cell ("Hartenstein" is ~225pt at AX5; the column held 150
+    /// and read "Harten…"). So each name takes its own full-width line above
+    /// its row and wraps by word, at the reader's size. The cells stay in one
+    /// sideways scroller, so every column still lines up, and the names are
+    /// pinned to the visible width while it scrolls.
+    private func stackedMatrix(_ grid: EventPropsMatrixLayout.Grid, now: Date) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 4) {
+                pinnedToViewport(
+                    Text(grid.stat.label)
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.secondary)
+                )
+                HStack(spacing: 4) {
+                    ForEach(grid.columns, id: \.self) { count in
+                        Text(columnLabel(count, grid: grid))
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.secondary)
+                            .frame(width: cellWidth)
+                            .accessibilityHidden(true)
+                    }
+                }
+                ForEach(grid.players) { player in
+                    pinnedToViewport(Text(player.label).font(.subheadline))
+                        .padding(.top, 6)
+                        .accessibilityHidden(true)
+                    HStack(spacing: 4) {
+                        ForEach(grid.columns, id: \.self) { count in
+                            cell(player.cells[count], stat: grid.stat, now: now)
+                        }
+                    }
+                }
+            }
+        }
+        .id(grid.stat.statKey)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { matrixWidth = $0 }
+    }
+
+    /// A line as wide as the scroller's viewport that stays put while the
+    /// cells beneath it move sideways.
+    private func pinnedToViewport(_ line: some View) -> some View {
+        line
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(width: matrixWidth > 0 ? matrixWidth : nil, alignment: .leading)
+            .visualEffect { content, proxy in
+                content.offset(x: -proxy.frame(in: .scrollView(axis: .horizontal)).minX)
+            }
     }
 
     /// The column header is the server's own label for that count's over
