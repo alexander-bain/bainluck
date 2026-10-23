@@ -182,8 +182,9 @@ final class LiveCardEarlierForecastA3Tests: XCTestCase {
         XCTAssertEqual(after.pregameLabel, "earlier forecast", "the finished fallback is unchanged")
         XCTAssertEqual(after.key, "Points · outline = earlier forecast · cross = final")
         let qualified = try XCTUnwrap(NFLFinishCard9483.build(input(phase: .after), finalBaseline: admitted))
-        XCTAssertEqual(qualified.pregameLabel, "pregame projection", "the finished qualified card keeps its words")
-        XCTAssertEqual(qualified.key, "Points · outline = pregame · cross = final")
+        XCTAssertEqual(qualified.pregameLabel, "projection before scheduled start",
+                       "#11296 — the finished qualified card says the headline's words")
+        XCTAssertEqual(qualified.key, "Points · outline = projection before scheduled start · cross = final")
         XCTAssertNil(qualified.missingCurrentNote, "a final is not a missing projection")
     }
 
