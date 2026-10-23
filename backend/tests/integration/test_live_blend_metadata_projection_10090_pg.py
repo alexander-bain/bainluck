@@ -51,7 +51,7 @@ async def test_projected_metadata_preserves_readings_and_refusals_in_real_postgr
     for version in (1, 0, 2, "1", True, 1.0):
         for venue in ("moneyline", "tennis_completed_match"):
             shapes.append({KEY: {"v": version, "semantic_type": "moneyline",
-                                 "venue_type": venue, "agreement": "disputed"}})
+                                 "venue_type": venue, "agreement": "contradicted"}})
     shapes.append({KEY: {"v": 1, "semantic_type": "moneyline", "venue_type": "moneyline"},
                    "unrelated_history": "x" * 262144})
     for metadata in shapes:
