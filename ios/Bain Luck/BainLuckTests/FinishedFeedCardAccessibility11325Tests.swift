@@ -164,7 +164,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         XCTAssertTrue(sameRow(away, awayName), "\(name): 17 left its name's row — \(all)")
         XCTAssertTrue(sameRow(home, homeName), "\(name): 23 left its name's row — \(all)")
         let league = try XCTUnwrap(read.first { tokens($0.text).contains("NFL") }, "\(name): \(all)")
-        let status = try XCTUnwrap(read.first { tokens($0.text).contains("FINAL") }, "\(name): \(all)")
+        let status = try XCTUnwrap(read.first { badgeTokens($0).contains("FINAL") }, "\(name): \(all)")
         XCTAssertTrue(sameRow(league, status), "\(name): league and FINAL no longer share the top row — \(all)")
         XCTAssertTrue(read.contains { $0.text.contains("Projection") }, "\(name): forecast line gone — \(all)")
     }
@@ -181,6 +181,62 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         // nothing beside it. How far the name is cut is not this test's claim.
         XCTAssertTrue(read.map { clearOfCrest($0, columnEdge: 40) }.contains { $0.box.minX >= 40 && $0.box.maxX < away.box.minX && sameRow(away, $0) },
                       "\(name): a live card took the finished layout — \(all)")
+    }
+
+    // MARK: - The hosted pill-edge misread (Watch MVP run 39990600534)
+
+    /// Hosted Xcode 27 read the Large card's top row as "NFL (FINAL" and the
+    /// control above failed its FINAL lookup. That exact text, laid over the
+    /// locally rendered card's own top row, is settled by the frame's ink to
+    /// NFL + FINAL, and the control's top-row checks hold on it. The same text
+    /// over a frame whose ink does not say FINAL — a bracket really drawn
+    /// before it, or no badge at all — stays rejected, as do fragments behind
+    /// the mark and a bare NFL row.
+    func testThePillEdgeReadAsABracketIsSettledOnlyByTheFramesInk() throws {
+        let hostedText = "NFL (FINAL"
+        let name = "sports-nfl-393-large-hosted-pill-edge"
+        let read = try sportsLines(try served(14780563), width: 393, size: .large, name: name)
+        let all = describe(read)
+        let league = try XCTUnwrap(read.first { tokens($0.text).contains("NFL") }, "\(name): \(all)")
+        let row = leagueAndBadgeBox(league, in: read)
+        let hosted = Line(text: hostedText, box: row, frame: league.frame)
+        print("Finished card 11325 pill edge: local top row \(describe(read.filter { sameRow($0, league) })), "
+              + "ink re-read \((try? league.frame.recognizeInk(in: row.insetBy(dx: -row.height * 0.15, dy: -row.height * 0.15)))?.map(\.text) ?? [])")
+        XCTAssertEqual(badgeTokens(hosted), ["NFL", "FINAL"], "\(name): the pill edge was not settled — \(all)")
+        let asHosted = read.filter { !sameRow($0, league) } + [hosted]
+        let status = try XCTUnwrap(asHosted.first { badgeTokens($0).contains("FINAL") }, "\(name): \(all)")
+        let hostedLeague = try XCTUnwrap(asHosted.first { tokens($0.text).contains("NFL") }, "\(name): \(all)")
+        XCTAssertTrue(sameRow(hostedLeague, status), "\(name): league and FINAL no longer share the top row — \(all)")
+        assertWholeToken("FINAL", in: asHosted, name)
+        assertNoFragmentOfFinal(in: asHosted, name)
+
+        for text in ["NFL (FIN", "NFL (FI", "(NAL", "NFL FI-"] {
+            let broken = Line(text: text, box: row, frame: league.frame)
+            XCTAssertFalse(badgeTokens(broken).contains("FINAL"), "\(name): '\(text)' settled to FINAL")
+            XCTExpectFailure("'\(text)' is a broken FINAL") { assertNoFragmentOfFinal(in: [broken], name) }
+        }
+        for text in ["NFL", "NFL ("] {
+            let bare = Line(text: text, box: row, frame: league.frame)
+            XCTAssertFalse(badgeTokens(bare).contains("FINAL"), "\(name): '\(text)' found a FINAL")
+            XCTExpectFailure("'\(text)' has no FINAL") { assertWholeToken("FINAL", in: [bare], name) }
+        }
+
+        // A bracket actually drawn before FINAL is ink: the same text stays as read.
+        let drawnName = "\(name)-drawn-bracket"
+        let drawn = try self.read(constructedTopBar(badge: "(FINAL"), width: 393, size: .large, name: drawnName)
+        // (Vision reads a drawn bracket glued to the league: "NFL(FINAL".)
+        let drawnLeague = try XCTUnwrap(drawn.first { normalized($0.text).hasPrefix("NFL") }, "\(drawnName): \(describe(drawn))")
+        let bracket = Line(text: hostedText, box: leagueAndBadgeBox(drawnLeague, in: drawn), frame: drawnLeague.frame)
+        XCTAssertEqual(badgeTokens(bracket), ["NFL", "(FINAL"], "\(drawnName): a drawn bracket was settled — \(describe(drawn))")
+        XCTExpectFailure("a drawn '(FINAL' is not FINAL") { assertWholeToken("FINAL", in: [bracket], drawnName) }
+
+        // No badge drawn: the same text over a bare NFL row stays as read.
+        let bareName = "\(name)-no-badge"
+        let bareRead = try self.read(constructedTopBar(badge: nil), width: 393, size: .large, name: bareName)
+        let bareLeague = try XCTUnwrap(bareRead.first { normalized($0.text).hasPrefix("NFL") }, "\(bareName): \(describe(bareRead))")
+        print("Finished card 11325 pill edge controls: drawn \(describe(drawn)), no badge \(describe(bareRead))")
+        let noBadge = Line(text: hostedText, box: CGRect(origin: bareLeague.box.origin, size: row.size), frame: bareLeague.frame)
+        XCTAssertEqual(badgeTokens(noBadge), ["NFL", "(FINAL"], "\(bareName): a row with no badge was settled — \(describe(bareRead))")
     }
 
     // MARK: - #9483 — the finished single row names its pre-game number
@@ -392,16 +448,18 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
 
     private func assertWholeToken(_ word: String, in read: [Line], _ name: String,
                                   file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertTrue(read.contains { tokens($0.text).contains(word) },
+        XCTAssertTrue(read.contains { badgeTokens($0).contains(word) },
                       "\(name): '\(word)' is not on screen as one whole word — \(describe(read))",
                       file: file, line: line)
     }
 
-    /// "FI-" / "NAL" and the like: the badge broken across lines.
+    /// "FI-" / "NAL" and the like: the badge broken across lines — also behind
+    /// a pill edge read as a mark ("(FIN"), which `badgeTokens` never settles.
     private func assertNoFragmentOfFinal(in read: [Line], _ name: String,
                                          file: StaticString = #filePath, line: UInt = #line) {
         let fragments: Set<String> = ["FI", "FIN", "FINA", "FI-", "FIN-", "FINA-", "NAL", "INAL", "AL"]
-        for l in read where tokens(l.text).contains(where: fragments.contains) {
+        let edge: (String) -> String = { Self.pillEdgeMarks.contains($0.first ?? " ") ? String($0.dropFirst()) : $0 }
+        for l in read where tokens(l.text).contains(where: { fragments.contains($0) || fragments.contains(edge($0)) }) {
             XCTFail("\(name): FINAL broke across lines ('\(l.text)') — \(describe(read))", file: file, line: line)
         }
     }
@@ -493,6 +551,29 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         a.box.midY >= b.box.minY - 2 && a.box.midY <= b.box.maxY + 2
     }
 
+    /// The box spanning `league` and every line on its row that reads the
+    /// league or a badge word — where a single-row top bar prints both.
+    private func leagueAndBadgeBox(_ league: Line, in read: [Line]) -> CGRect {
+        read.filter { sameRow($0, league) && tokens($0.text).contains { $0.hasPrefix("NFL") || $0.hasSuffix("FINAL") } }
+            .reduce(league.box) { $0.union($1.box) }
+    }
+
+    /// The single-row top bar's league and FINAL pill as `StatusBadge` draws
+    /// them, with `badge` as the pill's text (nil: no pill). CONSTRUCTED, to
+    /// draw what the card never does.
+    private func constructedTopBar(badge: String?) -> some View {
+        HStack(spacing: 6) {
+            Text("NFL").font(.caption).foregroundStyle(.secondary)
+            if let badge {
+                Text(badge).font(.caption2).fontWeight(.medium).foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.cardBackgroundDark).clipShape(Capsule())
+            }
+            Spacer()
+        }
+        .padding(12)
+    }
+
     private func describe(_ read: [Line]) -> String {
         read.map { "'\($0.text)'@\(Int($0.box.minX)),\(Int($0.box.minY))" }.joined(separator: " ")
     }
@@ -544,6 +625,30 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
                                                     width: b.width + b.height / 2, height: b.height * 1.3))
         guard ink.count >= 2, ink[0].height >= ink[1].height else { return line.text }
         return String(parts[1])
+    }
+
+    /// Marks a pill's rounded or straight edge can be read as.
+    private static let pillEdgeMarks: Set<Character> = ["(", "[", "{", "|"]
+
+    /// `tokens`, with FINAL's pill edge settled from the frame. Hosted Xcode 27
+    /// (Watch MVP run 39990600534, iPhone compatibility) read the Large card's
+    /// top row as "NFL (FINAL": nothing is drawn between "NFL" and "FINAL" —
+    /// the "(" is the left edge of FINAL's capsule, whose fill (≈240) is not
+    /// ink. A token that is ONE edge mark glued to a whole "FINAL" counts as
+    /// "FINAL" only when the line, read again from its ink alone, is one line
+    /// whose tokens are the line's own with that mark gone. A bracket actually
+    /// drawn is ink, survives the re-read, and the token stays as read; so does
+    /// any fragment ("(FIN"), and a row with no FINAL ink.
+    private func badgeTokens(_ line: Line) -> [String] {
+        let read = tokens(line.text)
+        let settled = read.map { t in
+            Self.pillEdgeMarks.contains(t.first ?? " ") && t.dropFirst() == "FINAL" ? "FINAL" : t
+        }
+        guard settled != read else { return read }
+        let b = line.box, pad = b.height * 0.15
+        guard let reread = try? line.frame.recognizeInk(in: b.insetBy(dx: -pad, dy: -pad)), reread.count == 1,
+              tokens(reread[0].text) == settled else { return read }
+        return settled
     }
 
     // MARK: - Fixture
@@ -716,6 +821,32 @@ private final class RenderedFrame11325 {
         guard let crop = image.cropping(to: CGRect(x: rect.minX * s, y: rect.minY * s,
                                                    width: rect.width * s, height: rect.height * s))
         else { throw CocoaError(.coderInvalidValue) }
+        return try lines(in: crop, covering: rect)
+    }
+
+    /// `recognize`, over the INK alone: the pixels inside `rect` redrawn black
+    /// where they are ink and white where they are not, on a white margin. A
+    /// fill that is not ink — the status pill's, and its rounded edge — is gone
+    /// before Vision looks; a glyph drawn in the cards' grey stays.
+    func recognizeInk(in rect: CGRect) throws -> [(text: String, box: CGRect)] {
+        let s = scale, m = Int((8 * s).rounded())
+        let x0 = max(0, Int((rect.minX * s).rounded(.down))), x1 = min(width, Int((rect.maxX * s).rounded(.up)))
+        let y0 = max(0, Int((rect.minY * s).rounded(.down))), y1 = min(height, Int((rect.maxY * s).rounded(.up)))
+        guard x0 < x1, y0 < y1, luma.count == width * height else { throw CocoaError(.coderInvalidValue) }
+        let w = x1 - x0 + 2 * m, h = y1 - y0 + 2 * m
+        var pixels = [UInt8](repeating: 255, count: w * h)
+        for y in y0..<y1 { for x in x0..<x1 where luma[y * width + x] < 200 { pixels[(y - y0 + m) * w + x - x0 + m] = 0 } }
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let crop = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: w,
+                                 space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: 0),
+                                 provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+        else { throw CocoaError(.coderInvalidValue) }
+        return try lines(in: crop, covering: CGRect(x: CGFloat(x0 - m) / s, y: CGFloat(y0 - m) / s,
+                                                    width: CGFloat(w) / s, height: CGFloat(h) / s))
+    }
+
+    /// Vision's lines in `crop`, an image of the frame's `rect` (points); boxes in points.
+    private func lines(in crop: CGImage, covering rect: CGRect) throws -> [(text: String, box: CGRect)] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
