@@ -5229,7 +5229,7 @@ jobs:
             exit 1
           }
 
-      - name: "#10090 held page recovers committed price after outage (Postgres + Redis)"
+      - name: "#10090 a held page receives the last committed price after a publication outage, without a new venue tick (real Postgres + Redis)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         env:
           PM_WITHDRAWAL_REDIS_URL: redis://localhost:56379/11

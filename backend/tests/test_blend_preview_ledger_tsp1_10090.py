@@ -1581,10 +1581,11 @@ class TestLocalIdleFirstEviction:
         # Primitive policy fixture: a clean same-class context can retire;
         # the actual fresh locked PostgreSQL proof has its own integration gate.
         assert rig.k._events[2].status == "live"
-        ticket, _ = await rig.k.read_ticket(rig.call, 'kalshi')
+        ticket, _, _, redis_now = await rig.k.capacity_ticket(rig.call, 'kalshi')
         proof = _capacity_event(2)
         proof.preview_context_at += timedelta(seconds=1)
-        await rig.k.prepare([rig.k.retire_policy(2, 'kalshi', proof, 10, ticket)], rig.call, rig.stats)
+        await rig.k.prepare([rig.k.retire_policy(2, 'kalshi', proof, 10, ticket,
+                                               redis_now + 1000)], rig.call, rig.stats)
         assert await rig.hget('nevents') == '511'
         operations = await _fresh_ops(rig, rig.k, 'kalshi', event_id=513, event=_capacity_event(513))
         sent = await rig.run(rig.k, operations)
