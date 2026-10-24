@@ -117,12 +117,15 @@ def test_commit_only_events_do_not_accumulate_when_admission_is_unavailable():
 
 
 @pytest.mark.parametrize('kind', ['terminal', 'unobserved'])
-def test_early_return_admission_stays_bounded_and_settles_displaced_chains(kind):
+def test_early_return_admission_stays_bounded_and_preserves_active_chain(kind):
     from tests.test_blend_preview_ledger_tsp1_10090 import _ev, _propose, BASE10
     reg = blend_preview.LedgerRegistry(sources=blend_preview.PREVIEW_SOURCES, max_events=2)
     _propose(reg, 'kalshi', .7, event_id=1)
     pending_seq = reg.pending_seq(1, 'kalshi')
     assert pending_seq is not None
+    active_state = reg._events[1]
+    active_entry = active_state.pending['kalshi']
+    active_chain = reg._chains[(1, 'kalshi')]
     evicted = []
     for eid in range(2, 20):
         event = _ev('completed' if kind == 'terminal' else 'live')
@@ -130,6 +133,11 @@ def test_early_return_admission_stays_bounded_and_settles_displaced_chains(kind)
                           row_rev=10, observation_only=(kind == 'unobserved'))
         evicted.extend(op for op in ops if op.get('reason') == 'evicted')
         assert len(reg._events) <= 2
-    assert len(evicted) == 1
-    assert evicted[0]['event_id'] == 1 and evicted[0]['through'] == pending_seq
-    assert not reg._chains
+        assert reg._events[1] is active_state
+        assert active_state.pending['kalshi'] is active_entry
+        assert reg.pending_seq(1, 'kalshi') == pending_seq
+        assert reg._chains == {(1, 'kalshi'): active_chain}
+    # Terminal/observation-only contexts carry no work or expiry proof. They
+    # must make room before an active reader loses its still-valid preview.
+    assert evicted == []
+    assert set(reg._events) == ({1} if kind == 'terminal' else {1, 19})

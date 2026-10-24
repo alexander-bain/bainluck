@@ -39,6 +39,7 @@ import {
   statDomain,
   statLabel,
   targetLabel,
+  withPagePregame,
   withPageProjection,
   type FinishCard,
   type MilestoneCard,
@@ -444,8 +445,76 @@ describe("#11103 one projected final per page", () => {
   it("the page hands the deck AND the reader the projected cards — no render site reads the raw series", () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const src: string = require("fs").readFileSync(require("path").join(__dirname, "../app/events/[id]/page.tsx"), "utf8");
-    expect(src).toMatch(/withPageProjection\(nflCards, heroProjectedFinal\)/);
+    expect(src).toMatch(/withPageProjection\(withPagePregame\(nflCards, heroPregamePair\), heroProjectedFinal\)/);
     const sites = [...src.matchAll(/(cards|liveCards)=\{(\w+)\}/g)].map((m) => `${m[1]}=${m[2]}`);
     expect(sites.sort()).toEqual(["cards=nflCardsShown", "liveCards=nflCardsShown"]);
+  });
+});
+
+describe("#2920 / #11296 one pregame forecast per page", () => {
+  // GB–DAL 14780562 (home Packers), retained from the served page at 21:36Z on 10/23: the
+  // headline printed "Projection before scheduled start Packers 27 / Cowboys 28" from 21
+  // sportsbooks; the card's series picked betrivers out of the since-start window and read its
+  // 00:23:06Z capture (27.5 / 26.5), three minutes after the scheduled start, just before Q1.
+  const GB = "Green Bay Packers";
+  const DAL = "Dallas Cowboys";
+  const seriesPregame = { away: 26.5, home: 27.5, at: Date.UTC(2026, 9, 19, 0, 23, 6) };
+  const final = { away: 13, home: 23, at: Date.UTC(2026, 9, 19, 3, 43, 13) };
+  const after: FinishCard = { kind: "finish", id: "finish", phase: "after", pregame: seriesPregame, projectedNow: null, final };
+  const headline = { home: 27, away: 28 };
+
+  it("before: the card graded one book's capture and contradicted the headline", () => {
+    expect(finishHeadline(after, DAL, GB)).toBe("Green Bay Packers won as projected");
+  });
+
+  it("after: the card prints the headline's pair and grades the winner against it", () => {
+    const [shown] = withPagePregame([after], headline) as FinishCard[];
+    expect(shown.pregame).toEqual({ away: 28, home: 27, at: seriesPregame.at });
+    expect(shown.final).toEqual(final);
+    expect(finishHeadline(shown, DAL, GB)).toBe("Green Bay Packers beat the forecast");
+  });
+
+  it("orientation: the pair is keyed home/away, never sorted by value", () => {
+    const [shown] = withPagePregame([after], { home: 30, away: 17 }) as FinishCard[];
+    expect(shown.pregame).toMatchObject({ home: 30, away: 17 });
+    expect(finishHeadline(shown, DAL, GB)).toBe("Green Bay Packers won as projected");
+  });
+
+  it("during: the 'before kickoff' sentence reads the headline's pair; the live projection is untouched", () => {
+    const during: FinishCard = {
+      ...after,
+      phase: "during",
+      final: null,
+      projectedNow: { away: 20, home: 24, at: Date.UTC(2026, 9, 19, 1, 30) },
+    };
+    const [shown] = withPagePregame([during], headline) as FinishCard[];
+    expect(shown.projectedNow).toEqual(during.projectedNow);
+    expect(finishHeadline(shown, DAL, GB)).toBe("The projected finish has flipped");
+    expect(finishHeadline({ ...shown, projectedNow: null }, DAL, GB)).toBe("Dallas Cowboys projected ahead before kickoff");
+  });
+
+  it("control: no printed headline pair keeps the series' reading (nothing invented)", () => {
+    expect(withPagePregame([after], null)).toEqual([after]);
+  });
+
+  it("control: before the game the card already reads the current projection; it is not replaced", () => {
+    const before: FinishCard = { ...after, phase: "before", final: null };
+    expect(withPagePregame([before], headline)).toEqual([before]);
+  });
+
+  it("control: player cards pass through untouched", () => {
+    const milestone = { kind: "milestone", id: "m" } as unknown as NflEventCard;
+    const out = withPagePregame([milestone, after], headline);
+    expect(out[0]).toBe(milestone);
+  });
+
+  it("the page passes the hero's PRINTED pregame pair: the final band, else the live baseline only where it renders", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const src: string = require("fs").readFileSync(require("path").join(__dirname, "../app/events/[id]/page.tsx"), "utf8");
+    expect(src).toMatch(
+      /const heroPregamePair = heroFinalForecast\?\.forecast \?\? \(heroProjectedFinal && heroLiveBaseline \? heroLiveBaseline\.baseline : null\);/,
+    );
+    expect(src).toMatch(/\{heroProjectedFinal && heroLiveBaseline && \(/);
+    expect(src).toMatch(/\{heroFinalForecast && \(/);
   });
 });

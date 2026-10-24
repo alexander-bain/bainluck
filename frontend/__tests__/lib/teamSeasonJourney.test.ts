@@ -133,6 +133,7 @@ describe("pickJourneyFuture follows the page's headline market (#9569)", () => {
       outcomeId: 44,
       marketName: "NBA Championship Winner",
       probability: 0.0069,
+      state: null,
     });
     expect(pick?.probability).toBe(teamHeadline(PATH, WARRIORS)?.probability);
   });

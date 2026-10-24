@@ -95,6 +95,25 @@ nonisolated struct DuringPropCurrent: Decodable, Equatable, Sendable {
         return probability
     }
     var isActualOnly: Bool { state == "actual_only" }
+
+    /// #10236 — the chance a reader may be shown AS CURRENT at `now`: the
+    /// quoted chance, unless it was last observed more than
+    /// `SourceAge.liveStaleAfter` (30 minutes) ago. The During matrix is play
+    /// in progress, so this is the question catalog's live rule (#10877,
+    /// `QuestionCatalog9483.reading`) on the same rows: strict `>`, and a
+    /// stamp that cannot be dated is not called stale — it shows with no age
+    /// claim. `observed_at` is when the price was last SEEN, not when it last
+    /// moved, so a newer observation of the same value makes it current again.
+    func currentProbability(now: Date) -> Double? {
+        isStale(now: now) ? nil : quotedProbability
+    }
+
+    /// A quoted chance too old to print as current. Its row stays, opens, and
+    /// keeps the last quote and its time in the detail.
+    func isStale(now: Date) -> Bool {
+        quotedProbability != nil
+            && SourceAge.isStale(observedAt, now: now, after: SourceAge.liveStaleAfter)
+    }
 }
 
 nonisolated struct DuringPropContributor: Decodable, Equatable, Sendable {

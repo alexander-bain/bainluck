@@ -9,54 +9,38 @@ import XCTest
 ///   whistle, over the card's own `FINAL · IND by 2` tile.
 /// - Live: an inline round, so a served 0.999 printed `100%` under a hero
 ///   reading `>99%`.
+///
+/// #9483 (Design, 2026-10-23) then removed the header in EVERY lifecycle: it
+/// repeated the hero's blended winner over individually sourced venue rungs
+/// (15195971: `OKC 56%` over `OKC by 1.5+ 62%`), which the card cannot present
+/// as one family. So a settled card still prints no live price — no card
+/// prints a header at all. `TheLiveMarginTileReadsTheHeadlinesPair9483Tests`
+/// carries the live half.
 final class AFinishedGamesMarginMapPrintsNoLivePrice9336Tests: XCTestCase {
 
-    private static func headline(isDone: Bool, away: Double?, home: Double?, sport: String) -> String {
-        MarketMapView.marginHeadline(
-            isDone: isDone,
-            side: DrawPricedWinner.headlineSide(away: away, home: home, sport: sport),
-            homeAbbr: "IND", awayAbbr: "HOU"
-        )
-    }
-
-    /// The specimen: a decisive settled game prints no header.
-    func testTheSettledSpecimenPrintsNoHeader() {
-        XCTAssertEqual(Self.headline(isDone: true, away: 0.0719, home: 0.9281, sport: "americanfootball_nfl"), "")
-    }
-
-    /// #6359's case: a settled draw would name home at an in-play price.
-    func testASettledDrawPrintsNoHeader() {
-        XCTAssertEqual(Self.headline(isDone: true, away: 0.20, home: 0.62, sport: "soccer_epl"), "")
-    }
-
-    /// Control: the same numbers on an open game keep the header, so the
-    /// settled rule is not simply "never print".
-    func testAnOpenGameKeepsItsHeader() {
-        XCTAssertEqual(Self.headline(isDone: false, away: 0.0719, home: 0.9281, sport: "americanfootball_nfl"), "IND 93%")
-        XCTAssertEqual(Self.headline(isDone: false, away: 0.64, home: 0.36, sport: "americanfootball_nfl"), "HOU 64%")
-    }
-
-    /// #6853's case: a live game is never 100%, and never 0%.
-    func testALiveHeaderKeepsTheBoundaryRule() {
-        XCTAssertEqual(Self.headline(isDone: false, away: 0.001, home: 0.999, sport: "americanfootball_nfl"), "IND >99%")
-        // A draw-priced sport names home even as a long shot.
-        XCTAssertEqual(Self.headline(isDone: false, away: 0.95, home: 0.004, sport: "soccer_epl"), "IND <1%")
-    }
-
-    func testNoPriceMeansNoHeader() {
-        XCTAssertEqual(Self.headline(isDone: false, away: nil, home: nil, sport: "americanfootball_nfl"), "")
-    }
-
-    /// The card must build its header through the helper. Reverting the call
-    /// site to an inline round would leave every test above green.
-    func testTheCardBuildsItsHeaderThroughTheHelper() throws {
+    private func card() throws -> String {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let file = root.appendingPathComponent("Bain Luck/Components/MarketMapView.swift")
-        let source = try String(contentsOf: file, encoding: .utf8)
-        // …and hand it the card's own settled test, not a constant.
-        XCTAssertNotNil(source.range(of: #"let headline = Self\.marginHeadline\(\s*isDone: isDone,"#,
-                                     options: .regularExpression),
-                        "the full-game margin card's header must come from marginHeadline(isDone: isDone, …)")
+        return try String(contentsOf: file, encoding: .utf8)
+    }
+
+    /// Every map card — full game and halves — hands `mapCard` an empty header,
+    /// so no lifecycle can print a probability there.
+    func testEveryMapCardPrintsNoHeader() throws {
+        let source = try card()
+        // Every argument passed under the label; the parameter's own
+        // declaration (`headline: String`) is not a call.
+        let headers = source.components(separatedBy: "headline: ").dropFirst()
+            .map { $0.prefix(3) }.filter { $0 != "Str" }
+        XCTAssertGreaterThanOrEqual(headers.count, 4, "the full-game card and the three other map cards")
+        XCTAssertTrue(headers.allSatisfy { $0 == "\"\"," }, "a map card passes a header: \(headers)")
+    }
+
+    /// The probability the header used to print is not read at all.
+    func testTheCardNoLongerTakesTheWinnerProbability() throws {
+        let source = try card()
+        XCTAssertFalse(source.contains("homeWinProb"))
+        XCTAssertFalse(source.contains("awayWinProb"))
         XCTAssertFalse(source.contains("Int((side.probability * 100).rounded())"),
                        "an inline round skips both the settled rule and the >99%/<1% rule")
     }

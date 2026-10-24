@@ -241,3 +241,13 @@ describe('the displayed probability owns its observation clock', () => {
     expect(displayedProbabilityObservedAt(held(10), null, 500, undefined)).toBeUndefined();
   });
 });
+
+
+test('idle residency readmission survives its delayed older-generation revoke', () => {
+  const initial = readerAfter(EMPTY_BLEND_PREVIEW_READER, blend(8, .6, { epoch: 600 }), EVENT, 0);
+  const readmitted = readerAfter(initial, blend(1, .8, { epoch: 602 }), EVENT, 10);
+  const afterDelayedRevoke = readerAfter(readmitted, revoke(9, 8, 601), EVENT, 20);
+  expect(afterDelayedRevoke).toBe(readmitted);
+  expect(afterDelayedRevoke.held?.p).toBe(.8);
+  expect(afterDelayedRevoke.epoch).toBe(602);
+});

@@ -617,12 +617,24 @@ class _RecordingSession:
         column = columns[len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
             "win_probability_sources"
         )] if columns else None
-        source = column.element.right.value if hasattr(column, "element") else None
+        from copy import deepcopy
+        from sqlalchemy.sql.elements import Cast, Null
+        null_source = (hasattr(column, "element") and isinstance(column.element, Cast)
+                       and isinstance(column.element.clause, Null))
+        source = (column.element.right.value
+                  if hasattr(getattr(column, "element", None), "right") else None)
+        preview = [c.name for c in columns[-3:]] == [
+            "preview_sources", "preview_rev", "preview_context_at",
+        ]
+        from datetime import datetime, timezone
+        read_at = datetime.now(timezone.utc)
 
         def field(obj, key):
             raw = getattr(obj, key, None)
+            if key == "win_probability_sources" and null_source:
+                return None
             if key == "win_probability_sources" and source is not None:
-                return raw.get(source) if isinstance(raw, dict) else None
+                return deepcopy(raw.get(source)) if isinstance(raw, dict) else None
             return raw
 
         # The read admits only the events it names (`event_id IN ...`), as the
@@ -640,7 +652,8 @@ class _RecordingSession:
                     (event, PREPARED_EVENT_FIELDS),
                     (outcome, PREPARED_OUTCOME_FIELDS),
                 ) for key in fields
-            )
+            ) + ((deepcopy(getattr(event, "win_probability_sources", None)),
+                  getattr(event, "win_probability_sources_rev", None), read_at) if preview else ())
             for market, event in self._market_rows
             if wanted is None or event.id in wanted
             for outcome in (
@@ -977,6 +990,7 @@ class TestTheHeadlineDoesNotWaitForItsChartPoint:
         })
         session.returned_rev = 42
         r, _ = _one_event_refresher(monkeypatch, session)
+        _refuse_redis_without_a_socket(monkeypatch)
         log = []
         sent = {eid: asyncio.Event() for eid in range(1, count + 1)}
 
@@ -1344,6 +1358,29 @@ class _LockedRowSession(_RecordingSession):
             self.updates.append(statement)
             raise _LockTimeout("canceling statement due to lock timeout")
         return await super().execute(statement, *args, **kwargs)
+
+
+def _refuse_redis_without_a_socket(monkeypatch):
+    """The ledger is always on, so a refresh reaches Redis. This rig has none.
+
+    Hand the refresher a client whose connections refuse at once, as an absent
+    local Redis does, but with no DNS lookup, no socket and no retry backoff.
+    A real lookup of ``localhost`` ran out a 0.25 s wait on CI (#11485)."""
+    import redis.asyncio as aioredis
+    from redis.backoff import NoBackoff
+    from redis.retry import Retry
+
+    class _Refused(aioredis.Connection):
+        async def _connect(self):
+            raise ConnectionRefusedError(61, "no Redis in the unit rig")
+
+    def client():
+        pool = aioredis.ConnectionPool(
+            connection_class=_Refused, retry=Retry(NoBackoff(), 0),
+        )
+        return aioredis.Redis(connection_pool=pool, retry=Retry(NoBackoff(), 0))
+
+    monkeypatch.setattr("app.tasks.redis_state.get_async_redis_client", client)
 
 
 def _one_event_refresher(monkeypatch, session, **kwargs):

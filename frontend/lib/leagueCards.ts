@@ -25,6 +25,10 @@ import { SUSPENDED_LABEL, venueSettledSummary } from "./eventState";
 // 1. Events → the standard event card
 // ---------------------------------------------------------------------------
 
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
 /**
  * Map one league-rail game onto the shape the SHARED event card reads.
  *
@@ -69,17 +73,35 @@ export function leagueGameToEvent(game: LeagueGameBrief): Event {
     // spelling absence one particular way — but a payload that says "we have no
     // projection" out loud is the honest half of that pair.)
     //
+    // #11576 — the projected pair the upcoming rail now serves (#11295) travels
+    // as served, but only as a PAIR: half a pair, or a half that is not a finite
+    // number, is stated as no projection at all. Before this the pair was always
+    // nulled here, so an upcoming NFL card printed "Projected final" on
+    // /sports and in search and nothing on its league page. The card still
+    // makes every printing decision (`cardProjectedFinal`, and
+    // `liveCardProjectedFinal` for the in-play object, carried only when served).
+    //
     // `captured_at` is the one field genuinely not in this envelope: the league
     // rail carries a blend, not a snapshot, and inventing a capture time would
     // be worse than the cast.
-    event.current_odds = {
+    const served = game.current_odds;
+    const pair =
+      isFiniteNumber(served?.projected_home_score) && isFiniteNumber(served?.projected_away_score)
+        ? { home: served.projected_home_score, away: served.projected_away_score }
+        : null;
+    const odds: Record<string, unknown> = {
       home_probability: home,
       away_probability: away,
       spread: null,
       over_under: null,
-      projected_home_score: null,
-      projected_away_score: null,
-    } as Event["current_odds"];
+      projected_home_score: pair ? pair.home : null,
+      projected_away_score: pair ? pair.away : null,
+    };
+    if (pair && typeof served?.projection_captured_at === "string") {
+      odds.projection_captured_at = served.projection_captured_at;
+    }
+    if (served?.live_projection != null) odds.live_projection = served.live_projection;
+    event.current_odds = odds as unknown as Event["current_odds"];
   }
   if (game.opening_odds) {
     event.opening_odds = game.opening_odds as Event["opening_odds"];
@@ -112,6 +134,16 @@ export function leagueGameToEvent(game: LeagueGameBrief): Event {
   // function only refuses to lose them.
   if (game.doubleheader != null) event.doubleheader = game.doubleheader;
   if (game.game_number != null) event.game_number = game.game_number;
+
+  // #11296 — a final's forecast from before the scheduled start travels as
+  // served, with its refusal and the actual score's period. The shared card's
+  // `finalForecastComparison` decides whether it prints; dropped here, the
+  // results rail printed no band while search and the event page did.
+  if (game.pregame_projection != null) event.pregame_projection = game.pregame_projection;
+  if (game.pregame_projection_unavailable != null) {
+    event.pregame_projection_unavailable = game.pregame_projection_unavailable;
+  }
+  if (game.final_score_period != null) event.final_score_period = game.final_score_period;
 
   return event;
 }

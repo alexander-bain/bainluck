@@ -88,3 +88,29 @@ async def test_quiet_final_past_backlog_and_spill_survives_handoff(monkeypatch):
     assert tail == WANT, {"paid_after_handoff": tail,
                           "unretained": r.stats.get("history_unretained"),
                           "deferred": r.stats.get("history_deferred")}
+
+
+@pytest.mark.asyncio
+async def test_the_rig_reaches_redis_without_a_socket(monkeypatch):
+    """#11485: the ledger's Redis calls must not resolve a hostname under the
+    0.25 s waits above. A refresh on this rig builds a Redis client; it looks
+    nothing up."""
+    import socket
+    from app.tasks import redis_state
+
+    lookups, resolve = [], socket.getaddrinfo
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda *a, **k: lookups.append(a[:2]) or resolve(*a, **k))
+    r, session, frames, price = _ready_rig(monkeypatch)
+
+    async def chart(session_, **kw):
+        return object(), True
+
+    monkeypatch.setattr("app.tasks.snapshots._create_or_update_win_prob_snapshot", chart)
+    built, rigged = [], redis_state.get_async_redis_client
+    monkeypatch.setattr(redis_state, "get_async_redis_client",
+                        lambda: built.append(1) or rigged())
+    await r.refresh([1], flush_started=1000)
+    await r.drain_history()
+    assert [f["source_value"] for f in frames] == [.40]
+    assert built and not lookups, {"clients": len(built), "lookups": lookups}

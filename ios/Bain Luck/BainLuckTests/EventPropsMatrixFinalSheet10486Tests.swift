@@ -143,7 +143,8 @@ final class EventPropsMatrixFinalSheet10486Tests: XCTestCase {
         let matrix = try source("Components/EventPropsMatrixView.swift")
         let sheet = try XCTUnwrap(matrix.range(of: ".sheet(item: $selection.openQuestion"))
         let call = String(matrix[sheet.upperBound...].prefix(400))
-        for argument in ["subjectLabel: selection.openedSubjectLabel", "afterProps: afterProps", "gameEnded: gameEnded"] {
+        for argument in ["subjectLabel: selection.openedSubjectLabel", "afterProps: afterProps", "gameEnded: gameEnded",
+                         "displayAsOf: displayAsOf"] {
             XCTAssertTrue(call.contains(argument), "the matrix's sheet drops \(argument): \(call)")
         }
         let page = try source("Views/EventDetailView.swift")
@@ -175,7 +176,10 @@ final class EventPropsMatrixFinalSheet10486Tests: XCTestCase {
             Color.clear.sheet(item: $feed.open) { open in
                 EventPropsMatrixDetailView(
                     open: open, subjectLabel: feed.label,
-                    props: feed.during, afterProps: feed.after, gameEnded: feed.ended
+                    props: feed.during, afterProps: feed.after, gameEnded: feed.ended,
+                    // #10236 — the route body's capture minute (quotes
+                    // observed 07:08Z), so the live 48% is current here.
+                    displayAsOf: "2026-10-03T07:09:00Z".asDate
                 )
             }
         }

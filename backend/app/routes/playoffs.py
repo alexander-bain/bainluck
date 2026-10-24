@@ -1656,11 +1656,27 @@ def _collect_trend_outcomes(
       outcome's own. Venues spell a club differently and the old fallback was
       the lowercase normalized form, so naming per outcome would split one club
       into two differently-named series the moment the ``break`` came out.
+
+    * **A club the grid has put OUT is not drawn** (#11493). Its championship
+      cell says ``eliminated`` (or ``lost``) and prints ✕, but ``grid_raw`` still
+      holds the venue's leftover 0.1% quote, so the legend beside the table used
+      to list the Reds, Orioles and Athletics — none of which made the MLB
+      playoffs — at "0%" next to the two live clubs. The ``top`` seats go to the
+      next clubs still in it, which is the shape the WNBA legend already had.
+      Dropping a name never moves a drawn club's number: the de-vig denominator
+      is the market's whole column, not the names drawn.
     """
     trend_outcome_ids: list[int] = []
     trend_outcome_names: dict[int, str] = {}
 
-    for team in teams[:top]:
+    drawn = 0
+    for team in teams:
+        if drawn >= top:
+            break
+        cell = (team.get("cells") or {}).get(championship_col) or {}
+        if cell.get("state") in _GRID_OUT_STATES:
+            continue
+        drawn += 1
         norm_name = _normalize_team_name(team["name"])
         for entry in grid_raw.get(norm_name, {}).get(championship_col, []):
             outcome_id = entry.get("outcome_id")
@@ -4576,6 +4592,10 @@ async def get_playoff_grid_cached(
 #: plus the tournament register's "lost"). A cell in one of these carries no
 #: probability and needs none: the outcome has been graded.
 _GRID_DECIDED_STATES = frozenset({"won", "eliminated", "lost"})
+
+#: The decided states that put a club OUT of the question — every decided state
+#: but a win. A club in one of these is not drawn on the trend chart (#11493).
+_GRID_OUT_STATES = _GRID_DECIDED_STATES - {"won"}
 
 #: Fraction of the grid's rows that must carry a cell before the column may be
 #: called DECIDED (#6442). Measured on all 14 live grids 2026-09-17 06:26Z: of

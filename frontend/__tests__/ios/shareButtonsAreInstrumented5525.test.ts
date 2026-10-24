@@ -43,6 +43,7 @@ const MODIFIER = ".recordsShareOpened";
 const MENU_SITES: Record<string, number> = {
   "Components/CardContextMenu.swift": 2,
   "Views/MyStuffView.swift": 2,
+  "Views/SearchView.swift": 1,
 };
 
 function swiftFiles(dir: string): string[] {

@@ -72,7 +72,7 @@ from app.utils.game_market_club_names import (
     repair_card_club_names,
     repair_club_names,
 )
-from app.utils.market_staleness import unobserved_board_keys
+from app.utils.market_staleness import board_touched_at, unobserved_board_keys
 from app.utils.nation_flags import flag_nation
 from app.utils.series_card_labels import (
     market_threshold_label,
@@ -4929,6 +4929,18 @@ def _compose_futures_families(
 
 _SEARCH_TS_CONFIG_SQL = literal_column("'english'")
 _SEARCH_EVENT_TEAM_WEIGHT = "A"
+
+#: #10769: the futures pools' `status = 'open'`, rendered INLINE rather than bound.
+#: The reader runs these arms through asyncpg as prepared statements, where
+#: `status == "open"` becomes `status = $1::VARCHAR`; once Postgres keeps a
+#: generic plan it cannot prove `$1` implies the open-only partial's
+#: `WHERE status = 'open'`, so the arm falls back to the whole-table
+#: `ix_futures_name_trgm` and scans the settled tail. A fixed constant keeps
+#: `ix_futures_name_trgm_open` eligible under generic and custom plans alike;
+#: same truth value, no caller input. (#4506 measured this class on the
+#: last-match arm.) Not covered here: `ix_futures_name_fts_open`'s expression,
+#: whose `coalesce(name, '')` default the arm also binds.
+_FUTURES_OPEN_STATUS_SQL = literal_column("'open'", String)
 
 #: How much a last-token PREFIX match is worth against a whole-lexeme match on
 #: the Teams surface (#4126). Strictly between 0 and 1: above 0 so a prefix-only
@@ -12096,7 +12108,8 @@ async def search_events(
     # vs 701ms. The outer copy is deliberate redundancy — it keeps the predicate
     # correct if the pushed-down copy is ever removed.
     _futures_open_now = (
-        FuturesMarket.status == "open",
+        # #10769: inline, so a generic plan can still use the open-only trigram partial.
+        FuturesMarket.status == _FUTURES_OPEN_STATUS_SQL,
         or_(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= datetime.now(timezone.utc),
@@ -15147,7 +15160,8 @@ async def typeahead_search(
     # by construction. Filters pushed into each arm (AND distributes over UNION);
     # kept on the outer query as deliberate redundancy.
     _ta_open_now = (
-        FuturesMarket.status == "open",
+        # #10769: the same inline constant as `_futures_open_now`.
+        FuturesMarket.status == _FUTURES_OPEN_STATUS_SQL,
         or_(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
@@ -23311,6 +23325,29 @@ def _match_scope_tennis_totals(
     return _match_scope_totals(game_totals, sport_prefix)
 
 
+def _game_total_leg_prices_a_period(outcome_name: Optional[str]) -> bool:
+    """True when a `game_total` row's own LEG names a period (#11488).
+
+    A row is typed by its MARKET's name, and a Polymarket game container is
+    named for the matchup alone, with one leg per sub-market
+    (`_parent_outcome_data`). "Nuggets vs. Thunder" types as `game_total`
+    because th·UNDER·r holds the word the Over/Under arm looks for, so every
+    leg that carries a number became a full-game rung — including the
+    container's copy of "1H O/U 122.5". Basketball's band admits 122.5, the
+    rung sorts below the whole ladder, and step 7b capped all 36 full-game rungs
+    on `/events/15195971` to that answered first-half line's 0.0005 and its
+    clock. The donor then left the payload, so no served row showed where the
+    number came from.
+
+    The projection pool already asks the leg this question for the same reason
+    (`_PM_SCOPES_DEFERRING_TO_OUTCOMES`); this is the same shipped classifier
+    asked of the leg with no ticker, since the ticker describes the market. A
+    leg naming no period ("Over 204.5 points", "Under", "O/U 221.5") is
+    untouched.
+    """
+    return _classify_game_market(outcome_name or "", None) in _PM_PERIOD_SCOPES
+
+
 # ---- Queue #190 Item 3: settled player-prop grading ------------------------
 # For completed/closed events we compute each player prop's ACTUAL stat value
 # and hit/miss from event.box_score_data, mirroring the authoritative resolver
@@ -27251,6 +27288,13 @@ async def _build_game_markets(
 
     for t in totals_thresholds:
         if t["market_type"] == "game_total":
+            # #11488: a leg that prices a period is not a rung of the game's
+            # ladder. Left out HERE, before the one-row-per-threshold pick, so
+            # it can neither evict a real rung at its line nor cap the rungs
+            # above it in 7b and then leave the payload with its price still
+            # on them.
+            if _game_total_leg_prices_a_period(t.get("outcome_name")):
+                continue
             key = t["threshold"]
             incumbent = seen_thresholds.get(key)
             if incumbent is None:
@@ -38324,7 +38368,7 @@ async def _search_withheld_price_ids(
         outcomes = getattr(market, "outcomes", None) or []
         withheld |= unobserved_board_keys(
             ((o.id, o.last_updated) for o in outcomes),
-            board_touched_at=getattr(market, "updated_at", None),
+            board_touched_at=board_touched_at(market),
             fleet_newest_observation=await _fleet_newest_observation(db, market),
             board_has_a_verdict=_board_has_a_verdict(outcomes),
         )

@@ -2,30 +2,32 @@ import XCTest
 @testable import Bain_Luck
 
 /// #10090 — an already-open page keeps receiving folded previews when its
-/// authoritative fold membership changes. The server composes a connection's
-/// folded previews for the rows it opened with (`_fold_stream_ids`: membership
-/// changes are picked up on reconnect), so the adopted detail is the authority:
-/// a change withdraws the old fold's preview, closes that connection, and the
-/// page's re-plan opens one on the new fold. Every origin fence and commit
-/// floor the visit holds is kept (`BlendPreview.readerAfterMembership`).
+/// authoritative combined-event membership changes. The adopted detail is the
+/// membership authority: a change retires the old fold's preview authority
+/// (`BlendPreview.readerAfterMembership`), closes the connection whose
+/// server-side composition was bound to the old membership, and the page's
+/// re-plan opens a new one for the new fold. Old-session and old-membership
+/// packets on the new connection are refused; the new fold is shown.
+///
+/// Written by Fable against 882fc964 without an Xcode build: Native runs it.
 @MainActor
 final class AMembershipChangeReopensTheFoldedPreview10090Tests: XCTestCase {
     private static let id = 4242
-    private static let oldFold = #"{"4242":10,"4243":20}"#
-    private static let newFold = #"{"4242":10,"4244":30}"#
 
     private final class Handle: LiveStreamHandle, @unchecked Sendable {
+        private var handlers: [String: [@MainActor (String) -> Void]] = [:]
         var isClosed = false
-        var handlers: [String: [@MainActor (String) -> Void]] = [:]
         func on(_ event: String, _ handler: @escaping @MainActor (String) -> Void) {
             handlers[event, default: []].append(handler)
         }
         func close() { isClosed = true }
-        func fire(_ event: String, _ data: String = "") {
-            for handler in handlers[event] ?? [] { handler(data) }
+        @MainActor func fire(_ event: String, _ data: String = "") {
+            for h in handlers[event] ?? [] { h(data) }
         }
     }
 
+    /// `load()` reads `page`; every other section declines, as in the other
+    /// held-page tests (an optional read that fails leaves the page intact).
     @MainActor private final class Client: EventDetailProviding {
         struct Declined: Error {}
         var page: EventDetail
@@ -38,9 +40,7 @@ final class AMembershipChangeReopensTheFoldedPreview10090Tests: XCTestCase {
         func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse { throw Declined() }
     }
 
-    @MainActor private final class Handles { var all: [Handle] = [] }
-
-    private static func detail(_ fold: String) throws -> EventDetail {
+    private static func detail(revision: String) throws -> EventDetail {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(EventDetail.self, from: Data("""
@@ -48,32 +48,49 @@ final class AMembershipChangeReopensTheFoldedPreview10090Tests: XCTestCase {
          "home_score":1,"away_score":0,
          "current_odds":{"home_probability":0.5,"away_probability":0.25},
          "hero_probability":0.5,"hero_probability_away":0.25,"hero_probability_source":"blend",
-         "hero_probability_observed_at":"2026-10-21T19:00:00Z","blend_fold_revision":\(fold),
+         "hero_probability_observed_at":"2026-10-21T19:00:00Z","blend_fold_revision":\(revision),
          "win_probability_sources":{"kalshi":{"value":0.5,"updated_at":"2026-10-21T19:00:00Z"}}}
         """.utf8))
     }
 
-    /// The backend's folded projection of one origin row's ledger frame: the
-    /// removed row 4243 composes on `oldFold`, the joining row 4244 on `newFold`.
-    private static func preview(origin: Int, epoch: Int, seq: Int, p: Double = 0.65) -> String {
-        let (fold, rev) = origin == 4243 ? (oldFold, 20) : (newFold, 30)
-        return """
-        {"event_id":\(id),"p":\(p),"p_away":0.2,"sport":"soccer_epl","status":"live","source":"kalshi",
-         "source_value":\(p),"display_observed_at":"2026-10-21T19:00:04+00:00","provisional":true,
-         "preview":{"kind":"blend","epoch":\(epoch),"seq":\(seq),"base_rev":\(rev),"ttl_ms":60000,
-                    "origin_event_id":\(origin),"folded_version":1,"base_fold_revision":\(fold)}}
+    private static func open(_ session: String) -> String {
+        #"{"event_id":4242,"fold_session":"\#(session)"}"#
+    }
+
+    private static func pending(_ epoch: Int, _ seq: Int) -> String {
+        #"{"epoch":\#(epoch),"seq":\#(seq),"state":"pending","ttl_ms":60000}"#
+    }
+
+    private static func snapshot(session: String, seq: Int, base: String, authority: String,
+                                 p: Double = 0.65) -> String {
         """
+        {"event_id":\(id),"p":\(p),"p_away":0.2,"sport":"soccer_epl","status":"live","provisional":true,
+         "display_observed_at":"2026-10-21T19:00:04Z",
+         "preview":{"kind":"blend","folded_version":2,"fold_session":"\(session)","fold_seq":\(seq),
+                    "ttl_ms":60000,"base_fold_revision":\(base),"origin_authority":\(authority)}}
+        """
+    }
+
+    private static let oldBase = #"{"4242":10,"4243":20}"#
+    private static let newBase = #"{"4242":11,"4244":30}"#
+    private static let oldAuthority = #"{"4242":\#(AMembershipChangeReopensTheFoldedPreview10090Tests.pending(100, 2)),"4243":\#(AMembershipChangeReopensTheFoldedPreview10090Tests.pending(2, 1))}"#
+    private static let newAuthority = #"{"4242":\#(AMembershipChangeReopensTheFoldedPreview10090Tests.pending(100, 2)),"4244":\#(AMembershipChangeReopensTheFoldedPreview10090Tests.pending(7, 1))}"#
+
+    /// Every connection the page opens, in order.
+    @MainActor private final class Handles {
+        var all: [Handle] = []
     }
 
     private func headline(_ vm: EventDetailViewModel) throws -> Double? {
         vm.headline(try XCTUnwrap(vm.event)).currentOdds?.homeProbability
     }
 
-    func testTheAdoptedMembershipChangeReopensTheStreamAndKeepsEveryFence() async throws {
-        let client = Client(page: try Self.detail(Self.oldFold))
+    func testTheAdoptedMembershipChangeReopensTheStreamOnTheNewFoldAndRefusesTheOld() async throws {
+        let client = Client(page: try Self.detail(revision: Self.oldBase))
         let handles = Handles()
         let vm = EventDetailViewModel(
-            eventId: Self.id, client: client,
+            eventId: Self.id,
+            client: client,
             makeStreamHandle: { _ in
                 let handle = Handle()
                 handles.all.append(handle)
@@ -84,56 +101,39 @@ final class AMembershipChangeReopensTheFoldedPreview10090Tests: XCTestCase {
         )
         defer { vm.stopRefresh() }
         await vm.load()
-        XCTAssertEqual(handles.all.count, 1)
-        let first = try XCTUnwrap(handles.all.last)
-        first.fire("open")
-        first.fire("preview", Self.preview(origin: 4243, epoch: 900, seq: 1))
+        XCTAssertEqual(handles.all.count, 1, "the held page opened one stream")
+        let first = try XCTUnwrap(handles.all.first)
+        first.fire("open", Self.open("s1"))
+        first.fire("preview", Self.snapshot(session: "s1", seq: 1, base: Self.oldBase, authority: Self.oldAuthority))
         XCTAssertEqual(try headline(vm), 0.65, "the 4242/4243 fold shows its pending blend")
-        // A commit of the row about to leave: the parent withheld every later fold on it.
-        first.fire("fold_preview_floor", #"{"event_id":4242,"floor":{"4243":21}}"#)
-        XCTAssertEqual(try headline(vm), 0.5)
 
         // The authoritative detail now folds 4242 with 4244 instead of 4243.
-        client.page = try Self.detail(Self.newFold)
+        client.page = try Self.detail(revision: Self.newBase)
         await vm.load(fresh: false)
-        XCTAssertEqual(vm.event?.blendFoldRevision?.revision?.rows, ["4242": 10, "4244": 30])
-        XCTAssertNil(vm.blendPreview)
+        XCTAssertEqual(vm.event?.blendFoldRevision?.revision?.rows, ["4242": 11, "4244": 30], "the changed fold is adopted")
+        XCTAssertNil(vm.blendPreview, "the old fold's preview is withdrawn")
+        XCTAssertEqual(try headline(vm), 0.5)
         XCTAssertTrue(first.isClosed, "the connection composed on the old membership is closed")
-        XCTAssertEqual(handles.all.count, 2, "and the page opened one for the new fold")
+        XCTAssertEqual(handles.all.count, 2, "and the page opened a new one for the new fold")
         let second = try XCTUnwrap(handles.all.last)
-        second.fire("open")
-        first.fire("preview", Self.preview(origin: 4244, epoch: 12, seq: 1, p: 0.9))
-        XCTAssertEqual(try headline(vm), 0.5, "the retired connection delivers nothing")
-        second.fire("preview", Self.preview(origin: 4243, epoch: 900, seq: 2))
-        XCTAssertEqual(try headline(vm), 0.5, "a frame composed for the old membership is refused")
-        // Neither the removed row's floor nor its epoch 900 withholds the new row's epoch 12.
-        second.fire("preview", Self.preview(origin: 4244, epoch: 12, seq: 1, p: 0.7))
+
+        // On the new connection: the old session and the old membership are refused.
+        second.fire("open", Self.open("s2"))
+        second.fire("preview", Self.snapshot(session: "s1", seq: 2, base: Self.newBase, authority: Self.newAuthority))
+        XCTAssertNil(vm.blendPreview, "a packet of the old session is refused")
+        second.fire("preview", Self.snapshot(session: "s2", seq: 1, base: Self.oldBase, authority: Self.oldAuthority))
+        XCTAssertNil(vm.blendPreview, "a packet naming the removed member is refused")
+        XCTAssertEqual(try headline(vm), 0.5)
+
+        // The new fold is admitted on the same connection.
+        second.fire("preview", Self.snapshot(session: "s2", seq: 2, base: Self.newBase, authority: Self.newAuthority, p: 0.7))
         XCTAssertEqual(try headline(vm), 0.7, "the already-open page shows the new fold's pending blend")
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.5, "the committed event is untouched")
 
+        // The same membership read again is not a change: the stream stays.
         await vm.load(fresh: false)
         XCTAssertEqual(handles.all.count, 2, "an unchanged membership keeps the connection")
         XCTAssertFalse(second.isClosed)
-        XCTAssertEqual(try headline(vm), 0.7)
-
-        // A cached detail flips back to the old fold, then the fresh one returns.
-        client.page = try Self.detail(Self.oldFold)
-        await vm.load(fresh: false)
-        XCTAssertEqual(handles.all.count, 3)
-        let third = try XCTUnwrap(handles.all.last)
-        third.fire("open")
-        third.fire("preview", Self.preview(origin: 4243, epoch: 900, seq: 1))
-        XCTAssertEqual(try headline(vm), 0.5, "the returned row's old identity gets no new lease")
-        third.fire("preview", Self.preview(origin: 4243, epoch: 900, seq: 3))
-        XCTAssertEqual(try headline(vm), 0.5, "nor a base its kept commit floor has passed")
-        client.page = try Self.detail(Self.newFold)
-        await vm.load(fresh: false)
-        XCTAssertEqual(handles.all.count, 4)
-        let fourth = try XCTUnwrap(handles.all.last)
-        fourth.fire("open")
-        fourth.fire("preview", Self.preview(origin: 4244, epoch: 12, seq: 1, p: 0.7))
-        XCTAssertEqual(try headline(vm), 0.5, "the replayed identity stays fenced across the flap")
-        fourth.fire("preview", Self.preview(origin: 4244, epoch: 12, seq: 2, p: 0.72))
-        XCTAssertEqual(try headline(vm), 0.72)
+        XCTAssertEqual(try headline(vm), 0.7, "and the shown preview")
     }
 }

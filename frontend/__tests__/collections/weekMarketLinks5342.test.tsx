@@ -28,7 +28,9 @@ jest.mock("next/link", () => {
 jest.mock("@/components/Analytics", () => ({ useAnalyticsContext: () => ({ track: () => {} }) }));
 
 import CollectionHub from "@/components/collections/CollectionHub";
-import { forgetAcceptedCollections, parseCollection, RELATED_LINK_LIMIT, relatedMarketLinks, settleCollectionRead } from "@/lib/collections";
+import {
+  forgetAcceptedCollections, parseCollection, reconcileCollectionContext, RELATED_LINK_LIMIT, relatedMarketLinks, settleCollectionPage, settleCollectionRead,
+} from "@/lib/collections";
 import savedWeek5 from "../fixtures/nflWeek5Rev34Container5342.20261020.json";
 import { event, nflHub, question } from "./fixtures";
 
@@ -58,10 +60,13 @@ describe("Week 5 (saved revision 34): the attached O/U 47.5 is one tap from the 
     expect(routes(bucs!)).toHaveLength(9);
   });
   test("the links keep the order the week served them in", () => {
-    const { hub, html } = draw(week5(), W5);
+    const raw = week5();
+    const served = raw.sections.flatMap((s) => s.members).filter((m) => m.type === "market" && m.event_id === 14780554).map((m) => `market:${m.id}`);
+    const { hub, html } = draw(raw, W5);
     const drawn = [...(list(html, BUCS) ?? "").matchAll(/data-related-market="(market:\d+)"/g)].map((m) => m[1]);
     expect(drawn).toHaveLength(9);
-    expect(drawn).toEqual(hub.related[BUCS].map((m) => m.key));
+    expect(hub.related[BUCS].map((m) => m.key)).toEqual(served);
+    expect(drawn).toEqual(served);
     expect(new Set(drawn).size).toBe(9);
   });
   test("every one of the 38 attached markets is drawn once, under the game it was served with", () => {
@@ -107,6 +112,22 @@ describe("Week 5 (saved revision 34): the attached O/U 47.5 is one tap from the 
     try { clicks.get(NAMED)!(); } finally { g.document = saved.document; g.sessionStorage = saved.sessionStorage; }
     expect(JSON.parse(stored.get(`collection-reading:${W5}`)!)).toEqual({ slug: W5, memberKey: BUCS, offset: 212, expanded: [] });
   });
+  test("a mid-page game's attached market keeps its non-zero scroll context across a week refresh", () => {
+    const midGame = "event:14782156";
+    const midMarket = "market:63341312";
+    draw(week5(), W5);
+    const stored = new Map<string, string>();
+    const g = global as unknown as Record<string, unknown>;
+    const saved = { document: g.document, sessionStorage: g.sessionStorage };
+    g.document = { getElementById: (id: string) => id === `collection-member-${midGame}` ? { getBoundingClientRect: () => ({ top: 148 }) } : null };
+    g.sessionStorage = { setItem: (key: string, value: string) => stored.set(key, value) };
+    try { clicks.get(midMarket)!(); } finally { g.document = saved.document; g.sessionStorage = saved.sessionStorage; }
+    const context = JSON.parse(stored.get(`collection-reading:${W5}`)!);
+    expect(context).toEqual({ slug: W5, memberKey: midGame, offset: 148, expanded: [] });
+    const refreshed = parseCollection({ ...week5(), revision: 35 }, W5);
+    const settled = settleCollectionRead(W5, { hub: refreshed });
+    expect(reconcileCollectionContext(context, settled.hub!)).toEqual({ slug: W5, memberKey: midGame, offset: 148, expanded: [] });
+  });
 });
 
 describe("the inline list is bounded; a long list stays behind the game page (#10146)", () => {
@@ -121,6 +142,26 @@ describe("the inline list is bounded; a long list stays behind the game page (#1
     raw.member_count = 3 + n + 1;
     return raw;
   };
+  const pagedThemePage = (
+    members: ReturnType<typeof event | typeof question>[],
+    nextCursor: string | null,
+    totalCount: number,
+  ) => ({
+    state: "published",
+    slug: "ai",
+    revision: 12,
+    reason: null,
+    edition: { kind: "theme_continuing", subject: "ai" },
+    container: { id: 9301, kind: "theme", name: "AI", slug: "ai", category: "ai", status: "active", window_start: null, window_end: null, parent_container_id: null },
+    children: [],
+    sections: [{ class: "side_question", count: members.length, members }],
+    member_count: members.length,
+    withheld_count: 0,
+    withheld: [],
+    counts: { eligible_count: totalCount, shown_count: totalCount, withheld_count: 0, inventory_complete: true },
+    page: { size: 50, next_cursor: nextCursor },
+    revision_moved: false,
+  });
   // The bound is the number 12, written as literals: a test that reads the
   // constant follows it to 400 and still passes (lane1 review of 31fe423227).
   test("the limit is 12", () => {
@@ -139,6 +180,59 @@ describe("the inline list is bounded; a long list stays behind the game page (#1
     expect(html).not.toContain("data-related-market=");
     expect(html).not.toContain('href="/futures/700"');
     expect(html).toContain('data-more-on-game="event:7"');
+  });
+  test("Load more growing a game from 11 to 12 attached markets folds the new market under the game without a duplicate card", () => {
+    const ids = Array.from({ length: 12 }, (_, index) => 700 + index);
+    const game = event(7);
+    game.question_ids = ids;
+    const p1 = parseCollection(
+      pagedThemePage([game, ...ids.slice(0, 11).map((id) => question(id, 7))], "WzAsNzEwXQ", 14),
+      "ai",
+    );
+    settleCollectionRead("ai", { hub: p1 });
+    const p2 = parseCollection(
+      pagedThemePage([question(711, 7), question(801, null)], null, 14),
+      "ai",
+    );
+    const combined = settleCollectionPage("ai", p1, { revision: 12, cursor: "WzAsNzEwXQ" }, p2);
+    const html = renderToStaticMarkup(<CollectionHub slug="ai" />);
+    expect(combined.related["event:7"].map((m) => m.key)).toEqual(ids.map((id) => `market:${id}`));
+    expect(relatedMarketLinks(combined, "event:7")).toHaveLength(12);
+    expect(routes(list(html, "event:7") ?? "")).toHaveLength(12);
+    expect(html).toContain('data-related-market="market:711"');
+    expect(html).not.toContain('data-collection-member="market:711"');
+    expect(html).toContain('data-collection-member="market:801"');
+  });
+  test("Load more growing a game from 12 to 13 attached markets folds all 13 behind More on this game without leaking the 13th as a standalone card", () => {
+    const ids = Array.from({ length: 13 }, (_, index) => 700 + index);
+    const game = event(7);
+    game.question_ids = ids;
+    const rawPage1 = pagedThemePage([game, ...ids.slice(0, 12).map((id) => question(id, 7))], "WzAsNzExXQ", 14);
+    const p1 = parseCollection(rawPage1, "ai");
+    settleCollectionRead("ai", { hub: p1 });
+    const beforeHtml = renderToStaticMarkup(<CollectionHub slug="ai" />);
+    expect(routes(list(beforeHtml, "event:7") ?? "")).toHaveLength(12);
+
+    const p2 = parseCollection(pagedThemePage([question(712, 7)], null, 14), "ai");
+    const combined = settleCollectionPage("ai", p1, { revision: 12, cursor: "WzAsNzExXQ" }, p2);
+    const afterHtml = renderToStaticMarkup(<CollectionHub slug="ai" />);
+    expect(combined.related["event:7"].map((m) => m.key)).toEqual(ids.map((id) => `market:${id}`));
+    expect(relatedMarketLinks(combined, "event:7")).toEqual([]);
+    expect(list(afterHtml, "event:7")).toBeNull();
+    expect(afterHtml).not.toContain("data-related-market=");
+    expect(afterHtml).not.toContain('data-collection-member="market:712"');
+    expect(combined.sections.flatMap((s) => s.members).map((m) => m.key)).toEqual(["event:7"]);
+    expect(afterHtml).toContain('data-more-on-game="event:7"');
+
+    const refreshed = settleCollectionRead("ai", { hub: parseCollection(rawPage1, "ai") }).hub!;
+    expect(refreshed.related["event:7"]).toHaveLength(13);
+    expect(refreshed.sections.flatMap((s) => s.members).map((m) => m.key)).toEqual(["event:7"]);
+    expect(reconcileCollectionContext({ slug: "ai", memberKey: "event:7", offset: 164, expanded: [] }, refreshed)).toEqual({
+      slug: "ai",
+      memberKey: "event:7",
+      offset: 164,
+      expanded: [],
+    });
   });
 });
 

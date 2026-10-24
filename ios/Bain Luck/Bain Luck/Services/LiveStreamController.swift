@@ -457,6 +457,8 @@ final class LiveStreamController {
     /// can neither keep push "delivering" nor postpone the data-silence fallback.
     private let onPreview: @MainActor (String) -> Void
     private let onPreviewFloor: @MainActor (String) -> Void
+    private let onPreviewOpen: @MainActor (String) -> Void
+    private let onPreviewInvalidate: @MainActor () -> Void
     /// #10090 — previews are never replayed, so every (re)open and the end of
     /// the match clear them.
     private let onPreviewReset: @MainActor () -> Void
@@ -503,6 +505,8 @@ final class LiveStreamController {
         onReconcile: @escaping @MainActor (LiveStreamReconcile) -> Void = { _ in },
         onPreview: @escaping @MainActor (String) -> Void = { _ in },
         onPreviewFloor: @escaping @MainActor (String) -> Void = { _ in },
+        onPreviewOpen: @escaping @MainActor (String) -> Void = { _ in },
+        onPreviewInvalidate: (@MainActor () -> Void)? = nil,
         onPreviewReset: @escaping @MainActor () -> Void = {},
         deliversFoldedQuotes: Bool = false,
         schedule: @escaping LiveStreamSchedule = LiveStreamController.sleepThenRun,
@@ -518,6 +522,8 @@ final class LiveStreamController {
         self.onReconcile = onReconcile
         self.onPreview = onPreview
         self.onPreviewFloor = onPreviewFloor
+        self.onPreviewOpen = onPreviewOpen
+        self.onPreviewInvalidate = onPreviewInvalidate ?? onPreviewReset
         self.onPreviewReset = onPreviewReset
         self.deliversFoldedQuotes = deliversFoldedQuotes
         self.schedule = schedule
@@ -702,9 +708,10 @@ final class LiveStreamController {
 
         // The transport can reopen underneath this same handle after a drop.
         // A different server process may begin its recovery generation at 1.
-        next.on("open") { [weak self, weak next] _ in
+        next.on("open") { [weak self, weak next] raw in
             guard let self, let next, !self.stopped, self.handle === next else { return }
             self.onPreviewReset()
+            self.onPreviewOpen(raw)
             self.lastResyncGeneration = 0
             self.lastMessageAt = self.now()
             self.lastDataAt = self.now()
@@ -748,7 +755,7 @@ final class LiveStreamController {
                   let recovery = try? JSONDecoder().decode(LiveStreamRecovery.self, from: data),
                   recovery.generation > self.lastResyncGeneration else { return }
             self.lastResyncGeneration = recovery.generation
-            self.onPreviewReset()
+            self.onPreviewInvalidate()
             self.onResync()
         }
 

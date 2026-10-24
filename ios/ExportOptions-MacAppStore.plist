@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS App Store / TestFlight export options for `tools/native-mac-upload.sh` (#10878).
+
+  Companion to `ios/ExportOptions-AppStore.plist` — leaves the working iPhone/Watch
+  export options file untouched.
+
+  Uses `signingStyle = manual` with the explicit `MAC_APP_STORE` profile map
+  (`BainLuck Mac App AppStore` and `BainLuck Mac Widget AppStore`, provisioned via
+  `tools/asc-mac-signing.py`) so `xcodebuild -exportArchive` resolves the exact
+  macOS distribution profiles without requiring an interactive Xcode Apple ID session.
+
+  manageAppVersionAndBuildNumber is NO so `xcodebuild -exportArchive` preserves the
+  exact CFBundleVersion graded in the macOS archive.
+-->
+<plist version="1.0">
+<dict>
+	<key>destination</key>
+	<string>export</string>
+	<key>generateAppStoreInformation</key>
+	<false/>
+	<key>installerSigningCertificate</key>
+	<string>3rd Party Mac Developer Installer</string>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>com.bainluck.Bain-Luck</key>
+		<string>BainLuck Mac App AppStore</string>
+		<key>com.bainluck.Bain-Luck.BainLuckWidget</key>
+		<string>BainLuck Mac Widget AppStore</string>
+	</dict>
+	<key>signingCertificate</key>
+	<string>Apple Distribution</string>
+	<key>signingStyle</key>
+	<string>manual</string>
+	<key>stripSwiftSymbols</key>
+	<true/>
+	<key>teamID</key>
+	<string>J893F72P4R</string>
+	<key>testFlightInternalTestingOnly</key>
+	<false/>
+	<key>uploadSymbols</key>
+	<true/>
+</dict>
+</plist>

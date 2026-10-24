@@ -2336,7 +2336,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # Debt is registered: now join anything written beside it.
                 await end_beside()
 
-                if not final_drain and held_quotes is not None:
+                clock_after_delivery = (
+                    bool(written_outcome_ids) and not final_drain and held_quotes is not None
+                )
+                if not final_drain and held_quotes is not None and not clock_after_delivery:
                     # A committed write advanced last_updated: sample AFTER it,
                     # for future inputs only.
                     await held_quotes.sample_database_clock(get_task_session)
@@ -2384,6 +2387,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                             return allowed
 
                     if observation_groups:
+                        # Preserve recovery before potentially blocked unrelated
+                        # observation work; its input bounds remain frozen.
+                        if clock_after_delivery:
+                            await held_quotes.sample_database_clock(get_task_session)
+                            clock_after_delivery = False
                         await preview_observations(observation_groups, validate_observations)
                 # The event refresh uses its own session and committed prices.
                 # Start it before awaiting the separate MARKET notification;
@@ -2394,6 +2402,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         await stamp_start()
                 elif queued_refresh:
                     stamp_admit()
+
+                if clock_after_delivery:
+                    # The committed cohort can start display work now. This
+                    # sample only bounds FUTURE inputs and still completes
+                    # before the next price phase starts.
+                    await held_quotes.sample_database_clock(get_task_session)
 
                 # #9484: keep every committed MARKET notification, including
                 # standalone futures/props which have no event blend.

@@ -69,16 +69,26 @@ EVENTS_FOR_ESPN_IDS_SQL = (
 )
 
 #: Every market on those rows, resolved ones included — a finished series still
-#: shows what its questions settled at. Ordered by id so a truncation is
-#: deterministic and re-runnable.
+#: shows what its questions settled at. One PAGE of them: keyset on `fm.id`, so
+#: page N+1 starts strictly after the last id page N kept — no id is read twice
+#: and none is skipped at a page boundary, whatever the ids of other events in
+#: between. Ordered by id so the pages, and any truncation, are deterministic
+#: and re-runnable. (#9886: one capped read stopped a 43-game postseason at
+#: 5,000 questions.)
 MARKETS_FOR_EVENTS_SQL = (
     "SELECT fm.id, fm.event_id, fm.name, fm.external_id, fm.source, "
     "       fm.market_type, fm.status "
     "FROM futures_markets fm "
-    "WHERE fm.event_id = ANY(:event_ids) "
+    "WHERE fm.event_id = ANY(:event_ids) AND fm.id > :after_id "
     "ORDER BY fm.id "
     "LIMIT :limit"
 )
+
+#: Pages of `limit` questions one pass may read. Each page is the same bounded
+#: statement the single read was (`limit + 1` rows, `limit` kept); this bounds
+#: how many run. A postseason with more questions than ``limit * pages`` is
+#: `market_read_truncated` — partial, exactly as the single read reported a cap.
+MARKET_READ_MAX_PAGES = 4
 
 #: Report only — see the module note. Bounded by the postseason's own known
 #: kickoffs plus `REPORT_SLACK`, never a calendar guess. `listed_ids` is every
@@ -182,8 +192,17 @@ async def gather_mlb_postseason_candidates(
     target: MlbPostseason,
     *,
     limit: int = VENUE_FETCH_LIMIT,
+    max_pages: int = MARKET_READ_MAX_PAGES,
 ) -> PostseasonHarvest:
-    """Read our rows for ``target``'s postseason games and resolve the members."""
+    """Read our rows for ``target``'s postseason games and resolve the members.
+
+    ``limit`` is the row cap of one market read; ``max_pages`` how many such
+    reads the questions may take. A page that fails raises — the caller's run
+    rolls back — so a half-read postseason is never assembled.
+    """
+    if limit < 1 or max_pages < 1:
+        # A zero budget would read no question and report none missing.
+        raise ValueError(f"market read budget must be positive: {limit=} {max_pages=}")
     selection = select_postseason_games(boards, target)
     if selection.unavailable:
         return PostseasonHarvest(selection=selection, members=PostseasonMembers())
@@ -202,32 +221,43 @@ async def gather_mlb_postseason_candidates(
     market_rows: list[MarketRow] = []
     truncated = False
     if event_rows:
-        fetched = (
-            await session.execute(
-                text(MARKETS_FOR_EVENTS_SQL),
-                {"event_ids": [r.id for r in event_rows], "limit": limit + 1},
+        event_ids = [r.id for r in event_rows]
+        # Ids are serial and positive, so 0 starts before the first row.
+        after_id = 0
+        for page in range(1, max_pages + 1):
+            fetched = (
+                await session.execute(
+                    text(MARKETS_FOR_EVENTS_SQL),
+                    {"event_ids": event_ids, "after_id": after_id, "limit": limit + 1},
+                )
+            ).fetchall()
+            kept = fetched[:limit]
+            market_rows.extend(
+                MarketRow(
+                    id=int(r[0]),
+                    event_id=r[1],
+                    name=r[2],
+                    external_id=r[3],
+                    source=r[4],
+                    market_type=r[5],
+                    status=r[6],
+                )
+                for r in kept
             )
-        ).fetchall()
-        truncated = len(fetched) > limit
-        if truncated:
-            logger.error(
-                "MLB postseason %s market read truncated at %s rows — members "
-                "beyond the cap are invisible to this pass",
-                target.slug,
-                limit,
-            )
-        market_rows = [
-            MarketRow(
-                id=int(r[0]),
-                event_id=r[1],
-                name=r[2],
-                external_id=r[3],
-                source=r[4],
-                market_type=r[5],
-                status=r[6],
-            )
-            for r in fetched[:limit]
-        ]
+            # The `+ 1` row says whether another page exists. It is never
+            # kept: the next page starts after the last KEPT id and reads it.
+            if len(fetched) <= limit:
+                break
+            after_id = int(kept[-1][0])
+            if page == max_pages:
+                truncated = True
+                logger.error(
+                    "MLB postseason %s market read truncated after %s pages of %s "
+                    "rows — members beyond the budget are invisible to this pass",
+                    target.slug,
+                    max_pages,
+                    limit,
+                )
 
     members = resolve_postseason_members(selection, event_rows, market_rows)
 
@@ -275,6 +305,7 @@ async def run_mlb_postseason_assembly(
     *,
     apply: bool = False,
     limit: int = VENUE_FETCH_LIMIT,
+    max_pages: int = MARKET_READ_MAX_PAGES,
 ) -> dict:
     """One MLB postseason, gathered and — with ``apply=True`` — assembled.
 
@@ -297,7 +328,9 @@ async def run_mlb_postseason_assembly(
         )
         return report
 
-    harvest = await gather_mlb_postseason_candidates(session, boards, target, limit=limit)
+    harvest = await gather_mlb_postseason_candidates(
+        session, boards, target, limit=limit, max_pages=max_pages
+    )
     report["harvest"] = harvest.summary()
     report["games"] = harvest.members.games
     report["games_without_event_row"] = harvest.members.unavailable

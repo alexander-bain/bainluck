@@ -645,19 +645,24 @@ final class LiveStreamControllerTests: XCTestCase {
         let controller = LiveStreamController(
             open: { handle }, now: { clock }, onFrame: { _ in XCTFail("control is not a price") },
             onDeliveringChange: { _ in }, onResync: { callbacks.append("resync") },
-            onPreviewFloor: { floors.append($0) }, onPreviewReset: { callbacks.append("reset") },
+            onPreviewFloor: { floors.append($0) },
+            onPreviewOpen: { callbacks.append("open:" + $0) },
+            onPreviewInvalidate: { callbacks.append("invalidate") },
+            onPreviewReset: { callbacks.append("reset") },
             schedule: { _, _ in {} })
         controller.start()
-        handle.fire("open")
+        let open = #"{"event_id":4242,"fold_session":"session-one"}"#
+        handle.fire("open", open)
+        XCTAssertEqual(callbacks, ["reset", "open:" + open], "session is installed after reset")
         callbacks.removeAll()
         let floor = #"{"event_id":4242,"floor":{"4243":21}}"#
         handle.fire("fold_preview_floor", floor)
         XCTAssertEqual(floors, [floor])
         XCTAssertEqual(callbacks, [])
         handle.fire("resync", #"{"generation":1}"#)
-        XCTAssertEqual(callbacks, ["reset", "resync"], "withdraw before requesting the new quote")
+        XCTAssertEqual(callbacks, ["invalidate", "resync"], "withdraw before requesting the new quote")
         handle.fire("resync", #"{"generation":1}"#)
-        XCTAssertEqual(callbacks, ["reset", "resync"], "dedup is retained")
+        XCTAssertEqual(callbacks, ["invalidate", "resync"], "dedup is retained")
         clock += LiveStreamTiming.dataSilenceTimeout + 1
         handle.fire("fold_preview_floor", floor)
         controller.tick()
