@@ -19,7 +19,7 @@ import { propRosterCoverageNote, type PropRosterCoverage } from "@/lib/propRoste
 // live; live by probability desc). Settled members get the WHAT-HIT label (the
 // 100%-Mitchell-Robinson class) instead of a live 100% row. This component renders
 // nothing when there are no qualifying families (yield is unmeasured — the section
-// must not embarrass on sparse teams).
+// must not embarrass on sparse teams), unless the roster search was capped (#2311).
 // ---------------------------------------------------------------------------
 
 // #7710 — the row's number obeys UX-P046's boundary rule.
@@ -242,14 +242,20 @@ export function TeamPropFamilies({
   // Defensive: the backend only emits >=2-entity families, but never render a
   // degenerate card if a stale/sparse payload slips a single-entity family through.
   const shown = (families || []).filter((f) => (f.rows?.length ?? 0) >= 2);
-  if (shown.length === 0) return null;
 
   // #2311 — one short caption when the races were found by a capped roster
-  // search; see lib/propRosterCoverage.ts for when it can quote counts. An empty
-  // section stays hidden as before (the return above): with no races there is
-  // nothing to read as complete. The counts also ride as data attributes for
-  // probes, so they never have to be scraped from the sentence.
+  // search; see lib/propRosterCoverage.ts for when it can quote counts. The
+  // counts also ride as data attributes for probes, so they never have to be
+  // scraped from the sentence.
+  //
+  // A capped search that found no races still says so: #2311's Outcome is that
+  // the page derives its races from the whole roster OR declares that it did
+  // not, and a capped team with zero races is exactly the case whose missing
+  // races could all sit among the unsearched names. It gets the heading and the
+  // same sentence, nothing else: no empty card, no count of markets, no "none
+  // found". Without a capped search an empty section stays hidden as before.
   const coverageNote = propRosterCoverageNote(rosterCoverage);
+  if (shown.length === 0 && !coverageNote) return null;
 
   return (
     <section className="mb-8">
@@ -270,16 +276,18 @@ export function TeamPropFamilies({
           {coverageNote}
         </p>
       )}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        {shown.map((family) => (
-          <PropFamilyCard
-            key={family.family_key}
-            family={family}
-            teamColor={teamColor}
-            teamName={teamName}
-          />
-        ))}
-      </div>
+      {shown.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {shown.map((family) => (
+            <PropFamilyCard
+              key={family.family_key}
+              family={family}
+              teamColor={teamColor}
+              teamName={teamName}
+            />
+          ))}
+        </div>
+      )}
     </section>
   );
 }

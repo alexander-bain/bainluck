@@ -8,12 +8,20 @@
  * was simply absent and the section read as complete. The fixture is that
  * payload, verbatim (shopper's 12:22Z re-look, artifacts/shopper/2311-relook-1222Z).
  *
+ * A capped team with NO races is declared too (Root, 12:47Z, on #2311's Outcome:
+ * "derived from the team's WHOLE roster, or must declare that they were not"):
+ * zero races is the case whose missing races could ALL sit among the unsearched
+ * names. a70bd36aa2 hid it; its "stays hidden" test pinned that incomplete rule
+ * and is replaced below by the positive and negative controls.
+ *
  * Mutation map:
  *   - drop the caption from TeamPropFamilies          → part 2 "counted" fails
  *   - quote counts without the `quality: "full"` gate → part 1 partial/absent-cache fail
  *   - accept `searched >= total` / non-integers       → part 1 malformed rows fail
  *   - treat a missing `truncated` as capped           → part 1 legacy rows fail
- *   - render the section for a capped empty result    → part 2 empty test fails
+ *   - hide a capped EMPTY result (a70bd36aa2's rule)   → part 2 capped-empty tests fail
+ *   - show an uncapped or legacy empty result          → part 2 uncapped-empty test fails
+ *   - draw the empty card grid under a capped-empty caption → part 2 capped-empty tests fail
  *   - drop the slug tag from useTeamPropRaces         → part 3 switch test fails
  *   - drop the `cancelled` guard                      → part 3 "resolving AFTER" test fails
  *   - gate counts on `!== "partial"` instead of `=== "full"` → part 1 degraded/no-quality rows fail
@@ -185,9 +193,55 @@ describe("#2311 part 2 — TeamPropFamilies renders the caption", () => {
     expect(omitted).toBe(withNull);
   });
 
-  test("a capped EMPTY result stays hidden: no heading, no caption", () => {
-    expect(render(propRosterCoverage(SEAHAWKS), [])).toBe("");
-    expect(render({ kind: "uncounted" }, [])).toBe("");
+  // A one-entity family is filtered out before render, so a payload holding only
+  // those is an empty result too.
+  const ONE_ENTITY_ONLY = [{ ...SEAHAWKS.families[0], rows: SEAHAWKS.families[0].rows.slice(0, 1) }];
+
+  test.each([
+    ["no families", []],
+    ["only one-entity families", ONE_ENTITY_ONLY],
+  ])("a capped EMPTY result (%s) is declared: heading and counted sentence, nothing else", (_l, families) => {
+    const html = render(propRosterCoverage(SEAHAWKS), families);
+    expect(html).toContain("Prop Races");
+    expect(html).toContain(COUNTED_NOTE);
+    expect(html).toContain('data-roster-searched="40"');
+    expect(html).toContain('data-roster-total="82"');
+    // No card scaffold, no race, no row, no market count.
+    expect(html).not.toContain("grid-cols-1");
+    expect(html).not.toContain("rounded-card");
+    expect(html).not.toContain("in the mix");
+    expect(html).not.toContain("/futures/");
+    for (const f of SEAHAWKS.families) expect(html).not.toContain(f.label);
+    // Heading and the one sentence are the whole section.
+    expect(html.replace(/<[^>]+>/g, "")).toBe(`Prop Races${COUNTED_NOTE}`);
+  });
+
+  test("a capped EMPTY result with untrusted counts is declared without numbers", () => {
+    const html = render({ kind: "uncounted" }, []);
+    expect(html.replace(/<[^>]+>/g, "")).toBe(`Prop Races${UNCOUNTED_NOTE}`);
+    expect(html).not.toContain("data-roster-searched");
+    expect(html).not.toContain("data-roster-total");
+  });
+
+  test("the empty declaration claims neither absence nor completeness", () => {
+    const html = render(propRosterCoverage(SEAHAWKS), []);
+    expect(html).not.toMatch(/\b(no|none|zero)\b[^.]*\b(races|props|markets)\b/i);
+    expect(html).not.toMatch(/\b(all|every|complete)\b/i);
+  });
+
+  test.each([
+    ["coverage null (whole-roster search)", null],
+    ["coverage omitted (legacy call site / payload)", undefined],
+  ])("an UNcapped or legacy EMPTY result stays hidden: %s", (_l, coverage) => {
+    for (const families of [[], ONE_ENTITY_ONLY]) {
+      const html =
+        coverage === undefined
+          ? renderToStaticMarkup(
+              <TeamPropFamilies families={families} teamColor="#002244" teamName="Seattle Seahawks" />,
+            )
+          : render(coverage, families);
+      expect(html).toBe("");
+    }
   });
 });
 
@@ -283,6 +337,16 @@ describe("#2311 part 3 — useTeamPropRaces", () => {
     await flush();
     expect(latest?.families).toHaveLength(4);
     expect(latest?.coverage).toEqual({ kind: "counted", searched: 40, total: 65 });
+  });
+
+  test("a capped payload with no races still hands back its coverage", async () => {
+    act(() => root.render(<Probe slug="seattle-seahawks" />));
+    pending["seattle-seahawks"].resolve({ ...SEAHAWKS, families: [], total_families: 0 });
+    await flush();
+    expect(latest).toEqual({
+      families: [],
+      coverage: { kind: "counted", searched: 40, total: 82 },
+    });
   });
 
   test("a failed fetch hides the section and claims nothing", async () => {

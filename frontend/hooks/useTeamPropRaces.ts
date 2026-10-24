@@ -5,9 +5,10 @@ import { fetchTeamPropFamilies, type PropFamily } from '@/lib/api';
 import { propRosterCoverage, type PropRosterCoverage } from '@/lib/propRosterCoverage';
 
 // Prop families (L2-167): a team's futures/prop markets grouped into cohort
-// races (Next Team, awards, ladders). Supplementary + best-effort — an
-// empty/failed payload simply hides the Prop Races section. Sparse teams yield
-// zero families and the card never renders.
+// races (Next Team, awards, ladders). Supplementary + best-effort — a failed
+// payload, or an empty one from a whole-roster search, hides the Prop Races
+// section. An empty payload from a capped roster search keeps its coverage, so
+// the section can still say the roster was not fully checked.
 //
 // #2311: the families and the roster coverage they were found under travel as
 // ONE value, tagged with the slug that produced them. A team switch therefore

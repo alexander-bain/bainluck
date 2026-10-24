@@ -396,7 +396,8 @@ export default function TeamPage() {
       {race && <TeamDivisionRace race={race} teamColor={team.primary_color} />}
 
       {/* Prop Races — cohort-compare cards (Next Team, awards, ladders). Renders
-          nothing on sparse teams (component hides when no >=2-entity family). */}
+          nothing on sparse teams (component hides when no >=2-entity family),
+          unless the roster search was capped: then it says so (#2311). */}
       <TeamPropFamilies
         families={propRaces.families}
         rosterCoverage={propRaces.coverage}
