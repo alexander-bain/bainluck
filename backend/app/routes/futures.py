@@ -6171,10 +6171,31 @@ async def get_related_events(
         len(group) > 1 and not team_named[tid] for tid, group in outcomes_by_team.items()
     )
 
+    # ═══ A TEAM WITH NOTHING SHOWN HAS NO ROW, AND A GAME WITH NO ROW IS NOT
+    # SHOWN (#11579, second half) ═══
+    #
+    # The first half served `probability: None` for a refused leg, and the
+    # number went away. The NAMES did not: `/futures/412` (v5913, shopper at
+    # 390px) still printed "Each team's leading player in this market." over
+    # ~2,700px of last season's MIP field in last season's rank order, while
+    # All Outcomes on the same screen said "No current prices". A name picked
+    # as a team's "leader" off a board the page refuses is a claim the page
+    # has already declined to make.
+    #
+    # So a refused outcome is not a candidate at all: a team whose candidates
+    # (its own named row, else its group) are all refused gets no entry, and
+    # the event query below is keyed by the teams that DO have one, so a game
+    # no shown team plays never takes a card slot. Every outcome refused ⇒ no
+    # events ⇒ GamesThisWeek renders nothing (it returns null on an empty
+    # list). The refusal failing open (`withheld = set()`) leaves this exactly
+    # as before. A row that is unpriced but NOT refused is unchanged.
     team_outcome_map = {}
     for team_id, group in outcomes_by_team.items():
         named = team_named[team_id]
-        o = _leader(named or group)
+        candidates = [x for x in (named or group) if x.id not in withheld]
+        if not candidates:
+            continue
+        o = _leader(candidates)
         team_outcome_map[team_id] = {
             # #10243: the row's identity, so a page holding the same market's
             # detail in another representation can print that row's own number
@@ -6185,6 +6206,15 @@ async def get_related_events(
             "american_odds": None if o.id in withheld else o.current_american_odds,
             "rank": o.rank,
             "outcome_is_team": not player_field,
+        }
+
+    served_team_ids = list(team_outcome_map)
+    if not served_team_ids:
+        return {
+            "market_id": market_id,
+            "market_name": market.name,
+            "events": [],
+            "total_count": 0,
         }
 
     # Find events where either team is linked
@@ -6287,8 +6317,8 @@ async def get_related_events(
         .options(selectinload(Event.sport))
         .where(
             or_(
-                Event.home_team_id.in_(team_ids),
-                Event.away_team_id.in_(team_ids),
+                Event.home_team_id.in_(served_team_ids),
+                Event.away_team_id.in_(served_team_ids),
             ),
             Event.commence_time.between(week_ago, week_ahead),
             *sport_filters,
