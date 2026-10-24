@@ -32,7 +32,8 @@ class _Result:
 
 
 class _Rig:
-    def __init__(self, monkeypatch, *, tickets, rows=(), reread=(), fail=None, idle=()):
+    def __init__(self, monkeypatch, *, tickets, rows=(), reread=(), fail=None, idle=(),
+                 redis_now=1_000_000):
         self.tickets = list(tickets)
         self.reads = [list(rows)] + [list(r) for r in reread]
         self.fail = fail
@@ -46,14 +47,15 @@ class _Rig:
 
         async def ticket(include_candidates=False):
             # capacity_ticket (the first, candidates call) also returns the
-            # ledger's idle hint; per-target read_ticket calls return two.
+            # ledger's idle hint and Redis TIME (ms, #11565); per-target
+            # read_ticket calls return two.
             value = self.tickets.pop(0)
-            return (*value, set(idle)) if include_candidates else value
+            return (*value, set(idle), redis_now) if include_candidates else value
 
         async def retire(eid, rev, ticket):
             self.retired.append(eid)
 
-        async def retire_idle(eid, ticket):
+        async def retire_idle(eid, ticket, deadline_ms, when):
             self.idle_retired.append(eid)
 
         async def publish(frames):
@@ -129,6 +131,21 @@ async def test_idle_reclaim_is_counted_apart_from_attempted(monkeypatch, caplog)
     fields = _fields(line)
     assert fields['end'] == 'done' and fields['attempted'] == '1'
     assert fields['idle'] == '3' and fields['idle_attempted'] == '2'
+
+
+async def test_spent_idle_budget_is_named_deadline(monkeypatch, caplog):
+    # #11565: with no Redis deadline the pass stops before an idle reclaim
+    # and the receipt names that, instead of the pass logging nothing.
+    now = datetime.now(timezone.utc)
+    rows = [(9, 10, False, 'scheduled', now + timedelta(hours=5), now)]
+    rig = _Rig(monkeypatch, tickets=[(7, [9])], rows=rows, idle={9}, redis_now=None)
+    caplog.set_level(logging.INFO, logger=lbr.__name__)
+    await rig.worker._maintain_preview_capacity()
+    assert rig.idle_retired == []
+    [line] = _receipts(caplog)
+    fields = _fields(line)
+    assert fields['end'] == 'deadline'
+    assert fields['idle'] == '1' and fields['idle_attempted'] == '0'
 
 
 @pytest.mark.parametrize('ticket, end', [((None, []), 'no_ticket'), ((3, []), 'no_candidates')])
