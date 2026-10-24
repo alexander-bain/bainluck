@@ -147,14 +147,26 @@ for scheme in BainLuckWatchUITests 'Bain Luck'; do
     -scheme "$scheme" -clonedSourcePackagesDirPath "$PACKAGES" \
     -disableAutomaticPackageResolution > "$OUT/$destination_log-destinations.log" 2>&1
 done
-SIM_ARCH="$(python3 "$ROOT/tools/watch_simulator_architecture.py" \
-  --watch-destinations "$OUT/watch-destinations.log" --watch-id "$TEST_UDID" \
-  --phone-destinations "$OUT/phone-destinations.log" --phone-id "$PHONE_UDID" \
+# Xcode's scheme listings above are evidence only (#11201): after simctl had
+# created, paired and booted this pair, two attempts' listings omitted every
+# concrete simulator of a platform, and a third attempt's Watch build lost them.
+# Gate on the exact pair through CoreSimulator, as the journeys do.
+xcrun simctl list --json > "$OUT/prepared-simulators.json" 2>> "$OUT/preflight.log"
+xcrun simctl list pairs --json > "$OUT/prepared-pairs.json" 2>> "$OUT/preflight.log"
+PHONE_SDK_VERSION="$(xcrun --sdk iphonesimulator --show-sdk-version 2>> "$OUT/preflight.log")"
+SIM_ARCH="$(python3 "$ROOT/tools/watch_simulator_architecture.py" --prepared-pair \
+  --watch-id "$TEST_UDID" --phone-id "$PHONE_UDID" \
+  --simulators "$OUT/prepared-simulators.json" --pairs "$OUT/prepared-pairs.json" \
+  --watch-sdk "$SDK_VERSION" --phone-sdk "$PHONE_SDK_VERSION" \
   --output "$OUT/simulator-architecture.json")"
+# Build only for the generic watchOS Simulator at the architecture resolved
+# above from this exact new pair (#11201). Xcode dropped every concrete Watch
+# from the build's destination set minutes after listing it, before compiling.
+# Execution still runs on each journey runner's own exact new pair.
 XCODE_ARGS=(
   -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj"
   -scheme BainLuckWatchUITests -configuration Debug
-  -destination "platform=watchOS Simulator,id=$TEST_UDID"
+  -destination 'generic/platform=watchOS Simulator'
   -derivedDataPath "$DERIVED" -parallel-testing-enabled NO -jobs 2
   -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution
   "ARCHS=$SIM_ARCH"
@@ -170,7 +182,7 @@ PHASE='build the exact Debug simulator companion without launching it'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 xcodebuild build -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
   -scheme 'Bain Luck' -configuration Debug \
-  -destination "platform=iOS Simulator,id=$PHONE_UDID" \
+  -destination 'generic/platform=iOS Simulator' \
   -derivedDataPath "$PHONE_DERIVED" -jobs 2 \
   -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution \
   "ARCHS=$SIM_ARCH" \
