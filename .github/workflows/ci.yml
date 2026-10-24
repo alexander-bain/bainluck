@@ -4432,6 +4432,26 @@ jobs:
             exit 1
           fi
 
+      - name: "#994 a DataGolf bucket opens the published curve's own members (real Postgres)"
+        # The staged build now carries, per DataGolf cell, the rows it counted,
+        # and publishes them beside the payload so the drill-in samples the
+        # published curve's exact members instead of re-running the chain per
+        # click. Drives the REAL staged loop on seeded rows: the membership is
+        # the unscoped canonical chain's DataGolf rows member-for-member and
+        # value-for-value in every bucket and moved arm (empty arms included),
+        # exclusions and other sources never join, the partition does not
+        # change it, and the drill-in answers from the published membership
+        # with no population SQL and flags a grade corrected since publish.
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_calibration_staged_members_994_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/dg_members_994.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/dg_members_994.txt; then
+            echo "::error::#994 DataGolf published-membership gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#1853 a settled Kalshi event's archived legs are graded by an attended, undoable repair (real Postgres)"
         # The live grader read a legless event once the venue archived its
         # markets, so 22 of KXUECLSCORE-26JUL30LEVIFK's 30 legs stayed ungraded.

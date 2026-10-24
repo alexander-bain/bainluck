@@ -332,7 +332,17 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: the same cost #5355 named and NOT MEASURED for the same reason (ruling 134).
 #: The published predicate moves ``598e0ed8…`` -> ``ea3ef49d…`` and is declared
 #: to the gate as a narrowing succession; the version is not bumped.
-LIVE_INPUT_FINGERPRINT = "dc2df778434ef3322f0b124214589736"
+#:
+#: RE-ANCHORED for #994 (the DataGolf drill-in opens a published bucket's exact
+#: members): ``dc2df778…`` -> ``e0cff3f8…``. Moved: ``_main_futures_sql`` only —
+#: its outer SELECT emits one ``string_agg`` of each DataGolf cell's members.
+#: ``staged_unit_fingerprint`` moves with it (``5de54fd2…`` -> ``74356774…``), so
+#: the release that carries this starts a FRESH bank, which is the point: a bank
+#: resumed across it would hold units with no membership. The published
+#: predicate does NOT move (``ea3ef49d…`` before and after), so the strict
+#: publish band is not re-armed; the version is not bumped. HELD for Root's
+#: fresh-generation boundary — never deployed under an in-flight bank.
+LIVE_INPUT_FINGERPRINT = "e0cff3f8ca27a41b61d46c1ce906f664"
 
 
 class _Db:

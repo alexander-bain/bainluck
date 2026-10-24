@@ -2998,6 +2998,11 @@ export interface CalibrationExample {
   // #994: audit ids for futures sources; never rendered.
   market_id?: number;
   outcome_id?: number;
+  // #994: on a published-membership example, `result` is the grade the chart
+  // counted; these say whether it has been corrected since.
+  result_basis?: string;
+  current_result?: string | null;
+  grade_changed_since_publish?: boolean;
 }
 
 /** #994: how a futures sample was drawn. `published_generation_membership` is
@@ -3009,6 +3014,11 @@ export interface CalibrationExamplesSampling {
   cohort?: string;
   sampled_at?: string;
   published_generation_membership?: string;
+  /** #994: the published chart (`generated_at`) the sample belongs to. */
+  generation?: string;
+  members_in_bucket?: number;
+  /** #994: why a published membership could not answer (live sample served). */
+  membership_status?: string;
 }
 
 export interface CalibrationExamplesResponse {
@@ -3023,12 +3033,16 @@ export async function fetchCalibrationExamples(
   source: string,
   bucketIdx: number,
   wellTraded: boolean,
+  // #994: the `generated_at` of the chart on screen, so the backend only
+  // answers from that chart's own published membership.
+  generation?: string | null,
 ): Promise<CalibrationExamplesResponse> {
   const params = new URLSearchParams({
     source,
     bucket: String(bucketIdx),
     well_traded: wellTraded ? "1" : "0",
   });
+  if (generation) params.set("generation", generation);
   return apiFetch<CalibrationExamplesResponse>(`/api/calibration/examples?${params.toString()}`);
 }
 

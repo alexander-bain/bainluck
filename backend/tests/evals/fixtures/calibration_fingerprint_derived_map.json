@@ -17,7 +17,7 @@
   ],
   "hashed_root_sha16": {
     "_calibration_population_ctes": "fd717a69a4235457",
-    "_main_futures_sql": "b78428c8e9ce8d3b",
+    "_main_futures_sql": "bf748a5bdf5dabbf",
     "_roster_pushdown_predicates": "9b4afb101a88cb8a",
     "_virtual_market_ctes": "d03415be9c36d5cb",
     "compute_calibration_payload": "62d5b4cbe93b5abf",
@@ -1075,7 +1075,7 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "29a99f39bd99fdeab0c700bcc99091301c776e8e2ecbe5e7462cbbb29a783bae",
+  "source_sha256": "42781dbb026e8f20e9b5407c4e5d1e32d2399775d89707cf34a83113cfa4e799",
   "uncovered_behavior_or_evidence": 50,
   "uncovered_count": 77,
   "uncovered_sql_shaping": 27
