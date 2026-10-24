@@ -595,3 +595,92 @@ async def test_a_retry_after_the_state_moved_since_restore_is_refused(db):
     assert out["refused_legs"] == [{"outcome_id": SPEC_UNDER,
                                     "reason": rp.BACKUP_FIELDS_MISMATCH}]
     assert await _state(db, {SPEC_UNDER}) == spec_before
+
+
+# ---------------------------------------------------------------------------
+# #11158 — the complete 16-point Vassell specimen through the real _ROWS_SQL
+# ---------------------------------------------------------------------------
+#
+# Values and times are RETAINED SERVED-DERIVED (tests/fixtures/vassell_under_11158,
+# history-all.json sha256 312906e7…f4a5); every id is SYNTHETIC. The seed above
+# keeps Live's six quoted pairs as component coverage. This adds the sixteen
+# points, with the two contrary near readings the six omit, and the SYNTHETIC
+# genuine-Under residual, each on its own market so the earned seed and its
+# assertions are untouched.
+
+import json as _json
+from pathlib import Path as _Path
+
+_VASSELL = _json.loads((_Path(__file__).resolve().parents[1] / "fixtures"
+                        / "vassell_under_11158" / "served-points.json").read_text())
+V16, RESID = 40000007, 40000008
+V16_OVER, V16_UNDER = 400000070, 400000071
+RES_OVER, RES_UNDER = 400000080, 400000081
+#: In-era SYNTHETIC ids (below BOUNDARY), one block.
+V16_IDS = range(9000, 9016)
+RES_IDS = range(9100, 9104)
+_RES_T0 = datetime(2026, 6, 3, 1, 0, 7, tzinfo=UTC)
+_RES_PAIRS = [(0.70, 0.70), (0.75, 0.76), (0.80, 0.79), (0.40, 0.60)]
+
+
+async def _seed_sixteen_and_residual(maker):
+    under = [(datetime.fromisoformat(p["captured_at"]), p["probability"])
+             for p in _VASSELL["under_history_shape_points"]]
+    over = [(datetime.fromisoformat(p["captured_at"]), p["probability"])
+            for p in _VASSELL["over_poll_points_within_60_min"]]
+    snaps = [(i, V16_UNDER, p, at, True) for i, (at, p) in zip(V16_IDS, under)]
+    snaps += [(None, V16_OVER, q, at, False) for at, q in over]
+    for i, (u, o) in zip(RES_IDS, _RES_PAIRS):
+        at = _RES_T0 + timedelta(hours=i - RES_IDS[0])
+        snaps.append((i, RES_UNDER, u, at, True))
+        snaps.append((None, RES_OVER, o, at + timedelta(minutes=20, microseconds=123), False))
+    async with maker() as s:
+        for mid, cid in ((V16, "0xvassell16"), (RESID, "0xresidual")):
+            await s.execute(text(
+                "INSERT INTO futures_markets (id, source, external_id, name, category,"
+                " mutually_exclusive, status, resolution_date, created_at, updated_at)"
+                " VALUES (:i, 'polymarket', :x, :n, 'sports', false, 'resolved',"
+                " '2026-06-04T00:30:00Z', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')"),
+                dict(i=mid, x=f"{cid}-market", n=f"market {mid}"))
+        for oid, mid, ext, name in ((V16_OVER, V16, "0xvassell16", "Over"),
+                                    (V16_UNDER, V16, "0xvassell16_no", "Under"),
+                                    (RES_OVER, RESID, "0xresidual", "Over"),
+                                    (RES_UNDER, RESID, "0xresidual_no", "Under")):
+            await s.execute(text(
+                "INSERT INTO futures_outcomes (id, market_id, external_id, name,"
+                " is_winner, resolution_source, last_updated)"
+                " VALUES (:i, :m, :x, :n, :won, 'clob_authoritative', '2026-07-12T00:00:00Z')"),
+                dict(i=oid, m=mid, x=ext, n=name, won=(name == "Under")))
+        for sid, oid, p, at, history in snaps:
+            await s.execute(text(
+                "INSERT INTO futures_odds_snapshots (id, outcome_id, bookmaker, probability,"
+                " american_odds, yes_bid, yes_ask, last_price, captured_at, reading_count)"
+                " VALUES (COALESCE(:id, nextval('futures_odds_snapshots_id_seq')), :o,"
+                " 'polymarket', :p, :odds, :bid, :ask, :last, :at, 1)"),
+                dict(id=sid, o=oid, p=p, at=at, last=round(p, 4),
+                     odds=None if history else (-150 if p > 0.5 else 150),
+                     bid=None if history else max(p - 0.01, 0.0),
+                     ask=None if history else min(p + 0.01, 1.0)))
+        await s.commit()
+
+
+async def test_the_sixteen_point_specimen_and_the_genuine_residual_plan_nothing(db):
+    earned = await _run(db, limit=50)
+    await _seed_sixteen_and_residual(db)
+    before = await _state(db, {V16_UNDER, RES_UNDER})
+    out = await _run(db, limit=50)
+    assert out["terminal"] == "dry_run"
+    for key in ("planned_outcome_ids", "rows_planned", "openings_planned",
+                "cp_planned", "plan_hash"):
+        assert out[key] == earned[key], key
+    refused = {e["outcome_id"]: e for e in out["examples"]["AMBIGUOUS"]}
+    v16, res = refused[V16_UNDER], refused[RES_UNDER]
+    # The real statement pairs the sixteen exactly as served: twelve read as
+    # the Over price, two (22:00:08Z, 04:00:05Z) as its complement.
+    assert v16["reason"] == "mixed_testimony" and v16["rows"] == 16
+    assert v16["testimony"] == {"kind": "near", "equal": 12, "complement": 2}
+    assert res["reason"] == "mixed_testimony" and res["rows"] == 4
+    assert res["testimony"] == {"kind": "near", "equal": 3, "complement": 1}
+    assert V16_UNDER not in out["planned_outcome_ids"]
+    assert RES_UNDER not in out["planned_outcome_ids"]
+    assert await _state(db, {V16_UNDER, RES_UNDER}) == before
