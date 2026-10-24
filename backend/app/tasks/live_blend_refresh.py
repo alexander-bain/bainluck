@@ -1405,6 +1405,7 @@ class HeldRowQuotes:
     IDLE_ACTIVE_S = 30.0
     #: An input noted after the last sample STARTED is owed its phase's own
     #: post-commit sample; the idle task leaves that phase this long first.
+    #: Later inputs cannot restart that grace while a slow phase is outstanding.
     IDLE_PHASE_GRACE_S = 1.0
 
     def __init__(self) -> None:
@@ -1429,6 +1430,7 @@ class HeldRowQuotes:
         self._last_sample_started = -math.inf
         self._last_sample_done = -math.inf
         self._last_input_at = -math.inf
+        self._phase_grace_started = -math.inf
         self._last_preview_input_at = -math.inf
         self.idle_samples = 0
         self.idle_skips = 0
@@ -1501,6 +1503,8 @@ class HeldRowQuotes:
             mark.seq, round(float(mark.probability), 6), self._database_bound,
         )
         now = self._now()
+        if self._last_input_at <= self._last_sample_started:
+            self._phase_grace_started = now
         self._last_input_at = now
         if getattr(mark, "event_id", None) in self.preview_events():
             self._last_preview_input_at = now
@@ -1527,7 +1531,7 @@ class HeldRowQuotes:
                     return
                 due = self._last_sample_done + self.IDLE_SAMPLE_S
                 if self._last_input_at > self._last_sample_started:
-                    due = max(due, self._last_input_at + self.IDLE_PHASE_GRACE_S)
+                    due = max(due, self._phase_grace_started + self.IDLE_PHASE_GRACE_S)
                 if (self._sample_failure_episode and not self._sampling
                         and not self._graph_idle_recovery_used
                         and self._graph_sample_ordinal > self._sample_failure_ordinal
