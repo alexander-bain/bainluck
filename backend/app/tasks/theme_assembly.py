@@ -127,7 +127,17 @@ EDGE_CONFIDENCE = Decimal("1.000")
 CLASS_RANK = {"title": 0, "advancement": 1, "side_question": 2}
 _OTHER_CLASS_RANK = 3
 SNAPSHOT_KEY = "theme_snapshot:{container_id}:{revision}"
-SNAPSHOT_TTL_S = 3 * 86400
+#: #9936 (silence changes nothing a reader sees): how long a page outlives the
+#: LAST pass that wrote or refreshed it. Every pass that reaches
+#: ``publish_snapshot`` resets the live revision's key to this TTL, so it bounds
+#: how long a published collection keeps serving its last good page while
+#: assembly is off or failing — a bound, not durability (Redis loss or eviction
+#: still answers "building"). A key keeps the TTL it was written with until the
+#: next write or refresh: deploying this value protects nothing until a pass runs.
+#: Superseded keys age out on the same clock; the reader never serves them
+#: (only ``_completeness_from_lineage`` reads one). Worst case one page per
+#: hourly pass per theme: 720 pages of ~5 KB each at 548 members.
+SNAPSHOT_TTL_S = 30 * 86400
 GATHER_PAGE = 500
 PASS_BUDGET_S = 200  # under the wrapper's 240 s soft limit
 

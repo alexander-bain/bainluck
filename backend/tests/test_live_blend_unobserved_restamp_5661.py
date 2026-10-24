@@ -114,7 +114,10 @@ class _Session:
         expression = getattr(column, "element", None)
         null_source = isinstance(expression, Cast) and isinstance(expression.clause, Null)
         source = expression.right.value if hasattr(expression, "right") else None
-        preview = [c.name for c in columns[-2:]] == ["preview_sources", "preview_rev"]
+        preview = [c.name for c in columns[-3:]] == [
+            "preview_sources", "preview_rev", "preview_context_at",
+        ]
+        read_at = datetime.now(timezone.utc)
 
         def field(obj, key):
             raw = getattr(obj, key, None)
@@ -133,7 +136,7 @@ class _Session:
                     (None, PREPARED_OUTCOME_FIELDS),
                 ) for key in fields
             ) + ((deepcopy(event.win_probability_sources),
-                  getattr(event, "win_probability_sources_rev", None)) if preview else ())
+                  getattr(event, "win_probability_sources_rev", None), read_at) if preview else ())
             for market, event in self._market_rows
         ]
         return SimpleNamespace(all=lambda: rows)

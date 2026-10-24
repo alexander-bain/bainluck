@@ -321,6 +321,12 @@ NON_KALSHI_SETTLEMENT_WRITERS = {
 #: census lie about what it covers.
 LIVE_POLYMARKET_SETTLEMENT_WRITERS = {
     "app/tasks/polymarket.py": {"settle_outcomes_stmt"},
+    # #698: the negRisk-parent arm of `_backfill_polymarket_winners_from_api`
+    # grades a venue-verified leg through this one statement — grade, source
+    # and terminal price together. The rail's other branches still write
+    # `api_settlement` inline, which is why the rail itself stays named in
+    # `NON_KALSHI_SETTLEMENT_WRITERS`.
+    "app/tasks/backfill_winners.py": {"gamma_leg_settle_stmt"},
 }
 
 
@@ -548,7 +554,15 @@ def test_the_settlement_writer_census_has_not_moved():
     about a real writer; a claim about a function that is not there excuses
     nothing and hides whatever replaced it.
     """
-    enforced = {**LIVE_KALSHI_SETTLEMENT_WRITERS, **LIVE_POLYMARKET_SETTLEMENT_WRITERS}
+    # Unioned per path, not dict-merged: since #698 one file
+    # (`backfill_winners.py`) carries writers in BOTH enforced maps, and a
+    # `{**a, **b}` merge would silently drop the Kalshi half of its census.
+    enforced = {
+        path: LIVE_KALSHI_SETTLEMENT_WRITERS.get(path, set())
+        | LIVE_POLYMARKET_SETTLEMENT_WRITERS.get(path, set())
+        for path in set(LIVE_KALSHI_SETTLEMENT_WRITERS)
+        | set(LIVE_POLYMARKET_SETTLEMENT_WRITERS)
+    }
     for path in set(enforced) | set(NON_KALSHI_SETTLEMENT_WRITERS):
         found = set(_settlement_writers(path))
         expected = enforced.get(path, set()) | NON_KALSHI_SETTLEMENT_WRITERS.get(

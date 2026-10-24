@@ -78,4 +78,15 @@ final class ContainerHubServiceTests: XCTestCase {
         }
         XCTAssertEqual(Origin.requests.first?.url?.path, "/api/containers/mlb-2026-postseason")
     }
+    func testThemePageCarriesBothCursorAndRevisionThroughFreshSharedTransport() async throws {
+        Origin.reset(body: try ContainerHubFixture.responseData("representative_ai_page_2"))
+        let response = try await service().loadPage(slug: "ai", cursor: "WzIsOTIwMV0", revision: 7, limit: 1)
+        XCTAssertEqual(response.counts?.shownCount, 2)
+        let request = try XCTUnwrap(Origin.requests.first)
+        let components = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.path, "/api/containers/ai")
+        let query = Dictionary((components.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { _, last in last })
+        XCTAssertEqual(query, ["cursor": "WzIsOTIwMV0", "revision": "7", "limit": "1"])
+    }
+
 }

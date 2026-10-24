@@ -4034,6 +4034,7 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_container_assembly_real_postgres.py \
+            tests/integration/test_container_mlb_proven_duplicates_9886_pg.py \
             -v -s -rs 2>&1 | tee /tmp/assembly2927.txt
           if grep -qiE "[0-9]+ skipped" /tmp/assembly2927.txt; then
             echo "::error::#2927 container assembly SKIPPED — the gate did not run"
@@ -5207,9 +5208,7 @@ jobs:
       - name: "#10090 a held page receives the last committed price after a publication outage, without a new venue tick (real Postgres + Redis)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         env:
-          # Private loopback DB 11, flushed per case; peers use 12/13.
           PM_WITHDRAWAL_REDIS_URL: redis://localhost:56379/11
-          # F3 capacity case: own random schema, dropped after.
           BLEND_DEADLOCK_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
         run: |
           if python -m pytest tests/integration/test_live_normal_publication_recovery_10090_pg.py \
@@ -5226,8 +5225,8 @@ jobs:
             echo "::error::#10090 normal-publication recovery gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]94 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
-            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 94 cases"
+          grep -qE "[^0-9]95 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
+            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 95 cases"
             exit 1
           }
 
@@ -5250,6 +5249,9 @@ jobs:
             tests/integration/test_pm_price_statement_deadline_10090_pg.py \
             tests/integration/test_dnpl_default_committed_fallback_10090_pg.py \
             tests/integration/test_dnpl_capacity_lifecycle_10090_pg.py \
+            tests/integration/test_dnpl_reservations_10090_pg.py \
+            tests/test_preview_reservations_redis_10090.py \
+            tests/test_preview_reservation_policy_10090.py \
             tests/integration/test_dnpl_post_cancel_idle_status_10090_pg.py \
             tests/test_dnpl_idle_retirement_cancellation_10090.py \
             -v -rs > /tmp/held-row11138.txt 2>&1; then
@@ -5264,8 +5266,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]70 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row/default-DNPL/returned-clock gate did not run all 70 cases"
+          grep -qE "[^0-9]157 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row/default-DNPL/reservations/returned-clock gate did not run all 157 cases"
             exit 1
           }
 
@@ -7950,8 +7952,9 @@ jobs:
         # (era bound, same-second and nearest-observation witnesses), its pinned
         # apply (rows and priors re-read under lock, one leg per transaction) and
         # a restore that never overwrites a later writer are SQL a session double
-        # reads green on. Runs in its own throwaway database. 19 cases (the 9
-        # classifier/apply/restore cases + the backup-pair collision falsifiers).
+        # reads green on. Runs in its own throwaway database. 20 cases (the 9
+        # classifier/apply/restore cases + the backup-pair collision falsifiers
+        # + the #11158 16-point specimen).
         if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -7961,8 +7964,8 @@ jobs:
             echo "::error::#2027 Under-history repair gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]19 passed[,[:space:]]" /tmp/underhistory2027.txt || {
-            echo "::error::#2027 Under-history repair gate did not run all nineteen cases"
+          grep -qE "[^0-9]20 passed[,[:space:]]" /tmp/underhistory2027.txt || {
+            echo "::error::#2027 Under-history repair gate did not run all twenty cases"
             exit 1
           }
 

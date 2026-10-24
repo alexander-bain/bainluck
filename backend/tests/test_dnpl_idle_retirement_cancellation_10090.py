@@ -9,9 +9,10 @@ from app.tasks.live_blend_refresh import LiveBlendRefresher
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('retirement', ['idle', 'policy'])
 @pytest.mark.parametrize('cancel_during', ['disconnect', 'release'])
 async def test_transport_error_then_cleanup_cancellation_survives_proof_hold(
-    monkeypatch, cancel_during,
+    monkeypatch, cancel_during, retirement,
 ):
     entered = asyncio.Event()
     never = asyncio.Event()
@@ -48,7 +49,7 @@ async def test_transport_error_then_cleanup_cancellation_survives_proof_hold(
     async def locked_operation():
         try:
             await worker._prepare_ledger_previews([
-                {'ledger_op': 'retire_idle', 'send_before': deadline},
+                {'ledger_op': 'retire_' + retirement, 'send_before': deadline},
             ])
         except BaseException as error:
             held['error'] = error

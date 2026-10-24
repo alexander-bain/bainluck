@@ -5098,7 +5098,10 @@ async def _fleet_newest_observation(
     database this route could not reach must degrade to today's behaviour, never
     to a blanked board.
     """
-    from app.utils.market_staleness import board_cannot_be_unobserved
+    from app.utils.market_staleness import (
+        board_cannot_be_unobserved,
+        board_touched_at,
+    )
 
     # 🔴 #2077, CERT-3308 — THIS LINE IS WHY WIDENING THE FORMATTER ALONE
     # CHANGED NOTHING A READER COULD SEE.
@@ -5136,7 +5139,7 @@ async def _fleet_newest_observation(
         return None
     if board_cannot_be_unobserved(
         ((o.id, o.last_updated) for o in (getattr(market, "outcomes", None) or [])),
-        board_touched_at=getattr(market, "updated_at", None),
+        board_touched_at=board_touched_at(market),
         now=datetime.now(timezone.utc),
     ):
         return None
@@ -6112,11 +6115,50 @@ async def get_related_events(
         )
         team_names = {tid: name for tid, name in names_result.all() if name}
 
+    # ═══ A LEG THE MARKET'S OWN PAGE REFUSES IS REFUSED HERE TOO (#11579) ═══
+    #
+    # `/futures/412` — KXNBAMIMP-26, last season's Most Improved Player, a board
+    # Kalshi closed in September — read "No current prices for this market"
+    # under All Outcomes (`prices_withheld: 59` of 59), while Games This Week on
+    # the SAME screen printed "Rockets at Hawks · Nickeil Alexander-Walk… >99%".
+    # This map read `current_probability` straight off the row and asked no
+    # refusal at all.
+    #
+    # Called, never re-spelled: `_page_withheld_outcome_ids` is #8972's
+    # composition of every refusal the detail route makes, stopped board
+    # included. Imported here because `league_futures` imports this module.
+    # The leader is picked on the SERVED value, so a refused 0.995 never takes
+    # the row from a teammate whose price is shown, and a refused leader serves
+    # `probability: None`, which the strip renders as no number.
+    #
+    # Fails open, loudly (gotcha #42, the direction events.py's rail gives): a
+    # board the refusal cannot evaluate keeps its prices rather than losing the
+    # strip.
+    from app.routes.league_futures import _page_withheld_outcome_ids
+
+    try:
+        withheld = await _page_withheld_outcome_ids(db, market)
+    except Exception:  # noqa: BLE001 - the strip survives an unevaluable refusal
+        logger.warning(
+            "futures related events: could not evaluate the price refusal for "
+            "market %s; serving its prices unrefused",
+            market.id,
+            exc_info=True,
+        )
+        withheld = set()
+
+    def _served_probability(o):
+        # The route's served site (#6081's strict form): the leader is picked on
+        # this value and the row prints it.
+        if o.id in withheld:
+            return None
+        return float(o.current_probability) if o.current_probability is not None else None
+
     def _leader(group):
         return min(
             group,
             key=lambda x: (
-                -(float(x.current_probability) if x.current_probability is not None else -1.0),
+                -(p if (p := _served_probability(x)) is not None else -1.0),
                 x.id if x.id is not None else 0,
             ),
         )
@@ -6129,20 +6171,50 @@ async def get_related_events(
         len(group) > 1 and not team_named[tid] for tid, group in outcomes_by_team.items()
     )
 
+    # ═══ A TEAM WITH NOTHING SHOWN HAS NO ROW, AND A GAME WITH NO ROW IS NOT
+    # SHOWN (#11579, second half) ═══
+    #
+    # The first half served `probability: None` for a refused leg, and the
+    # number went away. The NAMES did not: `/futures/412` (v5913, shopper at
+    # 390px) still printed "Each team's leading player in this market." over
+    # ~2,700px of last season's MIP field in last season's rank order, while
+    # All Outcomes on the same screen said "No current prices". A name picked
+    # as a team's "leader" off a board the page refuses is a claim the page
+    # has already declined to make.
+    #
+    # So a refused outcome is not a candidate at all: a team whose candidates
+    # (its own named row, else its group) are all refused gets no entry, and
+    # the event query below is keyed by the teams that DO have one, so a game
+    # no shown team plays never takes a card slot. Every outcome refused ⇒ no
+    # events ⇒ GamesThisWeek renders nothing (it returns null on an empty
+    # list). The refusal failing open (`withheld = set()`) leaves this exactly
+    # as before. A row that is unpriced but NOT refused is unchanged.
     team_outcome_map = {}
     for team_id, group in outcomes_by_team.items():
         named = team_named[team_id]
-        o = _leader(named or group)
+        candidates = [x for x in (named or group) if x.id not in withheld]
+        if not candidates:
+            continue
+        o = _leader(candidates)
         team_outcome_map[team_id] = {
             # #10243: the row's identity, so a page holding the same market's
             # detail in another representation can print that row's own number
             # by id instead of this route's source value beside it.
             "outcome_id": o.id,
             "outcome_name": o.name,
-            "probability": float(o.current_probability) if o.current_probability is not None else None,
-            "american_odds": o.current_american_odds,
+            "probability": _served_probability(o),
+            "american_odds": None if o.id in withheld else o.current_american_odds,
             "rank": o.rank,
             "outcome_is_team": not player_field,
+        }
+
+    served_team_ids = list(team_outcome_map)
+    if not served_team_ids:
+        return {
+            "market_id": market_id,
+            "market_name": market.name,
+            "events": [],
+            "total_count": 0,
         }
 
     # Find events where either team is linked
@@ -6245,8 +6317,8 @@ async def get_related_events(
         .options(selectinload(Event.sport))
         .where(
             or_(
-                Event.home_team_id.in_(team_ids),
-                Event.away_team_id.in_(team_ids),
+                Event.home_team_id.in_(served_team_ids),
+                Event.away_team_id.in_(served_team_ids),
             ),
             Event.commence_time.between(week_ago, week_ahead),
             *sport_filters,
@@ -10217,6 +10289,7 @@ def _format_market_detail(
     from app.utils.market_staleness import (
         expired_ladder_rungs,
         stale_observation_keys,
+        board_touched_at,
         unobserved_board_keys,
     )
     from app.utils.outcome_display import (
@@ -10841,7 +10914,7 @@ def _format_market_detail(
     if _board_status in ("open", "resolved"):
         withheld = withheld | unobserved_board_keys(
             ((o.id, o.last_updated) for o in sorted_outcomes),
-            board_touched_at=getattr(market, "updated_at", None),
+            board_touched_at=board_touched_at(market),
             fleet_newest_observation=fleet_newest_observation,
             board_has_a_verdict=_board_verdict,
         )

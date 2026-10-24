@@ -64,7 +64,7 @@ async def test_cancel_after_commit_before_ledger_settlement_recovers_without_inp
     fresh = task = client = subscriber = None
 
     async def interrupted_call(*args):
-        if args[0] == 'EVAL' and args[3 + int(args[2])] == 'settle':
+        if args[0] == 'EVAL' and args[4 + int(args[2])] == 'settle':
             entered.set()
             await asyncio.Event().wait()
         return await actual_call(*args)
@@ -134,7 +134,7 @@ async def test_default_stalled_ledger_eval_is_bounded_and_committed_frame_still_
 
     async def stalled_call(*args):
         if args[0] == 'EVAL':
-            attempts.append(args[3 + int(args[2])])
+            attempts.append(args[4 + int(args[2])])
             await asyncio.Event().wait()
         return await actual_call(*args)
 

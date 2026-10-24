@@ -570,6 +570,17 @@ def _market_row_prob(outcomes: list[dict]) -> tuple[float | None, str | None, di
     return None, None, winner
 
 
+def _price_contradicts_result(probability: float | None, result: str | None) -> bool:
+    """True when a graded row's price says the opposite of its grading."""
+    if probability is None:
+        return False
+    if result == "lost":
+        return probability > 0.5
+    if result == "won":
+        return probability < 0.5
+    return False
+
+
 def _make_row(
     *,
     entity: str,
@@ -584,6 +595,11 @@ def _make_row(
     top_outcome: str | None,
 ) -> dict:
     source = (source or "").lower()
+    if _price_contradicts_result(probability, result):
+        # #11568: Polymarket's resolved 2024-25 Comeback board stores EVERY leg
+        # at 1.000, losers included, and the card printed "OUT 100%". A price
+        # on the wrong side of its own grading is not a reading; the result is.
+        probability = None
     return {
         "entity": entity,
         "entity_key": normalize_question(entity or ""),
@@ -785,14 +801,16 @@ PRIOR_RESULT_MAX_AGE_DAYS = 90
 
 
 def _drop_earlier_results(rows: list[dict], now: datetime | None = None) -> list[dict]:
-    """Remove settled rows of an EARLIER question from a family still trading.
+    """Remove settled rows of an EARLIER question from a family.
 
-    Only bites when the family has at least one live row: an all-settled
-    family is a results card and is left as it was.  A settled row with no
-    resolution date cannot be aged and is kept.
+    An all-settled family is a results card only while its results are recent:
+    the Seahawks page built "Comeback Player Of The Year · Sam Darnold OUT 100%"
+    out of two finished boards, the 2024-25 award (resolved 2025-02-06) and the
+    2025-26 one (resolved 2026-02-07), because no current-season board joined
+    them to trigger the cut (#11568).  The same age that separates an earlier
+    question from a trading family separates it from this season's results.
+    A settled row with no resolution date cannot be aged and is kept.
     """
-    if all(r.get("settled") for r in rows):
-        return rows
     cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=PRIOR_RESULT_MAX_AGE_DAYS)
     return [
         r for r in rows

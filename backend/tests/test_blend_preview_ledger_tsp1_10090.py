@@ -240,7 +240,8 @@ def _ev(status="live"):
     # These original cases never retire state: ticket 0 is captured before
     # their synthetic row contexts. Lifecycle cases below use real tickets.
     return SimpleNamespace(status=status, espn_win_prob_home=None, opening_home_probability=None,
-                           preview_read_ticket=0)
+                           preview_read_ticket=0, sport_key=None,
+                           preview_context_at=NOW, commence_time=NOW, completed_at=None)
 
 
 def _stamp(seconds=0):
@@ -249,8 +250,10 @@ def _stamp(seconds=0):
 
 def _propose(reg, source, value, *, rev=10, base=BASE10, status="live", basis_s=1.0,
              event_id=EV):
+    event = _ev(status)
+    event.preview_context_at = NOW + timedelta(seconds=rev * 10 + basis_s)
     return reg.propose(
-        event_id, source, value=value, event=_ev(status), row_sources=base, row_rev=rev,
+        event_id, source, value=value, event=event, row_sources=base, row_rev=rev,
         observed_basis={f"{source}-1": NOW.timestamp() - 30 + basis_s},
         stamped_at=_stamp(basis_s),
     )
@@ -523,7 +526,7 @@ class TestTerminal:
     async def test_a_delayed_terminal_never_erases_a_newer_reopening(self, rig):
         await rig.run(rig.p, _propose(rig.p, "polymarket", 0.7, rev=12, status="final"))
         # A newer authoritative live status (rev 13) may reopen.
-        [frame] = _blends(await rig.run(rig.k, _propose(rig.k, "kalshi", 0.6, rev=13)))
+        [frame] = _blends(await rig.run(rig.k, await _fresh_ops(rig, rig.k, "kalshi", 0.6, rev=13)))
         assert await rig.hget(f"e:{EV}:term") is None
         # The rev-12 terminal observation arrives late, from the other arm.
         assert await rig.run(rig.p, _propose(rig.p, "polymarket", 0.7, rev=12,
@@ -882,14 +885,32 @@ def test_nonfinite_decimal_context_remains_unpublishable(value):
 
 # --------------------------------------------------------- bounded lifecycle F3
 
-async def _fresh_ops(rig, reg, source, value=.6, *, event_id=EV, rev=10):
+async def _fresh_ops(rig, reg, source, value=.6, *, event_id=EV, rev=10, event=None):
     # This represents a fresh authoritative row read AFTER the Redis ticket.
     # Delayed-message tests keep the returned operation, never reticket it.
     ticket, _ = await reg.read_ticket(rig.call, source)
-    event = _ev()
+    event = _ev() if event is None else event
     event.preview_read_ticket = ticket
     return reg.propose(event_id, source, value=value, event=event,
                        row_sources=BASE10, row_rev=rev, stamped_at=_stamp(1))
+
+
+def _capacity_event(eid):
+    """Fill all six REAL default reservations, not 512 copies of one tier."""
+    event = _ev()
+    index = (eid - 1) % 512
+    if index < 256:
+        event.sport_key = "americanfootball_nfl"
+        upcoming = index >= 192
+    elif index < 448:
+        event.sport_key = "basketball_wnba"
+        upcoming = index >= 384
+    else:
+        upcoming = index >= 496
+    if upcoming:
+        event.status = "scheduled"
+        event.commence_time = NOW + timedelta(hours=1)
+    return event
 
 
 class TestBoundedLifecycle:
@@ -906,8 +927,12 @@ class TestBoundedLifecycle:
             await rig.k.execute([retire], rig.call, rig.channel, rig.stats)
             assert await rig.hget('nevents') == '0'
             assert await rig.hget(f'e:{eid}:gen') is None
-        assert max_fields <= 15
-        assert await rig.client.hlen(blend_preview.LEDGER_KEY) <= 7
+        globals_ = {"epoch", "retired", "nevents", "reservation_policy", "r:unclassified",
+                    *(f"r:count:{i}" for i in range(7)),
+                    *(f"{field}:{source}" for field in ("owner", "read_owner", "policy_owner")
+                      for source in SOURCES)}
+        assert max_fields <= len(globals_) + 11
+        assert {k.decode() for k in await rig.client.hkeys(blend_preview.LEDGER_KEY)} == globals_
         assert rig.stats['published'] == 600
         assert rig.stats['revoked'] == 600
         assert await rig.hget('retired') == '600'
@@ -981,14 +1006,14 @@ class TestBoundedLifecycle:
 
     async def test_full_ledger_offers_only_bounded_ids_for_authoritative_terminal_read(self, rig):
         for eid in range(1, 513):
-            await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid), rig.call, rig.stats)
+            await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid, event=_capacity_event(eid)), rig.call, rig.stats)
         ticket, ids = await rig.p.read_ticket(rig.call, 'polymarket', include_candidates=True)
         assert sorted(ids) == list(range(1, 513))
         assert len(ids) == 512
-        assert await rig.p.prepare(await _fresh_ops(rig, rig.p, 'polymarket', event_id=513), rig.call, rig.stats) == []
+        assert await rig.p.prepare(await _fresh_ops(rig, rig.p, 'polymarket', event_id=513, event=_capacity_event(513)), rig.call, rig.stats) == []
         # One candidate proven final by the fresh DB statement frees one slot.
         await rig.run(rig.p, [rig.p.retire_read(1, 'polymarket', 11, ticket, committed_rev=12)])
-        frames = await rig.p.prepare(await _fresh_ops(rig, rig.p, 'polymarket', event_id=513), rig.call, rig.stats)
+        frames = await rig.p.prepare(await _fresh_ops(rig, rig.p, 'polymarket', event_id=513, event=_capacity_event(513)), rig.call, rig.stats)
         # A capacity refusal did not consume or expire the never-admitted value.
         assert len(_blends(frames)) == 1
         assert await rig.hget('nevents') == '512'
@@ -1088,13 +1113,13 @@ class TestLifecycleCaller:
         monkeypatch.setattr(refresher, '_preview_admission_read', ticket)
         market = dict(id=1, source='kalshi', external_id='KXNBAGAME-X', event_id=EV,
                       name='Winner', status='open', market_metadata={})
-        event = dict(id=EV, home_team_name='A', away_team_name='B', status='live',
+        event = dict(id=EV, sport_key=None, home_team_name='A', away_team_name='B', status='live',
                      completed_at=None, commence_time=NOW, win_probability_sources=BASE10['kalshi'],
                      espn_win_prob_home=None, opening_home_probability=None)
         outcome = dict(id=10, market_id=1, name='A', rank=0, current_probability=.6,
                        last_updated=NOW, is_winner=None, external_id='x', resolution_source=None)
         row = tuple(market[k] for k in PREPARED_MARKET_FIELDS) + tuple(event[k] for k in PREPARED_EVENT_FIELDS)
-        row += tuple(outcome[k] for k in PREPARED_OUTCOME_FIELDS) + (BASE10, 10)
+        row += tuple(outcome[k] for k in PREPARED_OUTCOME_FIELDS) + (BASE10, 10, NOW)
         class Session:
             async def execute(self, stmt):
                 order.append('statement')
@@ -1135,13 +1160,18 @@ class TestLifecycleCaller:
         try:
             await control.execute(f'CREATE SCHEMA {schema}')
             await control.execute(f'''CREATE TABLE {schema}.events
-                (id integer primary key, status text, completed_at timestamptz, commence_time timestamptz,
+                (id integer primary key, sport_id integer, status text, completed_at timestamptz, commence_time timestamptz,
                  win_probability_sources_rev bigint, win_probability_sources jsonb NOT NULL DEFAULT '{{}}')''')
+            await control.execute(f'CREATE TABLE {schema}.sports (id integer primary key, key text)')
+            await control.execute(f"INSERT INTO {schema}.sports VALUES (1, 'americanfootball_nfl'), (2, 'basketball_wnba'), (3, 'tennis_atp')")
             from app.utils.wps_revision import CREATE_FUNCTION_SQL, CREATE_TRIGGER_SQL
             await control.execute(f'SET search_path TO {schema}')
             await control.execute(CREATE_FUNCTION_SQL)
             await control.execute(CREATE_TRIGGER_SQL)
             await control.execute(f"INSERT INTO {schema}.events (id, status, completed_at, win_probability_sources_rev) SELECT id, 'live', NULL, 10 FROM generate_series(1,512) id")
+            await control.execute(f"UPDATE {schema}.events SET sport_id=CASE WHEN id<=256 THEN 1 WHEN id<=448 THEN 2 ELSE 3 END, "
+                                  "status=CASE WHEN id BETWEEN 193 AND 256 OR id BETWEEN 385 AND 448 OR id>=497 THEN 'scheduled' ELSE 'live' END, "
+                                  "commence_time=NOW()+CASE WHEN id BETWEEN 193 AND 256 OR id BETWEEN 385 AND 448 OR id>=497 THEN INTERVAL '1 hour' ELSE INTERVAL '-1 hour' END")
             engine = create_async_engine(url.replace('postgresql://', 'postgresql+asyncpg://'),
                 connect_args={'server_settings': {'search_path': schema}}, pool_size=2, max_overflow=0)
             maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -1153,7 +1183,7 @@ class TestLifecycleCaller:
             monkeypatch.setattr(refresher, '_client', lambda: rig.client)
             monkeypatch.setattr(blend_preview, 'registry', lambda: rig.k)
             for eid in range(1, 513):
-                await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid), rig.call, rig.stats)
+                await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid, event=_capacity_event(eid)), rig.call, rig.stats)
             writer = await asyncpg.connect(pg_url)
             tx = writer.transaction()
             await tx.start()
@@ -1164,7 +1194,7 @@ class TestLifecycleCaller:
             assert before == 0
             assert await rig.hget('nevents') == '512'
             assert await rig.hget('e:1:gen') is not None
-            delayed = await _fresh_ops(rig, rig.p, 'polymarket', event_id=1)
+            delayed = await _fresh_ops(rig, rig.p, 'polymarket', event_id=1, event=_capacity_event(1))
             await tx.commit()
             # Production runs capacity maintenance outside quote admission.
             # Advance the test's maintenance opportunity after COMMIT.
@@ -1182,7 +1212,7 @@ class TestLifecycleCaller:
             reopened = await control.fetchval(f'SELECT win_probability_sources_rev FROM {schema}.events WHERE id=1')
             assert reopened == 12
             assert await control.fetchval(f'SELECT win_probability_sources::text FROM {schema}.events WHERE id=1') == '{}'
-            frames = await rig.p.prepare(await _fresh_ops(rig, rig.p, 'polymarket', event_id=1, rev=reopened), rig.call, rig.stats)
+            frames = await rig.p.prepare(await _fresh_ops(rig, rig.p, 'polymarket', event_id=1, rev=reopened, event=_capacity_event(1)), rig.call, rig.stats)
             assert len(_blends(frames)) == 1
             # Exercise the ACTUAL post-read retirement caller, then its later
             # preview/settlement phases, through 600 sequential final events.
@@ -1197,6 +1227,7 @@ class TestLifecycleCaller:
                 ticket, _ = await rig.k.read_ticket(rig.call, 'kalshi')
                 row = await control.fetchrow(f'SELECT status, completed_at, win_probability_sources_rev FROM {schema}.events WHERE id=$1', eid)
                 event = SimpleNamespace(status=row['status'], completed_at=row['completed_at'],
+                    sport_key=None, preview_context_at=datetime.now(timezone.utc), commence_time=None,
                     preview_rev=row['win_probability_sources_rev'], preview_sources=BASE10,
                     preview_read_ticket=ticket, espn_win_prob_home=None, opening_home_probability=None)
                 grouped = {eid: (event, [])}
@@ -1218,7 +1249,14 @@ class TestLifecycleCaller:
             assert deadlines.durations.count(.25) >= 600
             assert deadlines.expired == 0
             assert await rig.hget('nevents') == '1'  # the still-live reopened event 1 only
-            assert await rig.client.hlen(blend_preview.LEDGER_KEY) <= 15
+            globals_ = {"epoch", "retired", "nevents", "reservation_policy", "r:unclassified",
+                        *(f"r:count:{i}" for i in range(7)),
+                        *(f"{field}:{source}" for field in ("owner", "read_owner", "policy_owner")
+                          for source in SOURCES)}
+            retained = {f"e:1:{suffix}" for suffix in (
+                "gen", "seq", "live", "base", "base_rev", "r_bucket", "r_target",
+                "r_clock", "r_rev", "m:polymarket", "p:polymarket")}
+            assert {k.decode() for k in await rig.client.hkeys(blend_preview.LEDGER_KEY)} == globals_ | retained
         finally:
             if writer is not None:
                 await writer.close()
@@ -1531,45 +1569,46 @@ class TestLandedCommitRenewal:
 
 
 class TestLocalIdleFirstEviction:
-    async def test_default_bound_keeps_oldest_live_preview_when_clean_context_exists(self, rig):
+    @pytest.mark.parametrize("retirement", ["idle", "policy"])
+    async def test_default_bound_keeps_oldest_live_preview_when_clean_context_exists(self, rig, retirement):
         assert rig.k.max_events == 512
-        await rig.k.execute(await _fresh_ops(rig, rig.k, 'kalshi', event_id=1),
+        await rig.k.execute(await _fresh_ops(rig, rig.k, 'kalshi', event_id=1, event=_capacity_event(1)),
                             rig.call, rig.channel, rig.stats)
         held = _blends(await rig.drain())
         assert len(held) == 1 and held[0]['event_id'] == 1
         original = await rig.hget('e:1:m:kalshi')
-        scheduled = _ev("scheduled")
-        scheduled.commence_time = NOW + timedelta(days=8)
-        scheduled.completed_at = None
         for eid in range(2, 513):
-            if eid == 2:
-                ticket, _ = await rig.k.read_ticket(rig.call, 'kalshi')
-                scheduled.preview_read_ticket = ticket
-                operations = rig.k.propose(eid, 'kalshi', value=.6, event=scheduled,
-                                           row_sources=BASE10, row_rev=10, stamped_at=_stamp(1))
-            else:
-                operations = await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid)
+            operations = await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid,
+                                           event=_capacity_event(eid))
             await rig.k.prepare(operations, rig.call, rig.stats)
             await rig.k.prepare(rig.k.committed(eid, 'kalshi', seq=rig.k.pending_seq(eid, 'kalshi'),
                                 sources=BASE10, rev=10), rig.call, rig.stats)
         assert len(rig.k._events) == 512
-        # Primitive fixture boundary: event2 supplies the future-scheduled,
-        # incomplete row proof required by the actual maintenance caller.
-        # This tests local eviction, not that caller's PostgreSQL lock proof.
-        assert rig.k._events[2].status == "scheduled"
-        assert scheduled.commence_time > NOW and scheduled.completed_at is None
-        # Shared retirement leaves local context present and makes a slot;
-        # the failure can therefore only be local eviction, not Redis full.
+        # Retain both parent scenarios: ordinary future-idle retirement and
+        # reservation policy retirement of a clean same-class live context.
+        # The future fixture is admitted within the six-hour upcoming window;
+        # the fresh locked PostgreSQL eligibility proof has its own gate.
+        target = 193 if retirement == "idle" else 2
+        proof = _capacity_event(target)
+        assert rig.k._events[target].status == proof.status
         ticket, _, _, redis_now = await rig.k.capacity_ticket(rig.call, 'kalshi')
-        await rig.k.prepare([rig.k.retire_idle(2, 'kalshi', 10, ticket,
-                                             redis_now + 1000)], rig.call, rig.stats)
+        if retirement == "idle":
+            assert proof.status == "scheduled"
+            assert proof.commence_time > NOW and proof.completed_at is None
+            op = rig.k.retire_idle(target, 'kalshi', 10, ticket, redis_now + 1000)
+        else:
+            assert proof.status == "live"
+            proof.preview_context_at += timedelta(seconds=1)
+            op = rig.k.retire_policy(target, 'kalshi', proof, 10, ticket, redis_now + 1000)
+        await rig.k.prepare([op], rig.call, rig.stats)
         assert await rig.hget('nevents') == '511'
-        operations = await _fresh_ops(rig, rig.k, 'kalshi', event_id=513)
+        # A newcomer uses the freed class; unrelated reservations stay full.
+        operations = await _fresh_ops(rig, rig.k, 'kalshi', event_id=513, event=_capacity_event(target))
         sent = await rig.run(rig.k, operations)
         assert await rig.hget('e:1:m:kalshi') == original, 'local eviction withdrew active held event1'
         assert not any(f['event_id'] == 1 and f['preview']['kind'] == 'revoke' for f in sent)
         assert any(f['event_id'] == 513 and f['preview']['kind'] == 'blend' for f in sent)
-        assert len(rig.k._events) == 512 and 2 not in rig.k._events and 3 in rig.k._events
+        assert len(rig.k._events) == 512 and target not in rig.k._events and 3 in rig.k._events
         assert await rig.hget('nevents') == '512'
 
     @pytest.mark.parametrize('rig', ['fake_clock'], indirect=True)
@@ -1601,15 +1640,14 @@ class TestLocalIdleFirstEviction:
         assert rig.k._events[2].expired_through == expired_through
         assert await _fresh_ops(rig, rig.k, 'kalshi', .6, event_id=2) == []
 
-    async def test_all_active_local_cache_keeps_existing_lru_settlement_fallback(self, rig):
+    async def test_all_active_local_cache_refuses_newcomer_without_settlement(self, rig):
         rig.k.max_events = 2
         for eid in (1, 2):
             await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid), rig.call, rig.stats)
-        through = rig.k.pending_seq(1, 'kalshi')
+        before = {eid: await rig.hget(f'e:{eid}:m:kalshi') for eid in (1, 2)}
         operations = await _fresh_ops(rig, rig.k, 'kalshi', event_id=3)
-        evicted = [op for op in operations if op.get('reason') == 'evicted']
-        assert len(evicted) == 1 and evicted[0]['event_id'] == 1 and evicted[0]['through'] == through
-        sent = await rig.run(rig.k, operations)
-        assert set(rig.k._events) == {2, 3}
-        assert await rig.hget('e:1:m:kalshi') is None
-        assert any(f['event_id'] == 1 and f['preview']['kind'] == 'revoke' for f in sent)
+        assert operations == []
+        assert await rig.run(rig.k, operations) == []
+        assert set(rig.k._events) == {1, 2}
+        assert {eid: await rig.hget(f'e:{eid}:m:kalshi') for eid in (1, 2)} == before
+        assert await rig.hget('e:3:gen') is None
