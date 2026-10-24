@@ -106,21 +106,27 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M1",
         "a lost branch ends the loop — branch 3 never gets its turn again",
-        """            lost.append(_name)
-            continue""",
-        """            lost.append(_name)
-            break""",
+        # #2311: the branch loop no longer `continue`s on a loss — the chunk
+        # loop does — so the branch-level "end the loop" mutant is a `break`
+        # after the loss is recorded.
+        """        if _branch_lost:
+            lost.append(_name)
+""",
+        """        if _branch_lost:
+            lost.append(_name)
+            break
+""",
         ROUTE,
     ),
     (
         "M2",
         "drop the rollback — the next branch inherits an aborted transaction",
-        """            try:
-                await db.rollback()
-            except Exception:""",
-        """            try:
-                pass
-            except Exception:""",
+        """                try:
+                    await db.rollback()
+                except Exception:""",
+        """                try:
+                    pass
+                except Exception:""",
         ROUTE,
     ),
     (
@@ -135,9 +141,9 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M4",
         "set the timeout once, before the loop — branches 2 and 3 run unbounded",
-        """            await db.execute(text(f"SET LOCAL statement_timeout = '{_timeout_ms}'"))
-            _result = (await db.execute(_branch(_cond))).all()""",
-        """            _result = (await db.execute(_branch(_cond))).all()""",
+        """                await db.execute(text(f"SET LOCAL statement_timeout = '{_timeout_ms}'"))
+                _result = (await db.execute(_branch(_cond))).all()""",
+        """                _result = (await db.execute(_branch(_cond))).all()""",
         ROUTE,
     ),
     (

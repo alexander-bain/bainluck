@@ -117,6 +117,20 @@ _INCLUDED_STATUSES = ["open", "resolved", "closed", "settled", "suspended"]
 
 _MAX_ROSTER_PATTERNS = 40
 
+#: #2311: the most roster patterns ONE statement carries. A roster branch's
+#: patterns are split into statements of at most this many, run in turn under
+#: the branch's ONE `_BRANCH_TIMEOUT_MS` (never 12 s each — the warm task's
+#: 60 s per-team wait would cancel the whole build first), then merged by
+#: outcome id, re-ordered and re-capped exactly as the single statement was.
+#: Why: cost is not linear at the top of the curve. Measured on production
+#: (#2311 issuecomment-6380162532): 10 patterns 2.2 s, 41 patterns 13.4 s — the
+#: single statement trips the 12 s ceiling on every large NFL roster, so the
+#: unbudgeted rebuild lands `branch_timeout:outcome_roster`/`market_roster` and
+#: never a full build. That measurement is the hypothesis, not a guarantee:
+#: chunks that do not finish inside the branch's deadline still report
+#: `branch_timeout:` and the build stays `partial`.
+_ROSTER_CHUNK_PATTERNS = 10
+
 #: How long ONE branch may run. Unchanged in value and in meaning from the
 #: `SET LOCAL statement_timeout = '12000'` this route has carried since #1197 —
 #: LAT-P145 changed who survives the expiry, deliberately not how long the
@@ -537,7 +551,10 @@ async def build_prop_families(
     So each branch now runs bounded, materialised and contained:
 
     * its own ``SET LOCAL``, in its own transaction, at the SAME 12 s — the
-      completeness of a build that succeeds today is untouched;
+      completeness of a build that succeeds today is untouched (#2311: a roster
+      branch is several statements of at most ``_ROSTER_CHUNK_PATTERNS``
+      patterns, and they SHARE that one 12 s; any chunk unread leaves the whole
+      branch reported lost);
     * its rows copied to plain dicts BEFORE the next branch can roll back, because
       a rollback expires every ORM object in the session and `expire_on_commit`
       does not prevent it (gotcha #6);
@@ -604,22 +621,31 @@ async def build_prop_families(
         # parameter, exactly as the `or_()` form bound them one at a time.
         return col.ilike(any_(literal(pats, ARRAY(Text))))
 
+    # #2311: a roster branch is its patterns in statements of at most
+    # `_ROSTER_CHUNK_PATTERNS`. Every other branch is one statement, as before.
+    _roster_chunks = [
+        _roster_pats[i:i + _ROSTER_CHUNK_PATTERNS]
+        for i in range(0, len(_roster_pats), _ROSTER_CHUNK_PATTERNS)
+    ]
+
     # ORDERED CHEAPEST-AND-SUREST FIRST, because a budget spends itself in order
     # and whatever it cannot reach is what gets deferred. The FK branch is the
     # team's own futures (7 ms, indexed); the team-name probes are one pattern
     # each; the roster probes are the 40 that cost 97% of the build.
-    branches: list[tuple[str, object]] = [
-        (_BRANCH_TEAM_ID, FuturesOutcome.team_id == team.id)  # FK branch (indexed)
+    branches: list[tuple[str, list]] = [
+        (_BRANCH_TEAM_ID, [FuturesOutcome.team_id == team.id])  # FK branch (indexed)
     ]
     if _team_pats:
-        branches.append((_BRANCH_OUTCOME_NAME, _ilike_any(FuturesOutcome.name, _team_pats)))
-        branches.append((_BRANCH_MARKET_NAME, _ilike_any(FuturesMarket.name, _team_pats)))
-    if _roster_pats:
+        branches.append((_BRANCH_OUTCOME_NAME, [_ilike_any(FuturesOutcome.name, _team_pats)]))
+        branches.append((_BRANCH_MARKET_NAME, [_ilike_any(FuturesMarket.name, _team_pats)]))
+    if _roster_chunks:
         branches.append(
-            (_BRANCH_OUTCOME_ROSTER, _ilike_any(FuturesOutcome.name, _roster_pats))
+            (_BRANCH_OUTCOME_ROSTER,
+             [_ilike_any(FuturesOutcome.name, c) for c in _roster_chunks])
         )
         branches.append(
-            (_BRANCH_MARKET_ROSTER, _ilike_any(FuturesMarket.name, _roster_pats))
+            (_BRANCH_MARKET_ROSTER,
+             [_ilike_any(FuturesMarket.name, c) for c in _roster_chunks])
         )
 
     # 🔴 SCALARS BEFORE THE FIRST BRANCH RUNS. A branch that times out rolls its
@@ -672,98 +698,158 @@ async def build_prop_families(
         None if budget_ms is None else budget_ms - _PRICE_SCREEN_RESERVE_MS
     )
 
-    for _name, _cond in branches:
-        _timeout_ms = _BRANCH_TIMEOUT_MS
-        if _fetch_budget_ms is not None:
-            _remaining = _fetch_budget_ms - int((time.monotonic() - _t0) * 1000)
-            if _remaining < _MIN_BRANCH_MS:
-                # NOT started. A cancelled statement still costs its full wait,
-                # so a branch we already know cannot finish is skipped outright
-                # and reported — the reader gets the page now and the background
-                # rebuild scheduled behind them fills this in for everyone after.
-                deferred.append(_name)
-                continue
-            _timeout_ms = min(_remaining, _BRANCH_TIMEOUT_MS)
-        try:
-            await db.execute(text(f"SET LOCAL statement_timeout = '{_timeout_ms}'"))
-            _result = (await db.execute(_branch(_cond))).all()
-        except Exception as exc:  # noqa: BLE001 — classified below, then contained
-            # The transaction is aborted by the cancellation; roll it back so the
-            # NEXT branch gets a usable session instead of "current transaction is
-            # aborted". This is `_run_bounded`'s recovery, read-only.
+    for _name, _conds in branches:
+        # #2311: ONE deadline per branch, however many statements it is. A
+        # one-statement branch reads 12,000 here exactly as it always did.
+        _branch_t0 = time.monotonic()
+        _rows: list[dict] = []
+        _branch_oids: set[int] = set()
+        _branch_lost = False
+        _branch_deferred = False
+        for _chunk_i, _cond in enumerate(_conds):
+            _timeout_ms = _BRANCH_TIMEOUT_MS - int((time.monotonic() - _branch_t0) * 1000)
+            if _fetch_budget_ms is not None:
+                _remaining = _fetch_budget_ms - int((time.monotonic() - _t0) * 1000)
+                if _remaining < _MIN_BRANCH_MS:
+                    # NOT started. A cancelled statement still costs its full wait,
+                    # so a branch we already know cannot finish is skipped outright
+                    # and reported — the reader gets the page now and the background
+                    # rebuild scheduled behind them fills this in for everyone after.
+                    _branch_deferred = True
+                    break
+                _timeout_ms = min(_remaining, _timeout_ms)
+            if _timeout_ms < _MIN_BRANCH_MS:
+                # #2311: the branch's own 12 s is spent with chunks still unread.
+                # That is the single statement's expiry, reached in pieces — a
+                # `branch_timeout:`, never a full branch.
+                logger.warning(
+                    "prop-families: %s branch timed out for team %s at chunk %d/%d — "
+                    "serving the chunks and branches that landed",
+                    _name, _team_id, _chunk_i + 1, len(_conds),
+                )
+                _branch_lost = True
+                break
             try:
-                await db.rollback()
-            except Exception:
-                logger.warning(
-                    "prop-families: rollback after %s branch failed for team %s",
-                    _name, _team_id, exc_info=True,
-                )
-            if is_statement_timeout(exc):
-                logger.warning(
-                    "prop-families: %s branch timed out for team %s after %d ms — "
-                    "serving the branches that landed",
-                    _name, _team_id, _timeout_ms,
-                )
-            else:
-                # Narrow containment (gotcha #45): a real query defect is not a
-                # budget expiry and must not be filed as one.
-                logger.exception(
-                    "prop-families: %s branch FAILED for team %s", _name, _team_id
-                )
-            lost.append(_name)
-            continue
+                await db.execute(text(f"SET LOCAL statement_timeout = '{_timeout_ms}'"))
+                _result = (await db.execute(_branch(_cond))).all()
+            except Exception as exc:  # noqa: BLE001 — classified below, then contained
+                # The transaction is aborted by the cancellation; roll it back so the
+                # NEXT branch gets a usable session instead of "current transaction is
+                # aborted". This is `_run_bounded`'s recovery, read-only.
+                try:
+                    await db.rollback()
+                except Exception:
+                    logger.warning(
+                        "prop-families: rollback after %s branch failed for team %s",
+                        _name, _team_id, exc_info=True,
+                    )
+                if is_statement_timeout(exc):
+                    logger.warning(
+                        "prop-families: %s branch timed out for team %s after %d ms — "
+                        "serving the branches that landed",
+                        _name, _team_id, _timeout_ms,
+                    )
+                else:
+                    # Narrow containment (gotcha #45): a real query defect is not a
+                    # budget expiry and must not be filed as one.
+                    logger.exception(
+                        "prop-families: %s branch FAILED for team %s", _name, _team_id
+                    )
+                # #2311: the branch is lost, but its later chunks still get their
+                # turn inside the branch's deadline, and its earlier chunks keep
+                # their rows — the reason below says the branch is incomplete.
+                _branch_lost = True
+                continue
 
-        # Materialise inside the loop: a later branch's rollback would expire these
-        # instances, and by then they are plain dicts and cannot be expired.
-        for outcome, market in _result:
-            oid = outcome.id
+            # Copy to plain data NOW: the next chunk's or branch's rollback would
+            # expire these instances (gotcha #6). A row two chunks both matched is
+            # one row — it must not take two of the cap's places.
+            for outcome, market in _result:
+                if outcome.id in _branch_oids:
+                    continue
+                _branch_oids.add(outcome.id)
+                _rows.append({
+                    "oid": outcome.id,
+                    "o_name": outcome.name,
+                    "o_prob": outcome.current_probability,
+                    "o_winner": outcome.is_winner,
+                    "m_id": market.id,
+                    "m_name": market.name,
+                    "m_source": market.source,
+                    "m_group_id": market.group_id,
+                    "m_status": market.status,
+                    "sport": getattr(market, "llm_sport_category", None),
+                    "m_resolution_date": market.resolution_date,
+                    "m_metadata": market.market_metadata,
+                    "m_sport_id": getattr(market, "sport_id", None),
+                    "m_external_id": getattr(market, "external_id", None),
+                })
+
+        if len(_conds) > 1:
+            # #2311: the statement's own ORDER BY and LIMIT, re-applied to the
+            # union of its chunks. Each chunk returned its own top `_cap`, which
+            # holds every row of the union's top `_cap` that it matched, so this
+            # is the single statement's selection (ties aside, which Postgres
+            # never ordered either). `sorted` is stable; NULLs last.
+            _rows = sorted(
+                _rows,
+                key=lambda r: (r["o_prob"] is None,
+                               -float(r["o_prob"]) if r["o_prob"] is not None else 0.0),
+            )[:_cap]
+        if _branch_lost:
+            lost.append(_name)
+        elif _branch_deferred:
+            deferred.append(_name)
+
+        # Materialise inside the loop. The rows are already plain data (copied
+        # per chunk above), so no later rollback can expire them.
+        for row in _rows:
+            oid = row["oid"]
             if oid in _seen_oids:
                 continue
             _seen_oids.add(oid)
-            entry = by_market.get(market.id)
+            entry = by_market.get(row["m_id"])
             if entry is None:
                 entry = {
-                    "market_id": market.id,
-                    "name": market.name,
-                    "source": market.source,
-                    "group_id": market.group_id,
-                    "status": market.status,
+                    "market_id": row["m_id"],
+                    "name": row["m_name"],
+                    "source": row["m_source"],
+                    "group_id": row["m_group_id"],
+                    "status": row["m_status"],
                     # #6630: the sport scope. Six live markets key to
                     # `defensive player of the year` across basketball,
                     # football and the WNBA, so the family key alone cannot
                     # tell two sports' awards apart. Only splits a family when
                     # two different sports are actually present.
-                    # `getattr`, not attribute access: this loop is driven by
-                    # test doubles as well as ORM rows, and a missing scope
-                    # degrades to today's behaviour (no split) rather than a
-                    # 500. `test_the_scope_column_exists_on_the_model` is the
-                    # guard that keeps the default from silently becoming the
-                    # only path if the column is ever renamed.
-                    "sport": getattr(market, "llm_sport_category", None),
+                    # Read with `getattr` in the copy above, not attribute
+                    # access: this loop is driven by test doubles as well as
+                    # ORM rows, and a missing scope degrades to today's
+                    # behaviour (no split) rather than a 500.
+                    # `test_the_scope_column_exists_on_the_model` is the guard
+                    # that keeps the default from silently becoming the only
+                    # path if the column is ever renamed.
+                    "sport": row["sport"],
                     "resolution_date": (
-                        market.resolution_date.isoformat()
-                        if market.resolution_date else None
+                        row["m_resolution_date"].isoformat()
+                        if row["m_resolution_date"] else None
                     ),
-                    "market_metadata": market.market_metadata,
+                    "market_metadata": row["m_metadata"],
                     "outcomes": [],
                 }
-                by_market[market.id] = entry
-                side_inputs[market.id] = (
-                    market.name,
-                    getattr(market, "sport_id", None),
-                    market.source,
-                    getattr(market, "external_id", None),
+                by_market[row["m_id"]] = entry
+                side_inputs[row["m_id"]] = (
+                    row["m_name"],
+                    row["m_sport_id"],
+                    row["m_source"],
+                    row["m_external_id"],
                 )
-            prob = (
-                float(outcome.current_probability)
-                if outcome.current_probability is not None else None
-            )
+            prob = float(row["o_prob"]) if row["o_prob"] is not None else None
             entry["outcomes"].append(
                 {
                     "outcome_id": oid,
-                    "name": outcome.name,
+                    "name": row["o_name"],
                     "probability": prob,
-                    "is_winner": bool(outcome.is_winner),
+                    "is_winner": bool(row["o_winner"]),
                 }
             )
 
