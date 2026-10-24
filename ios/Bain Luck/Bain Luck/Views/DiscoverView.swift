@@ -3,19 +3,19 @@ import Combine
 
 private enum DiscoverGroupedItem: Identifiable {
     case single(FeedItem)
-    case group(title: String, items: [FeedItem], kind: String? = nil, theme: String? = nil, sharedQuestion: String? = nil)
+    case group(title: String, items: [FeedItem], kind: String? = nil, theme: String? = nil, sharedQuestion: String? = nil, collectionRef: FeedThemeCollectionRef? = nil)
 
     var priceCards: [FeedItem] {
         switch self {
         case .single(let item): return [item]
-        case .group(_, let items, _, _, _): return items
+        case .group(_, let items, _, _, _, _): return items
         }
     }
 
     var id: String {
         switch self {
         case .single(let item): return item.id
-        case .group(let title, _, let kind, let theme, _): return "group-\(kind ?? "related")-\(theme ?? title)"
+        case .group(let title, _, let kind, let theme, _, _): return "group-\(kind ?? "related")-\(theme ?? title)"
         }
     }
 }
@@ -524,7 +524,7 @@ struct DiscoverView: View {
     private func primaryItem(_ grouped: DiscoverGroupedItem) -> FeedItem? {
         switch grouped {
         case .single(let item): return item
-        case .group(_, let items, _, _, _): return items.first
+        case .group(_, let items, _, _, _, _): return items.first
         }
     }
 
@@ -1006,7 +1006,7 @@ struct DiscoverView: View {
         let isGuessSlot = ReleaseSurfaces.insertsInlineGuessSlot(at: idx)
         Group {
             switch gi {
-            case .group(let title, let items, let kind, let theme, let sharedQuestion):
+            case .group(let title, let items, let kind, let theme, let sharedQuestion, let collectionRef):
                 // #1773: group cards were the largest of three
                 // archetypes rendered with NO swipe wrapper at all
                 // (group / tournament / concept — 10 of 30 cards on
@@ -1030,7 +1030,7 @@ struct DiscoverView: View {
                     },
                     onRequiresSignIn: inviteSignInForFeedback
                 ) {
-                    NativeGroupCard(title: title, items: items, kind: kind, theme: theme, sharedQuestion: sharedQuestion, navigationPath: $navigationPath)
+                    NativeGroupCard(title: title, items: items, kind: kind, theme: theme, sharedQuestion: sharedQuestion, collectionRef: collectionRef, navigationPath: $navigationPath)
                 }
             case .single(let item):
                 if item.type == "collection", let entry = DiscoverCollectionFeed.entry(for: item.collection) {
@@ -1251,7 +1251,7 @@ struct DiscoverView: View {
         .onAppear {
             switch gi {
             case .single(let item): vm.setPriceCardsVisible(owner: gi.id, cards: [item], visible: true)
-            case .group(_, let members, _, _, _): vm.setPriceCardsVisible(owner: gi.id, cards: members, visible: true)
+            case .group(_, let members, _, _, _, _): vm.setPriceCardsVisible(owner: gi.id, cards: members, visible: true)
             }
             // The first eligible card actually on screen → the
             // true first-render milestone, once per generation
@@ -1570,7 +1570,8 @@ struct DiscoverView: View {
                     items: eligibleChildren,
                     kind: bundle.kind,
                     theme: bundle.comparisonTheme,
-                    sharedQuestion: bundle.sharedQuestion
+                    sharedQuestion: bundle.sharedQuestion,
+                    collectionRef: bundle.themeCollectionRef
                 ))
                 continue
             }
@@ -1595,7 +1596,7 @@ struct DiscoverView: View {
     }
 
     private func groupItemCount(_ item: DiscoverGroupedItem) -> Int {
-        if case .group(_, let items, _, _, _) = item { return items.count }
+        if case .group(_, let items, _, _, _, _) = item { return items.count }
         return 1
     }
 
@@ -1622,7 +1623,7 @@ struct DiscoverView: View {
         var result = items
         while result.count < Self.groupExpansionFloor {
             let expandable = result.enumerated().filter { entry in
-                if case .group(_, let its, let kind, _, _) = entry.element {
+                if case .group(_, let its, let kind, _, _, _) = entry.element {
                     return kind == nil && its.count >= 2
                 }
                 return false
@@ -1630,7 +1631,7 @@ struct DiscoverView: View {
             guard let target = expandable.max(by: { groupItemCount($0.element) < groupItemCount($1.element) }) else {
                 break
             }
-            if case .group(_, let its, _, _, _) = result[target.offset] {
+            if case .group(_, let its, _, _, _, _) = result[target.offset] {
                 result.replaceSubrange(target.offset...target.offset, with: its.map { DiscoverGroupedItem.single($0) })
                 if target.offset < boundary { boundary += its.count - 1 }
             } else {
@@ -2732,8 +2733,12 @@ private struct NativeGroupCard: View {
     var kind: String? = nil
     var theme: String? = nil
     var sharedQuestion: String? = nil
+    /// #9925: present only when the server proved this theme's preview sits on a
+    /// published, complete collection (`FeedBundle.themeCollectionRef`).
+    var collectionRef: FeedThemeCollectionRef? = nil
     @Binding var navigationPath: NavigationPath
     @State private var expanded = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var category: String {
         items.first?.futures?.llmSportCategory?.lowercased() ?? ""
@@ -2816,11 +2821,55 @@ private struct NativeGroupCard: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            // #9925: outside both branches, as on web — the whole collection is
+            // one tap away whether the reader is peeking or reading every member.
+            if let collectionRef {
+                Divider()
+                collectionRow(collectionRef)
+            }
         }
         .background(DS.cardBg)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(DS.border, lineWidth: 0.5))
         .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 3)
+    }
+
+    /// The existing hub route on the card's own stack, so Back returns to this
+    /// card where the reader left it. A Button, like the footer: a
+    /// NavigationLink here turns a swipe into navigation on touch-up (#7074).
+    private func collectionRow(_ ref: FeedThemeCollectionRef) -> some View {
+        let countOnOwnLine = dynamicTypeSize.isAccessibilitySize
+        let layout = countOnOwnLine
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 12))
+        return Button { navigationPath.append(DiscoverGroupRows.collectionRoute(for: ref)) } label: {
+            layout {
+                Text(DiscoverGroupRows.collectionTitle(for: ref))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(DS.blue)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 2) {
+                    Text(DiscoverGroupRows.collectionCountLabel(for: ref))
+                        .font(.caption)
+                        .foregroundStyle(DS.textSecondary)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(DS.textMuted)
+                        .accessibilityHidden(true)
+                }
+                .fixedSize()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(DiscoverGroupRows.collectionTitle(for: ref))
+        .accessibilityValue(DiscoverGroupRows.collectionCountLabel(for: ref))
+        .accessibilityIdentifier("discover.group.collection")
     }
 
     private func compactRow(_ data: FeedFuturesData) -> some View {
