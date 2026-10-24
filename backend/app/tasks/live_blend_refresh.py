@@ -1499,6 +1499,36 @@ class HeldRowQuotes:
         finally:
             self._sampling -= 1
 
+    def begin_write_clock(self) -> tuple[int, float]:
+        """Reserve ordering for a clock returned by a caller-owned price write.
+
+        Do not block idle sampling behind a possibly held price transaction.
+        The caller must discard this ticket on failed/cancelled session exit.
+        """
+        self._sample_started += 1
+        return self._sample_started, self._now()
+
+    def publish_write_clock(self, ticket, value) -> bool:
+        """After successful transaction exit, bound FUTURE inputs only.
+
+        A committed write is not proof that the shorter standalone clock probe
+        recovered. Keep its failure/backoff and graph-recovery allowance intact.
+        False keeps the caller's existing standalone sample as fallback.
+        """
+        if self._closed or ticket is None or not isinstance(value, datetime):
+            return False
+        bound = value.timestamp()
+        if not math.isfinite(bound):
+            return False
+        ordinal, started = ticket
+        if ordinal <= self._sample_published:
+            return self._database_bound is not None and self._database_bound >= bound
+        self._sample_published = ordinal
+        self._database_bound = bound
+        self._last_sample_started = max(self._last_sample_started, started)
+        self._last_sample_done = self._now()
+        return True
+
     def note_input(self, mark) -> None:
         """Freeze the newest completed sample as this input's lower bound."""
         self._input_bounds[mark.outcome_id] = (

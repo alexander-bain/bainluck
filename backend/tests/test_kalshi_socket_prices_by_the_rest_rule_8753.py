@@ -41,6 +41,7 @@ from tests.test_a_settled_leg_takes_no_live_price_5411 import (
     _NoopRefresher,
 )
 from tests._kalshi_price_session import bind_sessions
+from tests._sqlite_returned_clock import install_returned_clock
 
 MARKET_ID = 61817501
 EVENT_ID = 15315945
@@ -114,6 +115,7 @@ async def _price_updates(monkeypatch, frame) -> list[tuple[Update, dict | None]]
 def _stored_after(write) -> tuple[float, float, float]:
     """Execute the captured UPDATE on one seeded SQLite row; read the row back."""
     engine = create_engine("sqlite://")
+    install_returned_clock(engine)
     table = FuturesOutcome.__table__
     table.create(engine)
     with engine.begin() as conn:
