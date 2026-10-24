@@ -457,7 +457,9 @@ def test_refresher_reads_no_overlay_unless_its_consumer_installs_one():
     assert source.count("held.note_input(mark)") == 1
     # Establish ordering before first receipt, then refresh the lower bound
     # after attempts for future inputs. Never re-date a previously accepted input.
-    assert source.count("held_quotes.sample_database_clock(get_task_session)") == 2
+    # Startup plus the mutually exclusive post-chunk outcomes. Executable
+    # ordering/cancellation controls assert one sample per attempted chunk.
+    assert source.count("held_quotes.sample_database_clock(get_task_session)") == 6
 
 
 # ── #10090: a quote the overlay would refuse is not held, so owes no stamp ──
