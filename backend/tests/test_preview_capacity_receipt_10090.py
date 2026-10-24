@@ -44,13 +44,31 @@ class _Rig:
             yield self
 
         self.worker = LiveBlendRefresher('kalshi', session_factory=factory)
+        self.candidate_ticket = None
+        self.policy_rereads = 0
 
         async def ticket(include_candidates=False):
             # capacity_ticket (the first, candidates call) also returns the
             # ledger's idle hint and Redis TIME (ms, #11565); per-target
             # read_ticket calls return two.
-            value = self.tickets.pop(0)
+            if include_candidates:
+                if self.candidate_ticket is None:
+                    self.candidate_ticket = self.tickets.pop(0)
+                value = self.candidate_ticket
+            elif self.policy_rereads:
+                self.policy_rereads -= 1
+                value = self.candidate_ticket
+            else:
+                value = self.tickets.pop(0)
             return (*value, set(idle), redis_now) if include_candidates else value
+
+        async def classify(ticket, candidates):
+            # This receipt rig has no policy debt. Real classification and
+            # policy retirement are exercised by the reservation PG controls.
+            pass
+
+        async def retire_policy(eid, ticket, deadline_ms, when):
+            self.policy_rereads += 1
 
         async def retire(eid, rev, ticket):
             self.retired.append(eid)
@@ -67,6 +85,8 @@ class _Rig:
                 return ('retire_missing', eid)
 
         monkeypatch.setattr(self.worker, '_preview_ticket', ticket)
+        monkeypatch.setattr(self.worker, '_classify_preview_residents', classify)
+        monkeypatch.setattr(self.worker, '_retire_policy_preview_event', retire_policy)
         monkeypatch.setattr(self.worker, '_retire_preview_event', retire)
         monkeypatch.setattr(self.worker, '_retire_idle_preview_event', retire_idle)
         monkeypatch.setattr(self.worker, '_publish_previews', publish)
@@ -150,8 +170,8 @@ async def test_spent_idle_budget_is_named_deadline(monkeypatch, caplog):
 
 @pytest.mark.parametrize('ticket, end', [((None, []), 'no_ticket'), ((3, []), 'no_candidates')])
 async def test_silent_returns_now_leave_a_receipt(monkeypatch, caplog, ticket, end):
-    # no_candidates beside a `status=full` ALARM is case (c): read_ticket
-    # returns residents only when full AND every owner is read-compatible.
+    # These return paths name the observed outcome, not a diagnosed cause.
+    # Reservation maintenance can return residents below the total cap too.
     rig = _Rig(monkeypatch, tickets=[ticket])
     caplog.set_level(logging.INFO, logger=lbr.__name__)
     await rig.worker._maintain_preview_capacity()
@@ -159,6 +179,39 @@ async def test_silent_returns_now_leave_a_receipt(monkeypatch, caplog, ticket, e
     fields = _fields(line)
     assert fields['end'] == end and fields['candidates'] == '0'
     assert fields['oldest_live_h'] == '-' and fields['attempted'] == '0'
+
+
+@pytest.mark.parametrize('stop, end', [
+    ('classification', 'ticket_lost'),
+    ('policy_item', 'ticket_lost'),
+    ('policy_pass', 'ticket_lost'),
+    ('empty_after_policy', 'no_candidates'),
+])
+async def test_reservation_prepass_returns_keep_receipt(monkeypatch, caplog, stop, end):
+    rig = _Rig(monkeypatch, tickets=[(7, [9])], idle={9})
+    original_ticket = rig.worker._preview_ticket
+    candidate_calls = 0
+
+    async def ticket(include_candidates=False):
+        nonlocal candidate_calls
+        if include_candidates:
+            candidate_calls += 1
+            if ((stop == 'classification' and candidate_calls == 2)
+                    or (stop == 'policy_pass' and candidate_calls == 3)):
+                return None, [], set(), 1_000_000
+            if stop == 'empty_after_policy' and candidate_calls == 3:
+                return 7, [], set(), 1_000_000
+        elif stop == 'policy_item':
+            return None, []
+        return await original_ticket(include_candidates=include_candidates)
+
+    monkeypatch.setattr(rig.worker, '_preview_ticket', ticket)
+    caplog.set_level(logging.INFO, logger=lbr.__name__)
+    await rig.worker._maintain_preview_capacity()
+    [line] = _receipts(caplog)
+    assert _fields(line)['end'] == end
+    assert rig.retired == [] and rig.idle_retired == [] and rig.missing == []
+    assert rig.worker.preview_stats['publish_errors'] == 0
 
 
 async def test_ticket_lost_mid_pass_is_named(monkeypatch, caplog):

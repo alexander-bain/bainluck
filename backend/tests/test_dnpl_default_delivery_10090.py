@@ -140,4 +140,4 @@ def test_early_return_admission_stays_bounded_and_preserves_active_chain(kind):
     # Terminal/observation-only contexts carry no work or expiry proof. They
     # must make room before an active reader loses its still-valid preview.
     assert evicted == []
-    assert set(reg._events) == {1, 19}
+    assert set(reg._events) == ({1} if kind == 'terminal' else {1, 19})

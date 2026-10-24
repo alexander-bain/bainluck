@@ -60,7 +60,7 @@ def _expected(stored, source, value, status="live"):
 
 
 class _PreviewSession(_LockedRowSession):
-    """The production read plus the preview arm's two trailing columns."""
+    """The production read with the preview arm's source/revision/clock."""
 
     def __init__(self, market_rows, returned, *, stored, rev, locked=True):
         super().__init__(market_rows, [], returned, locked=locked)
@@ -74,7 +74,8 @@ class _PreviewSession(_LockedRowSession):
             keys = [getattr(c, "key", None) for c in getattr(statement, "selected_columns", ())]
             if "preview_sources" in keys:
                 self.preview_reads += 1
-                result._rows = [tuple(row) + (self.stored, self.stored_rev) for row in result._rows]
+                result._rows = [tuple(row[:-3]) + (self.stored, self.stored_rev, row[-1])
+                                for row in result._rows]
         return result
 
 

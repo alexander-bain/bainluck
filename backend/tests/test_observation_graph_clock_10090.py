@@ -34,8 +34,13 @@ def clock_rig(monkeypatch, *, failure=None):
         calls.append(statement)
         if failure == "query":
             raise TimeoutError("query unavailable")
-        result = await original(statement)
-        if "observation_clock" in [column.key for column in statement.selected_columns]:
+        columns = list(statement.selected_columns)
+        has_clock = columns[-1].key == "observation_clock"
+        # This wrapper supplies the graph clock; the underlying fake supplies
+        # the ordinary graph, including its three trailing preview columns.
+        graph = statement.with_only_columns(*columns[:-1]) if has_clock else statement
+        result = await original(graph)
+        if has_clock:
             result._rows = [tuple(row) + (now,) for row in result._rows]
         return result
 
