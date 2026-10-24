@@ -316,7 +316,8 @@ def _roster_player_names(team: Team) -> list[str]:
 #: season's Super Bowl MVP, 18 legs) after the fix went live, because every
 #: rebuild since loses its roster branches and lands `partial`. A new prefix
 #: makes every pre-fix entry a miss; the old keys expire on their own TTL.
-PROP_FAMILIES_CACHE_PREFIX = "bainluck:prop_families:v2:"
+#: v3 (#11568): finished past-season boards no longer form a race.
+PROP_FAMILIES_CACHE_PREFIX = "bainluck:prop_families:v3:"
 
 #: How fresh a *live* hit is. Prop families are season-long questions ("Next
 #: Team", MVP races, threshold ladders) whose probabilities move on the futures
