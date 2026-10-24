@@ -1048,10 +1048,15 @@ class _VirtualTimeoutClock:
         async def scope():
             handle = asyncio.Timeout(None)
             entry = (self.now + delay, handle)
+            # Production reads the pass deadline through when(). Cancellation
+            # remains advanced explicitly below; expose the requested deadline
+            # in the real loop's clock domain, as asyncio.timeout(delay) does.
+            deadline = asyncio.get_running_loop().time() + delay
+            scope_budget = SimpleNamespace(when=lambda: deadline)
             async with handle:
                 self.active.append(entry)
                 try:
-                    yield handle
+                    yield scope_budget
                 finally:
                     self.active.remove(entry)
                     self.expired += int(handle.expired())
@@ -1555,8 +1560,9 @@ class TestLocalIdleFirstEviction:
         assert scheduled.commence_time > NOW and scheduled.completed_at is None
         # Shared retirement leaves local context present and makes a slot;
         # the failure can therefore only be local eviction, not Redis full.
-        ticket, _ = await rig.k.read_ticket(rig.call, 'kalshi')
-        await rig.k.prepare([rig.k.retire_idle(2, 'kalshi', 10, ticket)], rig.call, rig.stats)
+        ticket, _, _, redis_now = await rig.k.capacity_ticket(rig.call, 'kalshi')
+        await rig.k.prepare([rig.k.retire_idle(2, 'kalshi', 10, ticket,
+                                             redis_now + 1000)], rig.call, rig.stats)
         assert await rig.hget('nevents') == '511'
         operations = await _fresh_ops(rig, rig.k, 'kalshi', event_id=513)
         sent = await rig.run(rig.k, operations)

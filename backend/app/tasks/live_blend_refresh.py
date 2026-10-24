@@ -282,6 +282,10 @@ def _iso(wall: Optional[float]) -> Optional[str]:
     return datetime.fromtimestamp(wall, timezone.utc).isoformat(timespec="milliseconds")
 
 
+class PreviewSettlementUncertain(RuntimeError):
+    """A settlement did not produce a parsed reply; keep its locked proof alive."""
+
+
 @dataclass(frozen=True)
 class InputMark:
     """One accepted venue input, as the socket received it.
@@ -5012,8 +5016,10 @@ class LiveBlendRefresher:
         )
 
     @staticmethod
-    def _preview_call(connection):
+    def _preview_call(connection, *, send_before: Optional[float] = None):
         async def call(*args):
+            if send_before is not None and asyncio.get_running_loop().time() >= send_before:
+                raise TimeoutError("idle retirement pass ended before transmission")
             await connection.send_command(*args)
             return await connection.read_response()
         return call
@@ -5112,8 +5118,13 @@ class LiveBlendRefresher:
         from app.utils.blend_preview import registry
 
         try:
-            async with asyncio.timeout(1):
-                ticket, candidates, idle = await self._preview_ticket(include_candidates=True)
+            async with asyncio.timeout(1) as budget:
+                ticket, candidates, idle, redis_now = await self._preview_ticket(include_candidates=True)
+                # Redis sampled TIME before this local receipt. Flooring the remaining
+                # budget makes the remote cutoff conservative absent clock steps/drift.
+                when = budget.when()
+                deadline_ms = (redis_now + int((when - asyncio.get_running_loop().time()) * 1000)
+                               if redis_now is not None else None)
                 if ticket is None or not candidates:
                     return
                 factory = self._session_factory or get_task_session
@@ -5165,19 +5176,24 @@ class LiveBlendRefresher:
                         async with self._session_slot():
                             await self._retire_preview_event(eid, row[1], ticket)
                     elif eid in idle and idle_target(row):
-                        await self._retire_idle_preview_event(eid, ticket)
+                        if deadline_ms is None or deadline_ms <= redis_now:
+                            return
+                        await self._retire_idle_preview_event(eid, ticket, deadline_ms, when)
         except Exception:
             self.preview_stats["publish_errors"] += 1
             logger.warning("live_blend_refresh[%s]: preview capacity maintenance incomplete",
                            self.source, exc_info=True)
 
-    async def _retire_idle_preview_event(self, event_id: int, ticket: int) -> None:
+    async def _retire_idle_preview_event(
+        self, event_id: int, ticket: int, deadline_ms: int, when: float,
+    ) -> None:
         """Skip busy rows; hold fresh future-scheduled proof through mutation.
 
         An absent locked result means protected, missing or locked; none authorizes
         missing-row retirement. Publication happens after releasing the row.
-        The enclosing maintenance timeout bounds this work. An uncertain
-        Redis command may complete after cancellation releases the DB lock;
+        An uncertain outcome keeps the lock until the pass deadline; Redis
+        refuses execution at/after its paired cutoff. Redis clock rollback,
+        rate drift/failover and involuntary DB lock loss remain residuals:
         this is not distributed atomicity across the two stores.
         """
         from sqlalchemy import func, select
@@ -5197,9 +5213,30 @@ class LiveBlendRefresher:
             ).with_for_update(read=True, skip_locked=True))).first()
             if row is None:
                 return
-            frames = await self._prepare_ledger_previews([
-                registry().retire_idle(event_id, self.source, row[1], ticket)])
+            operation = registry().retire_idle(event_id, self.source, row[1], ticket, deadline_ms)
+            operation["send_before"] = when
+            try:
+                frames = await self._prepare_ledger_previews([operation])
+            except BaseException as exc:
+                # Before session rollback releases FOR SHARE, including on shutdown,
+                # transport errors and repeated cancellation from the outer timeout.
+                await self._hold_idle_proof_until(when, exc)
         await self._publish_previews(frames)
+
+    @staticmethod
+    async def _hold_idle_proof_until(when: float, error: BaseException) -> None:
+        first_cancel = error if isinstance(error, asyncio.CancelledError) else None
+        loop = asyncio.get_running_loop()
+        while loop.time() < when:
+            try:
+                await asyncio.sleep(max(0.0, when - loop.time()))
+            except asyncio.CancelledError as exc:
+                if first_cancel is None:
+                    first_cancel = exc
+        # Never uncancel: the outer timeout must see a prior shutdown cancellation.
+        if first_cancel is not None:
+            raise first_cancel
+        raise error
 
     async def _close_preview_maintenance(self):
         self._preview_maintenance_closed = True
@@ -5305,6 +5342,8 @@ class LiveBlendRefresher:
         """
         if not items or not any("ledger_op" in item for item in items):
             return items
+        idle = [item for item in items if item.get("ledger_op") == "retire_idle"]
+        send_before = min((item["send_before"] for item in idle), default=None)
         try:
             from app.utils.blend_preview import registry
             from app.utils.market_quote_push import _checkout
@@ -5316,24 +5355,43 @@ class LiveBlendRefresher:
                 pool = self._client().connection_pool
                 async with preview.claim_lock:
                     connection = await _checkout(pool)
+                    first_error = None
                     try:
                         if preview.unclaimed(self.source):
                             await self._claim_preview_epoch(connection, preview)
-                        return await preview.prepare(
-                            items, self._preview_call(connection), self.preview_stats,
-                        )
-                    except BaseException:
+                        call = (self._preview_call(connection, send_before=send_before)
+                                if idle else self._preview_call(connection))
+                        return await preview.prepare(items, call, self.preview_stats)
+                    except BaseException as exc:
+                        first_error = exc
                         self._redis = None
-                        await connection.disconnect()
-                        raise
+                        try:
+                            await connection.disconnect()
+                        except BaseException as cleanup_error:
+                            # A shutdown may arrive while cleaning up an ordinary
+                            # transport failure. Preserve the first cancellation.
+                            if (isinstance(cleanup_error, asyncio.CancelledError)
+                                    and not isinstance(first_error, asyncio.CancelledError)):
+                                first_error = cleanup_error
+                        raise first_error
                     finally:
-                        await pool.release(connection)
-        except Exception:
+                        try:
+                            await pool.release(connection)
+                        except BaseException as cleanup_error:
+                            if (isinstance(cleanup_error, asyncio.CancelledError)
+                                    and not isinstance(first_error, asyncio.CancelledError)):
+                                first_error = cleanup_error
+                            if first_error is not None:
+                                raise first_error
+                            raise
+        except Exception as exc:
             self.preview_stats["publish_errors"] += 1
             logger.warning(
                 "live_blend_refresh[%s]: ledger preview settlement incomplete (%s operations)",
                 self.source, len(items), exc_info=True,
             )
+            if idle:
+                raise PreviewSettlementUncertain("idle retirement reply unavailable") from exc
             return []
 
     async def _publish_previews(self, frames: list[dict], *, prepare_frames=None) -> None:

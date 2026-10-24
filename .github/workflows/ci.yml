@@ -4994,30 +4994,9 @@ jobs:
           fi
 
       - name: Live blend concurrent stamp, two socket arms (real Postgres)
-        # live/305's hero flicker, #836/#837/#5661. `worker-ws` runs the Kalshi
-        # and Polymarket consumers under one `asyncio.gather`, each with its own
-        # `LiveBlendRefresher`, and both stamp `events.win_probability_sources`
-        # on the same row. Read-modify-write meant the later writer DROPPED the
-        # sibling's key — measured 2026-09-16, `{'betting','kalshi'}` and
-        # `{'betting','polymarket'}` written 250 ms apart, the row keeping only
-        # the second — so the same question published two hero numbers 89 ms
-        # apart and the page took whichever landed last.
-        #
-        # Only a real server can grade the fix. The claim is that `a || b` on
-        # JSONB is evaluated INSIDE the UPDATE, so a concurrent writer blocks and
-        # then re-evaluates against the committed row — a session double has no
-        # row lock and calls both shapes correct. Under sqlite the column is
-        # shimmed to JSON, `||` is string concatenation, and gotcha #4 is that a
-        # JSONB write which reads correctly can silently fail to persist.
-        #
-        # The file carries its own strawman control: the old read-modify-write
-        # shape run through the same interleaving, asserting it still loses the
-        # key. If that control ever stops failing, the harness has stopped
-        # reproducing the hazard and the rest of the file is vacuous.
-        #
-        # Same skip detection as every gate in this job: pytest exits 0 when
-        # each test skips, and a gate that silently did not run reads exactly
-        # like one that passed.
+        # #836/#837/#5661: concurrent Kalshi/PM stamps must retain both source keys.
+        # Real PostgreSQL verifies row-lock JSONB merge semantics; sqlite/fakes cannot.
+        # The read-modify-write strawman must still lose a key; reject skipped gates.
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -5272,8 +5251,8 @@ jobs:
             echo "::error::#10090 normal-publication recovery gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]93 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
-            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 93 cases"
+          grep -qE "[^0-9]94 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
+            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 94 cases"
             exit 1
           }
 
@@ -5295,6 +5274,8 @@ jobs:
             tests/integration/test_pm_price_statement_deadline_10090_pg.py \
             tests/integration/test_dnpl_default_committed_fallback_10090_pg.py \
             tests/integration/test_dnpl_capacity_lifecycle_10090_pg.py \
+            tests/integration/test_dnpl_post_cancel_idle_status_10090_pg.py \
+            tests/test_dnpl_idle_retirement_cancellation_10090.py \
             -v -rs > /tmp/held-row11138.txt 2>&1; then
             gate_status=0
           else
@@ -5307,8 +5288,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]53 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row/default-DNPL gate did not run all 53 cases"
+          grep -qE "[^0-9]63 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row/default-DNPL gate did not run all 63 cases"
             exit 1
           }
 
