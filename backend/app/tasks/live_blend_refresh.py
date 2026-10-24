@@ -79,6 +79,24 @@ from typing import Awaitable, Callable, Container, Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
+#: One receipt per preview capacity pass (#10090). Read beside the ledger's
+#: `status=full` ALARM lines: capacity_ticket returns residents only when the
+#: ledger is full AND every owner is read-compatible, so `full` alarms with
+#: `end=no_candidates` mean the owners were incompatible; `candidates=512`
+#: with `retirable=0` is either a slate wider than the cap or rows stuck
+#: live/scheduled, which `live_over_6h` / `oldest_live_h` separate. `idle` is
+#: the ledger's hint of residents holding no valid pending preview;
+#: `idle_attempted` counts idle reclaims tried (each re-proved under a row
+#: lock, so a busy or protected row retires nothing). `end=deadline` means
+#: the pass's one-second budget ran out before the next idle reclaim could
+#: start. `attempted` stays the missing + retirable count. Report only:
+#: nothing here changes admission, retirement, cap or TTL.
+PREVIEW_CAPACITY_RECEIPT_FORMAT = (
+    "live_blend_refresh[%s]: preview capacity pass end=%s candidates=%d missing=%d "
+    "retirable=%d attempted=%d live=%d scheduled=%d suspended=%d other=%d "
+    "live_over_6h=%d oldest_live_h=%s idle=%d idle_attempted=%d")
+PREVIEW_CAPACITY_LIVE_OLD_HOURS = 6.0
+
 
 #: Per-event floor between fast-lane recomputes, equal to the WS's 2s flush:
 #: every flush that carries a new price for an event may stamp it. It was 5s
@@ -5115,12 +5133,36 @@ class LiveBlendRefresher:
                         Event.commence_time < text(
                             f"NOW() - INTERVAL '{int(SUSPENDED_SLATE_MAX_AGE_HOURS)} hours'")))
 
+    @staticmethod
+    def _preview_capacity_counts(candidates, rows, now: Optional[datetime], idle=()) -> dict:
+        """Report-only split of the residents a full pass read (#10090)."""
+        counts = {"candidates": len(candidates), "missing": 0, "retirable": 0,
+                  "live": 0, "scheduled": 0, "suspended": 0, "other": 0,
+                  "live_over_6h": 0, "oldest_live_h": "-",
+                  "idle": sum(1 for eid in candidates if eid in idle)}
+        present = {row[0] for row in rows}
+        counts["missing"] = sum(1 for eid in candidates if eid not in present)
+        oldest = None
+        for row in rows:
+            counts["retirable"] += bool(row[2])
+            status = row[3] if row[3] in ("live", "scheduled", "suspended") else "other"
+            counts[status] += 1
+            if status == "live" and row[4] is not None:
+                age = (now - row[4]).total_seconds() / 3600.0
+                counts["live_over_6h"] += age > PREVIEW_CAPACITY_LIVE_OLD_HOURS
+                oldest = age if oldest is None else max(oldest, age)
+        if oldest is not None:
+            counts["oldest_live_h"] = f"{oldest:.1f}"
+        return counts
+
     async def _maintain_preview_capacity(self):
         from sqlalchemy import func, select
         from app.models.models import Event
         from app.tasks.base import get_task_session
         from app.utils.blend_preview import registry
 
+        end, attempted, idle_attempted = None, 0, 0
+        counts = self._preview_capacity_counts((), (), None)
         try:
             async with asyncio.timeout(1) as budget:
                 ticket, candidates, idle, redis_now = await self._preview_ticket(include_candidates=True)
@@ -5130,6 +5172,7 @@ class LiveBlendRefresher:
                 deadline_ms = (redis_now + int((when - asyncio.get_running_loop().time()) * 1000)
                                if redis_now is not None else None)
                 if ticket is None or not candidates:
+                    end = "no_ticket" if ticket is None else "no_candidates"
                     return
                 factory = self._session_factory or get_task_session
                 # Fetch existence and retirement eligibility together. This is
@@ -5140,6 +5183,13 @@ class LiveBlendRefresher:
                         self._preview_retirable_row().label("retirable"),
                         Event.status, Event.commence_time, func.now().label("read_at"),
                     ).where(Event.id.in_(candidates)))).all()
+                try:
+                    counts = self._preview_capacity_counts(
+                        candidates, rows, datetime.now(timezone.utc), idle)
+                except Exception:
+                    # Report only: a counting fault never stops reclamation.
+                    logger.warning("live_blend_refresh[%s]: preview capacity receipt uncounted",
+                                   self.source, exc_info=True)
                 present = {row[0]: row for row in rows}
                 def priority(eid):
                     row = present.get(eid)
@@ -5164,6 +5214,7 @@ class LiveBlendRefresher:
                     if index:
                         ticket, _ = await self._preview_ticket()
                         if ticket is None:
+                            end = "ticket_lost"
                             return
                         async with self._session_slot(), factory() as session:
                             row = (await session.execute(select(
@@ -5172,8 +5223,10 @@ class LiveBlendRefresher:
                                 Event.status, Event.commence_time, func.now().label("read_at"),
                             ).where(Event.id == eid))).first()
                     if row is None:
+                        attempted += 1
                         await self._publish_previews([registry().retire_missing(eid, self.source, ticket)])
                     elif row[2]:
+                        attempted += 1
                         # The background UPDATE shares the same three DB
                         # slots as quote reads, stamps and chart custody.
                         # Inline terminal callers already own their slot.
@@ -5181,12 +5234,27 @@ class LiveBlendRefresher:
                             await self._retire_preview_event(eid, row[1], ticket)
                     elif eid in idle and idle_target(row):
                         if deadline_ms is None or deadline_ms <= redis_now:
+                            end = "deadline"
                             return
+                        idle_attempted += 1
                         await self._retire_idle_preview_event(eid, ticket, deadline_ms, when)
+                end = "done"
         except Exception:
+            end = "error"
             self.preview_stats["publish_errors"] += 1
             logger.warning("live_blend_refresh[%s]: preview capacity maintenance incomplete",
                            self.source, exc_info=True)
+        finally:
+            # A cancelled pass (shutdown) leaves end unset and logs nothing.
+            if end is not None:
+                self._log_preview_capacity_receipt(end, counts, attempted, idle_attempted)
+
+    def _log_preview_capacity_receipt(self, end: str, c: dict, attempted: int,
+                                      idle_attempted: int) -> None:
+        logger.info(PREVIEW_CAPACITY_RECEIPT_FORMAT, self.source, end, c["candidates"],
+                    c["missing"], c["retirable"], attempted, c["live"], c["scheduled"],
+                    c["suspended"], c["other"], c["live_over_6h"], c["oldest_live_h"],
+                    c["idle"], idle_attempted)
 
     async def _retire_idle_preview_event(
         self, event_id: int, ticket: int, deadline_ms: int, when: float,
