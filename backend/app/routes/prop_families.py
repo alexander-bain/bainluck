@@ -1166,10 +1166,9 @@ def _publish_primary_if_unchanged(
     The primary-slot twin of `publish_mirror_if_unchanged`, for the partial
     path only (#2311). `expected` is the `raw` half of `_stored_slot` on
     `keys.primary` — the bytes the caller judged "not full". Fails closed like
-    the primitive: a declined write leaves the stored value alone.
+    the primitive: a declined write leaves the stored value alone, and a
+    missing client is declined there.
     """
-    if rc is None:
-        return False
     try:
         encoded = encode_payload(payload)
     except Exception:
