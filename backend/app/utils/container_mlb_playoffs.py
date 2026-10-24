@@ -138,6 +138,7 @@ INCOMPLETE_DUPLICATE_ROWS = "game_with_duplicate_event_rows"
 INCOMPLETE_CONFLICTING_IDENTITY = "game_with_conflicting_identity"
 INCOMPLETE_MARKETS_TRUNCATED = "market_read_truncated"
 INCOMPLETE_STRANDED_QUESTIONS = "questions_on_rows_without_espn_id"
+INCOMPLETE_DUPLICATES_UNREAD = "proven_duplicates_unread"
 
 
 @dataclass(frozen=True)
@@ -630,15 +631,22 @@ def postseason_incompleteness(
     *,
     markets_truncated: bool,
     stranded_questions: int = 0,
+    duplicates_skipped: Optional[str] = None,
 ) -> list[str]:
     """Every reason this pass cannot say it holds the whole postseason read.
 
     [] means whole *over the board days read*. Members admitted around a gap
     are still right, so a caller may keep them — but an unread day, a game owed
     a row that has none, a game held as two rows, a contradicted game, a capped
-    question read, or questions sitting on a row with no ESPN id make the pass
-    `partial`, never `complete` (gotcha #53). Uncertain games with no row are
-    not owed yet and do not count. Fixed order: the first is the headline.
+    question read, questions sitting on a row with no ESPN id, or a skipped
+    proven-duplicate read make the pass `partial`, never `complete` (gotcha
+    #53). Uncertain games with no row are not owed yet and do not count. Fixed
+    order: the first is the headline.
+
+    ``duplicates_skipped`` is the reason the bounded duplicate read did not run
+    (``too_many_members`` / ``duplicate_read_overflow``). A skip is a gap on its
+    own: a proven duplicate OUTSIDE the span is never in the in-span report, so
+    without this its questions would go unread under a `complete` verdict.
     """
     reasons: list[str] = []
     if selection.days_dark:
@@ -653,4 +661,6 @@ def postseason_incompleteness(
         reasons.append(INCOMPLETE_MARKETS_TRUNCATED)
     if stranded_questions:
         reasons.append(INCOMPLETE_STRANDED_QUESTIONS)
+    if duplicates_skipped:
+        reasons.append(INCOMPLETE_DUPLICATES_UNREAD)
     return reasons

@@ -209,8 +209,9 @@ async def read_proven_duplicates(
 
     ``skipped`` names why no row was admitted without being judged (too many
     members to name in one read, or more labelled rows than one read returns);
-    it is None when the read ran whole. A skipped read admits nothing, so every
-    such row in the span stays unidentified and the pass says `partial`.
+    it is None when the read ran whole. A skipped read admits nothing, and the
+    skip itself makes the pass `partial` (a labelled row outside the span is in
+    no other report).
     """
     if not members:
         return ProvenDuplicates(), None
@@ -281,6 +282,7 @@ class PostseasonHarvest:
             self.members,
             markets_truncated=self.markets_truncated,
             stranded_questions=self.stranded_questions,
+            duplicates_skipped=self.duplicates_skipped,
         )
 
     def summary(self) -> dict:

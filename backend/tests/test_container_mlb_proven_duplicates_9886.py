@@ -38,6 +38,7 @@ from app.tasks.container_mlb_playoffs_assembly import (
 from app.utils.container_mlb_playoffs import (
     EXCLUDED_DUPLICATE_LABEL_REFUSED,
     EXCLUDED_GAME_WINNER_MARKET,
+    INCOMPLETE_DUPLICATES_UNREAD,
     INCOMPLETE_MARKETS_TRUNCATED,
     INCOMPLETE_STRANDED_QUESTIONS,
     REFUSED_CONFLICTING_LABELS,
@@ -333,6 +334,44 @@ async def test_too_many_members_skip_the_read_rather_than_widen_it(corpus, monke
     assert report["harvest"]["duplicates_skipped"] == "too_many_members"
     assert not [s for s, _ in session.reads if s.startswith(assembly.DUPLICATES_OF_MEMBERS_SQL_HEAD)]
     assert report["terminal"] == "partial"
+
+
+#: A rescheduled game's ghost: labelled, but outside the span, so it is in no
+#: in-span report and only the duplicate read can see its questions.
+EARLY_GHOST = replace(GHOST, commence_time=datetime(2026, 9, 20, 18, 0, tzinfo=timezone.utc))
+
+
+@pytest.mark.parametrize(
+    "skip, patch",
+    [
+        (None, {}),
+        ("too_many_members", {"DUPLICATE_READ_MAX_ARMS": 2}),
+        ("duplicate_read_overflow", {"DUPLICATE_READ_LIMIT": 1}),
+    ],
+    ids=["read-whole", "too-many-members", "read-overflow"],
+)
+@pytest.mark.asyncio
+async def test_a_skipped_duplicate_read_never_earns_complete(corpus, monkeypatch, skip, patch):
+    # Otherwise whole: every board day read, every game a member, no question
+    # cap, and NOTHING stranded in the span — the skip is the only gap.
+    for name, value in patch.items():
+        monkeypatch.setattr(assembly, name, value)
+    second = replace(EARLY_GHOST, id=15330002, duplicate_labels=(str(G1_EVENT),))
+    session = _Session(_rows(), _markets() + _ghost_markets(), unidentified=[], labelled=[EARLY_GHOST, second])
+    report = await run_mlb_postseason_assembly(session, _Container(), _boards(corpus), POST_2026, apply=True)
+    assert report["unidentified_in_span"] == [] and report["harvest"]["stranded_questions"] == 0
+    assert report["harvest"]["markets_truncated"] is False
+    # The skip reason stays visible beside the verdict.
+    assert report["harvest"]["duplicates_skipped"] == skip
+    market_edges = {e["child_id"] for e in _edge_rows(session) if e["child_type"] == "market"}
+    if skip is None:
+        assert report["terminal"] == "complete" and report["incomplete"] == []
+        assert {m.id for m in _ghost_markets()} <= market_edges
+    else:
+        assert report["proven_duplicates"] == []
+        assert not {m.id for m in _ghost_markets()} & market_edges
+        assert report["incomplete"] == [INCOMPLETE_DUPLICATES_UNREAD]
+        assert report["terminal"] == "partial" and report["reason"] == INCOMPLETE_DUPLICATES_UNREAD
 
 
 @pytest.mark.asyncio
