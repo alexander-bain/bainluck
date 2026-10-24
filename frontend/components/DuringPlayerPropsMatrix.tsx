@@ -114,7 +114,7 @@ export default function DuringPlayerPropsMatrix({ data, initialStatKey, initialS
             className={`min-h-[44px] rounded-full border px-4 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand ${statKey === item.stat_key ? "border-accent-brand bg-accent-brand text-text-inverse" : "border-surface-border bg-surface-card text-text-secondary"}`}
             onClick={() => { setStatKey(item.stat_key); if (scroller.current) scroller.current.scrollLeft = 0; }}>{item.label}</button>)}
         </div>
-        <p className="text-xs leading-relaxed text-text-muted">{matrix.players.length} {matrix.players.length === 1 ? "player" : "players"} · {matrix.questions} {matrix.questions === 1 ? "question" : "questions"} loaded{matrix.withoutQuote > 0 ? ` · ${matrix.withoutQuote} without a current quote` : ""}. Swipe across thresholds.</p>
+        <p className="text-xs leading-relaxed text-text-muted">{matrix.players.length} {matrix.players.length === 1 ? "player" : "players"} · {matrix.questions} {matrix.questions === 1 ? "prop line" : "prop lines"} loaded{matrix.withoutQuote > 0 ? ` · ${matrix.withoutQuote} without a current quote` : ""}. Swipe across thresholds.</p>
       </div>
       {matrix.players.length > 0 ? <div ref={scroller} className="overflow-x-auto overscroll-x-contain snap-x snap-mandatory" style={{ scrollPaddingLeft: 136 }} tabIndex={0} role="region" aria-label={`${stat?.label ?? "Selected statistic"} thresholds`}>
         <table className="w-full table-fixed border-collapse text-left" style={{ minWidth: 136 + matrix.columns.length * 88 }}>
@@ -127,7 +127,7 @@ export default function DuringPlayerPropsMatrix({ data, initialStatKey, initialS
             {player.cells.map((cell, index) => {
               const probability = cell && !matrix.columns[index].underOnly ? quotedChance(cell) : null;
               const change = cell && probability !== null ? compactChange(cell) : null;
-              const accessible = `${player.label}, ${stat?.label ?? statKey}, ${matrix.columns[index].label}, ${probability === null ? "current chance unavailable" : `${chanceLabel(probability)} chance`}${change ? `, ${change.replace(/%/g, " percentage points")} since pregame` : ""}${matrix.columns[index].underOnly ? ", exact under question available" : ""}`;
+              const accessible = `${player.label}, ${stat?.label ?? statKey}, ${matrix.columns[index].label}, ${probability === null ? "current chance unavailable" : `${chanceLabel(probability)} chance`}${change ? `, ${change.replace(/%/g, " percentage points")} since pregame` : ""}${matrix.columns[index].underOnly ? ", exact under line available" : ""}`;
               return <td key={matrix.columns[index].key} className="snap-start border-b border-surface-border p-0 text-center align-middle">
                 {cell ? <button type="button" aria-label={accessible} aria-haspopup="dialog" onClick={event => open(cell, event.currentTarget)}
                   className="flex min-h-[72px] w-full flex-col items-center justify-center gap-1 px-2 py-3 text-text-primary hover:bg-surface-elevated focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-brand">
@@ -137,7 +137,7 @@ export default function DuringPlayerPropsMatrix({ data, initialStatKey, initialS
               </td>;
             })}</tr>)}</tbody>
         </table>
-      </div> : <p role="status" className="px-4 pb-4 text-sm text-text-secondary">No questions for this statistic are currently available.</p>}
+      </div> : <p role="status" className="px-4 pb-4 text-sm text-text-secondary">No prop lines for this statistic are currently available.</p>}
       <p className="px-4 py-3 text-xs leading-relaxed text-text-muted">Signed changes are percentage points since pregame. Missing quotes are shown as —.</p>
 
       {/* #10358 — z-[100], the site's sheet layer: at z-50 the BottomNav (z-50, later in
@@ -154,14 +154,14 @@ export default function DuringPlayerPropsMatrix({ data, initialStatKey, initialS
             else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
             else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
           }}>
-          <div className="flex items-start justify-between gap-3"><h3 id={dialogId} className="text-lg font-semibold text-text-primary">{row ? `${row.subject.label} · ${data?.stats.find(item => item.stat_key === row.stat_key)?.label ?? row.stat_key} · ${row.predicate.label}` : "Question unavailable"}</h3>
+          <div className="flex items-start justify-between gap-3"><h3 id={dialogId} className="text-lg font-semibold text-text-primary">{row ? `${row.subject.label} · ${data?.stats.find(item => item.stat_key === row.stat_key)?.label ?? row.stat_key} · ${row.predicate.label}` : "Prop line unavailable"}</h3>
             <button ref={closeButton} type="button" onClick={close} className="min-h-[44px] px-2 text-sm font-medium text-accent-brand">Close</button></div>
-          {!row ? <p role="status" className="mt-4 text-sm text-text-secondary">This question isn&apos;t available right now.</p> : <>
+          {!row ? <p role="status" className="mt-4 text-sm text-text-secondary">This prop line isn&apos;t available right now.</p> : <>
             <p className="mt-1 text-sm text-text-muted">{row.period_key === "full_game" ? "Full game" : row.period_key} · {row.predicate.side === "under" ? "Under" : "Over"}</p>
             <div className="my-5"><p className="font-mono text-3xl font-semibold tabular-nums text-text-primary">{chance === null ? "Unavailable" : exactChanceLabel(chance)}</p>
               <p className="mt-1 text-sm text-text-secondary">{source ? contributorLabel(contributor ?? source) : row.current.basis === "blend_mean" ? "Blended chance" : "Current chance"}</p>
               <p className="mt-2 break-words text-xs text-text-muted">{clock(source ? contributor?.observed_at ?? null : row.current.observed_at)}</p>
-              {source && !contributor && <p role="status" className="mt-2 text-sm text-text-secondary">This source isn&apos;t quoting this question right now. Pick another source.</p>}
+              {source && !contributor && <p role="status" className="mt-2 text-sm text-text-secondary">This source isn&apos;t quoting this prop line right now. Pick another source.</p>}
               {row.current.state === "actual_only" && !source && <p className="mt-2 text-sm text-text-secondary">An actual result is available, but there is no current quote.</p>}
             </div>
             {points !== null ? <p className="text-sm text-text-secondary">{points > 0 ? "+" : ""}{Number(points.toPrecision(12))} percentage points since pregame ({exactChanceLabel(row.comparison.baseline!.probability)}).</p> : <p className="text-sm text-text-muted">Pregame comparison unavailable{source ? " for this exact source." : "."}</p>}

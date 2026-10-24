@@ -1528,3 +1528,88 @@ class TestLandedCommitRenewal:
         await rig.run(rig.k, rig.k.committed(EV, "kalshi", seq=first, sources=BASE10, rev=11))
         assert _propose(rig.k, "kalshi", 0.61, basis_s=3) == []
         assert await rig.hget(f"e:{EV}:m:kalshi") is None
+
+
+class TestLocalIdleFirstEviction:
+    async def test_default_bound_keeps_oldest_live_preview_when_clean_context_exists(self, rig):
+        assert rig.k.max_events == 512
+        await rig.k.execute(await _fresh_ops(rig, rig.k, 'kalshi', event_id=1),
+                            rig.call, rig.channel, rig.stats)
+        held = _blends(await rig.drain())
+        assert len(held) == 1 and held[0]['event_id'] == 1
+        original = await rig.hget('e:1:m:kalshi')
+        scheduled = _ev("scheduled")
+        scheduled.commence_time = NOW + timedelta(days=8)
+        scheduled.completed_at = None
+        for eid in range(2, 513):
+            if eid == 2:
+                ticket, _ = await rig.k.read_ticket(rig.call, 'kalshi')
+                scheduled.preview_read_ticket = ticket
+                operations = rig.k.propose(eid, 'kalshi', value=.6, event=scheduled,
+                                           row_sources=BASE10, row_rev=10, stamped_at=_stamp(1))
+            else:
+                operations = await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid)
+            await rig.k.prepare(operations, rig.call, rig.stats)
+            await rig.k.prepare(rig.k.committed(eid, 'kalshi', seq=rig.k.pending_seq(eid, 'kalshi'),
+                                sources=BASE10, rev=10), rig.call, rig.stats)
+        assert len(rig.k._events) == 512
+        # Primitive fixture boundary: event2 supplies the future-scheduled,
+        # incomplete row proof required by the actual maintenance caller.
+        # This tests local eviction, not that caller's PostgreSQL lock proof.
+        assert rig.k._events[2].status == "scheduled"
+        assert scheduled.commence_time > NOW and scheduled.completed_at is None
+        # Shared retirement leaves local context present and makes a slot;
+        # the failure can therefore only be local eviction, not Redis full.
+        ticket, _, _, redis_now = await rig.k.capacity_ticket(rig.call, 'kalshi')
+        await rig.k.prepare([rig.k.retire_idle(2, 'kalshi', 10, ticket,
+                                             redis_now + 1000)], rig.call, rig.stats)
+        assert await rig.hget('nevents') == '511'
+        operations = await _fresh_ops(rig, rig.k, 'kalshi', event_id=513)
+        sent = await rig.run(rig.k, operations)
+        assert await rig.hget('e:1:m:kalshi') == original, 'local eviction withdrew active held event1'
+        assert not any(f['event_id'] == 1 and f['preview']['kind'] == 'revoke' for f in sent)
+        assert any(f['event_id'] == 513 and f['preview']['kind'] == 'blend' for f in sent)
+        assert len(rig.k._events) == 512 and 2 not in rig.k._events and 3 in rig.k._events
+        assert await rig.hget('nevents') == '512'
+
+    @pytest.mark.parametrize('rig', ['fake_clock'], indirect=True)
+    async def test_clean_context_preference_preserves_real_expired_value_evidence(self, rig):
+        rig.k.max_events = 3
+        await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=1), rig.call, rig.stats)
+        first = rig.k.pending_seq(1, 'kalshi')
+        await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=2), rig.call, rig.stats)
+        await rig.clock(1_030_000)
+        await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', .61, event_id=1), rig.call, rig.stats)
+        await rig.k.prepare(rig.k.committed(1, 'kalshi', seq=first, sources=BASE10, rev=11), rig.call, rig.stats)
+        await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=2), rig.call, rig.stats)
+        await rig.clock(1_060_000)
+        rig.k._clock = lambda: 61.0
+        expiry = [op for op in rig.k.expire() if op['event_id'] == 2]
+        await rig.k.prepare(expiry, rig.call, rig.stats)
+        rig.k._clock = lambda: 0.0
+        assert rig.k._events[2].expired == {'kalshi': .6}
+        expired_through = dict(rig.k._events[2].expired_through)
+        assert expired_through and not rig.k._events[2].pending
+        active = await rig.hget('e:1:m:kalshi')
+        assert int(active.split()[3]) > 1_060_000
+        await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=3), rig.call, rig.stats)
+        await rig.k.prepare(rig.k.committed(3, 'kalshi', seq=rig.k.pending_seq(3, 'kalshi'),
+                            sources=BASE10, rev=10), rig.call, rig.stats)
+        await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=4), rig.call, rig.stats)
+        assert set(rig.k._events) == {1, 2, 4}
+        assert await rig.hget('e:1:m:kalshi') == active
+        assert rig.k._events[2].expired_through == expired_through
+        assert await _fresh_ops(rig, rig.k, 'kalshi', .6, event_id=2) == []
+
+    async def test_all_active_local_cache_keeps_existing_lru_settlement_fallback(self, rig):
+        rig.k.max_events = 2
+        for eid in (1, 2):
+            await rig.k.prepare(await _fresh_ops(rig, rig.k, 'kalshi', event_id=eid), rig.call, rig.stats)
+        through = rig.k.pending_seq(1, 'kalshi')
+        operations = await _fresh_ops(rig, rig.k, 'kalshi', event_id=3)
+        evicted = [op for op in operations if op.get('reason') == 'evicted']
+        assert len(evicted) == 1 and evicted[0]['event_id'] == 1 and evicted[0]['through'] == through
+        sent = await rig.run(rig.k, operations)
+        assert set(rig.k._events) == {2, 3}
+        assert await rig.hget('e:1:m:kalshi') is None
+        assert any(f['event_id'] == 1 and f['preview']['kind'] == 'revoke' for f in sent)

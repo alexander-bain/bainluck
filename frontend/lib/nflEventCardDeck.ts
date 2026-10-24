@@ -184,6 +184,31 @@ export function withPageProjection(
   );
 }
 
+/**
+ * #2920 / #11296 — the page prints one pregame forecast. While the headline
+ * prints the sportsbooks' projection before the scheduled start (under a final,
+ * or beside a live projected final), the finish card's pregame is that pair,
+ * not the series' own pre-game point: one book, picked by its row count in
+ * whatever window the history served, at its last capture before the first
+ * recorded game state. On a pick'em line that capture can name the other team
+ * (GB–DAL 14780562: the headline said Cowboys 28–27 from 21 sportsbooks, the
+ * card said "Packers won as projected" from betrivers' 27.5–26.5 at 00:23Z).
+ * The card's own clock and its final are unchanged. With no headline pair
+ * (none printed, or before the game, where the card already reads the current
+ * projection) the card keeps the series' reading.
+ */
+export function withPagePregame(
+  cards: NflEventCard[],
+  pair: { home: number; away: number } | null,
+): NflEventCard[] {
+  if (!pair) return cards;
+  return cards.map((card) =>
+    card.kind === "finish" && card.phase !== "before"
+      ? { ...card, pregame: { ...card.pregame, home: pair.home, away: pair.away } }
+      : card,
+  );
+}
+
 /** A projection keeps its half point; a final score is whole. */
 export function formatPoints(value: number): string {
   return Math.round(value) === value ? String(value) : value.toFixed(1);

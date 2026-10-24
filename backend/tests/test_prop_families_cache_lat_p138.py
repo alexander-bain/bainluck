@@ -303,7 +303,7 @@ class TestCacheKey:
         assert a != b
 
     def test_prefix_is_its_own_namespace(self):
-        assert route.PROP_FAMILIES_CACHE_PREFIX == "bainluck:prop_families:"
+        assert route.PROP_FAMILIES_CACHE_PREFIX == "bainluck:prop_families:v2:"
         assert route.prop_families_cache_keys(1, 400).primary.startswith(
             "bainluck:prop_families:"
         )

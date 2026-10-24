@@ -247,7 +247,16 @@ function combine(earlier: CollectionHub, later: CollectionHub, nextCursor: strin
     if (last?.cls === section.cls) sections[sections.length - 1] = { ...last, members: [...last.members, ...add] };
     else sections.push({ ...section, key: `${sections.length}:${section.cls}`, members: add });
   }
-  return { ...later, members, sections, related: relate(members), note, theme: { ...later.theme!, nextCursor } };
+  const related = relate(members);
+  const relatedKeys = new Set(Object.values(related).flat().map((m) => m.key));
+  return {
+    ...later,
+    members,
+    sections: sections.map((s) => ({ ...s, members: s.members.filter((m) => !relatedKeys.has(m.key)) })).filter((s) => s.members.length > 0),
+    related,
+    note,
+    theme: { ...later.theme!, nextCursor },
+  };
 }
 
 // "Load more": `page` answers `requested` (the hub's revision and next_cursor

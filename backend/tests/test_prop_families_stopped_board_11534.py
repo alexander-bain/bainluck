@@ -157,3 +157,49 @@ async def test_a_graded_board_is_a_result_and_stays():
     graded.outcomes[0].is_winner = True
     payload, _u, _db = await _build([graded, _dpoy()])
     assert "Drake Maye" in _entities(payload)
+
+
+class TestPreFixMirrorIsNotServed:
+    """The fix went live and the Patriots page still served the Super Bowl MVP.
+
+    2026-10-23 20:4xZ, after 814d689a60 went live: a fresh build of the Patriots
+    page dropped ``KXNFLSBMVP-26``, but the 24h mirror written at 17:22Z (quality
+    ``full``, 18 legs of market 479) was still in Redis. The primary lives 15
+    minutes; a partial rebuild never replaces a ``full`` mirror (CERT-480); and
+    every Patriots rebuild loses its roster branches. So each primary miss
+    served last season's board again until the mirror's 24h TTL ran out. The
+    prefix is versioned so an entry written before a withholding rule cannot be
+    read after it.
+    """
+
+    #: The key layout every pre-#11534-mirror-bump entry was written under.
+    PRE_FIX_PREFIX = "bainluck:prop_families:"
+
+    async def test_no_key_the_route_reads_is_a_pre_fix_key(self):
+        keys = route.prop_families_cache_keys(PATRIOTS, 400)
+        pre_fix = f"{self.PRE_FIX_PREFIX}{PATRIOTS}:400"
+        for key in (keys.primary, keys.stale, keys.negative, keys.refresh_lock):
+            assert not key.startswith(f"{pre_fix}:") and key != pre_fix, key
+
+    async def test_a_pre_fix_full_mirror_is_a_miss(self):
+        from app.utils.event_concept_cache import stamp_envelope, write_payload
+
+        store: dict[str, bytes] = {}
+        rc = MagicMock()
+        rc.get.side_effect = lambda k: store.get(k)
+        rc.setex.side_effect = lambda k, _ttl, v: store.__setitem__(k, v)
+        rc.set.side_effect = lambda k, v, **_kw: store.__setitem__(k, v) or True
+
+        old = route.cache_keys(f"{PATRIOTS}:400", prefix=self.PRE_FIX_PREFIX)
+        legacy = stamp_envelope(
+            {"team": {"id": PATRIOTS}, "families": [{"label": "Super Bowl MVP",
+             "rows": [{"market_id": 479}]}], "total_families": 1},
+            created_at=NOW, lifecycle_watermark=None, quality="full",
+            quality_reasons=[],
+        )
+        write_payload(rc, old, legacy, primary_ttl=900)
+        assert store.get(old.stale) is not None  # the legacy mirror exists
+
+        keys = route.prop_families_cache_keys(PATRIOTS, 400)
+        assert route.read_slot(rc, keys.primary) is None
+        assert route.read_slot(rc, keys.stale) is None

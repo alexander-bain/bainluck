@@ -21,9 +21,17 @@ enum DiscoverGroupRows {
         itemCount > 0 && (kind != "comparison" || itemCount > showsEveryRowUpTo)
     }
 
-    static func footerTitle(itemCount: Int, kind: String?, expanded: Bool) -> String? {
+    /// #10877: the footer names what the members are, as web's
+    /// `bundleExpandLabel` does — all markets say markets, all games say games,
+    /// and a mix gets no noun rather than a wrong one. `memberTypes` is each
+    /// member's served `FeedItem.type`.
+    static func footerTitle(memberTypes: [String], kind: String?, expanded: Bool) -> String? {
+        let itemCount = memberTypes.count
         guard !expanded, canExpand(itemCount: itemCount, kind: kind) else { return nil }
-        return itemCount > showsEveryRowUpTo ? "All \(itemCount) questions" : "Expand"
+        guard itemCount > showsEveryRowUpTo else { return "Expand" }
+        if memberTypes.allSatisfy({ $0 == "futures" }) { return "All \(itemCount) markets" }
+        if memberTypes.allSatisfy({ $0 == "event" }) { return "All \(itemCount) games" }
+        return "See all \(itemCount)"
     }
 
     /// Reuse the card's existing date/threshold rule, never the maximum price.

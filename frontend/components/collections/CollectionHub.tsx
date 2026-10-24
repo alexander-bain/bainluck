@@ -24,6 +24,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
   const pageRequest = useRef<AbortController | null>(null);
   const latest = useRef<Hub | null>(hub);
   const restored = useRef(false);
+  const pendingRestore = useRef<{ memberKey: string; offset: number } | null>(null);
 
   const load = useCallback(async () => {
     request.current?.abort();
@@ -95,6 +96,11 @@ export default function CollectionHub({ slug }: { slug: string }) {
       if (pageRequest.current === controller) { pageRequest.current = null; setPaging(false); }
     }
   };
+  const restoreTo = (key: string, offset: number): boolean => {
+    const element = document.getElementById(collectionMemberDomId(key));
+    if (element) window.scrollTo({ top: Math.max(0, window.scrollY + element.getBoundingClientRect().top - offset), behavior: "instant" });
+    return !!element;
+  };
   const interval = collectionRefreshInterval(shown);
   useEffect(() => {
     if (!interval) return;
@@ -108,9 +114,23 @@ export default function CollectionHub({ slug }: { slug: string }) {
     let context: CollectionReadingContext | null = null;
     try { context = reconcileCollectionContext(JSON.parse(sessionStorage.getItem(storageKey(slug)) ?? "null"), shown); } catch { /* blocked/corrupt storage never stops browsing */ }
     // No disclosures to reopen since #10146, so the drawn layout is the one the reader left (#9982).
-    const element = context?.memberKey ? document.getElementById(collectionMemberDomId(context.memberKey)) : null;
-    if (context && element) window.scrollTo({ top: Math.max(0, window.scrollY + element.getBoundingClientRect().top - context.offset), behavior: "instant" });
+    if (context?.memberKey && restoreTo(context.memberKey, context.offset)) pendingRestore.current = { memberKey: context.memberKey, offset: context.offset };
   }, [shown, slug]);
+
+  // #11555: the week links draw after their own read, above the games, so the
+  // first restore lands short by their height. Once they settle the offset is
+  // applied one more time — unless the reader has already moved the page.
+  useEffect(() => {
+    const release = () => { pendingRestore.current = null; };
+    const inputs = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+    inputs.forEach((input) => window.addEventListener(input, release, { passive: true }));
+    return () => { release(); inputs.forEach((input) => window.removeEventListener(input, release)); };
+  }, [slug]);
+  const settleWeekNavigation = () => {
+    const pending = pendingRestore.current;
+    pendingRestore.current = null;
+    if (pending) restoreTo(pending.memberKey, pending.offset);
+  };
 
   const remember = (key: string) => {
     const element = document.getElementById(collectionMemberDomId(key));
@@ -152,7 +172,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
       <p className="text-text-secondary">{error}</p>
       <button type="button" onClick={() => void load()} className="text-accent-brand hover:underline">Try again</button>
     </div>}
-    {shown?.state === "published" && /^nfl-\d{4}-(?:preseason-|postseason-)?week-[1-9]\d?$/.test(slug) && <CollectionWeekNavigation key={slug} slug={slug} read={navigationRead} onNavigate={() => {
+    {shown?.state === "published" && /^nfl-\d{4}-(?:preseason-|postseason-)?week-[1-9]\d?$/.test(slug) && <CollectionWeekNavigation key={slug} slug={slug} read={navigationRead} onSettle={settleWeekNavigation} onNavigate={() => {
       const member = shown.members.find((member) => (document.getElementById(collectionMemberDomId(member.key))?.getBoundingClientRect().bottom ?? 0) > 0);
       if (member) remember(member.key);
     }} />}
