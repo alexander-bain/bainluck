@@ -32,11 +32,11 @@ class _Result:
 
 
 class _Rig:
-    def __init__(self, monkeypatch, *, tickets, rows=(), reread=(), fail=None):
+    def __init__(self, monkeypatch, *, tickets, rows=(), reread=(), fail=None, idle=()):
         self.tickets = list(tickets)
         self.reads = [list(rows)] + [list(r) for r in reread]
         self.fail = fail
-        self.retired, self.missing = [], []
+        self.retired, self.missing, self.idle_retired = [], [], []
 
         @asynccontextmanager
         async def factory():
@@ -45,10 +45,16 @@ class _Rig:
         self.worker = LiveBlendRefresher('kalshi', session_factory=factory)
 
         async def ticket(include_candidates=False):
-            return self.tickets.pop(0)
+            # capacity_ticket (the first, candidates call) also returns the
+            # ledger's idle hint; per-target read_ticket calls return two.
+            value = self.tickets.pop(0)
+            return (*value, set(idle)) if include_candidates else value
 
         async def retire(eid, rev, ticket):
             self.retired.append(eid)
+
+        async def retire_idle(eid, ticket):
+            self.idle_retired.append(eid)
 
         async def publish(frames):
             self.missing.extend(frames)
@@ -60,6 +66,7 @@ class _Rig:
 
         monkeypatch.setattr(self.worker, '_preview_ticket', ticket)
         monkeypatch.setattr(self.worker, '_retire_preview_event', retire)
+        monkeypatch.setattr(self.worker, '_retire_idle_preview_event', retire_idle)
         monkeypatch.setattr(self.worker, '_publish_previews', publish)
         monkeypatch.setattr(blend_preview, 'registry', lambda: _Registry)
 
@@ -82,11 +89,11 @@ async def test_full_pass_splits_residents_by_state_and_counts_attempts(monkeypat
     # Anchored at call time, not import: a CI shard runs minutes after import.
     now = datetime.now(timezone.utc)
     rows = [
-        (1, 10, False, 'live', now - timedelta(hours=10)),
-        (2, 10, False, 'live', now - timedelta(hours=1)),
-        (3, 10, False, 'scheduled', now + timedelta(hours=2)),
-        (4, 10, True, 'final', now - timedelta(hours=3)),
-        (6, 10, False, 'suspended', now - timedelta(hours=2)),
+        (1, 10, False, 'live', now - timedelta(hours=10), now),
+        (2, 10, False, 'live', now - timedelta(hours=1), now),
+        (3, 10, False, 'scheduled', now + timedelta(hours=2), now),
+        (4, 10, True, 'final', now - timedelta(hours=3), now),
+        (6, 10, False, 'suspended', now - timedelta(hours=2), now),
     ]
     # Target 4 retires from the first read; target 5 is missing on its reread.
     rig = _Rig(monkeypatch, tickets=[(7, [1, 2, 3, 4, 5, 6]), (8, [])], rows=rows)
@@ -99,7 +106,29 @@ async def test_full_pass_splits_residents_by_state_and_counts_attempts(monkeypat
         'end': 'done', 'candidates': '6', 'missing': '1', 'retirable': '1',
         'attempted': '2', 'live': '2', 'scheduled': '1', 'suspended': '1',
         'other': '1', 'live_over_6h': '1', 'oldest_live_h': '10.0',
+        'idle': '0', 'idle_attempted': '0',
     }
+
+
+async def test_idle_reclaim_is_counted_apart_from_attempted(monkeypatch, caplog):
+    # #11550's idle reclaim: only future-scheduled idle residents are tried;
+    # an idle hint on a live row is counted as idle but never attempted.
+    now = datetime.now(timezone.utc)
+    rows = [
+        (2, 10, False, 'live', now - timedelta(hours=1), now),
+        (3, 10, False, 'scheduled', now + timedelta(hours=2), now),
+        (4, 10, True, 'final', now - timedelta(hours=3), now),
+        (9, 10, False, 'scheduled', now + timedelta(hours=5), now),
+    ]
+    rig = _Rig(monkeypatch, tickets=[(7, [2, 3, 4, 9]), (8, []), (9, [])], rows=rows,
+               reread=[[rows[3]], [rows[1]]], idle={2, 3, 9})
+    caplog.set_level(logging.INFO, logger=lbr.__name__)
+    await rig.worker._maintain_preview_capacity()
+    assert rig.retired == [4] and rig.idle_retired == [9, 3] and rig.missing == []
+    [line] = _receipts(caplog)
+    fields = _fields(line)
+    assert fields['end'] == 'done' and fields['attempted'] == '1'
+    assert fields['idle'] == '3' and fields['idle_attempted'] == '2'
 
 
 @pytest.mark.parametrize('ticket, end', [((None, []), 'no_ticket'), ((3, []), 'no_candidates')])

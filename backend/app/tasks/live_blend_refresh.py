@@ -80,16 +80,21 @@ from typing import Awaitable, Callable, Container, Iterable, Optional
 logger = logging.getLogger(__name__)
 
 #: One receipt per preview capacity pass (#10090). Read beside the ledger's
-#: `status=full` ALARM lines: read_ticket returns residents only when the
+#: `status=full` ALARM lines: capacity_ticket returns residents only when the
 #: ledger is full AND every owner is read-compatible, so `full` alarms with
 #: `end=no_candidates` mean the owners were incompatible; `candidates=512`
 #: with `retirable=0` is either a slate wider than the cap or rows stuck
-#: live/scheduled, which `live_over_6h` / `oldest_live_h` separate. Report
-#: only: nothing here changes admission, retirement, cap or TTL.
+#: live/scheduled, which `live_over_6h` / `oldest_live_h` separate. `idle` is
+#: the ledger's hint of residents holding no valid pending preview;
+#: `idle_attempted` counts idle reclaims tried (each re-proved under a row
+#: lock, so a busy or protected row retires nothing). `end=deadline` means
+#: the pass's one-second budget ran out before the next idle reclaim could
+#: start. `attempted` stays the missing + retirable count. Report only:
+#: nothing here changes admission, retirement, cap or TTL.
 PREVIEW_CAPACITY_RECEIPT_FORMAT = (
     "live_blend_refresh[%s]: preview capacity pass end=%s candidates=%d missing=%d "
     "retirable=%d attempted=%d live=%d scheduled=%d suspended=%d other=%d "
-    "live_over_6h=%d oldest_live_h=%s")
+    "live_over_6h=%d oldest_live_h=%s idle=%d idle_attempted=%d")
 PREVIEW_CAPACITY_LIVE_OLD_HOURS = 6.0
 
 
@@ -5125,11 +5130,12 @@ class LiveBlendRefresher:
                             f"NOW() - INTERVAL '{int(SUSPENDED_SLATE_MAX_AGE_HOURS)} hours'")))
 
     @staticmethod
-    def _preview_capacity_counts(candidates, rows, now: Optional[datetime]) -> dict:
+    def _preview_capacity_counts(candidates, rows, now: Optional[datetime], idle=()) -> dict:
         """Report-only split of the residents a full pass read (#10090)."""
         counts = {"candidates": len(candidates), "missing": 0, "retirable": 0,
                   "live": 0, "scheduled": 0, "suspended": 0, "other": 0,
-                  "live_over_6h": 0, "oldest_live_h": "-"}
+                  "live_over_6h": 0, "oldest_live_h": "-",
+                  "idle": sum(1 for eid in candidates if eid in idle)}
         present = {row[0] for row in rows}
         counts["missing"] = sum(1 for eid in candidates if eid not in present)
         oldest = None
@@ -5151,7 +5157,7 @@ class LiveBlendRefresher:
         from app.tasks.base import get_task_session
         from app.utils.blend_preview import registry
 
-        end, attempted = None, 0
+        end, attempted, idle_attempted = None, 0, 0
         counts = self._preview_capacity_counts((), (), None)
         try:
             async with asyncio.timeout(1) as budget:
@@ -5175,7 +5181,7 @@ class LiveBlendRefresher:
                     ).where(Event.id.in_(candidates)))).all()
                 try:
                     counts = self._preview_capacity_counts(
-                        candidates, rows, datetime.now(timezone.utc))
+                        candidates, rows, datetime.now(timezone.utc), idle)
                 except Exception:
                     # Report only: a counting fault never stops reclamation.
                     logger.warning("live_blend_refresh[%s]: preview capacity receipt uncounted",
@@ -5226,6 +5232,7 @@ class LiveBlendRefresher:
                         if deadline_ms is None or deadline_ms <= redis_now:
                             end = "deadline"
                             return
+                        idle_attempted += 1
                         await self._retire_idle_preview_event(eid, ticket, deadline_ms, when)
                 end = "done"
         except Exception:
@@ -5236,12 +5243,14 @@ class LiveBlendRefresher:
         finally:
             # A cancelled pass (shutdown) leaves end unset and logs nothing.
             if end is not None:
-                self._log_preview_capacity_receipt(end, counts, attempted)
+                self._log_preview_capacity_receipt(end, counts, attempted, idle_attempted)
 
-    def _log_preview_capacity_receipt(self, end: str, c: dict, attempted: int) -> None:
+    def _log_preview_capacity_receipt(self, end: str, c: dict, attempted: int,
+                                      idle_attempted: int) -> None:
         logger.info(PREVIEW_CAPACITY_RECEIPT_FORMAT, self.source, end, c["candidates"],
                     c["missing"], c["retirable"], attempted, c["live"], c["scheduled"],
-                    c["suspended"], c["other"], c["live_over_6h"], c["oldest_live_h"])
+                    c["suspended"], c["other"], c["live_over_6h"], c["oldest_live_h"],
+                    c["idle"], idle_attempted)
 
     async def _retire_idle_preview_event(
         self, event_id: int, ticket: int, deadline_ms: int, when: float,
