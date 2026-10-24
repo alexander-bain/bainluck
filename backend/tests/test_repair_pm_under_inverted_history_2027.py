@@ -491,3 +491,201 @@ class TestPostFixOnlyLegs:
         assert out["terminal"] == "applied" and out["legs_written"] == 1
         assert session.deleted == [(11, [r["id"] for r in SPECIMEN_ROWS])]
         assert session.withdrawn == []
+
+
+# ---------------------------------------------------------------------------
+# #11158 — the complete 16-point Vassell specimen, and why it stays refused
+# ---------------------------------------------------------------------------
+#
+# The six pairs above are COMPONENT coverage: Live's quoted pairs, all of which
+# read as the Over price. The retained served payload holds sixteen whole-second
+# Under points, and two of them read as the Over price's COMPLEMENT. Those two
+# contrary near readings are what keeps the real leg refused, so the six-pair
+# fixture alone cannot represent it.
+#
+# PROVENANCE (tests/fixtures/vassell_under_11158/PROVENANCE.md): values and
+# times are RETAINED SERVED-DERIVED (history-all.json, sha256 312906e7…f4a5).
+# Every snapshot id below is SYNTHETIC; the served payload carries none. Nothing
+# here is a raw production row, a token, a writer or a run.
+
+import json as _json
+from pathlib import Path as _Path
+
+_VASSELL = _json.loads((_Path(__file__).resolve().parent / "fixtures"
+                        / "vassell_under_11158" / "served-points.json").read_text())
+_V_UNDER = [(datetime.fromisoformat(p["captured_at"]), p["probability"])
+            for p in _VASSELL["under_history_shape_points"]]
+_V_OVER = [(datetime.fromisoformat(p["captured_at"]), p["probability"])
+           for p in _VASSELL["over_poll_points_within_60_min"]]
+#: SYNTHETIC ids, used only for the nearest-sibling tie-break.
+_V_OVER_IDS = [280_000_001 + i for i in range(len(_V_OVER))]
+
+
+def _rows_sql_view(under, ids):
+    """What `_ROWS_SQL` returns for these Under rows against the Over points:
+    the same-second sibling (ORDER BY id LIMIT 1) and the nearest sibling within
+    `NEAR_WINDOW_MIN` (ORDER BY |dt|, id LIMIT 1). The PostgreSQL gate executes
+    the real statement on the same values."""
+    win = timedelta(minutes=rp.NEAR_WINDOW_MIN)
+    over = sorted(zip(_V_OVER_IDS, _V_OVER))
+    out = []
+    for rid, (at, p) in zip(ids, under):
+        ex = [q for _, (t, q) in over if t == at]
+        near = sorted(((abs((t - at).total_seconds()), oid, t, q)
+                       for oid, (t, q) in over if abs(t - at) <= win))
+        out.append({"id": rid, "probability": p, "captured_at": at,
+                    "exact_p": ex[0] if ex else None,
+                    "near_p": near[0][3] if near else None,
+                    "near_at": near[0][2] if near else None})
+    return out
+
+
+#: History A — one SYNTHETIC block of ids for all sixteen rows.
+_A_IDS = [290_000_001 + i for i in range(16)]
+#: History B — the two complement testifiers (indexes 7 and 13: 22:00:08Z at
+#: 0.54, 04:00:05Z at 0.41) in a later SYNTHETIC block. Served data cannot tell
+#: A from B; that is the point of having both.
+_B_LATE = (7, 13)
+_B_IDS = [291_000_001 + _B_LATE.index(i) if i in _B_LATE else 290_000_001 + i
+          - sum(1 for j in _B_LATE if j < i) for i in range(16)]
+VASSELL_16_A = _rows_sql_view(_V_UNDER, _A_IDS)
+VASSELL_16_B = _rows_sql_view(_V_UNDER, _B_IDS)
+
+
+def _boundaries(ids):
+    """Every distinct place an era bound can fall among these ids."""
+    return [min(ids) - 1] + sorted(ids)
+
+
+class TestTheSixteenPointSpecimen:
+    def test_the_fixture_is_the_retained_payload(self):
+        assert _VASSELL["source_sha256"].startswith("312906e7")
+        assert len(_V_UNDER) == 16 and len(_V_OVER) == 10
+        assert all(at.microsecond == 0 for at, _ in _V_UNDER)
+        assert _V_UNDER[0] == (datetime(2026, 6, 3, 15, 0, 7, tzinfo=UTC), 0.745)
+        assert _V_UNDER[-1] == (datetime(2026, 6, 4, 6, 0, 4, tzinfo=UTC), 0.0005)
+
+    def test_the_two_contrary_near_readings(self):
+        contrary = [(r["captured_at"], r["probability"], r["near_p"])
+                    for r in VASSELL_16_A
+                    if rp.pair_testimony(r["probability"], r["near_p"] or -9, False)
+                    == "complement"]
+        assert contrary == [
+            (datetime(2026, 6, 3, 22, 0, 8, tzinfo=UTC), 0.54, 0.465),
+            (datetime(2026, 6, 4, 4, 0, 5, tzinfo=UTC), 0.41, 0.59),
+        ]
+
+    def test_the_six_quoted_pairs_are_a_subset_that_omits_both_contrary_readings(self):
+        pairs = [(r["probability"], r["near_p"]) for r in VASSELL_16_A]
+        for pair in SPECIMEN_PAIRS:
+            assert pair in pairs, pair
+        assert (0.54, 0.465) not in SPECIMEN_PAIRS and (0.41, 0.59) not in SPECIMEN_PAIRS
+
+    def test_the_complete_specimen_testifies_mixed(self):
+        t = rp.testify(VASSELL_16_A)
+        assert t == {"kind": "near", "equal": 12, "complement": 2}
+        assert rp.classify_testimony(t) == (rp.AMBIGUOUS, "mixed_testimony")
+
+
+#: SYNTHETIC genuine-Under residual (Root's disclosed counterexample): four rows
+#: of the Under token's own prices that swing so three read Over-equal against a
+#: sibling capture 20 minutes later and one reads as its complement. Ids 100-103.
+_RESIDUAL_T0 = datetime(2026, 6, 3, 1, 0, 7, tzinfo=UTC)
+GENUINE_RESIDUAL = [
+    {"id": 100 + i, "probability": u, "captured_at": _RESIDUAL_T0 + timedelta(hours=i),
+     "exact_p": None, "near_p": o,
+     "near_at": _RESIDUAL_T0 + timedelta(hours=i, minutes=20, microseconds=123)}
+    for i, (u, o) in enumerate([(0.70, 0.70), (0.75, 0.76), (0.80, 0.79), (0.40, 0.60)])
+]
+
+#: SYNTHETIC adjacent-id counterexample: ids 100-101 read as the Over price (an
+#: old run, Over token) and 102-103 as its complement (another run, Under token).
+#: The ids are consecutive; the tokens are not the same. Sequence proximity names
+#: neither a run nor a token.
+ADJACENT_TWO_TOKENS = [
+    {"id": 100 + i, "probability": p, "captured_at": _RESIDUAL_T0 + timedelta(hours=i),
+     "exact_p": None, "near_p": q,
+     "near_at": _RESIDUAL_T0 + timedelta(hours=i, minutes=21)}
+    for i, (p, q) in enumerate([(0.745, 0.745), (0.74, 0.74), (0.26, 0.74), (0.41, 0.59)])
+]
+
+
+def _planned(out):
+    return out["planned_outcome_ids"], out["rows_planned"]
+
+
+@pytest.mark.asyncio
+class TestConservativeRefusalHolds:
+    @pytest.mark.parametrize("boundary", [None, 10**9], ids=["unpinned", "above_all"])
+    async def test_the_all_in_era_specimen_plans_nothing(self, monkeypatch, boundary):
+        out = await _dry(monkeypatch, {51: (VASSELL_16_A, True)}, boundary=boundary)
+        assert out["verdicts"] == {rp.AMBIGUOUS: 1}
+        assert out["ambiguous_reasons"] == {"mixed_testimony": 1}
+        assert _planned(out) == ([], 0)
+        (ex,) = out["examples"][rp.AMBIGUOUS]
+        assert ex["testimony"] == {"kind": "near", "equal": 12, "complement": 2}
+        assert ex["rows"] == 16 and ex["post_fix_rows"] == 0
+
+    @pytest.mark.parametrize("boundary", [None, 10**9], ids=["unpinned", "above_all"])
+    async def test_the_genuine_under_residual_plans_nothing(self, monkeypatch, boundary):
+        out = await _dry(monkeypatch, {52: (GENUINE_RESIDUAL, True)}, boundary=boundary)
+        assert out["ambiguous_reasons"] == {"mixed_testimony": 1}
+        assert _planned(out) == ([], 0)
+
+    async def test_adjacent_ids_with_two_tokens_are_refused(self, monkeypatch):
+        ids = [r["id"] for r in ADJACENT_TWO_TOKENS]
+        assert max(b - a for a, b in zip(ids, ids[1:])) == 1
+        t = rp.testify(ADJACENT_TWO_TOKENS)
+        assert t == {"kind": "near", "equal": 2, "complement": 2}
+        out = await _dry(monkeypatch, {53: (ADJACENT_TWO_TOKENS, True)}, boundary=None)
+        assert out["ambiguous_reasons"] == {"mixed_testimony": 1}
+        assert _planned(out) == ([], 0)
+
+    async def test_history_a_plans_at_no_boundary(self, monkeypatch):
+        planning = []
+        for b in _boundaries(_A_IDS):
+            out = await _dry(monkeypatch, {51: (VASSELL_16_A, True)}, boundary=b)
+            if out["rows_planned"]:
+                planning.append(b)
+        assert len(_boundaries(_A_IDS)) == 17 and planning == []
+
+    async def test_history_b_plans_only_between_its_two_synthetic_runs(self, monkeypatch):
+        # NOT "every boundary refuses": in this SYNTHETIC layout a bound that
+        # falls exactly between the two blocks plans the fourteen old-block rows
+        # and never the two later ones. That is a conditional counterexample to
+        # "a pin can never help", not evidence about production ids, and the
+        # shipped constant stays unpinned.
+        old = sorted(i for k, i in enumerate(_B_IDS) if k not in _B_LATE)
+        planning = {}
+        for b in _boundaries(_B_IDS):
+            out = await _dry(monkeypatch, {51: (VASSELL_16_B, True)}, boundary=b)
+            if out["rows_planned"]:
+                planning[b] = out
+        assert list(planning) == [max(old)]
+        out = planning[max(old)]
+        assert out["rows_planned"] == 14
+        (ex,) = out["examples"][rp.INVERTED]
+        assert ex["testimony"] == {"kind": "near", "equal": 12, "complement": 0}
+        assert ex["post_fix_rows"] == 2
+
+    async def test_control_a_relaxed_classifier_would_plan_the_genuine_rows(
+            self, monkeypatch):
+        # CAUSAL CONTROL for the two guards above. The rejected proposal lets
+        # fewer than MIN_NEAR_TESTIMONY contrary near readings be outvoted when
+        # the leg's in-era rows are one id run. Every fixture here is one id run,
+        # so substituting that rule (here, not in the rail) is enough to show the
+        # guards discriminate: the genuine residual and the full specimen both
+        # get planned. The rail itself is not changed by this test.
+        original = rp.classify_testimony
+
+        def relaxed(t):
+            eq, comp = t["equal"], t["complement"]
+            if t["kind"] == "near" and eq >= rp.MIN_NEAR_TESTIMONY and 0 < comp < rp.MIN_NEAR_TESTIMONY:
+                return rp.INVERTED, None
+            return original(t)
+
+        monkeypatch.setattr(rp, "classify_testimony", relaxed)
+        residual = await _dry(monkeypatch, {52: (GENUINE_RESIDUAL, True)}, boundary=None)
+        assert _planned(residual) == ([52], 4)
+        specimen = await _dry(monkeypatch, {51: (VASSELL_16_A, True)}, boundary=None)
+        assert _planned(specimen) == ([51], 16)
