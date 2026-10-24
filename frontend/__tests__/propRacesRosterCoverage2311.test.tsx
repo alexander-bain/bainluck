@@ -27,6 +27,7 @@
  *   - gate counts on `!== "partial"` instead of `=== "full"` → part 1 degraded/no-quality rows fail
  *   - drop `rosterCoverage=` from the team page        → part 4 fails
  *   - feed the hook `teamSlug` instead of `resolvedSlug` → part 4 fails
+ *   - wrap the page's <TeamPropFamilies> in `&&`, `? :` or `&& (` → part 4 unconditional test fails
  */
 
 import "./helpers/minimalDom";
@@ -400,5 +401,14 @@ describe("#2311 part 4 — the team page passes the hook's coverage to Prop Race
     const element = elements[0] ?? "";
     expect(element).toMatch(new RegExp(`\\bfamilies=\\{${binding}\\.families\\}`));
     expect(element).toMatch(new RegExp(`\\brosterCoverage=\\{${binding}\\.coverage\\}`));
+  });
+
+  test("the page draws <TeamPropFamilies> unconditionally: the component decides when to hide", () => {
+    // A page-level `families.length > 0 &&` would hide the capped-empty
+    // declaration while every component test stays green (lane1's MG on 14dcaaa322).
+    const at = src.indexOf(elements[0] ?? "\u0000");
+    expect(at).toBeGreaterThan(0);
+    const before = src.slice(0, at).replace(/\{\/\*[\s\S]*?\*\/\}/g, "").trimEnd();
+    expect(before).not.toMatch(/(&&|\?|\(|:)$/);
   });
 });
