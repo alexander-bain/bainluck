@@ -8931,6 +8931,43 @@ def _merge_head_into_page(head_rows, cursor_rows):
     return list(head_rows) + rest, {r.id for r in head_only}
 
 
+def gamma_leg_settle_stmt(won: bool):
+    """The negRisk-parent arm's settling UPDATE for one leg (#698).
+
+    The arm used to write a leg's result in TWO statements: the leg's
+    ``outcomePrices[0]`` into ``current_probability``, then ``is_winner`` and
+    ``api_settlement`` in a second ORM update. The price it wrote was whatever
+    the venue was quoting, so a leg could be stamped Lost over ``0.006`` or Won
+    over ``0.95`` — a grade and a price that disagree, and a reader contract
+    (``settlement_display``) that correctly prints such a row as Unknown.
+
+    One statement now carries all of it: the grade, ``api_settlement``, and the
+    terminal price through the shared :func:`settled_price_set_sql` (#5246), which
+    also nulls the american odds and moves ``price_changed_at`` only on a real
+    change (#2024). The caller reaches this only for a leg
+    :func:`venue_terminal_leg_result` verified, so the 1 or the 0 written is the
+    venue's payout, not a rounding of its quote.
+
+    The WHERE is the arm's existing one — this market, this condition id — with
+    no pending-settlement skip, so the rowcount still answers "do we hold this
+    leg", which is what the champion mint below keys on. It also carries the
+    shared duplicate-leg rule (Q487), as every winner write keyed on
+    ``external_id`` does; the arm binds a bare Gamma condition id or its
+    ``_side1`` companion, neither of which ends ``_yes``/``_no``, so the rule
+    cannot fire on what this arm writes today.
+    """
+    price = SETTLED_YES_PRICE if won else SETTLED_NO_PRICE
+    return text("""
+        UPDATE futures_outcomes fo
+           SET is_winner = """ + ("true" if won else "false") + """,
+               resolution_source = 'api_settlement',
+               last_updated = NOW(),
+               """ + settled_price_set_sql(price) + """
+         WHERE fo.market_id = :mid
+           AND fo.external_id = :cid
+           AND """ + DUPLICATE_CONDITION_LEG_SQL)
+
+
 async def _backfill_polymarket_winners_from_api(
     limit: int = 500,
     deadline: float | None = None,
@@ -8959,6 +8996,7 @@ async def _backfill_polymarket_winners_from_api(
     from app.services.polymarket_api import PolymarketAPIService
     from app.utils.polymarket_champion_mint import MINTED as _CHAMPION_MINTED
     from app.utils.polymarket_champion_mint import venue_has_closed_the_leg
+    from app.utils.polymarket_settlement_scan import venue_terminal_leg_result
 
     stats = {
         "markets_checked": 0,
@@ -8981,6 +9019,10 @@ async def _backfill_polymarket_winners_from_api(
         # bookkeeping, not the venue's result, so an open leg's quote is never
         # read as its outcome.
         "legs_open_at_venue": 0,
+        # #698. negRisk-parent legs the venue closed WITHOUT a verified payout
+        # (UMA not resolved, or a quote rather than exact 1/0). Left exactly as
+        # stored: no grade, no price, no mint.
+        "legs_closed_without_verified_result": 0,
         "errors": [],
     }
 
@@ -9572,61 +9614,38 @@ async def _backfill_polymarket_winners_from_api(
                                     stats["legs_open_at_venue"] += 1
                                     continue
 
-                                m_prices_raw = (
-                                    m.get("outcomePrices")
-                                    or m.get("outcome_prices")
-                                    or []
-                                )
-                                if isinstance(m_prices_raw, str):
-                                    try:
-                                        m_prices_raw = _json.loads(m_prices_raw)
-                                    except (ValueError, TypeError):
-                                        m_prices_raw = []
-                                try:
-                                    m_prices = [float(p) for p in m_prices_raw]
-                                except (ValueError, TypeError):
-                                    m_prices = []
-
-                                if not m_prices:
+                                # #698 — GRADE ONLY A PAYOUT THE VENUE HAS
+                                # VERIFIED. `closed` (above) says the leg stopped
+                                # trading; it does not say what it paid. This arm
+                                # used to read `outcomePrices[0] >= 0.90` as Won
+                                # and anything else as Lost, so a closed leg
+                                # still carrying its last quote was stamped Lost
+                                # at 0.006 or Won at 0.95, and the quote itself
+                                # was written as the price in a SEPARATE
+                                # statement from the grade. `api_settlement` is
+                                # authoritative, so no later pass took it back.
+                                #
+                                # Now a leg is graded only when
+                                # `venue_terminal_leg_result` reads the existing
+                                # verified-result contract (closed, UMA resolved,
+                                # exact 1/0 payout — the same one
+                                # `polymarket_ws.gamma_resolution_verdict` reads).
+                                # Anything else is left exactly as stored — no
+                                # grade, no price, no mint — and counted.
+                                leg_won = venue_terminal_leg_result(m)
+                                if leg_won is None:
+                                    stats["legs_closed_without_verified_result"] += 1
                                     continue
 
-                                settlement_price = m_prices[0]
-                                is_winner = settlement_price >= 0.90
-
-                                # Sync settlement price to current_probability
-                                price_r = await session.execute(
-                                    text("""
-                                        UPDATE futures_outcomes
-                                        SET current_probability = :price
-                                        WHERE market_id = :mid
-                                          AND external_id = :cid
-                                          AND (current_probability IS NULL
-                                               OR ABS(current_probability - :price) > 0.001)
-                                    """),
-                                    {
-                                        "price": settlement_price,
-                                        "mid": row.id,
-                                        "cid": m_cid,
-                                    },
-                                )
-                                stats["prices_synced"] += price_r.rowcount
-
-                                # Set is_winner
+                                # Grade, source and terminal price in ONE
+                                # statement, so the three cannot diverge.
                                 r = await session.execute(
-                                    update(FuturesOutcome)
-                                    .where(
-                                        FuturesOutcome.market_id == row.id,
-                                        FuturesOutcome.external_id == m_cid,
-                                    )
-                                    .values(
-                                        is_winner=is_winner,
-                                        resolution_source="api_settlement",
-                                        last_updated=func.now(),
-                                    )
+                                    gamma_leg_settle_stmt(leg_won),
+                                    {"mid": row.id, "cid": m_cid},
                                 )
                                 if r.rowcount > 0:
                                     market_resolved = True
-                                    if is_winner:
+                                    if leg_won:
                                         stats["winners_set"] += r.rowcount
                                     else:
                                         stats["losers_set"] += r.rowcount
@@ -9658,46 +9677,21 @@ async def _backfill_polymarket_winners_from_api(
                                     # written beside a BARE condition id on a
                                     # sole-moneyline row, so on a many-legged
                                     # negRisk field this key matches nothing and
-                                    # the statement is a no-op. Same complement
-                                    # reasoning as the bare branch — `is_winner`
-                                    # is `m_prices[0] >= 0.90` and the two legs
-                                    # were written off that same index-aligned
-                                    # array.
-                                    if len(m_prices) > 1:
-                                        await session.execute(
-                                            text("""
-                                                UPDATE futures_outcomes
-                                                SET current_probability = :price
-                                                WHERE market_id = :mid
-                                                  AND external_id = :cid
-                                                  AND (current_probability IS NULL
-                                                       OR ABS(current_probability - :price) > 0.001)
-                                            """),
-                                            {
-                                                "price": m_prices[1],
-                                                "mid": row.id,
-                                                "cid": f"{m_cid}_side1",
-                                            },
-                                        )
+                                    # the statement is a no-op. The companion is
+                                    # `outcomes[1]` of the same index-aligned
+                                    # payout the leg was verified on, so its
+                                    # result is the other side of that one
+                                    # verdict, written by the same statement.
                                     r_c = await session.execute(
-                                        update(FuturesOutcome)
-                                        .where(
-                                            FuturesOutcome.market_id == row.id,
-                                            FuturesOutcome.external_id
-                                            == f"{m_cid}_side1",
-                                        )
-                                        .values(
-                                            is_winner=(not is_winner),
-                                            resolution_source="api_settlement",
-                                            last_updated=func.now(),
-                                        )
+                                        gamma_leg_settle_stmt(not leg_won),
+                                        {"mid": row.id, "cid": f"{m_cid}_side1"},
                                     )
                                     if r_c.rowcount > 0:
-                                        if is_winner:
+                                        if leg_won:
                                             stats["losers_set"] += r_c.rowcount
                                         else:
                                             stats["winners_set"] += r_c.rowcount
-                                elif is_winner:
+                                elif leg_won:
                                     # #6110 — the update matched nothing and the
                                     # venue says this leg WON. That is the one
                                     # shape this rail could never repair: the
@@ -9713,15 +9707,15 @@ async def _backfill_polymarket_winners_from_api(
                                         condition_id=m_cid,
                                         # The venue's own per-leg flag, raw from
                                         # the Gamma payload and normalised by
-                                        # the decision module. `is_winner` above
-                                        # is a PRICE test (>= 0.90) and the
-                                        # selection above that is our own
-                                        # `status = 'resolved'` bookkeeping —
-                                        # neither is evidence the venue has
-                                        # settled this leg, and a mint needs
-                                        # that evidence (CERT-2893).
+                                        # the decision module. A mint needs that
+                                        # evidence (CERT-2893); #698 reaches
+                                        # here only for a verified payout, so the
+                                        # flag is already `True`, and the
+                                        # decision module still checks it.
                                         venue_closed=m.get("closed"),
-                                        price=settlement_price,
+                                        # Verified above: the Yes payout is
+                                        # exactly 1.
+                                        price=1.0,
                                         group_item_title=m.get("groupItemTitle"),
                                         question=m.get("question"),
                                     )
