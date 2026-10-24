@@ -495,3 +495,140 @@ def test_local_t1_headroom_reclaims_only_clean_foreign_debt():
     assert put(3, context(sport=T1, at=2))
     assert set(r._events) == {2, 3}
     assert r.has_pending(2, "kalshi")
+
+
+# Observe the existing maintenance ticket; receipts never issue their own read.
+def _reservation_receipts(caplog):
+    import json
+    prefix = "blend_preview reservation receipt "
+    return [json.loads(r.getMessage()[len(prefix):]) for r in caplog.records
+            if r.getMessage().startswith(prefix)]
+
+
+@pytest.mark.parametrize("proof", [False, True])
+async def test_maintenance_receipt_ready_provenance_and_retained_proof(rig, caplog, proof):
+    import os
+    from datetime import datetime
+    if proof:
+        assert await prepare(rig, rig.k, "kalshi", 1, sport=T1)
+        st = rig.k._events[1]
+        rig.k._local_expired({"event_id": 1, "source": "kalshi",
+                             "local_seq": st.pending["kalshi"].seq, "value": .60})
+    caplog.set_level("INFO", logger=bp.__name__)
+    calls = []
+    async def call(*args):
+        calls.append(args[0])
+        return await rig.call(*args)
+    await rig.k.capacity_ticket(call, "kalshi")
+    assert not _reservation_receipts(caplog)  # Generic one-off reads do not opt in.
+    before = await rig.client.hgetall(bp.LEDGER_KEY)
+    result = await rig.k.capacity_ticket(call, "kalshi", maintenance_receipt=True)
+    [r] = _reservation_receipts(caplog)
+    assert calls == ["EVAL", "EVAL"] and await rig.client.hgetall(bp.LEDGER_KEY) == before
+    assert r["status"] == "ready" and r["ready"] is True
+    assert r["origin"] == "capacity_maintenance" and r["version"] == 1
+    assert r["pid"] == os.getpid() and r["source"] == "kalshi"
+    assert r["claim"] == rig.k.claim_of("kalshi")
+    assert r["registry_id"] == rig.k._capacity_registry_id != rig.p._capacity_registry_id
+    assert r["policy_fingerprint"] == rig.k.policy.fingerprint
+    assert r["sample_seq"] == 2 and r["redis_time_ms"] == result[3]
+    assert datetime.fromisoformat(r["sample_started_at"]) <= datetime.fromisoformat(r["sample_finished_at"])
+    assert 0 <= r["sample_duration_ms"] <= 1000 and r["shared"]["shared_ready"] is True
+    assert r["local"] == rig.k.local_capacity_status and r["local"]["proofs"] == int(proof)
+
+
+async def test_maintenance_receipt_shared_ready_local_debt(rig, caplog):
+    assert await prepare(rig, rig.k, "kalshi", 1, sport=T1)
+    st = rig.k._events[1]
+    st.reservation_target = 6  # Local retained proof moves outside the eligible window.
+    rig.k._local_expired({"event_id": 1, "source": "kalshi",
+                         "local_seq": st.pending["kalshi"].seq, "value": .60})
+    caplog.set_level("INFO", logger=bp.__name__)
+    await rig.k.capacity_ticket(rig.call, "kalshi", maintenance_receipt=True)
+    [r] = _reservation_receipts(caplog)
+    assert r["shared"]["shared_ready"] is True
+    assert r["local"]["proofs"] == 1 and r["local"]["debt"] == 1 and r["local"]["ready"] is False
+    assert r["status"] == "not_ready" and r["ready"] is False and st.expired == {"kalshi": .60}
+
+
+@pytest.mark.parametrize("fault,error", [
+    ("absent", KeyError), ("malformed", ValueError), ("ready_number", None),
+    ("counts_array", None), ("negative_count", None), ("inconsistent_ready", None),
+    ("missing_time", ValueError), ("refused", None),
+])
+async def test_maintenance_receipt_bad_sample_never_reuses_cached_green(rig, caplog, fault, error):
+    import json
+    await rig.k.capacity_ticket(rig.call, "kalshi")
+    assert rig.k.capacity_status["ready"] is True
+    caplog.set_level("INFO", logger=bp.__name__)
+    async def call(*args):
+        reply = await rig.call(*args)
+        status = json.loads(reply[4])
+        if fault == "absent": reply[4] = "{}"
+        elif fault == "malformed": reply[4] = "not json"
+        elif fault == "missing_time": reply[5] = ""
+        elif fault == "refused": return ["policy_required"]
+        else:
+            if fault == "ready_number": status["ready"] = 1
+            elif fault == "counts_array": status["counts"] = []
+            elif fault == "negative_count": status["counts"]["0"] = -1
+            elif fault == "inconsistent_ready": status["debt"] = 1
+            reply[4] = json.dumps(status)
+        return reply
+    if error:
+        with pytest.raises(error):
+            await rig.k.capacity_ticket(call, "kalshi", maintenance_receipt=True)
+    else:
+        await rig.k.capacity_ticket(call, "kalshi", maintenance_receipt=True)
+    [r] = _reservation_receipts(caplog)
+    assert r["status"] == "invalid_sample" and r["ready"] is False
+    assert r["shared"] is None and r["local"] is None and r["sample_seq"] == 2
+
+
+async def test_maintenance_receipt_bounded_emission_fresh_sequence(rig, caplog):
+    caplog.set_level("INFO", logger=bp.__name__)
+    for _ in range(3):
+        await rig.k.capacity_ticket(rig.call, "kalshi", maintenance_receipt=True)
+    [first] = _reservation_receipts(caplog)
+    assert first["sample_seq"] == 1 and rig.k._capacity_receipt_after["kalshi"] > bp.time.monotonic()
+    rig.k._capacity_receipt_after["kalshi"] = bp.time.monotonic() - 1
+    await rig.k.capacity_ticket(rig.call, "kalshi", maintenance_receipt=True)
+    first, second = _reservation_receipts(caplog)
+    assert second["sample_seq"] == 4 and second["registry_id"] == first["registry_id"]
+    assert second["redis_time_ms"] >= first["redis_time_ms"]
+
+
+@pytest.mark.parametrize("fault", ["stale", "forked_registry", "unclaimed"])
+async def test_maintenance_receipt_stale_or_wrong_process_refuses_green(rig, caplog, fault):
+    await rig.k.capacity_ticket(rig.call, "kalshi")
+    caplog.set_level("INFO", logger=bp.__name__)
+    if fault == "unclaimed":
+        rig.k.claims.clear()
+        await rig.k.capacity_ticket(rig.call, "kalshi", maintenance_receipt=True)
+    else:
+        if fault == "forked_registry": rig.k._capacity_pid = -1
+        rig.k._capacity_receipt("kalshi", bp.time.monotonic() - (2 if fault == "stale" else 0),
+                               NOW.isoformat(), 2, rig.k.capacity_status, 1_000_000)
+    [r] = _reservation_receipts(caplog)
+    assert r["status"] == "invalid_sample" and r["ready"] is False
+
+
+async def test_maintenance_ticket_gateway_emits_without_extra_eval(rig, monkeypatch, caplog):
+    from app.tasks.live_blend_refresh import LiveBlendRefresher
+    refresher = LiveBlendRefresher("kalshi")
+    monkeypatch.setattr(bp, "registry", lambda: rig.k)
+    monkeypatch.setattr(refresher, "_client", lambda: rig.client)
+    caplog.set_level("INFO", logger=bp.__name__)
+    calls = []
+    original = refresher._preview_call
+    def tracked(connection):
+        execute = original(connection)
+        async def call(*args):
+            calls.append(args[0])
+            return await execute(*args)
+        return call
+    monkeypatch.setattr(refresher, "_preview_call", tracked)
+    await refresher._preview_ticket(include_candidates=True)
+    [r] = _reservation_receipts(caplog)
+    assert r["status"] == "ready" and r["registry_id"] == rig.k._capacity_registry_id
+    assert calls == ["EVAL"]

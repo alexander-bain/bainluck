@@ -132,6 +132,7 @@ import logging
 import math
 import os
 import time
+import uuid
 from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -1380,6 +1381,10 @@ class LedgerRegistry(PreviewRegistry):
         self._alarm_owed: dict[tuple[str, str, str], tuple[int, Optional[int]]] = {}
         self._alarm_last: dict[tuple[str, str, str], float] = {}
         self._alarm_batch_open = False
+        self._capacity_registry_id = uuid.uuid4().hex
+        self._capacity_pid = os.getpid()
+        self._capacity_sample_seq = 0
+        self._capacity_receipt_after: dict[str, float] = {}
 
     def unclaimed(self, source: str) -> bool:
         return source not in self.claims
@@ -1402,17 +1407,34 @@ class LedgerRegistry(PreviewRegistry):
             return None, []
         return int(reply[1]), [int(eid) for eid in reply[2:]]
 
-    async def capacity_ticket(self, call, source: str) -> tuple[Optional[int], list[int], set[int], Optional[int]]:
+    async def capacity_ticket(self, call, source: str, *, maintenance_receipt: bool = False) -> tuple[Optional[int], list[int], set[int], Optional[int]]:
         """One bounded resident/idle hint, before the maintenance DB statement.
 
         The idle hint never authorizes deletion: retire_idle checks it again.
         Ordinary admission keeps read_ticket's unchanged lightweight response.
         """
+        started = time.monotonic()
+        sampled_at = datetime.now(timezone.utc).isoformat()
+        self._capacity_sample_seq += 1
+        sample_seq = self._capacity_sample_seq
         claim = self.claims.get(source)
         if claim is None:
+            if maintenance_receipt:
+                self._capacity_receipt(source, started, sampled_at, sample_seq)
             return None, [], set(), None
+        try:
+            return await self._capacity_ticket_sample(call, source, claim, maintenance_receipt,
+                                                     started, sampled_at, sample_seq)
+        except Exception:
+            if maintenance_receipt:
+                self._capacity_receipt(source, started, sampled_at, sample_seq)
+            raise  # Diagnostic failure never changes the existing caller's error path.
+
+    async def _capacity_ticket_sample(self, call, source, claim, receipt, started, sampled_at, sample_seq):
         reply = await self._eval(call, "capacity_ticket", source, claim, "", " ".join(self.sources))
         if reply[0] != "ok":
+            if receipt:
+                self._capacity_receipt(source, started, sampled_at, sample_seq)
             return None, [], set(), None
         self.capacity_status = json.loads(reply[4])
         self.capacity_status["shared_ready"] = self.capacity_status["ready"]
@@ -1422,8 +1444,62 @@ class LedgerRegistry(PreviewRegistry):
         if not self.capacity_status["ready"]:
             logger.warning("blend_preview reservation migration pending source=%s status=%s",
                            source, self.capacity_status)
-        return int(reply[1]), [int(eid) for eid in json.loads(reply[2])], {
+        result = int(reply[1]), [int(eid) for eid in json.loads(reply[2])], {
             int(eid) for eid in json.loads(reply[3])}, int(reply[5])
+        if receipt:
+            self._capacity_receipt(source, started, sampled_at, sample_seq,
+                                   self.capacity_status, result[3])
+        return result
+
+    def _capacity_receipt(self, source, started, sampled_at, sample_seq, status=None, redis_ms=None):
+        """One fresh maintenance sample/source/30s; never publish cached status as proof.
+
+        The operator must correlate PID/source/registry with the active runner.
+        A one-off's own empty registry is not evidence about a running venue.
+        """
+        now = time.monotonic()
+        if now < self._capacity_receipt_after.get(source, float("-inf")):
+            return
+        self._capacity_receipt_after[source] = now + 30.0
+
+        def uint(value):
+            return type(value) is int and 0 <= value <= 9007199254740991
+
+        local = status.get("local") if isinstance(status, dict) else None
+        counts = status.get("counts") if isinstance(status, dict) else None
+        valid = (source in self.sources and os.getpid() == self._capacity_pid
+                 and uint(self.claims.get(source)) and uint(redis_ms)
+                 and 0 <= now - started <= 1.0
+                 and isinstance(counts, dict) and set(counts) == {str(i) for i in range(7)}
+                 and all(uint(value) for value in counts.values())
+                 and uint(status.get("unclassified")) and uint(status.get("debt"))
+                 and sum(counts.values()) + status["unclassified"] <= LEDGER_MAX_EVENTS
+                 and type(status.get("compatible")) is bool
+                 and type(status.get("shared_ready")) is bool
+                 and status["shared_ready"] == (status["compatible"] and status["unclassified"] == 0
+                                                 and status["debt"] == 0)
+                 and status["debt"] >= counts["6"] + sum(
+                     max(0, counts[str(i)] - limit) for i, limit in enumerate(self.policy.limits))
+                 and isinstance(local, dict) and isinstance(local.get("counts"), list)
+                 and len(local["counts"]) == 7 and all(uint(value) for value in local["counts"])
+                 and uint(local.get("debt")) and uint(local.get("proofs"))
+                 and local["proofs"] <= sum(local["counts"])
+                 and type(local.get("ready")) is bool
+                 and local["ready"] == (local["debt"] == 0 and sum(local["counts"]) <= self.max_events)
+                 and type(status.get("ready")) is bool
+                 and status["ready"] == (status["shared_ready"] and local["ready"]))
+        payload = {"version": 1, "origin": "capacity_maintenance", "source": source,
+                   "pid": os.getpid(), "registry_id": self._capacity_registry_id,
+                   "sample_seq": sample_seq, "sample_started_at": sampled_at,
+                   "sample_finished_at": datetime.now(timezone.utc).isoformat(),
+                   "sample_duration_ms": round((now - started) * 1000),
+                   "policy_fingerprint": self.policy.fingerprint,
+                   "claim": self.claims.get(source), "redis_time_ms": redis_ms,
+                   "status": ("ready" if status["ready"] else "not_ready") if valid else "invalid_sample",
+                   "shared": {key: status[key] for key in
+                              ("counts", "unclassified", "debt", "compatible", "shared_ready")} if valid else None,
+                   "local": local if valid else None, "ready": bool(valid and status["ready"])}
+        logger.info("blend_preview reservation receipt %s", json.dumps(payload, sort_keys=True))
 
     def retire_idle(self, event_id: int, source: str, rev: int, ticket: int, deadline_ms: int) -> dict:
         """Locked fresh future-scheduled DB proof for a resident with no valid pending metadata."""

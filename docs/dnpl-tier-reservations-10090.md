@@ -94,6 +94,34 @@ committed frames remain the fallback.
 
 ## Verification boundaries
 
+Existing capacity maintenance emits an INFO-level `blend_preview reservation
+receipt` JSON record at most once per source/registry per 30 seconds, using its
+already-issued Redis ticket. It adds no Redis/DB call or maintenance trigger.
+`status` is `ready`, `not_ready`, or `invalid_sample`; only a complete, internally
+consistent sample obtained within one second may report ready. Malformed or
+absent responses never reuse a previous green snapshot, and existing exceptions
+still propagate. Invalid samples do not alter admission or erase evidence.
+
+Receipts identify source, PID, random registry identity, claim, policy
+fingerprint, increasing sample sequence, UTC start/finish, elapsed milliseconds
+and Redis sample time. Shared counts include outside bucket6; local counts,
+debt, `proofs` and readiness come from that actual registry. **Combined ready
+does not mean zero proofs**: within-budget retained proofs are valid evidence.
+
+For cutover acceptance, bind the trusted log transport's dyno/process envelope
+to the inventoried authoritative worker and its current release; correlate its
+runner PID/source with the receipt. PID/UUID or an environment tag alone is not
+authority. Use fresh receipts from every active venue registry. Require a
+post-start sample, a progressing sequence for that registry, a source/claim
+matching the actual new ledger owners, the expected fingerprint and timestamps within the selected checkpoint
+freshness window (45 seconds for a 30-second checkpoint). A changed registry
+identity starts a new evidence series. A copied log, cached receipt, one-off's
+empty registry or single venue does not establish both venues' readiness.
+Uncorrelated identity, clock uncertainty, invalid/missing/stale output is
+inconclusive. The receipt does not prove absence of old writers or queued EVALs.
+Maintenance is demand-triggered; its minimum30-second spacing is no maximum
+readiness delay. A finite operator decision window is not a convergence promise.
+
 `test_preview_reservation_policy_10090.py` covers classification and allocation.
 `test_preview_reservations_redis_10090.py` exercises real Redis saturation,
 transition, migration, deadline, restart, proof-retention and local debt cases.

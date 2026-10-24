@@ -5084,7 +5084,8 @@ class LiveBlendRefresher:
                 if preview.unclaimed(self.source):
                     await self._claim_preview_epoch(connection, preview)
                 if include_candidates:
-                    return await preview.capacity_ticket(self._preview_call(connection), self.source)
+                    return await preview.capacity_ticket(self._preview_call(connection), self.source,
+                                                         maintenance_receipt=True)
                 return await preview.read_ticket(self._preview_call(connection), self.source)
             except BaseException:
                 self._redis = None
