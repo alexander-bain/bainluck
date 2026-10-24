@@ -2131,6 +2131,13 @@ export interface LeagueGameBrief {
   // `TeamGameBrief` and `Event`. @see Event.doubleheader
   doubleheader?: boolean | null;
   game_number?: number | null;
+  // ── #11296 ── a results-rail final's forecast from before the scheduled start,
+  // its refusal, and the actual score's period. Same names and shapes as
+  // `Event`; the producer (`_attach_pregame_projections` in
+  // `routes/league_futures.py`) serves them on `recent_results` only.
+  pregame_projection?: Event["pregame_projection"];
+  pregame_projection_unavailable?: Event["pregame_projection_unavailable"];
+  final_score_period?: Event["final_score_period"];
 }
 
 export interface LeagueFuturesResponse {

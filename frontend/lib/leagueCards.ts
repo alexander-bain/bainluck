@@ -113,6 +113,16 @@ export function leagueGameToEvent(game: LeagueGameBrief): Event {
   if (game.doubleheader != null) event.doubleheader = game.doubleheader;
   if (game.game_number != null) event.game_number = game.game_number;
 
+  // #11296 — a final's forecast from before the scheduled start travels as
+  // served, with its refusal and the actual score's period. The shared card's
+  // `finalForecastComparison` decides whether it prints; dropped here, the
+  // results rail printed no band while search and the event page did.
+  if (game.pregame_projection != null) event.pregame_projection = game.pregame_projection;
+  if (game.pregame_projection_unavailable != null) {
+    event.pregame_projection_unavailable = game.pregame_projection_unavailable;
+  }
+  if (game.final_score_period != null) event.final_score_period = game.final_score_period;
+
   return event;
 }
 
