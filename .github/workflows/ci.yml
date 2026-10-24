@@ -4059,6 +4059,7 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_container_assembly_real_postgres.py \
+            tests/integration/test_container_mlb_proven_duplicates_9886_pg.py \
             -v -s -rs 2>&1 | tee /tmp/assembly2927.txt
           if grep -qiE "[0-9]+ skipped" /tmp/assembly2927.txt; then
             echo "::error::#2927 container assembly SKIPPED — the gate did not run"
