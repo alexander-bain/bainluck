@@ -197,6 +197,8 @@ final class DiscoverThemeCollectionEntry9925Tests: XCTestCase {
         XCTAssertEqual(DiscoverGroupRows.collectionCountLabel(for: one), "1 market")
     }
 
+    /// `Route`'s `Equatable` is main-actor isolated.
+    @MainActor
     func testTheRouteIsTheExistingHubKeyedByTheServerSlug() throws {
         let ref = try XCTUnwrap(FeedThemeCollectionRef(slug: "oscars-2027", name: "Oscars 2027", revision: 4, collectionCount: 37))
         XCTAssertEqual(DiscoverGroupRows.collectionRoute(for: ref), .containerHub(slug: "oscars-2027", name: "Oscars 2027"))
