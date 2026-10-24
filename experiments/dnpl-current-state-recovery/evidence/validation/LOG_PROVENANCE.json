@@ -1,0 +1,38 @@
+[
+  {
+    "path": "evidence/validation/frontend-typecheck.log",
+    "raw_capture_sha256": "ddc21043c5aff58dea472feb33621c2216591a74e0275ed8a44eb8b5dec41ad1",
+    "published_sha256": "ddc21043c5aff58dea472feb33621c2216591a74e0275ed8a44eb8b5dec41ad1",
+    "transformation": "line endings and trailing whitespace only"
+  },
+  {
+    "path": "evidence/validation/backend-startup.log",
+    "raw_capture_sha256": "863ca0cb814d4b6558726ba2edd27c72efbcc180b5f993e35bf23a8c0faf6235",
+    "published_sha256": "863ca0cb814d4b6558726ba2edd27c72efbcc180b5f993e35bf23a8c0faf6235",
+    "transformation": "line endings and trailing whitespace only"
+  },
+  {
+    "path": "evidence/validation/frontend-build.log",
+    "raw_capture_sha256": "db75a8eb4f41cc6f113780b9a1a705c489241139828c88365cf99e458ca2e9ce",
+    "published_sha256": "b0bdb89a96ea9e444e8a51c582160f1b9fbc47ca51f18eb2800113c1c60e3823",
+    "transformation": "line endings and trailing whitespace only"
+  },
+  {
+    "path": "evidence/validation/real-redis-selection-only.log",
+    "raw_capture_sha256": "98edc1ee7ecef7f023b57b8fbdd44bb35ff7fcbb1e2eb4b194083a2cf0cacee0",
+    "published_sha256": "98edc1ee7ecef7f023b57b8fbdd44bb35ff7fcbb1e2eb4b194083a2cf0cacee0",
+    "transformation": "line endings and trailing whitespace only"
+  },
+  {
+    "path": "evidence/validation/selected-typecheck.log",
+    "raw_capture_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "published_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "transformation": "line endings and trailing whitespace only"
+  },
+  {
+    "path": "evidence/validation/focused-current-base.log",
+    "raw_capture_sha256": "32bb34015d1ae8225820c06eff04273e04060e76f23728be0dc5da6647d9a66d",
+    "published_sha256": "10c73fab51794b47813c35316481e24a0f746b8ed188dc51f539f8c1722cc976",
+    "transformation": "line endings and trailing whitespace only"
+  }
+]

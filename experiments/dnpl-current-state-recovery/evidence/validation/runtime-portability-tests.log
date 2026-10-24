@@ -1,0 +1,18 @@
+test_62_is_explicit_compatibility_not_72_evidence (__main__.RuntimeSelection.test_62_is_explicit_compatibility_not_72_evidence) ... ok
+test_directory_rejected (__main__.RuntimeSelection.test_directory_rejected) ... ok
+test_explicit_primary_contract_records_bytes_path_and_platform (__main__.RuntimeSelection.test_explicit_primary_contract_records_bytes_path_and_platform) ... ok
+test_hash_mismatch_rejected_without_running_binary (__main__.RuntimeSelection.test_hash_mismatch_rejected_without_running_binary) ... ok
+test_matrix_is_explicit_not_any_binary_version (__main__.RuntimeSelection.test_matrix_is_explicit_not_any_binary_version) ... ok
+test_missing_malformed_or_noncanonical_hash_rejected (__main__.RuntimeSelection.test_missing_malformed_or_noncanonical_hash_rejected) ... ok
+test_missing_path_rejected (__main__.RuntimeSelection.test_missing_path_rejected) ... ok
+test_nonexecutable_file_rejected (__main__.RuntimeSelection.test_nonexecutable_file_rejected) ... ok
+test_nonexistent_path_rejected (__main__.RuntimeSelection.test_nonexistent_path_rejected) ... ok
+test_owned_info_mismatch_or_missing_rejected (__main__.RuntimeSelection.test_owned_info_mismatch_or_missing_rejected) ... ok
+test_relative_path_rejected (__main__.RuntimeSelection.test_relative_path_rejected) ... ok
+test_symlink_resolves_to_hashed_executable_before_launch (__main__.RuntimeSelection.test_symlink_resolves_to_hashed_executable_before_launch) ... ok
+test_unknown_or_missing_versions_rejected (__main__.RuntimeSelection.test_unknown_or_missing_versions_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.017s
+
+OK
