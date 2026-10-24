@@ -178,7 +178,7 @@ export function AwardsCategoryCard({ child }: { child: EventConceptChild }) {
     {result.state === "announced" ? <>
       <p className="text-xs font-semibold text-text-secondary">{result.prop ? "Result" : result.names.length > 1 ? "Joint winners" : "Winner"}</p>
       <ul className="space-y-1 text-base font-semibold text-text-primary">{result.names.map((name) => <li key={name}>{display(name)}</li>)}</ul>
-    </> : result.state === "closed" ? <p className="text-sm text-text-secondary">Trading closed · Result not announced yet</p> : <>
+    </> : result.state === "closed" ? <p className="text-sm text-text-secondary">Trading closed · Result not yet confirmed</p> : <>
       <p className="text-xs font-semibold text-text-secondary">Not announced</p>
       <ul className="space-y-1 text-sm text-text-secondary">{topOutcomes(child).map((outcome) => <li key={outcome.name} className="flex justify-between gap-3"><span>{display(outcome.name)}</span><span className="shrink-0 font-mono">{formatProbability(outcome.probability)}</span></li>)}</ul>
     </>}

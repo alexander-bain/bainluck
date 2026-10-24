@@ -8,6 +8,7 @@ import pytest
 from tests.test_live_blend_refresh import (
     NormalRecoverySession,
     TestTheHeadlineDoesNotWaitForItsChartPoint as _HeadlineRig,
+    _refuse_redis_without_a_socket,
     is_normal_recovery_owner,
 )
 
@@ -631,8 +632,9 @@ async def test_history_and_next_refresh_share_existing_three_session_ceiling(
     next_refresh = asyncio.create_task(x.r.refresh([2, 3, 4], flush_started=1002))
     try:
         await settle_until(lambda: opened[0] == 3)
-        for _ in range(10):
-            await asyncio.sleep(0)
+        # A session opening precedes its preview admission read. Wait for
+        # the actual two blocked stamps, rather than counting loop turns.
+        await settle_until(lambda: x.commands.count("update") == 3)
         assert maximum[0] == 3
         assert x.commands.count("update") == 3, "history plus only two next stamps"
         assert len(x.committed) == 1 and not next_refresh.done()
@@ -875,7 +877,7 @@ async def test_real_consumer_joins_history_before_engine_disposal_under_repeated
     async def quote(self, ids, now, **kwargs):
         pass
 
-    async def history(self, owed, now, factory):
+    async def history(self, owed, now, factory, *, verify_event=False):
         async with self._session_slot(), factory():
             entered.set()
             await release.wait()
@@ -884,6 +886,7 @@ async def test_real_consumer_joins_history_before_engine_disposal_under_repeated
     monkeypatch.setattr(blend.LiveBlendRefresher, "__init__", with_committed_history)
     monkeypatch.setattr(blend.LiveBlendRefresher, "_refresh_batch", quote)
     monkeypatch.setattr(blend.LiveBlendRefresher, "_write_owed_snapshots", history)
+    _refuse_redis_without_a_socket(monkeypatch)
     if source == "kalshi":
         p = _Rig(KALSHI_SLATE)
         task = asyncio.create_task(

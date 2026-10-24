@@ -75,15 +75,26 @@ describe("#9906 — an end inside the core moves nothing", () => {
 describe("#9906 — OddsChart hands the axis every series' last value", () => {
   const src = readFileSync(join(__dirname, "..", "..", "components", "OddsChart.tsx"), "utf8");
   const memo = src.slice(src.indexOf("const { domain: yDomain, ticks: yTicks } = useMemo("));
-  const body = memo.slice(0, memo.indexOf("}, [chartData, plottedProbKeys, drawnMinuteRanges]);"));
+  const end = memo.indexOf("}, [chartData, axisProbKeys,");
+  const body = memo.slice(0, end);
+
+  test("the memo was found (the guards below read real code)", () => {
+    expect(end).toBeGreaterThan(0);
+    expect(body).toContain("computeWinProbYAxis(");
+  });
 
   test("the axis call passes the per-key last values", () => {
     expect(body).toContain("lastByKey.set(key, v);");
-    // #10093 appends a live minute's inked high/low after the per-key ends.
-    expect(body).toContain("return computeWinProbYAxis(values, [...lastByKey.values(), ...rangeEnds]);");
+    // #10093 appends a live minute's inked high/low after the per-key ends;
+    // #11356 appends a revealed source's own extremes after those.
+    expect(body).toContain(
+      "return computeWinProbYAxis(values, [...lastByKey.values(), ...rangeEnds, ...revealedExtremes]);",
+    );
   });
 
-  test("the last value is taken from the same plotted keys that size the axis", () => {
-    expect(body).toMatch(/for \(const key of plottedProbKeys\)/);
+  test("the last value is taken from the same drawn keys that size the axis", () => {
+    // #11356 — `axisProbKeys`: the lines actually drawn (the blend alone while
+    // Sources is closed), so a hidden line neither sizes the axis nor ends it.
+    expect(body).toMatch(/for \(const key of axisProbKeys\)/);
   });
 });

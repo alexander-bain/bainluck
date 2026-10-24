@@ -695,7 +695,16 @@ export interface TeamFutureItem {
   is_winner?: boolean | null;
   /** #10078 — the tier the team page shows this row at (see types.ts TeamFutureItem). */
   display_tier?: number | null;
+  /** #11493 — the grid's verdict on this row's column (see ChampionshipPathEntry.state). */
+  state?: TeamDecidedState | null;
 }
+
+/**
+ * #11493 — a team's decided verdict on one season question, republished by
+ * `/api/teams/{id}` from the championship grid (`routes/teams.py::_stamp_grid_states`).
+ * Absent when the question is undecided or unknown; `probability` is unchanged.
+ */
+export type TeamDecidedState = "eliminated" | "won";
 
 export interface ChampionshipPathEntry {
   tier: number;
@@ -709,6 +718,11 @@ export interface ChampionshipPathEntry {
   // backend teams.py::_get_championship_path). Absent/null when the market carries
   // no season and the league has no current-season string.
   season?: string | null;
+  // #11493: "eliminated" when the championship grid has this club out of this
+  // step's question, "won" when it has clinched it. The probability keeps the
+  // venue's last price (an eliminated leg trades at 0.001 until graded), so a
+  // reader must be shown the verdict, not the number.
+  state?: TeamDecidedState | null;
 }
 
 /**
@@ -1373,6 +1387,12 @@ export interface GameMarketsResponse {
     resolution_source?: string | null;
     /** #8596: the market id, so the page can tell which section already shows it. */
     _market_id?: number | null;
+    /**
+     * #1529: present only as `"moneyline"`, on a row of a market the server
+     * already classified as the full game's winner (never a player container).
+     * Absent means not established — the row stays an Other question.
+     */
+    market_type?: string | null;
   }[];
   pace: {
     total_scored: number;
@@ -2090,7 +2110,20 @@ export interface LeagueGameBrief {
   external_id?: string | null;
   sport?: string | null;
   completed_at?: string | null;
-  current_odds?: { home_probability: number | null; away_probability: number | null };
+  current_odds?: {
+    home_probability: number | null;
+    away_probability: number | null;
+    // ── #11576 ── the projected final the game's own page serves, added by
+    // `_attach_card_projected_pairs` (#11295, `utils/card_projected_pair.py`)
+    // on the upcoming rail only, and only when admitted: an unadmitted key is
+    // absent, never null. `live_projection` is the same in-play object
+    // `/api/events` serves; the card checks every field of it
+    // (`admittedLiveProjection`), so it stays `unknown` here.
+    projected_home_score?: number | null;
+    projected_away_score?: number | null;
+    projection_captured_at?: string | null;
+    live_projection?: unknown;
+  };
   opening_odds?: { home_probability: number; away_probability: number };
   home_team_data?: TeamData;
   away_team_data?: TeamData;
@@ -2111,6 +2144,13 @@ export interface LeagueGameBrief {
   // `TeamGameBrief` and `Event`. @see Event.doubleheader
   doubleheader?: boolean | null;
   game_number?: number | null;
+  // ── #11296 ── a results-rail final's forecast from before the scheduled start,
+  // its refusal, and the actual score's period. Same names and shapes as
+  // `Event`; the producer (`_attach_pregame_projections` in
+  // `routes/league_futures.py`) serves them on `recent_results` only.
+  pregame_projection?: Event["pregame_projection"];
+  pregame_projection_unavailable?: Event["pregame_projection_unavailable"];
+  final_score_period?: Event["final_score_period"];
 }
 
 export interface LeagueFuturesResponse {
@@ -2512,6 +2552,8 @@ export interface EntMarketRow {
   ladder?: boolean;
   /** #9803: on a cumulative ladder, the tightest rung the market still calls likely — served only when it is not `top_outcomes[0]`. */
   headline?: { name: string; prob: number } | null;
+  /** #7382: on `trending[0]` only — up to six of the same priced rungs, `top_outcomes` as its prefix; read by the web lead alone. */
+  lead_outcomes?: { name: string; prob: number; delta_24h: number }[];
 }
 
 export interface EntThresholdGroup {

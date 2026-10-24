@@ -3,11 +3,8 @@ name: CI
 on:
   # NO `branches:` FILTER ON pull_request — deliberate, and load-bearing.
   #
-  # It used to read `pull_request: branches: [master]`, which does NOT mean
-  # "PRs into master get CI". It means "ONLY PRs into master get CI" — a PR
-  # based on any other branch matches no trigger and gets NO RUN AT ALL. Not a
-  # pending check, not a red one: an empty checks list, which reads as "nothing
-  # to wait for" in exactly the place a reviewer looks for permission to merge.
+  # `branches: [master]` suppresses CI entirely for stacked PRs targeting
+  # another branch. Empty checks are not a pending or successful run.
   #
   # Two named failures, both in one week, both on stacked lane branches:
   #
@@ -4997,30 +4994,9 @@ jobs:
           fi
 
       - name: Live blend concurrent stamp, two socket arms (real Postgres)
-        # live/305's hero flicker, #836/#837/#5661. `worker-ws` runs the Kalshi
-        # and Polymarket consumers under one `asyncio.gather`, each with its own
-        # `LiveBlendRefresher`, and both stamp `events.win_probability_sources`
-        # on the same row. Read-modify-write meant the later writer DROPPED the
-        # sibling's key — measured 2026-09-16, `{'betting','kalshi'}` and
-        # `{'betting','polymarket'}` written 250 ms apart, the row keeping only
-        # the second — so the same question published two hero numbers 89 ms
-        # apart and the page took whichever landed last.
-        #
-        # Only a real server can grade the fix. The claim is that `a || b` on
-        # JSONB is evaluated INSIDE the UPDATE, so a concurrent writer blocks and
-        # then re-evaluates against the committed row — a session double has no
-        # row lock and calls both shapes correct. Under sqlite the column is
-        # shimmed to JSON, `||` is string concatenation, and gotcha #4 is that a
-        # JSONB write which reads correctly can silently fail to persist.
-        #
-        # The file carries its own strawman control: the old read-modify-write
-        # shape run through the same interleaving, asserting it still loses the
-        # key. If that control ever stops failing, the harness has stopped
-        # reproducing the hazard and the rest of the file is vacuous.
-        #
-        # Same skip detection as every gate in this job: pytest exits 0 when
-        # each test skips, and a gate that silently did not run reads exactly
-        # like one that passed.
+        # #836/#837/#5661: concurrent Kalshi/PM stamps must retain both source keys.
+        # Real PostgreSQL verifies row-lock JSONB merge semantics; sqlite/fakes cannot.
+        # The read-modify-write strawman must still lose a key; reject skipped gates.
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -5091,8 +5067,8 @@ jobs:
             echo "::error::#11181 owed chart custody gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]9 passed[,[:space:]]" /tmp/owed-chart11181.txt || {
-            echo "::error::#11181 owed chart custody gate did not run all nine cases"
+          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/owed-chart11181.txt || {
+            echo "::error::#11181 owed chart custody gate did not run all twelve cases"
             exit 1
           }
 
@@ -5256,13 +5232,13 @@ jobs:
       - name: "#10090 a held page receives the last committed price after a publication outage, without a new venue tick (real Postgres + Redis)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         env:
-          # The job-local redis:7 service (#7351's, port 56379). Logical db 11 is
-          # this gate's alone: the reused fixture refuses a non-loopback URL or db 0
-          # and FLUSHES db 11 around each case. 12 and 13 are the reconcile-route
-          # and peer-publication gates'.
+          # Private loopback DB 11, flushed per case; peers use 12/13.
           PM_WITHDRAWAL_REDIS_URL: redis://localhost:56379/11
+          # F3 capacity case: own random schema, dropped after.
+          BLEND_DEADLOCK_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
         run: |
           if python -m pytest tests/integration/test_live_normal_publication_recovery_10090_pg.py \
+            tests/test_blend_preview_ledger_tsp1_10090.py \
             -v -rs > /tmp/normal-recovery10090.txt 2>&1; then
             gate_status=0
           else
@@ -5275,15 +5251,31 @@ jobs:
             echo "::error::#10090 normal-publication recovery gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]23 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
-            echo "::error::#10090 normal-publication recovery gate did not run all twenty-three cases"
+          grep -qE "[^0-9]94 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
+            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 94 cases"
             exit 1
           }
 
       - name: "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/held-row-redis"
+          wheel=redislite-6.2.912183-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          pip download --no-deps --only-binary=:all: redislite==6.2.912183 -d "$dir"
+          echo "d5ed8af4d03225a9b19e279d40f8d8feae872f87a9cd9f017751864fe7b224c6  $dir/$wheel" | sha256sum -c -
+          python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract('redislite/bin/redis-server', sys.argv[2])" "$dir/$wheel" "$dir"
+          chmod +x "$dir/redislite/bin/redis-server"
+          "$dir/redislite/bin/redis-server" --version
+          export EVENT_FRAME_REDIS_SERVER="$dir/redislite/bin/redis-server" EVENT_FRAME_REDIS_REQUIRED=1
           if python -m pytest tests/integration/test_pm_held_price_row_stamps_received_quote_11138_pg.py \
+            tests/integration/test_live_blend_source_projection_10090_pg.py \
+            tests/integration/test_live_blend_metadata_projection_10090_pg.py \
+            tests/integration/test_pm_price_statement_deadline_10090_pg.py \
+            tests/integration/test_dnpl_default_committed_fallback_10090_pg.py \
+            tests/integration/test_dnpl_capacity_lifecycle_10090_pg.py \
+            tests/integration/test_dnpl_post_cancel_idle_status_10090_pg.py \
+            tests/test_dnpl_idle_retirement_cancellation_10090.py \
             -v -rs > /tmp/held-row11138.txt 2>&1; then
             gate_status=0
           else
@@ -5296,8 +5288,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row gate did not run all twelve cases"
+          grep -qE "[^0-9]63 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row/default-DNPL gate did not run all 63 cases"
             exit 1
           }
 
@@ -5345,6 +5337,9 @@ jobs:
 
       - name: "#10090 a lock-held KALSHI price row stamps the received quote; a restart cannot undo it (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        env:
+          EVENT_FRAME_REDIS_SERVER: ${{ runner.temp }}/held-row-redis/redislite/bin/redis-server
+          EVENT_FRAME_REDIS_REQUIRED: '1'
         run: |
           if python -m pytest tests/integration/test_kalshi_held_price_row_10090_pg.py \
             tests/integration/test_kalshi_floor_deferred_owed_held_stamp_10090_pg.py \
@@ -7640,7 +7635,7 @@ jobs:
         # file reddens this gate until the number below moves with it. That is
         # the point (it is how a silently-dropped case gets caught), but it means
         # the number is part of the test file's contract, not CI boilerplate.
-        # 12 = 7 age-floor cases + 4 settled-market cases + 1 consumer wiring case.
+        # 14 = 7 age-floor + 4 settled-market + 2 link-read (#10663) + 1 wiring case.
         if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -7650,12 +7645,12 @@ jobs:
             echo "::error::#837 slate contract SKIPPED — the gate did not run"
             exit 1
           fi
-          # `[^0-9]` so a future `112 passed` cannot satisfy a gate asking for 12.
+          # `[^0-9]` so a future `114 passed` cannot satisfy a gate asking for 14.
           # `[,[:space:]]` because pytest drops the comma when a run emits no
           # warnings (`12 passed in 3.4s`) — the old `passed,` form was green
           # only by the accident of this file currently raising warnings.
-          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/slate837.txt || {
-            echo "::error::#837 slate contract did not run all twelve cases"
+          grep -qE "[^0-9]14 passed[,[:space:]]" /tmp/slate837.txt || {
+            echo "::error::#837 slate contract did not run all 14 cases"
             exit 1
           }
 

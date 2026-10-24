@@ -29,9 +29,13 @@ import SwiftUI
 /// claims an observed kickoff), the SOURCE and BASIS the label and rounding
 /// describe, the UNIT for the sport, and the PERIOD: the actual score must
 /// cover what the forecast lines settle on. Football and basketball forecasts
-/// are `full_game`; soccer's are `regulation`. No payload says whether a
-/// soccer final went to extra time, so callers pass `.fullGame` and a soccer
-/// final is withheld. This file does not infer regulation.
+/// are `full_game`; soccer's are `regulation`. A soccer final is compared only
+/// when the producer serves `final_score_period: "regulation"` beside it (the
+/// row's own stored period says the match ended at full time); extra time,
+/// penalties and an unknown finish serve no such key and stay withheld.
+/// `actualPeriod(sport:servedFinalScorePeriod:)` is every caller's one read of
+/// it, web's `finalScorePeriod`. This file does not infer regulation from the
+/// score, the clock, the competition or the forecast's own period.
 ///
 /// No grading: nothing here says who the forecast favoured, whether it was
 /// right, or picks a colour. Team order is keyed (home/away), never by value.
@@ -42,6 +46,12 @@ enum FinalForecastComparison11296 {
     /// character for character. It names what the numbers ARE and the boundary
     /// they were read before (Design R1 on PR #11311).
     static let label = "Projection before scheduled start"
+
+    /// The same line over a soccer final — web's `FINAL_FORECAST_LABEL_90_MIN`,
+    /// character for character. Both sides are 90-minute quantities (the line
+    /// prints only beside a served regulation final), and the basis is said at
+    /// the comparison, in the "(90 min)" the soccer pre-game line already uses.
+    static let label90Min = "Projection (90 min) before scheduled start"
 
     /// The one kind the producer serves today, and the only one admitted.
     /// `latest_before_play` and `opening` are reserved by the producer and
@@ -78,13 +88,39 @@ enum FinalForecastComparison11296 {
         return nil
     }
 
+    /// What a finished game's actual score covers, for every caller to pass as
+    /// `actualPeriod` — web's `finalScorePeriod`. Football and basketball: a
+    /// scoreboard final is the full game, overtime included. Soccer: only the
+    /// producer's served `final_score_period`, and only its one value
+    /// `"regulation"`; absent, null or anything else is nil, so the comparison
+    /// is withheld. Never `.fullGame` for soccer, and never the forecast's own
+    /// `period`, which says nothing about the scoreboard.
+    nonisolated static func actualPeriod(sport: String?, servedFinalScorePeriod: String?) -> ScorePeriod? {
+        switch unit(forSport: sport) {
+        case "points": return .fullGame
+        case "goals": return servedFinalScorePeriod == ScorePeriod.regulation.rawValue ? .regulation : nil
+        default: return nil
+        }
+    }
+
+    /// A comparison that passed every gate, with the served halves it was
+    /// rounded from. #9483 R2 — the finished page's other comparisons (the
+    /// projected-finish card, the NBA margin and total) read THESE halves, so
+    /// the headline and the cards under it compare the final with one pregame
+    /// expectation. The halves are the served projection's own; no rounded
+    /// display integer is ever turned back into a number.
+    nonisolated struct Qualified: Equatable, Sendable {
+        let comparison: Comparison
+        let away: Double
+        let home: Double
+    }
+
     /// The forecast pair to print under a finished game's actual result, or
     /// nil when any part of it cannot be shown honestly. Nil prints nothing:
     /// no placeholder, no gap, no explanation.
     ///
     /// `actualPeriod` is what the actual score covers, from evidence the caller
-    /// holds. A scoreboard final in football or basketball is `.fullGame`
-    /// (overtime included, which is what those lines settle on). Nil: refused.
+    /// holds — `actualPeriod(sport:servedFinalScorePeriod:)`. Nil: refused.
     static func resolve(
         sport: String?,
         status: String?,
@@ -93,6 +129,19 @@ enum FinalForecastComparison11296 {
         actualPeriod: ScorePeriod?,
         projection p: PregameProjection?
     ) -> Comparison? {
+        qualified(sport: sport, status: status, homeScore: homeScore, awayScore: awayScore,
+                  actualPeriod: actualPeriod, projection: p)?.comparison
+    }
+
+    /// `resolve`'s gates, returning the served halves beside the printed pair.
+    static func qualified(
+        sport: String?,
+        status: String?,
+        homeScore: Int?,
+        awayScore: Int?,
+        actualPeriod: ScorePeriod?,
+        projection p: PregameProjection?
+    ) -> Qualified? {
         guard EventState.isFinished(status) else { return nil }
         guard let homeScore, let awayScore, homeScore >= 0, awayScore >= 0 else { return nil }
         guard let p else { return nil }
@@ -132,7 +181,10 @@ enum FinalForecastComparison11296 {
               let roundedAway = Int(exactly: away.rounded()) else { return nil }
         guard roundedHome != roundedAway || vocab.canEndInATie else { return nil }
 
-        return Comparison(label: label, away: roundedAway, home: roundedHome, bookmakerCount: books)
+        return Qualified(
+            comparison: Comparison(label: actualPeriod == .regulation ? label90Min : label,
+                                   away: roundedAway, home: roundedHome, bookmakerCount: books),
+            away: away, home: home)
     }
 
     /// The visible pair in the card's own order — both native cards stack away
@@ -201,9 +253,10 @@ extension PregameProjection {
     }
 }
 
-/// The line both finished cards draw under the actual final. Caption size,
-/// secondary colour, wraps at any text size; the final score above it stays
-/// the primary number. One view so the two cards cannot drift.
+/// The line both finished cards and the event page's headline draw under the
+/// actual final. Caption size, secondary colour, wraps at any text size; the
+/// final score above it stays the primary number. One view so the three
+/// surfaces cannot drift.
 struct FinalForecastLine11296: View {
     let comparison: FinalForecastComparison11296.Comparison
     let awayName: String

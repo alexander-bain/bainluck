@@ -277,23 +277,23 @@ class TestTheReaderIsBounded:
         """
         (payload, unusable), db = await _build(
             [FK_ROWS, TEAM_NAME_ROWS, [], _timeout(), ROSTER_ROWS],
-            costs_ms=[10, 250, 250, 1990, 4500],
+            costs_ms=[10, 250, 250, 1240, 4500],
             budget_ms=2500,
         )
         assert unusable is False
         assert db.branch_index == 4, "the last branch was started past the budget"
-        assert db.now * 1000 == pytest.approx(2500), "the reader overran the budget"
+        assert db.now * 1000 <= 2500, "the reader overran the budget"
         assert set(_reasons(payload)) == {
             f"branch_timeout:{route._BRANCH_OUTCOME_ROSTER}",
             f"branch_deferred:{route._BRANCH_MARKET_ROSTER}",
-            # #8478: the price screen runs AFTER the branches and spends the
-            # same budget, so a reader who used it all defers the screen too —
-            # an IOU the unbudgeted rebuild pays, never an overrun.
-            f"branch_deferred:{route._BRANCH_PRICE_SCREEN}",
+            # #11534: the branches stop short by the price screen's reserve, so
+            # the screen (#8478) RUNS on this build. It used to find the budget
+            # spent and defer — and fail open — on every rostered team.
         }
-        # The cancelled probe was bounded by what was LEFT (1,990 ms), never by
-        # the 12,000 ms ceiling — that difference is the ten seconds.
-        assert _timeout_values(db) == [2500, 2490, 2240, 1990]
+        # The cancelled probe was bounded by what was LEFT of the branches'
+        # share (1,240 ms), never by the 12,000 ms ceiling — that difference is
+        # the ten seconds. The last figure is the screen's reserve.
+        assert _timeout_values(db) == [1750, 1740, 1490, 1240, 750]
 
     async def test_a_deferred_branch_is_never_started_at_all(self):
         """NOT "started and cancelled". A cancelled statement still costs the
@@ -314,7 +314,7 @@ class TestTheReaderIsBounded:
     async def test_the_content_the_reader_does_get_is_the_cheap_branches_content(self):
         (payload, _unusable), _db = await _build(
             [FK_ROWS, TEAM_NAME_ROWS, [], ROSTER_ROWS, ROSTER_ROWS],
-            costs_ms=[10, 250, 2200, 0, 0],
+            costs_ms=[10, 250, 1480, 0, 0],
             budget_ms=2500,
         )
         entities = {r["entity"] for f in payload["families"] for r in f["rows"]}
@@ -427,7 +427,7 @@ class TestDeferralIsReportedDistinctlyFromExpiry:
         rc = _FakeRedis()
         db = _BranchDB(
             [FK_ROWS, TEAM_NAME_ROWS, [], ROSTER_ROWS, ROSTER_ROWS],
-            costs_ms=[10, 250, 250, 11800, 4500],
+            costs_ms=[10, 250, 250, 1240, 4500],
         )
         with _clock_of(db):
             payload, unusable = await route.build_and_cache_prop_families(
@@ -461,7 +461,7 @@ class TestADeferredBuildSchedulesItsCompletion:
         rc = _FakeRedis()
         db = _BranchDB(
             [FK_ROWS, TEAM_NAME_ROWS, [], ROSTER_ROWS, ROSTER_ROWS],
-            costs_ms=[10, 250, 250, 11800, 4500],
+            costs_ms=[10, 250, 250, 1240, 4500],
         )
         sent = MagicMock()
         with _clock_of(db), \
@@ -557,8 +557,10 @@ class TestTheBudgetArithmetic:
             costs_ms=[1000, 500, 0, 0, 0],
             budget_ms=2500,
         )
-        # The sixth figure is the #8478 price screen, bounded by what is left.
-        assert _timeout_values(db) == [2500, 1500, 1000, 1000, 1000, 1000]
+        # The branches share the budget less the screen's reserve (#11534); the
+        # sixth figure is the #8478 price screen, bounded by what is left of
+        # the WHOLE budget, reserve included.
+        assert _timeout_values(db) == [1750, 750, 250, 250, 250, 1000]
 
     async def test_a_branch_is_skipped_below_the_floor_not_given_a_sliver(self):
         """Handing a branch 40 ms is a cancelled statement dressed as a budget."""

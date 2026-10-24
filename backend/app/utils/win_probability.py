@@ -606,12 +606,13 @@ def model_pregame_spread(sport_key: str, opening_home_spread: object) -> float |
     expected run margin. Read as a margin it made every favourite a 1.5-run
     favourite: a 55% favourite opened at 73% and the model's line sat 15+
     points above every venue all game. Baseball's prior is the opening price
-    instead; every other sport's spread is a real point spread and passes
-    through.
+    instead. NHL's puck line is also a handicap, not an expected goal margin
+    (#11462); use its opening price too. Other sports retain their spreads.
     """
     if opening_home_spread is None:
         return None
-    if _normalize_sport_key(sport_key).startswith("baseball_"):
+    normalized = _normalize_sport_key(sport_key)
+    if normalized.startswith("baseball_") or normalized == "hockey_nhl":
         return None
     return float(opening_home_spread)
 
@@ -638,7 +639,7 @@ def compute_statistical_win_prob(
         pregame_spread: Pregame Vegas spread (negative = home favored).
                        If None, falls back to opening_home_probability
                        to derive an equivalent spread. Ignored for
-                       baseball, where it is the run line (#8613).
+                       baseball's run line (#8613) and NHL's puck line (#11462).
         commence_time: Game start time (UTC). Used as fallback when
                       clock/period aren't available — estimates remaining
                       time from wall-clock elapsed time.

@@ -31,6 +31,7 @@ from tests.test_ws_flush_retry_q491 import (
     is_stored_live_slate_read,
     stored_live_batches,
 )
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 
 # ---------------------------------------------------------------- fakes ----
@@ -119,7 +120,7 @@ def _install_session(monkeypatch, slate_batches, reread):
                 # batches ahead of the full slate, which stays queued.
                 state["slate"][:0] = stored_live_batches(*slate_batches[:3])
             if state["slate"]:
-                return _Result(state["slate"].pop(0))
+                return _Result(answer_slate_market_read(_stmt, state["slate"].pop(0)))
             state["reread_calls"] += 1
             return _Result(reread(state["reread_calls"]))
 

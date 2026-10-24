@@ -134,21 +134,22 @@ describe("#6331 the settled champion's only observation is drawn", () => {
     expect(marks(html)).toHaveLength(1);
   });
 
-  test("the mark sits at 100%, at the instant the market settled", () => {
-    // Not at the clock and not at the plot's edge: a chart whose whole job is
-    // WHEN things moved may not place a result at a time we did not observe.
-    // #6360 froze this point at the field's own last reading; the mark has to
-    // land on the same x as the riders' final points, and on the 100% line.
+  test("the mark sits at the plot's right edge, off the probability scale", () => {
+    // #10955 / #11158 Step 2 supersedes this test's first form, which pinned
+    // the mark at 100% (cy 20). The champion's only point is a SETTLEMENT point
+    // (`bookmaker: "settlement"`): its value is the grade and its stamp is no
+    // trade, so the leg has no recorded probability and no y to give a mark.
+    // Authority's 0545Z contract keeps the x — the field's own last real stamp,
+    // the right edge of the plot area (chartWidth 800 − padding.right 20) — and
+    // Design's disposition forbids inventing a y. So the result mark sits at
+    // that x in the band ABOVE the plot (padding.top = 20), not on the 100% line.
     const html = renderToStaticMarkup(
       <FuturesChart historyData={VUELTA} settled height={200} />,
     );
     const [mark] = marks(html);
 
-    // y: 100% on a 0–1 axis is the top of the plot area (padding.top = 20).
-    expect(mark.cy).toBe(20);
-    // x: the champion's stamp IS the field's newest stamp, so it is maxTime —
-    // the right edge of the plot area (chartWidth 800 − padding.right 20).
     expect(mark.cx).toBe(780);
+    expect(mark.cy).toBeLessThan(20);
   });
 
   test("the mark is the series' own colour, so it matches its legend swatch", () => {
@@ -159,9 +160,11 @@ describe("#6331 the settled champion's only observation is drawn", () => {
     );
     const [mark] = marks(html);
 
-    // Third series → third palette entry. Read off the rendered line colours
+    // Third series → third palette entry. Read off the rendered legend swatches
     // rather than restated, so a palette change cannot make this pass falsely.
-    const strokes = [...html.matchAll(/<path[^>]*stroke="(#[0-9a-fA-F]{6})"/g)].map(
+    // (#10955: read from the swatches, not the line strokes — the champion's
+    // settlement point no longer draws a line of its own to read.)
+    const strokes = [...html.matchAll(/background-color:(#[0-9a-fA-F]{6})/g)].map(
       (m) => m[1],
     );
     expect(strokes).toContain(mark.fill);

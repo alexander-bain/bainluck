@@ -734,11 +734,11 @@ class TestAwardsEventAdapter:
             c["market_id"] >= 20 for c in body["children"] if c.get("kind") != "prop"
         )
 
-    async def test_settled_marquee_crowns_price_leader(self, client, mock_db):
+    async def test_price_leader_does_not_announce_category_or_ceremony_result(self, client, mock_db):
         from tests.integration.test_route_weather import _entity_result
 
-        # A concluded category whose leader is priced ~1.0 but not yet graded — the
-        # display `won` crown fires (parity with tennis/f1), status flips to settled.
+        # #5349 explicitly reverses the obsolete price crown: an extreme favorite
+        # is still undecided without its category's assigned state or result.
         best_pic = _award_market(
             30, "Oscar winner: Best Picture", "KXOSCARPIC-26",
             [("Oppenheimer", 0.98), ("Barbie", 0.02)],
@@ -747,9 +747,10 @@ class TestAwardsEventAdapter:
         resp = await client.get("/api/event/event:awards:oscars-2026")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["event"]["status"] == "settled"
-        champ = [c for c in body["primary"]["competitors"] if c.get("won")]
-        assert len(champ) == 1 and champ[0]["name"] == "Oppenheimer"
+        assert body["event"]["status"] == "unknown"
+        assert not any(c.get("won") for c in body["primary"]["competitors"])
+        assert body["children"][0]["settled"] is False
+        assert body["children"][0]["graded_winner"] is None
 
     async def test_year_end_backstop_never_reaches_the_page(self, client, mock_db):
         from datetime import datetime, timezone

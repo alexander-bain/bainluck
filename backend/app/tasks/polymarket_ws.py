@@ -20,6 +20,8 @@ from collections.abc import Collection, Iterable, Iterator, Mapping
 from typing import Any, NamedTuple, Optional
 from datetime import datetime, timezone
 
+from sqlalchemy import text
+
 from app.tasks.kalshi_ws import (
     FINAL_FLUSH_ATTEMPTS,
     PRICE_FLUSH_SECONDS,
@@ -57,6 +59,20 @@ PRICE_STATEMENT_LOCK_TIMEOUT_MS = 50
 #: turned a 20 ms hold into a 270 ms prop/standalone wait (real PG, 50 ms: 34–49).
 FAST_GAME_PRICE_STATEMENT_LOCK_TIMEOUT_MS = 1
 FAST_GAME_FLUSH_SECONDS = 0.025
+
+# Optional DNPL game writers must not hold later arrivals inside a slow price
+# statement. Keep the separate lock budget; preserve any tighter prior cap.
+DNPL_PRICE_STATEMENT_TIMEOUT_MS = 250
+ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL = text("""
+    WITH prior AS MATERIALIZED (
+        SELECT current_setting('statement_timeout') AS value
+    )
+    SELECT value, set_config('statement_timeout', CASE
+        WHEN CAST(value AS interval) > interval '0'
+         AND CAST(value AS interval) < CAST(CAST(:ms AS text) AS interval) THEN value
+        ELSE CAST(:ms AS text) END, true)
+    FROM prior
+""")
 
 #: #10090 — after an idle input wakes the price flush, wait this long (fixed,
 #: once) before it snapshots the buffer, so the rest of an already-arriving
@@ -105,6 +121,14 @@ class _PMCatalogFlushBoundary:
         self.stamps: Optional["_PMStampOwner"] = None
         self.flush_wake = asyncio.Event()
         self.flush_work = 0
+        # Optional observations never own price/stamp debt. A successful
+        # unchanged acknowledgement permits only its uninterrupted input value.
+        self.observation_ack = {}
+        self.observation_pending = {}
+        self.observation_wake = asyncio.Event()
+        self.observation_writing = set()
+        self.observation_write_epoch = {}
+        self.observation_drain = None
         # #10090: the linked props' own loop (`flush_props`).
         self.prop_wake = asyncio.Event()
         self.prop_work = 0
@@ -1696,7 +1720,11 @@ async def withdraw_attributed_event_sources(session, withdrawn_rows):
         return []
     # Re-read the whole source population in the removal transaction, after
     # the independent price withdrawal committed. A newly stored quote wins.
-    groups = await LiveBlendRefresher('polymarket')._read_groups(session, sorted(event_ids))
+    # This transaction helper has no consumer shutdown/drain lifecycle.
+    # It reads ordinary DNPL context but cannot own background maintenance.
+    groups = await LiveBlendRefresher(
+        'polymarket', owns_preview_maintenance=False,
+    )._read_groups(session, sorted(event_ids))
     frames = []
     for event_id, (event, group) in groups.items():
         if event.status != 'live' or event.completed_at is not None:
@@ -1765,6 +1793,7 @@ async def _publish_committed_withdrawals(refresher, frames):
         return
     import asyncio
 
+    previews = []
     for frame in frames:
         if frame.get('reconcile_only'):
             continue  # old control cannot invalidate a newer writer cache
@@ -1772,6 +1801,12 @@ async def _publish_committed_withdrawals(refresher, frames):
         refresher._last_written_value.pop(event_id, None)
         refresher._last_refresh_at.pop(event_id, None)
         refresher._last_snapshot_at.pop(event_id, None)
+        if event_id in getattr(refresher, 'preview_events', ()):
+            # #10090 (preview arm, canary events only): the withdrawn source
+            # may not keep speaking in a provisional blend.
+            from app.utils.blend_preview import registry
+
+            previews.extend(registry().refused(event_id, refresher.source, 'withdrawn'))
     task = asyncio.create_task(
         refresher._publish(frames), name='polymarket-withdrawal-event-publish',
     )
@@ -1786,6 +1821,9 @@ async def _publish_committed_withdrawals(refresher, frames):
     acknowledged = task.result()
     if interrupted is not None:
         raise interrupted
+    if previews:
+        # After the invalidation, whose newer revision already hides them.
+        await refresher._publish_previews(previews)
     return acknowledged
 
 
@@ -1826,6 +1864,29 @@ def is_price_row_lock_refusal(exc: BaseException) -> bool:
         if not isinstance(message, str):
             message = getattr(getattr(cur, "diag", None), "message_primary", None)
         if code == LOCK_NOT_AVAILABLE_SQLSTATE and message == PRICE_ROW_LOCK_REFUSAL_MESSAGE:
+            return True
+        nxt = getattr(cur, "orig", None)
+        if nxt is None or nxt is cur:
+            nxt = cur.__cause__
+        cur = nxt
+    return False
+
+
+def is_price_statement_timeout(exc: BaseException) -> bool:
+    """Require PostgreSQL's statement-timeout diagnostic, not just 57014.
+
+    Operator cancellation shares 57014. Unknown/localised messages stay on
+    the ordinary failure path; elapsed time never authorizes held admission.
+    """
+    seen = set()
+    cur = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        code = getattr(cur, "sqlstate", None) or getattr(cur, "pgcode", None)
+        message = getattr(cur, "message", None)
+        if not isinstance(message, str):
+            message = getattr(getattr(cur, "diag", None), "message_primary", None)
+        if code == "57014" and message == "canceling statement due to statement timeout":
             return True
         nxt = getattr(cur, "orig", None)
         if nxt is None or nxt is cur:
@@ -1939,8 +2000,13 @@ def _pm_lock_isolated_chunks(
     market_by_outcome: dict[int, int],
     complement_of: dict[int, int],
     chunk_rows: int,
+    *, first_events: Iterable[int] = (),
 ) -> list[list[int]]:
-    """Isolate admitted event cohorts only after their ordinary lock failure.
+    """Isolate selected admitted event cohorts without splitting questions.
+
+    Callers select lock retries or acknowledged optional observation cohorts.
+    Changed preview events may go first only when none of their indivisible
+    units shares an outside event. Selection never bypasses the ordinary writer.
 
     The caller passes separately planned headline and prop transactions. Never
     admit another buffered row or change the open cap here. Within the admitted
@@ -1949,7 +2015,8 @@ def _pm_lock_isolated_chunks(
     Unaffected rows retain their original chunks and order, ahead of the
     retried cohorts they share no event with.
     """
-    if not retry_events:
+    first_events = set(first_events).difference(retry_events)
+    if not retry_events and not first_events:
         return chunks
     admitted = [oid for chunk in chunks for oid in chunk]
     parents = {oid: oid for oid in admitted}
@@ -1977,13 +2044,29 @@ def _pm_lock_isolated_chunks(
     units = {}
     for oid in admitted:
         units.setdefault(root(oid), []).append(oid)
+    if first_events:
+        # Only promote complete events whose indivisible units share no outside
+        # event. Propagate exclusion through shared units so no sibling of a
+        # promoted event remains behind the unrelated transaction.
+        unit_events = [
+            {event_by_outcome[oid] for oid in unit if oid in event_by_outcome}
+            for unit in units.values()
+        ]
+        while True:
+            blocked = set().union(*(events for events in unit_events
+                                    if not events.issubset(first_events)))
+            kept = first_events.difference(blocked)
+            if kept == first_events:
+                break
+            first_events = kept
+    selected_events = set(retry_events) | first_events
     groups = {}
     group_by_outcome = {}
     for unit in units.values():
         events = frozenset(
             event_by_outcome[oid] for oid in unit if oid in event_by_outcome
         )
-        if events.isdisjoint(retry_events):
+        if events.isdisjoint(selected_events):
             continue
         groups.setdefault(events, []).append(unit)
         group_by_outcome.update(dict.fromkeys(unit, events))
@@ -2034,6 +2117,12 @@ def _pm_lock_isolated_chunks(
                 emitted.add(events)
     for cohort in held:
         result.extend(packed[cohort])
+    if first_events:
+        first, rest = [], []
+        for chunk in result:
+            events = {event_by_outcome[oid] for oid in chunk if oid in event_by_outcome}
+            (first if events.intersection(first_events) else rest).append(chunk)
+        result = first + rest
     return result
 
 
@@ -2539,6 +2628,60 @@ def _slate_market_filter():
     )
 
 
+def _slate_metadata_keys() -> tuple[str, ...]:
+    """The only ``market_metadata`` keys the slate's market loop reads (#10663)."""
+    from app.tasks.polymarket_token_topup import OUTCOME_TOKEN_METADATA_KEY
+    from app.utils.content_understanding import CONTENT_UNDERSTANDING_KEY
+
+    return (
+        "clob_token_ids",
+        "clobTokenIds",
+        OUTCOME_TOKEN_METADATA_KEY,
+        CONTENT_UNDERSTANDING_KEY,
+    )
+
+
+def slate_market_stmt(market_ids: Iterable[int]):
+    """The slate's market read: ``(id, external_id, <four keys>, event status)``.
+
+    #10663 — the four keys the loop reads, never the whole metadata blob, the
+    same way ``open_contract_markets_stmt`` reads its token keys. A key the row
+    does not carry (or a blob that is not an object) reads as SQL NULL.
+    """
+    from sqlalchemy import select
+
+    from app.models.models import Event, FuturesMarket
+
+    meta = FuturesMarket.market_metadata
+    return (
+        select(
+            FuturesMarket.id,
+            FuturesMarket.external_id,
+            *(meta[key] for key in _slate_metadata_keys()),
+            Event.status,
+        )
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(FuturesMarket.id.in_(list(market_ids)))
+    )
+
+
+def slate_market_rows(rows: Iterable[Any]) -> Iterator[tuple[Any, Any, dict, Any]]:
+    """``slate_market_stmt`` rows as ``(id, external_id, metadata, status)``.
+
+    ``metadata`` holds only the keys that are present, so the loop reads it as
+    it read the full blob. A row with no token key is still skipped: an empty
+    dict hits ``if not metadata``, where the full blob hit ``if not tokens``.
+    """
+    keys = _slate_metadata_keys()
+    for mid, mext, *values, event_status in rows:
+        metadata = {
+            key: value
+            for key, value in zip(keys, values, strict=True)
+            if value is not None
+        }
+        yield mid, mext, metadata, event_status
+
+
 def _format_by_shard(ws_stats: dict) -> str:
     """`0:14/500 1:26/500 …` — the per-shard shape behind the coverage ratio.
 
@@ -2741,9 +2884,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     )
     from app.tasks.polymarket_open_contracts import (  # #9484
         FLUSH_CHUNK_ROWS, OPEN_CONTRACT_MAX_CONCURRENT_HANDSHAKES,
+        OpenContractLegs,
         book_snapshot_prices_enabled, open_contract_receiver_process_enabled,
         OPEN_CONTRACT_MAX_QUEUE, OPEN_FLUSH_CHUNKS_PER_FLUSH,
-        open_contract_asset_map, open_contract_event_candidates,
+        open_contract_asset_map_cooperatively,
+        open_contract_event_candidates_cooperatively,
         open_contract_markets_stmt, open_contract_outcome_stmts,
         open_contract_prices_enabled, plan_flush_chunks, tokens_by_contract,
     )
@@ -2810,7 +2955,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 market_rows = (
                     await session.execute(open_contract_markets_stmt())
                 ).all()
-                outcome_rows = []
+                # #10663: each leg chunk is digested into the pairing's own
+                # structures as it arrives (`OpenContractLegs.add`), so the
+                # read never holds ~71,000 result rows beside them for the
+                # whole mapping. Row order is unchanged: chunks in catalog
+                # order, legs in id order within each.
+                legs = OpenContractLegs()
                 # These markets already belong to the game arm. The mapper
                 # skips them before pairing; keep their market rows for counts,
                 # but do not read legs that cannot enter the open admission.
@@ -2818,18 +2968,25 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 for stmt in open_contract_outcome_stmts(
                     r[0] for r in market_rows if r[0] not in excluded
                 ):
-                    outcome_rows.extend((await session.execute(stmt)).all())
-            admission = open_contract_asset_map(
-                market_rows, outcome_rows, taken_assets, excluded_market_ids,
+                    await legs.add_rows_cooperatively(
+                        (await session.execute(stmt)).all()
+                    )
+            # #10090: this mapping shares the loop with every PM socket.
+            admission = await open_contract_asset_map_cooperatively(
+                market_rows, legs, taken_assets, excluded_market_ids,
                 taken_tokens_by_contract,
             )
+            # The pairing has read every leg; nothing below needs them.
+            legs = None
         except Exception:
             logger.exception(
                 "Polymarket WS: open-contract admission read failed; "
                 "streaming the linked slate only this run"
             )
             return None, True, {}, False
-        candidates = open_contract_event_candidates(market_rows, admission)
+        candidates = await open_contract_event_candidates_cooperatively(
+            market_rows, admission
+        )
         if not candidates:
             return admission, False, {}, False
         try:
@@ -2865,13 +3022,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
     async def load_game_slate(*, stored_live_only=False):
         # Load linked Polymarket market asset IDs
+        # #10663: one row per linked market. The outcome join still requires a
+        # market to have an outcome, but no outcome field is read here: tokens
+        # and outcomes come from the reads below. An event id belongs to its
+        # market row, so DISTINCT drops only the per-outcome repeats.
         async with get_task_session() as session:
             result = await session.execute(
                 select(
-                    FuturesOutcome.id,
                     FuturesOutcome.market_id,
-                    FuturesOutcome.external_id,
-                    FuturesMarket.external_id.label("market_ext_id"),
                     FuturesMarket.event_id.label("linked_event_id"),
                 )
                 .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
@@ -2883,20 +3041,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     _slate_market_filter(),
                     *([Event.status.in_(("live", "suspended"))] if stored_live_only else []),
                 )
+                .distinct()
             )
             rows = result.all()
 
-        # Polymarket outcomes store condition_id as external_id (e.g. "0xabc..._yes").
-        # But the WS needs asset_ids (token IDs), which we store in market_metadata.
-        # For now, load token IDs from the outcomes' market_metadata.
-        # Build lookup: condition_id → (market_id, outcome_id)
-        condition_to_ids: dict[str, tuple[int, int]] = {}
         market_ids = set()
         # Q460: linked event per market, so a flushed price can re-stamp the blend.
         event_id_by_market: dict[int, int] = {}
-        for outcome_id, market_id, ext_id, market_ext_id, linked_event_id in rows:
-            if ext_id:
-                condition_to_ids[ext_id] = (market_id, outcome_id)
+        for market_id, linked_event_id in rows:
             market_ids.add(market_id)
             if linked_event_id is not None:
                 event_id_by_market[market_id] = linked_event_id
@@ -2913,18 +3065,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         stored_outcome_tokens: dict[int, tuple[int, str]] = {}
 
         async with get_task_session() as session:
-            market_result = await session.execute(
-                select(
-                    FuturesMarket.id,
-                    FuturesMarket.external_id,
-                    FuturesMarket.market_metadata,
-                    Event.status,
-                )
-                .join(Event, FuturesMarket.event_id == Event.id)
-                .where(FuturesMarket.id.in_(list(market_ids)))
-            )
+            market_result = await session.execute(slate_market_stmt(market_ids))
             ext_by_market: dict[int, str] = {}
-            for mid, mext, metadata, event_status in market_result.all():
+            for mid, mext, metadata, event_status in slate_market_rows(
+                market_result.all()
+            ):
                 # Same authoritative refutation as shared WIN admission, using the
                 # catalog metadata this token read already owns. Missing labels
                 # remain conservative; titles and outcome names are never guessed.
@@ -3277,6 +3422,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     blend_refresher = LiveBlendRefresher(
         "polymarket", min_refresh_interval_s=blend_floor,
         session_factory=get_task_session,  # #2471
+        observation_read_factory=sessions.observation_read,
         chart_custody=OwedChartCustody(),  # #11181: no owed chart point is lost
     )
     # #11138: quotes whose price-row write a lock holds; the stamp reads them
@@ -3288,6 +3434,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # never settled. A failed read is retried by the first withdrawal flush.
     blend_refresher.withdrawal_debt = PMWithdrawalDebt()
     await blend_refresher.withdrawal_debt.load(get_task_session)
+    # #10090: when this arm is the named preview source, claim its display
+    # epoch before any frame (`LiveBlendRefresher.claim_preview_display`).
+    if getattr(blend_refresher, 'preview', False):
+        await blend_refresher.claim_preview_display()
     # #837 receipt — every accepted input is stamped (seq, receive instant) as
     # it is buffered, so a held price can be followed from the socket to the
     # stamp that carried it. `input_marks` is keyed like `price_buffer` (one
@@ -3309,6 +3459,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
     stats["history_pending_adopted"] = len(getattr(blend_refresher, "_history", ()))
     input_marks: dict = {}
+    # DNPL canary speaking outcomes only. Same-price successors retain their
+    # token; a move/withdrawal/routing change ends continuity, including A-B-A.
+    observation_continuity: dict[int, tuple[object, float]] = {}
 
     # #9484: filled IN PLACE by `admit_open_contracts`, which the handlers and
     # the flush read through these same objects. Separate from the game maps so
@@ -3352,7 +3505,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # Entries now leave only after the write lands, so nothing needs to be
         # "put back", because it was never taken away.
         from app.tasks.live_blend_refresh import _mono
-        from app.tasks.polymarket_ws import _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS
+        from app.tasks.polymarket_ws import (
+            _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS,
+            DNPL_PRICE_STATEMENT_TIMEOUT_MS, ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+            is_price_statement_timeout,
+        )
+        from app.utils.repair_lock_budget import SET_STATEMENT_TIMEOUT_SQL
 
         # #10090 stage trace (OFF by default): times only the chunk the game
         # flush registered for its selected outcomes; never raises. Reached
@@ -3378,15 +3536,25 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # #10090 (Root attempt71): only a whole game chunk — every leg names
         # its event, none is a prop or an open-catalog leg — takes the game
         # loop's own first wait; the side loops never write such a chunk.
+        game_chunk = bool(chunk) and all(
+            event_id_by_outcome.get(oid) is not None
+            and oid not in non_blend_outcome_ids
+            and oid not in open_outcome_ids
+            for oid in chunk
+        )
         price_lock_timeout_ms = (
             catalog_boundary.game_price_lock_timeout_ms
-            if chunk and all(
-                event_id_by_outcome.get(oid) is not None
-                and oid not in non_blend_outcome_ids
-                and oid not in open_outcome_ids
-                for oid in chunk
-            ) else PRICE_STATEMENT_LOCK_TIMEOUT_MS
+            if game_chunk else PRICE_STATEMENT_LOCK_TIMEOUT_MS
         )
+        bound_price_statement = (
+            not final and game_chunk and getattr(blend_refresher, "preview", False)
+            and bool(getattr(blend_refresher, "preview_events", ()))
+        )
+        # Includes unrelated game B: bounding B is what lets a later DNPL A
+        # reach the same serial writer. Side loops and disabled/final stay as-is.
+        previous_statement_timeout = None
+        rolled_back_statement_timeout = None
+        price_statement_timeout_seen = False
         # A hold that outlasts a try this short is ordinary, not news: its
         # first timeout is counted like a probe's repeat, never logged as a
         # flush error (one Sentry event per 1–50 ms hold otherwise).
@@ -3422,6 +3590,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     or oid not in successful_price_write_at
                     or now - successful_price_write_at[oid] >= PM_QUOTE_LIVENESS_SECONDS
                 }
+                if bound_price_statement:
+                    previous_statement_timeout = (await session.execute(
+                        ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+                        {"ms": lock_timeout_value(DNPL_PRICE_STATEMENT_TIMEOUT_MS)},
+                    )).scalar_one()
                 try:
                     if stage_trace is not None:
                         stage_trace.write_stage(chunk, "STATEMENT_START")
@@ -3438,7 +3611,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # for next-cadence retry; other failures keep their cooldown.
                     probe_refused = probe and is_price_row_lock_refusal(exc)
                     price_lock_timed_out = is_lock_timeout(exc)
+                    if previous_statement_timeout is not None and is_price_statement_timeout(exc):
+                        price_statement_timeout_seen = True
+                        # A server cancellation aborted this transaction. Only
+                        # a successful explicit rollback AND successful context
+                        # cleanup may hand its frozen cohort to the held path.
+                        await session.rollback()
+                        rolled_back_statement_timeout = exc
                     raise
+                if previous_statement_timeout is not None:
+                    await session.execute(
+                        SET_STATEMENT_TIMEOUT_SQL, {"ms": previous_statement_timeout},
+                    )
                 # The shorter budget belongs only to the price-row attempt.
                 # Rerank and other transaction work keep their existing budget.
                 if not final:
@@ -3492,10 +3676,26 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             if stage_trace is not None:
                 stage_trace.write_stage(
                     chunk, "FAILED",
-                    reason="LOCK_PROBE_REFUSED" if probe_refused
+                    reason="PRICE_STATEMENT_TIMEOUT" if exc is rolled_back_statement_timeout
+                    else "LOCK_PROBE_REFUSED" if probe_refused
                     else "LOCK_TIMEOUT" if is_lock_timeout(exc)
                     else type(exc).__name__,
                 )
+            if exc is rolled_back_statement_timeout:
+                # Separate from a row-lock refusal: the price statement spent
+                # its own runtime budget. Keep ordinary buffered retry/overlay
+                # admission; a cleanup replacement error never enters here.
+                stats["price_statement_timeouts"] = stats.get("price_statement_timeouts", 0) + 1
+                lock_retry_until.update({oid: lock_retry_until.get(oid, 0) for oid in chunk})
+                lock_retry_events.update(event_ids_for_outcomes(event_id_by_outcome, chunk))
+                return None
+            if price_statement_timeout_seen:
+                # Rollback/cleanup replaced the UPDATE error. It must never
+                # inherit held admission, even if cleanup itself says 55P03.
+                stats["errors"] += 1
+                stats["requeued"] += len(chunk)
+                logger.exception("Polymarket WS: price timeout cleanup failed")
+                return False
             # Q491 — THE SHIP. The chunk is still in `price_buffer`, so the next
             # flush retries it. Before Q491 the buffer was drained up front and
             # a failed write DISCARDED those prices outright: the socket only
@@ -4244,9 +4444,56 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # A typed rollback may have coupled unrelated events in one
                 # ordinary chunk. Retry only its admitted event/question units;
                 # fresh siblings then retain their own cooldown eligibility.
+                isolated_events = set(lock_retry_events)
+                changed_events = set()
+                if getattr(blend_refresher, "preview_events", ()):
+                    async with buffer_lock:
+                        held_events = (
+                            stamp_owner.held_events()
+                            if stamp_owner.task is not None and not stamp_owner.task.done()
+                            else set()
+                        )
+                        if held_events is not None:
+                            pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+                            blocked = (
+                                held_events | lock_retry_events
+                                | catalog_boundary.bridges.reserved
+                                | catalog_boundary.bridges.unstamped
+                                | event_ids_for_outcomes(event_id_by_outcome, withdraw_buffer)
+                                | (set(pending_reader()) if callable(pending_reader) else set())
+                            )
+                            held_quotes = getattr(blend_refresher, "held_quotes", None)
+                            event_legs = {}
+                            for oid, value in price_buffer.items():
+                                eid = headline_event_ids.get(oid)
+                                if eid in blend_refresher.preview_events and eid not in blocked:
+                                    event_legs.setdefault(eid, []).append((oid, value))
+                            for eid, legs in event_legs.items():
+                                if all(
+                                    oid not in open_outcome_ids
+                                    and observation_continuity.get(oid) is not None
+                                    and catalog_boundary.observation_ack.get(oid) is not None
+                                    and observation_continuity[oid][1] == round(float(value), 6)
+                                    and (held_quotes is None or oid not in held_quotes)
+                                    for oid, value in legs
+                                ):
+                                    if all(catalog_boundary.observation_ack[oid] == observation_continuity[oid]
+                                           for oid, _ in legs):
+                                        isolated_events.add(eid)
+                                    elif any(catalog_boundary.observation_ack[oid][1] != observation_continuity[oid][1]
+                                             for oid, _ in legs):
+                                        changed_events.add(eid)
+                # A known unchanged cohort need not share an unrelated SQL
+                # wait. This is a scheduling hint only: every admitted row still
+                # reaches write_chunk, including heartbeat/held-return forcing.
+                # A changed preview cohort needs its ordinary price authority
+                # first, so schedule it before unrelated waits. Its existing
+                # ready/stamp path then publishes DNPL; no preview bypass.
+                # Market/complement units remain indivisible across events.
                 chunks = _pm_lock_isolated_chunks(
-                    chunks, lock_retry_events, event_id_by_outcome,
+                    chunks, isolated_events, event_id_by_outcome,
                     market_by_outcome, open_complement_of, FLUSH_CHUNK_ROWS,
+                    first_events=changed_events,
                 )
             stats["open_contract_flush_deferred"] += len(batch) - sum(
                 len(c) for c in chunks
@@ -4428,6 +4675,21 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # newly buffered ids still belong to a successor flush.
                     held_quotes = getattr(blend_refresher, "held_quotes", None)
                     async with buffer_lock:
+                        observation_generation = None
+                        observation_tokens = {}
+                        if getattr(blend_refresher, "preview_events", ()):
+                            observation_generation = routing_generation
+                            observation_tokens = {
+                                oid: observation_continuity.get(oid) for oid in chunk_ids
+                            }
+                            catalog_boundary.observation_writing = {
+                                eid for eid in event_ids_for_outcomes(headline_event_ids, chunk_ids)
+                                if eid in blend_refresher.preview_events
+                            }
+                            for eid in catalog_boundary.observation_writing:
+                                catalog_boundary.observation_write_epoch[eid] = (
+                                    catalog_boundary.observation_write_epoch.get(eid, 0) + 1
+                                )
                         current_chunk = {oid: price_buffer[oid] for oid in chunk_ids}
                         for oid in chunk_ids:
                             if oid in input_marks:
@@ -4456,6 +4718,25 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # AFTER it, for FUTURE inputs, never to re-date this batch.
                     if held_quotes is not None and not final:
                         await held_quotes.sample_database_clock(get_task_session)
+                    # Only a completed unchanged acknowledgement establishes
+                    # continuity. A price/heartbeat write still owes its stamp;
+                    # failed/held writes never authorize observation bypass.
+                    if (not final and observation_tokens
+                            and getattr(wrote, "written_ids", None) is not None):
+                        written_events = event_ids_for_outcomes(headline_event_ids, wrote.written_ids)
+                        async with buffer_lock:
+                            for oid, value in current_chunk.items():
+                                eid = headline_event_ids.get(oid)
+                                token = observation_tokens.get(oid)
+                                if (eid in getattr(blend_refresher, "preview_events", ())
+                                        and eid not in written_events and token is not None
+                                        and token == observation_continuity.get(oid)
+                                        and routing_generation == observation_generation):
+                                    catalog_boundary.observation_ack[oid] = token
+                                    entry = (eid, value, chunk_bounds.get(oid), batch_marks.get(oid),
+                                             token, observation_generation)
+                                    catalog_boundary.observation_pending.setdefault(oid, entry)
+                                    catalog_boundary.observation_wake.set()
                     # #11138: None is a price row a lock holds (refused, timed
                     # out or cooling down). Each event whose speaking legs here
                     # all carry their received quote is stamped from
@@ -4952,10 +5233,120 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             wrote_all = False
         return wrote_all
 
+    async def flush_observations():
+        """Admit frozen unchanged inputs beside an unrelated price transaction."""
+        boundary = catalog_boundary
+
+        def owners():
+            owner = boundary.stamp_owner(blend_refresher)
+            held = (owner.held_events()
+                    if owner.task is not None and not owner.task.done() else set())
+            if held is None:
+                return None
+            pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+            pending = set(pending_reader()) if callable(pending_reader) else set()
+            # PM buffers unchanged BBOs too. Only acknowledged uninterrupted
+            # values may pass; another leg's queued change owns the whole event
+            # even before its price chunk starts (including A-B-A).
+            price_owned = {
+                event_id_by_outcome.get(oid) for oid, value in price_buffer.items()
+                if oid not in non_blend_outcome_ids
+                and (observation_continuity.get(oid) is None
+                     or boundary.observation_ack.get(oid) != observation_continuity[oid]
+                     or observation_continuity[oid][1] != round(float(value), 6))
+            }
+            return (held | pending | price_owned | boundary.observation_writing
+                    | boundary.bridges.reserved | boundary.bridges.unstamped
+                    | event_ids_for_outcomes(event_id_by_outcome, withdraw_buffer))
+
+        async with buffer_lock:
+            busy = owners()
+            if busy is None:
+                return
+            snapshot = {oid: entry for oid, entry in boundary.observation_pending.items()
+                        if entry[0] not in busy}
+            if not snapshot:
+                return
+            for oid in snapshot:
+                boundary.observation_pending.pop(oid)
+            window = getattr(blend_refresher, "_admission", None)
+            releases = {entry[0]: window.released.get(entry[0], 0) if window else 0
+                        for entry in snapshot.values()}
+            epochs = {entry[0]: boundary.observation_write_epoch.get(entry[0], 0)
+                      for entry in snapshot.values()}
+        boundary.flush_work += 1
+        groups = {}
+        for oid, (eid, value, bound, mark, _token, _generation) in snapshot.items():
+            groups.setdefault(eid, {})[oid] = (value, bound, mark)
+
+        async def validate(event_ids):
+            async with buffer_lock:
+                busy = owners()
+                if busy is None or getattr(blend_refresher, "_admission", None) is not window:
+                    return set()
+                return {
+                    eid for eid in event_ids
+                    if eid not in busy and eid in getattr(blend_refresher, "preview_events", ())
+                    and boundary.observation_write_epoch.get(eid, 0) == epochs[eid]
+                    and (window is None or window.released.get(eid, 0) == releases[eid])
+                    and all(
+                        event_id_by_outcome.get(oid) == eid
+                        and oid not in non_blend_outcome_ids and oid not in open_outcome_ids
+                        and generation == routing_generation
+                        and token == observation_continuity.get(oid)
+                        and token == boundary.observation_ack.get(oid)
+                        and mark is not None and bound is not None
+                        and getattr(mark, "probability", None) == value
+                        and input_marks.get(oid) is not None
+                        and round(float(input_marks[oid].probability), 6) == round(float(value), 6)
+                        and getattr(input_marks[oid], "seq", -1) >= getattr(mark, "seq", 0)
+                        for oid, (event, value, bound, mark, token, generation) in snapshot.items()
+                        if event == eid
+                    )
+                }
+
+        async def restore():
+            async with buffer_lock:
+                for oid, entry in snapshot.items():
+                    boundary.observation_pending.setdefault(oid, entry)
+                boundary.observation_wake.set()
+
+        try:
+            accepted = await blend_refresher.preview_accepted_observations(groups, validate)
+        except asyncio.CancelledError:
+            await restore()
+            raise
+        if accepted is False:
+            await restore()
+            return
+        held = getattr(blend_refresher, "held_quotes", None)
+        if held is not None and any(entry[2] == getattr(held, "_database_bound", None)
+                                    for entry in snapshot.values()):
+            # Advance bounds for FUTURE arrivals only. Never re-date retries.
+            await held.sample_database_clock(get_task_session)
+
     async def flush_prices(flush_started=None, final=False):
-        # The final drain also writes standalone legs.
+        # The joined pump cannot outlive the catalog/routing scope or final drain.
         async with catalog_boundary.flushing(standalone=final):
-            return await _flush_prices(flush_started, final=final)
+            if (final or not getattr(blend_refresher, "preview_events", ())
+                    or not callable(getattr(blend_refresher, "preview_accepted_observations", None))):
+                return await _flush_prices(flush_started, final=final)
+            from app.tasks.ws_observation_drain import ObservationDrain
+            if catalog_boundary.observation_drain is None:
+                catalog_boundary.observation_drain = ObservationDrain(
+                    flush_observations, lambda: any(
+                        entry[0] not in catalog_boundary.observation_writing
+                        for entry in catalog_boundary.observation_pending.values()
+                    ),
+                    catalog_boundary.observation_wake, game_period,
+                )
+            async def work():
+                try:
+                    return await _flush_prices(flush_started, final=final)
+                finally:
+                    catalog_boundary.observation_writing.clear()
+                    catalog_boundary.observation_wake.set()
+            return await catalog_boundary.observation_drain.run_with(work)
 
     async def flush_standalone(flush_started=None):
         async with catalog_boundary.flushing(standalone=True):
@@ -5138,6 +5529,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     return
                 for outcome_id, leg_bid, leg_ask in legs:
                     withdraw_buffer[outcome_id] = (leg_bid, leg_ask)
+                    if getattr(blend_refresher, "preview_events", ()):
+                        observation_continuity.pop(outcome_id, None)
                 # #11138: a held quote never outlives a book that withdraws it.
                 held_quotes = getattr(blend_refresher, "held_quotes", None)
                 if held_quotes is not None:
@@ -5235,10 +5628,28 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         except Exception:
             return
         if mark is not None:
+            if (event_id_by_outcome.get(outcome_id) in getattr(blend_refresher, "preview_events", ())
+                    and outcome_id not in non_blend_outcome_ids and outcome_id not in open_outcome_ids):
+                price = round(float(prob), 6)
+                previous = observation_continuity.get(outcome_id)
+                if previous is None or previous[1] != price:
+                    observation_continuity[outcome_id] = (object(), price)
+            elif getattr(blend_refresher, "preview_events", ()):
+                observation_continuity.pop(outcome_id, None)
             input_marks[outcome_id] = mark
             held = getattr(blend_refresher, "held_quotes", None)
             if held is not None:
                 held.note_input(mark)
+            token = observation_continuity.get(outcome_id)
+            if token is not None and catalog_boundary.observation_ack.get(outcome_id) == token:
+                catalog_boundary.observation_pending[outcome_id] = (
+                    event_id_by_outcome.get(outcome_id), prob,
+                    held.bound_for(mark) if held is not None else None,
+                    mark, token, routing_generation,
+                )
+                catalog_boundary.observation_wake.set()
+            else:
+                catalog_boundary.observation_pending.pop(outcome_id, None)
             stage_trace = getattr(tail_receipts, "exact_trace", None)
             if stage_trace is not None:
                 stage_trace.input_accepted(mark)  # never raises
@@ -5554,6 +5965,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             async with buffer_lock:
                 timing.enter("map")
                 routing_generation += 1
+                observation_continuity.clear()
+                catalog_boundary.observation_ack.clear()
+                catalog_boundary.observation_pending.clear()
+                catalog_boundary.observation_write_epoch.clear()
                 # Keep accepted writes' ownership through their drain even if the
                 # token has left the catalog. New inputs use ONLY the fresh maps.
                 protected = set(price_buffer) | set(withdraw_buffer)
@@ -5564,6 +5979,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 for owners in (market_by_outcome, event_id_by_outcome):
                     for oid in owners.keys() - old_debt:
                         del owners[oid]
+                # #10663: per-outcome bookkeeping keeps only the outcomes this
+                # catalog owns or a buffered write still carries. Nothing else
+                # retired an entry, so both grew by every outcome the process
+                # ever priced. A re-admitted outcome has no last-write instant
+                # and is written on its next price (never suppressed); its next
+                # accepted input records a fresh mark before any flush reads it.
+                retained = current_outcomes | protected
+                for bookkeeping in (successful_price_write_at, input_marks):
+                    for oid in bookkeeping.keys() - retained:
+                        del bookkeeping[oid]
                 asset_ids[:] = slate["asset_ids"]
                 market_ids.clear()
                 market_ids.update(slate["market_ids"])

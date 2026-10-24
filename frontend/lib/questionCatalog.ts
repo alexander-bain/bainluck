@@ -77,6 +77,7 @@ interface LooseRow {
   observed_at?: string | null;
   _inverted?: boolean | null;
   _market_id?: number | null;
+  market_type?: string | null;
 }
 
 type Side = "over" | "under" | "unreadable";
@@ -194,7 +195,12 @@ export function buildQuestionCatalog(
       add("Matchups", row, catalogQuote(row, status, now), outcome.name);
     }
   }
-  addRows("Other", data.other as LooseRow[]);
+  // #1529: the game's winner is served in `other` (it has no section of its
+  // own) with the class the server established. Only that class moves; the
+  // title is never read here, so an unclassified question stays in Other.
+  const other = (data.other ?? []) as LooseRow[];
+  addRows("Game lines", other.filter((row) => row.market_type === "moneyline"));
+  addRows("Other", other.filter((row) => row.market_type !== "moneyline"));
 
   return [...groups.values()].sort(
     (a, b) =>

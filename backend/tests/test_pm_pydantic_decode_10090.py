@@ -54,7 +54,7 @@ def test_rejections_keep_stdlib_error_type_message_and_position(raw):
 
 
 @pytest.mark.parametrize("error", [ValueError, TypeError])
-def test_fast_parser_refusal_falls_back_without_string_cache(monkeypatch, error):
+def test_fast_parser_refusal_falls_back_with_keys_only_string_cache(monkeypatch, error):
     calls = []
 
     def refuse(raw, **kwargs):
@@ -63,7 +63,8 @@ def test_fast_parser_refusal_falls_back_without_string_cache(monkeypatch, error)
 
     monkeypatch.setattr(service, "from_json", refuse)
     assert service._decode_message('{"n":18446744073709551616}') == {"n": 18446744073709551616}
-    assert calls == [{"cache_strings": False}]
+    # #10663: keys only — values (ids, prices) are never cached.
+    assert calls == [{"cache_strings": "keys"}]
 
 
 @pytest.mark.asyncio

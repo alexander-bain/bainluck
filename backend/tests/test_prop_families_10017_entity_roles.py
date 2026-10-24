@@ -155,7 +155,11 @@ def test_named_teams_in_the_same_form_still_make_a_family():
     assert got == [("Toronto Maple Leafs", 70000001, 0.62), ("Montreal Canadiens", 70000002, 0.21)]
 
 
-def test_the_9983_olympic_mvp_family_is_unchanged_beside_the_field_markets():
+def test_the_9983_olympic_mvp_family_is_unchanged_beside_the_field_markets(monkeypatch):
+    # The specimen is calendar-dated (2026-02-23); #11568's age cut is not
+    # what this pins, so it is lifted here and tested on its own there.
+    from app.utils import prop_families as pf
+    monkeypatch.setattr(pf, "PRIOR_RESULT_MAX_AGE_DAYS", 36_500)
     fam = _families(_leafs_page())["2026 winter olympics men's mvp"]
     assert fam["label"] == "2026 Winter Olympics Men's MVP"
     rows = {r["entity"]: r for r in fam["rows"]}

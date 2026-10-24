@@ -114,6 +114,7 @@ const VERDICT = "Crawley wins";
 
 interface Fixture {
   venueSettled: boolean;
+  authoritativeClock?: boolean;
 }
 
 let eventPayload: unknown;
@@ -168,7 +169,8 @@ const { AnalyticsProvider } = require("@/components/Analytics");
  * live/354's specimen: a `suspended` row three hours past kickoff, no score
  * reported, markets still priced — and the venue's own grade beside it.
  */
-function draw({ venueSettled }: Fixture): string {
+function draw({ venueSettled, authoritativeClock = true }: Fixture): string {
+  const observedAt = agoIso(2 * MINUTE);
   eventPayload = {
     id: 15313807,
     sport_key: "soccer_efl_cup",
@@ -182,6 +184,8 @@ function draw({ venueSettled }: Fixture): string {
     hero_probability: 0.89,
     hero_probability_away: 0.11,
     hero_probability_source: "blend",
+    // A suspended detail requires the blend's own observation authority.
+    ...(authoritativeClock ? { hero_probability_observed_at: observedAt } : {}),
     win_probability_sources: {
       polymarket: {
         value: 0.89,
@@ -189,7 +193,7 @@ function draw({ venueSettled }: Fixture): string {
         type: "market",
         color: "#22c55e",
         // FRESH, which is the whole reason #5459's guard cannot reach this row.
-        updated_at: agoIso(2 * MINUTE),
+        updated_at: observedAt,
       },
     },
     venue_settled: venueSettled,
@@ -223,6 +227,23 @@ describe("/events/[id] over a venue-graded match", () => {
     // whether or not it promises a new one, and folding the two together is the
     // mistake #4861's guard caught the last time someone made it. Rendered, this
     // row reads `live · 2m ago  Settled · Crawley wins`.
-    expect(draw({ venueSettled: true })).toMatch(/\bago\b/);
+    const html = draw({ venueSettled: true });
+    expect(html).toMatch(/\bago\b/);
+    expect(html).toContain('data-probability="0.89"');
+    expect(html).toContain('data-observation-delivery="committed"');
+    expect(html).toContain('data-status="Finished"');
   });
+});
+
+
+test("a graded suspended detail without blend authority keeps its verdict but no borrowed observation time", () => {
+  const html = draw({ venueSettled: true, authoritativeClock: false });
+  expect(html).toContain(VERDICT);
+  expect(html).not.toContain(PROMISE);
+  expect(html).toContain('data-status="Finished"');
+  expect(html).toContain('data-probability=""');
+  expect(html).toContain("Probability observed</dt><dd><span>Time unavailable</span>");
+  expect(html).toContain('data-observation-at=""');
+  expect(html).toContain('data-observation-count="0"');
+  expect(html).toContain('data-observation-delivery="unknown"');
 });

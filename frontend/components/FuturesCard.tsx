@@ -29,6 +29,7 @@ import { PinIcon } from "@/components/PinButton";
 import { categoryKeyLabel } from "@/lib/sportCategories";
 import { gamePropContextLine, spreadSideLabels, type GamePropGameRef } from "@/lib/gamePropCardContext";
 import { relatedGameListingText } from "@/lib/relatedGameListing";
+import { openFieldLegIsOut } from "@/lib/openFieldLegOut";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -46,6 +47,9 @@ interface FuturesCardProps {
    *  whose title names one team can print the matchup. Absent ⇒ the card still
    *  dates the prop, and names the matchup only when its own rows do. */
   games?: readonly GamePropGameRef[];
+  /** #11493: an open field's venue-graded loser prints Out instead of its last
+   *  price (`lib/openFieldLegOut`). Search opts in; absent ⇒ unchanged. */
+  readsOpenFieldOuts?: boolean;
 }
 
 function formatSportName(sportKey: string | null, sportName: string | null): string {
@@ -112,6 +116,7 @@ export default function FuturesCard({
   multiplier,
   personalizationReasons,
   games,
+  readsOpenFieldOuts = false,
 }: FuturesCardProps) {
   const outcomes = market.top_outcomes || market.outcomes || [];
   // #6018: the footer pip's subject. Derived off the same row pick as `outcomes`
@@ -297,6 +302,7 @@ export default function FuturesCard({
                   displayName={row.displayName}
                   rendered={renderedById.get(row.outcome.id) ?? null}
                   numericLadder={numericLadder}
+                  out={readsOpenFieldOuts && openFieldLegIsOut(market, row.outcome)}
                 />
               </motion.div>
             ))}
@@ -364,6 +370,7 @@ function OutcomeRow({
   displayName,
   rendered,
   numericLadder,
+  out,
 }: {
   outcome: FuturesOutcome;
   rank: number;
@@ -387,6 +394,9 @@ function OutcomeRow({
    *  compile at the next call site and silently print a row of digit-initials
    *  where the rank belongs, with every test green. */
   numericLadder: boolean;
+  /** #11493: the caller's `openFieldLegIsOut` answer for this row. Required for
+   *  the same reason `rendered` is: only the caller knows the market's shape. */
+  out: boolean;
 }) {
   const movement = outcome.movement ?? outcome.probability_change_24h;
   const prob = outcome.probability ?? 0;
@@ -419,7 +429,10 @@ function OutcomeRow({
   // (measured same session), so it tells no lie. Gating it would instead delete the
   // chip from the 3,885 graded legs sitting on markets still `open` — a different
   // question ("may an open market show a winner tick?") that is not this ship's.
-  const verdict = outcomeRowVerdict(outcome, isResolved);
+  const graded = outcomeRowVerdict(outcome, isResolved);
+  // #11493: an open field's knocked-out leg draws like a loss and reads "Out",
+  // the championship grid's word for the same club. A verdict always wins.
+  const verdict = graded ?? (out ? "out" : null);
 
   // Determine entity image type
   const isNonSports = isNonSportsCategory(marketCategory ?? null);
@@ -480,16 +493,16 @@ function OutcomeRow({
             style={{
               backgroundColor: verdict === "won"
                 ? "var(--accent-live, #10b981)"
-                : verdict === "lost"
+                : verdict === "lost" || verdict === "out"
                 ? "var(--text-muted)"
                 : isLeader ? "var(--accent-futures)" : "var(--text-muted)",
-              opacity: verdict === "lost" ? 0.15
+              opacity: verdict === "lost" || verdict === "out" ? 0.15
                 : isLeader ? 0.7 : 0.3,
             }}
             animate={{
               width: verdict === "won"
                 ? "100%"
-                : verdict === "lost"
+                : verdict === "lost" || verdict === "out"
                 ? "0%"
                 : `${Math.min(prob * 100, 100)}%`,
             }}
@@ -507,6 +520,10 @@ function OutcomeRow({
         ) : verdict === "lost" ? (
           <span className="font-mono text-sm tabular-nums text-text-muted">
             Lost
+          </span>
+        ) : verdict === "out" ? (
+          <span className="font-mono text-sm tabular-nums text-text-muted" data-open-field-out>
+            Out
           </span>
         ) : (
           <>

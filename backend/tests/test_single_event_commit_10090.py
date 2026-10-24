@@ -96,6 +96,22 @@ def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None, block
     r._read_groups = filtered_read
     r._session_factory = factory
     r._publish = publish
+    publication_ready = set()
+    refresh_batch = r._refresh_batch
+
+    async def track_publication_ready(*args, **kwargs):
+        publish_committed = kwargs.get("publish_committed")
+        if publish_committed is not None:
+            async def queued(frames):
+                # The default ledger settles after COMMIT and before this
+                # callback. Observe the real sender boundary, not the earlier
+                # transaction exit, for tests interrupting queued frames.
+                publication_ready.update(frame["event_id"] for frame in frames)
+                await publish_committed(frames)
+            kwargs["publish_committed"] = queued
+        return await refresh_batch(*args, **kwargs)
+
+    r._refresh_batch = track_publication_ready
     return SimpleNamespace(**locals())
 
 
@@ -540,7 +556,8 @@ async def test_cancel_preserves_both_waiting_committed_groups_and_one_sender(mon
         # Event 1 plus one stamp per fixed worker commit (a queued event
         # rereads its own row, 6d8b493900); then every worker waits on the
         # one sender, so 2..4 form the second waiting group.
-        await settle_until(lambda: sorted(x.committed) == [1, 2, 3, 4])
+        await settle_until(lambda: sorted(x.committed) == [1, 2, 3, 4]
+                           and x.publication_ready == {1, 2, 3, 4})
         task.cancel()
         await asyncio.wait_for(cleaning.wait(), 1)
         task.cancel()

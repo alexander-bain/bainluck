@@ -5,6 +5,17 @@ import { API_URL } from '@/lib/api';
 import { frameFoldOrder } from '@/lib/foldRevision';
 import { rememberLiveChartFrame, type LiveChartFrame } from '@/lib/liveChartHistory';
 import { frameCarriesUnpricedSnapshot } from '@/lib/sourceSnapshot';
+import {
+  EMPTY_BLEND_PREVIEW_READER,
+  parseBlendPreview,
+  readerAfter,
+  readerAfterCommitFloor,
+  readerAfterPreviewOpen,
+  readerAfterPreviewReset,
+  readerAfterPreviewMembership,
+  type BlendPreviewReader,
+  type BlendPreviewState,
+} from '@/lib/blendPreview';
 import type { ReconcileControl } from '@/lib/reconcileControl';
 import {
   TICK_INTERVAL_MS,
@@ -95,6 +106,14 @@ interface UseLiveEventStreamResult {
   status: LiveStreamStatus;
   /** #10666: hook-lifetime monotonic recovery ordinal, scoped to this event. */
   recoveryGeneration: number;
+  /**
+   * #10090: the held provisional blend, or null. Never part of `frame` or
+   * `chartPoints`; the page overlays it on the hero only
+   * (`lib/blendPreview.ts`). Always null when the server sends none.
+   */
+  blendPreview: BlendPreviewState | null;
+  /** #10090: `Date.now()` at the last preview change or expiry, for `displayedPreview`. */
+  blendPreviewNow: number;
 }
 
 export function useLiveEventStream(
@@ -113,7 +132,12 @@ export function useLiveEventStream(
    * the event id and owns the ledger.
    */
   onReconcile?: (control: ReconcileControl) => void,
+  authoritativeMembership?: unknown,
 ): UseLiveEventStreamResult {
+  const memberKeys = authoritativeMembership && typeof authoritativeMembership === 'object' && !Array.isArray(authoritativeMembership)
+    ? Object.keys(authoritativeMembership).sort().join(',') : '';
+  const membershipRef = useRef(authoritativeMembership);
+  membershipRef.current = authoritativeMembership;
   const [frame, setFrame] = useState<LiveFrame | null>(null);
   const [connected, setConnected] = useState(false);
   const [{ chartEventId, points }, setChart] = useState<{
@@ -123,6 +147,10 @@ export function useLiveEventStream(
     statusEventId: number | undefined; status: LiveStreamStatus;
   }>({ statusEventId: eventId, status: 'idle' });
   const [recovery, setRecovery] = useState({ eventId, ordinal: 0 });
+  const [{ reader, previewNow }, setPreview] = useState<{
+    reader: BlendPreviewReader; previewNow: number;
+  }>({ reader: EMPTY_BLEND_PREVIEW_READER, previewNow: 0 });
+  const preview = reader.held;
   // A replacement controller starts its own ordinal at one; the hook does not.
   const recoveryOrdinal = useRef(0);
   // A ref so the controller's callbacks never close over a stale setter.
@@ -145,7 +173,14 @@ export function useLiveEventStream(
   }, []);
 
   useEffect(() => {
+    setPreview({ reader: EMPTY_BLEND_PREVIEW_READER, previewNow: 0 });
+  }, [eventId]);
+
+  useEffect(() => {
     setRecovery({ eventId, ordinal: 0 });
+    if (eventId) setPreview(previous => ({
+      reader: readerAfterPreviewMembership(previous.reader, membershipRef.current, eventId), previewNow: Date.now(),
+    }));
     if (!enabled || !eventId || typeof window === 'undefined') {
       setConnected(false);
       setStatus({ statusEventId: eventId, status: 'idle' });
@@ -160,7 +195,7 @@ export function useLiveEventStream(
     const controller = createLiveStreamController({
       open: () =>
         new EventSource(
-          `${API_URL}/api/events/${eventId}/stream`,
+          `${API_URL}/api/events/${eventId}/stream?preview_protocol=folded-v2`,
         ) as unknown as StreamHandle,
       now: () => Date.now(),
       onFrame: (next) => {
@@ -193,12 +228,55 @@ export function useLiveEventStream(
       },
       onReconcile: (control) => {
         if (!mounted.current) return;
+        setPreview(previous => ({
+          reader: readerAfterCommitFloor(previous.reader, control.floor),
+          previewNow: Date.now(),
+        }));
         try {
           onReconcileRef.current?.(control);
         } catch (error) {
           setTimeout(() => {
             throw error;
           });
+        }
+      },
+      onPreview: (raw) => {
+        if (!mounted.current) return;
+        const parsed = parseBlendPreview(raw);
+        if (!parsed) return;
+        const at = Date.now();
+        // The controller is per event, so the reader (and its epoch floor)
+        // never carries over from another event: see the effect cleanup.
+        setPreview(previous => ({
+          reader: readerAfter(previous.reader, parsed, eventId, at),
+          previewNow: at,
+        }));
+      },
+      onPreviewFloor: (raw) => {
+        if (!mounted.current) return;
+        try {
+          const packet = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          if (!packet || packet.event_id !== eventId) return;
+          setPreview(previous => ({
+            reader: readerAfterCommitFloor(previous.reader, packet.floor), previewNow: Date.now(),
+          }));
+        } catch {
+          setPreview(previous => ({
+            reader: readerAfterPreviewReset(previous.reader), previewNow: Date.now(),
+          }));
+        }
+      },
+      onPreviewOpen: (raw) => {
+        if (mounted.current) setPreview(previous => ({
+          reader: readerAfterPreviewOpen(previous.reader, raw, eventId), previewNow: Date.now(),
+        }));
+      },
+      onPreviewReset: () => {
+        // Clears the held preview; keeps the epoch floor (epochs only rise).
+        if (mounted.current) {
+          setPreview(previous => ({
+            reader: readerAfterPreviewReset(previous.reader), previewNow: Date.now(),
+          }));
         }
       },
       onDeliveringChange: (delivering) => {
@@ -222,14 +300,29 @@ export function useLiveEventStream(
     return () => {
       clearInterval(timer);
       controller.stop();
+      setPreview(previous => ({ reader: readerAfterPreviewReset(previous.reader), previewNow: Date.now() }));
     };
-  }, [eventId, enabled]);
+  }, [eventId, enabled, memberKeys]);
+
+  // #10090: re-render once when the held preview's lifetime ends, so an
+  // expired provisional value gives way to the committed one without a frame.
+  const previewExpiresAt = preview?.expiresAt;
+  useEffect(() => {
+    if (previewExpiresAt === undefined) return;
+    const wait = Math.max(0, previewExpiresAt - Date.now());
+    const timer = setTimeout(() => {
+      if (mounted.current) setPreview(previous => ({ ...previous, previewNow: Date.now() }));
+    }, wait + 1);
+    return () => clearTimeout(timer);
+  }, [previewExpiresAt]);
 
   return {
     frame,
     connected,
     recoveryGeneration: enabled && recovery.eventId === eventId ? recovery.ordinal : 0,
     chartPoints: chartEventId === eventId ? points : [],
+    blendPreview: enabled && preview?.eventId === eventId ? preview : null,
+    blendPreviewNow: previewNow,
     // Before this event's controller has said anything, it is connecting if
     // it is going to try at all — never the last event's word.
     status: statusEventId === eventId ? status : enabled ? 'connecting' : 'idle',

@@ -514,19 +514,8 @@ struct TotalPointsSpectrumView: View {
             }
             .padding(.leading, 68)
 
-            if let pregame = pregameTotal, abs(paceTotal - pregame) > 0.5 {
-                let diff = paceTotal - pregame
-                HStack(spacing: 4) {
-                    Text("Pace projects")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text("\(diff > 0 ? "+" : "")\(String(format: "%.1f", diff))")
-                        .font(.caption2.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(paceColor)
-                    Text("vs pre-game expectation.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+            if let comparison = PaceComparison.make(pregameTotal: pregameTotal, paceTotal: paceTotal, unit: unit) {
+                PaceComparisonLine(comparison: comparison, color: paceColor)
             }
         }
         .padding(12)
@@ -920,5 +909,109 @@ extension TotalPointsSpectrumView {
             i += step
         }
         return picks
+    }
+}
+
+/// "Pace projects -28.9 vs pre-game expectation." — the live strip's one
+/// comparison of the pace with the served opening (#10796).
+///
+/// At AX5 on a 375 or 393 phone the three words used to sit in one
+/// `HStack(spacing: 4)`, each wrapping on its own: the number broke after its
+/// decimal point ("−28." over "9") and the sentence broke into fragments
+/// ("pro" / "jects", "expec" / "tation."), Design build-81 addendum
+/// 2026-10-23. The number now keeps its width, and the sentence takes the
+/// card's.
+nonisolated struct PaceComparison: Equatable, Sendable {
+    /// Pace total minus the pre-game total.
+    let difference: Double
+    /// The sport's noun for what the total counts ("points", "games"), or
+    /// "scoring" where it has none.
+    let unit: String
+
+    /// Nil when there is no served opening to compare with (#6290), or the
+    /// pace is within half a unit of it — the same gate the strip always had.
+    static func make(pregameTotal: Double?, paceTotal: Double, unit: String) -> PaceComparison? {
+        guard let pregameTotal, abs(paceTotal - pregameTotal) > 0.5 else { return nil }
+        return PaceComparison(difference: paceTotal - pregameTotal, unit: unit)
+    }
+
+    /// The number as it has always printed: "+12.3", "-28.9".
+    var signedValue: String {
+        "\(difference > 0 ? "+" : "")\(String(format: "%.1f", difference))"
+    }
+
+    /// One sentence for VoiceOver in place of three fragments:
+    /// "Pace projects 28.9 fewer points than the pre-game expectation."
+    var spokenLabel: String {
+        let amount = String(format: "%.1f", abs(difference))
+        guard unit != "scoring" else {
+            return "Pace projects \(amount) \(difference > 0 ? "above" : "below") the pre-game expectation."
+        }
+        return "Pace projects \(amount) \(difference > 0 ? "more" : "fewer") \(unit) than the pre-game expectation."
+    }
+}
+
+/// The comparison drawn inline where its natural width fits, otherwise
+/// stacked: "Pace projects" / the number / the rest of the sentence across
+/// the card. At accessibility sizes it is always stacked. Nothing shrinks,
+/// clamps or truncates.
+struct PaceComparisonLine: View {
+    let comparison: PaceComparison
+    let color: Color
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        Group {
+            if typeSize.isAccessibilitySize {
+                stacked
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    inline
+                    stacked
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(comparison.spokenLabel)
+    }
+
+    private var inline: some View {
+        HStack(spacing: 4) {
+            lead
+            value
+            tail
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var stacked: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            lead
+                .fixedSize(horizontal: false, vertical: true)
+            value
+            tail
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var lead: some View {
+        Text("Pace projects")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+    }
+
+    /// Sign, whole part and decimal stay on one line at their own width.
+    private var value: some View {
+        Text(comparison.signedValue)
+            .font(.caption2.monospacedDigit().weight(.semibold))
+            .foregroundStyle(color)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var tail: some View {
+        Text("vs pre-game expectation.")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
     }
 }

@@ -578,6 +578,7 @@ function SearchContent() {
                   onPinToggle={toggleFuturesPin}
                   pinDisabled={isFuturesMaxReached}
                   games={results.results}
+                  readsOpenFieldOuts
                 />
               </div>
             ))}

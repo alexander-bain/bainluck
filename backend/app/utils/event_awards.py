@@ -22,11 +22,11 @@ Drama Series / Album of the Year / Best Musical) becomes the head-to-head hero
 (TwoSidedTimeline), mirroring a card's "main event".
 
 Honest v1 limitations (design §6 said "fast-follow", so this is deliberately thin):
-  * Award resolution dates on Kalshi are placeholders (Dec 31), so event status is
-    approximate — a graded winner or a price-settled leader flips it to "settled",
-    otherwise "upcoming". This only toggles the settled path chart. The placeholder
-    is NEVER published as the ceremony date (`ceremony_end_date`): status can live
-    with a deadline, a date on the page cannot.
+  * Category completion is independent: only that category's assigned status or
+    authoritative outcome grade settles it. The adapter has no authoritative
+    full-ceremony completion signal, so the parent phase stays unknown. Prices
+    and resolution deadlines never announce a result or complete the ceremony.
+    The placeholder is NEVER published as the ceremony date (`ceremony_end_date`).
   * MatchupsRail shows the top-2 nominees per category (no "+N more"); a 10-nominee
     Best Picture shows its two frontrunners. A richer awards section is a later,
     additive frontend change.
@@ -45,24 +45,34 @@ from app.utils.futures_market_snapshot import concept_price_observed_at_iso
 
 from app.utils.settledness import (
     market_assigned_settled,
-    price_converged,
     settled_under_assigned_state,
 )
 
-# Raw price at/above which a SETTLED marquee nominee is the crowned winner during
-# the is_winner grading-lag window (parity with tennis/f1 — display-only, never
-# authoritative, gotcha #21).
-_WON_PRICE_THRESHOLD = 0.97
-
 # Day-of-year on which a Kalshi award market resolves when the ceremony has no
-# published date: the exchange's end-of-year backstop, not a schedule (gotcha #14,
-# and the status arm below already says so in prose).
+# published date: the exchange's end-of-year backstop, not a schedule (gotcha #14)
+# or a ceremony-completion signal.
 _PLACEHOLDER_RESOLUTION_DAY = (12, 31)
 
 # A category winner market names an award category. Nomination + novelty markets
 # are excluded from this by the checks in `classify_market`.
 _CATEGORY_NAME_RE = re.compile(
     r"\bbest\b|\baward for\b|\bwinner\b|\boutstanding\b", re.IGNORECASE
+)
+
+# A question asking whether someone GETS nominated ("Will X be nominated for Best
+# Actress?") is a nomination market even though it names a "Best" category (#11336).
+# Verb-phrase only: an adjectival "a nominated film" / "most-nominated" or a post-noun
+# "a film nominated for X" in a winner question stays a winner category, so a bare
+# "nominated for" counts only when it opens the title. \b keeps "denominated" out.
+_NOMINATED_RE = re.compile(
+    r"\b(?:be|get|gets|got|is|are)\s+(?:[a-z]+-)?nominated\b|^\s*nominated\s+for\b",
+    re.IGNORECASE,
+)
+# The same verb phrase inside a "that/which" relative clause describes a noun ("a film
+# that is nominated for 10+ Oscars win Best Picture?"), so it is removed before the check.
+_RELATIVE_NOMINATED_RE = re.compile(
+    r"\b(?:that|which)\s+(?:be|get|gets|got|is|are)\s+(?:[a-z]+-)?nominated\b",
+    re.IGNORECASE,
 )
 
 # Leading boilerplate stripped so a category card reads "Best Picture", not
@@ -192,10 +202,9 @@ def ceremony_end_date(resolution_date) -> str | None:
     "Dec 31" on three of the four award pages. Returning None renders nothing,
     which is what we actually know.
 
-    The status arm in `build_event` deliberately keeps reading the raw resolution
-    date — a backstop is still a real upper bound on when the race must be over,
-    so it remains usable for settled/upcoming even though it is unusable as a
-    displayed date."""
+    A deadline also cannot establish completion in `build_event`: the result of
+    one category, or the exchange's resolve-by instant, says nothing authoritative
+    about whether every award in the ceremony has been announced."""
     if resolution_date is None:
         return None
     try:
@@ -210,11 +219,13 @@ def classify_market(external_id: str | None, name: str | None) -> str:
     """Classify an award market: "category" (a co-equal winner category),
     "nominations" (who gets nominated), or "novelty" (attendance/most-wins/etc.).
 
-    Nominations win first (ticker "NOM" or name says nomination/nominee); then a
-    real award category by name; anything else is a novelty prop."""
+    Nominations win first (ticker "NOM" or name says nomination/nominee, or asks
+    whether someone gets nominated); then a real award category by name; anything
+    else is a novelty prop."""
     eid = (external_id or "").upper()
     n = (name or "").lower()
-    if "NOM" in eid or "nomination" in n or "nominee" in n:
+    if ("NOM" in eid or "nomination" in n or "nominee" in n
+            or _NOMINATED_RE.search(_RELATIVE_NOMINATED_RE.sub(" ", n))):
         return "nominations"
     if _CATEGORY_NAME_RE.search(name or ""):
         return "category"
@@ -283,8 +294,6 @@ class AwardsEventAdapter:
     domain = "awards"
 
     async def build_event(self, slug: str, db: AsyncSession) -> dict | None:
-        from datetime import datetime, timezone
-
         from app.models import FuturesMarket
         from app.utils.outcome_display import (
             is_field_outcome,
@@ -295,8 +304,6 @@ class AwardsEventAdapter:
         cfg, want_year = parse_awards_slug(slug)
         if cfg is None:
             return None
-
-        now = datetime.now(timezone.utc)
 
         # All of this ceremony's markets. The KX ticker stem is unambiguous, so
         # match on it directly (no llm_sport_category filter needed) — this also
@@ -395,14 +402,24 @@ class AwardsEventAdapter:
                 and not is_field_outcome(o.name)
                 and not is_placeholder_outcome_name(o.name)
             ]
-            return real[:limit]
+            displayed = real[:limit]
+            # #5349: price-ranked previews can omit the actual winner. Keep every
+            # named authoritative grade from the FULL category, even when its
+            # price is absent or it was outside the nominee/field preview.
+            displayed.extend(
+                o
+                for o in (m.outcomes or [])
+                if o.name
+                and bool(getattr(o, "is_winner", False))
+                and not any(o is shown for shown in displayed)
+            )
+            return displayed
 
         # Marquee competitors (the hero head-to-head + settled crown).
         # #5809: bound to a name so the price-age fold below runs over the SAME
-        # filtered, capped rows the card displays — `_outcomes` drops the
-        # `is_field_outcome` catch-all and every placeholder, and caps at 40, so
-        # `marquee.outcomes` is a different (larger) set that can rank a row no
-        # reader sees.
+        # rows the card displays: `_outcomes` limits the ungraded nominee preview
+        # to40 and preserves authoritative winners outside that preview. The full
+        # `marquee.outcomes` can still rank ungraded rows no reader sees.
         marquee_outcomes = _outcomes(marquee, limit=40)
         competitors = []
         for o in marquee_outcomes:
@@ -418,53 +435,12 @@ class AwardsEventAdapter:
                 }
             )
 
-        # Event status (approximate — Kalshi award dates are placeholders). Settled
-        # if a nominee is graded, the marquee leader is price-settled, or the
-        # resolution date is genuinely in the past.
-        marquee_top = max((c["probability"] or -1) for c in competitors) if competitors else -1
+        # #5349: this adapter holds category markets, not a complete authoritative
+        # ceremony roster/calendar. Even every currently known category being
+        # graded cannot prove the whole ceremony finished. The existing unknown
+        # envelope phase makes no upcoming/live/completed claim at the reader.
+        event_status = "unknown"
         marquee_res = getattr(marquee, "resolution_date", None)
-        event_status = "upcoming"
-        if any(c["won"] for c in competitors):
-            event_status = "settled"
-        elif marquee_res is not None:
-            try:
-                if marquee_res < now:
-                    event_status = "settled"
-            except TypeError:
-                pass
-        if event_status != "settled" and marquee_top >= _WON_PRICE_THRESHOLD:
-            event_status = "settled"
-
-        # #1812: the ASSIGNED half of the above, captured BEFORE the price arm on
-        # the line above can contaminate it. `event_status` is not usable as a
-        # ruling-036 term precisely because that arm makes it price-derived — OR-ing
-        # the whole thing into a child would chain two inferences and introduce a
-        # NEW defect: one runaway favourite (a lock for Best Picture) would mark
-        # every other category settled while they are genuinely undecided.
-        # Monotonicity protects the direction, never the truth of the input.
-        #
-        # A graded marquee is authoritative (`is_winner`, gotcha #21) and a ceremony
-        # is ATOMIC IN TIME — one night, one venue, every category awarded together
-        # — so it legitimately settles siblings. The resolution-date arm is
-        # deliberately NOT promoted: this module's own comment above calls Kalshi
-        # award dates placeholders, and L2-88 is the precedent for what a trusted
-        # placeholder date does (it settled a tennis final that was still being
-        # played).
-        #
-        # THE LINE POSITION IS LOAD-BEARING, in both directions. Above it, the price
-        # arm has already contaminated `event_status` (line 375) but not `won`.
-        # BELOW it, the crown block writes `won = True` onto a price-settled leader
-        # — so reading `any(c["won"])` after that block would silently re-admit the
-        # very inference this term exists to exclude. Captured here, between the
-        # two, it is `is_winner` and nothing else. Do not move it.
-        ceremony_graded = any(c["won"] for c in competitors)
-
-        # Crown the price-settled marquee leader during the grading-lag window
-        # (read the RAW price before normalize dilutes it — parity with tennis/f1).
-        if event_status == "settled" and not any(c["won"] for c in competitors):
-            top = max(competitors, key=lambda c: (c["probability"] or -1), default=None)
-            if top is not None and (top["probability"] or 0) >= _WON_PRICE_THRESHOLD:
-                top["won"] = True
 
         normalize_display_probs(competitors)
         competitors.sort(key=lambda c: (c["probability"] or -1), reverse=True)
@@ -476,25 +452,29 @@ class AwardsEventAdapter:
                 if outs and outs[0].current_probability is not None
                 else None
             )
-            # #1812: assigned state beats inferred (ruling 036). A category that
-            # went to a genuine toss-up never converges, so it is exactly the one
-            # left rendering a live ladder after the ceremony. `ceremony_graded` is
-            # the atomic-in-time term; the market's own status/grade is the precise
-            # per-child one. OR-ed, never substituted — an upcoming ceremony has
-            # both False and this is bit-for-bit the old inference.
+            # #5349: own assigned state dominates; another category's grade and
+            # this category's price cannot announce its result. Read all outcomes,
+            # not the preview, so an actual winner beyond the slice still settles.
             settled = settled_under_assigned_state(
-                inferred=price_converged(lead_prob),
-                assigned_settled=ceremony_graded or market_assigned_settled(m, outs),
+                inferred=False,
+                assigned_settled=market_assigned_settled(m),
             )
+            winners = [
+                o.name
+                for o in (m.outcomes or [])
+                if o.name and bool(getattr(o, "is_winner", False))
+            ]
             row = {
                 "market_id": m.id,
                 "market_name": clean_category_label(m.name),
                 "source": m.source,  # data-only (audit); not rendered
                 "settled": settled,
+                "graded_winner": winners[0] if len(winners) == 1 else None,
                 "probability": lead_prob,
                 "outcomes": [
                     {
                         "name": o.name,
+                        "won": bool(getattr(o, "is_winner", False)),
                         "probability": (
                             round(float(o.current_probability), 4)
                             if o.current_probability is not None
@@ -518,7 +498,9 @@ class AwardsEventAdapter:
             key=lambda c: (c["market_id"] != marquee.id, -(c["probability"] or 0))
         )
         nom_children = [_child(m, kind="prop", prop_type="nominations") for m in nominations]
-        nov_children = [_child(m, kind="prop", prop_type="occurrence") for m in novelties]
+        nov_children = [
+            _child(m, kind="prop", prop_type="occurrence") for m in novelties
+        ]
         children = cat_children + nom_children + nov_children
 
         sections = [
@@ -530,7 +512,13 @@ class AwardsEventAdapter:
         ]
         prop_ids = [c["market_id"] for c in nom_children + nov_children]
         if prop_ids:
-            sections.append({"type": "props", "label": "Nominations & props", "market_ids": prop_ids})
+            sections.append(
+                {
+                    "type": "props",
+                    "label": "Nominations & props",
+                    "market_ids": prop_ids,
+                }
+            )
 
         year_suffix = f"-20{chosen_year:02d}" if chosen_year is not None else ""
         return {

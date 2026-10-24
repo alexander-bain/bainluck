@@ -160,6 +160,8 @@ describe("#3973 — a narrow market is drawn, not flattened", () => {
 });
 
 describe("#3973 — the axis still says what it always said", () => {
+  const yTickValues = (html: string) =>
+    [...html.matchAll(/data-axis-value="(\d+(?:\.\d+)?)"/g)].map((m) => Number(m[1]));
   const yTickLabels = (html: string) =>
     [...html.matchAll(/class="recharts-text recharts-cartesian-axis-tick-value"[^>]*text-anchor="end"[^>]*>.*?<tspan[^>]*>([^<]*)<\/tspan>/g)]
       .map((m) => m[1]);
@@ -169,7 +171,10 @@ describe("#3973 — the axis still says what it always said", () => {
     // here, and so does any rule that forgets a blowout is allowed to look like
     // one.
     const html = render(wander(400, 8, 92));
-    expect(yTickLabels(html)).toEqual(["0%", "25%", "50%", "75%", "100%"]);
+    expect(yTickValues(html)).toEqual([0, 25, 50, 75, 100]);
+    // #11356 — the team-to-team frame: the bottom of a full axis is the away
+    // side at 100%, the middle 50/50, the top the home side at 100%.
+    expect(yTickLabels(html)).toEqual(["100%", "75%", "50%", "75%", "100%"]);
   });
 
   test("a narrow market's labels read as probabilities, not as a redrawn scale", () => {

@@ -75,7 +75,9 @@ describe("#920 actual published observations reach the main chart", () => {
     expect(page).toContain(": finishedChartFrames(admittedChartRef.current, eventId, event, servedHistory);");
     expect(page).toContain("const observed = appendAdmittedSourceObservations(servedHistory, admittedChartRef.current, event);");
     expect(page).toContain("const pushed = mergeLiveChartHistory(observed, frames);");
-    expect(page.match(/aggregateLine=\{historyData\?\.aggregate_line \?\? undefined\}/g)).toHaveLength(2);
+    expect(page.match(/aggregateLine=\{previewChartLine\}/g)).toHaveLength(2);
+    expect(page).toContain("const previewChartLine = useMemo(() => overlayBlendPreviewLine(");
+    expect(page).toContain("event, blendPreview, blendPreviewNow, historyData?.aggregate_line ?? undefined,");
     expect(hook).toContain("rememberLiveChartFrame");
     expect(hook).toContain("chartEventId === eventId");
   });

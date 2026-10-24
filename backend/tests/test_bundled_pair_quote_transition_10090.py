@@ -19,6 +19,11 @@ def consumer(s=None,*,ticker_ids=None,event_ids=None,refresher=None):
     ns=dict(vars(K));ns['_kalshi_yes_probability']=_kalshi_yes_probability
     ns.update(game_clients=clients,ticker_to_ids=ticker_ids,prices=NS(settled_market_ids=set()),primary_quote_custody=c,tail_receipts=NS(note_raw=lambda *a:None,note_input=lambda *a:None),ticker_owner={},open_contract_ids={},event_id_by_outcome=event_ids,buffer_lock=asyncio.Lock(),price_buffer={},input_marks={},blend_refresher=r,non_blend_outcome_ids=set(),flush_wake=asyncio.Event(),winner_quoted_at={},live_event_ids=set(event_ids.values()),admission_wake=asyncio.Event())
     old.nested('_parse_dollar',ns)
+    # Extract the real observation helpers with their shared closure state;
+    # default DNPL exercises these on every accepted/refused ticker.
+    ns['observation_continuity']={}
+    for name in ('steady_book_signature','observation_signature','note_observation_continuity'):
+        old.nested(name,ns)
     handle=old.nested('handle_ticker',ns);proof=old.nested('steady_primary_input',ns)
     r.require_current_book_proof=True;r.current_book_midpoint=s.current_book_midpoint;r.current_book_primary_price=s.current_book_primary_price;r.current_primary_input=proof
     return s,c,r,handle,proof,ns
