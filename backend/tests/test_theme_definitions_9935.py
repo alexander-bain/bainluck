@@ -103,8 +103,9 @@ class TestRegistryAndSlugs:
         assert AI.container_kind == "theme" and AI.category == "ai"
         assert OSCARS_2027.display_name == "Oscars 2027"
         assert OSCARS_2027.rule_version == "oscars-edition@1"
-        # @2 (#9936): clause 3's unknown-time verdict no longer retires a standing member
-        assert AI.rule_version == "ai-subject@2"
+        # @2 (#9936): clause 3's unknown-time verdict no longer retires a standing member.
+        # @3 (#9925): clause 1 reads GPT on its own word, with or without a version.
+        assert AI.rule_version == "ai-subject@3"
 
     @pytest.mark.parametrize("slug", sorted(REGISTRY))
     def test_every_registered_slug_round_trips(self, slug):
@@ -425,7 +426,7 @@ class TestVenueEventTitle:
 
 
 # ---------------------------------------------------------------------------
-# ai-subject@2
+# ai-subject@3
 # ---------------------------------------------------------------------------
 
 
@@ -489,6 +490,107 @@ class TestAiEntity:
     def test_gemini_context_elsewhere_in_the_name_does_not_count(self):
         d = ai(mk(990035, "Gemini exchange app adds pro tier for XRP?", cat="economics"))
         assert d.reason == td.LEXICAL_FALSE_FRIEND
+
+
+
+class TestAiGptModelFamily9925:
+    """@3 (#9925): GPT names a model family on its own word. @2 required a digit
+    after it, so "What will GPT Sol's output token price hit in 2026?" (62178321)
+    sat in the Discover AI group while the AI collection gathered nothing for it
+    and the group could never link. The term is a word rule, never a list of
+    model names: an invented name passes the same way a shipped one does."""
+
+    GATHER = re.compile(td.AI_ENTITY_PG.replace(r"\y", r"\b"), re.IGNORECASE)
+
+    # (name, expected clause-1 hits). Unnumbered and spaced names are the new
+    # class; fused and hyphenated versions are the @2 behaviour kept byte-for-byte.
+    POSITIVES = [
+        ("What will GPT Sol's output token price hit in 2026?", ["gpt"]),
+        ("GPT 5.5 tops LMArena in November?", ["gpt"]),
+        ("Will OpenAI release GPT Zephyr before 2027?", ["openai", "gpt"]),
+        ("GPT5 released before 2027?", ["gpt5"]),
+        ("Will GPT-4o top LMArena?", ["gpt-4o"]),
+        ("GPT-4.5 released before 2027?", ["gpt-4"]),
+        ("GPT-6-luna price cut before 2027?", ["gpt-6"]),
+    ]
+
+    @pytest.mark.parametrize("name,hits", POSITIVES)
+    def test_gpt_on_its_own_word_is_admitted_and_gathered(self, name, hits):
+        d = ai(mk(990060, name, cat="tech"))
+        assert (d.outcome, d.reason, d.edge_class) == (
+            "admitted", td.ADMITTED_ENTITY_SIGNAL, "side_question")
+        assert clause(d, "entity")["input"] == {"hits": hits, "denied": []}
+        assert d.rule_version == "ai-subject@3"
+        assert self.GATHER.search(name)
+
+    def test_gpt_fused_into_another_word_is_not_a_term(self):
+        for name in ("GPTZero valuation tops $1B?", "Will SGPT close above $10?"):
+            d = ai(mk(990070, name, cat="tech"))
+            assert (d.outcome, d.reason) == ("excluded", td.NOT_THIS_SUBJECT), name
+            assert not self.GATHER.search(name), name
+
+    def test_chatgpt_is_still_its_own_term_and_is_not_counted_twice(self):
+        d = ai(mk(990071, "ChatGPT tops App Store on Friday?", cat="tech"))
+        assert clause(d, "entity")["input"]["hits"] == ["chatgpt"]
+
+    def test_an_unnumbered_gpt_row_still_needs_its_second_signal(self):
+        d = ai(mk(990072, "What will GPT Sol's output token price hit in 2026?", cat="sports"))
+        assert (d.outcome, d.reason) == ("excluded", td.WRONG_CATEGORY)
+
+    def test_an_unnumbered_gpt_row_still_retires_by_its_settled_clock(self):
+        name = "What will GPT Sol's output token price hit in 2026?"
+        beyond = mk(990073, name, cat="tech", status="resolved",
+                    settled_at=NOW - timedelta(days=15))
+        unknown = mk(990074, name, cat="tech", status="resolved", settled_at=None)
+        within = mk(990075, name, cat="tech", status="resolved",
+                    settled_at=NOW - timedelta(days=2))
+        assert ai(beyond).reason == td.RESOLVED_BEYOND_RETENTION
+        assert ai(unknown).reason == td.RESOLVED_SETTLE_TIME_UNKNOWN
+        assert ai(within).reason == td.ADMITTED_ENTITY_SIGNAL
+
+    CORPUS = [
+        *(n for n, _ in POSITIVES),
+        "GPTZero valuation tops $1B?",
+        "ChatGPT tops App Store on Friday?",
+        "Claude Monet's artwork break auction record?",
+        "Claude Debussy streams top 1B?",
+        "Claude 6 released before 2027?",
+        "Gemini exchange app adds pro tier for XRP?",
+        "Google Gemini 3 released before 2027?",
+        "Best AI model at the end of October?",
+        "Top AI models by Oct 31",
+        "Will DeepSeek release R3?",
+        "OpenAI IPO before 2027?",
+        "Fed cuts rates in December?",
+    ]
+
+    def test_the_gather_offers_exactly_the_rows_clause_one_reads(self):
+        """A row the gather never offers has no decision row and no evidence; a
+        row decide() reads as no-entity would be gathered for nothing. Every row
+        is gathered iff clause 1 saw a term (an admitting OR a denied one)."""
+        for i, name in enumerate(self.CORPUS):
+            d = ai(mk(990080 + i, name, cat="tech"))
+            assert bool(self.GATHER.search(name)) == (d.reason != td.NOT_THIS_SUBJECT), name
+
+    def test_every_row_the_feed_groups_as_ai_is_admitted_or_a_named_false_friend(self):
+        """The Discover AI group (``story:ai``) and the collection read one
+        subject. The only feed rows the collection refuses are the deliberate
+        near-misses, refused as lexical false friends — so their group links
+        nowhere, which is correct; nothing is refused as "no AI term at all"."""
+        from app.utils.feed_market_quality import _story_key
+
+        refused = {}
+        for i, name in enumerate(self.CORPUS):
+            if _story_key(name, "tech") != "story:ai":
+                continue
+            d = ai(mk(990100 + i, name, cat="tech"))
+            if not d.admitted:
+                refused[name] = d.reason
+        assert refused == {
+            "Claude Debussy streams top 1B?": td.LEXICAL_FALSE_FRIEND,
+            "Gemini exchange app adds pro tier for XRP?": td.LEXICAL_FALSE_FRIEND,
+        }
+        assert _story_key("What will GPT Sol's output token price hit in 2026?", "tech") == "story:ai"
 
 
 class TestAiRetention:
@@ -734,7 +836,7 @@ def test_9936_the_pass_only_reasons_are_pinned_and_never_decided():
     unknown = ai(mk(5, "DeepSeek R3 released?", cat="tech", status="resolved", settled_at=None))
     assert (unknown.outcome, unknown.reason, unknown.edge_class) == (
         "excluded", td.RESOLVED_SETTLE_TIME_UNKNOWN, None)
-    assert unknown.rule_version == "ai-subject@2"
+    assert unknown.rule_version == "ai-subject@3"
 
 
 def test_reason_vocabulary_is_closed_and_disjoint():
