@@ -16,8 +16,12 @@ probability 0.995, american_odds -19900. `get_related_events` built its
 
   * **SPECIMEN, END TO END**: production's shape (legs written 182 days ago, the
     venue's "over" marker 48 days ago, a Discover LLM write 1 hour ago, the fleet
-    observed now) through the REAL `_page_withheld_outcome_ids`. Both rows serve
-    `probability: None` and `american_odds: None`.
+    observed now) through the REAL `_page_withheld_outcome_ids`. Second half
+    (v5913, shopper): nulling the number left last season's names under "Each
+    team's leading player", so the strip serves NO events and the page renders
+    no section.
+  * **ONE TEAM REFUSED**: that team leaves the game row and the event read; the
+    shown team keeps its row.
   * **CONTROL**: the identical board with no venue marker is acquitted by the
     parent clause and keeps its prices, so the arm above is the stopped-board
     rule firing, not a route that blanks everything.
@@ -78,6 +82,7 @@ class _Session:
         self._market = market
         self._events = events
         self.unexpected = []
+        self.event_statements = []
 
     async def execute(self, statement):
         cols = getattr(statement, "column_descriptions", None) or []
@@ -86,6 +91,7 @@ class _Session:
         if entities == {FuturesMarket}:
             return _Result([self._market])
         if entities == {Event}:
+            self.event_statements.append(statement)
             return _Result(self._events)
         if entities == {Team}:
             return _Result([(t.id, t.name) for t in (HAWKS, ROCKETS)])
@@ -140,19 +146,41 @@ async def _linked(market):
 
 
 @pytest.mark.asyncio
-async def test_the_specimen_serves_no_price_for_a_board_its_page_refuses():
-    rows, session = await _linked(_mip(marker=True))
+async def test_the_specimen_serves_no_strip_for_a_board_its_page_refuses():
+    session = _Session(_mip(marker=True), _rockets_at_hawks())
+    payload = await get_related_events(412, db=session)
 
-    hawks = rows["home"]
-    assert hawks["outcome_id"] == 4664
-    assert hawks["probability"] is None, (
-        f"Games This Week serves {hawks['probability']} for Alexander-Walker on a "
-        "board /api/futures/412 withholds: the strip printed '>99%' (#11579)"
+    assert payload["events"] == [], (
+        f"Games This Week serves {payload['events']} on a board /api/futures/412 "
+        "withholds: the strip printed last season's 'leading player' names under "
+        "'No current prices' (#11579)"
     )
-    assert hawks["american_odds"] is None
-    assert rows["away"]["probability"] is None
-    assert rows["away"]["american_odds"] is None
+    assert payload["total_count"] == 0
+    assert session.event_statements == [], "no shown team, so no event read"
     assert session.unexpected == []
+
+
+@pytest.mark.asyncio
+async def test_a_team_whose_every_leg_is_refused_drops_out_of_the_game_row(monkeypatch):
+    async def _refuse_the_hawks(db, market):
+        return {4664}
+
+    monkeypatch.setattr(league_futures, "_page_withheld_outcome_ids", _refuse_the_hawks)
+
+    rows, session = await _linked(_mip(marker=False))
+
+    assert set(rows) == {"away"}, (
+        f"the Hawks row is still served as {rows.get('home')} with every Hawks leg refused"
+    )
+    assert rows["away"]["outcome_name"] == "Reed Sheppard"
+    assert rows["away"]["probability"] == pytest.approx(0.01)
+    (statement,) = session.event_statements
+    sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
+    assert str(ROCKETS.id) in sql
+    assert str(HAWKS.id) not in sql, (
+        "the event read is still keyed by a team with nothing shown, so a game only "
+        "that team plays can take a card slot"
+    )
 
 
 @pytest.mark.asyncio
