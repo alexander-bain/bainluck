@@ -661,7 +661,20 @@ def test_the_bank_never_promotes_a_row_the_writers_left_silent():
     """
     market = _Market(1, "m", [], bank={"7": _cell(0.79)})
     assert dated_movement_points(market, 7, 0.70, None, now=NOW) is None
-    assert dated_movement_points(market, 7, 0.70, 0.0, now=NOW) is None
+
+
+def test_a_stored_zero_is_a_dated_claim_since_2408():
+    """#2408: outside DataGolf the column is a DATED move, so 0 is a measured
+    flat day — a claim the reader dates off the bank — and only NULL is silent.
+
+    This assertion used to sit in the test above as "0.0 stays silent too",
+    written when the shared writers stored per-write deltas and 0 meant an
+    unchanged poll. The selection question that test guards moved upstream:
+    statement A11 now decides which rows carry a claim, from the same basis the
+    bank holds; the reader still never promotes a NULL.
+    """
+    market = _Market(1, "m", [], bank={"7": _cell(0.79)})
+    assert dated_movement_points(market, 7, 0.70, 0.0, now=NOW) == pytest.approx(-0.09)
 
 
 def test_a_market_with_no_metadata_column_at_all_is_excluded_not_crashed():

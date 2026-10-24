@@ -48,6 +48,7 @@ from app.utils.kalshi_occurrence_start import (  # noqa: E402  # CERT-3342/3344 
     kalshi_derivative_series_excess,
     kalshi_occurrence_hour_is_recoverable,
 )
+from app.utils.movement_basis import carried_change_value  # #2408
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 from app.utils.settled_price import (  # noqa: E402  # #5246
@@ -2351,8 +2352,13 @@ async def _poll_kalshi_markets(event_ticker: Optional[str] = None):
                             "current_yes_bid": market.yes_bid,
                             "current_yes_ask": market.yes_ask,
                             "rank": rank,
-                            "probability_change_24h": prob
-                            - FuturesOutcome.current_probability,
+                            # #2408: a dated move, carried (`movement_basis`).
+                            "probability_change_24h": carried_change_value(
+                                FuturesOutcome.probability_change_24h,
+                                FuturesOutcome.current_probability,
+                                FuturesOutcome.last_updated,
+                                prob,
+                            ),
                             "rank_change_24h": FuturesOutcome.rank - rank,
                             "last_updated": func.now(),
                             # #2024. `last_updated` still records that the poll
