@@ -4734,14 +4734,17 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     )
                     if traced is not None:
                         stage_trace.chunk_end(traced, wrote)
-                    # A completed write has advanced last_updated. Sample
-                    # AFTER it, for FUTURE inputs, never to re-date this batch.
+                    # A proven returned clock already bounds future inputs.
+                    # Otherwise start a completed cohort's display work before
+                    # the optional sample; failed/held writes keep their order.
                     write_clock_ready = (
                         held_quotes is not None
                         and getattr(wrote, "clock_owner", None) is held_quotes
                         and getattr(blend_refresher, "held_quotes", None) is held_quotes
                     )
-                    if held_quotes is not None and not final and not write_clock_ready:
+                    clock_needed = held_quotes is not None and not final and not write_clock_ready
+                    clock_after_delivery = clock_needed and bool(wrote)
+                    if clock_needed and not clock_after_delivery:
                         await held_quotes.sample_database_clock(get_task_session)
                     # Only a completed unchanged acknowledgement establishes
                     # continuity. A price/heartbeat write still owes its stamp;
@@ -4944,6 +4947,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                      and headline_event_ids.get(oid) is not None]
                             refresh_events.difference_update(admitted)
                             if not ready:
+                                if clock_after_delivery:
+                                    await held_quotes.sample_database_clock(get_task_session)
                                 continue
                             admitting = getattr(blend_refresher, "admitting", None)
                             keep_owed = getattr(blend_refresher, "keep_owed", None)
@@ -4960,10 +4965,17 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                            if oid in batch_marks
                                            and oid not in headline_event_ids.non_speakers],
                                 )
+                                if clock_after_delivery:
+                                    await held_quotes.sample_database_clock(get_task_session)
                                 continue
                         # Refused by a call that no longer admits (it is ending):
                         # the previous joined path. No second mutable refresher
-                        # call runs beside it.
+                        # call runs beside it. Preserve clock recovery before
+                        # an older stamp that must be joined can hold this cohort.
+                        if (clock_after_delivery and stamp_owner.task is not None
+                                and not stamp_owner.task.done()):
+                            await held_quotes.sample_database_clock(get_task_session)
+                            clock_after_delivery = False
                         await stamp_done()
                         tail_receipts.stage(
                             [batch_marks[oid] for oid in ready if oid in batch_marks
@@ -4987,6 +4999,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         # staged receipts and asks for its connection before
                         # the next write.
                         await asyncio.sleep(0)
+                    if clock_after_delivery:
+                        await held_quotes.sample_database_clock(get_task_session)
             except asyncio.CancelledError:
                 # A recycle mid-batch cancels the persistent owner and joins
                 # it before this interrupted batch ends. The refresher's cancellation path keeps
