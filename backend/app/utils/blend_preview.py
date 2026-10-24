@@ -911,6 +911,7 @@ class _Pending:
     since: float
     # Local hint only: unknown, refused, or accepted for this ledger chain.
     ledger_admission: str = "unknown"
+    ledger_open_attempt: int = 0  # newest recovery dispatch; older refusals cannot rearm it
 
 
 @dataclass
@@ -1743,6 +1744,7 @@ class LedgerRegistry(PreviewRegistry):
             stamped_at=stamped_at, seq=local_seq,
             since=prior.since if prior is not None else self._clock(),
             ledger_admission=prior.ledger_admission if prior is not None else "unknown",
+            ledger_open_attempt=prior.ledger_open_attempt if prior is not None else 0,
         )
         return [{"ledger_op": "propose", "event_id": int(event_id), "source": source,
                  "mode": mode, "chain": chain, "local_seq": local_seq, "ctx_rev": ctx_rev,
@@ -1927,6 +1929,11 @@ class LedgerRegistry(PreviewRegistry):
                 # returned. Only confirmed non-admission permits a fresh open;
                 # preserve the original ticket, chain and Redis guards.
                 op = {**op, "mode": "open"}
+                # Spend this proof before I/O. A lost reply is ambiguous, not
+                # permission to reopen after expiry/pruning. Older no_base
+                # replies may not restore the consumed permission either.
+                entry.ledger_admission = "unknown"
+                entry.ledger_open_attempt = op["local_seq"]
             reply = await self._eval(
                 call, "propose", *common, op["mode"], op["chain"], op["local_seq"],
                 op["ctx_rev"], int(self.max_uncommitted_s * 1000), LEDGER_MAX_EVENTS,
@@ -2025,7 +2032,8 @@ class LedgerRegistry(PreviewRegistry):
                 self._forget(event_id, source)
             elif (status == "no_base" and op["mode"] == "open" and entry is not None
                   and self._chains.get((event_id, source)) == op["chain"]
-                  and entry.ledger_admission != "accepted"):
+                  and entry.ledger_admission != "accepted"
+                  and op["local_seq"] >= entry.ledger_open_attempt):
                 # Preserve the newer value/sequence while recording that its
                 # inherited chain never opened. A delayed refusal cannot undo
                 # an accepted acknowledgement or affect a replacement chain.

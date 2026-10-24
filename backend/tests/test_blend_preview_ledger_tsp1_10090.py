@@ -1022,6 +1022,41 @@ async def test_overlapping_recovery_lost_ack_keeps_original_expiry(rig):
     assert _propose(rig.k, "kalshi", .7, basis_s=5) == []
 
 
+@pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+@pytest.mark.parametrize("late_original_refusal", [False, True])
+async def test_overlapping_lost_ack_after_expiry_and_prune_never_reopens(rig, late_original_refusal):
+    old, newer = await _refused_open_with_queued_successor(rig)
+
+    async def lost_reply(*args):
+        reply = await rig.call(*args)
+        assert reply[0] == b"ok"
+        raise TimeoutError("accepted recovery reply lost")
+
+    async def delayed_old_reply(*args):
+        # This is the actual Redis refusal, held while the recovery is sent.
+        reply = await rig.call(*args)
+        assert reply[0] == b"no_base"
+        with pytest.raises(TimeoutError):
+            await rig.k.prepare(newer, lost_reply, rig.stats)
+        return reply
+
+    if late_original_refusal:
+        assert await rig.k.prepare(old, delayed_old_reply, rig.stats) == []
+    else:
+        with pytest.raises(TimeoutError):
+            await rig.k.prepare(newer, lost_reply, rig.stats)
+    assert (await rig.hget(f"e:{EV}:m:kalshi")).split()[3] == "1060000"
+    await rig.clock(1_060_001)
+    assert len(_blends(await rig.run(rig.p, _propose(rig.p, "polymarket", .4)))) == 1
+    assert await rig.hget(f"e:{EV}:m:kalshi") is None
+    before = await rig.hget(f"e:{EV}:m:polymarket")
+    assert await rig.run(rig.k, newer) == [], "an ambiguous open may not resurrect its expired chain"
+    assert await rig.hget(f"e:{EV}:m:kalshi") is None
+    assert await rig.hget(f"e:{EV}:m:polymarket") == before
+    assert rig.k._events[EV].expired["kalshi"] == .7
+    assert _propose(rig.k, "kalshi", .7, basis_s=3) == []
+
+
 async def test_overlapping_recovery_never_uses_old_owner_or_erases_replacement(rig):
     _, newer = await _refused_open_with_queued_successor(rig)
     replacement = rig.registry()
