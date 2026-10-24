@@ -836,6 +836,12 @@ export interface TeamPropFamiliesResponse {
   team: { id: number; name: string; slug: string | null };
   families: PropFamily[];
   total_families: number;
+  // #2311: roster names the player-prop search covered, of how many the roster
+  // holds. Absent for rosterless teams. Read it through `propRosterCoverage`
+  // (lib/propRosterCoverage.ts), which validates it, never directly.
+  roster_search?: { searched: number; total: number; truncated: boolean };
+  // LAT-P138 envelope; absent on a build that lost every branch.
+  cache?: { quality?: string; availability?: string; created_at?: string };
 }
 
 export async function fetchTeamPropFamilies(

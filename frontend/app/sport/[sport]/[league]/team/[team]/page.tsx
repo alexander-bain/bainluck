@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { fetchTeamPage, fetchChampionshipGrid, fetchTeamPropFamilies } from "@/lib/api";
-import type { TeamPageResponse, PropFamily } from "@/lib/api";
+import { fetchTeamPage, fetchChampionshipGrid } from "@/lib/api";
+import type { TeamPageResponse } from "@/lib/api";
 import type { ChampionshipGridResponse } from "@/lib/types";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import { useTeamPropRaces } from "@/hooks/useTeamPropRaces";
 import { getSiteUrl } from "@/lib/siteUrl";
 import LoadingState from "@/components/LoadingState";
 import { teamLeagueLabel } from "@/lib/teamLeagueLabel";
@@ -42,7 +43,6 @@ export default function TeamPage() {
 
   const [data, setData] = useState<TeamPageResponse | null>(null);
   const [grid, setGrid] = useState<ChampionshipGridResponse | null>(null);
-  const [propFamilies, setPropFamilies] = useState<PropFamily[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // The slug the page ACTUALLY resolved to (#5852): the URL's, or its
@@ -62,7 +62,6 @@ export default function TeamPage() {
     setLoading(true);
     setError(null);
     setGrid(null);
-    setPropFamilies([]);
     setResolvedSlug(teamSlug);
     resolveTeamForRoute(teamSlug, sport, league, fetchTeamPage)
       .then((result) => {
@@ -102,23 +101,9 @@ export default function TeamPage() {
     };
   }, [data?.team?.sport_key]);
 
-  // Prop families (L2-167): a team's futures/prop markets grouped into cohort
-  // races (Next Team, awards, ladders). Supplementary + best-effort — an
-  // empty/failed payload simply hides the Prop Races section. Sparse teams yield
-  // zero families and the card never renders.
-  useEffect(() => {
-    let cancelled = false;
-    fetchTeamPropFamilies(resolvedSlug)
-      .then((result) => {
-        if (!cancelled) setPropFamilies(result.families || []);
-      })
-      .catch(() => {
-        if (!cancelled) setPropFamilies([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [resolvedSlug]);
+  // Prop families (L2-167) plus the roster coverage they were found under
+  // (#2311), keyed on the resolved slug; see the hook for the reset contract.
+  const propRaces = useTeamPropRaces(resolvedSlug);
 
   // Document title
   useEffect(() => {
@@ -413,7 +398,8 @@ export default function TeamPage() {
       {/* Prop Races — cohort-compare cards (Next Team, awards, ladders). Renders
           nothing on sparse teams (component hides when no >=2-entity family). */}
       <TeamPropFamilies
-        families={propFamilies}
+        families={propRaces.families}
+        rosterCoverage={propRaces.coverage}
         teamColor={team.primary_color}
         teamName={team.name}
       />

@@ -5,6 +5,7 @@ import EntityImage from "@/components/EntityImage";
 import { formatProbabilityPercent, NO_READING } from "@/lib/probabilityDisplay";
 import { labelNamesSide } from "@/lib/eventOwnMoneyline";
 import type { PropFamily, PropFamilyRow } from "@/lib/api";
+import { propRosterCoverageNote, type PropRosterCoverage } from "@/lib/propRosterCoverage";
 
 // ---------------------------------------------------------------------------
 // Prop-family cohort card (L2-167 Item 1) — the cohort-compare kernel's first
@@ -231,21 +232,44 @@ export function TeamPropFamilies({
   families,
   teamColor,
   teamName = null,
+  rosterCoverage = null,
 }: {
   families: PropFamily[];
   teamColor: string | null;
   teamName?: string | null;
+  rosterCoverage?: PropRosterCoverage;
 }) {
   // Defensive: the backend only emits >=2-entity families, but never render a
   // degenerate card if a stale/sparse payload slips a single-entity family through.
   const shown = (families || []).filter((f) => (f.rows?.length ?? 0) >= 2);
   if (shown.length === 0) return null;
 
+  // #2311 — one short caption when the races were found by a capped roster
+  // search; see lib/propRosterCoverage.ts for when it can quote counts. An empty
+  // section stays hidden as before (the return above): with no races there is
+  // nothing to read as complete. The counts also ride as data attributes for
+  // probes, so they never have to be scraped from the sentence.
+  const coverageNote = propRosterCoverageNote(rosterCoverage);
+
   return (
     <section className="mb-8">
-      <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
+      <h2
+        className={`text-xs font-medium text-text-secondary uppercase tracking-wide ${
+          coverageNote ? "mb-1" : "mb-4"
+        }`}
+      >
         Prop Races
       </h2>
+      {coverageNote && (
+        <p
+          className="mb-3 text-[11px] leading-snug text-text-secondary"
+          data-testid="prop-roster-coverage"
+          data-roster-searched={rosterCoverage?.kind === "counted" ? rosterCoverage.searched : undefined}
+          data-roster-total={rosterCoverage?.kind === "counted" ? rosterCoverage.total : undefined}
+        >
+          {coverageNote}
+        </p>
+      )}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         {shown.map((family) => (
           <PropFamilyCard
