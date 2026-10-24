@@ -26,7 +26,7 @@ from sqlalchemy import text
 
 from app.utils import blend_preview
 from app.utils.live_push import event_channel
-from tests.integration.test_dnpl_capacity_lifecycle_10090_pg import capacity  # noqa: F401
+from tests.integration.test_dnpl_capacity_lifecycle_10090_pg import capacity, fresh_event  # noqa: F401
 from tests.integration.test_live_blend_grouped_commit_8129_pg import DB_URL, rig  # noqa: F401
 from tests.test_blend_preview_ledger_tsp1_10090 import BASE10, _ev, redis_kwargs  # noqa: F401
 
@@ -36,7 +36,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.skipif(
 
 L = blend_preview.LEDGER_KEY
 #: The operation is its own RESP bulk string; the script text only contains it quoted.
-OP = re.compile(rb"\r\n\$11\r\nretire_idle\r\n\$\d+\r\n[a-z]+\r\n\$\d+\r\n\d+\r\n\$\d+\r\n(\d+)\r\n")
+OP = re.compile(rb"\r\n\$(?:11|13)\r\n(?:retire_idle|retire_policy)\r\n\$\d+\r\n[a-z]+\r\n\$\d+\r\n\d+\r\n\$\d+\r\n(\d+)\r\n")
 
 
 class HoldingRelay:
@@ -91,13 +91,18 @@ class HoldingRelay:
         await asyncio.gather(up(), down(), return_exceptions=True)
 
 
+@pytest.mark.parametrize("retirement", ["idle", "policy"])
 @pytest.mark.parametrize("failure", ["shutdown", "pass_timeout", "read_connection_error"])
 async def test_post_cancel_late_retire_idle_does_not_remove_a_row_that_went_live(
-        rig, capacity, redis_kwargs, monkeypatch, tmp_path, failure):
+        rig, capacity, redis_kwargs, monkeypatch, tmp_path, failure, retirement):
     worker, registry, client, reads = capacity
     async with rig.engine.begin() as conn:
-        await conn.execute(text("UPDATE events SET status='scheduled', commence_time=NOW()+INTERVAL '8 days'"))
-    for eid in range(1, 513):                        # settled -> idle future-scheduled residency
+        await conn.execute(text("UPDATE events SET status='scheduled', commence_time=NOW()+INTERVAL '2 hours' WHERE id=481"))
+    if retirement == 'idle':
+        async def no_policy(*args):
+            return None
+        monkeypatch.setattr(worker, '_retire_policy_preview_event', no_policy)
+    for eid in [481]:  # Only one idle target; keep its existing upcoming reservation.
         await registry.execute(registry.committed(eid, 'kalshi', seq=registry.pending_seq(eid, 'kalshi'),
                                sources=BASE10, rev=10), client.execute_command, event_channel, worker.preview_stats)
     relay = HoldingRelay(redis_kwargs['unix_socket_path'], str(tmp_path / 'relay.sock'))
@@ -106,11 +111,12 @@ async def test_post_cancel_late_retire_idle_does_not_remove_a_row_that_went_live
     monkeypatch.setattr(worker, '_client', lambda: relayed)
     timing = {}
     hold_entered = asyncio.Event()
-    retire = worker._retire_idle_preview_event
+    retirement_method = '_retire_' + retirement + '_preview_event'
+    retire = getattr(worker, retirement_method)
     async def record_deadline(eid, ticket, deadline_ms, when):
         timing['deadline'] = when
         return await retire(eid, ticket, deadline_ms, when)
-    monkeypatch.setattr(worker, '_retire_idle_preview_event', record_deadline)
+    monkeypatch.setattr(worker, retirement_method, record_deadline)
     hold = worker._hold_idle_proof_until
     async def record_hold(when, error):
         timing['hold_start'] = asyncio.get_running_loop().time()
@@ -175,7 +181,7 @@ async def test_post_cancel_late_retire_idle_does_not_remove_a_row_that_went_live
             'POST-CANCEL: a delayed retire_idle removed residency from a row that went live: '
             + relay.reply[:40].decode(errors='replace'))
         ticket, _ = await registry.read_ticket(client.execute_command, 'kalshi')
-        event = _ev('live'); event.preview_read_ticket = ticket
+        event = await fresh_event(rig, E, ticket)
         frames = await registry.prepare(registry.propose(E, 'kalshi', value=.73, event=event,
                                                          row_sources=BASE10, row_rev=10),
                                         client.execute_command, worker.preview_stats)
@@ -187,8 +193,9 @@ async def test_post_cancel_late_retire_idle_does_not_remove_a_row_that_went_live
         await relayed.aclose()
 
 
+@pytest.mark.parametrize('retirement', ['idle', 'policy'])
 @pytest.mark.parametrize('deadline,status', [(10000, 'late'), (9999, 'late'), (10001, 'ok'), (None, 'malformed')])
-async def test_idle_deadline_exact_redis_clock_boundary(rig, capacity, monkeypatch, deadline, status):
+async def test_idle_deadline_exact_redis_clock_boundary(rig, capacity, monkeypatch, deadline, status, retirement):
     worker, registry, client, _ = capacity
     for eid in range(1, 513):
         await registry.execute(registry.committed(eid, 'kalshi', seq=registry.pending_seq(eid, 'kalshi'),
@@ -200,11 +207,15 @@ async def test_idle_deadline_exact_redis_clock_boundary(rig, capacity, monkeypat
     await client.set(CLOCK_KEY, 10000)
     ticket, _, _, now = await registry.capacity_ticket(client.execute_command, 'kalshi')
     assert now == 10000
+    assert isinstance(registry.capacity_status['shared_ready'], bool)
+    assert isinstance(registry.capacity_status['counts'], (dict, list))
     before = await client.hgetall(L)
     args = ['kalshi', registry.claim_of('kalshi'), 1, ' '.join(registry.sources), 10, ticket]
+    if retirement == 'policy':
+        args.extend([0, int(await client.hget(L, 'e:1:r_clock')) + 1])
     if deadline is not None:
         args.append(deadline)
-    reply = await registry._eval(client.execute_command, 'retire_idle', *args)
+    reply = await registry._eval(client.execute_command, 'retire_' + retirement, *args)
     assert reply[0] == status
     if status == 'ok':
         assert await client.hget(L, 'e:1:gen') is None
@@ -213,11 +224,16 @@ async def test_idle_deadline_exact_redis_clock_boundary(rig, capacity, monkeypat
         assert await client.hgetall(L) == before
 
 
-async def test_elapsed_local_budget_never_sends_idle_eval(rig, capacity, monkeypatch):
+@pytest.mark.parametrize('retirement', ['idle', 'policy'])
+async def test_elapsed_local_budget_never_sends_idle_eval(rig, capacity, monkeypatch, retirement):
     worker, registry, client, _ = capacity
     from app.tasks.live_blend_refresh import PreviewSettlementUncertain
     ticket, _, _, now = await registry.capacity_ticket(client.execute_command, 'kalshi')
-    op = registry.retire_idle(1, 'kalshi', 10, ticket, now + 1000)
+    if retirement == 'idle':
+        op = registry.retire_idle(1, 'kalshi', 10, ticket, now + 1000)
+    else:
+        event = await fresh_event(rig, 1, ticket)
+        op = registry.retire_policy(1, 'kalshi', event, 10, ticket, now + 1000)
     op['send_before'] = asyncio.get_running_loop().time()
     before = await client.hgetall(L)
     with pytest.raises(PreviewSettlementUncertain) as exc:

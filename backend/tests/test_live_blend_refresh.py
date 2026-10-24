@@ -623,7 +623,11 @@ class _RecordingSession:
                        and isinstance(column.element.clause, Null))
         source = (column.element.right.value
                   if hasattr(getattr(column, "element", None), "right") else None)
-        preview = [c.name for c in columns[-2:]] == ["preview_sources", "preview_rev"]
+        preview = [c.name for c in columns[-3:]] == [
+            "preview_sources", "preview_rev", "preview_context_at",
+        ]
+        from datetime import datetime, timezone
+        read_at = datetime.now(timezone.utc)
 
         def field(obj, key):
             raw = getattr(obj, key, None)
@@ -649,7 +653,7 @@ class _RecordingSession:
                     (outcome, PREPARED_OUTCOME_FIELDS),
                 ) for key in fields
             ) + ((deepcopy(getattr(event, "win_probability_sources", None)),
-                  getattr(event, "win_probability_sources_rev", None)) if preview else ())
+                  getattr(event, "win_probability_sources_rev", None), read_at) if preview else ())
             for market, event in self._market_rows
             if wanted is None or event.id in wanted
             for outcome in (
