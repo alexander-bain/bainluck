@@ -883,6 +883,54 @@ def test_nonfinite_decimal_context_remains_unpublishable(value):
     assert blend_preview.LedgerRegistry._base(BASE10, 10, event) == (None, None)
 
 
+@pytest.mark.parametrize("source", ["kalshi", "polymarket"])
+async def test_no_base_open_recovers_on_next_valid_same_value(rig, source, caplog):
+    """A never-admitted proposal must not become an expired accepted chain."""
+    reg = rig.k if source == "kalshi" else rig.p
+    await rig.run(reg, _propose(reg, source, .65, event_id=8))
+    neighbor = await rig.hget(f"e:8:m:{source}")
+    bad = _ev()
+    bad.opening_home_probability = float("nan")
+    ops = reg.propose(
+        EV, source, value=.7, event=bad, row_sources=BASE10, row_rev=10,
+        observed_basis={f"{source}-1": NOW.timestamp() - 29}, stamped_at=_stamp(1))
+    assert ops[0]["base"] is None
+    assert await rig.run(reg, ops) == []
+    assert "status=no_base" in caplog.text  # refusal stays visible
+    assert await rig.hget(f"e:{EV}:gen") is None
+    assert await rig.hget(f"e:8:m:{source}") == neighbor
+
+    frames = _blends(await rig.run(reg, _propose(reg, source, .7, basis_s=2)))
+    assert len(frames) == 1, "next valid same-value input must publish without restart"
+    assert frames[0]["preview"]["pending"][source] == .7
+    assert rig.stats["ledger_refused"] == 1
+    assert source not in reg._events[EV].expired
+    assert await rig.hget(f"e:8:m:{source}") == neighbor
+
+
+async def test_late_no_base_reply_keeps_newer_local_sequence(rig):
+    bad = _ev()
+    bad.opening_home_probability = float("nan")
+    old = rig.k.propose(EV, "kalshi", value=.7, event=bad,
+                        row_sources=BASE10, row_rev=10, stamped_at=_stamp(1))
+    newer = []
+
+    async def delayed_reply(*args):
+        reply = await rig.call(*args)
+        if reply[0] == b"no_base":
+            # A newer input reaches the local registry while this EVAL reply
+            # is delayed. The old refusal must not delete that newer work.
+            newer.extend(_propose(rig.k, "kalshi", .71, basis_s=2))
+        return reply
+
+    assert await rig.k.prepare(old, delayed_reply, rig.stats) == []
+    assert newer
+    pending = rig.k._events[EV].pending["kalshi"]
+    assert pending.seq == newer[0]["local_seq"]
+    assert pending.value == .71
+    assert rig.k._chains[(EV, "kalshi")] == newer[0]["chain"]
+
+
 # --------------------------------------------------------- bounded lifecycle F3
 
 async def _fresh_ops(rig, reg, source, value=.6, *, event_id=EV, rev=10, event=None):
