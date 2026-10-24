@@ -81,6 +81,22 @@ describe("a failed refresh keeps the accepted hub with an honest error", () => {
     expect(next.error).toBe("Couldn't refresh this collection. Showing the last update.");
     expect(cards(frame(W4))).toHaveLength(5);
   });
+  // #9936: an incomplete body at a LATER revision is not the collection. The
+  // reader keeps the exact accepted slug, revision and members, never revision 2.
+  test("an incomplete later revision keeps the accepted revision and its exact cards", async () => {
+    accept();
+    const before = cards(frame(W4));
+    const { sections: _dropped, ...incomplete } = { ...nflHub(), revision: 2 };
+    respond(200, incomplete);
+    const next = await read(W4);
+    expect(next.error).toBe("Couldn't refresh this collection. Showing the last update.");
+    expect(next.hub?.slug).toBe(W4);
+    expect(next.hub?.revision).toBe(1);
+    expect(next.hub?.members.map((m) => m.key)).toEqual(acceptedCollection(W4)?.members.map((m) => m.key));
+    expect(acceptedCollection(W4)?.revision).toBe(1);
+    expect(before).toHaveLength(5);
+    expect(cards(frame(W4))).toEqual(before);
+  });
   test("control: a failed first read with nothing accepted shows the error and no cards", async () => {
     respond(503);
     const next = await read(W4);
