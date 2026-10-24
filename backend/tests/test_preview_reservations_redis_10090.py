@@ -632,3 +632,31 @@ async def test_maintenance_ticket_gateway_emits_without_extra_eval(rig, monkeypa
     [r] = _reservation_receipts(caplog)
     assert r["status"] == "ready" and r["registry_id"] == rig.k._capacity_registry_id
     assert calls == ["EVAL"]
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+async def test_maintenance_receipt_sink_failure_preserves_ticket_outcome(rig, monkeypatch, malformed):
+    import json
+    attempts = []
+
+    def broken_sink(*args, **kwargs):
+        attempts.append(args)
+        raise RuntimeError("receipt sink failed")
+
+    monkeypatch.setattr(bp.logger, "info", broken_sink)
+
+    async def call(*args):
+        reply = await rig.call(*args)
+        if malformed:
+            reply[4] = "not json"
+        return reply
+
+    if malformed:
+        with pytest.raises(json.JSONDecodeError):
+            await rig.k.capacity_ticket(call, "kalshi", maintenance_receipt=True)
+    else:
+        ticket, candidates, idle, redis_ms = await rig.k.capacity_ticket(
+            call, "kalshi", maintenance_receipt=True)
+        assert ticket == 0 and candidates == [] and idle == set() and redis_ms > 0
+        assert rig.k.capacity_status["ready"] is True
+    assert len(attempts) == 1

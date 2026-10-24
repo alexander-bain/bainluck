@@ -1452,6 +1452,14 @@ class LedgerRegistry(PreviewRegistry):
         return result
 
     def _capacity_receipt(self, source, started, sampled_at, sample_seq, status=None, redis_ms=None):
+        # Optional diagnostics cannot turn a valid ticket into a failure or
+        # replace its original parsing/transport error. Cancellation still wins.
+        try:
+            self._emit_capacity_receipt(source, started, sampled_at, sample_seq, status, redis_ms)
+        except Exception:
+            pass
+
+    def _emit_capacity_receipt(self, source, started, sampled_at, sample_seq, status=None, redis_ms=None):
         """One fresh maintenance sample/source/30s; never publish cached status as proof.
 
         The operator must correlate PID/source/registry with the active runner.

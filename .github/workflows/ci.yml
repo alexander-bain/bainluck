@@ -5289,8 +5289,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]148 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row/default-DNPL/reservations gate did not run all 148 cases"
+          grep -qE "[^0-9]150 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row/default-DNPL/reservations gate did not run all 150 cases"
             exit 1
           }
 
