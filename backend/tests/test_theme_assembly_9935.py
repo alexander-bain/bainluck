@@ -1504,7 +1504,7 @@ async def test_9936_b1_a_complete_pass_retires_a_vanished_row_with_evidence(db, 
     assert CLAUDE_6.id not in db.theme_edges("ai")
     row = db.decision("ai", CLAUDE_6.id)
     assert (row["outcome"], row["reason"], row["rule_version"]) == (
-        "excluded", "member_row_absent", "ai-subject@3")
+        "excluded", "member_row_absent", "ai-subject@2")
     assert row["evidence"] == {"local_row": "absent", "observed_by": "prior_decision_arm",
                                "edge_class": "side_question"}
     assert report["receipt"]["retired"] == {"member_row_absent": 1}
@@ -1657,7 +1657,7 @@ async def test_9936_c1_c3_a_member_that_settles_without_a_time_keeps_its_card(db
     assert db.theme_edges("ai")[CLAUDE_6.id] == "side_question"
     row = db.decision("ai", CLAUDE_6.id)
     assert (row["outcome"], row["reason"], row["rule_version"]) == (
-        "admitted", "admitted_settle_time_pending", "ai-subject@3")
+        "admitted", "admitted_settle_time_pending", "ai-subject@2")
     assert row["evidence"]["retained_member"] == {"edge_class": "side_question"}
     rule = row["evidence"]["rule_decision"]
     assert (rule["outcome"], rule["reason"]) == ("excluded", "resolved_settle_time_unknown")

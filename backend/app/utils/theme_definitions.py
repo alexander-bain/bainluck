@@ -17,7 +17,7 @@ What lives here:
 * ``build_theme_slug`` / ``parse_theme_slug`` — the canonical slug and its
   byte-for-byte round-trip parser (§1). P2's ``edition_for_slug`` calls the
   parser after its NFL/MLB branches.
-* ``decide(market, now=...)`` for ``oscars-edition@1`` and ``ai-subject@3``
+* ``decide(market, now=...)`` for ``oscars-edition@1`` and ``ai-subject@2``
   (§3): own-row clauses in order, a closed reason enum and clause-by-clause
   evidence. ``now`` is always explicit.
 * ``candidate_population`` — the §4 gather arms as Core ``select()``
@@ -166,7 +166,7 @@ SWINGS_FEED_KEY = "swings"
 SCOPE_FINITE = "finite"
 SCOPE_CONTINUING = "continuing"
 
-#: Continuing-scope retention (§3 ``ai-subject@3`` clause 3; Discover's N).
+#: Continuing-scope retention (§3 ``ai-subject@2`` clause 3; Discover's N).
 AI_RETENTION_DAYS = 14
 
 # ---------------------------------------------------------------------------
@@ -227,17 +227,13 @@ _OSCAR_TICKER_CATEGORY_KEYWORDS: Mapping[str, re.Pattern] = {
     "VIS": re.compile(r"\bvisual effects?\b", re.IGNORECASE),
 }
 
-#: ``ai-subject@3`` clause 1 terms, shared by ``decide()`` and the §4 gather so the
-#: two can never drift. ``gpt(?:-?\d\w*)?`` and ``ai models?`` keep the trailing word
-#: boundary from dropping "GPT-4o", "GPT5" and "AI models" (Authority review
-#: 5964991446, item 1). @3 (#9925): GPT is a model family on its own word, so a
-#: model with no number ("GPT Sol") or a spaced one ("GPT 5.5") is admitted; @2
-#: required a digit and the Discover AI group carried rows its collection
-#: refused. "GPTZero" is still not a term. ``claude`` carries the #8742 deny
-#: clause; ``gemini`` is gathered here but decided separately, because it counts
-#: only with ADJACENT context.
+#: ``ai-subject@2`` clause 1 terms, shared by ``decide()`` and the §4 gather so the
+#: two can never drift. ``gpt-?\d\w*`` and ``ai models?`` keep the trailing word
+#: boundary from dropping "GPT-4o" and "AI models" (Authority review 5964991446,
+#: item 1). ``claude`` carries the #8742 deny clause; ``gemini`` is gathered here
+#: but decided separately, because it counts only with ADJACENT context.
 _AI_ENTITY_TERMS = (
-    "openai", "anthropic", "claude", r"gpt(?:-?\d\w*)?", "chatgpt", "deepseek", "gemini",
+    "openai", "anthropic", "claude", r"gpt-?\d\w*", "chatgpt", "deepseek", "gemini",
     "grok", "xai", r"ai models?", "best ai", "agi",
 )
 _AI_ENTITY_RE = re.compile(
@@ -471,9 +467,8 @@ def _decide_oscars(defn: "ThemeDefinition", market: Any, *, now: datetime) -> De
 
 
 # ---------------------------------------------------------------------------
-# ai-subject@3 (continuing). @2 (#9936): clause 3's unknown-time verdict no
+# ai-subject@2 (continuing). @2 (#9936): clause 3's unknown-time verdict no
 # longer retires a standing member — the pass retains it (RETAIN_IF_MEMBER_REASONS).
-# @3 (#9925): clause 1 reads GPT on its own word, with or without a version.
 # ---------------------------------------------------------------------------
 
 
@@ -729,7 +724,7 @@ AI = ThemeDefinition(
     subject="ai",
     scope=SCOPE_CONTINUING,
     retention_days=AI_RETENTION_DAYS,
-    rule_version="ai-subject@3",
+    rule_version="ai-subject@2",
     container_kind="theme",
     category="ai",
     display_name="AI",
