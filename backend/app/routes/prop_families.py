@@ -85,12 +85,14 @@ from app.utils.event_concept_cache import (
     ConceptCacheKeys,
     acquire_refresh_lock,
     cache_keys,
+    encode_payload,
     get_client,
     note_build_loss,
     publish_mirror_if_unchanged,
     read_slot,
     read_slot_raw,
     release_refresh_lock,
+    setex_if_unchanged,
     stamp_envelope,
     take_build_quality,
     with_availability,
@@ -1110,6 +1112,14 @@ def _withhold_unscreened(by_market: dict[int, dict], ids: list[int]) -> None:
 def _stored_mirror(rc, keys: ConceptCacheKeys) -> tuple[Any, bool]:
     """The 24h mirror's exact bytes, and whether they hold a COMPLETE answer.
 
+    See `_stored_slot`, which this reads through.
+    """
+    return _stored_slot(rc, keys.stale)
+
+
+def _stored_slot(rc, key: str) -> tuple[Any, bool]:
+    """One slot's exact bytes, and whether they hold a COMPLETE answer.
+
     Both halves come from ONE read, and that is the whole point of the function
     (CERT-480 finding 1). The bytes are what the caller hands to
     `publish_mirror_if_unchanged` as its precondition, so the value that was
@@ -1126,7 +1136,7 @@ def _stored_mirror(rc, keys: ConceptCacheKeys) -> tuple[Any, bool]:
     actually sitting in the slot.
     """
     try:
-        raw, stored = read_slot_raw(rc, keys.stale)
+        raw, stored = read_slot_raw(rc, key)
     except Exception:
         return None, False
     if not isinstance(stored, dict):
@@ -1146,6 +1156,28 @@ def _mirror_is_full(rc, keys: ConceptCacheKeys) -> bool:
     from `_stored_mirror` and let the compare-and-set settle it.
     """
     return _stored_mirror(rc, keys)[1]
+
+
+def _publish_primary_if_unchanged(
+    rc, keys: ConceptCacheKeys, payload: dict, expected: Any
+) -> bool:
+    """Write the 15-minute primary iff it still holds exactly the bytes `expected`.
+
+    The primary-slot twin of `publish_mirror_if_unchanged`, for the partial
+    path only (#2311). `expected` is the `raw` half of `_stored_slot` on
+    `keys.primary` — the bytes the caller judged "not full". Fails closed like
+    the primitive: a declined write leaves the stored value alone.
+    """
+    if rc is None:
+        return False
+    try:
+        encoded = encode_payload(payload)
+    except Exception:
+        logger.warning("prop-families: could not encode primary for %s", keys.primary)
+        return False
+    return setex_if_unchanged(
+        rc, keys.primary, expected, PROP_FAMILIES_PRIMARY_TTL, encoded
+    )
 
 
 async def build_and_cache_prop_families(
@@ -1228,6 +1260,24 @@ async def build_and_cache_prop_families(
         )
         return stamped, True
 
+    # 🔴 #2311 — A PARTIAL NEVER REPLACES A FULL PRIMARY. The table's mirror
+    # rule covered the 24h slot only, so a partial overwrote the 15-minute one
+    # unconditionally. Seahawks, 2026-10-24: a refresh published a
+    # full build at 09:41:51Z, a second refresh (37 s, both roster branches
+    # timed out) published a partial at 09:44:58Z, and readers lost Season
+    # Receiving Yards three minutes into the full build's window. A full primary
+    # ends the rebuild loop just as well as a partial does, so declining here
+    # costs nothing; the write itself is a compare-and-set against the bytes
+    # judged, so a full build landing between the read and the write survives.
+    primary_raw, primary_is_full = _stored_slot(rc, keys.primary)
+    if primary_is_full:
+        logger.info(
+            "prop-families: primary for team %s holds a full build — partial "
+            "declined to replace it (%s)",
+            team_id, ",".join(reasons),
+        )
+        return stamped, False
+
     # 🔴 A DEFERRAL IS AN IOU AND AN IOU DOES NOT GET THE 24-HOUR SLOT (CERT-557).
     # The table above was written when the only way to be `partial` was to lose a
     # branch to the database, and for that case it is still right: a timeout
@@ -1247,23 +1297,17 @@ async def build_and_cache_prop_families(
     if _deferral_reasons(reasons) and not any(
         r.startswith(_REASON_TIMEOUT) for r in reasons
     ):
-        write_payload(
-            rc, keys, stamped, primary_ttl=PROP_FAMILIES_PRIMARY_TTL, mirror=False
-        )
+        _publish_primary_if_unchanged(rc, keys, stamped, primary_raw)
         return stamped, False
 
-    # The primary write is what ends the rebuild loop, so it is unconditional and
-    # goes first. The mirror is the CONTESTED slot: it is settled separately, by a
-    # compare-and-set against the very bytes the read above judged, so that a
-    # complete build landing in between cannot be overwritten (CERT-480 finding 1).
+    # The primary write is what ends the rebuild loop, so it goes first, and it
+    # is withheld only when the primary already holds a full build (above) or
+    # changed under us. The mirror is the CONTESTED slot: it is settled
+    # separately, by a compare-and-set against the very bytes the read above
+    # judged, so that a complete build landing in between cannot be overwritten
+    # (CERT-480 finding 1).
     mirror_raw, mirror_is_full = _stored_mirror(rc, keys)
-    write_payload(
-        rc,
-        keys,
-        stamped,
-        primary_ttl=PROP_FAMILIES_PRIMARY_TTL,
-        mirror=False,
-    )
+    _publish_primary_if_unchanged(rc, keys, stamped, primary_raw)
     if not mirror_is_full and not publish_mirror_if_unchanged(
         rc, keys, stamped, mirror_raw
     ):
