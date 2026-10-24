@@ -768,8 +768,8 @@ enum MarketMapRail {
     /// venue was still trading at **0.9955** printed **100%** under a hero that
     /// said **>99%** (`15317879`, Maldives @ Kyrgyz Republic, live, 2026-09-28).
     /// `formatProbability` is where the app keeps the `<1%` / `>99%` rule, and the
-    /// margin card's own header already went through it (`marginHeadline`); the
-    /// rungs under that header never did.
+    /// margin card's own header already went through it; the rungs under that
+    /// header never did. (#9483 later removed that header.)
     ///
     /// #10830 — `nil` is a rung with no price, and it prints the app's absent
     /// mark rather than a number: the half ladder's "All N lines" reaches every
@@ -1505,6 +1505,35 @@ enum MarketMapRail {
     static func exactMarginLabel(homeAbbr: String, awayAbbr: String, margin: Double) -> String {
         guard margin != 0 else { return tiedMarginLabel }
         return "\(margin > 0 ? homeAbbr : awayAbbr) by \(marginNumber(abs(margin)))"
+    }
+
+    /// #9483 — the live full-game PROJECTION tile's input: the headline's
+    /// admitted in-play pair (`LiveProjectedFinalAdmission2920.Printed`), read
+    /// as a margin. Built only from that pair, so the tile and the headline
+    /// cannot tell two stories.
+    struct LiveMarginForecast: Equatable {
+        /// Home-signed difference of the pair as served (106.0 − 103.6 = 2.4):
+        /// where the marker sits on the rail.
+        let margin: Double
+        /// Home-signed difference of the pair as the headline PRINTS it,
+        /// rounded per side (106 − 104 = 2): what the tile says.
+        let printedMargin: Int
+
+        init(_ printed: LiveProjectedFinalAdmission2920.Printed) {
+            margin = printed.admitted.home - printed.admitted.away
+            printedMargin = printed.home - printed.away
+        }
+    }
+
+    /// `OKC by about 2` — a projected final margin, `Tied` at zero.
+    ///
+    /// Not ``projectedMarginLabel(homeAbbr:awayAbbr:margin:)``'s `by N+`: that
+    /// tile quotes a cover line, and this one states the difference of the two
+    /// projected scores the headline prints. "About" because it is a forecast;
+    /// no `+` because no threshold is meant.
+    static func liveForecastMarginLabel(homeAbbr: String, awayAbbr: String, printedMargin: Int) -> String {
+        guard printedMargin != 0 else { return tiedMarginLabel }
+        return "\(printedMargin > 0 ? homeAbbr : awayAbbr) by about \(abs(printedMargin))"
     }
 
     /// What a margin of zero is called, in one place, so the three sites that

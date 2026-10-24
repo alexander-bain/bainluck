@@ -107,7 +107,19 @@ enum NativeDiscoverDebugState {
 }
 
 struct DiscoverView: View {
-    @StateObject private var vm = DiscoverView.makeViewModel()
+    @StateObject private var vm: DiscoverViewModel
+
+    /// #10878 — the Mac window's kept place for this screen: the feed (the view
+    /// model), the open detail, how many cards were revealed and the scroll
+    /// offset. `nil` everywhere else, which is today's behaviour.
+    private let macPlace: MacReadingPlace<DiscoverViewModel>?
+
+    init(macPlace: MacReadingPlace<DiscoverViewModel>? = nil) {
+        self.macPlace = macPlace
+        _vm = StateObject(wrappedValue: macPlace?.models(orMake: { DiscoverView.makeViewModel() }) ?? DiscoverView.makeViewModel())
+        _visibleCount = State(initialValue: macPlace?.revealedCount ?? 20)
+        _navigationPath = State(initialValue: macPlace?.path ?? NavigationPath())
+    }
 
     /// The view model this launch runs. Production: the ordinary client, network
     /// feed and last-good cache. A DEBUG launch passing `-launch_fixed_feed`
@@ -127,7 +139,7 @@ struct DiscoverView: View {
     @State private var priceViewVisible = false
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
-    @State private var visibleCount = 20
+    @State private var visibleCount: Int
 
     /// Width available to the card area, in points. 0 until the first
     /// geometry pass resolves, which `DiscoverMasonry.columnCount` reads as one
@@ -253,7 +265,7 @@ struct DiscoverView: View {
     @State private var resolutions: [Resolution] = []
     @State private var interactionProfile: DiscoverInteractionProfile?
     @State private var seenImpressions: Set<String> = []
-    @State private var navigationPath = NavigationPath()
+    @State private var navigationPath: NavigationPath
     @State private var showSwipeHint = !UserDefaults.standard.bool(forKey: "discover_swipe_hinted")
     @State private var showChallenge = false
     @State private var challengeIndex = 0
@@ -2044,6 +2056,7 @@ struct DiscoverView: View {
             .frame(maxWidth: contentMaxWidth)
             .frame(maxWidth: .infinity)
         }
+        .macReadingOffset(macPlace)
         // #7074. HOW A REFRESH ENDED, drawn where the reader is looking whichever
         // end of the feed they started it from.
         //
@@ -2134,11 +2147,21 @@ struct DiscoverView: View {
                 // already-populated Discover stamps no new render generation, so
                 // arming it would report a full screen as blank.
                 ScreenTimingSession.armScreen(surface: ScreenTimingSurface.discover)
+                let model = vm
                 #if DEBUG
-                await Self.loadForInitialAppearanceObservingRestoredDeck(vm)
+                let initialLoad: @MainActor () async -> Void = { await Self.loadForInitialAppearanceObservingRestoredDeck(model) }
                 #else
-                await Self.loadForInitialAppearance(vm)
+                let initialLoad: @MainActor () async -> Void = { await Self.loadForInitialAppearance(model) }
                 #endif
+                if let macPlace {
+                    // #10878: the Mac keeps this model while the reader is on
+                    // another screen. Coming back mid-load joins the load already
+                    // running, and a model still running its cold-start recovery
+                    // is left to it — never a second load beside either.
+                    if !vm.isRecovering { await macPlace.runInitialLoad(initialLoad) }
+                } else {
+                    await initialLoad()
+                }
             }
             // Gated with the refresh path's copy (#1472): the only view that
             // reads `resolutions` is the digest card above, and it is behind this
@@ -2160,6 +2183,8 @@ struct DiscoverView: View {
             // actually waited on and never saw a card in.
             ScreenTimingSession.disarmScreen(surface: ScreenTimingSurface.discover)
         }
+        .onChange(of: navigationPath) { _, newPath in macPlace?.path = newPath }
+        .onChange(of: visibleCount) { _, count in macPlace?.revealedCount = count }
         .onChange(of: vm.loading) { _, loading in
             // A load that resolved with no cards KNOWS why, and saying so keeps a
             // legitimate empty state out of the failure bucket.
@@ -2780,7 +2805,7 @@ private struct NativeGroupCard: View {
                 }
             }
 
-            if let footer = DiscoverGroupRows.footerTitle(itemCount: items.count, kind: kind, expanded: expanded) {
+            if let footer = DiscoverGroupRows.footerTitle(memberTypes: items.map(\.type), kind: kind, expanded: expanded) {
                 Divider()
                 Button { withAnimation { expanded = true } } label: {
                     Text(footer)

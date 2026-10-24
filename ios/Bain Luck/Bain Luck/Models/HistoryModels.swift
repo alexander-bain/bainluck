@@ -49,6 +49,8 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable, Equatable {
     /// of the detail hero, and the fold revision that pinned value was computed
     /// from (detail's `blend_fold_revision` twin; null when there is no pin).
     let blendEdgePinned: Bool?
+    /// Observation time behind the synthetic read-time pin, never the pin time.
+    var blendEdgeObservedAt: String? = nil
     let blendEdgeFoldRevision: ServedFoldRevision?
     /// #10090 — `{row_id: rev}` a complete FRESH build read every series it
     /// draws after, for exactly the rows it charts, pinned or not (producer
@@ -264,6 +266,13 @@ nonisolated struct WinProbGameState: Decodable, Sendable, Equatable {
     let inning: Int?
     let homeScore: Int?
     let awayScore: Int?
+    /// #11356 — how the producer timed this reading: `"espn"` (the game clock
+    /// ESPN served) or `"wall_clock"` (the imprecise fallback when the ESPN name
+    /// match fails; `odds_polling.py`). Additive and lenient: absent, null or
+    /// unreadable is nil — never `"wall_clock"` — and can never fail the point,
+    /// its siblings or the response. Read only by
+    /// `OddsChartView.withheldSources9483`.
+    @LenientDecode var timeSource: String? = nil
 }
 
 // MARK: - Win Prob Source Info

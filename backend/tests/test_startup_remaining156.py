@@ -16,6 +16,7 @@ from app.tasks import polymarket_ws as task
 from app.tasks import polymarket_open_contracts as admission
 from app.tasks import live_blend_refresh as blend
 from app.tasks import ws_admission
+from app.utils.repair_lock_budget import SET_STATEMENT_TIMEOUT_SQL
 from tests.test_pm_open_cycle_lifetime_10090 import CatalogRig, until
 from tests.test_ws_consumer_session_lifetime_2471 import (
     _install, _assert_one_lent_engine, _assert_disposed_once_after_last_session,
@@ -23,6 +24,8 @@ from tests.test_ws_consumer_session_lifetime_2471 import (
 from tests.test_ws_flush_retry_q491 import _Result
 from tests.pm_bulk_test_support import price_writes, statement_params
 from tests._kalshi_price_session import is_price_write, returned
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
+from tests._pm_slate_link_read_10663 import answer_slate_link_read
 
 
 def slate(markets):
@@ -84,6 +87,12 @@ class Rig(CatalogRig):
                 session = await original.__aenter__()
                 execute = session.execute
                 async def route(stmt, params=None):
+                    if stmt is task.ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL:
+                        # The recording session's writes are immediate; model
+                        # its default timeout for the writer's restore step.
+                        return SimpleNamespace(scalar_one=lambda: "0")
+                    if stmt is SET_STATEMENT_TIMEOUT_SQL:
+                        return _Result([])
                     sql, bound = str(stmt), stmt.compile().params
                     if isinstance(stmt, Update):
                         values = statement_params(stmt, params)
@@ -102,8 +111,8 @@ class Rig(CatalogRig):
                         if narrow:
                             rig.current = rig.initial
                             rig.calls_log.append("stored_live_select")
-                            return _Result(rig.initial[0])
-                        return _Result(await rig.read_full())
+                            return _Result(answer_slate_link_read(stmt, rig.initial[0]))  # #10663
+                        return _Result(answer_slate_link_read(stmt, await rig.read_full()))
                     if sql == str(admission.open_contract_markets_stmt()):
                         rig.open_reads += 1
                         rig.calls_log.append(f"open:{rig.open_reads}:entered")
@@ -125,7 +134,7 @@ class Rig(CatalogRig):
                     if sql.startswith("SELECT events.id") and "events.completed_at IS NULL" in sql:
                         return SimpleNamespace(scalars=lambda: _Result([907]))
                     if "futures_markets.market_metadata" in sql:
-                        return _Result(rig.current[1])
+                        return _Result(answer_slate_market_read(stmt, rig.current[1]))
                     if sql.startswith("SELECT futures_outcomes.id, futures_outcomes.market_id, futures_outcomes.external_id"):
                         return _Result(rig.current[2])
                     return _Result([])

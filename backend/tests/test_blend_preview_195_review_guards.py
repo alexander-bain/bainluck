@@ -43,8 +43,10 @@ FRESH = datetime.now(timezone.utc).isoformat()
 @pytest.fixture(autouse=True)
 def _fresh_registry(monkeypatch):
     blend_preview.reset_registry_for_tests()
-    monkeypatch.setenv(blend_preview.SOURCE_ENV, "polymarket")
-    monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, ",".join(map(str, range(1, 600))))
+    # Explicit legacy subject: its ordering/fencing regressions remain covered.
+    monkeypatch.setattr(blend_preview, "_REGISTRY", blend_preview.PreviewRegistry())
+    monkeypatch.setattr(blend_preview, "preview_events_for",
+                        lambda source: frozenset(range(1, 600)) if source == "polymarket" else frozenset())
     yield
     blend_preview.reset_registry_for_tests()
 
@@ -343,19 +345,12 @@ class TestR3SettleEveryAttemptedEvent:
         [k] = reg.propose(1, "kalshi", value=0.31, event=_ctx(), row_sources=STORED, row_rev=11)
         assert k["preview"]["pending"] == {"kalshi": 0.31}
 
-    @pytest.mark.parametrize("name,value", [
-        (blend_preview.SOURCE_ENV, None),
-        (blend_preview.SOURCE_ENV, "kalshi"),
-        (blend_preview.EVENT_IDS_ENV, "2,3"),
-    ], ids=["off", "other-arm", "other-events"])
-    async def test_a_withdrawal_outside_the_canary_touches_no_registry(self, monkeypatch, name, value):
+    @pytest.mark.parametrize("scope", [frozenset(), frozenset({2, 3})])
+    async def test_withdrawal_outside_explicit_scope_touches_no_registry(self, monkeypatch, scope):
         from app.tasks import polymarket_ws as pm
         from app.tasks.live_blend_refresh import LiveBlendRefresher
 
-        if value is None:
-            monkeypatch.delenv(name)
-        else:
-            monkeypatch.setenv(name, value)
+        monkeypatch.setattr(blend_preview, "preview_events_for", lambda source: scope)
         blend_preview.registry().propose(
             1, "polymarket", value=0.9, event=_ctx(), row_sources=STORED, row_rev=10)
         r = LiveBlendRefresher("polymarket")

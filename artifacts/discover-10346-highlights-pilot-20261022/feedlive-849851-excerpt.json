@@ -1,0 +1,26 @@
+{
+ "what": "Excerpt of MLB Stats API /api/v1.1/game/849851/feed/live, fetched 2026-10-22T01:42:27Z (file read of the saved response; no re-fetch). Binds event 15319563 to gamePk 849851 and witnesses first pitch and final play.",
+ "source_sha256": "20fce6408363863a827bcd22284820b832c50a2126722a68e4167a8d8df75f1a",
+ "source_bytes": 802822,
+ "gamePk": 849851,
+ "gameType": "F",
+ "scheduled_dateTime": "2026-09-30T00:00:00Z",
+ "officialDate": "2026-09-29",
+ "away": {
+  "id": 111,
+  "name": "Boston Red Sox"
+ },
+ "home": {
+  "id": 147,
+  "name": "New York Yankees"
+ },
+ "venue": "Yankee Stadium",
+ "status": "Final",
+ "final_runs": {
+  "away": 0,
+  "home": 9
+ },
+ "first_pitch_startTime": "2026-09-30T00:15:26.152Z",
+ "final_play_endTime": "2026-09-30T03:16:33.590Z",
+ "final_play": "Willson Contreras strikes out swinging."
+}

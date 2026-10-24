@@ -9,6 +9,10 @@ import {
   EMPTY_BLEND_PREVIEW_READER,
   parseBlendPreview,
   readerAfter,
+  readerAfterCommitFloor,
+  readerAfterPreviewOpen,
+  readerAfterPreviewReset,
+  readerAfterPreviewMembership,
   type BlendPreviewReader,
   type BlendPreviewState,
 } from '@/lib/blendPreview';
@@ -128,7 +132,12 @@ export function useLiveEventStream(
    * the event id and owns the ledger.
    */
   onReconcile?: (control: ReconcileControl) => void,
+  authoritativeMembership?: unknown,
 ): UseLiveEventStreamResult {
+  const memberKeys = authoritativeMembership && typeof authoritativeMembership === 'object' && !Array.isArray(authoritativeMembership)
+    ? Object.keys(authoritativeMembership).sort().join(',') : '';
+  const membershipRef = useRef(authoritativeMembership);
+  membershipRef.current = authoritativeMembership;
   const [frame, setFrame] = useState<LiveFrame | null>(null);
   const [connected, setConnected] = useState(false);
   const [{ chartEventId, points }, setChart] = useState<{
@@ -164,7 +173,14 @@ export function useLiveEventStream(
   }, []);
 
   useEffect(() => {
+    setPreview({ reader: EMPTY_BLEND_PREVIEW_READER, previewNow: 0 });
+  }, [eventId]);
+
+  useEffect(() => {
     setRecovery({ eventId, ordinal: 0 });
+    if (eventId) setPreview(previous => ({
+      reader: readerAfterPreviewMembership(previous.reader, membershipRef.current, eventId), previewNow: Date.now(),
+    }));
     if (!enabled || !eventId || typeof window === 'undefined') {
       setConnected(false);
       setStatus({ statusEventId: eventId, status: 'idle' });
@@ -179,7 +195,7 @@ export function useLiveEventStream(
     const controller = createLiveStreamController({
       open: () =>
         new EventSource(
-          `${API_URL}/api/events/${eventId}/stream`,
+          `${API_URL}/api/events/${eventId}/stream?preview_protocol=folded-v2`,
         ) as unknown as StreamHandle,
       now: () => Date.now(),
       onFrame: (next) => {
@@ -212,6 +228,10 @@ export function useLiveEventStream(
       },
       onReconcile: (control) => {
         if (!mounted.current) return;
+        setPreview(previous => ({
+          reader: readerAfterCommitFloor(previous.reader, control.floor),
+          previewNow: Date.now(),
+        }));
         try {
           onReconcileRef.current?.(control);
         } catch (error) {
@@ -232,11 +252,30 @@ export function useLiveEventStream(
           previewNow: at,
         }));
       },
+      onPreviewFloor: (raw) => {
+        if (!mounted.current) return;
+        try {
+          const packet = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          if (!packet || packet.event_id !== eventId) return;
+          setPreview(previous => ({
+            reader: readerAfterCommitFloor(previous.reader, packet.floor), previewNow: Date.now(),
+          }));
+        } catch {
+          setPreview(previous => ({
+            reader: readerAfterPreviewReset(previous.reader), previewNow: Date.now(),
+          }));
+        }
+      },
+      onPreviewOpen: (raw) => {
+        if (mounted.current) setPreview(previous => ({
+          reader: readerAfterPreviewOpen(previous.reader, raw, eventId), previewNow: Date.now(),
+        }));
+      },
       onPreviewReset: () => {
         // Clears the held preview; keeps the epoch floor (epochs only rise).
         if (mounted.current) {
           setPreview(previous => ({
-            reader: { held: null, epoch: previous.reader.epoch }, previewNow: Date.now(),
+            reader: readerAfterPreviewReset(previous.reader), previewNow: Date.now(),
           }));
         }
       },
@@ -261,9 +300,9 @@ export function useLiveEventStream(
     return () => {
       clearInterval(timer);
       controller.stop();
-      setPreview({ reader: EMPTY_BLEND_PREVIEW_READER, previewNow: 0 });
+      setPreview(previous => ({ reader: readerAfterPreviewReset(previous.reader), previewNow: Date.now() }));
     };
-  }, [eventId, enabled]);
+  }, [eventId, enabled, memberKeys]);
 
   // #10090: re-render once when the held preview's lifetime ends, so an
   // expired provisional value gives way to the committed one without a frame.

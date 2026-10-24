@@ -17,6 +17,33 @@ from tests.test_single_event_commit_10090 import rig as stamp_rig, settle_until
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture
+async def cadence_redis(monkeypatch, private_redis_socket, caplog):
+    """Keep DNPL's real ledger, but never borrow an ambient Redis server.
+
+    Cadence controls fake their database and socket inputs. Their preview
+    boundary must be equally explicit now that DNPL is enabled by default.
+    The shared private-Redis fixture owns server startup before any timed work.
+    """
+    from redis.asyncio import Redis
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    from app.tasks import redis_state
+    from app.utils import blend_preview
+
+    client = Redis(unix_socket_path=str(private_redis_socket))
+    await client.ping()
+    assert isinstance(blend_preview.registry(), blend_preview.LedgerRegistry)
+    monkeypatch.setattr(redis_state, "get_async_redis_client", lambda: client)
+    try:
+        yield client
+        assert not any(
+            record.exc_info and isinstance(record.exc_info[1], (ConnectionError, RedisConnectionError))
+            for record in caplog.get_records("call")
+        ), "the cadence fixture must not depend on a missing external service"
+    finally:
+        await client.aclose()
+
+
 def paired(monkeypatch, *, split=False, fail_last=False, blocked=(1,)):
     x = stamp_rig(monkeypatch, count=2, block=True, blocked=blocked)
     p = pm_rig(

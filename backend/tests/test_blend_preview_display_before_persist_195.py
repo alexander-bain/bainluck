@@ -42,8 +42,10 @@ STORED = {"kalshi": {"value": 0.5, "updated_at": FRESH}}
 @pytest.fixture(autouse=True)
 def _fresh_registry(monkeypatch):
     blend_preview.reset_registry_for_tests()
-    monkeypatch.setenv(blend_preview.SOURCE_ENV, "polymarket")
-    monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, ",".join(map(str, range(1, 600))))
+    # Explicit legacy subject: its ordering/fencing regressions remain covered.
+    monkeypatch.setattr(blend_preview, "_REGISTRY", blend_preview.PreviewRegistry())
+    monkeypatch.setattr(blend_preview, "preview_events_for",
+                        lambda source: frozenset(range(1, 600)) if source == "polymarket" else frozenset())
     yield
     blend_preview.reset_registry_for_tests()
 
@@ -58,7 +60,7 @@ def _expected(stored, source, value, status="live"):
 
 
 class _PreviewSession(_LockedRowSession):
-    """The production read plus the preview arm's two trailing columns."""
+    """The production read with the preview arm's source/revision/clock."""
 
     def __init__(self, market_rows, returned, *, stored, rev, locked=True):
         super().__init__(market_rows, [], returned, locked=locked)
@@ -72,7 +74,8 @@ class _PreviewSession(_LockedRowSession):
             keys = [getattr(c, "key", None) for c in getattr(statement, "selected_columns", ())]
             if "preview_sources" in keys:
                 self.preview_reads += 1
-                result._rows = [tuple(row) + (self.stored, self.stored_rev) for row in result._rows]
+                result._rows = [tuple(row[:-3]) + (self.stored, self.stored_rev, row[-1])
+                                for row in result._rows]
         return result
 
 
@@ -246,37 +249,19 @@ class TestPreviewBeforePersistence:
         assert _blends(previews) == []
 
 
-_OFF = {
-    "no source named": {blend_preview.SOURCE_ENV: None},
-    "the other arm named": {blend_preview.SOURCE_ENV: "kalshi"},
-    "unknown source": {blend_preview.SOURCE_ENV: "espn"},
-    "no events named": {blend_preview.EVENT_IDS_ENV: None},
-    "blank events": {blend_preview.EVENT_IDS_ENV: " "},
-    "malformed list": {blend_preview.EVENT_IDS_ENV: "1,x"},
-    "zero id in list": {blend_preview.EVENT_IDS_ENV: "1,0"},
-    "this event not named": {blend_preview.EVENT_IDS_ENV: "7,8"},
-}
-
-
-class TestDisabledIsUnchanged:
-    @pytest.mark.parametrize("env", list(_OFF.values()), ids=list(_OFF))
-    async def test_disabled_reads_no_extra_columns_and_publishes_no_preview(self, monkeypatch, env):
-        for name, value in env.items():
-            if value is None:
-                monkeypatch.delenv(name)
-            else:
-                monkeypatch.setenv(name, value)
+class TestExcludedSourceIsUnchanged:
+    async def test_excluded_source_reads_no_extra_columns_and_publishes_no_preview(self, monkeypatch):
+        monkeypatch.setattr(blend_preview, "preview_events_for", lambda source: frozenset())
         event, market = _event()
         session = _PreviewSession([(market, event)], None, stored=STORED, rev=10)
         r, committed = _one_event_refresher(monkeypatch, session)
         assert 1 not in r.preview_events
 
-        async def _forbidden(frames):
-            raise AssertionError("no preview publication when disabled")
+        async def forbidden(frames):
+            raise AssertionError("no preview publication for an excluded source")
 
-        monkeypatch.setattr(r, "_publish_previews", _forbidden)
+        monkeypatch.setattr(r, "_publish_previews", forbidden)
         stats = await r.refresh([1])
-
         assert stats["lock_skipped"] == 1
         assert session.preview_reads == 0
         assert committed == []
@@ -438,15 +423,16 @@ class TestStreamForwarding:
         (blend_preview.EVENT_IDS_ENV, "41,43"),
         (blend_preview.EVENT_IDS_ENV, "42,x"),
     ], ids=["no-source", "no-events", "other-events", "malformed"])
-    async def test_disabled_drops_it_so_no_reader_sees_it_as_a_price(self, monkeypatch, name, value):
+    async def test_legacy_rollout_settings_do_not_drop_default_preview(self, monkeypatch, name, value):
         if value is None:
-            monkeypatch.delenv(name)
+            monkeypatch.delenv(name, raising=False)
         else:
             monkeypatch.setenv(name, value)
         committed = self._committed()
-        [chunk] = await self._chunks(
-            monkeypatch, [("live:event:42", self._preview()), ("live:event:42", committed)],
+        [preview, chunk] = await self._chunks(
+            monkeypatch, [("live:event:42", self._preview()), ("live:event:42", committed)], n=2,
         )
+        assert preview.startswith("event: preview\n")
         assert chunk.startswith("event: probability\n")
         assert json.loads(chunk.split("data: ")[1])["rev"] == {"42": 11}
 

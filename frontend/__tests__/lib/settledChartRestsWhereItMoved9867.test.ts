@@ -114,9 +114,12 @@ describe("#9867 — FuturesChart hands the anchor the movement of what it DRAWS"
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
 
-  test("movement is computed from displayedOutcomes on the full-size frame", () => {
+  // #10955: what the chart DRAWS is now `plottedOutcomes` — the displayed legs
+  // with settlement points split off — so the anchor reads that, not the
+  // unsplit list whose settlement stamps the plot no longer places.
+  test("movement is computed from the drawn (plottedOutcomes) series on the full-size frame", () => {
     expect(CODE).toMatch(
-      /seriesMovementMarks\(\s*displayedOutcomes\s*,\s*\{\s*width:\s*FULL_CHART_WIDTH\s*,\s*left:\s*FULL_PADDING\.left\s*,\s*right:\s*FULL_PADDING\.right/,
+      /seriesMovementMarks\(\s*plottedOutcomes\s*,\s*\{\s*width:\s*FULL_CHART_WIDTH\s*,\s*left:\s*FULL_PADDING\.left\s*,\s*right:\s*FULL_PADDING\.right/,
     );
   });
 

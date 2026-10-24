@@ -9,8 +9,10 @@ id). Installed per module or per class in the older listener tests only —
 never globally or from a shared conftest, so the reconcile controls and the
 real PostgreSQL route tests always see the real read and the real frames.
 
-``drop_reconcile=True`` additionally drops reconcile controls from the wire
-(old listeners ignore named events they do not know). Only the modules whose
+``drop_reconcile=True`` additionally drops reconcile and DNPL commit-floor
+controls from the wire (old listeners ignore named events they do not know).
+Default DNPL makes the latter present without an event activation list; real
+fold-preview controls remain covered by test_folded_blend_preview_10090.py. Only the modules whose
 assertions read chunk position ask for it (latest_replay and folded_837 per
 module, and the one folded case in stream_recovery_10666); every
 other legacy module keeps those frames, so cancellation and release run
@@ -44,7 +46,7 @@ def install_legacy_view(monkeypatch, *, drop_reconcile: bool = False) -> None:
         underlying = original(*a, **kw)
         try:
             async for chunk in underlying:
-                if not chunk.startswith("event: reconcile\n"):
+                if not chunk.startswith(("event: reconcile\n", "event: fold_preview_floor\n")):
                     yield chunk
         finally:
             await underlying.aclose()

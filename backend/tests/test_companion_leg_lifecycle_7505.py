@@ -500,6 +500,9 @@ def _settled_event(draxl_won=True):
                 "outcomes": '["Liam Draxl", "Quentin Halys"]',
                 "outcomePrices": f'["{prices[0]}", "{prices[1]}"]',
                 "closed": True,
+                # #698: a settled Gamma leg carries this beside `closed`; the
+                # negRisk arm requires it before it reads a payout.
+                "umaResolutionStatus": "resolved",
             }
         ],
     }
@@ -599,11 +602,18 @@ def _install_settlement(monkeypatch, recorder, event_payload, *, row=None):
             ]
             return _Result(picked[: (p.get("limit") or len(picked))])
         if "UPDATE futures_outcomes" in sql:
-            # the price-sync `text()` statements, one per leg
+            # the price-sync `text()` statements, one per leg — and, since #698,
+            # the negRisk arm's single settling statement, whose grade is a SQL
+            # literal rather than a bind. Read exactly, never by substring of
+            # "true" alone, so a grade the statement does not write is not seen.
             p = params or {}
             cid = p.get("cid")
             if cid in recorder.stored and "price" in p:
                 recorder.prices[cid] = p["price"]
+            if cid in recorder.stored and "SET is_winner = true," in sql:
+                recorder.grades[cid] = True
+            elif cid in recorder.stored and "SET is_winner = false," in sql:
+                recorder.grades[cid] = False
             return MagicMock(rowcount=1 if cid in recorder.stored else 0)
         return MagicMock(rowcount=0)
 
@@ -737,6 +747,7 @@ def _ladder_event():
                 "outcomes": '["Yes", "No"]',
                 "outcomePrices": '["1.0", "0.0"]' if i == 0 else '["0.0", "1.0"]',
                 "closed": True,
+                "umaResolutionStatus": "resolved",
             }
             for i in range(3)
         ],

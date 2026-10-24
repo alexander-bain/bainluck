@@ -21,7 +21,7 @@ import {
 } from "@/lib/probabilityDisplay";
 import { buildDivisionRace } from "@/lib/teamDivisionRace";
 import { teamTextColor } from "@/lib/teamColors";
-import { teamHeadline } from "@/lib/teamHeadline";
+import { decidedHeadlineText, teamHeadline } from "@/lib/teamHeadline";
 import { UpcomingGameCard, RecentGameCard } from "@/components/TeamGameCards";
 import { seasonFuturesRows } from "@/lib/teamSeasonFutures";
 import { TeamChampionshipPath } from "@/components/TeamChampionshipPath";
@@ -319,8 +319,14 @@ export default function TeamPage() {
               {headline.label}
             </span>
             <span
-              className="font-mono font-bold text-3xl leading-none tabular-nums"
-              style={{ color: teamTextColor(team.primary_color) || undefined }}
+              className={`${headline.state ? "" : "font-mono "}font-bold text-3xl leading-none tabular-nums${
+                headline.state === "eliminated" ? " text-text-muted" : ""
+              }`}
+              style={
+                headline.state === "eliminated"
+                  ? undefined
+                  : { color: teamTextColor(team.primary_color) || undefined }
+              }
             >
               {/* #7710 — the loudest instance of the same defect. This 3xl
                   number is the page's signature, and Baltimore's read `0%` in
@@ -328,7 +334,12 @@ export default function TeamPage() {
                   page said the season was over for them and that the price of
                   it being over had moved. Boundary rule, same as every other
                   number on the page. */}
-              {formatProbabilityPercent(headline.probability)}
+              {/* #11493 — a decided question prints the grid's verdict. The
+                  Braves, out in the NLCS, read `<1%` here off a title leg still
+                  trading at 0.001 while their own grid row read out. */}
+              {headline.state
+                ? decidedHeadlineText(headline.state)
+                : formatProbabilityPercent(headline.probability)}
             </span>
             {/* UX-P275: ask the STRING, not the number. `!== 0` let a move that
                 rounds to nothing through, so a 0.0034-point drift printed a

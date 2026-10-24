@@ -601,6 +601,14 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     /// (`format_unsupported`, `no_pregame_reading`, …). Decoded, and rendered
     /// NOWHERE: a card without a forecast looks exactly as it did (notice 34).
     var pregameProjectionUnavailable: String? = nil
+    /// #11296 — the producer's word on what a settled row's actual score
+    /// covers, decoded from `final_score_period`. Its one value is
+    /// `"regulation"` (a soccer match the row's own period says ended at full
+    /// time); extra time, penalties and an unknown finish serve no key. Read
+    /// only through `FinalForecastComparison11296.actualPeriod`, never printed.
+    /// Lenient: a value this build cannot read is nil — it withholds the
+    /// forecast line, never the card.
+    @LenientDecode var finalScorePeriod: String? = nil
     let highlight: Highlight?
     let homeTeamData: TeamData?
     let awayTeamData: TeamData?

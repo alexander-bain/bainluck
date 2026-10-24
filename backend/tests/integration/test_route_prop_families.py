@@ -22,6 +22,51 @@ def _scalars_result(items):
     return result
 
 
+def _routed(team, branches, markets=()):
+    """An `execute` side effect that answers by STATEMENT, not by call order.
+
+    The route issues one `SET LOCAL statement_timeout` per branch and then runs
+    the #8478 price screen, which reloads the family markets by id. A fixed
+    side-effect list modelled none of that, so the list ran out mid-build and the
+    screen raised — and it passed only while a failed screen kept every price.
+    Since #11534 a failed screen withholds what it could not judge, so the
+    screen's reload is answered here with the seeded markets (tight books, which
+    the screen prices) and the test asserts what a real build serves.
+    """
+    pending = list(branches)
+
+    def _execute(stmt, *args, **kwargs):
+        sql = str(stmt)
+        if "statement_timeout" in sql:
+            return MagicMock()
+        if "futures_outcomes" in sql and "futures_markets" in sql:
+            return _scalars_result(pending.pop(0) if pending else [])
+        if "FROM futures_markets" in sql:
+            return _scalars_result(list(markets))
+        if "FROM teams" in sql:
+            return _scalars_result([team])
+        return _scalars_result([])
+
+    return _execute
+
+
+def _screened(market, legs):
+    """`market` as the price screen reloads it: every leg, with a tight book."""
+    outcomes = [
+        SimpleNamespace(
+            id=o.id, name=o.name, current_probability=o.current_probability,
+            current_yes_bid=o.current_probability - 0.01,
+            current_yes_ask=o.current_probability + 0.01,
+            resolution_source=None, is_winner=False, volume_24h=None,
+            volume_24h_at=None, last_updated=None, price_changed_at=None,
+            volume=None, team_id=None,
+        )
+        for o in legs
+    ]
+    return SimpleNamespace(**{**vars(market), "outcomes": outcomes,
+                              "market_type": "field", "event_id": None})
+
+
 def _mock_team(*, team_id=42, slug="lakers", name="Los Angeles Lakers"):
     return SimpleNamespace(
         id=team_id, slug=slug, name=name, roster_players=[],
@@ -65,13 +110,14 @@ class TestPropFamiliesSeeded:
         # branch queries run after the team lookup + statement_timeout. The FK
         # branch returns all rows; the name branches return nothing new (dedup
         # by outcome id keeps the result identical to the pre-split behaviour).
-        mock_db.execute.side_effect = [
-            _scalars_result([team]),   # team lookup
-            MagicMock(),               # SET LOCAL statement_timeout (#1197)
-            _scalars_result(rows),     # branch 1: team_id FK
-            _scalars_result([]),       # branch 2: outcome-name trigram
-            _scalars_result([]),       # branch 3: market-name trigram
-        ]
+        mock_db.execute.side_effect = _routed(
+            team,
+            [rows, [], []],  # FK branch, outcome-name trigram, market-name trigram
+            markets=[
+                _screened(m1, [o for o, m in rows if m is m1]),
+                _screened(m2, [o for o, m in rows if m is m2]),
+            ],
+        )
 
         resp = await client.get("/api/teams/lakers/prop-families")
         assert resp.status_code == 200
@@ -91,13 +137,7 @@ class TestPropFamiliesSeeded:
 
     async def test_empty_when_no_markets(self, client, mock_db):
         team = _mock_team()
-        mock_db.execute.side_effect = [
-            _scalars_result([team]),
-            MagicMock(),               # SET LOCAL statement_timeout (#1197)
-            _scalars_result([]),       # branch 1: team_id FK
-            _scalars_result([]),       # branch 2: outcome-name trigram
-            _scalars_result([]),       # branch 3: market-name trigram
-        ]
+        mock_db.execute.side_effect = _routed(team, [[], [], []])
         resp = await client.get("/api/teams/42/prop-families")
         assert resp.status_code == 200
         body = resp.json()
@@ -119,13 +159,13 @@ class TestPropFamiliesBranchSplit:
         fk_rows = [(_outcome(11, "Lakers", 0.4), m1), (_outcome(12, "Warriors", 0.2), m1)]
         fo_name_rows = [(_outcome(11, "Lakers", 0.4), m1), (_outcome(21, "Suns", 0.5), m2)]
         fm_name_rows = [(_outcome(22, "Rockets", 0.1), m2)]
-        mock_db.execute.side_effect = [
-            _scalars_result([team]),   # team lookup
-            MagicMock(),               # SET LOCAL statement_timeout
-            _scalars_result(fk_rows),      # branch 1: team_id FK
-            _scalars_result(fo_name_rows), # branch 2: outcome-name trigram
-            _scalars_result(fm_name_rows), # branch 3: market-name trigram
-        ]
+        all_rows = fk_rows + fo_name_rows + fm_name_rows
+        legs = {m.id: {o.id: o for o, mm in all_rows if mm is m} for m in (m1, m2)}
+        mock_db.execute.side_effect = _routed(
+            team,
+            [fk_rows, fo_name_rows, fm_name_rows],
+            markets=[_screened(m, list(legs[m.id].values())) for m in (m1, m2)],
+        )
         resp = await client.get("/api/teams/lakers/prop-families")
         assert resp.status_code == 200
         body = resp.json()

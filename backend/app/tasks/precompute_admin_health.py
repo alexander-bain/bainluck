@@ -13,11 +13,13 @@ Redis keys / TTL are shared with the routes:
 - ``bainluck:admin:link_rate``        (ex=3600)
 - ``bainluck:admin:matured_linkage``  (ex=3600)  # Queue #220/221 Item 2
 - ``bainluck:admin:event_source_coverage:v1``     # #847, see the section at the end
+- ``bainluck:admin:schedule_accuracy:14d:v1``     # #847, the last section
 
 The #847 event-source-coverage section is different from the three above in two
 ways that matter: its GET is CACHE-ONLY (no inline fallback, ever), and its
 producer is deliberately INERT — implemented and tested, but registered as no
-task, scheduled by no beat and called by nothing.
+task, scheduled by no beat and called by nothing. The #847 14-day sport-card
+producer in the last section is inert in the same way.
 """
 
 import asyncio
@@ -830,3 +832,138 @@ async def _precompute_admin_event_source_coverage() -> dict:
         "published": True,
         "rows": len(envelope["last_good"]["rows"]) if envelope["last_good"] else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# #847 — the 14-day sport cards for the Correctness Console's Matching tab.
+#
+# THE PRODUCER IS INERT, like the coverage producer above: not a Celery task,
+# in no beat schedule, called by nothing. Only fake sessions and fake Redis
+# ever execute it. The reader and the snapshot contract live beside the legacy
+# route in ``app.routes.admin_events``.
+#
+# One transaction, in this order: ``SET LOCAL statement_timeout = '10s'``
+# (``run_db_panel``), ``SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ
+# ONLY`` (so the legacy calculation's two grouped counts read ONE snapshot), a
+# settings read that proves both took, then ``_compute_schedule_accuracy(db,
+# days=14, now=as_of)`` exactly once and unchanged. ``run_db_panel`` rolls back
+# on success and on error.
+#
+# A failed run publishes NOTHING: the earlier snapshot keeps its own bytes and
+# its own expiry, so a failure can neither replace it with an empty or partial
+# result nor make it look newer. The run's return value says what failed.
+#
+# Owed before activation, and not decided here: statement cost/plan, cadence,
+# retention (``SCHEDULE_ACCURACY_RETAIN_SECONDS`` is a placeholder equal to
+# this module's TTL), and a single publisher — nothing here stops two
+# overlapping runs from racing their SETs, so one beat entry must be the only
+# writer.
+# ---------------------------------------------------------------------------
+
+SCHEDULE_ACCURACY_RETAIN_SECONDS = _ADMIN_HEALTH_CACHE_TTL
+_SCHEDULE_ACCURACY_TRANSACTION_SQL = (
+    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+)
+_SCHEDULE_ACCURACY_SETTINGS_SQL = (
+    "SELECT current_setting('transaction_isolation') AS isolation, "
+    "current_setting('transaction_read_only') AS read_only"
+)
+
+
+def _schedule_accuracy_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+async def _precompute_admin_schedule_accuracy() -> dict:
+    """Observe the 14-day sport cards once and publish them. INERT — see above."""
+    from app.routes.admin_events import (
+        SCHEDULE_ACCURACY_CACHE_KEY,
+        SCHEDULE_ACCURACY_DAYS,
+        SCHEDULE_ACCURACY_MAX_BYTES,
+        SCHEDULE_ACCURACY_SNAPSHOT_VERSION,
+        SCHEDULE_ACCURACY_WINDOW_COLUMN,
+        _compute_schedule_accuracy,
+        check_schedule_accuracy_snapshot,
+    )
+    from app.tasks.base import get_task_session
+    from app.tasks.redis_state import get_redis_client
+    from app.utils.admin_dashboard import _PANEL_STATEMENT_TIMEOUT, run_db_panel
+    from app.utils.saved_snapshot_read import SavedPayloadInvalid, strict_loads
+    from sqlalchemy import text
+
+    captured: dict[str, Any] = {}
+
+    async def _observe(db):
+        try:
+            await db.execute(text(_SCHEDULE_ACCURACY_TRANSACTION_SQL))
+            as_of = _schedule_accuracy_now()
+            settings = (await db.execute(text(_SCHEDULE_ACCURACY_SETTINGS_SQL))).one()
+            accuracy = await _compute_schedule_accuracy(db, days=SCHEDULE_ACCURACY_DAYS, now=as_of)
+            finished = _schedule_accuracy_now()
+        except Exception as exc:
+            captured["exc"] = exc
+            raise
+        return as_of, settings, accuracy, finished
+
+    def _refused(error: dict) -> dict:
+        logger.warning("schedule-accuracy snapshot not published (%s/%s)", error["kind"], error["code"])
+        return {"status": "error", "error": error, "published": False}
+
+    observed = None
+    try:
+        async with get_task_session() as db:
+            observed = await run_db_panel(
+                db, "schedule_accuracy_14d", lambda: _observe(db),
+                on_error=lambda _msg: None,
+                statement_timeout=_PANEL_STATEMENT_TIMEOUT,
+            )
+    except Exception as exc:  # noqa: BLE001 — session open/close failure
+        captured.setdefault("exc", exc)
+        observed = None
+    if observed is None:
+        return _refused(_classify_db_error(captured.get("exc") or RuntimeError()))
+
+    as_of, settings, accuracy, finished = observed
+    snapshot = {
+        "schema_version": SCHEDULE_ACCURACY_SNAPSHOT_VERSION,
+        "generated_at": _iso(as_of),
+        "as_of": _iso(as_of),
+        "observation_finished_at": _iso(finished),
+        "window": {
+            "column": SCHEDULE_ACCURACY_WINDOW_COLUMN,
+            "days": SCHEDULE_ACCURACY_DAYS,
+            "start": _iso(as_of - timedelta(days=SCHEDULE_ACCURACY_DAYS)),
+            "start_inclusive": True,
+            "end": None,
+        },
+        "transaction": {
+            "isolation": getattr(settings, "isolation", None),
+            "read_only": getattr(settings, "read_only", None) == "on",
+        },
+        "accuracy": accuracy,
+    }
+    try:
+        # NOT sort_keys: the legacy payload's sport order is part of it.
+        raw = json.dumps(snapshot, separators=(",", ":"), allow_nan=False)
+        # The reader's own contract, on the exact bytes a reader would get.
+        check_schedule_accuracy_snapshot(strict_loads(raw))
+    except SavedPayloadInvalid as exc:
+        return _refused({"kind": "malformed_result", "code": exc.reason})
+    except (TypeError, ValueError):
+        return _refused({"kind": "malformed_result", "code": "not_serializable"})
+    if len(raw.encode("utf-8")) > SCHEDULE_ACCURACY_MAX_BYTES:
+        return _refused({"kind": "malformed_result", "code": "exceeds_read_bound"})
+    # The key lives only as long as the observation it carries, from as_of.
+    ttl = math.ceil(
+        (as_of + timedelta(seconds=SCHEDULE_ACCURACY_RETAIN_SECONDS) - _schedule_accuracy_now())
+        .total_seconds()
+    )
+    if ttl <= 0:
+        return _refused({"kind": "malformed_result", "code": "observation_outlived_retention"})
+    try:
+        await asyncio.to_thread(get_redis_client().set, SCHEDULE_ACCURACY_CACHE_KEY, raw, ex=ttl)
+    except Exception:  # noqa: BLE001
+        # Readers keep seeing whatever was there before. Say so here instead.
+        return _refused({"kind": "cache_publish_error", "code": "redis_set_failed"})
+    logger.info("Cached admin schedule-accuracy 14d snapshot (sports=%d)", len(accuracy["sports"]))
+    return {"status": "ok", "error": None, "published": True, "sports": len(accuracy["sports"])}

@@ -7,6 +7,14 @@ import re
 from datetime import datetime
 from typing import Any
 
+from app.utils.congress_control_story import (
+    US_CONGRESS_CONTROL_QUESTION,
+    US_CONGRESS_CONTROL_TITLE,
+    congress_control_bundle_members,
+    congress_control_story_key_for_item,
+    has_congress_control_story_prefix,
+    is_congress_control_story_key,
+)
 from app.utils.feed_market_quality import GOLF_TOURNAMENT_STORY_PREFIX
 from app.utils.feed_market_quality import UFC_EVENT_STORY_PREFIX
 from app.utils.feed_market_quality import _story_key as compute_story_key
@@ -202,6 +210,8 @@ def _resolve_story_title(story_key: str) -> tuple[str, str]:
     — and every reader of this function treats it exactly as it treats
     ``fallback``, so naming one of these keys moves a string and nothing else.
     """
+    if is_congress_control_story_key(story_key):
+        return US_CONGRESS_CONTROL_TITLE, "authored"
     authored = AUTHORED_STORY_TITLES.get(story_key)
     if authored:
         return authored, "authored"
@@ -315,6 +325,8 @@ def resolve_story_question(
     a group asserting a common question that does not exist. No shared phrase
     means no question means no bundle.
     """
+    if is_congress_control_story_key(story_key):
+        return US_CONGRESS_CONTROL_QUESTION, "authored"
     authored = AUTHORED_STORY_QUESTIONS.get(story_key)
     if authored:
         return authored, "authored"
@@ -708,9 +720,13 @@ def _theme_story_key(item: dict[str, Any]) -> str | None:
     data = _futures_data(item)
     if not data:
         return None
+    congress_key = congress_control_story_key_for_item(item)
+    if congress_key is not None:
+        return congress_key
     carried = item.get("_quality_story_key")
     if isinstance(carried, str) and carried.startswith("story:"):
-        return carried
+        if not has_congress_control_story_prefix(carried):
+            return carried
     name = str(data.get("name") or "")
     if not name:
         return None
@@ -951,7 +967,11 @@ _CANDIDACY_NOT_VICTORY_RE = re.compile(
 
 def _story_question_promises_a_winner(story_key: str) -> bool:
     """Whether this family's AUTHORED sentence promises the reader a winner."""
-    authored = AUTHORED_STORY_QUESTIONS.get(story_key)
+    authored = (
+        US_CONGRESS_CONTROL_QUESTION
+        if is_congress_control_story_key(story_key)
+        else AUTHORED_STORY_QUESTIONS.get(story_key)
+    )
     return bool(authored and _VICTORY_QUESTION_RE.search(authored))
 
 
@@ -1128,6 +1148,9 @@ def _make_theme_bundle_item(
     # Members ranked by feed score (most feed-worthy leads the mini-ranked-peek);
     # the bundle competes for ONE slot scored by its best member.
     ranked = sorted(items, key=lambda it: float(it.get("score") or 0), reverse=True)
+    if is_congress_control_story_key(story_key):
+        if congress_control_bundle_members(story_key, ranked) is None:
+            return None
     score = max(float(item.get("score") or 0) for item in ranked)
     sort_time = max(float(item.get("_sort_time") or 0) for item in ranked)
     label, title_source = _resolve_story_title(story_key)
@@ -1288,13 +1311,53 @@ _FIELD_MIN_PRICED = 3
 _FIELD_MIN_SHARED = 2
 
 
+#: Central-bank rate-decision outcome synonyms (#4082). Kalshi's FOMC board
+#: (``KXFEDDECISION-*``) names its legs "Hike 25bps", "Fed maintains rate",
+#: "Hike >25bps", "Cut 25bps", "Cut >25bps"; Polymarket's FOMC board (event
+#: 27824) names its legs "25 bps increase", "No change", "50+ bps increase",
+#: "25 bps decrease", "50+ bps decrease". Under the venues' own rules
+#: ``50+ bps`` is equivalent to ``>25bps``: Kalshi ``KXFEDDECISION`` carries
+#: ``custom_strike`` ``>25`` ("a 50-basis-point hike resolves Hike >25 to Yes"),
+#: and Polymarket event 27824 rounds any unlisted change UP to the nearest 25
+#: bps (whereas an exact ``50 bps`` leg is ``(25, 50]``, not ``(25, inf)``, and
+#: is excluded). This alias table is a Removal-3 GATE signal only, never a price
+#: join — even ``25 bps decrease`` <-> ``Cut 25bps`` differ for a sub-25 move
+#: under Polymarket's round-up rule.
+_RATE_DECISION_OUTCOME_ALIASES: dict[str, str] = {
+    "fed maintains rate": "no change",
+    "maintain current rate": "no change",
+    "unchanged": "no change",
+    "25 bps increase": "hike 25bps",
+    "25bps increase": "hike 25bps",
+    "hike 25 bps": "hike 25bps",
+    "raise 25bps": "hike 25bps",
+    "raise 25 bps": "hike 25bps",
+    "25 bps decrease": "cut 25bps",
+    "25bps decrease": "cut 25bps",
+    "cut 25 bps": "cut 25bps",
+    "lower 25bps": "cut 25bps",
+    "lower 25 bps": "cut 25bps",
+    "50+ bps increase": "hike >25bps",
+    "50+bps increase": "hike >25bps",
+    "hike more than 25bps": "hike >25bps",
+    "50+ bps decrease": "cut >25bps",
+    "50+bps decrease": "cut >25bps",
+    "cut more than 25bps": "cut >25bps",
+}
+
+
+def _canonical_outcome_name(raw: Any) -> str:
+    name = str(raw or "").strip().lower()
+    return _RATE_DECISION_OUTCOME_ALIASES.get(name, name)
+
+
 def _priced_leader(data: dict[str, Any]) -> str | None:
     """The name of the highest-priced outcome, lowercased, or None."""
     best: tuple[float, str] | None = None
     for outcome in data.get("top_outcomes") or ():
         if not isinstance(outcome, dict) or outcome.get("probability") is None:
             continue
-        name = str(outcome.get("name") or "").strip().lower()
+        name = _canonical_outcome_name(outcome.get("name"))
         if not name:
             continue
         try:
@@ -1344,6 +1407,47 @@ _CEREMONY_PLURAL_RE = re.compile(
     r"\b(oscar|grammy|emmy|tony|golden globe|bafta)s\b", re.IGNORECASE
 )
 
+#: Standard English month abbreviations (#4082). Kalshi's FOMC board writes
+#: "Fed decision in Sep 2026?" ("Jul", "Oct", "Nov", "Dec") where Polymarket
+#: writes "Fed Decision in September?" ("July", "October", "November",
+#: "December"). Expanded pairwise — ONLY when the other title already spells the
+#: same month out in full — so a title whose partner does not name that full
+#: month is untouched.
+_MONTH_ABBREV_TO_FULL: dict[str, str] = {
+    "jan": "January",
+    "feb": "February",
+    "mar": "March",
+    "apr": "April",
+    "jun": "June",
+    "jul": "July",
+    "aug": "August",
+    "sep": "September",
+    "sept": "September",
+    "oct": "October",
+    "nov": "November",
+    "dec": "December",
+}
+_MONTH_ABBREV_RE = re.compile(
+    r"\b(" + "|".join(_MONTH_ABBREV_TO_FULL) + r")\.?(?=\s|[?.,;:!)]|$)",
+    re.IGNORECASE,
+)
+
+
+def _expand_shared_month_abbreviations(title: str, other_title: str) -> str:
+    """Expand a month abbreviation in ``title`` only when ``other_title`` names
+    that same month in full (#4082)."""
+    if not title or not other_title:
+        return title
+    other_lower = other_title.lower()
+
+    def _replace(match: re.Match[str]) -> str:
+        full = _MONTH_ABBREV_TO_FULL[match.group(1).lower()]
+        if re.search(rf"\b{full.lower()}\b", other_lower):
+            return full
+        return match.group(0)
+
+    return _MONTH_ABBREV_RE.sub(_replace, title)
+
 
 def _priced_outcome_names(data: dict[str, Any]) -> frozenset[str]:
     """The names of the outcomes a card actually PRICES, lowercased (#6537).
@@ -1358,7 +1462,7 @@ def _priced_outcome_names(data: dict[str, Any]) -> frozenset[str]:
     for outcome in data.get("top_outcomes") or ():
         if not isinstance(outcome, dict) or outcome.get("probability") is None:
             continue
-        name = str(outcome.get("name") or "").strip().lower()
+        name = _canonical_outcome_name(outcome.get("name"))
         if name:
             names.add(name)
     return frozenset(names)
@@ -1431,6 +1535,22 @@ def _comparison_title(data: dict[str, Any], other: dict[str, Any]) -> str:
        below the near arm's 3, so the prefilter still never hides a pair this
        rewrite lets the matcher pair.
 
+    5. **A month abbreviation whose partner spells that same month out in full,
+       when both rows resolve inside one cycle** (#4082): ``Sep`` -> ``September``
+       when the other title already contains ``September`` and
+       :func:`_resolve_within_one_cycle` holds ("Fed decision in Sep 2026?"
+       beside "Fed Decision in September?"). Pairwise and resolution-gated, so a
+       title whose partner names a different month, no month at all, or resolves
+       in a different year ("Fed decision in Sep?" 2026 beside "Fed Decision in
+       September?" 2027) is untouched. Note on the prefilter bound:
+       ``could_be_same_question`` documents the ceremony plural as one
+       substitution; month expansion is a second substitution and can rewrite
+       two or more tokens when a title names multiple abbreviated months ("Sep
+       or Oct" -> "September or October"), so Removal 5 relies on the raw titles
+       already sharing at least two non-month tokens (such as ``fed`` and
+       ``decision``) to pass ``could_be_same_question``'s 2-token floor before
+       ``_comparison_title`` runs.
+
     WHY THIS IS NOT A THRESHOLD MOVE, measured on the 23 same-bundle pairs served
     on page one at 13:30 PT 2026-09-09:
 
@@ -1482,6 +1602,8 @@ def _comparison_title(data: dict[str, Any], other: dict[str, Any]) -> str:
             ):
                 title = _ANY_YEAR_RE.sub("", title).strip()
 
+    if _resolve_within_one_cycle(data, other):
+        title = _expand_shared_month_abbreviations(title, other_stripped)
     return _CEREMONY_PLURAL_RE.sub(lambda m: m.group(1), title)
 
 
@@ -1773,11 +1895,21 @@ def assemble_story_theme_bundles(
         # cap so a duplicate does not spend a member slot the next distinct
         # question could have had.
         members, folded = _dedupe_same_question_members(members)
+        if is_congress_control_story_key(story_key):
+            verified_members = congress_control_bundle_members(
+                story_key, members, folded
+            )
+            if verified_members is None:
+                continue
+            members = verified_members
         if len(members) < min_items:
             continue
         chosen = members[:max_items_per_bundle]
         if len(chosen) < min_items:
             continue
+        if is_congress_control_story_key(story_key):
+            if congress_control_bundle_members(story_key, chosen, folded) is None:
+                continue
         bundle = _make_theme_bundle_item(story_key, chosen)
         if bundle is None:
             # No statable shared question — leave the members unfolded rather

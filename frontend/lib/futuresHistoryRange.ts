@@ -211,7 +211,7 @@ export function rangeCoverageNote(
   // Round both before comparing: a sub-hour difference is not a widening, and
   // reporting "showing 7 days" against a requested 7 days is noise, not truth.
   if (Math.round(actualHours) <= Math.round(requestedHours)) return null;
-  return `Too few prices in ${spanWords(requestedHours)} — showing ${spanWords(actualHours)}.`;
+  return `Limited history for ${spanWords(requestedHours)} — showing ${spanWords(actualHours)}.`;
 }
 
 /**

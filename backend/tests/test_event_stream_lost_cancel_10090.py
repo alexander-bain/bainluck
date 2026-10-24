@@ -323,7 +323,9 @@ class TestAStreamNobodyLeftKeepsRunning:
             await gone.wait()
             return {"type": "http.disconnect"}
 
-        request = Request({"type": "http", "method": "GET", "headers": []}, receive)
+        request = Request(
+            {"type": "http", "method": "GET", "headers": [], "query_string": b""}, receive,
+        )
         reader = _Reader(4704, request)
         await reader.opened()
         await asyncio.sleep(0.4)  # ~8 passes, each probing the disconnect

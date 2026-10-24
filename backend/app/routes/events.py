@@ -72,7 +72,7 @@ from app.utils.game_market_club_names import (
     repair_card_club_names,
     repair_club_names,
 )
-from app.utils.market_staleness import unobserved_board_keys
+from app.utils.market_staleness import board_touched_at, unobserved_board_keys
 from app.utils.nation_flags import flag_nation
 from app.utils.series_card_labels import (
     market_threshold_label,
@@ -86,6 +86,13 @@ from app.utils.sport_keys import NON_SPORT_LLM_CATEGORIES, SPORT_PREFIX_TO_LLM_C
 # imports it under the same alias for the same reason (#6256).
 from app.utils.futures_market_snapshot import (
     outcome_prints_a_price as _outcome_prints_a_price,
+)
+from app.utils.card_projected_pair import (
+    LIVE_PROJECTION_KEY,
+    attach_card_projected_pair,
+    card_projection_read_timeout_ms,
+    event_live_projection,
+    own_event_rows,
 )
 from app.utils.pregame_projection import (
     attach_pregame_projection,
@@ -4922,6 +4929,18 @@ def _compose_futures_families(
 
 _SEARCH_TS_CONFIG_SQL = literal_column("'english'")
 _SEARCH_EVENT_TEAM_WEIGHT = "A"
+
+#: #10769: the futures pools' `status = 'open'`, rendered INLINE rather than bound.
+#: The reader runs these arms through asyncpg as prepared statements, where
+#: `status == "open"` becomes `status = $1::VARCHAR`; once Postgres keeps a
+#: generic plan it cannot prove `$1` implies the open-only partial's
+#: `WHERE status = 'open'`, so the arm falls back to the whole-table
+#: `ix_futures_name_trgm` and scans the settled tail. A fixed constant keeps
+#: `ix_futures_name_trgm_open` eligible under generic and custom plans alike;
+#: same truth value, no caller input. (#4506 measured this class on the
+#: last-match arm.) Not covered here: `ix_futures_name_fts_open`'s expression,
+#: whose `coalesce(name, '')` default the arm also binds.
+_FUTURES_OPEN_STATUS_SQL = literal_column("'open'", String)
 
 #: How much a last-token PREFIX match is worth against a whole-lexeme match on
 #: the Teams surface (#4126). Strictly between 0 and 1: above 0 so a prefix-only
@@ -11640,6 +11659,24 @@ async def search_events(
             event, aggregated_odds_map.get(event.id), gei_percentiles, team_lookup,
             folded_sources=folded_map.get(event.id),
         )
+        # #2920 — the event page's marked in-play pair, from the rows this route
+        # already read, so a search row and the page it opens agree.
+        _odds_entry = aggregated_odds_map.get(event.id)
+        if _odds_entry and isinstance(formatted.get("current_odds"), dict):
+            try:
+                attach_card_projected_pair(
+                    formatted["current_odds"],
+                    {
+                        LIVE_PROJECTION_KEY: event_live_projection(
+                            _odds_entry["all_snapshots"],
+                            event,
+                            served_status=formatted.get("status"),
+                            sport_key=loaded_sport_key(event),
+                        )
+                    },
+                )
+            except Exception:  # noqa: BLE001 — gotcha #42: one row, not the page
+                logger.exception("live projection failed for event %s", event.id)
         formatted_results.append(formatted)
 
         # Track sports for disambiguation info.
@@ -12071,7 +12108,8 @@ async def search_events(
     # vs 701ms. The outer copy is deliberate redundancy — it keeps the predicate
     # correct if the pushed-down copy is ever removed.
     _futures_open_now = (
-        FuturesMarket.status == "open",
+        # #10769: inline, so a generic plan can still use the open-only trigram partial.
+        FuturesMarket.status == _FUTURES_OPEN_STATUS_SQL,
         or_(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= datetime.now(timezone.utc),
@@ -15122,7 +15160,8 @@ async def typeahead_search(
     # by construction. Filters pushed into each arm (AND distributes over UNION);
     # kept on the outer query as deliberate redundancy.
     _ta_open_now = (
-        FuturesMarket.status == "open",
+        # #10769: the same inline constant as `_futures_open_now`.
+        FuturesMarket.status == _FUTURES_OPEN_STATUS_SQL,
         or_(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
@@ -18702,6 +18741,24 @@ async def list_events(
     # the ordinary page pays nothing at all.
     await attach_venue_settlement(db, events, formatted, now)
 
+    # #11296: a final row's pregame projected score and its score's period, the
+    # same object search and the event page serve. `/sports/{key}` reads this
+    # route, not `/api/leagues/{sport_key}`, so without it the league page's
+    # finished cards could never print the band their own event page prints.
+    # Asked by the status the card PRINTS, after the venue pass, exactly as
+    # search does. One statement for the page; unsettled rows and unsupported
+    # sports are refused before it. This route has no request deadline and
+    # serves up to 500 rows, so the read carries the feed's server-side cap: a
+    # read that reaches it answers `read_failed` and costs the page nothing else.
+    _served_status = {f.get("id"): f.get("status") for f in formatted}
+    _projections = await read_pregame_projections(
+        db, events, loaded_sport_key,
+        status_of=lambda e: _served_status.get(e.id),
+        timeout_ms=card_projection_read_timeout_ms(None),
+    )
+    for _formatted in formatted:
+        attach_pregame_projection(_formatted, _projections.get(_formatted.get("id")))
+
     return {
         "events": formatted,
         "count": len(events),
@@ -19935,14 +19992,14 @@ async def get_event(
 
     absorbed = await serve_fold_absorbed_rows(db, event)
     odds_event_ids = await folded_series_event_ids(db, event_id, absorbed)
-    latest_snapshots = latest_snapshot_for_each_bookmaker(
-        list(
-            (await db.execute(latest_odds_per_bookmaker_query(odds_event_ids)))
-            .scalars()
-            .all()
-        ),
-        event_id,
+    # #2920 C1 — the raw per-(event, sportsbook) rows are kept: the marked
+    # in-play pair reads only this event's own rows, exactly as its card does.
+    _latest_rows = list(
+        (await db.execute(latest_odds_per_bookmaker_query(odds_event_ids)))
+        .scalars()
+        .all()
     )
+    latest_snapshots = latest_snapshot_for_each_bookmaker(_latest_rows, event_id)
 
     # Load GEI percentiles for formatting
     gei_percentiles = await _load_gei_percentiles(db)
@@ -20177,6 +20234,24 @@ async def get_event(
             # feature to show, outside a short closed list of comparison surfaces
             # this payload is not on.
         }
+        # #2920 — the in-play pair, marked, by the cards' admission and from
+        # this event's OWN rows of the read above (never the folded twins the
+        # price table uses), so the page and its card cannot print two finals.
+        # Asked by the status this page PRINTS. Optional: never the page.
+        try:
+            attach_card_projected_pair(
+                response["current_odds"],
+                {
+                    LIVE_PROJECTION_KEY: event_live_projection(
+                        own_event_rows(_latest_rows, event.id),
+                        event,
+                        served_status=response.get("status"),
+                        sport_key=event_sport_key,
+                    )
+                },
+            )
+        except Exception:  # noqa: BLE001 — gotcha #42
+            logger.exception("live projection failed for event %s", event.id)
 
         # Show ALL bookmakers in the table (not just filtered ones)
         # so users see every book we ever had odds from.
@@ -20310,9 +20385,13 @@ async def get_event(
     # time and kind. A sibling of `prematch_odds`, never inside it: that
     # object's `source` names the probability prior's venue. Asked by the
     # status this page PRINTS, the same key every list surface uses.
+    # `live_detail`: this page alone also asks while the game prints `live`, so
+    # its headline can set the in-play pair beside the retained one. Lists stay
+    # settled-only (see "LIVE DETAIL" in `app/utils/pregame_projection`).
     _projection = await read_pregame_projections(
         db, [event], lambda _e: event_sport_key,
         status_of=lambda _e: response.get("status"),
+        live_detail=True,
     )
     attach_pregame_projection(response, _projection.get(event.id))
 
@@ -23244,6 +23323,29 @@ def _match_scope_tennis_totals(
 ) -> list[dict]:
     """Back-compat entry point for #3161's guard. Delegates to the registry."""
     return _match_scope_totals(game_totals, sport_prefix)
+
+
+def _game_total_leg_prices_a_period(outcome_name: Optional[str]) -> bool:
+    """True when a `game_total` row's own LEG names a period (#11488).
+
+    A row is typed by its MARKET's name, and a Polymarket game container is
+    named for the matchup alone, with one leg per sub-market
+    (`_parent_outcome_data`). "Nuggets vs. Thunder" types as `game_total`
+    because th·UNDER·r holds the word the Over/Under arm looks for, so every
+    leg that carries a number became a full-game rung — including the
+    container's copy of "1H O/U 122.5". Basketball's band admits 122.5, the
+    rung sorts below the whole ladder, and step 7b capped all 36 full-game rungs
+    on `/events/15195971` to that answered first-half line's 0.0005 and its
+    clock. The donor then left the payload, so no served row showed where the
+    number came from.
+
+    The projection pool already asks the leg this question for the same reason
+    (`_PM_SCOPES_DEFERRING_TO_OUTCOMES`); this is the same shipped classifier
+    asked of the leg with no ticker, since the ticker describes the market. A
+    leg naming no period ("Over 204.5 points", "Under", "O/U 221.5") is
+    untouched.
+    """
+    return _classify_game_market(outcome_name or "", None) in _PM_PERIOD_SCOPES
 
 
 # ---- Queue #190 Item 3: settled player-prop grading ------------------------
@@ -27016,6 +27118,21 @@ async def _build_game_markets(
                 event, market, market_outcomes, _gm_now
             )
 
+            # #1529 reader gate — a full-game winner has no section of its own,
+            # so its legs land in `other` below; without the class it already
+            # carries, the catalog files "Philadelphia vs New York" under Other
+            # (event 15195694, 2026-10-21). The row keeps its section and gains
+            # the classifier's answer under the key totals/period rows use.
+            # NOT on a matchup-named player container: one player-shaped leg
+            # makes every sibling the rescue leaves behind an unknown, not the
+            # game's winner.
+            other_market_type = (
+                "moneyline"
+                if market_type == "moneyline"
+                and not any(_PLAYER_OUTCOME_RE.match(o.name or "") for o in market_outcomes)
+                else None
+            )
+
             # Rescue player-prop-shaped outcomes from "other" markets.
             # Some markets land here because their name is a generic matchup
             # ("Celtics at Warriors") with no stat keywords, yet their
@@ -27142,6 +27259,7 @@ async def _build_game_markets(
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
                     **_settled_grade_fields(market, o, **_grade_ctx),
+                    **({"market_type": other_market_type} if other_market_type else {}),
                     "_market_id": market.id,
                 })
 
@@ -27170,6 +27288,13 @@ async def _build_game_markets(
 
     for t in totals_thresholds:
         if t["market_type"] == "game_total":
+            # #11488: a leg that prices a period is not a rung of the game's
+            # ladder. Left out HERE, before the one-row-per-threshold pick, so
+            # it can neither evict a real rung at its line nor cap the rungs
+            # above it in 7b and then leave the payload with its price still
+            # on them.
+            if _game_total_leg_prices_a_period(t.get("outcome_name")):
+                continue
             key = t["threshold"]
             incumbent = seen_thresholds.get(key)
             if incumbent is None:
@@ -38243,7 +38368,7 @@ async def _search_withheld_price_ids(
         outcomes = getattr(market, "outcomes", None) or []
         withheld |= unobserved_board_keys(
             ((o.id, o.last_updated) for o in outcomes),
-            board_touched_at=getattr(market, "updated_at", None),
+            board_touched_at=board_touched_at(market),
             fleet_newest_observation=await _fleet_newest_observation(db, market),
             board_has_a_verdict=_board_has_a_verdict(outcomes),
         )

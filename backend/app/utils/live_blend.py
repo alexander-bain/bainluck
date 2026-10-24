@@ -1195,6 +1195,59 @@ def _reading_for_entry(
     return matchup, home_prob, outcome, yes_prob, away_prob, draw_prob
 
 
+def _without_duplicated_pm_wrappers(
+    entries: list[MarketOutcomes], home_team_name: str, away_team_name: str
+) -> list[MarketOutcomes]:
+    """Prefer an admissible named duel to its singleton event-container copy.
+
+    PM ingest stores the condition id on the parent outcome as well as the
+    child's market. Those exact identities prove one contract, not two prices
+    to devig. Titles/group membership alone cannot prove duplication. Keep
+    multi-outcome parents (including three-way fields) and unknown identities.
+    This lives in the shared resolver so DNPL and durable writers agree.
+    """
+    def wrapper_condition(entry: MarketOutcomes) -> Optional[str]:
+        external_id = getattr(entry.market, "external_id", None)
+        if (entry.market.source != "polymarket" or not isinstance(external_id, str)
+                or not external_id.isdecimal() or len(entry.outcomes) != 1):
+            return None
+        condition = getattr(entry.outcomes[0], "external_id", None)
+        return condition.lower() if isinstance(condition, str) else None
+
+    wrapper_conditions = {wrapper_condition(entry) for entry in entries} - {None}
+    if not wrapper_conditions:
+        return entries
+
+    direct_conditions: set[str] = set()
+    for entry in entries:
+        market = entry.market
+        condition = getattr(market, "external_id", None)
+        if (market.source != "polymarket" or not isinstance(condition, str)
+                or len(condition) != 66 or not condition.startswith("0x")
+                or any(c not in "0123456789abcdefABCDEF" for c in condition[2:])
+                or len(entry.outcomes) != 2 or condition.lower() not in wrapper_conditions):
+            continue
+        if not admissible_as_blend_speaker(
+            market, is_primary=False, outcomes=entry.outcomes,
+            event_commence_time=getattr(entry, "event_commence_time", None),
+            event_has_result=getattr(entry, "event_has_result", None),
+        ):
+            continue
+        found = _reading_for_entry(entry, home_team_name, away_team_name)
+        if found is None:
+            continue
+        _matchup, home_prob, outcome, yes_prob, _away, _draw = found
+        if (home_prob != yes_prob or not _is_unique_named_home_quote(
+                entry, outcome, home_team_name, away_team_name)):
+            continue
+        if not any(row is not outcome and _is_unique_named_home_quote(
+                entry, row, away_team_name, home_team_name) for row in entry.outcomes):
+            continue
+        direct_conditions.add(condition.lower())
+
+    return [entry for entry in entries if wrapper_condition(entry) not in direct_conditions]
+
+
 def compute_source_home_probability(
     group: Sequence[MarketOutcomes],
     home_team_name: str,
@@ -1267,7 +1320,9 @@ def compute_source_home_probability(
     defect seen at three call sites is fixed here instead. See ``BlendReading``
     for the invariant and the measurement.
     """
-    entries = list(group or [])
+    entries = _without_duplicated_pm_wrappers(
+        list(group or []), home_team_name, away_team_name,
+    )
     if not entries:
         return None
 

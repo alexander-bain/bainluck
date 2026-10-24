@@ -70,7 +70,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Team, FuturesMarket, FuturesOutcome, Sport
-from app.routes.futures import withheld_price_outcome_ids_for_markets
+from app.routes.futures import (
+    _board_has_a_verdict,
+    _fleet_newest_observation,
+    withheld_price_outcome_ids_for_markets,
+)
 from app.services import get_db
 from app.utils.event_concept_cache import (
     AVAILABILITY_LIVE,
@@ -112,6 +116,20 @@ router = APIRouter()
 _INCLUDED_STATUSES = ["open", "resolved", "closed", "settled", "suspended"]
 
 _MAX_ROSTER_PATTERNS = 40
+
+#: #2311: the most roster patterns ONE statement carries. A roster branch's
+#: patterns are split into statements of at most this many, run in turn under
+#: the branch's ONE `_BRANCH_TIMEOUT_MS` (never 12 s each — the warm task's
+#: 60 s per-team wait would cancel the whole build first), then merged by
+#: outcome id, re-ordered and re-capped exactly as the single statement was.
+#: Why: cost is not linear at the top of the curve. Measured on production
+#: (#2311 issuecomment-6380162532): 10 patterns 2.2 s, 41 patterns 13.4 s — the
+#: single statement trips the 12 s ceiling on every large NFL roster, so the
+#: unbudgeted rebuild lands `branch_timeout:outcome_roster`/`market_roster` and
+#: never a full build. That measurement is the hypothesis, not a guarantee:
+#: chunks that do not finish inside the branch's deadline still report
+#: `branch_timeout:` and the build stays `partial`.
+_ROSTER_CHUNK_PATTERNS = 10
 
 #: How long ONE branch may run. Unchanged in value and in meaning from the
 #: `SET LOCAL statement_timeout = '12000'` this route has carried since #1197 —
@@ -183,7 +201,21 @@ _BRANCH_MARKET_ROSTER = "market_roster"
 #: market page runs. It reports through the same two reason prefixes so the
 #: completion path treats it exactly like a branch: `branch_deferred:` is an IOU
 #: the unbudgeted rebuild pays, `branch_timeout:` is a real expiry.
+#:
+#: #11534: and unlike a branch it FAILS CLOSED. A missing branch is content the
+#: page lacks; a missing screen is a price the page should not print. So a screen
+#: that is deferred, times out or fails withholds every market it would have
+#: judged — the IOU is then owed for content, never paid in wrong numbers.
 _BRANCH_PRICE_SCREEN = "price_screen"
+
+#: #11534: the slice of `_READER_BUDGET_MS` the fetch branches leave for the
+#: screen. Without it the roster probe — started, then cancelled by whatever is
+#: LEFT — spent the whole budget on every rostered team, so every cold NFL build
+#: deferred the screen (Steelers, Patriots, Chiefs, 2026-10-23, all
+#: `branch_deferred:price_screen`). The screen is a reload of the family markets
+#: by id plus at most four indexed reads (`withheld_price_outcome_ids_for_markets`);
+#: the roster probe it is taken from never finishes inside the budget anyway.
+_PRICE_SCREEN_RESERVE_MS = 750
 
 #: #9610: the side screen, also a step after the fetch branches. It reports a
 #: failure through `branch_timeout:` like the price screen, and it never defers.
@@ -290,7 +322,16 @@ def _roster_player_names(team: Team) -> list[str]:
 # mirror, same single-flight refresh lock, same "an empty build never overwrites
 # a good mirror" ordering.
 
-PROP_FAMILIES_CACHE_PREFIX = "bainluck:prop_families:"
+#: 🔴 VERSIONED, AND BUMPED WHEN WHAT A BUILD MAY SERVE NARROWS (#11534). The
+#: 24h mirror outlives the 15-minute primary, and a partial build never replaces
+#: a mirror that reads `full` (CERT-480). So a mirror written BEFORE a withholding
+#: rule shipped is served again on every primary miss for up to a day — on
+#: 2026-10-23 the Patriots' 17:22Z mirror still carried `KXNFLSBMVP-26` (last
+#: season's Super Bowl MVP, 18 legs) after the fix went live, because every
+#: rebuild since loses its roster branches and lands `partial`. A new prefix
+#: makes every pre-fix entry a miss; the old keys expire on their own TTL.
+#: v3 (#11568): finished past-season boards no longer form a race.
+PROP_FAMILIES_CACHE_PREFIX = "bainluck:prop_families:v3:"
 
 #: How fresh a *live* hit is. Prop families are season-long questions ("Next
 #: Team", MVP races, threshold ladders) whose probabilities move on the futures
@@ -510,7 +551,10 @@ async def build_prop_families(
     So each branch now runs bounded, materialised and contained:
 
     * its own ``SET LOCAL``, in its own transaction, at the SAME 12 s — the
-      completeness of a build that succeeds today is untouched;
+      completeness of a build that succeeds today is untouched (#2311: a roster
+      branch is several statements of at most ``_ROSTER_CHUNK_PATTERNS``
+      patterns, and they SHARE that one 12 s; any chunk unread leaves the whole
+      branch reported lost);
     * its rows copied to plain dicts BEFORE the next branch can roll back, because
       a rollback expires every ORM object in the session and `expire_on_commit`
       does not prevent it (gotcha #6);
@@ -577,22 +621,31 @@ async def build_prop_families(
         # parameter, exactly as the `or_()` form bound them one at a time.
         return col.ilike(any_(literal(pats, ARRAY(Text))))
 
+    # #2311: a roster branch is its patterns in statements of at most
+    # `_ROSTER_CHUNK_PATTERNS`. Every other branch is one statement, as before.
+    _roster_chunks = [
+        _roster_pats[i:i + _ROSTER_CHUNK_PATTERNS]
+        for i in range(0, len(_roster_pats), _ROSTER_CHUNK_PATTERNS)
+    ]
+
     # ORDERED CHEAPEST-AND-SUREST FIRST, because a budget spends itself in order
     # and whatever it cannot reach is what gets deferred. The FK branch is the
     # team's own futures (7 ms, indexed); the team-name probes are one pattern
     # each; the roster probes are the 40 that cost 97% of the build.
-    branches: list[tuple[str, object]] = [
-        (_BRANCH_TEAM_ID, FuturesOutcome.team_id == team.id)  # FK branch (indexed)
+    branches: list[tuple[str, list]] = [
+        (_BRANCH_TEAM_ID, [FuturesOutcome.team_id == team.id])  # FK branch (indexed)
     ]
     if _team_pats:
-        branches.append((_BRANCH_OUTCOME_NAME, _ilike_any(FuturesOutcome.name, _team_pats)))
-        branches.append((_BRANCH_MARKET_NAME, _ilike_any(FuturesMarket.name, _team_pats)))
-    if _roster_pats:
+        branches.append((_BRANCH_OUTCOME_NAME, [_ilike_any(FuturesOutcome.name, _team_pats)]))
+        branches.append((_BRANCH_MARKET_NAME, [_ilike_any(FuturesMarket.name, _team_pats)]))
+    if _roster_chunks:
         branches.append(
-            (_BRANCH_OUTCOME_ROSTER, _ilike_any(FuturesOutcome.name, _roster_pats))
+            (_BRANCH_OUTCOME_ROSTER,
+             [_ilike_any(FuturesOutcome.name, c) for c in _roster_chunks])
         )
         branches.append(
-            (_BRANCH_MARKET_ROSTER, _ilike_any(FuturesMarket.name, _roster_pats))
+            (_BRANCH_MARKET_ROSTER,
+             [_ilike_any(FuturesMarket.name, c) for c in _roster_chunks])
         )
 
     # 🔴 SCALARS BEFORE THE FIRST BRANCH RUNS. A branch that times out rolls its
@@ -640,99 +693,163 @@ async def build_prop_families(
     # None` is the background path — nobody is waiting, so the per-branch bound
     # is the only bound and behaviour is byte-for-byte what it was.
     _t0 = time.monotonic()
+    # #11534: the branches stop short of the budget by the screen's reserve.
+    _fetch_budget_ms = (
+        None if budget_ms is None else budget_ms - _PRICE_SCREEN_RESERVE_MS
+    )
 
-    for _name, _cond in branches:
-        _timeout_ms = _BRANCH_TIMEOUT_MS
-        if budget_ms is not None:
-            _remaining = budget_ms - int((time.monotonic() - _t0) * 1000)
-            if _remaining < _MIN_BRANCH_MS:
-                # NOT started. A cancelled statement still costs its full wait,
-                # so a branch we already know cannot finish is skipped outright
-                # and reported — the reader gets the page now and the background
-                # rebuild scheduled behind them fills this in for everyone after.
-                deferred.append(_name)
-                continue
-            _timeout_ms = min(_remaining, _BRANCH_TIMEOUT_MS)
-        try:
-            await db.execute(text(f"SET LOCAL statement_timeout = '{_timeout_ms}'"))
-            _result = (await db.execute(_branch(_cond))).all()
-        except Exception as exc:  # noqa: BLE001 — classified below, then contained
-            # The transaction is aborted by the cancellation; roll it back so the
-            # NEXT branch gets a usable session instead of "current transaction is
-            # aborted". This is `_run_bounded`'s recovery, read-only.
+    for _name, _conds in branches:
+        # #2311: ONE deadline per branch, however many statements it is. A
+        # one-statement branch reads 12,000 here exactly as it always did.
+        _branch_t0 = time.monotonic()
+        _rows: list[dict] = []
+        _branch_oids: set[int] = set()
+        _branch_lost = False
+        _branch_deferred = False
+        for _chunk_i, _cond in enumerate(_conds):
+            _timeout_ms = _BRANCH_TIMEOUT_MS - int((time.monotonic() - _branch_t0) * 1000)
+            if _fetch_budget_ms is not None:
+                _remaining = _fetch_budget_ms - int((time.monotonic() - _t0) * 1000)
+                if _remaining < _MIN_BRANCH_MS:
+                    # NOT started. A cancelled statement still costs its full wait,
+                    # so a branch we already know cannot finish is skipped outright
+                    # and reported — the reader gets the page now and the background
+                    # rebuild scheduled behind them fills this in for everyone after.
+                    _branch_deferred = True
+                    break
+                _timeout_ms = min(_remaining, _timeout_ms)
+            if _timeout_ms < _MIN_BRANCH_MS:
+                # #2311: the branch's own 12 s is spent with chunks still unread.
+                # That is the single statement's expiry, reached in pieces — a
+                # `branch_timeout:`, never a full branch.
+                logger.warning(
+                    "prop-families: %s branch timed out for team %s at chunk %d/%d — "
+                    "serving the chunks and branches that landed",
+                    _name, _team_id, _chunk_i + 1, len(_conds),
+                )
+                _branch_lost = True
+                break
             try:
-                await db.rollback()
-            except Exception:
-                logger.warning(
-                    "prop-families: rollback after %s branch failed for team %s",
-                    _name, _team_id, exc_info=True,
-                )
-            if is_statement_timeout(exc):
-                logger.warning(
-                    "prop-families: %s branch timed out for team %s after %d ms — "
-                    "serving the branches that landed",
-                    _name, _team_id, _timeout_ms,
-                )
-            else:
-                # Narrow containment (gotcha #45): a real query defect is not a
-                # budget expiry and must not be filed as one.
-                logger.exception(
-                    "prop-families: %s branch FAILED for team %s", _name, _team_id
-                )
-            lost.append(_name)
-            continue
+                await db.execute(text(f"SET LOCAL statement_timeout = '{_timeout_ms}'"))
+                _result = (await db.execute(_branch(_cond))).all()
+            except Exception as exc:  # noqa: BLE001 — classified below, then contained
+                # The transaction is aborted by the cancellation; roll it back so the
+                # NEXT branch gets a usable session instead of "current transaction is
+                # aborted". This is `_run_bounded`'s recovery, read-only.
+                try:
+                    await db.rollback()
+                except Exception:
+                    logger.warning(
+                        "prop-families: rollback after %s branch failed for team %s",
+                        _name, _team_id, exc_info=True,
+                    )
+                if is_statement_timeout(exc):
+                    logger.warning(
+                        "prop-families: %s branch timed out for team %s after %d ms — "
+                        "serving the branches that landed",
+                        _name, _team_id, _timeout_ms,
+                    )
+                else:
+                    # Narrow containment (gotcha #45): a real query defect is not a
+                    # budget expiry and must not be filed as one.
+                    logger.exception(
+                        "prop-families: %s branch FAILED for team %s", _name, _team_id
+                    )
+                # #2311: the branch is lost, but its later chunks still get their
+                # turn inside the branch's deadline, and its earlier chunks keep
+                # their rows — the reason below says the branch is incomplete.
+                _branch_lost = True
+                continue
 
-        # Materialise inside the loop: a later branch's rollback would expire these
-        # instances, and by then they are plain dicts and cannot be expired.
-        for outcome, market in _result:
-            oid = outcome.id
+            # Copy to plain data NOW: the next chunk's or branch's rollback would
+            # expire these instances (gotcha #6). A row two chunks both matched is
+            # one row — it must not take two of the cap's places.
+            for outcome, market in _result:
+                if outcome.id in _branch_oids:
+                    continue
+                _branch_oids.add(outcome.id)
+                _rows.append({
+                    "oid": outcome.id,
+                    "o_name": outcome.name,
+                    "o_prob": outcome.current_probability,
+                    "o_winner": outcome.is_winner,
+                    "m_id": market.id,
+                    "m_name": market.name,
+                    "m_source": market.source,
+                    "m_group_id": market.group_id,
+                    "m_status": market.status,
+                    "sport": getattr(market, "llm_sport_category", None),
+                    "m_resolution_date": market.resolution_date,
+                    "m_metadata": market.market_metadata,
+                    "m_sport_id": getattr(market, "sport_id", None),
+                    "m_external_id": getattr(market, "external_id", None),
+                })
+
+        if len(_conds) > 1:
+            # #2311: the statement's own ORDER BY and LIMIT, re-applied to the
+            # union of its chunks. Each chunk returned its own top `_cap`, which
+            # holds every row of the union's top `_cap` that it matched, so this
+            # is the single statement's selection (ties aside, which Postgres
+            # never ordered either). `sorted` is stable; NULLs last.
+            _rows = sorted(
+                _rows,
+                key=lambda r: (r["o_prob"] is None,
+                               -float(r["o_prob"]) if r["o_prob"] is not None else 0.0),
+            )[:_cap]
+        if _branch_lost:
+            lost.append(_name)
+        elif _branch_deferred:
+            deferred.append(_name)
+
+        # Materialise inside the loop. The rows are already plain data (copied
+        # per chunk above), so no later rollback can expire them.
+        for row in _rows:
+            oid = row["oid"]
             if oid in _seen_oids:
                 continue
             _seen_oids.add(oid)
-            entry = by_market.get(market.id)
+            entry = by_market.get(row["m_id"])
             if entry is None:
                 entry = {
-                    "market_id": market.id,
-                    "name": market.name,
-                    "source": market.source,
-                    "group_id": market.group_id,
-                    "status": market.status,
+                    "market_id": row["m_id"],
+                    "name": row["m_name"],
+                    "source": row["m_source"],
+                    "group_id": row["m_group_id"],
+                    "status": row["m_status"],
                     # #6630: the sport scope. Six live markets key to
                     # `defensive player of the year` across basketball,
                     # football and the WNBA, so the family key alone cannot
                     # tell two sports' awards apart. Only splits a family when
                     # two different sports are actually present.
-                    # `getattr`, not attribute access: this loop is driven by
-                    # test doubles as well as ORM rows, and a missing scope
-                    # degrades to today's behaviour (no split) rather than a
-                    # 500. `test_the_scope_column_exists_on_the_model` is the
-                    # guard that keeps the default from silently becoming the
-                    # only path if the column is ever renamed.
-                    "sport": getattr(market, "llm_sport_category", None),
+                    # Read with `getattr` in the copy above, not attribute
+                    # access: this loop is driven by test doubles as well as
+                    # ORM rows, and a missing scope degrades to today's
+                    # behaviour (no split) rather than a 500.
+                    # `test_the_scope_column_exists_on_the_model` is the guard
+                    # that keeps the default from silently becoming the only
+                    # path if the column is ever renamed.
+                    "sport": row["sport"],
                     "resolution_date": (
-                        market.resolution_date.isoformat()
-                        if market.resolution_date else None
+                        row["m_resolution_date"].isoformat()
+                        if row["m_resolution_date"] else None
                     ),
-                    "market_metadata": market.market_metadata,
+                    "market_metadata": row["m_metadata"],
                     "outcomes": [],
                 }
-                by_market[market.id] = entry
-                side_inputs[market.id] = (
-                    market.name,
-                    getattr(market, "sport_id", None),
-                    market.source,
-                    getattr(market, "external_id", None),
+                by_market[row["m_id"]] = entry
+                side_inputs[row["m_id"]] = (
+                    row["m_name"],
+                    row["m_sport_id"],
+                    row["m_source"],
+                    row["m_external_id"],
                 )
-            prob = (
-                float(outcome.current_probability)
-                if outcome.current_probability is not None else None
-            )
+            prob = float(row["o_prob"]) if row["o_prob"] is not None else None
             entry["outcomes"].append(
                 {
                     "outcome_id": oid,
-                    "name": outcome.name,
+                    "name": row["o_name"],
                     "probability": prob,
-                    "is_winner": bool(outcome.is_winner),
+                    "is_winner": bool(row["o_winner"]),
                 }
             )
 
@@ -877,10 +994,16 @@ async def _withhold_refused_prices(
     ("Malik Willis — Philadelphia") leaves the card instead of printing a dash,
     and a family left with fewer than two entities is not emitted at all.
 
-    Returns a loss reason, or None. A failed screen FAILS OPEN — the page keeps
-    today's numbers — and says so in the envelope, so the build is partial and
-    never mistaken for full. A board the helper could not read is omitted from
-    its map and served as-is, its own documented failure direction.
+    Returns a loss reason, or None. A screen that did not run FAILS CLOSED
+    (#11534): deferred by the reader budget, expired or failed, it withholds
+    every market it would have judged, and says so in the envelope, so the build
+    is partial and never mistaken for full. It used to fail open, and on every
+    cold build of a rostered team the budget was already spent, so the Steelers
+    page printed ``KXNFLSBMVP-26`` — last season's game — at 50% a leg while
+    ``/api/futures/479`` withheld all 79 legs. A blank Prop Races is the honest
+    answer to "we could not check these prices"; the rebuild scheduled behind a
+    partial fills it in. A board the helper could not read is omitted from its
+    map and served as-is, its own documented failure direction.
     """
     ids = sorted(mid for mid, m in by_market.items() if resolve_family_key(m))
     if not ids:
@@ -889,6 +1012,7 @@ async def _withhold_refused_prices(
     if budget_ms is not None:
         remaining = budget_ms - int((time.monotonic() - t0) * 1000)
         if remaining < _MIN_BRANCH_MS:
+            _withhold_unscreened(by_market, ids)
             return f"{_REASON_DEFERRED}{_BRANCH_PRICE_SCREEN}"
         timeout_ms = min(remaining, _BRANCH_TIMEOUT_MS)
     try:
@@ -901,6 +1025,10 @@ async def _withhold_refused_prices(
             )
         ).scalars().all()
         withheld = await withheld_price_outcome_ids_for_markets(db, markets)
+        for market in markets:
+            stopped = await _board_staleness_withheld(db, market)
+            if stopped:
+                withheld[market.id] = withheld.get(market.id, set()) | stopped
     except Exception as exc:  # noqa: BLE001 — classified below, then contained
         try:
             await db.rollback()
@@ -916,6 +1044,7 @@ async def _withhold_refused_prices(
             )
         else:
             logger.exception("prop-families: price screen FAILED for team %s", team_id)
+        _withhold_unscreened(by_market, ids)
         return f"{_REASON_TIMEOUT}{_BRANCH_PRICE_SCREEN}"
 
     for mid, refused in withheld.items():
@@ -928,6 +1057,54 @@ async def _withhold_refused_prices(
         if not entry["outcomes"]:
             del by_market[mid]
     return None
+
+
+async def _board_staleness_withheld(db: AsyncSession, market) -> set[int]:
+    """The two board-level refusals the market page adds outside the six arms (#11534).
+
+    ``withheld_price_outcome_ids_for_markets`` is the shared six arms, and
+    ``get_futures_market`` unions two more terms outside them: per-leg staleness
+    on an open board (#7537) and the stopped-board rule on an open or resolved
+    board (#8011). ``league_futures._page_withheld_outcome_ids`` (#8972) found
+    the same gap on league and hub pages; this is that composition, same calls,
+    same gates, same order.
+
+    WHAT A READER SAW, 2026-10-23 18:40Z. The Patriots page, a FULL build with
+    the screen run to completion, printed ``KXNFLSBMVP-26`` — last season's
+    Super Bowl MVP board — as "Drake Maye 26.5%" plus seventeen more legs. Every
+    leg was last written 2026-02-04 with a real bid/ask, so none of the six arms
+    refuse it; ``/api/futures/479`` serves all 79 legs ``null`` with
+    ``prices_withheld: 79`` on #8011 alone.
+
+    Both helpers fail open on a row with no stamp, and ``_fleet_newest_observation``
+    skips its single index-only read for any board whose own stamp is recent.
+    """
+    from app.utils.market_staleness import (
+        stale_observation_keys,
+        board_touched_at,
+        unobserved_board_keys,
+    )
+
+    outcomes = getattr(market, "outcomes", None) or []
+    observations = [(o.id, getattr(o, "last_updated", None)) for o in outcomes]
+    status = getattr(market, "status", None)
+    withheld: set[int] = set()
+    if status == "open":
+        withheld |= stale_observation_keys(observations)
+    if status in ("open", "resolved"):
+        withheld |= unobserved_board_keys(
+            observations,
+            board_touched_at=board_touched_at(market),
+            fleet_newest_observation=await _fleet_newest_observation(db, market),
+            board_has_a_verdict=_board_has_a_verdict(outcomes),
+        )
+    return withheld
+
+
+def _withhold_unscreened(by_market: dict[int, dict], ids: list[int]) -> None:
+    """Remove every market the price screen was owed and did not judge (#11534)."""
+    for mid in ids:
+        by_market.pop(mid, None)
 
 
 def _stored_mirror(rc, keys: ConceptCacheKeys) -> tuple[Any, bool]:

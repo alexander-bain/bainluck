@@ -13,6 +13,7 @@ import asyncio
 import inspect
 import json
 import logging
+import math
 import random
 import ssl
 from typing import Any, Callable, Optional
@@ -23,17 +24,27 @@ logger = logging.getLogger(__name__)
 
 WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
+#: #10663 — the parser reuses one string object per distinct object KEY. A
+#: 500-book dump is ~37k ``{"price", "size"}`` levels; with no cache each level
+#: allocates its own two key strings. Rig (10/22): one 1.5 MB dump decoded to
+#: 14.1 MiB uncached and 10.6 MiB keys-only, ~25% less memory per dump on every
+#: socket. Values stay uncached: ids and prices change, and a cached value
+#: would outlive the frame it came from. The decoded values are equal either
+#: way (strings are immutable).
+_STRING_CACHE = "keys"
+
 
 def _decode_message(raw):
     """#10090: lower receive CPU without narrowing stdlib JSON semantics.
 
     The existing Pydantic dependency parses arbitrary-size integers exactly.
-    Disable its string cache for the changing asset/book stream. Inputs it
-    refuses (e.g. lone surrogate escapes) go through the original decoder,
-    which also preserves the original accepted values and exception contract.
+    Its string cache holds object KEYS only (``_STRING_CACHE``), never the
+    changing asset/book values. Inputs it refuses (e.g. lone surrogate escapes)
+    go through the original decoder, which also preserves the original accepted
+    values and exception contract.
     """
     try:
-        return from_json(raw, cache_strings=False)
+        return from_json(raw, cache_strings=_STRING_CACHE)
     except (ValueError, TypeError):
         return json.loads(raw)
 
@@ -48,7 +59,7 @@ def _decode_text_frame_bytes(raw):
     the loop's skip clause, so the shard redials as it did before.
     """
     try:
-        return from_json(raw, cache_strings=False)
+        return from_json(raw, cache_strings=_STRING_CACHE)
     except (ValueError, TypeError):
         return _decode_message(raw.decode("utf-8"))
 
@@ -305,6 +316,60 @@ def _assets_in(message: Any) -> set[str]:
     return found
 
 
+def _price_change_quotes(message: dict) -> list[dict]:
+    """Forward timestamped current BBOs, never the changed depth-level price.
+
+    A depth change can freshly observe an unchanged top of book. Preserve its
+    venue timestamp so the consumer's existing clock/eligibility guards decide
+    whether it can advance an observation; missing clocks are not replaced.
+    """
+    timestamp = message.get("timestamp")
+    try:
+        stamp = float(timestamp)
+        if (
+            isinstance(timestamp, bool)
+            or not math.isfinite(stamp)
+            or stamp <= 0
+            or not stamp.is_integer()
+        ):
+            return []
+    except (TypeError, ValueError, OverflowError):
+        return []
+    changes = message.get("price_changes")
+    if not isinstance(changes, list):
+        return []
+    quotes = []
+    for change in changes:
+        if not isinstance(change, dict):
+            continue
+        asset = change.get("asset_id")
+        bid, ask = change.get("best_bid"), change.get("best_ask")
+        if (
+            not isinstance(asset, str)
+            or not asset
+            or isinstance(bid, bool)
+            or isinstance(ask, bool)
+        ):
+            continue
+        try:
+            b, a = float(bid), float(ask)
+            if not (math.isfinite(b) and math.isfinite(a) and 0 <= b <= a <= 1):
+                continue
+        except (TypeError, ValueError, OverflowError):
+            continue
+        quotes.append(
+            {
+                "event_type": "best_bid_ask",
+                "asset_id": asset,
+                "market": message.get("market"),
+                "timestamp": timestamp,
+                "best_bid": bid,
+                "best_ask": ask,
+            }
+        )
+    return quotes
+
+
 def _snapshot_quotes(message: Any) -> list[dict]:
     """A ``best_bid_ask``-shaped quote for every book in a snapshot frame.
 
@@ -380,6 +445,35 @@ async def _snapshot_quotes_cooperatively(
         if start + SNAPSHOT_BATCH_SIZE < len(entries):
             await asyncio.sleep(0)
     return quotes, None
+
+
+#: #10663 — a frame with at least this many ids not yet on a shard's wire set
+#: has them recorded as the subscription's own strings (`_record_wire`). The
+#: scan that finds them costs one pass over the shard's subscription (<=500
+#: ids), i.e. at most ~16 lookups per id recorded.
+CANONICAL_WIRE_MIN_IDS = 32
+
+
+def _compact_frozenset(items) -> frozenset:
+    """``frozenset(items)``, its table sized once from a finished set.
+
+    #10663: a frozenset built straight from a generator grows one element at a
+    time and keeps the doubled table (32 KB for a 500-id shard); copied from a
+    set it is sized to fit (16 KB). The per-shard fences are kept for the
+    socket's life, ~136 of them in the open-contract child.
+    """
+    return frozenset(set(items))
+
+
+def _fence_is(fence: frozenset, ids: list[str], latest: set[str]) -> bool:
+    """Whether ``fence`` equals ``{a for a in ids if a in latest}``, building nothing."""
+    count = 0
+    for asset_id in ids:
+        if asset_id in latest:
+            if asset_id not in fence:
+                return False
+            count += 1
+    return count == len(fence)
 
 
 def _evenly_spaced(items: list[str], limit: int) -> list[str]:
@@ -579,8 +673,12 @@ class PolymarketWebSocket:
         # that keeps a dropped token cannot deliver it in between. Only the
         # loop WIDENS a fence (a token returning to its socket).
         wanted = set(self._next_asset_ids)
+        # #10663: a fence that loses nothing is kept as is; one that does is
+        # rebuilt sized to fit (see `_compact_frozenset`).
         self._shard_routed = {
-            i: routed & wanted for i, routed in self._shard_routed.items()
+            i: routed if routed <= wanted
+            else _compact_frozenset(a for a in routed if a in wanted)
+            for i, routed in self._shard_routed.items()
         }
         self._asset_refresh.set()
 
@@ -690,12 +788,17 @@ class PolymarketWebSocket:
                 for i, ids in retained.items():
                     if i not in repack:
                         self._shard_ids[i] = ids
-                        self._shard_routed[i] = frozenset(a for a in ids if a in latest)
+                        fence = self._shard_routed.get(i)
+                        # #10663: an unchanged fence is kept, not rebuilt.
+                        if fence is None or not _fence_is(fence, ids, latest):
+                            self._shard_routed[i] = _compact_frozenset(
+                                a for a in ids if a in latest
+                            )
                 for i, ids in fresh.items():
                     subscribed[i] = ids
                     self._shard_ids[i] = list(ids)
                     self._shard_wire[i] = set()
-                    self._shard_routed[i] = frozenset(a for a in ids if a in latest)
+                    self._shard_routed[i] = _compact_frozenset(a for a in ids if a in latest)
                     tasks[i] = asyncio.create_task(self._run_one(ids, i))
                 refresh = asyncio.create_task(self._asset_refresh.wait())
                 done, _ = await asyncio.wait(
@@ -854,6 +957,33 @@ class PolymarketWebSocket:
                     },
                 )
 
+    def _record_wire(
+        self, shard: int, on_wire: set[str], subscribed: Optional[list[str]],
+    ) -> None:
+        """Add a frame's ids to the shard's raw wire set, every one of them.
+
+        #10663: for a frame carrying many new ids (a book dump), the set keeps
+        the subscription's own strings, not the decoded frame's copies. The set
+        lives as long as the socket, and the copies it kept were decoded inside
+        ~500-book dumps, so 68k of them (7.9 MB in the rig) also held the dumps'
+        freed memory in place. Finding a subscription's string scans the shard's
+        subscription once, so a frame with only a few new ids (a price change,
+        a foreign id) is recorded as decoded, as before. Either way the set's
+        contents are the same ids.
+        """
+        wire = self._shard_wire.setdefault(shard, set())
+        if subscribed and len(on_wire) >= CANONICAL_WIRE_MIN_IDS:
+            unseen = on_wire.difference(wire) if wire else on_wire
+            if len(unseen) >= CANONICAL_WIRE_MIN_IDS:
+                # A set, not a list: merging a set sizes the table once (16 KB
+                # for 500 ids; built element by element it grows to 32 KB).
+                own = {asset_id for asset_id in subscribed if asset_id in unseen}
+                wire.update(own)
+                if len(own) == len(unseen):
+                    return
+                on_wire = unseen.difference(own)
+        wire.update(on_wire)
+
     def _mark_shard_down(self, shard: int) -> None:
         """This shard has no live socket, so it is not a coverage subject.
 
@@ -887,6 +1017,9 @@ class PolymarketWebSocket:
                     max_size=MAX_MESSAGE_BYTES,
                     max_queue=self._max_queue,
                 ) as ws:
+                    # Per-connection state: one last successful quote per
+                    # subscribed asset. A reconnect starts a new observation epoch.
+                    quote_versions = dict.fromkeys(asset_ids or ())
                     connected_at = loop.time()
                     self._shards_connected.add(shard)
                     self._shard_connected_at[shard] = connected_at
@@ -908,6 +1041,10 @@ class PolymarketWebSocket:
                         f"{len(asset_ids)} assets" if asset_ids else "all",
                         len(frame.encode("utf-8")),
                     )
+                    # #10663: a full shard's frame is ~40 KB, and this frame
+                    # lives as long as the socket does. ~136 open-contract
+                    # sockets held 5.4 MB of sent frames (rig, 10/22).
+                    frame = None
                     # #9484: the permit rides until the initial dump lands (the
                     # first frame, below) or this timeout, whichever is first.
                     permit.release_after(HANDSHAKE_PERMIT_HOLD_SECONDS)
@@ -963,9 +1100,7 @@ class PolymarketWebSocket:
                                 # been populated first.
                                 on_wire = _assets_in(data)
                                 if on_wire:
-                                    self._shard_wire.setdefault(shard, set()).update(
-                                        on_wire
-                                    )
+                                    self._record_wire(shard, on_wire, asset_ids)
 
                                 event_type = (
                                     "book"
@@ -991,18 +1126,30 @@ class PolymarketWebSocket:
                                         await self._price_quotes(quotes, shard, failure)
                                     continue
 
+                                if event_type == "price_change" and self.on_price:
+                                    quotes = _price_change_quotes(data)
+                                    if asset_ids is not None:
+                                        quotes = [
+                                            q
+                                            for q in quotes
+                                            if q["asset_id"] in asset_ids
+                                        ]
+                                    await self._price_quotes(
+                                        quotes, shard, book_snapshot=False,
+                                        quote_versions=quote_versions,
+                                    )
+                                    continue
+
                                 if event_type in (
                                     "best_bid_ask", "last_trade_price"
                                 ) and not self._routes(shard, data):
                                     continue
 
                                 if event_type == "best_bid_ask" and self.on_price:
-                                    try:
-                                        result = self.on_price(data)
-                                        if asyncio.iscoroutine(result):
-                                            await result
-                                    except Exception:
-                                        logger.exception("Polymarket price handler error")
+                                    await self._price_quotes(
+                                        [data], shard, book_snapshot=False,
+                                        quote_versions=quote_versions,
+                                    )
 
                                 elif event_type == "last_trade_price" and self.on_trade:
                                     try:
@@ -1203,8 +1350,11 @@ class PolymarketWebSocket:
         quotes: list[dict],
         shard: Optional[int],
         failure: Optional[Exception] = None,
+        *,
+        book_snapshot: bool = True,
+        quote_versions: Optional[dict] = None,
     ) -> None:
-        """Hand a snapshot's extracted quotes to `on_price`, in order.
+        """Hand extracted current quotes to `on_price`, in order.
 
         Routing is read per quote, at hand-off, so a fence narrowed while an
         earlier quote's callback waited still applies. ``failure`` is the
@@ -1218,13 +1368,40 @@ class PolymarketWebSocket:
             for quote in quotes[start : start + batch_size]:
                 if shard is not None and not self._routes(shard, quote):
                     continue
-                self._book_snapshot_quotes += 1
+                asset = quote.get("asset_id")
+                identity = None
+                if quote_versions is not None and asset in quote_versions:
+                    # Validate identity without changing legacy top-level price
+                    # handling when the old protocol omitted its timestamp.
+                    normalized = _price_change_quotes({
+                        "timestamp": quote.get("timestamp"),
+                        "price_changes": [quote],
+                    })
+                    if normalized:
+                        identity = (
+                            int(float(quote["timestamp"])),
+                            float(quote["best_bid"]), float(quote["best_ask"]),
+                        )
+                        previous = quote_versions[asset]
+                        if previous is not None and (
+                            identity == previous or identity[0] < previous[0]
+                        ):
+                            continue
+                if book_snapshot:
+                    self._book_snapshot_quotes += 1
                 try:
                     result = self.on_price(quote)
                     if asyncio.iscoroutine(result):
                         await result
+                    if identity is not None:
+                        quote_versions[asset] = identity
                 except Exception:
-                    logger.exception("Polymarket book snapshot price handler error")
+                    # A failed callback leaves the identity retryable; failure
+                    # in one child must not hide healthy siblings.
+                    logger.exception(
+                        "Polymarket book snapshot price handler error"
+                        if book_snapshot else "Polymarket price handler error"
+                    )
                 result = None
             if start + batch_size < len(quotes):
                 await asyncio.sleep(0)

@@ -37,10 +37,12 @@
  *   - UNIT. The served `unit` must equal `projectedFinalFormat(sportKey).unit`.
  *   - PERIOD. The actual score must cover the same period the forecast lines
  *     settle on. Football and basketball forecasts are `full_game`; soccer's
- *     are `regulation` (its sportsbook lines settle on 90 minutes). No web
- *     payload today says whether a soccer final went to extra time or
- *     penalties, so a soccer final is withheld until a caller can pass
- *     `"regulation"` from real evidence. This file does not infer it.
+ *     are `regulation` (its sportsbook lines settle on 90 minutes). A soccer
+ *     final is compared only when the producer serves `final_score_period:
+ *     "regulation"` beside it (the row's own stored period says the match
+ *     ended at full time); extra time, penalties and an unknown finish serve
+ *     no key and stay withheld. `finalScorePeriod` is the callers' one read of
+ *     it. This file does not infer it from the score, clock or competition.
  *
  * No grading: nothing here says who the forecast favoured, whether it was
  * right, or picks a colour. Team order is keyed (home/away), never by value.
@@ -51,6 +53,7 @@ import { isFinishedStatus } from "@/lib/eventState";
 import {
   cardProjectedFinal,
   projectedFinalFormat,
+  projectedFinalPeriod,
   type ProjectedFinalFormat,
   type ProjectedScorePair,
 } from "@/lib/projectedFinalPair";
@@ -73,6 +76,22 @@ export const PREGAME_BASIS_CONSENSUS_SPREAD_TOTAL = "consensus_spread_total";
  * to this band only; the pre-game line keeps its own label.
  */
 export const FINAL_FORECAST_LABEL = "Projection before scheduled start";
+
+/**
+ * The same band over a soccer final, which compares 90-minute quantities on
+ * both sides: the forecast lines settle on 90 minutes, and the band is only
+ * admitted when the actual score is the regulation one. The basis is said AT
+ * the comparison, in the "(90 min)" the soccer pre-game line already uses, so
+ * a reader never has to open Details to learn which score the pair is about.
+ */
+export const FINAL_FORECAST_LABEL_90_MIN = "Projection (90 min) before scheduled start";
+
+export type FinalForecastLabel = typeof FINAL_FORECAST_LABEL | typeof FINAL_FORECAST_LABEL_90_MIN;
+
+/** Whether a band label is one of the final-comparison labels (the long, wrapping ones). */
+export function isFinalForecastLabel(label: string): label is FinalForecastLabel {
+  return label === FINAL_FORECAST_LABEL || label === FINAL_FORECAST_LABEL_90_MIN;
+}
 
 /** The period a set of scores covers. `regulation` = play ended without extra time. */
 export type ScorePeriod = "full_game" | "regulation";
@@ -123,8 +142,27 @@ export interface FinalForecastComparisonInput {
   projection: PregameProjection | null | undefined;
 }
 
+/**
+ * What a finished game's actual score covers, for the three callers to pass as
+ * `actualPeriod`. Football and basketball: a scoreboard final is the full
+ * game, overtime included. Soccer (and any sport whose lines settle on
+ * `regulation`): only the producer's served `final_score_period`, and only its
+ * one value `"regulation"`; absent, null or anything else is null, so the
+ * comparison is withheld. Never `full_game` for soccer, and never the
+ * forecast's own `period`, which says nothing about the scoreboard.
+ */
+export function finalScorePeriod(
+  sportKey: string | null | undefined,
+  servedFinalScorePeriod: string | null | undefined,
+): ScorePeriod | null {
+  const settlesOn = projectedFinalPeriod(sportKey);
+  if (settlesOn === "full_game") return "full_game";
+  if (settlesOn === "regulation" && servedFinalScorePeriod === "regulation") return "regulation";
+  return null;
+}
+
 export interface FinalForecastComparison {
-  label: typeof FINAL_FORECAST_LABEL;
+  label: FinalForecastLabel;
   /** Rounded exactly as the pre-game card rounds it. Keyed, never sorted. */
   forecast: ProjectedScorePair;
   details: {
@@ -187,7 +225,7 @@ export function finalForecastComparison(
   if (!forecast) return null;
 
   return {
-    label: FINAL_FORECAST_LABEL,
+    label: p.period === "regulation" ? FINAL_FORECAST_LABEL_90_MIN : FINAL_FORECAST_LABEL,
     forecast: { home: forecast.home, away: forecast.away },
     details: {
       sourceLabel: "Sportsbooks",

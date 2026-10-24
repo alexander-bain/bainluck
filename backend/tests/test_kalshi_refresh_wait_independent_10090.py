@@ -307,16 +307,26 @@ async def test_cancelled_quiet_flush_debt_stamp_stays_owed(monkeypatch):
 @pytest.mark.parametrize("turn", ["before_first_turn", "after_first_turn"])
 async def test_a_quiet_flush_cancelled_at_its_yield_keeps_the_debt(monkeypatch, turn):
     # Cancellation delivered at the yield right after the debt task is created:
-    # before its first turn (the debt never moved) or after it (taken into the
-    # refresher, then cancelled with it). Owed either way, no failed hold.
+    # before its first turn (the debt never moved) or after UPDATE entry
+    # (taken into the refresher, then cancelled with it). DNPL admission can
+    # yield before UPDATE, so a single event-loop turn is not that witness.
+    # Owed either way, no failed hold.
     x, r = _caller(monkeypatch, blocked=(1,))
     r.batch.clear()
     x.r._lock_retry = {1}
-    real_sleep = asyncio.sleep
+    update_entered = asyncio.Event()
+    execute = x.Session.execute
+
+    async def witnessed_execute(session, statement, *args, **kwargs):
+        if isinstance(statement, Update):
+            update_entered.set()
+        return await execute(session, statement, *args, **kwargs)
+
+    monkeypatch.setattr(x.Session, "execute", witnessed_execute)
 
     async def cancelled_yield(delay, *args, **kwargs):
         if delay == 0 and turn == "after_first_turn":
-            await real_sleep(0)
+            await update_entered.wait()
         raise asyncio.CancelledError
 
     r.ns["asyncio"] = SimpleNamespace(

@@ -167,6 +167,8 @@ describe("the event page actually wraps its sections", () => {
       "The score and probability",
       "The win probability chart",
       // #9483: the NFL game-story cards under the chart render independently of it.
+      // #10346 pilot: three supported takeaways, mounted only with ?highlights=preview.
+      "Three takeaways",
       "Game stories",
       // #6421: the sportsbook price table used to be markup INSIDE the win
       // probability card, so it shared that card's boundary and vanished with

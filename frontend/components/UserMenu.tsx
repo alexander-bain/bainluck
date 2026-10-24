@@ -44,7 +44,7 @@ export default function UserMenu() {
 
   if (!isAuthenticated) {
     return (
-      <div className="relative" ref={menuRef}>
+      <div className="relative shrink-0" ref={menuRef}>
         <button
           onClick={() => {
             if (signingIn) return;
@@ -56,7 +56,7 @@ export default function UserMenu() {
           aria-expanded={showProviders}
           aria-haspopup="true"
           aria-label={signingIn ? "Signing in" : "Sign in"}
-          className="text-sm text-text-secondary hover:text-text-primary transition-colors"
+          className="text-sm text-text-secondary hover:text-text-primary transition-colors whitespace-nowrap shrink-0"
         >
           {signingIn ? "Signing in..." : "Sign in"}
         </button>
@@ -143,10 +143,10 @@ export default function UserMenu() {
     "?";
 
   return (
-    <div className="relative" ref={menuRef}>
+    <div className="relative shrink-0" ref={menuRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2"
+        className="flex items-center gap-2 shrink-0"
         aria-label="User menu"
         aria-expanded={isOpen}
         aria-haspopup="true"

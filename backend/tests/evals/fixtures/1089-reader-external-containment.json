@@ -1,0 +1,40 @@
+{
+  "issue": 1089,
+  "pillar": "TRUTH",
+  "ship": "Settled NHL player questions use the correct game's pregame forecast and result.",
+  "observed_source_not_runtime": {
+    "reader_commit": "948e56c9c563655c48d40cac2f0962cb8d6e1b0f",
+    "reader_sha256": "3ba1c9f1c19ac183e27b24e5389a4e3ca1431a0ac382d7e1314895e80d85236e",
+    "spawn_pump_start_new_session": true,
+    "parent_cleanup_requires_parent_control": true,
+    "measurement_042_verdict": "HOLD: existing timeout wrapper does not establish termination of the detached network session",
+    "requests_made_by_measurement_042": 0
+  },
+  "synthetic_guard_specs_not_venue_evidence": [
+    {
+      "case": "external termination includes the network child",
+      "expected": "An existing external command deadline can terminate both the reader and its network child without relying on the reader reaching cleanup."
+    },
+    {
+      "case": "ordinary internal timeout retains cleanup",
+      "expected": "The reader still terminates and reaps its network child on its own internal deadline without killing the invoking shell or unrelated processes."
+    },
+    {
+      "case": "detached descendant is a failing control",
+      "expected": "A mutant restoring the observed detached-child topology fails the external-containment guard."
+    },
+    {
+      "case": "successful one-response path remains unchanged",
+      "expected": "Existing complete-response framing, exact ticker and nonempty rules, byte bound, exit-plus-receipt and late-finalization guards remain enforced."
+    },
+    {
+      "case": "spent attempt survives interruption",
+      "expected": "An interrupted reader cannot remove or overwrite its exclusive attempt marker or authorize another request."
+    }
+  ],
+  "unpaid": [
+    "No live request, actual HTTP response or occurrence evidence is represented by this fixture.",
+    "A source correction does not itself qualify installed operator timing, current carrier, safe window or operation admission.",
+    "The original single request, 15-second total client envelope and 262144-byte response cap remain unchanged."
+  ]
+}

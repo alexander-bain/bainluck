@@ -31,3 +31,4 @@ tests/test_ci_cross_tier_manifest.py
 tests/test_watch_navigation_reveal.py
 tests/test_watch_rectangular_face_activation.py
 tests/test_watch_widget_arrival.py
+tests/test_entertainment_lead_outcomes_web_only_7382.py

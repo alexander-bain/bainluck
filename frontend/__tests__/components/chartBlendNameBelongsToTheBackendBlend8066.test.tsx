@@ -238,13 +238,16 @@ describe("#8066 — the controls: what the gate must NOT change", () => {
     expect(blend!.vertices).toBe(2);
     expect(blend!.width).toBe(3);
     expect(html).toContain("Bain Luck");
-    // …and the 319-vertex real line demoted underneath it.
-    const kalshi = kalshiCurve(html);
-    expect(kalshi!.vertices).toBeGreaterThan(300);
-    expect(kalshi!.width).toBe(1);
-    expect(kalshi!.opacity).toBe(0.28);
+    // …and the 319-vertex real line hidden behind "+ 1 source" (#11356: a
+    // blend drawn is the only line until Sources opens; it was painted faint).
+    expect(kalshiCurve(html)).toBeUndefined();
     expect(hasExpander(html)).toBe(true);
     expect(callout(html)).toBe("44%");
+    const opened = render({ aggregateLine: PUSHED_FRAMES, defaultSourcesExpanded: true });
+    const kalshi = kalshiCurve(opened);
+    expect(kalshi!.vertices).toBeGreaterThan(300);
+    expect(kalshi!.width).toBe(1.75);
+    expect(kalshi!.opacity).toBe(0.85);
   });
 
   test("CONTROL — a real backend blend still dominates: drawn at 3px, named, sources collapsed", () => {
@@ -270,10 +273,15 @@ describe("#8066 — the controls: what the gate must NOT change", () => {
     expect(blend!.width).toBe(3);
     expect(blend!.vertices).toBeGreaterThan(100);
     expect(html).toContain("Bain Luck");
-    // Sources stay collapsed and faint — the blend is what dominates.
+    // Sources stay collapsed — the blend is the one line (#11356), and the
+    // sources draw only once the reader opens them, legibly, under the same
+    // 3px blend.
     expect(hasExpander(html)).toBe(true);
-    expect(kalshiCurve(html)!.width).toBe(1);
-    expect(kalshiCurve(html)!.opacity).toBe(0.28);
+    expect(kalshiCurve(html)).toBeUndefined();
+    const opened = render({ aggregateLine: served, backendBlendServed: true, defaultSourcesExpanded: true }, twoSource);
+    expect(blendCurve(opened)!.width).toBe(3);
+    expect(kalshiCurve(opened)!.width).toBe(1.75);
+    expect(kalshiCurve(opened)!.opacity).toBe(0.85);
   });
 
   test("CONTROL — sportsbooks-only mode is untouched: flat legend, betting at full weight", () => {
