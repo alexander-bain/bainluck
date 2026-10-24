@@ -158,6 +158,7 @@ export function formatDeadlineMovementTimeframe(
   basisObservedAt: string | null | undefined,
   referenceAt: string | null | undefined,
   timeZone?: string,
+  nowIso?: string | null,
 ): DeadlineMovementTimeframe {
   const resolvedTz =
     timeZone ||
@@ -168,6 +169,7 @@ export function formatDeadlineMovementTimeframe(
 
   const basisMs = parseTimezoneAwareEpochMs(basisObservedAt);
   const refMs = parseTimezoneAwareEpochMs(referenceAt);
+  const nowMs = parseTimezoneAwareEpochMs(nowIso);
   if (basisMs == null || refMs == null) {
     return {
       valid: false,
@@ -182,13 +184,20 @@ export function formatDeadlineMovementTimeframe(
   let effectiveTz = resolvedTz;
   let basisLocal: ReturnType<typeof localDateParts>;
   let refLocal: ReturnType<typeof localDateParts>;
+  let nowLocal: ReturnType<typeof localDateParts> | null = null;
   try {
     basisLocal = localDateParts(basisMs, effectiveTz);
     refLocal = localDateParts(refMs, effectiveTz);
+    if (nowMs != null) {
+      nowLocal = localDateParts(nowMs, effectiveTz);
+    }
   } catch {
     effectiveTz = "UTC";
     basisLocal = localDateParts(basisMs, "UTC");
     refLocal = localDateParts(refMs, "UTC");
+    if (nowMs != null) {
+      nowLocal = localDateParts(nowMs, "UTC");
+    }
   }
 
   const basisDayUtc = Date.UTC(
@@ -197,6 +206,11 @@ export function formatDeadlineMovementTimeframe(
     basisLocal.day,
   );
   const refDayUtc = Date.UTC(refLocal.year, refLocal.month - 1, refLocal.day);
+  const nowDayUtc =
+    nowLocal != null
+      ? Date.UTC(nowLocal.year, nowLocal.month - 1, nowLocal.day)
+      : refDayUtc;
+  const refMatchesReaderToday = nowDayUtc === refDayUtc;
   const dayDiff = Math.round((refDayUtc - basisDayUtc) / 86_400_000);
 
   if (dayDiff < 0) {
@@ -210,7 +224,7 @@ export function formatDeadlineMovementTimeframe(
     };
   }
 
-  if (dayDiff === 1) {
+  if (dayDiff === 1 && refMatchesReaderToday) {
     return {
       valid: true,
       calendarDayDiff: 1,
@@ -221,7 +235,7 @@ export function formatDeadlineMovementTimeframe(
     };
   }
 
-  if (dayDiff === 0) {
+  if (dayDiff === 0 && refMatchesReaderToday) {
     const hour12 = basisLocal.hour % 12 || 12;
     const amPm = basisLocal.hour < 12 ? "AM" : "PM";
     const minuteStr = String(basisLocal.minute).padStart(2, "0");
@@ -304,6 +318,7 @@ export interface DeadlineFamilyMemberViewModel {
   settlementState: FeedDeadlineSettlementState;
   isSettled: boolean;
   isTradingClosed: boolean;
+  isDeadlinePassed: boolean;
   settledText: string | null;
   laggingLocalStatus: boolean;
   isNearCertain: boolean;
@@ -312,6 +327,7 @@ export interface DeadlineFamilyMemberViewModel {
   detailHref: string;
   accessibleLabel: string;
   providerMarketCount: number | null;
+  verifiedFamilyCount: number | null;
 }
 
 export interface DeadlineFamilyCardModel {
@@ -334,6 +350,7 @@ export interface DeadlineFamilyCardModel {
   representative: DeadlineFamilyMemberViewModel;
   members: DeadlineFamilyMemberViewModel[];
   representedCount: number;
+  verifiedFamilyCount: number | null;
   providerMarketCount: number | null;
   inventoryComplete: boolean | null;
   expandLabel: string;
@@ -468,15 +485,19 @@ function verifySingleMember(
     };
   }
 
-  // Section 3C: Keep `open`, `trading_closed`, `resolved`, `void`, and `unknown` distinct.
+  // Section 3C: Keep `open`, `deadline_passed`, `trading_closed`, `resolved`, `void`, and `unknown` distinct.
   const rawSettlement = contract.settlement;
   if (!rawSettlement || typeof rawSettlement !== "object") {
     return { member: null, reason: "missing_settlement_evidence" };
   }
-  if (rawSettlement.untrusted_local_grade === true) {
+  if (
+    rawSettlement.untrusted_local_grade === true ||
+    rawSettlement.conflicting_settlement_evidence === true
+  ) {
     return { member: null, reason: "member_settlement_unknown" };
   }
 
+  const nowMs = parseTimezoneAwareEpochMs(options.nowIso);
   const itemStatus = (itemData?.status ?? rawSettlement.status ?? "open")
     .trim()
     .toLowerCase();
@@ -488,18 +509,30 @@ function verifySingleMember(
   ).trim();
   const normalizedWinner =
     rawWinner === "Yes" || rawWinner === "No" ? rawWinner : null;
+  const hasVenueClosure =
+    rawSettlement.venue_closure_evidence === true ||
+    itemStatus === "closed" ||
+    itemStatus === "trading_closed" ||
+    (rawSettlement.is_trading_closed === true &&
+      rawSettlement.venue_closure_evidence !== false);
 
   let settlementState: FeedDeadlineSettlementState;
   if (rawSettlement.state) {
-    settlementState = rawSettlement.state;
+    if (
+      rawSettlement.state === "trading_closed" &&
+      rawSettlement.venue_closure_evidence === false &&
+      itemStatus === "open"
+    ) {
+      settlementState = "deadline_passed";
+    } else {
+      settlementState = rawSettlement.state;
+    }
   } else if (rawSettlement.is_settled === true || itemData?.resolved === true) {
     settlementState = "resolved";
-  } else if (
-    rawSettlement.is_trading_closed === true ||
-    itemStatus === "closed" ||
-    itemStatus === "trading_closed"
-  ) {
+  } else if (hasVenueClosure) {
     settlementState = "trading_closed";
+  } else if (rawSettlement.is_deadline_passed === true) {
+    settlementState = "deadline_passed";
   } else {
     settlementState = "open";
   }
@@ -518,19 +551,30 @@ function verifySingleMember(
   }
   // If outer item says `closed` without an authoritative resolved state, treat as `trading_closed`.
   if (
-    settlementState === "open" &&
+    (settlementState === "open" || settlementState === "deadline_passed") &&
     (itemStatus === "closed" || itemStatus === "trading_closed")
   ) {
     settlementState = "trading_closed";
   }
+  // A passed condition cutoff without venue closure or result is `deadline_passed`, never `trading_closed`.
+  if (
+    settlementState === "open" &&
+    nowMs != null &&
+    nowMs >= deadlineEpochMs
+  ) {
+    settlementState = "deadline_passed";
+  }
 
   const isSettled = settlementState === "resolved";
   const isTradingClosed = settlementState === "trading_closed";
+  const isDeadlinePassed = settlementState === "deadline_passed";
   const settledText = isSettled
     ? `Resolved · ${normalizedWinner}`
     : isTradingClosed
       ? "Trading closed"
-      : null;
+      : isDeadlinePassed
+        ? "Deadline passed"
+        : null;
   const laggingLocalStatus = Boolean(
     rawSettlement.lagging_local_status ||
       ((isSettled || isTradingClosed) &&
@@ -598,7 +642,6 @@ function verifySingleMember(
       ? contract.price_observed_at.trim()
       : null;
   const observedMs = parseTimezoneAwareEpochMs(priceObservedAt);
-  const nowMs = parseTimezoneAwareEpochMs(options.nowIso);
 
   const observationFresh = Boolean(
     observedMs != null &&
@@ -665,6 +708,7 @@ function verifySingleMember(
       basis.observed_at,
       priceObservedAt,
       options.timeZone,
+      options.nowIso,
     );
     if (tf.valid) {
       timeframe = tf;
@@ -726,6 +770,8 @@ function verifySingleMember(
     narrativeCaption = settledText ?? "Resolved";
   } else if (isTradingClosed) {
     narrativeCaption = "Trading closed · awaiting resolution";
+  } else if (isDeadlinePassed) {
+    narrativeCaption = "Deadline passed · awaiting result";
   } else if (yesProbability == null) {
     narrativeCaption = `Price unavailable · ${deadlineLabel}`;
   } else if (movementSentenceSummary) {
@@ -769,15 +815,23 @@ function verifySingleMember(
     ? `${name} — ${settledText ?? "Resolved"}`
     : isTradingClosed
       ? `${name} — Trading closed (awaiting resolution)`
-      : yesProbability != null
-        ? `${name} — Yes (${yesPercentText})${accessibleMovementSuffix}`
-        : `${name} — price unavailable`;
+      : isDeadlinePassed
+        ? `${name} — Deadline passed (awaiting result)`
+        : yesProbability != null
+          ? `${name} — Yes (${yesPercentText})${accessibleMovementSuffix}`
+          : `${name} — price unavailable`;
 
   const providerMarketCount =
     typeof contract.provider_market_count === "number" &&
     Number.isInteger(contract.provider_market_count) &&
     contract.provider_market_count > 0
       ? contract.provider_market_count
+      : null;
+  const verifiedFamilyCount =
+    typeof contract.verified_family_count === "number" &&
+    Number.isInteger(contract.verified_family_count) &&
+    contract.verified_family_count > 0
+      ? contract.verified_family_count
       : null;
 
   return {
@@ -820,6 +874,7 @@ function verifySingleMember(
       settlementState,
       isSettled,
       isTradingClosed,
+      isDeadlinePassed,
       settledText,
       laggingLocalStatus,
       isNearCertain,
@@ -827,6 +882,7 @@ function verifySingleMember(
       detailHref,
       accessibleLabel,
       providerMarketCount,
+      verifiedFamilyCount,
     },
     reason: null,
   };
@@ -998,7 +1054,7 @@ export function validateAndBuildDeadlineFamilyCardModel(
       });
       selectedMarketId = eligibleMovers[0].marketId;
       selectionReason = "largest_supported_dated_move";
-      selectionBadgeText = "Largest 24h move";
+      selectionBadgeText = "Largest recent move";
     } else {
       eligibleOpenPriced.sort((a, b) => {
         const distDiff =
@@ -1052,6 +1108,7 @@ export function validateAndBuildDeadlineFamilyCardModel(
       settlementState: m.settlementState,
       isSettled: m.isSettled,
       isTradingClosed: m.isTradingClosed,
+      isDeadlinePassed: m.isDeadlinePassed,
       settledText: m.settledText,
       laggingLocalStatus: m.laggingLocalStatus,
       isNearCertain: m.isNearCertain,
@@ -1060,6 +1117,7 @@ export function validateAndBuildDeadlineFamilyCardModel(
       detailHref: m.detailHref,
       accessibleLabel: m.accessibleLabel,
       providerMarketCount: m.providerMarketCount,
+      verifiedFamilyCount: m.verifiedFamilyCount,
     }),
   );
 
@@ -1067,7 +1125,7 @@ export function validateAndBuildDeadlineFamilyCardModel(
     membersWithRepFlag.find((m) => m.isRepresentative) ??
     membersWithRepFlag[0];
 
-  // 6F: Distinguish represented family members from complete provider inventory.
+  // 6F: Distinguish represented family members, verified family total, and raw provider inventory.
   const representedCount = membersWithRepFlag.length;
   const candidateCounts = new Set<number>();
   if (
@@ -1091,9 +1149,30 @@ export function validateAndBuildDeadlineFamilyCardModel(
       ? providerMarketCount === representedCount
       : null;
 
+  const verifiedFamilyCounts = new Set<number>();
+  if (
+    typeof familyContract?.verified_family_count === "number" &&
+    Number.isInteger(familyContract.verified_family_count) &&
+    familyContract.verified_family_count >= representedCount
+  ) {
+    verifiedFamilyCounts.add(familyContract.verified_family_count);
+  }
+  for (const m of membersWithRepFlag) {
+    if (
+      m.verifiedFamilyCount != null &&
+      m.verifiedFamilyCount >= representedCount
+    ) {
+      verifiedFamilyCounts.add(m.verifiedFamilyCount);
+    }
+  }
+  const verifiedFamilyCount =
+    verifiedFamilyCounts.size === 1
+      ? Array.from(verifiedFamilyCounts)[0]
+      : representedCount;
+
   const expandLabel =
-    providerMarketCount != null && providerMarketCount > representedCount
-      ? `Compare ${representedCount} of ${providerMarketCount} deadlines`
+    verifiedFamilyCount != null && verifiedFamilyCount > representedCount
+      ? `Compare ${representedCount} of ${verifiedFamilyCount} deadlines`
       : `Compare ${representedCount} deadlines`;
   const collapseLabel = "Hide deadlines";
 
@@ -1132,6 +1211,7 @@ export function validateAndBuildDeadlineFamilyCardModel(
       representative,
       members: membersWithRepFlag,
       representedCount,
+      verifiedFamilyCount,
       providerMarketCount,
       inventoryComplete,
       expandLabel,

@@ -2228,11 +2228,22 @@ def _make_deadline_family_bundle_item(
         if _futures_data(item).get("id") is not None
     }
     ascending_contracts = family_payload.get("members") or []
-    ascending_items = [
-        member_by_id[int(m["market_id"])]
-        for m in ascending_contracts
-        if int(m["market_id"]) in member_by_id
-    ]
+    verified_total = family_payload.get("verified_family_count")
+    provider_total = family_payload.get("provider_market_count")
+    ascending_items: list[dict[str, Any]] = []
+    for m in ascending_contracts:
+        mid = int(m["market_id"])
+        if mid not in member_by_id:
+            continue
+        raw_item = member_by_id[mid]
+        raw_data = dict(_futures_data(raw_item))
+        updated_member = dict(m)
+        if verified_total is not None:
+            updated_member["verified_family_count"] = int(verified_total)
+        if provider_total is not None:
+            updated_member["provider_market_count"] = int(provider_total)
+        raw_data["deadline_member"] = updated_member
+        ascending_items.append({**raw_item, "data": raw_data})
     score_pool = all_group_items or ascending_items
     score = max(float(item.get("score") or 0) for item in score_pool)
     rank_score = max(
@@ -2360,9 +2371,14 @@ def assemble_deadline_family_bundles(
                 int(full_family.get("provider_market_count") or 0),
                 len(child_members),
             )
+            verified_total = int(
+                full_family.get("verified_family_count")
+                or len(full_family.get("members") or child_members)
+            )
             for m in ranked:
                 c = dict(_futures_data(m)["deadline_member"])
                 c["provider_market_count"] = total_known
+                c["verified_family_count"] = verified_total
                 chosen_contracts.append(c)
             capped_family, capped_err = verify_and_select_deadline_family(
                 chosen_contracts, now=now

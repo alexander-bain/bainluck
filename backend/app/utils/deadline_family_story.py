@@ -329,6 +329,145 @@ def _normalize_rule_text_for_hash(description: str) -> str:
     return text
 
 
+def _sha256_hex(text: str | None) -> str | None:
+    if not text or not isinstance(text, str):
+        return None
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+    return hashlib.sha256(cleaned.encode("utf-8")).hexdigest()
+
+
+def is_verified_deadline_rule_contract(contract: Any) -> bool:
+    """True only when `contract` is a verified cumulative deadline rule contract."""
+    return isinstance(contract, Mapping) and contract.get("verified") is True
+
+
+def merge_submarket_metadata_for_upsert(
+    existing_metadata: Mapping[str, Any] | None,
+    new_sub_meta: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Apply the top-level JSONB `||` merge semantics used by `_process_event_batch`.
+
+    In `tasks/polymarket.py`, `FuturesMarket.market_metadata` is updated on conflict via:
+        `COALESCE(futures_markets.market_metadata, '{}'::jsonb) || jsonb_build_object(...)`
+    Top-level keys present in `new_sub_meta` (including `deadline_rule_contract`)
+    atomically replace the corresponding top-level key in `existing_metadata` while
+    every unrelated top-level key (`dated_movement_basis`, `clob_token_ids`,
+    `content_understanding`, `volume_evidence`, etc.) is preserved untouched.
+    """
+    merged: dict[str, Any] = dict(existing_metadata) if isinstance(existing_metadata, Mapping) else {}
+    if isinstance(new_sub_meta, Mapping):
+        if DEADLINE_RULE_CONTRACT_KEY not in new_sub_meta:
+            merged.pop(DEADLINE_RULE_CONTRACT_KEY, None)
+        for key, value in new_sub_meta.items():
+            merged[key] = value
+    return merged
+
+
+def diagnose_polymarket_deadline_rule_refusal(
+    description: str | None,
+    *,
+    question: str | None = None,
+    group_item_title: str | None = None,
+    end_date: Any = None,
+) -> str:
+    """Return a specific deterministic refusal reason when a sub-market fails deadline rule validation."""
+    if not description or not isinstance(description, str) or not description.strip():
+        return "missing_or_empty_description"
+    cleaned_desc = description.strip()
+    rule_match = _AFFIRMATIVE_CUMULATIVE_RULE_RE.search(cleaned_desc)
+    if rule_match is None:
+        return "non_cumulative_or_non_affirmative_rule_clause"
+    raw_predicate = rule_match.group("predicate").strip()
+    main_clause_predicate = re.sub(r"\([^)]*\)", " ", raw_predicate).strip()
+    if not main_clause_predicate or _NEGATIVE_STEM_RE.search(main_clause_predicate):
+        return "negative_or_inverted_rule_predicate"
+    raw_tz = rule_match.group("cutoff_tz").strip().upper()
+    iana_tz = _RULE_TZ_TO_IANA.get(raw_tz)
+    if not iana_tz:
+        return "unsupported_rule_cutoff_timezone"
+    try:
+        hour_12 = int(rule_match.group("cutoff_hour"))
+        minute = int(rule_match.group("cutoff_minute"))
+    except (TypeError, ValueError):
+        return "invalid_rule_cutoff_time"
+    converted = _convert_12h_to_24h(hour_12, minute, rule_match.group("cutoff_ampm"))
+    if converted is None:
+        return "invalid_rule_cutoff_time"
+    cutoff_local_time = f"{converted[0]:02d}:{converted[1]:02d}"
+    raw_date_slot = rule_match.group("date_slot").strip()
+    rule_slot_date = None
+    if raw_date_slot.lower() != "the specified date":
+        rule_slot_date = _parse_calendar_date_slot(raw_date_slot)
+        if rule_slot_date is None:
+            return "invalid_rule_date_slot"
+    if group_item_title is not None and str(group_item_title).strip():
+        gi_date = _parse_calendar_date_slot(str(group_item_title).strip())
+        if gi_date is None:
+            return "non_calendar_group_item_title"
+        if rule_slot_date is not None and (
+            (gi_date[0], gi_date[1]) != (rule_slot_date[0], rule_slot_date[1])
+            or (gi_date[2] is not None and rule_slot_date[2] is not None and gi_date[2] != rule_slot_date[2])
+        ):
+            return "group_item_title_conflicts_with_rule_date"
+    if question is not None or end_date is not None:
+        parsed_q = parse_cumulative_deadline_question(
+            question,
+            end_date,
+            cutoff_timezone=iana_tz,
+            cutoff_local_time=cutoff_local_time,
+        )
+        if parsed_q is None:
+            return "question_or_end_date_cutoff_mismatch"
+    return "rule_contract_validation_failed"
+
+
+def _extract_venue_terminal_fields(
+    *,
+    closed: Any = None,
+    uma_resolution_status: str | None = None,
+    outcomes: Sequence[Any] | None = None,
+    outcome_prices: Sequence[Any] | None = None,
+) -> tuple[bool, str | None, str, str | None]:
+    venue_terminal_state = "open"
+    venue_winner: str | None = None
+    uma_status_clean = (
+        str(uma_resolution_status).strip().lower()
+        if isinstance(uma_resolution_status, str) and uma_resolution_status.strip()
+        else None
+    )
+    is_closed = closed is True
+    if is_closed and uma_status_clean == "resolved":
+        parsed_prices: list[float] = []
+        if isinstance(outcome_prices, Sequence) and not isinstance(outcome_prices, (str, bytes)):
+            try:
+                parsed_prices = [float(p) for p in outcome_prices]
+            except (TypeError, ValueError):
+                parsed_prices = []
+        norm_outcomes = [
+            str(o).strip().lower()
+            for o in (outcomes or ["Yes", "No"])
+            if str(o).strip()
+        ]
+        if norm_outcomes == ["yes", "no"] and len(parsed_prices) == 2:
+            if parsed_prices == [1.0, 0.0]:
+                venue_terminal_state = "resolved"
+                venue_winner = "Yes"
+            elif parsed_prices == [0.0, 1.0]:
+                venue_terminal_state = "resolved"
+                venue_winner = "No"
+            elif parsed_prices == [0.5, 0.5]:
+                venue_terminal_state = "void"
+            else:
+                venue_terminal_state = "unknown"
+        else:
+            venue_terminal_state = "unknown"
+    elif is_closed:
+        venue_terminal_state = "trading_closed"
+    return is_closed, uma_status_clean, venue_terminal_state, venue_winner
+
+
 def extract_polymarket_deadline_rule_contract(
     description: str | None,
     *,
@@ -340,6 +479,8 @@ def extract_polymarket_deadline_rule_contract(
     outcomes: Sequence[Any] | None = None,
     outcome_prices: Sequence[Any] | None = None,
     provider_market_count: int | None = None,
+    condition_id: str | None = None,
+    market_created_at: Any = None,
 ) -> dict[str, Any] | None:
     """Extract and verify a cumulative deadline rule contract from producer fields.
 
@@ -357,6 +498,11 @@ def extract_polymarket_deadline_rule_contract(
        - `end_date` converted to `ZoneInfo(cutoff_timezone)` at the exact local
          `cutoff_hour:cutoff_minute` (handling EDT/EST DST transitions and UTC year
          rollovers with zero adjacent-day tolerance).
+    4. Records lower-bound window semantics honestly: `"between market creation and ..."`
+       binds each market's resolution window to that market's creation (`window_start_kind:
+       "market_creation"`). It does NOT claim nested cumulative windows across siblings
+       unless their `window_start_instant` timestamps are present and proven equal
+       (`nested_window_proven`).
     """
     if not description or not isinstance(description, str):
         return None
@@ -441,48 +587,37 @@ def extract_polymarket_deadline_rule_contract(
             if group_item_date[2] is not None and group_item_date[2] != q_year:
                 return None
 
-    # Extract venue terminal state from real Gamma market fields when present
-    venue_terminal_state = "open"
-    venue_winner: str | None = None
-    uma_status_clean = (
-        str(uma_resolution_status).strip().lower()
-        if isinstance(uma_resolution_status, str) and uma_resolution_status.strip()
+    is_closed, uma_status_clean, venue_terminal_state, venue_winner = (
+        _extract_venue_terminal_fields(
+            closed=closed,
+            uma_resolution_status=uma_resolution_status,
+            outcomes=outcomes,
+            outcome_prices=outcome_prices,
+        )
+    )
+
+    clean_condition_id = (
+        str(condition_id).strip()
+        if condition_id is not None and str(condition_id).strip()
         else None
     )
-    is_closed = closed is True
-    if is_closed and uma_status_clean == "resolved":
-        parsed_prices: list[float] = []
-        if isinstance(outcome_prices, Sequence) and not isinstance(outcome_prices, (str, bytes)):
-            try:
-                parsed_prices = [float(p) for p in outcome_prices]
-            except (TypeError, ValueError):
-                parsed_prices = []
-        norm_outcomes = [
-            str(o).strip().lower()
-            for o in (outcomes or ["Yes", "No"])
-            if str(o).strip()
-        ]
-        if norm_outcomes == ["yes", "no"] and len(parsed_prices) == 2:
-            if parsed_prices == [1.0, 0.0]:
-                venue_terminal_state = "resolved"
-                venue_winner = "Yes"
-            elif parsed_prices == [0.0, 1.0]:
-                venue_terminal_state = "resolved"
-                venue_winner = "No"
-            elif parsed_prices == [0.5, 0.5]:
-                venue_terminal_state = "void"
-            else:
-                venue_terminal_state = "unknown"
-        else:
-            venue_terminal_state = "unknown"
-    elif is_closed:
-        venue_terminal_state = "trading_closed"
+    end_dt = parse_timezone_aware_instant(end_date)
+    created_dt = parse_timezone_aware_instant(market_created_at)
 
     contract: dict[str, Any] = {
         "schema": "polymarket_cumulative_deadline_v1",
+        "verified": True,
+        "status": "verified",
+        "condition_id": clean_condition_id,
+        "question_sha256": _sha256_hex(question),
+        "description_sha256": _sha256_hex(cleaned_desc),
+        "end_date_iso": end_dt.isoformat() if end_dt is not None else None,
         "rule_template_hash": rule_template_hash,
         "predicate_hash": predicate_hash,
         "window_kind": "cumulative_from_creation",
+        "window_start_kind": "market_creation",
+        "window_start_instant": created_dt.isoformat() if created_dt is not None else None,
+        "nested_window_proven": False,
         "resolves_yes_on_affirmative": True,
         "cutoff_timezone": iana_tz,
         "cutoff_tz_abbr": raw_tz,
@@ -514,10 +649,23 @@ def build_polymarket_submarket_deadline_contract(event: Any, market: Any) -> dic
     """Ingest helper for `tasks/polymarket.py` (`sub_market_metadata`).
 
     Inspects `market` (`PolymarketMarket`) and `event` (`PolymarketEvent`) already
-    in hand during `_process_event_batch`. Returns a verified `deadline_rule_contract`
-    dict only when `market` is a cumulative deadline sub-market with verified rule
-    text and matching contractual cutoff timestamp; returns `None` for all other
-    sub-markets so non-deadline markets are untouched.
+    in hand during `_process_event_batch`.
+    - For single-market or `neg_risk` events, returns `None`.
+    - For multi-market non-`neg_risk` events (`len(event.markets) >= 2`):
+      Always returns a `deadline_rule_contract` dict so that re-ingestion via the
+      PostgreSQL `COALESCE(market_metadata, '{}') || jsonb_build_object(...)` merge
+      in `_process_event_batch` atomically replaces any prior `deadline_rule_contract`
+      while preserving all unrelated `market_metadata` keys:
+      1. When the sub-market satisfies cumulative deadline rule & cutoff validation:
+         returns `"verified": True, "status": "verified"`, bound to `condition_id`,
+         `question_sha256`, `description_sha256`, and `end_date_iso`.
+      2. When `description` is missing (`None` or empty):
+         returns `"verified": False, "status": "missing_rule_description"`.
+      3. When `description`, `question`, `group_item_title`, or `end_date` fails
+         validation (including when a previously valid rule is edited to an
+         incompatible rule):
+         returns `"verified": False, "status": "invalidated_incompatible_rule"`
+         with the specific refusal `reason`, invalidating any previously stored proof.
     """
     if event is None or market is None:
         return None
@@ -530,20 +678,84 @@ def build_polymarket_submarket_deadline_contract(event: Any, market: Any) -> dic
     question = getattr(market, "question", None) or getattr(event, "title", None)
     description = getattr(market, "description", None)
     end_date = getattr(market, "end_date", None)
-    if not question or not description or end_date is None:
-        return None
+    raw_cid = getattr(market, "condition_id", None)
+    clean_condition_id = str(raw_cid).strip() if raw_cid is not None and str(raw_cid).strip() else None
+    market_created_at = getattr(market, "created_at", None) or getattr(market, "start_date", None)
+    group_item_title = getattr(market, "group_item_title", None)
+    provider_market_count = len(markets_list)
 
-    return extract_polymarket_deadline_rule_contract(
-        description,
-        question=question,
-        group_item_title=getattr(market, "group_item_title", None),
-        end_date=end_date,
-        closed=getattr(market, "closed", False),
-        uma_resolution_status=getattr(market, "uma_resolution_status", None),
-        outcomes=getattr(market, "outcomes", None),
-        outcome_prices=getattr(market, "outcome_prices", None),
-        provider_market_count=len(markets_list),
+    if question and isinstance(description, str) and description.strip() and end_date is not None:
+        verified_contract = extract_polymarket_deadline_rule_contract(
+            description,
+            question=question,
+            group_item_title=group_item_title,
+            end_date=end_date,
+            closed=getattr(market, "closed", False),
+            uma_resolution_status=getattr(market, "uma_resolution_status", None),
+            outcomes=getattr(market, "outcomes", None),
+            outcome_prices=getattr(market, "outcome_prices", None),
+            provider_market_count=provider_market_count,
+            condition_id=clean_condition_id,
+            market_created_at=market_created_at,
+        )
+        if verified_contract is not None:
+            return verified_contract
+
+    is_closed, uma_status_clean, venue_terminal_state, venue_winner = (
+        _extract_venue_terminal_fields(
+            closed=getattr(market, "closed", False),
+            uma_resolution_status=getattr(market, "uma_resolution_status", None),
+            outcomes=getattr(market, "outcomes", None),
+            outcome_prices=getattr(market, "outcome_prices", None),
+        )
     )
+    end_dt = parse_timezone_aware_instant(end_date)
+    missing_desc = not description or not isinstance(description, str) or not description.strip()
+    status_code = "missing_rule_description" if missing_desc else "invalidated_incompatible_rule"
+    reason = (
+        "missing_or_empty_description"
+        if missing_desc
+        else diagnose_polymarket_deadline_rule_refusal(
+            description,
+            question=question,
+            group_item_title=group_item_title,
+            end_date=end_date,
+        )
+    )
+
+    invalidation_contract: dict[str, Any] = {
+        "schema": "polymarket_cumulative_deadline_v1",
+        "verified": False,
+        "status": status_code,
+        "reason": reason,
+        "condition_id": clean_condition_id,
+        "question_sha256": _sha256_hex(question),
+        "description_sha256": None if missing_desc else _sha256_hex(description),
+        "end_date_iso": end_dt.isoformat() if end_dt is not None else None,
+        "rule_template_hash": None,
+        "predicate_hash": None,
+        "window_kind": None,
+        "window_start_kind": None,
+        "window_start_instant": None,
+        "nested_window_proven": False,
+        "resolves_yes_on_affirmative": False,
+        "cutoff_timezone": None,
+        "cutoff_tz_abbr": None,
+        "cutoff_local_time": None,
+        "date_slot_kind": None,
+        "group_item_title": (
+            str(group_item_title).strip()
+            if group_item_title is not None and str(group_item_title).strip()
+            else None
+        ),
+        "verified_calendar_date": None,
+        "venue_closed": is_closed,
+        "uma_resolution_status": uma_status_clean,
+        "venue_terminal_state": venue_terminal_state,
+        "venue_winner": venue_winner,
+        "provider_market_count": provider_market_count,
+    }
+    return invalidation_contract
 
 
 def parse_cumulative_deadline_question(
@@ -689,29 +901,38 @@ def extract_settlement_evidence(
     outcomes: Sequence[Any] | None = None,
     deadline_instant: Any = None,
     now: Any = None,
+    external_id: str | None = None,
+    question: str | None = None,
 ) -> dict[str, Any]:
-    """Classify terminal/settlement state using only real producer fields (Section 3C).
+    """Classify terminal/settlement state using only real producer fields (Section 3C / Gap 2).
 
-    Keeps five states strictly distinct:
-    - `"open"`: Market is open, before `deadline_instant`, with no venue/outcome
-      settlement signal.
-    - `"trading_closed"`: Trading has closed (`market_metadata[VENUE_SETTLED_KEY]`
-      or Gamma `venue_closed=True` without `uma_resolution_status="resolved"`, or
-      `now >= deadline_instant` on an `"open"` row), result not yet known (`result=None`).
-    - `"resolved"`: Result is known and settled with a specific winning outcome
-      (`result` is `"Yes"` or `"No"`), supported by:
-      1. `FuturesOutcome.is_winner is True` with a non-guess `resolution_source`
+    Keeps six states strictly distinct:
+    1. `"open"`: Market is open, before `deadline_instant`, with no venue/outcome
+       settlement signal (`is_settled=False, is_trading_closed=False, is_deadline_passed=False`).
+    2. `"deadline_passed"`: Condition cutoff (`deadline_instant`) has passed (`now >= deadline_instant`)
+       while the market row remains `"open"` without venue trading-closure or result evidence.
+       Excluded from live-movement representative selection and movement chips/badges,
+       while rendering truthful `"Deadline passed"` wording rather than `"Trading closed"`
+       (`is_settled=False, is_trading_closed=False, is_deadline_passed=True`).
+    3. `"trading_closed"`: Venue trading has closed (`market_metadata[VENUE_SETTLED_KEY]`,
+       Gamma `venue_closed=True` without `uma_resolution_status="resolved"`, or
+       `status in {"closed", "trading_closed"}` without an authoritative winner),
+       result not yet known (`is_settled=False, is_trading_closed=True, result=None`).
+    4. `"resolved"`: Result is known and settled with a specific winning outcome
+       (`result` is `"Yes"` or `"No"`, `is_settled=True`), supported by:
+       - `FuturesOutcome.is_winner is True` with a non-guess `resolution_source`
          permitted by `app.utils.resolution_authority.can_write_winner`, or
-      2. Producer-stamped Gamma `venue_terminal_state == "resolved"` with
+       - Producer-stamped Gamma `venue_terminal_state == "resolved"` with
          `venue_winner in {"Yes", "No"}` (`closed=True`, `uma_resolution_status="resolved"`,
          and exact `[1.0, 0.0]` / `[0.0, 1.0]` outcome prices), or
-      3. Explicit verified `winner` in `{"Yes", "No"}` on a settled envelope.
-    - `"void"`: Void, canceled, retracted (`resolution_source` in `_VOID_RESOLUTION_SOURCES`),
-      or 50/50 split resolution (`result=None`).
-    - `"unknown"`: Market has terminal status (`status in {"resolved", "closed", "suspended"}`
-      or `resolved is True`) but the winning outcome is not carried on the current
-      projection/wire (e.g. `FuturesMarketSnapshot` where `OUTCOME_ROW_COLUMNS` omits
-      `is_winner` and no venue winner was stamped). Never guesses a winner from prices.
+       - Explicit verified `winner` in `{"Yes", "No"}` on a settled envelope.
+    5. `"void"`: Void, canceled, retracted (`resolution_source` in `_VOID_RESOLUTION_SOURCES`),
+       or 50/50 split resolution (`is_settled=False, result=None`).
+    6. `"unknown"`: Market has terminal resolved/settled/suspended status
+       (`status in {"resolved", "settled", "finalized", "final", "suspended"}` or
+       `resolved is True` or `venue_terminal_state == "unknown"`) without an
+       authoritative winning outcome, OR stale stored proof conflicts with newer
+       state (`conflicting_settlement_evidence`). Never guesses a winner from prices.
     """
     local_status = str(status or "open").strip().lower()
     meta = market_metadata if isinstance(market_metadata, Mapping) else {}
@@ -722,10 +943,43 @@ def extract_settlement_evidence(
     )
     venue_settled_since = meta.get(VENUE_SETTLED_KEY)
 
+    deadline_dt = parse_timezone_aware_instant(deadline_instant)
+    now_dt = parse_timezone_aware_instant(now)
+    cutoff_has_passed = bool(
+        deadline_dt is not None and now_dt is not None and now_dt >= deadline_dt
+    )
+
+    # Check whether stored `deadline_rule_contract` identity/cutoff conflicts with current row
+    stored_contract_stale_conflict = False
+    if rule_contract:
+        rc_cid = rule_contract.get("condition_id")
+        if (
+            rc_cid is not None
+            and external_id is not None
+            and str(rc_cid).strip()
+            and str(external_id).strip()
+            and str(rc_cid).strip() != str(external_id).strip()
+        ):
+            stored_contract_stale_conflict = True
+        rc_q_sha = rule_contract.get("question_sha256")
+        if (
+            rc_q_sha is not None
+            and question is not None
+            and _sha256_hex(question) is not None
+            and str(rc_q_sha) != _sha256_hex(question)
+        ):
+            stored_contract_stale_conflict = True
+        rc_end_iso = rule_contract.get("end_date_iso")
+        if rc_end_iso is not None and deadline_dt is not None:
+            rc_end_dt = parse_timezone_aware_instant(rc_end_iso)
+            if rc_end_dt is None or rc_end_dt != deadline_dt:
+                stored_contract_stale_conflict = True
+
     # 1. Inspect outcome-level resolution_source and is_winner (ORM path)
     outcome_winner_name: str | None = None
     outcome_resolution_source: str | None = None
     has_void_outcome_source = False
+    multiple_outcome_winners = False
     for outcome in outcomes or ():
         raw_res_src = _outcome_field(outcome, "resolution_source")
         res_src = str(raw_res_src).strip() if isinstance(raw_res_src, str) and raw_res_src.strip() else None
@@ -745,20 +999,60 @@ def extract_settlement_evidence(
                 continue
             candidate_name = _normalize_yes_no_result(_outcome_field(outcome, "name"))
             if candidate_name in {"Yes", "No"}:
+                if outcome_winner_name is not None and outcome_winner_name != candidate_name:
+                    multiple_outcome_winners = True
                 outcome_winner_name = candidate_name
                 outcome_resolution_source = res_src or "outcome_winner"
-                break
 
     # 2. Inspect producer-stamped Gamma terminal state in `deadline_rule_contract`
-    venue_state = str(rule_contract.get("venue_terminal_state") or "").strip().lower()
-    venue_winner = _normalize_yes_no_result(rule_contract.get("venue_winner"))
+    venue_state = (
+        ""
+        if stored_contract_stale_conflict
+        else str(rule_contract.get("venue_terminal_state") or "").strip().lower()
+    )
+    venue_winner = (
+        None
+        if stored_contract_stale_conflict
+        else _normalize_yes_no_result(rule_contract.get("venue_winner"))
+    )
 
     # 3. Inspect explicit envelope winner
     explicit_winner = _normalize_yes_no_result(winner)
-    local_is_terminal = local_status in _TERMINAL_MARKET_STATUSES or resolved is True
+    local_is_resolved_status = (
+        local_status in {"resolved", "settled", "finalized", "final"}
+        or resolved is True
+    )
+    local_is_closed_only = (
+        local_status in {"closed", "trading_closed"} and not local_is_resolved_status
+    )
 
-    # Classify into one of: "void", "resolved", "trading_closed", "unknown", "open"
-    if (
+    # Detect conflicting settlement evidence (e.g. stored proof says Yes while outcome/envelope says No,
+    # or stored contract is bound to a different condition/question/cutoff while claiming terminal state).
+    distinct_winners = {
+        w
+        for w in (outcome_winner_name, venue_winner, explicit_winner)
+        if w in {"Yes", "No"}
+    }
+    has_conflicting_evidence = (
+        multiple_outcome_winners
+        or len(distinct_winners) > 1
+        or (
+            stored_contract_stale_conflict
+            and str(rule_contract.get("venue_terminal_state") or "").strip().lower()
+            in {"resolved", "trading_closed", "void"}
+        )
+        or (
+            venue_state == "resolved"
+            and venue_winner in {"Yes", "No"}
+            and has_void_outcome_source
+        )
+    )
+
+    if has_conflicting_evidence:
+        state = "unknown"
+        result = None
+        auth_source = "conflicting_settlement_evidence"
+    elif (
         local_status in _VOID_MARKET_STATUSES
         or has_void_outcome_source
         or venue_state == "void"
@@ -772,6 +1066,10 @@ def extract_settlement_evidence(
             if venue_state == "void"
             else "market_status"
         )
+    elif venue_state == "unknown":
+        state = "unknown"
+        result = None
+        auth_source = "deadline_rule_contract"
     elif venue_state == "resolved" and venue_winner in {"Yes", "No"}:
         state = "resolved"
         result = venue_winner
@@ -780,12 +1078,18 @@ def extract_settlement_evidence(
         state = "resolved"
         result = outcome_winner_name
         auth_source = outcome_resolution_source
-    elif local_is_terminal and explicit_winner in {"Yes", "No"}:
+    elif (local_is_resolved_status or local_is_closed_only) and explicit_winner in {"Yes", "No"}:
         state = "resolved"
         result = explicit_winner
         auth_source = "market_status"
-    elif venue_state == "trading_closed" or (
-        venue_settled_since is not None and not local_is_terminal
+    elif local_is_resolved_status or local_status == "suspended":
+        state = "unknown"
+        result = None
+        auth_source = "market_status"
+    elif (
+        venue_state == "trading_closed"
+        or venue_settled_since is not None
+        or local_is_closed_only
     ):
         state = "trading_closed"
         result = None
@@ -793,24 +1097,28 @@ def extract_settlement_evidence(
             "deadline_rule_contract"
             if venue_state == "trading_closed"
             else VENUE_SETTLED_KEY
+            if venue_settled_since is not None
+            else "market_status"
         )
-    elif local_is_terminal or local_status == "suspended":
-        state = "unknown"
+    elif cutoff_has_passed:
+        state = "deadline_passed"
         result = None
-        auth_source = "market_status"
+        auth_source = "deadline_passed"
     else:
-        deadline_dt = parse_timezone_aware_instant(deadline_instant)
-        now_dt = parse_timezone_aware_instant(now)
-        if deadline_dt is not None and now_dt is not None and now_dt >= deadline_dt:
-            state = "trading_closed"
-            result = None
-            auth_source = "deadline_passed"
-        else:
-            state = "open"
-            result = None
-            auth_source = None
+        state = "open"
+        result = None
+        auth_source = None
 
-    is_settled = state != "open"
+    is_settled = state == "resolved"
+    is_trading_closed = state == "trading_closed"
+    is_deadline_passed = state == "deadline_passed"
+    venue_closure_evidence = bool(
+        venue_state in {"resolved", "trading_closed", "void"}
+        or venue_settled_since is not None
+        or local_is_closed_only
+        or local_is_resolved_status
+        or outcome_winner_name in {"Yes", "No"}
+    )
     lagging_local_status = bool(
         state in {"resolved", "trading_closed", "void"}
         and local_status == "open"
@@ -820,6 +1128,10 @@ def extract_settlement_evidence(
     return {
         "state": state,
         "is_settled": is_settled,
+        "is_trading_closed": is_trading_closed,
+        "is_deadline_passed": is_deadline_passed,
+        "venue_closure_evidence": venue_closure_evidence,
+        "conflicting_settlement_evidence": has_conflicting_evidence,
         "status": "resolved" if state == "resolved" else local_status,
         "result": result,
         "authoritative_source": auth_source,
@@ -832,18 +1144,24 @@ def format_movement_timeframe(
     endpoint_observed_at: Any,
     *,
     tz_name: str | None = None,
+    timezone_name: str | None = None,
+    now: Any = None,
 ) -> dict[str, Any]:
     """Compute truthful movement comparison wording under Direct User Decision Q4 & Section 3D.
 
     - Requires BOTH `basis_observed_at` and `endpoint_observed_at` (`yes_price_observed_at`)
       to be valid timezone-aware timestamps with `endpoint_observed_at >= basis_observed_at`.
-    - Uses `"since yesterday"` ONLY when `basis_observed_at` and `endpoint_observed_at`
-      genuinely cross from the previous calendar day (`calendar_day_diff == 1`)
-      in the target timezone.
-    - When both timestamps fall on the same local calendar day (`calendar_day_diff == 0`),
-      even if 12–24 hours apart, uses truthful same-day time wording
-      (`"today since <time>"` / `"since <time>"`), never `"since yesterday"`.
+    - When `now` is provided, also checks the reader's current local calendar date:
+      - Uses `"since yesterday"` ONLY when `basis_observed_at` is the local calendar day
+        before `endpoint_observed_at` (`calendar_day_diff == 1`) AND `endpoint_observed_at`
+        is on the reader's current local calendar date (`local_end.date() == local_now.date()`).
+      - Uses `"today since <time>"` / `"since <time>"` ONLY when `basis_observed_at` and
+        `endpoint_observed_at` fall on the same local calendar day (`calendar_day_diff == 0`)
+        AND `endpoint_observed_at` is on the reader's current local calendar date.
+      - Otherwise uses explicit calendar-date wording (`"since <Mon D>"`, e.g. `"since Oct 13"`).
+    - Never manufactures an observation timestamp from `now`.
     """
+    effective_tz_arg = tz_name or timezone_name
     basis_dt = parse_timezone_aware_instant(basis_observed_at)
     end_dt = parse_timezone_aware_instant(endpoint_observed_at)
     if basis_dt is None or end_dt is None or end_dt < basis_dt:
@@ -853,21 +1171,27 @@ def format_movement_timeframe(
             "crosses_previous_calendar_day": False,
             "chip_timeframe": None,
             "sentence_timeframe": None,
-            "timezone": tz_name or "UTC",
+            "timezone": effective_tz_arg or "UTC",
         }
 
     tz: Any = timezone.utc
     effective_tz_name = "UTC"
-    if tz_name:
+    if effective_tz_arg:
         try:
-            tz = ZoneInfo(tz_name)
-            effective_tz_name = tz_name
+            tz = ZoneInfo(effective_tz_arg)
+            effective_tz_name = effective_tz_arg
         except ZoneInfoNotFoundError:
             tz = timezone.utc
             effective_tz_name = "UTC"
 
     local_basis = basis_dt.astimezone(tz)
     local_end = end_dt.astimezone(tz)
+    now_dt = parse_timezone_aware_instant(now)
+    local_now_date = now_dt.astimezone(tz).date() if now_dt is not None else None
+    end_is_reader_today = (
+        local_now_date is None or local_end.date() == local_now_date
+    )
+
     day_diff = (local_end.date() - local_basis.date()).days
     if day_diff < 0:
         return {
@@ -879,7 +1203,7 @@ def format_movement_timeframe(
             "timezone": effective_tz_name,
         }
 
-    if day_diff == 1:
+    if day_diff == 1 and end_is_reader_today:
         return {
             "valid": True,
             "calendar_day_diff": 1,
@@ -889,7 +1213,7 @@ def format_movement_timeframe(
             "timezone": effective_tz_name,
         }
 
-    if day_diff == 0:
+    if day_diff == 0 and end_is_reader_today:
         hour_12 = local_basis.hour % 12 or 12
         am_pm = "AM" if local_basis.hour < 12 else "PM"
         time_label = f"{hour_12}:{local_basis.minute:02d} {am_pm}"
@@ -1024,24 +1348,230 @@ def _verify_member_rule_equivalence(
     resolution_date: Any,
     description: str | None,
     market_metadata: Mapping[str, Any],
+    external_id: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """Verify rule equivalence and contractual deadline cutoff for a single member (3A / 3B).
+    """Verify rule equivalence and contractual deadline cutoff for a single member (3A / 3B / Gap 1).
 
     Returns `(rule_verification_dict, parsed_question_dict_or_None)`.
-    - If a verified `deadline_rule_contract` is present in `market_metadata` or
-      derivable from `description`, validates the question and `resolution_date`
-      against the rule's exact `cutoff_timezone` and `cutoff_local_time`.
-    - If neither `description` nor `market_metadata["deadline_rule_contract"]` is
-      present on the row (e.g. un-augmented Oct 14 `FuturesMarket` rows where
-      `description` was not persisted), still checks whether the question is a
-      candidate under the default `America/New_York` `23:59` cutoff so the caller
-      can report the exact missing upstream producer evidence
-      (`missing_rule_equivalence_proof`) rather than silently pretending the
-      family is ready.
+    - If `description` is explicitly supplied, validates `description` directly against
+      `name` and `resolution_date`; if `description` fails validation, returns
+      `verified=False, status="invalidated_incompatible_rule"` and NEVER falls back
+      to stale stored proof in `market_metadata["deadline_rule_contract"]`.
+    - If `market_metadata["deadline_rule_contract"]` carries an explicit invalidation or
+      missing-rule marker (`verified is False`), honours that status
+      (`"invalidated_incompatible_rule"` vs `"missing_rule_description"`).
+    - If `market_metadata["deadline_rule_contract"]` carries verified proof, verifies
+      its bound `condition_id`, `question_sha256`, `end_date_iso`, and
+      `verified_calendar_date` against the current row so stale proof cannot be
+      reused after a question, condition, or cutoff change.
     """
     stored_contract = market_metadata.get(DEADLINE_RULE_CONTRACT_KEY)
     rule_contract: dict[str, Any] | None = None
-    if isinstance(stored_contract, Mapping):
+
+    # 1. If a live `description` is explicitly provided, it is authoritative over any stored contract.
+    if isinstance(description, str) and description.strip():
+        extracted = extract_polymarket_deadline_rule_contract(
+            description,
+            question=name,
+            end_date=resolution_date,
+            condition_id=external_id,
+        )
+        if extracted is None:
+            candidate_q = parse_cumulative_deadline_question(
+                name,
+                resolution_date,
+                cutoff_timezone="America/New_York",
+                cutoff_local_time="23:59",
+            )
+            if candidate_q is None:
+                return (
+                    {
+                        "verified": False,
+                        "status": "not_a_deadline_candidate",
+                        "reason": "question_or_end_date_cutoff_mismatch",
+                        "rule_template_hash": None,
+                        "predicate_hash": None,
+                        "window_kind": None,
+                        "window_start_kind": None,
+                        "window_start_instant": None,
+                        "nested_window_proven": False,
+                        "cutoff_timezone": None,
+                        "cutoff_local_time": None,
+                        "missing_producer_fields": [],
+                    },
+                    None,
+                )
+            return (
+                {
+                    "verified": False,
+                    "status": "invalidated_incompatible_rule",
+                    "reason": diagnose_polymarket_deadline_rule_refusal(
+                        description,
+                        question=name,
+                        end_date=resolution_date,
+                    ),
+                    "rule_template_hash": None,
+                    "predicate_hash": None,
+                    "window_kind": None,
+                    "window_start_kind": None,
+                    "window_start_instant": None,
+                    "nested_window_proven": False,
+                    "cutoff_timezone": None,
+                    "cutoff_local_time": None,
+                    "missing_producer_fields": [],
+                },
+                candidate_q,
+            )
+        rule_contract = extracted
+
+    # 2. Otherwise inspect `market_metadata["deadline_rule_contract"]`
+    elif isinstance(stored_contract, Mapping):
+        if stored_contract.get("verified") is False:
+            status_code = str(
+                stored_contract.get("status") or "invalidated_incompatible_rule"
+            )
+            reason = stored_contract.get("reason")
+            candidate_q = parse_cumulative_deadline_question(
+                name,
+                resolution_date,
+                cutoff_timezone="America/New_York",
+                cutoff_local_time="23:59",
+            )
+            if candidate_q is None:
+                return (
+                    {
+                        "verified": False,
+                        "status": "not_a_deadline_candidate",
+                        "reason": reason,
+                        "rule_template_hash": None,
+                        "predicate_hash": None,
+                        "window_kind": None,
+                        "window_start_kind": None,
+                        "window_start_instant": None,
+                        "nested_window_proven": False,
+                        "cutoff_timezone": None,
+                        "cutoff_local_time": None,
+                        "missing_producer_fields": [],
+                    },
+                    None,
+                )
+            return (
+                {
+                    "verified": False,
+                    "status": status_code,
+                    "reason": reason,
+                    "rule_template_hash": None,
+                    "predicate_hash": None,
+                    "window_kind": None,
+                    "window_start_kind": None,
+                    "window_start_instant": None,
+                    "nested_window_proven": False,
+                    "cutoff_timezone": None,
+                    "cutoff_local_time": None,
+                    "missing_producer_fields": (
+                        [
+                            "FuturesMarket.description",
+                            f"market_metadata.{DEADLINE_RULE_CONTRACT_KEY}",
+                        ]
+                        if status_code == "missing_rule_description"
+                        else []
+                    ),
+                },
+                candidate_q,
+            )
+
+        # Verify identity and content bindings on stored proof before trusting it
+        bound_cid = stored_contract.get("condition_id")
+        if (
+            bound_cid is not None
+            and external_id is not None
+            and str(bound_cid).strip()
+            and str(external_id).strip()
+            and str(bound_cid).strip() != str(external_id).strip()
+        ):
+            candidate_q = parse_cumulative_deadline_question(
+                name,
+                resolution_date,
+                cutoff_timezone="America/New_York",
+                cutoff_local_time="23:59",
+            )
+            return (
+                {
+                    "verified": False,
+                    "status": "stale_bound_condition_id",
+                    "reason": "stored_contract_condition_id_mismatch",
+                    "rule_template_hash": None,
+                    "predicate_hash": None,
+                    "window_kind": None,
+                    "window_start_kind": None,
+                    "window_start_instant": None,
+                    "nested_window_proven": False,
+                    "cutoff_timezone": None,
+                    "cutoff_local_time": None,
+                    "missing_producer_fields": [],
+                },
+                candidate_q,
+            )
+
+        bound_q_sha = stored_contract.get("question_sha256")
+        if (
+            bound_q_sha is not None
+            and _sha256_hex(name) is not None
+            and str(bound_q_sha) != _sha256_hex(name)
+        ):
+            candidate_q = parse_cumulative_deadline_question(
+                name,
+                resolution_date,
+                cutoff_timezone="America/New_York",
+                cutoff_local_time="23:59",
+            )
+            return (
+                {
+                    "verified": False,
+                    "status": "stale_bound_question",
+                    "reason": "stored_contract_question_sha256_mismatch",
+                    "rule_template_hash": None,
+                    "predicate_hash": None,
+                    "window_kind": None,
+                    "window_start_kind": None,
+                    "window_start_instant": None,
+                    "nested_window_proven": False,
+                    "cutoff_timezone": None,
+                    "cutoff_local_time": None,
+                    "missing_producer_fields": [],
+                },
+                candidate_q,
+            )
+
+        bound_end_iso = stored_contract.get("end_date_iso")
+        if bound_end_iso is not None:
+            bound_end_dt = parse_timezone_aware_instant(bound_end_iso)
+            current_end_dt = parse_timezone_aware_instant(resolution_date)
+            if bound_end_dt is None or current_end_dt is None or bound_end_dt != current_end_dt:
+                candidate_q = parse_cumulative_deadline_question(
+                    name,
+                    resolution_date,
+                    cutoff_timezone="America/New_York",
+                    cutoff_local_time="23:59",
+                )
+                return (
+                    {
+                        "verified": False,
+                        "status": "stale_bound_cutoff",
+                        "reason": "stored_contract_end_date_mismatch",
+                        "rule_template_hash": None,
+                        "predicate_hash": None,
+                        "window_kind": None,
+                        "window_start_kind": None,
+                        "window_start_instant": None,
+                        "nested_window_proven": False,
+                        "cutoff_timezone": None,
+                        "cutoff_local_time": None,
+                        "missing_producer_fields": [],
+                    },
+                    candidate_q,
+                )
+
         rule_template_hash = stored_contract.get("rule_template_hash")
         cutoff_tz = stored_contract.get("cutoff_timezone")
         cutoff_time = stored_contract.get("cutoff_local_time")
@@ -1056,13 +1586,6 @@ def _verify_member_rule_equivalence(
             and resolves_yes is True
         ):
             rule_contract = dict(stored_contract)
-
-    if rule_contract is None and description:
-        rule_contract = extract_polymarket_deadline_rule_contract(
-            description,
-            question=name,
-            end_date=resolution_date,
-        )
 
     if rule_contract is not None:
         cutoff_tz = str(rule_contract["cutoff_timezone"])
@@ -1081,6 +1604,9 @@ def _verify_member_rule_equivalence(
                     "rule_template_hash": None,
                     "predicate_hash": None,
                     "window_kind": None,
+                    "window_start_kind": None,
+                    "window_start_instant": None,
+                    "nested_window_proven": False,
                     "cutoff_timezone": cutoff_tz,
                     "cutoff_local_time": cutoff_time,
                     "missing_producer_fields": [],
@@ -1096,6 +1622,9 @@ def _verify_member_rule_equivalence(
                     "rule_template_hash": None,
                     "predicate_hash": None,
                     "window_kind": None,
+                    "window_start_kind": None,
+                    "window_start_instant": None,
+                    "nested_window_proven": False,
                     "cutoff_timezone": cutoff_tz,
                     "cutoff_local_time": cutoff_time,
                     "missing_producer_fields": [],
@@ -1116,6 +1645,9 @@ def _verify_member_rule_equivalence(
                         "rule_template_hash": None,
                         "predicate_hash": None,
                         "window_kind": None,
+                        "window_start_kind": None,
+                        "window_start_instant": None,
+                        "nested_window_proven": False,
                         "cutoff_timezone": cutoff_tz,
                         "cutoff_local_time": cutoff_time,
                         "missing_producer_fields": [],
@@ -1130,12 +1662,17 @@ def _verify_member_rule_equivalence(
                         "rule_template_hash": None,
                         "predicate_hash": None,
                         "window_kind": None,
+                        "window_start_kind": None,
+                        "window_start_instant": None,
+                        "nested_window_proven": False,
                         "cutoff_timezone": cutoff_tz,
                         "cutoff_local_time": cutoff_time,
                         "missing_producer_fields": [],
                     },
                     None,
                 )
+        raw_w_start = rule_contract.get("window_start_instant")
+        parsed_w_start = parse_timezone_aware_instant(raw_w_start)
         return (
             {
                 "verified": True,
@@ -1147,9 +1684,23 @@ def _verify_member_rule_equivalence(
                     else None
                 ),
                 "window_kind": "cumulative_from_creation",
+                "window_start_kind": str(
+                    rule_contract.get("window_start_kind") or "market_creation"
+                ),
+                "window_start_instant": (
+                    parsed_w_start.isoformat() if parsed_w_start is not None else None
+                ),
+                "nested_window_proven": False,
                 "cutoff_timezone": cutoff_tz,
                 "cutoff_local_time": cutoff_time,
                 "group_item_title": rule_contract.get("group_item_title"),
+                "condition_id": rule_contract.get("condition_id") or external_id,
+                "question_sha256": rule_contract.get("question_sha256") or _sha256_hex(name),
+                "description_sha256": rule_contract.get("description_sha256"),
+                "end_date_iso": (
+                    rule_contract.get("end_date_iso")
+                    or parsed_q["deadline_instant"]
+                ),
                 "missing_producer_fields": [],
             },
             parsed_q,
@@ -1172,6 +1723,9 @@ def _verify_member_rule_equivalence(
                 "rule_template_hash": None,
                 "predicate_hash": None,
                 "window_kind": None,
+                "window_start_kind": None,
+                "window_start_instant": None,
+                "nested_window_proven": False,
                 "cutoff_timezone": None,
                 "cutoff_local_time": None,
                 "missing_producer_fields": [],
@@ -1185,6 +1739,9 @@ def _verify_member_rule_equivalence(
             "rule_template_hash": None,
             "predicate_hash": None,
             "window_kind": None,
+            "window_start_kind": None,
+            "window_start_instant": None,
+            "nested_window_proven": False,
             "cutoff_timezone": None,
             "cutoff_local_time": None,
             "missing_producer_fields": [
@@ -1222,10 +1779,9 @@ def build_deadline_member_contract(
     Returns `None` when the market is not a cumulative deadline-family candidate
     or lacks required condition/outcome/deadline identity. When the market is a
     structural candidate but lacks upstream rule-equivalence proof (`description` /
-    `market_metadata["deadline_rule_contract"]`), returns the contract with
-    `rule_verification.verified = False` and `missing_producer_fields` populated
-    so `verify_and_select_deadline_family` refuses grouping with an explicit
-    producer-gap reason (`missing_rule_equivalence_proof`).
+    `market_metadata["deadline_rule_contract"]`) or has invalidated rule proof,
+    returns the contract with `rule_verification.verified = False` so
+    `verify_and_select_deadline_family` refuses grouping with the exact reason.
     """
     if market_id is None or isinstance(market_id, bool):
         return None
@@ -1246,6 +1802,7 @@ def build_deadline_member_contract(
         resolution_date=resolution_date,
         description=description,
         market_metadata=meta_dict,
+        external_id=clean_external_id,
     )
     if parsed_q is None:
         return None
@@ -1292,6 +1849,8 @@ def build_deadline_member_contract(
         outcomes=outcomes,
         deadline_instant=parsed_q["deadline_instant"],
         now=reference_dt,
+        external_id=clean_external_id,
+        question=str(name),
     )
 
     # Section 3D: Observation timestamp comes strictly from the selected Yes outcome.
@@ -1363,7 +1922,14 @@ def build_deadline_member_contract(
 
     supported_move: float | None = None
     supported_move_points: float | None = None
-    if settlement["is_settled"]:
+    settlement_state = settlement["state"]
+    if settlement_state == "resolved":
+        movement_status = "settled_suppressed"
+    elif settlement_state == "trading_closed":
+        movement_status = "trading_closed_suppressed"
+    elif settlement_state == "deadline_passed":
+        movement_status = "deadline_passed_suppressed"
+    elif settlement_state in {"void", "unknown"}:
         movement_status = "settled_suppressed"
     elif yes_probability is None:
         movement_status = "unpriced"
@@ -1397,6 +1963,7 @@ def build_deadline_member_contract(
             basis_observed_at,
             yes_observed_dt,
             tz_name="UTC",
+            now=reference_dt,
         )
         if supported_move is not None
         and basis_observed_at is not None
@@ -1455,6 +2022,15 @@ def build_deadline_member_contract(
     ):
         provider_market_count = raw_market_count
 
+    raw_verified_family_count = meta_dict.get("verified_family_count")
+    verified_family_count: int | None = None
+    if (
+        isinstance(raw_verified_family_count, int)
+        and not isinstance(raw_verified_family_count, bool)
+        and raw_verified_family_count > 0
+    ):
+        verified_family_count = raw_verified_family_count
+
     return {
         "market_id": clean_market_id,
         "name": str(name).strip(),
@@ -1511,6 +2087,7 @@ def build_deadline_member_contract(
         "is_near_certain": is_near_certain,
         "near_certain_open_eligible": near_certain_open_eligible,
         "provider_market_count": provider_market_count,
+        "verified_family_count": verified_family_count,
         "detail_href": f"/futures/{clean_market_id}",
     }
 
@@ -1568,8 +2145,12 @@ def _validate_member_contract_dict(
     rule_ver = member_contract.get("rule_verification")
     if isinstance(rule_ver, Mapping) and rule_ver.get("verified") is not True:
         status_code = str(rule_ver.get("status") or "")
-        if status_code == "missing_upstream_rule_text":
+        if status_code in {"missing_upstream_rule_text", "missing_rule_description"}:
             return None, "missing_rule_equivalence_proof"
+        if status_code == "invalidated_incompatible_rule":
+            return None, "invalidated_incompatible_rule"
+        if status_code.startswith("stale_bound_"):
+            return None, f"stale_rule_proof:{status_code}"
         return None, f"unverified_rule_contract:{status_code or 'unknown'}"
 
     market_id = member_contract.get("market_id")
@@ -1671,9 +2252,17 @@ def _validate_member_contract_dict(
     synthetic_meta: dict[str, Any] = {
         DEADLINE_RULE_CONTRACT_KEY: {
             "schema": "polymarket_cumulative_deadline_v1",
+            "verified": True,
+            "status": "verified",
+            "condition_id": str(external_id),
+            "question_sha256": _sha256_hex(str(name)),
+            "end_date_iso": str(deadline_instant),
             "rule_template_hash": rule_hash,
             "predicate_hash": rule_ver.get("predicate_hash"),
             "window_kind": "cumulative_from_creation",
+            "window_start_kind": rule_ver.get("window_start_kind") or "market_creation",
+            "window_start_instant": rule_ver.get("window_start_instant"),
+            "nested_window_proven": False,
             "resolves_yes_on_affirmative": True,
             "cutoff_timezone": cutoff_tz,
             "cutoff_local_time": cutoff_time,
@@ -1705,6 +2294,8 @@ def _validate_member_contract_dict(
             synthetic_meta["dated_movement_basis_eligibility"] = "priced_leg"
     if member_contract.get("provider_market_count") is not None:
         synthetic_meta["market_count"] = member_contract.get("provider_market_count")
+    if member_contract.get("verified_family_count") is not None:
+        synthetic_meta["verified_family_count"] = member_contract.get("verified_family_count")
 
     top_outcomes_in = (
         [{"id": yes_outcome_id, "rendered_percent": member_contract.get("yes_rendered_percent")}]
@@ -1720,7 +2311,14 @@ def _validate_member_contract_dict(
         group_id=str(group_id),
         group_type=member_contract.get("group_type"),
         market_type=member_contract.get("market_type"),
-        status="resolved" if state_in == "unknown" else status_in,
+        status=(
+            "resolved"
+            if state_in == "unknown"
+            else "closed"
+            if state_in == "trading_closed"
+            and auth_src_in not in {"deadline_rule_contract", VENUE_SETTLED_KEY}
+            else status_in
+        ),
         resolved=True if state_in in {"resolved", "unknown"} else False,
         winner=result_in if state_in == "resolved" else None,
         resolution_date=deadline_instant,
@@ -1731,6 +2329,22 @@ def _validate_member_contract_dict(
     )
     if rebuilt is None:
         return None, "invalid_or_missing_member_contract"
+    if state_in == "deadline_passed" and rebuilt["settlement"]["state"] == "open":
+        rebuilt["settlement"] = {
+            "state": "deadline_passed",
+            "is_settled": False,
+            "is_trading_closed": False,
+            "is_deadline_passed": True,
+            "status": status_in,
+            "result": None,
+            "authoritative_source": "deadline_passed",
+            "lagging_local_status": False,
+        }
+        rebuilt["movement_status"] = "deadline_passed_suppressed"
+        rebuilt["supported_move"] = None
+        rebuilt["supported_move_points"] = None
+        rebuilt["show_hero_movement_chip"] = False
+        rebuilt["show_row_movement_badge"] = False
     if isinstance(settlement_in, Mapping) and settlement_in.get("lagging_local_status"):
         rebuilt["settlement"]["lagging_local_status"] = True
     return rebuilt, None
@@ -1811,15 +2425,27 @@ def verify_and_select_deadline_family(
     if "unknown" in states:
         return None, "member_settlement_result_unknown"
 
-    # Cumulative monotonicity sanity check on resolved members: if an earlier
-    # deadline resolved "Yes", a later cumulative deadline cannot resolve "No".
-    saw_resolved_yes = False
+    # Lower-bound window provenance ("between market creation and ..."):
+    # Identical template text does not automatically mean identical start instants.
+    # Nested cumulative windows across members are proven ONLY when every member
+    # carries an explicit `window_start_instant` and all start instants are identical.
+    start_instants = [
+        m["rule_verification"].get("window_start_instant") for m in ascending
+    ]
+    nested_window_proven = bool(
+        all(s is not None for s in start_instants) and len(set(start_instants)) == 1
+    )
     for m in ascending:
-        if m["settlement"]["state"] == "resolved":
-            if m["settlement"]["result"] == "Yes":
-                saw_resolved_yes = True
-            elif saw_resolved_yes and m["settlement"]["result"] == "No":
-                return None, "contradictory_cumulative_settlement_results"
+        m["rule_verification"]["nested_window_proven"] = nested_window_proven
+
+    if nested_window_proven:
+        saw_resolved_yes = False
+        for m in ascending:
+            if m["settlement"]["state"] == "resolved":
+                if m["settlement"]["result"] == "Yes":
+                    saw_resolved_yes = True
+                elif saw_resolved_yes and m["settlement"]["result"] == "No":
+                    return None, "contradictory_cumulative_settlement_results"
 
     source = ascending[0]["source"]
     group_id = ascending[0]["group_id"]
@@ -1841,7 +2467,8 @@ def verify_and_select_deadline_family(
         family_state = "settled"
     else:
         family_state = "open"
-        # Filter to open, priced members that are eligible (applying Q8 for >=97% members)
+        # Filter to open, priced members that are eligible (excluding `deadline_passed`,
+        # `trading_closed`, and `resolved`, and applying Q8 for >=97% members)
         eligible_open_priced = [
             m
             for m in ascending
@@ -1884,13 +2511,14 @@ def verify_and_select_deadline_family(
             selection_reason = "nearest_50_pct_fallback"
 
     # Compute timeframe in requested timezone (`reader_tz` or UTC) strictly from
-    # `(basis_observed_at, rep.price_observed_at)` — never from `now`!
+    # `(basis_observed_at, rep.price_observed_at)`, checking reader-local today against `now`.
     rep_basis = rep.get("movement_basis")
     rep_timeframe = (
         format_movement_timeframe(
             rep_basis.get("observed_at") if isinstance(rep_basis, Mapping) else None,
             rep.get("price_observed_at"),
             tz_name=reader_tz or "UTC",
+            now=now,
         )
         if rep.get("supported_move") is not None
         and isinstance(rep_basis, Mapping)
@@ -1898,15 +2526,31 @@ def verify_and_select_deadline_family(
         else None
     )
 
-    # 6F: Distinguish represented family members from complete provider inventory.
+    # 6F & Gap 4: Distinguish represented family members from verified family total
+    # and raw provider event market count.
     represented_count = len(ascending)
-    known_counts = {
+    known_provider_counts = {
         int(m["provider_market_count"])
         for m in ascending
         if m.get("provider_market_count") is not None
         and int(m["provider_market_count"]) >= represented_count
     }
-    provider_market_count = next(iter(known_counts)) if len(known_counts) == 1 else None
+    provider_market_count = (
+        next(iter(known_provider_counts)) if len(known_provider_counts) == 1 else None
+    )
+
+    known_verified_counts = {
+        int(m["verified_family_count"])
+        for m in ascending
+        if m.get("verified_family_count") is not None
+        and int(m["verified_family_count"]) >= represented_count
+    }
+    verified_family_count = (
+        next(iter(known_verified_counts))
+        if len(known_verified_counts) == 1
+        else represented_count
+    )
+
     inventory_complete: bool | None = (
         (provider_market_count == represented_count)
         if provider_market_count is not None
@@ -1922,6 +2566,9 @@ def verify_and_select_deadline_family(
             "shared_question": shared_question,
             "family_state": family_state,
             "rule_template_hash": ascending[0]["rule_verification"]["rule_template_hash"],
+            "window_start_kind": ascending[0]["rule_verification"].get("window_start_kind")
+            or "market_creation",
+            "nested_window_proven": nested_window_proven,
             "cutoff_timezone": ascending[0]["rule_verification"]["cutoff_timezone"],
             "cutoff_local_time": ascending[0]["rule_verification"]["cutoff_local_time"],
             "representative_market_id": rep["market_id"],
@@ -1932,6 +2579,7 @@ def verify_and_select_deadline_family(
             "hero_min_movement_points": DEADLINE_HERO_MIN_MOVEMENT_POINTS,
             "moderate_min_movement_points": DEADLINE_MODERATE_MIN_MOVEMENT_POINTS,
             "represented_count": represented_count,
+            "verified_family_count": verified_family_count,
             "provider_market_count": provider_market_count,
             "inventory_complete": inventory_complete,
             "representative_timeframe": rep_timeframe,
@@ -1952,6 +2600,9 @@ __all__ = [
     "is_deadline_family_story_key",
     "deadline_family_story_key",
     "parse_timezone_aware_instant",
+    "is_verified_deadline_rule_contract",
+    "merge_submarket_metadata_for_upsert",
+    "diagnose_polymarket_deadline_rule_refusal",
     "extract_polymarket_deadline_rule_contract",
     "build_polymarket_submarket_deadline_contract",
     "parse_cumulative_deadline_question",

@@ -706,7 +706,7 @@ def sub_market_metadata(
         # the next poll and a re-ingest refreshes one that has gone stale
         # because the venue relabelled the market.
         meta[CONTENT_UNDERSTANDING_KEY] = content_understanding
-    if deadline_rule_contract:
+    if deadline_rule_contract is not None:
         meta[DEADLINE_RULE_CONTRACT_KEY] = deadline_rule_contract
     return meta or None
 
@@ -3390,10 +3390,15 @@ async def _process_event_batch(
                                         _sa_literal(_json.dumps(_v)), _PG_JSONB,
                                     )
                                 _sub_meta_pairs.extend([_k, _v])
-                            sub_set["market_metadata"] = func.coalesce(
+                            _base_sub_meta = func.coalesce(
                                 FuturesMarket.market_metadata,
                                 _sa_cast(_sa_literal("{}"), _PG_JSONB),
-                            ).op("||")(
+                            )
+                            if DEADLINE_RULE_CONTRACT_KEY not in sub_meta_insert:
+                                _base_sub_meta = _base_sub_meta.op("-")(
+                                    DEADLINE_RULE_CONTRACT_KEY
+                                )
+                            sub_set["market_metadata"] = _base_sub_meta.op("||")(
                                 func.jsonb_build_object(*_sub_meta_pairs)
                             )
 

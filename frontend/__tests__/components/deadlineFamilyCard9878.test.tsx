@@ -422,7 +422,7 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
     );
     expect(model).not.toBeNull();
     expect(model!.selectionReason).toBe("largest_supported_dated_move");
-    expect(model!.selectionBadgeText).toBe("Largest 24h move");
+    expect(model!.selectionBadgeText).toBe("Largest recent move");
     expect(model!.representative.marketId).toBe(65678074);
     expect(model!.representative.movementStatus).toBe("hero");
     expect(model!.representative.supportedMovePoints).toBe(-6.5);
@@ -708,7 +708,7 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
     expect(expired.rejectionReason).toBe("no_eligible_open_priced_member");
   });
 
-  test("Case 11a: 3C / 6D keeps resolved, trading_closed, void, and unknown distinct", () => {
+  test("Case 11a: 3C / 6D / v3 Gap 2 keeps resolved, trading_closed, deadline_passed, void, and unknown distinct", () => {
     const oct31TradingClosed = makeFeedItemFromContract(
       makeOct31Contract({
         settlement: {
@@ -736,7 +736,43 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
     expect(octMember.settlementState).toBe("trading_closed");
     expect(octMember.isSettled).toBe(false);
     expect(octMember.isTradingClosed).toBe(true);
+    expect(octMember.isDeadlinePassed).toBe(false);
     expect(octMember.settledText).toBe("Trading closed");
+
+    // Deadline passed (`state === "deadline_passed"` or `nowIso >= deadline_instant` without venue closure):
+    // kept out of live representative selection and movement chips, rendered as "Deadline passed", NEVER "Trading closed"
+    const oct31DeadlinePassed = makeFeedItemFromContract(
+      makeOct31Contract({
+        yes_probability: 0.48,
+        yes_rendered_percent: 48,
+        stored_movement_claim: -0.12,
+        settlement: {
+          state: "deadline_passed",
+          is_settled: false,
+          is_trading_closed: false,
+          is_deadline_passed: true,
+          status: "open",
+          winner: null,
+          result: null,
+        },
+      }),
+    );
+    const modelWithDeadlinePassed = buildDeadlineFamilyCardModel(
+      { items: [oct31DeadlinePassed, dec31Open] },
+      { nowIso: "2026-11-02T12:00:00+00:00" },
+    );
+    expect(modelWithDeadlinePassed).not.toBeNull();
+    expect(modelWithDeadlinePassed!.representative.marketId).toBe(65678074);
+    const octPassedMember = modelWithDeadlinePassed!.members.find(
+      (m) => m.marketId === 65678073,
+    )!;
+    expect(octPassedMember.settlementState).toBe("deadline_passed");
+    expect(octPassedMember.isSettled).toBe(false);
+    expect(octPassedMember.isTradingClosed).toBe(false);
+    expect(octPassedMember.isDeadlinePassed).toBe(true);
+    expect(octPassedMember.settledText).toBe("Deadline passed");
+    expect(octPassedMember.showHeroMovementChip).toBe(false);
+    expect(octPassedMember.showRowMovementBadge).toBe(false);
 
     // Void or unknown member state refuses the family
     const oct31Void = makeFeedItemFromContract(
@@ -852,21 +888,38 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
     );
   });
 
-  test("Case 13: Direct User Decision Q4 uses 'since yesterday' only across previous local calendar day", () => {
+  test("Case 13: Direct User Decision Q4 & v3 Gap 4 uses 'since yesterday' only when referenceAt is reader-local today and basis is reader-local yesterday", () => {
     const prevDay = formatDeadlineMovementTimeframe(
       "2026-10-13T21:00:00+00:00",
       "2026-10-14T13:30:00+00:00",
       "America/New_York",
+      "2026-10-14T23:47:16+00:00",
     );
     expect(prevDay.valid).toBe(true);
     expect(prevDay.calendarDayDiff).toBe(1);
+    expect(prevDay.crossesPreviousCalendarDay).toBe(true);
     expect(prevDay.chipTimeframe).toBe("since yesterday");
     expect(prevDay.sentenceTimeframe).toBe("since yesterday");
+
+    // When reader `nowIso` is on a later local date (Oct 16 EDT), a move observed on Oct 14 vs Oct 13
+    // must NOT claim "since yesterday" — it uses explicit date wording ("since Oct 13")
+    const laterReaderNow = formatDeadlineMovementTimeframe(
+      "2026-10-13T21:00:00+00:00",
+      "2026-10-14T13:30:00+00:00",
+      "America/New_York",
+      "2026-10-16T15:00:00+00:00",
+    );
+    expect(laterReaderNow.valid).toBe(true);
+    expect(laterReaderNow.calendarDayDiff).toBe(1);
+    expect(laterReaderNow.crossesPreviousCalendarDay).toBe(false);
+    expect(laterReaderNow.chipTimeframe).toBe("since Oct 13");
+    expect(laterReaderNow.sentenceTimeframe).toBe("since Oct 13");
 
     const sameDay = formatDeadlineMovementTimeframe(
       "2026-10-14T05:15:00+00:00",
       "2026-10-14T18:15:00+00:00",
       "America/New_York",
+      "2026-10-14T23:47:16+00:00",
     );
     expect(sameDay.valid).toBe(true);
     expect(sameDay.calendarDayDiff).toBe(0);
@@ -875,18 +928,48 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
     expect(sameDay.sentenceTimeframe).toBe("today since 1:15 AM");
   });
 
-  test("Cases 14 & 15: Partial inventory wording, unpriced reachability, trading-closed row rendering, and in-place expand/collapse", () => {
+  test("Cases 14 & 15: Verified family denominator wording (v3 Gap 4), unpriced reachability, and in-place expand/collapse", () => {
+    // 1. Raw `provider_market_count: 12` with `verified_family_count: 2` and 2 represented members
+    //    must NEVER claim "Compare 2 of 12 deadlines" when the 10 other markets are not proven members;
+    //    it says "Compare 2 deadlines"
+    const oct31CompleteVerified = makeFeedItemFromContract(
+      makeOct31Contract({
+        provider_market_count: 12,
+        verified_family_count: 2,
+      }),
+    );
+    const dec31CompleteVerified = makeFeedItemFromContract(
+      makeDec31Contract({
+        provider_market_count: 12,
+        verified_family_count: 2,
+      }),
+    );
+    const completeVerifiedModel = buildDeadlineFamilyCardModel(
+      { items: [oct31CompleteVerified, dec31CompleteVerified] },
+      { nowIso: RETAINED_NOW_ISO, timeZone: "America/New_York" },
+    );
+    expect(completeVerifiedModel).not.toBeNull();
+    expect(completeVerifiedModel!.representedCount).toBe(2);
+    expect(completeVerifiedModel!.verifiedFamilyCount).toBe(2);
+    expect(completeVerifiedModel!.providerMarketCount).toBe(12);
+    expect(completeVerifiedModel!.inventoryComplete).toBe(false);
+    expect(completeVerifiedModel!.expandLabel).toBe("Compare 2 deadlines");
+
+    // 2. When `verified_family_count: 4` (proven 4-member family capped to 2 represented members),
+    //    `expandLabel` truthfully says "Compare 2 of 4 deadlines"
     const oct31Unpriced = makeFeedItemFromContract(
       makeOct31Contract({
         yes_probability: null,
         yes_rendered_percent: null,
         provider_market_count: 4,
+        verified_family_count: 4,
       }),
     );
     const dec31Moved = makeFeedItemFromContract(
       makeDec31Contract({
         stored_movement_claim: -0.065,
         provider_market_count: 4,
+        verified_family_count: 4,
       }),
     );
 
@@ -896,6 +979,7 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
     );
     expect(model).not.toBeNull();
     expect(model!.representedCount).toBe(2);
+    expect(model!.verifiedFamilyCount).toBe(4);
     expect(model!.providerMarketCount).toBe(4);
     expect(model!.inventoryComplete).toBe(false);
     expect(model!.expandLabel).toBe("Compare 2 of 4 deadlines");

@@ -82,6 +82,7 @@ export function DeadlineFamilyCard({
       data-representative-market-id={rep.marketId}
       data-representative-outcome-id={rep.yesOutcomeId}
       data-represented-count={model.representedCount}
+      data-verified-family-count={model.verifiedFamilyCount ?? ""}
       data-provider-market-count={model.providerMarketCount ?? ""}
       data-inventory-complete={
         model.inventoryComplete == null ? "unknown" : String(model.inventoryComplete)
@@ -276,6 +277,13 @@ export function DeadlineFamilyCard({
                     data-testid="deadline-family-member-trading-closed"
                   >
                     Trading closed
+                  </span>
+                ) : member.isDeadlinePassed ? (
+                  <span
+                    className="text-xs font-semibold text-text-secondary"
+                    data-testid="deadline-family-member-deadline-passed"
+                  >
+                    Deadline passed
                   </span>
                 ) : (
                   <>

@@ -1944,6 +1944,7 @@ export interface FeedDeadlineMovementBasis {
 
 export type FeedDeadlineSettlementState =
   | "open"
+  | "deadline_passed"
   | "trading_closed"
   | "resolved"
   | "void"
@@ -1953,6 +1954,9 @@ export interface FeedDeadlineSettlementEvidence {
   state?: FeedDeadlineSettlementState;
   is_settled: boolean;
   is_trading_closed?: boolean;
+  is_deadline_passed?: boolean;
+  venue_closure_evidence?: boolean;
+  conflicting_settlement_evidence?: boolean;
   status: string;
   winner?: "Yes" | "No" | string | null;
   result?: "Yes" | "No" | string | null;
@@ -2015,6 +2019,7 @@ export interface FeedDeadlineMemberContract {
     | "basis_out_of_window"
     | "settled_suppressed"
     | "trading_closed_suppressed"
+    | "deadline_passed_suppressed"
     | "unobserved_current_price"
     | "unpriced";
   supported_move: number | null;
@@ -2025,6 +2030,7 @@ export interface FeedDeadlineMemberContract {
   is_near_certain?: boolean;
   near_certain_open_eligible?: boolean;
   provider_market_count?: number | null;
+  verified_family_count?: number | null;
   detail_href: string;
 }
 
@@ -2049,6 +2055,7 @@ export interface FeedDeadlineFamilyContract {
   hero_min_movement_points: number;
   moderate_min_movement_points: number;
   represented_count: number;
+  verified_family_count?: number | null;
   provider_market_count: number | null;
   inventory_complete: boolean | null;
   members: FeedDeadlineMemberContract[];
