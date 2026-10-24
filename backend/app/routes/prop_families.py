@@ -994,6 +994,7 @@ async def _board_staleness_withheld(db: AsyncSession, market) -> set[int]:
     """
     from app.utils.market_staleness import (
         stale_observation_keys,
+        board_touched_at,
         unobserved_board_keys,
     )
 
@@ -1006,7 +1007,7 @@ async def _board_staleness_withheld(db: AsyncSession, market) -> set[int]:
     if status in ("open", "resolved"):
         withheld |= unobserved_board_keys(
             observations,
-            board_touched_at=getattr(market, "updated_at", None),
+            board_touched_at=board_touched_at(market),
             fleet_newest_observation=await _fleet_newest_observation(db, market),
             board_has_a_verdict=_board_has_a_verdict(outcomes),
         )

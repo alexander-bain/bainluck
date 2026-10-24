@@ -35,6 +35,7 @@ from app.utils.cross_source_matching import (
     source as _source,
 )
 from app.utils.market_staleness import (
+    board_touched_at,
     should_exclude_from_featured,
     unobserved_board_keys,
 )
@@ -1043,7 +1044,7 @@ async def get_entertainment(db: AsyncSession):
         market_outcomes = getattr(m, "outcomes", None) or []
         withheld_ids |= unobserved_board_keys(
             ((o.id, o.last_updated) for o in market_outcomes),
-            board_touched_at=getattr(m, "updated_at", None),
+            board_touched_at=board_touched_at(m),
             fleet_newest_observation=await _fleet_newest_observation(db, m),
             board_has_a_verdict=_board_has_a_verdict(market_outcomes),
         )
