@@ -6148,9 +6148,11 @@ async def get_related_events(
         withheld = set()
 
     def _served_probability(o):
-        if o.id in withheld or o.current_probability is None:
+        # The route's served site (#6081's strict form): the leader is picked on
+        # this value and the row prints it.
+        if o.id in withheld:
             return None
-        return float(o.current_probability)
+        return float(o.current_probability) if o.current_probability is not None else None
 
     def _leader(group):
         return min(
