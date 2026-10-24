@@ -16,6 +16,9 @@
  *   - render the section for a capped empty result    → part 2 empty test fails
  *   - drop the slug tag from useTeamPropRaces         → part 3 switch test fails
  *   - drop the `cancelled` guard                      → part 3 "resolving AFTER" test fails
+ *   - gate counts on `!== "partial"` instead of `=== "full"` → part 1 degraded/no-quality rows fail
+ *   - drop `rosterCoverage=` from the team page        → part 4 fails
+ *   - feed the hook `teamSlug` instead of `resolvedSlug` → part 4 fails
  */
 
 import "./helpers/minimalDom";
@@ -35,6 +38,9 @@ jest.mock("@/lib/api", () => ({
 }));
 
 import { useTeamPropRaces, type TeamPropRaces } from "@/hooks/useTeamPropRaces";
+
+import fs from "node:fs";
+import path from "node:path";
 
 const SEAHAWKS = seahawks as unknown as TeamPropFamiliesResponse;
 const COUNTED_NOTE = "We checked 40 of the 82 players on this roster, so some races may be missing.";
@@ -108,6 +114,15 @@ describe("#2311 part 1 — propRosterCoverage", () => {
       quality_reasons: ["branch_timeout:outcome_roster", "branch_timeout:market_roster"],
     };
     expect(propRosterCoverage(withSearch(SEAHAWKS.roster_search, partial))).toEqual({
+      kind: "uncounted",
+    });
+  });
+
+  test.each([
+    ["degraded", { ...SEAHAWKS.cache, quality: "degraded" }],
+    ["missing its quality", (({ quality: _q, ...rest }) => rest)(SEAHAWKS.cache ?? {})],
+  ])("a %s build does not quote counts: only `full` is trusted", (_label, cache) => {
+    expect(propRosterCoverage(withSearch(SEAHAWKS.roster_search, cache))).toEqual({
       kind: "uncounted",
     });
   });
@@ -284,5 +299,42 @@ describe("#2311 part 3 — useTeamPropRaces", () => {
     await flush();
     expect(latest?.families).toHaveLength(4);
     expect(latest?.coverage).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Part 4 — the team page delivers the coverage to the section
+// ---------------------------------------------------------------------------
+//
+// Parts 2 and 3 render the component and the hook directly, so neither sees the
+// page. The prop is optional, so typecheck does not either: deleting
+// `rosterCoverage={propRaces.coverage}` from the page left every suite green
+// (lane1's M1 on a70bd36aa2) — and "the web page dropped the field" was #2311's
+// defect in the first place. The page fills itself from effects, which
+// `renderToStaticMarkup` never runs, so this reads the source, as
+// `teamPageMovementPoints5669` / `teamPageLeagueLabel5847` do.
+
+describe("#2311 part 4 — the team page passes the hook's coverage to Prop Races", () => {
+  const TEAM_PAGE = "app/sport/[sport]/[league]/team/[team]/page.tsx";
+  const src = fs.readFileSync(path.join(__dirname, "..", TEAM_PAGE), "utf8");
+  const hookCalls = [...src.matchAll(/const\s+(\w+)\s*=\s*useTeamPropRaces\(([^)]*)\)/g)];
+  const elements = src.match(/<TeamPropFamilies\b[^>]*\/>/g) ?? [];
+
+  test("the scan read the real page, so every assertion below is about something", () => {
+    expect(src.length).toBeGreaterThan(5000);
+    expect(hookCalls).toHaveLength(1);
+    expect(elements).toHaveLength(1);
+  });
+
+  test("the hook is asked for the RESOLVED slug, not the URL's", () => {
+    // A redirected or aliased URL slug fetches the wrong team's races.
+    expect(hookCalls[0]?.[2].trim()).toBe("resolvedSlug");
+  });
+
+  test("the one <TeamPropFamilies> gets that hook's families AND its coverage", () => {
+    const binding = hookCalls[0]?.[1];
+    const element = elements[0] ?? "";
+    expect(element).toMatch(new RegExp(`\\bfamilies=\\{${binding}\\.families\\}`));
+    expect(element).toMatch(new RegExp(`\\brosterCoverage=\\{${binding}\\.coverage\\}`));
   });
 });
