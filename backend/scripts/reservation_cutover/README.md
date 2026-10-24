@@ -19,18 +19,21 @@ C1–C4 manifest SHA256: `ba55f8650c92f8df53a10f8a521973b63f797bbd3229d956326cda
 
 ## W2: fail closed in the same one-off
 
-Only after separate operational authorization and the external preconditions hold, the executor substitutes the trusted release/slug receipt and runs from the verified backend slug root. The command explicitly targets `bainluck`, never heavy. Print both file hashes, validate them against the accepted manifest literals, and start Python **only after** checksum success. This is a command template, not an invocation performed by packaging:
+Only after separate operational authorization and the external preconditions hold, the executor substitutes the trusted release/slug receipt and runs from the verified backend slug root. The command explicitly targets `bainluck`, never heavy. Print both file hashes, validate them against the accepted hashes written literally in the reviewed command, and start Python **only after** checksum success. The slug manifest is an additional packaging-consistency check; it is not the authority for the accepted hashes. This is a command template, not an invocation performed by packaging:
 
 ```sh
 heroku run:detached -a bainluck 'set -eu
   test -f app/utils/blend_preview.py
   sha256sum scripts/reservation_cutover/old-owner-fence.py scripts/reservation_cutover/readback.lua
-  sha256sum -c scripts/reservation_cutover/MANIFEST.sha256 &&
+  printf "%s\n" \
+    "add82908ea909734800c1aa9d2a69b6100f3f84837fa7e3a85c89c128d895bf7  scripts/reservation_cutover/old-owner-fence.py" \
+    "46981112b1b84c68ec66823710ee6c4fda9eed4eeb0eaff70df74478ff214c2f  scripts/reservation_cutover/readback.lua" | sha256sum -c --strict - &&
+    sha256sum -c scripts/reservation_cutover/MANIFEST.sha256 &&
     PYTHONPATH="$PWD" python3 scripts/reservation_cutover/old-owner-fence.py \
       --mode fence --release-identity REPLACE_WITH_EXTERNALLY_BOUND_RELEASE_SLUG_RECEIPT'
 ```
 
-For an independently authorized readback, use the same hashes, cwd and shell failure handling with `--mode readback`. That mode does not import application code or claim an owner. Fence mode imports the hash-verified old module only when explicitly invoked. There is no reset operation in this directory.
+For an independently authorized readback, retain these same command-literal hashes, cwd and shell failure handling with `--mode readback`. That mode does not import application code or claim an owner. Fence mode imports the hash-verified old module only when explicitly invoked. There is no reset operation in this directory.
 
 Capture logs from dyno creation. Take `run.N` from the create response's **`done, run.N`** line, never echoed arguments. T0c success requires matching in-dyno hashes/checksum success, both source `claim_ack` lines, `fence_complete`, accepted final metadata, and trusted `heroku[run.N] Process exited with status 0` from that same run. A post-run empty log session cannot substitute. Missing/ambiguous output is INCONCLUSIVE; a lost reply may already have moved owners. No automatic retry or repeat claim.
 
