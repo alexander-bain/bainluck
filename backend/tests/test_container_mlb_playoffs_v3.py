@@ -21,6 +21,7 @@ those real ids; no production row is read.
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import replace
 from datetime import date, datetime, timezone
 
@@ -385,11 +386,17 @@ class _Session:
             return _Result([self._event(r) for r in self.events if r.espn_id in ids])
         if sql == MARKETS_FOR_EVENTS_SQL:
             ids = set(params["event_ids"])
+            # Keyset page (#9886): honoured exactly as the statement says, and
+            # a statement naming `:after_id` without binding it fails here as
+            # it would on Postgres.
+            keyset = re.search(r"fm\.id (>=?) :after_id", sql)
+            after = params["after_id"] if keyset else float("-inf")
+            inclusive = bool(keyset) and keyset.group(1) == ">="
             return _Result(
                 [
                     (m.id, m.event_id, m.name, m.external_id, m.source, m.market_type, m.status)
                     for m in sorted(self.markets, key=lambda m: m.id)
-                    if m.event_id in ids
+                    if m.event_id in ids and (m.id >= after if inclusive else m.id > after)
                 ][: params["limit"]]
             )
         if sql == UNIDENTIFIED_IN_SPAN_SQL:
@@ -542,12 +549,13 @@ async def test_an_unread_board_day_is_partial_not_an_empty_day(corpus):
 
 @pytest.mark.asyncio
 async def test_a_capped_market_read_is_partial(corpus):
+    # One page of `limit` (#9886 pages the read): an exhausted budget is a cap.
     session = _Session(_rows(), _markets())
-    report = await run_mlb_postseason_assembly(session, _Container(), _boards(corpus), POST_2026, limit=3)
+    report = await run_mlb_postseason_assembly(session, _Container(), _boards(corpus), POST_2026, limit=3, max_pages=1)
     assert report["harvest"]["markets_truncated"] is True
     assert report["incomplete"] == [INCOMPLETE_MARKETS_TRUNCATED]
     session = _Session(_rows(), _markets())
-    report = await run_mlb_postseason_assembly(session, _Container(), _boards(corpus), POST_2026, limit=4)
+    report = await run_mlb_postseason_assembly(session, _Container(), _boards(corpus), POST_2026, limit=4, max_pages=1)
     assert report["terminal"] == "complete"
 
 

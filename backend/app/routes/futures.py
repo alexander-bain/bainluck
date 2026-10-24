@@ -5098,7 +5098,10 @@ async def _fleet_newest_observation(
     database this route could not reach must degrade to today's behaviour, never
     to a blanked board.
     """
-    from app.utils.market_staleness import board_cannot_be_unobserved
+    from app.utils.market_staleness import (
+        board_cannot_be_unobserved,
+        board_touched_at,
+    )
 
     # 🔴 #2077, CERT-3308 — THIS LINE IS WHY WIDENING THE FORMATTER ALONE
     # CHANGED NOTHING A READER COULD SEE.
@@ -5136,7 +5139,7 @@ async def _fleet_newest_observation(
         return None
     if board_cannot_be_unobserved(
         ((o.id, o.last_updated) for o in (getattr(market, "outcomes", None) or [])),
-        board_touched_at=getattr(market, "updated_at", None),
+        board_touched_at=board_touched_at(market),
         now=datetime.now(timezone.utc),
     ):
         return None
@@ -10217,6 +10220,7 @@ def _format_market_detail(
     from app.utils.market_staleness import (
         expired_ladder_rungs,
         stale_observation_keys,
+        board_touched_at,
         unobserved_board_keys,
     )
     from app.utils.outcome_display import (
@@ -10841,7 +10845,7 @@ def _format_market_detail(
     if _board_status in ("open", "resolved"):
         withheld = withheld | unobserved_board_keys(
             ((o.id, o.last_updated) for o in sorted_outcomes),
-            board_touched_at=getattr(market, "updated_at", None),
+            board_touched_at=board_touched_at(market),
             fleet_newest_observation=fleet_newest_observation,
             board_has_a_verdict=_board_verdict,
         )

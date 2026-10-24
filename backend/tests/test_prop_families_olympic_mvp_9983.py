@@ -12,7 +12,18 @@ The grades are right for the Olympics; the defect is the family. Specimens are
 the served rows, trimmed; the active NHL market is the same-player control.
 """
 
+import pytest
+
+from app.utils import prop_families as pf
 from app.utils.prop_families import _family_label, group_prop_families, resolve_family_key
+
+
+@pytest.fixture(autouse=True)
+def _no_age_cut(monkeypatch):
+    # These tests pin the FAMILY KEY of a calendar-dated specimen. #11568 ages a
+    # finished board off the page after PRIOR_RESULT_MAX_AGE_DAYS, which this
+    # 2026-02-23 board has passed; that rule has its own tests there.
+    monkeypatch.setattr(pf, "PRIOR_RESULT_MAX_AGE_DAYS", 36_500)
 
 OLYMPIC_ID = 110951
 OLYMPIC_KEY = "2026 winter olympics men's mvp"

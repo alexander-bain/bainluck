@@ -2110,7 +2110,20 @@ export interface LeagueGameBrief {
   external_id?: string | null;
   sport?: string | null;
   completed_at?: string | null;
-  current_odds?: { home_probability: number | null; away_probability: number | null };
+  current_odds?: {
+    home_probability: number | null;
+    away_probability: number | null;
+    // ── #11576 ── the projected final the game's own page serves, added by
+    // `_attach_card_projected_pairs` (#11295, `utils/card_projected_pair.py`)
+    // on the upcoming rail only, and only when admitted: an unadmitted key is
+    // absent, never null. `live_projection` is the same in-play object
+    // `/api/events` serves; the card checks every field of it
+    // (`admittedLiveProjection`), so it stays `unknown` here.
+    projected_home_score?: number | null;
+    projected_away_score?: number | null;
+    projection_captured_at?: string | null;
+    live_projection?: unknown;
+  };
   opening_odds?: { home_probability: number; away_probability: number };
   home_team_data?: TeamData;
   away_team_data?: TeamData;
@@ -2131,6 +2144,13 @@ export interface LeagueGameBrief {
   // `TeamGameBrief` and `Event`. @see Event.doubleheader
   doubleheader?: boolean | null;
   game_number?: number | null;
+  // ── #11296 ── a results-rail final's forecast from before the scheduled start,
+  // its refusal, and the actual score's period. Same names and shapes as
+  // `Event`; the producer (`_attach_pregame_projections` in
+  // `routes/league_futures.py`) serves them on `recent_results` only.
+  pregame_projection?: Event["pregame_projection"];
+  pregame_projection_unavailable?: Event["pregame_projection_unavailable"];
+  final_score_period?: Event["final_score_period"];
 }
 
 export interface LeagueFuturesResponse {

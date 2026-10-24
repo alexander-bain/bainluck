@@ -72,7 +72,7 @@ from app.utils.game_market_club_names import (
     repair_card_club_names,
     repair_club_names,
 )
-from app.utils.market_staleness import unobserved_board_keys
+from app.utils.market_staleness import board_touched_at, unobserved_board_keys
 from app.utils.nation_flags import flag_nation
 from app.utils.series_card_labels import (
     market_threshold_label,
@@ -38368,7 +38368,7 @@ async def _search_withheld_price_ids(
         outcomes = getattr(market, "outcomes", None) or []
         withheld |= unobserved_board_keys(
             ((o.id, o.last_updated) for o in outcomes),
-            board_touched_at=getattr(market, "updated_at", None),
+            board_touched_at=board_touched_at(market),
             fleet_newest_observation=await _fleet_newest_observation(db, market),
             board_has_a_verdict=_board_has_a_verdict(outcomes),
         )
