@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.tasks.live_blend_refresh import HeldRowQuotes
 from app.utils import blend_preview
 from tests.test_fresh_observation_preview_10090 import acknowledged_rig, preview_enabled
 from tests.test_blend_preview_display_before_persist_195 import _blends
@@ -60,7 +61,7 @@ async def test_no_write_phase_revalidates_continuity_and_event_ownership(transit
     refresher.preview_events = {100}
     refresher._admission = SimpleNamespace(released={})
 
-    class Bounds:
+    class Bounds(HeldRowQuotes):
         def bound_for(self, mark):
             return 1000.
         async def sample_database_clock(self, *args):

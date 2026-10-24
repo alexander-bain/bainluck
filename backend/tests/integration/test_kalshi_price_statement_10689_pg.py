@@ -537,12 +537,13 @@ _REPEAT_SKIP = re.compile(
 
 
 def _without_reviewed_repeat_skip(hook):
-    """The candidate price statement, less exactly the reviewed repeat skip.
+    """Compare the frozen statement after pinning the two intentional additions.
 
     The baseline is the verbatim pre-#10689 expression and is never refreshed;
     so the comparison is split: the predicate and its two binds must be present
     exactly as reviewed, and everything else must equal the baseline byte for
-    byte (later placeholders shift by the two inserted binds).
+    byte (later placeholders shift by the two inserted binds). The returned
+    clock expression is pinned separately; the stored-data SQL stays frozen.
     """
     if hook[0] != "before":
         return hook
@@ -552,6 +553,14 @@ def _without_reviewed_repeat_skip(hook):
         and " RETURNING futures_outcomes.id" in sql
     ):
         return hook  # a control's own competing writer, not the flush's write
+    returned_prefix = (
+        " RETURNING futures_outcomes.id, futures_outcomes.market_id, "
+        "futures_outcomes.last_updated"
+    )
+    returned_clock = ", clock_timestamp() AS database_clock"
+    assert sql.count(returned_clock) == 1, sql
+    assert returned_prefix + returned_clock in sql, sql
+    sql = sql.replace(returned_clock, "", 1)
     match = _REPEAT_SKIP.search(sql)
     assert match, sql
     force = int(match["force"])

@@ -1830,8 +1830,9 @@ async def _publish_committed_withdrawals(refresher, frames):
 class _PMPriceWriteResult:
     """A committed acknowledgement; only written rows may stage fresh receipts."""
 
-    def __init__(self, written_ids):
+    def __init__(self, written_ids, *, clock_owner=None):
         self.written_ids = tuple(written_ids)
+        self.clock_owner = clock_owner
 
 
 PM_QUOTE_LIVENESS_SECONDS = 30.0
@@ -1989,6 +1990,7 @@ def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False):
             table.c.market_id,
             table.c.last_updated,
             quote_moved_column(table),
+            func.clock_timestamp().label("database_clock"),
         )
     )
 
@@ -3561,6 +3563,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         short_first_wait = price_lock_timeout_ms < PRICE_STATEMENT_LOCK_TIMEOUT_MS
         probe_refused = False
         price_lock_timed_out = False
+        clock_ticket = None
+        clock_owner = None
+        write_clock = None
         try:
             async with get_task_session() as session:
                 if stage_trace is not None:
@@ -3595,6 +3600,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
                         {"ms": lock_timeout_value(DNPL_PRICE_STATEMENT_TIMEOUT_MS)},
                     )).scalar_one()
+                clock_ticket = (
+                    held_price_quotes.begin_write_clock()
+                    if game_chunk and not final and held_price_quotes is not None else None
+                )
                 try:
                     if stage_trace is not None:
                         stage_trace.write_stage(chunk, "STATEMENT_START")
@@ -3631,6 +3640,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
                     )
                 written_rows = sorted(result.all(), key=lambda r: r.ord)
+                if clock_ticket is not None:
+                    clocks = [getattr(row, "database_clock", None) for row in written_rows]
+                    write_clock = max((value for value in clocks if value is not None), default=None)
                 if stage_trace is not None:
                     stage_trace.write_stage(chunk, "STATEMENT_END")
                 # #9484: only a row the UPDATE returned is evidence — a
@@ -3778,6 +3790,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 return None
             return False
 
+        # Only a successful session exit proves this price write committed.
+        # Adopt before publication/cleanup can yield; accepted inputs keep their
+        # frozen bounds. A replaced owner cannot inherit this proof.
+        if (clock_ticket is not None
+                and held_price_quotes is getattr(blend_refresher, "held_quotes", None)
+                and held_price_quotes.publish_write_clock(clock_ticket, write_clock)):
+            clock_owner = held_price_quotes
+
         if stage_trace is not None:
             stage_trace.write_stage(chunk, "COMMITTED", rows=written_rows)
         for oid in chunk:
@@ -3811,7 +3831,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # A zero-return statement still acknowledged the unchanged inputs.
         # Clear only matching buffered values, but never stamp those inputs as
         # a new database observation or rerank their unchanged markets.
-        return _PMPriceWriteResult(row.id for row in written_rows)
+        return _PMPriceWriteResult((row.id for row in written_rows), clock_owner=clock_owner)
 
     async def flush_withdrawals(
         *,
@@ -4716,7 +4736,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         stage_trace.chunk_end(traced, wrote)
                     # A completed write has advanced last_updated. Sample
                     # AFTER it, for FUTURE inputs, never to re-date this batch.
-                    if held_quotes is not None and not final:
+                    write_clock_ready = (
+                        held_quotes is not None
+                        and getattr(wrote, "clock_owner", None) is held_quotes
+                        and getattr(blend_refresher, "held_quotes", None) is held_quotes
+                    )
+                    if held_quotes is not None and not final and not write_clock_ready:
                         await held_quotes.sample_database_clock(get_task_session)
                     # Only a completed unchanged acknowledgement establishes
                     # continuity. A price/heartbeat write still owes its stamp;

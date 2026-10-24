@@ -92,7 +92,9 @@ async def test_stored_live_startup_pair(monkeypatch, mode):
                                 stmt, [row for row in slate[0] if row[1] in live_markets]))
                         if "linked_event_id" in sql:
                             return await execute(stmt, params)
-                        if "clock_timestamp()" in sql:
+                        # UPDATE RETURNING also contains this function; only
+                        # the standalone clock read returns a scalar result.
+                        if sql.startswith("SELECT clock_timestamp()"):
                             return SimpleNamespace(scalar_one=lambda: datetime.now(timezone.utc))
                         if "futures_markets.market_metadata" in sql and "LEFT OUTER JOIN" in sql:
                             return _Result([(8, parent_metadata, datetime.now(timezone.utc), "live"),
