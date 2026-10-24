@@ -931,6 +931,127 @@ async def test_late_no_base_reply_keeps_newer_local_sequence(rig):
     assert rig.k._chains[(EV, "kalshi")] == newer[0]["chain"]
 
 
+@pytest.mark.parametrize("source", ["kalshi", "polymarket"])
+async def test_overlapping_no_base_same_value_recovers(rig, source):
+    reg = rig.k if source == "kalshi" else rig.p
+    bad = _ev()
+    bad.opening_home_probability = float("nan")
+    old = reg.propose(EV, source, value=.7, event=bad,
+                      row_sources=BASE10, row_rev=10, stamped_at=_stamp(1))
+    newer = []
+
+    async def delayed_reply(*args):
+        reply = await rig.call(*args)
+        if reply[0] == b"no_base":
+            newer.extend(_propose(reg, source, .7, basis_s=2))
+        return reply
+
+    assert await reg.prepare(old, delayed_reply, rig.stats) == []
+    assert newer[0]["mode"] == "continue"
+    frames = _blends(await rig.run(reg, newer))
+    assert len(frames) == 1, "a prebuilt successor must recover after confirmed refused open"
+    assert frames[0]["preview"]["pending"][source] == .7
+    assert source not in reg._events[EV].expired
+    assert len(_blends(await rig.run(reg, _propose(reg, source, .7, basis_s=3)))) == 1
+
+
+async def test_overlapping_refusal_preserves_newest_chain_and_expiry(rig):
+    bad = _ev()
+    bad.opening_home_probability = float("nan")
+    old = rig.k.propose(EV, "kalshi", value=.7, event=bad,
+                        row_sources=BASE10, row_rev=10, stamped_at=_stamp(1))
+    queued = []
+
+    async def delayed_reply(*args):
+        reply = await rig.call(*args)
+        if reply[0] == b"no_base":
+            queued.extend(_propose(rig.k, "kalshi", .71, basis_s=2))
+            queued.extend(_propose(rig.k, "kalshi", .72, basis_s=3))
+        return reply
+
+    assert await rig.k.prepare(old, delayed_reply, rig.stats) == []
+    assert await rig.run(rig.k, queued[:1]) == []
+    assert rig.k._events[EV].pending["kalshi"].value == .72
+    frames = _blends(await rig.run(rig.k, queued[1:]))
+    assert len(frames) == 1
+    assert frames[0]["preview"]["pending"]["kalshi"] == .72
+    before = await rig.hget(f"e:{EV}:m:kalshi")
+    assert await rig.run(rig.k, old) == []
+    assert await rig.hget(f"e:{EV}:m:kalshi") == before
+
+
+async def _refused_open_with_queued_successor(rig):
+    bad = _ev()
+    bad.opening_home_probability = float("nan")
+    old = rig.k.propose(EV, "kalshi", value=.7, event=bad,
+                        row_sources=BASE10, row_rev=10, stamped_at=_stamp(1))
+    newer = []
+
+    async def delayed_reply(*args):
+        reply = await rig.call(*args)
+        if reply[0] == b"no_base":
+            newer.extend(_propose(rig.k, "kalshi", .7, basis_s=2))
+        return reply
+
+    assert await rig.k.prepare(old, delayed_reply, rig.stats) == []
+    return old, newer
+
+
+@pytest.mark.parametrize("rig", ["fake_clock"], indirect=True)
+async def test_overlapping_recovery_lost_ack_keeps_original_expiry(rig):
+    _, newer = await _refused_open_with_queued_successor(rig)
+
+    async def lost_reply(*args):
+        reply = await rig.call(*args)
+        assert reply[0] == b"ok"
+        raise TimeoutError("accepted recovery reply lost")
+
+    with pytest.raises(TimeoutError):
+        await rig.k.prepare(newer, lost_reply, rig.stats)
+    before = await rig.hget(f"e:{EV}:m:kalshi")
+    await rig.clock(1_030_000)
+    # Re-sending the already prepared successor cannot renew its lease.
+    assert await rig.run(rig.k, newer) == []
+    assert await rig.hget(f"e:{EV}:m:kalshi") == before
+    assert len(_blends(await rig.run(rig.k, _propose(rig.k, "kalshi", .7, basis_s=3)))) == 1
+    after = await rig.hget(f"e:{EV}:m:kalshi")
+    assert after.split()[3] == before.split()[3]
+    await rig.clock(1_060_001)
+    assert _blends(await rig.run(rig.k, _propose(rig.k, "kalshi", .7, basis_s=4))) == []
+    assert rig.k._events[EV].expired["kalshi"] == .7
+    assert _propose(rig.k, "kalshi", .7, basis_s=5) == []
+
+
+async def test_overlapping_recovery_never_uses_old_owner_or_erases_replacement(rig):
+    _, newer = await _refused_open_with_queued_successor(rig)
+    replacement = rig.registry()
+    await replacement.claim(rig.call, "kalshi")
+    assert len(_blends(await rig.run(replacement, _propose(replacement, "kalshi", .8)))) == 1
+    before = await rig.hget(f"e:{EV}:m:kalshi")
+    assert await rig.run(rig.k, newer) == []
+    assert await rig.hget(f"e:{EV}:m:kalshi") == before
+    assert rig.stats["fenced"] >= 1
+
+
+async def test_overlapping_late_no_base_cannot_demote_accepted_recovery(rig):
+    old, newer = await _refused_open_with_queued_successor(rig)
+    delayed = None
+
+    async def accept_before_old_refusal_returns(*args):
+        nonlocal delayed
+        reply = await rig.call(*args)
+        assert reply[0] == b"no_base"
+        delayed = await rig.run(rig.k, newer)
+        return reply
+
+    assert await rig.k.prepare(old, accept_before_old_refusal_returns, rig.stats) == []
+    assert len(_blends(delayed)) == 1
+    assert rig.k._events[EV].pending["kalshi"].ledger_admission == "accepted"
+    frames = _blends(await rig.run(rig.k, _propose(rig.k, "kalshi", .71, basis_s=3)))
+    assert len(frames) == 1
+    assert frames[0]["preview"]["pending"]["kalshi"] == .71
+
+
 # --------------------------------------------------------- bounded lifecycle F3
 
 async def _fresh_ops(rig, reg, source, value=.6, *, event_id=EV, rev=10, event=None):

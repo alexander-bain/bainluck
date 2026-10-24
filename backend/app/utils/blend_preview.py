@@ -909,6 +909,8 @@ class _Pending:
     #: Monotonic start of this source's uncommitted chain (kept across
     #: re-proposals until a commit, refusal or expiry ends the chain).
     since: float
+    # Local hint only: unknown, refused, or accepted for this ledger chain.
+    ledger_admission: str = "unknown"
 
 
 @dataclass
@@ -1740,6 +1742,7 @@ class LedgerRegistry(PreviewRegistry):
             observed_basis=dict(observed_basis) if observed_basis else None,
             stamped_at=stamped_at, seq=local_seq,
             since=prior.since if prior is not None else self._clock(),
+            ledger_admission=prior.ledger_admission if prior is not None else "unknown",
         )
         return [{"ledger_op": "propose", "event_id": int(event_id), "source": source,
                  "mode": mode, "chain": chain, "local_seq": local_seq, "ctx_rev": ctx_rev,
@@ -1915,6 +1918,15 @@ class LedgerRegistry(PreviewRegistry):
                         "terminal", "retire", "retire_missing", "retire_idle", "retire_policy")
                     else {})
         if kind == "propose":
+            entry = None if retiring_state is None else retiring_state.pending.get(source)
+            if (op["mode"] == "continue" and entry is not None
+                    and entry.seq == op["local_seq"]
+                    and self._chains.get((event_id, source)) == op["chain"]
+                    and entry.ledger_admission == "refused"):
+                # A newer input was prepared before this chain's refused open
+                # returned. Only confirmed non-admission permits a fresh open;
+                # preserve the original ticket, chain and Redis guards.
+                op = {**op, "mode": "open"}
             reply = await self._eval(
                 call, "propose", *common, op["mode"], op["chain"], op["local_seq"],
                 op["ctx_rev"], int(self.max_uncommitted_s * 1000), LEDGER_MAX_EVENTS,
@@ -1943,6 +1955,14 @@ class LedgerRegistry(PreviewRegistry):
             reply = await self._eval(call, "terminal", *common, op["ctx_rev"],
                                      LEDGER_MAX_EVENTS, op.get("read_ticket"))
         status = reply[0]
+        if kind == "propose" and op["mode"] == "open" and status == "chain_exists":
+            state = self._events.get(event_id)
+            entry = None if state is None else state.pending.get(source)
+            if entry is not None and self._chains.get((event_id, source)) == op["chain"]:
+                # A recovery open may have landed while its reply was lost.
+                # Redis confirms this same owner's chain; future continuations
+                # retain that chain's existing deadline, even if already expired.
+                entry.ledger_admission = "accepted"
         if (status in ("ok", "current") and op.get("chain") is not None
                 and self._chains.get((event_id, source)) == op["chain"]):
             state = self._events.get(event_id)
@@ -1950,6 +1970,7 @@ class LedgerRegistry(PreviewRegistry):
             own = next((reply[i:i + 4] for i in range(7, len(reply) - 3, 4)
                         if reply[i] == source and int(reply[i + 1]) == claim), None)
             if entry is not None and own is not None:
+                entry.ledger_admission = "accepted"
                 # The pre-EVAL monotonic time is conservative under slow/lost
                 # replies; only Redis acknowledgement can advance this hint.
                 entry.since = max(entry.since, started +
@@ -1997,10 +2018,18 @@ class LedgerRegistry(PreviewRegistry):
             state = self._events.get(event_id)
             entry = None if state is None else state.pending.get(source)
             if (op["mode"] == "open" and entry is not None
-                    and entry.seq == op["local_seq"]):
+                    and entry.seq == op["local_seq"]
+                    and not (status == "no_base" and entry.ledger_admission == "accepted")):
                 # This open never entered Redis. Keeping its local chain would
                 # turn a later valid input into missing_chain/false expiry.
                 self._forget(event_id, source)
+            elif (status == "no_base" and op["mode"] == "open" and entry is not None
+                  and self._chains.get((event_id, source)) == op["chain"]
+                  and entry.ledger_admission != "accepted"):
+                # Preserve the newer value/sequence while recording that its
+                # inherited chain never opened. A delayed refusal cannot undo
+                # an accepted acknowledgement or affect a replacement chain.
+                entry.ledger_admission = "refused"
         if kind == "propose" and status in ("expired", "missing_chain"):
             self._local_expired(op)
         if kind == "propose" and status == "terminal":
