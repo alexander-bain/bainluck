@@ -1,0 +1,19 @@
+{
+  "date_utc": "2026-10-20",
+  "node": "24.19.0",
+  "postgres": "17.11",
+  "pg": "8.23.1",
+  "passed": 19,
+  "failed": 0,
+  "skipped": 0,
+  "cluster_owned_by_runner": true,
+  "cluster_stopped_verified": true,
+  "fixture": "synthetic in-memory values only",
+  "historical_browser_replay_rerun": false,
+  "production_suites_run": false,
+  "clean_online_dependency_install_verified": false,
+  "offline_install_attempt": "ENOTCACHED for xtend tarball; tested using existing pinned installation",
+  "verification_after_final_source_edits": true,
+  "direct_postgres_check_without_runner": "rejected before connecting",
+  "independent_review": "No source blocker for isolated draft under documented limits. Arm validation is absent and now explicitly scoped; crash-child file URL and owned-cluster check corrected."
+}

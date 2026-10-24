@@ -1,0 +1,30 @@
+{
+  "node": "24.19.0",
+  "model_checks": 36,
+  "transport_checks": 4,
+  "independent_pure_checks": 16,
+  "wire_cases": 20,
+  "receipt_assertions": 966,
+  "independent_receipt_assertions": 3008,
+  "shutdown": {
+    "kind": "clean-shutdown",
+    "reason": "wire-suite-complete",
+    "startedAt": "2026-10-20T14:46:41.586Z",
+    "endedAt": "2026-10-20T14:46:50.812Z",
+    "remainingSockets": 0,
+    "remainingLabs": 0,
+    "cleanupTimedOut": false,
+    "labs": [],
+    "scope": "Bounded localhost synthetic server; no production, Internet partition, or physical-pixel claim"
+  },
+  "source_unchanged_from_frozen_predecessor": true,
+  "browser_rerun": false,
+  "production_suites_run_locally": false,
+  "historical_browser_run_precedes_final_expired_handshake_guard": true,
+  "source_manifest": "source-sha256-before-renewal.json",
+  "source_manifest_recorded_after_run": true,
+  "runnable_source_changed_after_run": false,
+  "source_receipt_limitation": "This manifest was generated after the run from unchanged staged runnable files. It is not a contemporaneously copied per-run source snapshot.",
+  "historical_source_commit": "58de889adbf63d5c659f19802602faaf8a07b964",
+  "scope_note": "Historical pre-renewal results. These are not a rerun of the event-driven renewal update; see renewal-verification.json."
+}

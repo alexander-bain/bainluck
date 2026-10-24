@@ -1,0 +1,64 @@
+{
+  "parent_commit": "64b9a82ba70588713f848b7bbd25d204a87fcf7e",
+  "node": "24.19.0",
+  "platform": "linux",
+  "journal_sha256": "3e60005beabf5fcc5d68d59469ef374cfc08efc56e80dddb3b147a25b41b7646",
+  "schedule_sha256": "f3df3038f40a257eecd3c89a77c201f26e89e430a3703ba9867741893c321779",
+  "journal_copies_identical": true,
+  "focused_security_checks": 79,
+  "independent_security_checks": 21,
+  "models": {
+    "fenced-display-authority": 36,
+    "stream-reconnect": 36,
+    "stream-backpressure": 36
+  },
+  "actual_sigkill_scenarios": 22,
+  "journal_backed_crash_scenarios": 14,
+  "journal_emitted_publication_callbacks": 10,
+  "journal_publication_callbacks_missing": 0,
+  "model_crash_scope": "Executed exact hardened journal source before the five output-default-only edits. Algorithm bodies unchanged; new initializers tested separately.",
+  "final_stage_checks": {
+    "private_output_initializers": 5,
+    "legacy_authority_independent": 24,
+    "renewal_focused": 28,
+    "reconnect_pure": 16,
+    "captured_failed_wire_replays": 2
+  },
+  "previous_wire_result": {
+    "passed": 18,
+    "failed": 2,
+    "new_full_wire_run": false,
+    "still_failed_qualification": true
+  },
+  "new_benchmark_run": false,
+  "new_pg_run": false,
+  "new_browser_run": false,
+  "production_validation": false,
+  "latency_improvement_claimed": false,
+  "remote_security_rescan": "pending publication; local tests do not clear the hold",
+  "source_manifests": {
+    "fenced-display-authority": "../../fenced-display-authority/results/source-sha256.json",
+    "stream-reconnect": "../../stream-reconnect/results/source-sha256.json",
+    "stream-backpressure": "../../stream-backpressure/results/source-sha256.json"
+  },
+  "source_manifest_recorded_after_tests": true,
+  "source_receipt_limitation": "Post-run inventories; not contemporaneous per-run source snapshots. Frozen journal/schedule bytes were independently checked across tests.",
+  "trusted_boundary": "Single writer, trusted parent directory and ancestors. No-follow protects final component only; no namespace-survival, multi-host, power-loss or host-loss guarantee.",
+  "existing_user_directory_permissions_changed": false,
+  "alerts_dismissed_or_suppressed": false,
+  "test_only_followon": {
+    "parent_commit": "b297ae6fe6c41bfb9772f74fff6054c35ad56b6c",
+    "reason": "Its first CodeQL rescan reported one new test-side js/file-system-race at independent verifier line40, alert4301; original seven highs/four notes were no longer listed.",
+    "failed_scan": "https://github.com/alexander-bain/bainluck/runs/118758427665",
+    "alert": "https://github.com/alexander-bain/bainluck/security/code-scanning/4301",
+    "previous_test_sha256": "712672921d36ecf7d353a4b953c4c50c47a4dcdef6a13986455c7196d8d72e6f",
+    "current_test_sha256": "1417a148ce7f927ad85ef553b1c5222dbad0e86868ccb9018305e737b22c51eb",
+    "test_change": "Use fstat and positional byte reads on held descriptors; no path-stat/path-read pairs. Exact serialization, UTF-8, recovery and EIO assertions retained.",
+    "runtime_files_changed": false,
+    "focused_checks_rerun": 21,
+    "reviewer_checks_rerun": 21,
+    "other_suites_rerun": false,
+    "alert_dismissed_or_suppressed": false,
+    "new_remote_rescan": "pending; hold remains"
+  }
+}
