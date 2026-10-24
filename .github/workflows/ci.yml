@@ -7975,8 +7975,9 @@ jobs:
         # (era bound, same-second and nearest-observation witnesses), its pinned
         # apply (rows and priors re-read under lock, one leg per transaction) and
         # a restore that never overwrites a later writer are SQL a session double
-        # reads green on. Runs in its own throwaway database. 19 cases (the 9
-        # classifier/apply/restore cases + the backup-pair collision falsifiers).
+        # reads green on. Runs in its own throwaway database. 20 cases (the 9
+        # classifier/apply/restore cases + the backup-pair collision falsifiers
+        # + the #11158 16-point specimen).
         if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -7986,8 +7987,8 @@ jobs:
             echo "::error::#2027 Under-history repair gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]19 passed[,[:space:]]" /tmp/underhistory2027.txt || {
-            echo "::error::#2027 Under-history repair gate did not run all nineteen cases"
+          grep -qE "[^0-9]20 passed[,[:space:]]" /tmp/underhistory2027.txt || {
+            echo "::error::#2027 Under-history repair gate did not run all twenty cases"
             exit 1
           }
 
