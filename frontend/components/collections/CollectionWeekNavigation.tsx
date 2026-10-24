@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fetchCollectionWeekNavigation, type CollectionWeekNavigation as Navigation } from "@/lib/collections";
 
 export function CollectionWeekLinks({ navigation, onNavigate }: { navigation: Navigation; onNavigate?: () => void }) {
@@ -19,8 +19,10 @@ export function CollectionWeekLinks({ navigation, onNavigate }: { navigation: Na
   </nav>;
 }
 
-export function CollectionWeekNavigation({ slug, read, onNavigate }: { slug: string; read: number; onNavigate?: () => void }) {
+export function CollectionWeekNavigation({ slug, read, onNavigate, onSettle }: { slug: string; read: number; onNavigate?: () => void; onSettle?: () => void }) {
   const [answer, setAnswer] = useState<{ read: number; navigation: Navigation } | null>(null);
+  const settled = useRef(onSettle);
+  settled.current = onSettle;
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
@@ -32,6 +34,8 @@ export function CollectionWeekNavigation({ slug, read, onNavigate }: { slug: str
     }).finally(() => window.clearTimeout(timeout));
     return () => { active = false; controller.abort(); window.clearTimeout(timeout); };
   }, [slug, read]);
+  // #11555: the links' final height is in the DOM, before paint.
+  useLayoutEffect(() => { if (answer?.read === read) settled.current?.(); }, [answer, read]);
   // A refresh never draws links accepted by an earlier read. Failed metadata
   // is unknown; it cannot replace or erase the independently accepted hub.
   return answer?.read === read && answer.navigation.slug === slug ? <CollectionWeekLinks navigation={answer.navigation} onNavigate={onNavigate} /> : null;

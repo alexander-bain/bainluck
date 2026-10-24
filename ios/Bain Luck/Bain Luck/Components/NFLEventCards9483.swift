@@ -312,7 +312,7 @@ struct NFLFinishCardView9483: View {
                     HStack(alignment: .firstTextBaseline) {
                         teamName(isHome: isHome)
                         Spacer(minLength: 8)
-                        number(isHome ? card.pregame.home : card.pregame.away, label: card.pregameLabel)
+                        number(pregameText(isHome ? card.pregame.home : card.pregame.away), label: card.pregameLabel)
                         if let later, let laterLabel {
                             number(isHome ? later.home : later.away, label: laterLabel.lowercased())
                                 .frame(minWidth: 72, alignment: .trailing)
@@ -320,7 +320,7 @@ struct NFLFinishCardView9483: View {
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         teamName(isHome: isHome)
-                        number(isHome ? card.pregame.home : card.pregame.away, label: card.pregameLabel,
+                        number(pregameText(isHome ? card.pregame.home : card.pregame.away), label: card.pregameLabel,
                                alignment: .leading)
                         if let later, let laterLabel {
                             number(isHome ? later.home : later.away, label: laterLabel.lowercased(),
@@ -375,8 +375,13 @@ struct NFLFinishCardView9483: View {
 
     private func number(_ value: Double, label: String,
                         alignment: HorizontalAlignment = .trailing) -> some View {
+        number(Self.points(value), label: label, alignment: alignment)
+    }
+
+    private func number(_ text: String, label: String,
+                        alignment: HorizontalAlignment = .trailing) -> some View {
         VStack(alignment: alignment, spacing: 0) {
-            Text(Self.points(value))
+            Text(text)
                 .font(.headline.monospacedDigit())
                 .fixedSize()
             // #11285 — the label wraps in the stacked layout ("pregame
@@ -393,10 +398,21 @@ struct NFLFinishCardView9483: View {
         value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
     }
 
+    /// #11296 — the pregame number as printed: whole, as the headline prints
+    /// it, on a finished card's qualified pair; otherwise `points`.
+    private func pregameText(_ value: Double) -> String {
+        Self.pregameText(value, whole: card.printsPregameWhole)
+    }
+
+    static func pregameText(_ value: Double, whole: Bool) -> String {
+        guard whole, let rounded = Int(exactly: value.rounded()) else { return points(value) }
+        return String(rounded)
+    }
+
     private var accessibilityText: String {
         var parts = [card.kicker, card.headline(awayName: awayName, homeName: homeName),
                      "\(card.pregameName) "
-                     + "\(awayName) \(Self.points(card.pregame.away)), \(homeName) \(Self.points(card.pregame.home))"]
+                     + "\(awayName) \(pregameText(card.pregame.away)), \(homeName) \(pregameText(card.pregame.home))"]
         if let later, let laterLabel {
             parts.append("\(laterLabel) \(awayName) \(Self.points(later.away)), \(homeName) \(Self.points(later.home))")
         }

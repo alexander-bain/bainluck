@@ -19,6 +19,10 @@ import XCTest
 ///   the fallback's floor is the first OBSERVED game state, not kickoff),
 ///   `testTheBaselineChangesNothingBeforeTheFinal`,
 ///   `testTheQualifiedHalvesAreTheServedOnes`, `testThePageWiresOneBaselineToEveryComparison`
+/// - #11296 a finished page with the headline's qualified forecast and no
+///   history point before the floor drew no card (Hawks 15198499) →
+///   `testAFinishedCardComparesTheQualifiedForecastWithTheFinalWithoutAHistoryPoint`,
+///   `testWithoutAHistoryPointOnlyTheFinishedQualifiedCaseDrawsACard`
 /// - R3 two bare "Sources" controls with different counts →
 ///   `testThePagesSourcesSayWhichNumberTheyMake`
 /// - R4 Show/Hide stranded past the right edge at AX3, long key names cut off,
@@ -128,11 +132,13 @@ final class RealPageCorrections9483Tests: XCTestCase {
 
     /// Packers 14780562's shape: home GB, away DAL; the history's last point
     /// before play favours GB 27.5–26.5, the final is GB 23–13.
-    private func packersInput(final: Bool = true, sport: String = "americanfootball_nfl")
+    private func packersInput(final: Bool = true, sport: String = "americanfootball_nfl",
+                              score: (home: Double, away: Double) = (23, 13))
         -> ProjectedFinalPointsSeries.Input {
         .init(sportKey: sport, sourceKey: "draftkings", basis: .sameBookSameCaptureFullGameSpreadAndTotal,
               pairs: [pair(-30, home: 27.5, away: 26.5), pair(60, home: 25, away: 17)],
-              actuals: final ? [.init(at: Self.start.addingTimeInterval(200 * 60), home: 23, away: 13)] : [],
+              actuals: final ? [.init(at: Self.start.addingTimeInterval(200 * 60),
+                                      home: score.home, away: score.away)] : [],
               kickoffAt: nil, scoreObservationStartAt: Self.start,
               finalAt: final ? Self.start.addingTimeInterval(200 * 60) : nil,
               asOf: Self.start.addingTimeInterval((final ? 200 : 65) * 60),
@@ -155,11 +161,37 @@ final class RealPageCorrections9483Tests: XCTestCase {
         XCTAssertEqual(card.headline(awayName: "Cowboys", homeName: "Packers"), "Packers beat the forecast")
         XCTAssertEqual(card.final?.home, 23, "the actual is unchanged")
         XCTAssertEqual(card.final?.away, 13)
-        XCTAssertEqual(card.pregameLabel, "pregame projection")
+        XCTAssertEqual(card.pregameLabel, "projection before scheduled start",
+                       "#11296 — the headline's words, never a \"pregame\" that implies a proven kickoff")
+        XCTAssertTrue(card.printsPregameWhole, "printed per side as the headline prints it")
+        XCTAssertEqual(NFLFinishCardView9483.pregameText(card.pregame.away, whole: card.printsPregameWhole), "28")
+        XCTAssertEqual(NFLFinishCardView9483.pregameText(card.pregame.home, whole: card.printsPregameWhole), "27")
         XCTAssertFalse(card.namesDistinctBasis)
         XCTAssertEqual(card.ladderPregame?.away, 27.6, "the NBA margin and total read the same pair")
         XCTAssertEqual(card.ladderPregame?.home, 26.5)
         XCTAssertEqual(card.withoutProjectedNow.pregameBasis, .scheduledStart, "expiry keeps the basis")
+    }
+
+    /// #11536 F1 (lane1 1847Z) — football can end level, so the headline may
+    /// qualify a pair less than a point apart that prints level (21.75 / 22.25
+    /// → 22 · 22). The sentence grades the pair as printed: no "won as
+    /// projected" or "beat the forecast" from a leader the reader cannot see.
+    func testAFinishedCardOnAPairPrintedLevelGradesNoInvisibleLeader() throws {
+        let level = (away: 21.75, home: 22.25)
+        let homeWin = try XCTUnwrap(NFLFinishCard9483.build(packersInput(), finalBaseline: level))
+        XCTAssertTrue(homeWin.printsPregameWhole)
+        XCTAssertEqual(NFLFinishCardView9483.pregameText(homeWin.pregame.away, whole: homeWin.printsPregameWhole), "22")
+        XCTAssertEqual(NFLFinishCardView9483.pregameText(homeWin.pregame.home, whole: homeWin.printsPregameWhole), "22")
+        XCTAssertEqual(homeWin.headline(awayName: "Cowboys", homeName: "Packers"), "Packers won",
+                       "not \"won as projected\" from the unrounded 22.25")
+        XCTAssertEqual(homeWin.pregame, .init(away: 21.75, home: 22.25, at: nil), "the marks keep the served halves")
+        let awayWin = try XCTUnwrap(NFLFinishCard9483.build(packersInput(score: (home: 17, away: 20)),
+                                                           finalBaseline: level))
+        XCTAssertEqual(awayWin.headline(awayName: "Cowboys", homeName: "Packers"), "Cowboys won",
+                       "not \"beat the forecast\" from the unrounded 22.25")
+        // Control: the history point keeps its half point and its graded sentence.
+        let history = try XCTUnwrap(NFLFinishCard9483.build(packersInput(score: (home: 17, away: 20))))
+        XCTAssertEqual(history.headline(awayName: "Cowboys", homeName: "Packers"), "Cowboys beat the forecast")
     }
 
     func testWithoutTheHeadlinesForecastTheCardNamesItsOtherBasis() throws {
@@ -170,15 +202,74 @@ final class RealPageCorrections9483Tests: XCTestCase {
             XCTAssertTrue(card.namesDistinctBasis)
             XCTAssertEqual(card.pregameLabel, "earlier forecast", "it does not borrow \"pregame projection\"")
             XCTAssertNil(card.ladderPregame, "no unqualified history pair reaches the ladders' \"Pregame projection\"")
+            XCTAssertFalse(card.printsPregameWhole, "the history point keeps its half point")
         }
-        // The baseline never creates a card the history refuses.
-        let noHistory = ProjectedFinalPointsSeries.Input(
-            sportKey: "americanfootball_nfl", sourceKey: "draftkings", basis: .sameBookSameCaptureFullGameSpreadAndTotal,
+    }
+
+    /// Packers' finished shape with no point before the floor.
+    private func noHistoryInput(final: Bool = true, actual: Bool = true, sport: String = "americanfootball_nfl")
+        -> ProjectedFinalPointsSeries.Input {
+        .init(
+            sportKey: sport, sourceKey: "draftkings", basis: .sameBookSameCaptureFullGameSpreadAndTotal,
             pairs: [pair(60, home: 25, away: 17)],
-            actuals: [.init(at: Self.start.addingTimeInterval(200 * 60), home: 23, away: 13)],
-            kickoffAt: nil, scoreObservationStartAt: Self.start, finalAt: Self.start.addingTimeInterval(200 * 60),
-            asOf: Self.start.addingTimeInterval(200 * 60), windowStartAt: nil, requestCutoffAt: nil)
-        XCTAssertNil(NFLFinishCard9483.build(noHistory, finalBaseline: headlineHalves))
+            actuals: final && actual ? [.init(at: Self.start.addingTimeInterval(200 * 60), home: 23, away: 13)] : [],
+            kickoffAt: nil, scoreObservationStartAt: Self.start,
+            finalAt: final ? Self.start.addingTimeInterval(200 * 60) : nil,
+            asOf: Self.start.addingTimeInterval((final ? 200 : 65) * 60), windowStartAt: nil, requestCutoffAt: nil)
+    }
+
+    /// #11296 (Design on the retained Hawks 15198499 final, 2026-10-23) — a
+    /// finished card with an admitted final and the headline's qualified pair
+    /// compares the two even when the history holds no point before the floor:
+    /// the qualified pair, unrounded inside and whole as printed, no clock.
+    func testAFinishedCardComparesTheQualifiedForecastWithTheFinalWithoutAHistoryPoint() throws {
+        let card = try XCTUnwrap(NFLFinishCard9483.build(noHistoryInput(), finalBaseline: headlineHalves))
+        XCTAssertEqual(card.phase, .after)
+        XCTAssertEqual(card.pregameBasis, .scheduledStart)
+        XCTAssertEqual(card.pregame, .init(away: 27.6, home: 26.5, at: nil), "the served halves, no invented time")
+        XCTAssertEqual(card.final, .init(away: 13, home: 23, at: Self.start.addingTimeInterval(200 * 60)),
+                       "the admitted final, unchanged")
+        XCTAssertNil(card.projectedNow)
+        XCTAssertEqual(card.headline(awayName: "Cowboys", homeName: "Packers"), "Packers beat the forecast")
+        XCTAssertEqual(card.pregameName, "Projection before scheduled start")
+        XCTAssertEqual(card.key, "Points · outline = projection before scheduled start · cross = final")
+        XCTAssertEqual(card.ladderPregame?.away, 27.6, "the NBA margin and total read the same pair")
+        XCTAssertTrue(card.printsPregameWhole)
+        // The same card the history-backed page draws: the history point only
+        // decided whether the card existed.
+        XCTAssertEqual(card, try XCTUnwrap(NFLFinishCard9483.build(packersInput(), finalBaseline: headlineHalves)))
+    }
+
+    /// The printed and spoken pregame numbers are one rendering, so the card
+    /// never shows 116 and says 115.8.
+    func testTheCardPrintsAndSpeaksOnePregameNumber() throws {
+        let view = try code("Components", "NFLEventCards9483.swift")
+        XCTAssertFalse(view.contains("Self.points(card.pregame"), "a pregame number bypasses pregameText")
+        XCTAssertEqual(view.components(separatedBy: "number(pregameText(isHome?card.pregame.home:card.pregame.away),"
+                                       + "label:card.pregameLabel").count - 1, 2, "both layouts print it")
+        XCTAssertTrue(view.contains("\\(awayName)\\(pregameText(card.pregame.away)),"
+                                    + "\\(homeName)\\(pregameText(card.pregame.home))"), "the spoken card says it")
+        XCTAssertEqual(NFLFinishCardView9483.pregameText(115.8, whole: true), "116")
+        XCTAssertEqual(NFLFinishCardView9483.pregameText(118.1, whole: true), "118")
+        XCTAssertEqual(NFLFinishCardView9483.pregameText(115.8, whole: false), "115.8", "elsewhere unchanged")
+    }
+
+    /// Everything else about a page without a history point is as it was.
+    func testWithoutAHistoryPointOnlyTheFinishedQualifiedCaseDrawsACard() {
+        for baseline in [nil, (away: Double.nan, home: 26.5), (away: 27.6, home: Double.infinity)]
+            as [(away: Double, home: Double)?] {
+            XCTAssertNil(NFLFinishCard9483.build(noHistoryInput(), finalBaseline: baseline),
+                         "no qualified pair and no history point: no card (\(String(describing: baseline)))")
+        }
+        XCTAssertNil(NFLFinishCard9483.build(noHistoryInput(actual: false), finalBaseline: headlineHalves),
+                     "no admitted final: no card")
+        XCTAssertNil(NFLFinishCard9483.build(noHistoryInput(final: false), finalBaseline: headlineHalves),
+                     "live: the final baseline is never read")
+        XCTAssertNil(NFLFinishCard9483.build(noHistoryInput(final: false), liveBaseline: headlineHalves),
+                     "live: unchanged, the history point is still required")
+        XCTAssertNil(NFLFinishCard9483.build(noHistoryInput(sport: "icehockey_nhl"), finalBaseline: headlineHalves),
+                     "an unsupported sport: no card")
+        XCTAssertNil(NFLFinishCard9483.build(nil, finalBaseline: headlineHalves), "a refused series: no card")
     }
 
     /// The history point is the last one before the instrument's first
@@ -192,12 +283,14 @@ final class RealPageCorrections9483Tests: XCTestCase {
         XCTAssertEqual(NFLFinishCard9483.earlierForecast, "Earlier forecast")
         XCTAssertEqual(fallback.pregameLabel, "earlier forecast")
         let qualified = try XCTUnwrap(NFLFinishCard9483.build(packersInput(), finalBaseline: headlineHalves))
-        XCTAssertEqual(qualified.pregameLabel, "pregame projection", "the qualified comparison is unchanged")
+        XCTAssertEqual(qualified.pregameLabel, "projection before scheduled start", "the qualified comparison's own words")
         XCTAssertEqual(fallback.key, "Points · outline = earlier forecast · cross = final",
                        "the legend clause names the earlier forecast")
-        XCTAssertEqual(qualified.key, "Points · outline = pregame · cross = final", "the qualified legend is unchanged")
+        XCTAssertEqual(qualified.key, "Points · outline = projection before scheduled start · cross = final",
+                       "the qualified legend names the headline's basis")
         XCTAssertEqual(fallback.pregameName, "Earlier forecast", "the spoken intro names the earlier forecast")
-        XCTAssertEqual(qualified.pregameName, "Pregame projection", "the qualified one still says pregame")
+        XCTAssertEqual(qualified.pregameName, "Projection before scheduled start",
+                       "the qualified one says the headline's words, not \"pregame\"")
         let view = try code("Components", "NFLEventCards9483.swift")
         XCTAssertTrue(view.contains("Text(card.key)"), "the legend is the card's own key")
         XCTAssertTrue(view.contains("\"\\(card.pregameName)\""), "the spoken intro is the card's own name")

@@ -2805,7 +2805,7 @@ private struct NativeGroupCard: View {
                 }
             }
 
-            if let footer = DiscoverGroupRows.footerTitle(itemCount: items.count, kind: kind, expanded: expanded) {
+            if let footer = DiscoverGroupRows.footerTitle(memberTypes: items.map(\.type), kind: kind, expanded: expanded) {
                 Divider()
                 Button { withAnimation { expanded = true } } label: {
                     Text(footer)
