@@ -196,11 +196,13 @@ describe("the mapper hands the card what the envelope said", () => {
   });
 
   it("absence is an explicit null, never undefined, and a partial pair is no pair", () => {
+    // Each broken pair still carries the served capture time, so the last
+    // assertion tests that the time travels only WITH an accepted pair.
     for (const o of [
-      {},
-      { projected_home_score: 29.6 },
-      { projected_home_score: Number.NaN, projected_away_score: 22.3 },
-      { projected_home_score: "29.6", projected_away_score: 22.3 },
+      { projection_captured_at: CAPTURED },
+      { projected_home_score: 29.6, projection_captured_at: CAPTURED },
+      { projected_home_score: Number.NaN, projected_away_score: 22.3, projection_captured_at: CAPTURED },
+      { projected_home_score: "29.6", projected_away_score: 22.3, projection_captured_at: CAPTURED },
     ] as unknown as Partial<BriefOdds>[]) {
       const odds = leagueGameToEvent(scheduled(o)).current_odds!;
       expect(odds.projected_home_score).toBeNull();
