@@ -232,6 +232,8 @@ struct Bain_LuckApp: App {
             .environmentObject(authManager)
             .environmentObject(navCoordinator)
             .environmentObject(pinManager)
+            // #10875 — the saved items (and their account) the Home/Lock Screen widget may show.
+            .savedItemWidgets10875(pins: pinManager)
             .overlay {
                 PinFeedbackToast()
                     .environmentObject(pinManager)
