@@ -1,0 +1,12 @@
+[
+{"vid":"v24","verdict":"pass","reasons":["two NL teams, one pennant, mutually exclusive; sentences match rules"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v25","verdict":"pass","reasons":["two East teams, one conference title, mutually exclusive; sentences match rules"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v26","verdict":"pass","reasons":["rungs increase 3/28/65; first-over-50 mark correct; 'by the House' correctly signals impeachment not removal","note: rules say 'the President of the United States', not Trump by name"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v27","verdict":"pass","reasons":["rungs increase 8/68/79; first-over-50 mark correct; sentences match rules"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v28","verdict":"pass","reasons":["all four sentences faithful","note: t0975 and t0081 both concern 2028 Republicans but are distinct claims, not duplicates"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v29","verdict":"fix","reasons":["t1376 reads as conditional on a meeting; market resolves No if no meeting by Dec 31, so 75% includes them meeting at all","'in-person' not confirmable from cut-off rules","other three sentences faithful"],"fixes":[{"id":"t1376","plain":"Trump and Putin meet by December 31, 2026, and their next meeting is in China"}],"drop_members":[],"headline_fix":""},
+{"vid":"v30","verdict":"pass","reasons":["all deadlines Dec 31 2027 / before Jan 1 2028; sentences match rules; no duplicates"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v31","verdict":"pass","reasons":["all deadlines end of 2026; sentences match rules; no duplicates","note: t0635 is settled by NASA data published after year end"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v32","verdict":"pass","reasons":["sentences match rules incl. negative-outcome polarity on t1530; no duplicates","note: t1530 rules count 'Pro' preview models as a release"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v33","verdict":"pass","reasons":["sentences match rules; t0553 correctly follows party-based rules although venue label names Aaron Ford","Ohio and Texas moratorium rows are parallel but distinct, not duplicates"],"fixes":[],"drop_members":[],"headline_fix":""}
+]

@@ -1,0 +1,144 @@
+[
+ {
+  "cid": "canonical",
+  "type": "roundup",
+  "kicker": "Round-up",
+  "headline": "NFL division front-runners",
+  "tag": "NFL",
+  "rows": [
+   {
+    "text": "NFC East: Cowboys",
+    "num": "44",
+    "p": 0.44,
+    "plain": "NFC East: Cowboys"
+   },
+   {
+    "text": "NFC West: 49ers",
+    "num": "41",
+    "p": 0.41,
+    "plain": "NFC West: 49ers"
+   },
+   {
+    "text": "NFC North: Vikings",
+    "num": "38",
+    "p": 0.38,
+    "plain": "NFC North: Vikings"
+   },
+   {
+    "text": "NFC South: Falcons",
+    "num": "35",
+    "p": 0.35,
+    "plain": "NFC South: Falcons"
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "notes": []
+ },
+ {
+  "cid": "three",
+  "type": "roundup",
+  "kicker": "Round-up",
+  "headline": "NFL division front-runners",
+  "tag": "NFL",
+  "rows": [
+   {
+    "text": "NFC East: Cowboys",
+    "num": "44",
+    "p": 0.44,
+    "plain": "NFC East: Cowboys"
+   },
+   {
+    "text": "NFC West: 49ers",
+    "num": "41",
+    "p": 0.41,
+    "plain": "NFC West: 49ers"
+   },
+   {
+    "text": "NFC North: Vikings",
+    "num": "38",
+    "p": 0.38,
+    "plain": "NFC North: Vikings"
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "notes": []
+ },
+ {
+  "cid": "long",
+  "type": "roundup",
+  "kicker": "Round-up",
+  "headline": "NFL awards: the front-runners for the 2026 season",
+  "tag": "NFL",
+  "rows": [
+   {
+    "text": "Comeback Player of the Year: Patrick Mahomes",
+    "num": "65",
+    "p": 0.65,
+    "plain": "Comeback Player of the Year: Patrick Mahomes"
+   },
+   {
+    "text": "Defensive Rookie of the Year: Jacob Rodriguez",
+    "num": "35",
+    "p": 0.35,
+    "plain": "Defensive Rookie of the Year: Jacob Rodriguez"
+   },
+   {
+    "text": "Offensive Rookie of the Year: Jeremiyah Love",
+    "num": "32",
+    "p": 0.32,
+    "plain": "Offensive Rookie of the Year: Jeremiyah Love"
+   },
+   {
+    "text": "Defensive Player of the Year: Will Anderson Jr.",
+    "num": "27",
+    "p": 0.27,
+    "plain": "Defensive Player of the Year: Will Anderson Jr."
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "notes": []
+ },
+ {
+  "cid": "extremes",
+  "type": "roundup",
+  "kicker": "Round-up",
+  "headline": "NFL division front-runners",
+  "tag": null,
+  "rows": [
+   {
+    "text": "AFC East: Bills",
+    "num": "97",
+    "p": 0.97,
+    "plain": "AFC East: Bills"
+   },
+   {
+    "text": "AFC South: Jaguars",
+    "num": "66",
+    "p": 0.66,
+    "plain": "AFC South: Jaguars"
+   },
+   {
+    "text": "NFC South: Falcons",
+    "num": "35",
+    "p": 0.35,
+    "plain": "NFC South: Falcons"
+   },
+   {
+    "text": "NFC North: Vikings",
+    "num": "8",
+    "p": 0.08,
+    "plain": "NFC North: Vikings"
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ],
+  "notes": []
+ }
+]

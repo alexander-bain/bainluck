@@ -1,0 +1,14 @@
+[
+{"vid":"v12","verdict":"pass","reasons":["sentences match rules incl. announce-or-leave","rungs rise 10/21/63/80; first over 50% correctly marked at Jun 1 2027"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v13","verdict":"pass","reasons":["all sentences faithful","note t0577: venue title says 'announces departure' but rules say 'leaves office'; sentence follows rules","note t0577: sentence mentions death exclusion (mild tone)","note t0687: one Cabinet member or agency statement is enough"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v14","verdict":"pass","reasons":["all sentences faithful; 99th Academy Awards = 2027 Oscars","note t0579: title says 'announces departure', rules say 'leaves office'; sentence follows rules; mentions death exclusion (mild tone)"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v15","verdict":"pass","reasons":["all sentences faithful","t0065 'by the House' correctly signals impeachment is not removal","note t0593: presumes a wedding takes place"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v16","verdict":"pass","reasons":["all sentences faithful to rules; no duplicates"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v17","verdict":"pass","reasons":["deadlines Dec 31 / before Jan 1 match headline","sentences faithful","note: t0067 (buy Greenland) is a subset of t0031 (any new territory) - overlapping, not duplicate"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v18","verdict":"pass","reasons":["all deadlines before Dec 1 2026 = end of November","sentences faithful"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v19","verdict":"pass","reasons":["deadlines Oct 31 / before Nov 1 match headline","sentences faithful","note t1545: war-adjacent topic but claim is a diplomatic meeting"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v20","verdict":"fix","reasons":["t1539 is a month bucket: IPO occurs IN December 2026 (Dec 1-31), not by end of November - does not fit headline; drop","other four sentences faithful and deadlines match"],"fixes":[],"drop_members":["t1539"],"headline_fix":""},
+{"vid":"v21","verdict":"pass","reasons":["sentences faithful; t1530 negative polarity matches 'No release by November 1' outcome","no duplicates"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v22","verdict":"pass","reasons":["sentences faithful; t1365 negative polarity matches 'No Bond chosen' outcome","note: t1222 and t0848 are rival outcomes of one question (AL pennant), not duplicates","note t0848: listed deadline 2028-10-31 looks wrong for a 2026 title; sentence correctly says 2026"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v23","verdict":"pass","reasons":["headline fits all three rows; same deadline","rules say 'confirms an IPO' - consistent with 'officially announces'","note: Starlink row is Starlink itself, not parent SpaceX"],"fixes":[],"drop_members":[],"headline_fix":""}
+]
