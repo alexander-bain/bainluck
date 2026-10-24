@@ -6115,11 +6115,50 @@ async def get_related_events(
         )
         team_names = {tid: name for tid, name in names_result.all() if name}
 
+    # ═══ A LEG THE MARKET'S OWN PAGE REFUSES IS REFUSED HERE TOO (#11579) ═══
+    #
+    # `/futures/412` — KXNBAMIMP-26, last season's Most Improved Player, a board
+    # Kalshi closed in September — read "No current prices for this market"
+    # under All Outcomes (`prices_withheld: 59` of 59), while Games This Week on
+    # the SAME screen printed "Rockets at Hawks · Nickeil Alexander-Walk… >99%".
+    # This map read `current_probability` straight off the row and asked no
+    # refusal at all.
+    #
+    # Called, never re-spelled: `_page_withheld_outcome_ids` is #8972's
+    # composition of every refusal the detail route makes, stopped board
+    # included. Imported here because `league_futures` imports this module.
+    # The leader is picked on the SERVED value, so a refused 0.995 never takes
+    # the row from a teammate whose price is shown, and a refused leader serves
+    # `probability: None`, which the strip renders as no number.
+    #
+    # Fails open, loudly (gotcha #42, the direction events.py's rail gives): a
+    # board the refusal cannot evaluate keeps its prices rather than losing the
+    # strip.
+    from app.routes.league_futures import _page_withheld_outcome_ids
+
+    try:
+        withheld = await _page_withheld_outcome_ids(db, market)
+    except Exception:  # noqa: BLE001 - the strip survives an unevaluable refusal
+        logger.warning(
+            "futures related events: could not evaluate the price refusal for "
+            "market %s; serving its prices unrefused",
+            market.id,
+            exc_info=True,
+        )
+        withheld = set()
+
+    def _served_probability(o):
+        # The route's served site (#6081's strict form): the leader is picked on
+        # this value and the row prints it.
+        if o.id in withheld:
+            return None
+        return float(o.current_probability) if o.current_probability is not None else None
+
     def _leader(group):
         return min(
             group,
             key=lambda x: (
-                -(float(x.current_probability) if x.current_probability is not None else -1.0),
+                -(p if (p := _served_probability(x)) is not None else -1.0),
                 x.id if x.id is not None else 0,
             ),
         )
@@ -6142,8 +6181,8 @@ async def get_related_events(
             # by id instead of this route's source value beside it.
             "outcome_id": o.id,
             "outcome_name": o.name,
-            "probability": float(o.current_probability) if o.current_probability is not None else None,
-            "american_odds": o.current_american_odds,
+            "probability": _served_probability(o),
+            "american_odds": None if o.id in withheld else o.current_american_odds,
             "rank": o.rank,
             "outcome_is_team": not player_field,
         }
