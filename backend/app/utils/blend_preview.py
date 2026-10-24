@@ -1991,13 +1991,15 @@ class LedgerRegistry(PreviewRegistry):
         if kind == "classify" and status == "classified":
             return []
         if kind == "propose" and status in (
-            "read_required", "full", "bucket_full", "migration_pending", "migration_debt",
+            "no_base", "read_required", "full", "bucket_full", "migration_pending", "migration_debt",
             "outside_window", "context_required", "stale_context", "policy_mismatch", "legacy_owner",
         ):
             state = self._events.get(event_id)
             entry = None if state is None else state.pending.get(source)
             if (op["mode"] == "open" and entry is not None
                     and entry.seq == op["local_seq"]):
+                # This open never entered Redis. Keeping its local chain would
+                # turn a later valid input into missing_chain/false expiry.
                 self._forget(event_id, source)
         if kind == "propose" and status in ("expired", "missing_chain"):
             self._local_expired(op)
