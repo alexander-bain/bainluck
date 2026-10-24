@@ -55,6 +55,11 @@ const SEAHAWKS = seahawks as unknown as TeamPropFamiliesResponse;
 const COUNTED_NOTE = "We checked 40 of the 82 players on this roster, so some races may be missing.";
 const UNCOUNTED_NOTE = "We did not check every player on this roster, so some races may be missing.";
 
+/** The markup's text between tags, in order — what a person reads, piece by piece. */
+function textPieces(html: string): string[] {
+  return html.split(/<[^>]*>/).filter((piece) => piece !== "");
+}
+
 function withSearch(search: unknown, cache: unknown = SEAHAWKS.cache) {
   return { ...SEAHAWKS, roster_search: search, cache } as unknown as TeamPropFamiliesResponse;
 }
@@ -214,12 +219,12 @@ describe("#2311 part 2 — TeamPropFamilies renders the caption", () => {
     expect(html).not.toContain("/futures/");
     for (const f of SEAHAWKS.families) expect(html).not.toContain(f.label);
     // Heading and the one sentence are the whole section.
-    expect(html.replace(/<[^>]+>/g, "")).toBe(`Prop Races${COUNTED_NOTE}`);
+    expect(textPieces(html)).toEqual(["Prop Races", COUNTED_NOTE]);
   });
 
   test("a capped EMPTY result with untrusted counts is declared without numbers", () => {
     const html = render({ kind: "uncounted" }, []);
-    expect(html.replace(/<[^>]+>/g, "")).toBe(`Prop Races${UNCOUNTED_NOTE}`);
+    expect(textPieces(html)).toEqual(["Prop Races", UNCOUNTED_NOTE]);
     expect(html).not.toContain("data-roster-searched");
     expect(html).not.toContain("data-roster-total");
   });
