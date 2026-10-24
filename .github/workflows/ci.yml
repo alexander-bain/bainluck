@@ -1,36 +1,11 @@
 name: CI
 
 on:
-  # NO `branches:` FILTER ON pull_request — deliberate, and load-bearing.
-  #
-  # `branches: [master]` suppresses CI entirely for stacked PRs targeting
-  # another branch. Empty checks are not a pending or successful run.
-  #
-  # Two named failures, both in one week, both on stacked lane branches:
-  #
-  #   1. PR #1943 (`lane1/q363` -> `lane1/q362`) reported `mergeStateStatus:
-  #      DIRTY` and no checks. The base was retargeted to master; GitHub emits
-  #      `edited` on a retarget and this workflow listens to opened/synchronize/
-  #      reopened, so retargeting SCHEDULED NOTHING. A close+reopen is what
-  #      finally produced a run.
-  #   2. PR #1950 (`lane1/q365`, cut from `lane1/q364`) hit the same wall. Only
-  #      gitleaks reported, because `gitleaks.yml` has a BARE `pull_request:`
-  #      with no branch filter — the accidental control that proves the cause
-  #      is the filter here and not anything about the branches themselves.
-  #
-  # The workaround (retarget, then close+reopen) was rediscovered from scratch
-  # both times, because the symptom — a green-looking PR with no checks — does
-  # not point at a trigger. Removing the filter deletes the class: every PR gets
-  # a run regardless of base, and a stacked branch can never again be merged on
-  # the strength of checks that were never scheduled.
-  #
-  # Deploy is unaffected. The `deploy` job is separately gated on
-  # `github.ref == 'refs/heads/master' && github.event_name == 'push'`, so a PR
-  # into any base still cannot release — see the job's own comment. The `push:`
-  # filter below admits master plus the desk's compose branches only. The desk
-  # uses compose PUSH CI instead of a composition PR; lane PRs are unchanged.
-  #
-  # Guarded by `frontend/e2e/contract/ciTriggerCoverage.contract.test.js`.
+  # Keep pull_request unfiltered: stacked PRs (#1943, #1950) otherwise got no
+  # CI, and retargeting did not trigger a run. Every PR base must be tested.
+  # Deploy remains restricted to master pushes by its own job condition.
+  # Compose pushes serve Integrator; they do not replace lane PR validation.
+  # Guard: frontend/e2e/contract/ciTriggerCoverage.contract.test.js.
   pull_request:
   push:
     branches: [master, 'integrator/compose-**']
@@ -5270,6 +5245,7 @@ jobs:
           if python -m pytest tests/integration/test_pm_held_price_row_stamps_received_quote_11138_pg.py \
             tests/integration/test_live_blend_source_projection_10090_pg.py \
             tests/integration/test_live_blend_metadata_projection_10090_pg.py \
+            tests/integration/test_pm_price_returned_clock_10090_pg.py \
             tests/integration/test_pm_price_statement_deadline_10090_pg.py \
             tests/integration/test_dnpl_default_committed_fallback_10090_pg.py \
             tests/integration/test_dnpl_capacity_lifecycle_10090_pg.py \
@@ -5290,8 +5266,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]150 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row/default-DNPL/reservations gate did not run all 150 cases"
+          grep -qE "[^0-9]157 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row/default-DNPL/reservations/returned-clock gate did not run all 157 cases"
             exit 1
           }
 
@@ -5357,8 +5333,8 @@ jobs:
             echo "::error::#10090 Kalshi held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]5 passed[,[:space:]]" /tmp/kalshi-held10090.txt || {
-            echo "::error::#10090 Kalshi held-row gate did not run all five cases"
+          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/kalshi-held10090.txt || {
+            echo "::error::#10090 Kalshi held-row gate did not run all six cases"
             exit 1
           }
 

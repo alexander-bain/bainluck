@@ -1,7 +1,8 @@
 """Fresh identical Kalshi input skips writes; changed DB values remain immediate.
 
-SQLite exercises the actual UPDATE predicate with only its PostgreSQL interval
-expression replaced by a fixed cutoff. It cannot certify PostgreSQL RETURNING
+SQLite exercises the actual UPDATE predicate with its PostgreSQL interval
+expression replaced by a fixed cutoff and a fixed returned-clock adapter.
+It cannot certify PostgreSQL RETURNING
 book-change publication; these controls assert admission and stored clocks only.
 """
 
@@ -24,6 +25,7 @@ from app.utils.kalshi_price_statement import (
     kalshi_price_parameters,
 )
 from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
+from tests._sqlite_returned_clock import FIXED_DATABASE_CLOCK, install_returned_clock
 
 CUTOFF = datetime(2026, 1, 1)
 FRESH = CUTOFF + timedelta(seconds=1)
@@ -45,6 +47,7 @@ def _fixed_cutoff(statement):
 @pytest.fixture
 def database():
     engine = create_engine("sqlite://")
+    install_returned_clock(engine)
     with engine.begin() as db:
         db.execute(text("""CREATE TABLE futures_outcomes (
             id INTEGER PRIMARY KEY, market_id INTEGER, resolution_source TEXT,
@@ -79,7 +82,9 @@ def test_repeat_does_not_write_or_mint_a_clock_but_first_receipt_does(database):
     before = dict(_state(database))
     assert not _write(database)
     assert dict(_state(database)) == before
-    assert len(_write(database, force=True)) == 1
+    written = _write(database, force=True)
+    assert len(written) == 1
+    assert written[0].database_clock == FIXED_DATABASE_CLOCK
     assert _state(database)["last_updated"] != before["last_updated"]
 
 
