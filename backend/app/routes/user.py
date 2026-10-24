@@ -1845,6 +1845,20 @@ async def _query_team_futures(
             withheld_by_market = await withheld_price_outcome_ids_for_markets(
                 db, _screen_markets
             )
+            # #11534: the six arms are not the whole refusal. The market page
+            # also unions per-leg staleness (#7537) and the stopped-board rule
+            # (#8011), and the Patriots page's Season Futures printed
+            # `KXNFLSBMVP-26` — last season's Super Bowl MVP, every leg last
+            # written 2026-02-04 — as "Drake Maye 27%" while `/api/futures/479`
+            # withheld all 79 legs. Prop Races' composition, called, not re-spelled.
+            from app.routes.prop_families import _board_staleness_withheld
+
+            for _m in _screen_markets:
+                _stopped = await _board_staleness_withheld(db, _m)
+                if _stopped:
+                    withheld_by_market[_m.id] = (
+                        withheld_by_market.get(_m.id, set()) | _stopped
+                    )
             await _screen_savepoint.commit()
         except Exception:  # noqa: BLE001 — a price screen never costs the page
             await _screen_savepoint.rollback()

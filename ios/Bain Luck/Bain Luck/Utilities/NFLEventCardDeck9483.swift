@@ -104,6 +104,13 @@ enum NFLEventCardDeck9483 {
 /// with the headline's admitted retained pair ("Projection before scheduled
 /// start") whenever the headline prints one. The fallback is honestly named;
 /// it does not stand in for the pregame comparison.
+///
+/// #11296 — a finished card may stand on the headline's qualified pair alone
+/// when the admitted history holds no point before the floor (Hawks 15198499:
+/// the retained 19-book scheduled-start forecast, no game-day pre-floor pair).
+/// It is an endpoint comparison: the qualified pair against the admitted final,
+/// with no history point, timestamp or trajectory invented. Live and before are
+/// unchanged; without the qualified pair the history point is still required.
 nonisolated struct NFLFinishCard9483: Equatable {
     nonisolated struct Pair: Equatable {
         let away: Double
@@ -147,9 +154,23 @@ nonisolated struct NFLFinishCard9483: Equatable {
     /// from the headline's, and says so instead of borrowing "pregame projection".
     var namesDistinctBasis: Bool { phase != .before && pregameBasis == .history }
 
-    /// A live card on the headline's admitted retained pair says the qualified
-    /// timing the headline says. (A finished one keeps "pregame projection".)
-    private var namesScheduledStart: Bool { phase == .during && pregameBasis == .scheduledStart }
+    /// A live or finished card on the headline's qualified pair says the
+    /// timing the headline says ("Projection before scheduled start"), never a
+    /// "pregame" that implies a proven kickoff (#11296, Design 2026-10-23).
+    private var namesScheduledStart: Bool { phase != .before && pregameBasis == .scheduledStart }
+
+    /// #11296 — a finished card prints the headline's qualified pair as the
+    /// headline prints it, rounded per side (`FinalForecastComparison11296`);
+    /// the served halves stay unrounded for the marks and the sentence.
+    var printsPregameWhole: Bool { phase == .after && pregameBasis == .scheduledStart }
+
+    /// #11536 F1 — the pregame pair the reader is shown: whole per side when it
+    /// prints whole, so a pair printed level (22 · 22) is never graded with a
+    /// leader the reader cannot see. The marks keep the served halves.
+    private var printedPregame: Pair {
+        guard printsPregameWhole else { return pregame }
+        return Pair(away: pregame.away.rounded(), home: pregame.home.rounded(), at: pregame.at)
+    }
 
     /// The pregame pair's name as a sentence starts it: in the spoken card,
     /// and lowercased under each number.
@@ -226,13 +247,15 @@ nonisolated struct NFLFinishCard9483: Equatable {
             return before == nowLeads ? "\(name(nowLeads)) still projected ahead" : "The projected finish has flipped"
         case .after:
             guard let final, let winner = final.homeLeads else { return "Final vs forecast" }
-            guard let before = pregame.homeLeads else { return "\(name(winner)) won" }
+            guard let before = printedPregame.homeLeads else { return "\(name(winner)) won" }
             return before == winner ? "\(name(winner)) won as projected" : "\(name(winner)) beat the forecast"
         }
     }
 
     /// From the page's own projected-points input. Nil wherever that series
-    /// is refused, or holds no projection before the game began.
+    /// is refused, or holds no projection before the game began — except a
+    /// finished one with an admitted final and the headline's qualified pair
+    /// (#11296), which compares that pair with the final.
     ///
     /// `finalBaseline` is the headline's qualified forecast halves
     /// (`EventDetailView.qualifiedFinalForecast11296`), read only after the
@@ -253,9 +276,6 @@ nonisolated struct NFLFinishCard9483: Equatable {
         case .before: pregamePoint = series.latestIntervalUnavailable ? nil : series.latest
         case .during, .after: pregamePoint = floor.flatMap { f in points.last { $0.at < f } }
         }
-        // The card exists exactly where it did; the baseline only changes
-        // which pregame pair a live or finished one compares with.
-        guard let pregamePoint else { return nil }
         let served: (away: Double, home: Double)? = switch series.phase {
         case .before: nil
         case .during: liveBaseline
@@ -265,7 +285,13 @@ nonisolated struct NFLFinishCard9483: Equatable {
             guard b.away.isFinite, b.home.isFinite else { return nil }
             return Pair(away: b.away, home: b.home, at: nil)
         }
-        let pregame = baseline ?? Pair(away: pregamePoint.away, home: pregamePoint.home, at: pregamePoint.at)
+        // The card exists where it did, and — finished only — on the
+        // qualified pair alone (#11296); the `.after` case still requires the
+        // admitted final. Otherwise the baseline only changes which pregame
+        // pair a live or finished card compares with.
+        let historyPair = pregamePoint.map { Pair(away: $0.away, home: $0.home, at: $0.at) }
+        guard historyPair != nil || (series.phase == .after && baseline != nil),
+              let pregame = baseline ?? historyPair else { return nil }
         let basis: PregameBasis = baseline != nil ? .scheduledStart : .history
         let tickStep = ProjectedFinalPointsSeries.leagues[input.sportKey]?.tickStep ?? 7
         let startWord = NBAEventCards9483.applies(sportKey: input.sportKey) ? "tip-off" : "kickoff"

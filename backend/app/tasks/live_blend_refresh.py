@@ -5072,8 +5072,9 @@ class LiveBlendRefresher:
             try:
                 if preview.unclaimed(self.source):
                     await self._claim_preview_epoch(connection, preview)
-                return await preview.read_ticket(self._preview_call(connection), self.source,
-                                                 include_candidates=include_candidates)
+                if include_candidates:
+                    return await preview.capacity_ticket(self._preview_call(connection), self.source)
+                return await preview.read_ticket(self._preview_call(connection), self.source)
             except BaseException:
                 self._redis = None
                 await connection.disconnect()
@@ -5105,14 +5106,14 @@ class LiveBlendRefresher:
                             f"NOW() - INTERVAL '{int(SUSPENDED_SLATE_MAX_AGE_HOURS)} hours'")))
 
     async def _maintain_preview_capacity(self):
-        from sqlalchemy import select
+        from sqlalchemy import func, select
         from app.models.models import Event
         from app.tasks.base import get_task_session
         from app.utils.blend_preview import registry
 
         try:
             async with asyncio.timeout(1):
-                ticket, candidates = await self._preview_ticket(include_candidates=True)
+                ticket, candidates, idle = await self._preview_ticket(include_candidates=True)
                 if ticket is None or not candidates:
                     return
                 factory = self._session_factory or get_task_session
@@ -5122,10 +5123,24 @@ class LiveBlendRefresher:
                     rows = (await session.execute(select(
                         Event.id, Event.win_probability_sources_rev,
                         self._preview_retirable_row().label("retirable"),
+                        Event.status, Event.commence_time, func.now().label("read_at"),
                     ).where(Event.id.in_(candidates)))).all()
                 present = {row[0]: row for row in rows}
-                targets = [eid for eid in sorted(candidates)
-                           if eid not in present or present[eid][2]][:32]
+                def priority(eid):
+                    row = present.get(eid)
+                    if row is None or row[2]:
+                        return (0, 0, eid)
+                    # Only future scheduled rows reach this idle branch.
+                    return (1, -row[4].timestamp(), eid)
+
+                def idle_target(row):
+                    return (not row[2] and row[3] == "scheduled"
+                            and row[4] is not None and row[4] > row[5])
+
+                targets = sorted((eid for eid in candidates
+                                  if eid not in present or present[eid][2]
+                                  or (eid in idle and idle_target(present[eid]))),
+                                 key=priority)[:32]
                 # Reclaim a bounded batch rather than allowing just one new
                 # event per cadence. Every deletion advances the barrier;
                 # each next proof therefore needs a new ticket AND DB read.
@@ -5139,6 +5154,7 @@ class LiveBlendRefresher:
                             row = (await session.execute(select(
                                 Event.id, Event.win_probability_sources_rev,
                                 self._preview_retirable_row().label("retirable"),
+                                Event.status, Event.commence_time, func.now().label("read_at"),
                             ).where(Event.id == eid))).first()
                     if row is None:
                         await self._publish_previews([registry().retire_missing(eid, self.source, ticket)])
@@ -5148,10 +5164,42 @@ class LiveBlendRefresher:
                         # Inline terminal callers already own their slot.
                         async with self._session_slot():
                             await self._retire_preview_event(eid, row[1], ticket)
+                    elif eid in idle and idle_target(row):
+                        await self._retire_idle_preview_event(eid, ticket)
         except Exception:
             self.preview_stats["publish_errors"] += 1
             logger.warning("live_blend_refresh[%s]: preview capacity maintenance incomplete",
                            self.source, exc_info=True)
+
+    async def _retire_idle_preview_event(self, event_id: int, ticket: int) -> None:
+        """Skip busy rows; hold fresh future-scheduled proof through mutation.
+
+        An absent locked result means protected, missing or locked; none authorizes
+        missing-row retirement. Publication happens after releasing the row.
+        The enclosing maintenance timeout bounds this work. An uncertain
+        Redis command may complete after cancellation releases the DB lock;
+        this is not distributed atomicity across the two stores.
+        """
+        from sqlalchemy import func, select
+        from app.models.models import Event
+        from app.tasks.base import get_task_session
+        from app.utils.blend_preview import registry
+
+        factory = self._session_factory or get_task_session
+        frames = []
+        async with self._session_slot(), factory() as session:
+            row = (await session.execute(select(
+                Event.status, Event.win_probability_sources_rev,
+            ).where(
+                Event.id == event_id, Event.status == "scheduled",
+                Event.commence_time.is_not(None), Event.commence_time > func.now(),
+                Event.completed_at.is_(None),
+            ).with_for_update(read=True, skip_locked=True))).first()
+            if row is None:
+                return
+            frames = await self._prepare_ledger_previews([
+                registry().retire_idle(event_id, self.source, row[1], ticket)])
+        await self._publish_previews(frames)
 
     async def _close_preview_maintenance(self):
         self._preview_maintenance_closed = True

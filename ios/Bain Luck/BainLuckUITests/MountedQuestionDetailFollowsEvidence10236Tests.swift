@@ -29,7 +29,7 @@ final class MountedQuestionDetailFollowsEvidence10236Tests: XCTestCase {
         "08-withdrawn-old-quote-no-resurrection", "09-new-evidence-restoration",
         "10-selected-question-removed"
     ]
-    private static let unavailable = "This question isn't being offered right now."
+    private static let unavailable = "This prop line isn't being offered right now."
 
     /// What the reader must see after each step. `chance` nil = no percentage
     /// anywhere on the sheet; `removed` = the unavailable sentence; `sameAgeAs`
