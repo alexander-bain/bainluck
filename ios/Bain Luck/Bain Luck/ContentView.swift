@@ -34,6 +34,14 @@ struct ContentView: View {
             .sheet(item: $bugScreenshot) { wrapper in
                 BugReportView(screenshot: wrapper.image)
             }
+            // #10873: a Siri/Shortcuts "open" arrives as the same canonical link
+            // a shared URL carries, and goes through the same router. A link
+            // posted before this view mounted (cold launch) is replayed once;
+            // `consume()` clears it so a remount never replays it.
+            .onReceive(IntentRouteHandoff10873.shared.settledPosts) { _ in
+                guard let link = IntentRouteHandoff10873.shared.consume() else { return }
+                _ = navCoordinator.handleURL(link)
+            }
             .task {
                 // #1847 defect D: unsent reports used to be retried ONLY when
                 // the bug-report sheet re-appeared, so a queued report needed
