@@ -26,10 +26,19 @@ def test_collapsed_field_is_explicit_and_keeps_legacy_shape_without_a_hook(monke
     assert m == original
 
 
-@pytest.mark.parametrize("legs", [COHERENT, VISION_QUEST, [("A", .2), ("B", .9), ("C", .95)], [("Above 10", .7), ("Above 20", None), ("Above 30", 0)], [("Above 45", .88), ("Above 65", .9), ("Above 70", .37)]])
-def test_supported_trim_unknown_missing_zero_and_existing_tolerance_are_not_collapsed(legs):
+@pytest.mark.parametrize("legs", [COHERENT, [("A", .2), ("B", .9), ("C", .95)], [("Above 10", .7), ("Above 20", None), ("Above 30", 0)]])
+def test_supported_unknown_missing_and_zero_are_not_refused(legs):
     row = entertainment._market_row(market(legs), max_outcomes=8)
     assert row.get("ladder_treatment_refused") is not True
+
+
+@pytest.mark.parametrize("legs", [VISION_QUEST, [("Above 45", .88), ("Above 65", .9), ("Above 70", .37)]])
+def test_previous_tolerance_controls_now_refuse_the_visible_residual(legs):
+    # Both previously passed through numeric cards. The original #4751
+    # acceptance rules out that behavior, including after a partial trim.
+    row = entertainment._market_row(market(legs), max_outcomes=8)
+    assert row["ladder_treatment_refused"] is True
+    assert row["headline"] is None
 
 
 def test_grouping_cannot_turn_a_refused_board_back_into_a_heatmap_price():

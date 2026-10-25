@@ -76,7 +76,10 @@ def test_issue_specimen_filters_before_headline_and_top_n(limit):
         == ["Above 45", "Above 65", "Above 50", "Above 60", "Above 70"][:limit]
     )
     assert row["prob"] == 88
-    assert row["headline"] == {"name": "Above 70", "prob": 85}
+    # The retained 60/65 pair still reverses .86/.875 within the trim tolerance.
+    # Preserve the trim, but do not turn that residual field into a headline.
+    assert row["headline"] is None
+    assert row["ladder_treatment_refused"] is True
     assert row["outcome_count"] == 8
     assert m == original  # no column writes or mutation of shared ORM rows
 
@@ -208,7 +211,8 @@ async def test_real_response_builder_filters_all_card_occurrences_and_preserves_
     for row in bad_rows:
         assert not {"Above 55", "Above 75", "Above 90"}.intersection(names(row))
         assert row["prob"] == 88
-        assert row["headline"] == {"name": "Above 70", "prob": 85}
+        assert row["headline"] is None
+        assert row["ladder_treatment_refused"] is True
         if "lead_outcomes" in row:
             assert not {"Above 55", "Above 75", "Above 90"}.intersection(
                 o["name"] for o in row["lead_outcomes"]

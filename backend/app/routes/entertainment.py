@@ -22,7 +22,7 @@ from app.services import get_db
 from app.utils.futures_liveness import market_reads_settled
 from app.utils.hook_staleness import is_hook_stale
 from app.utils.ladder_headline import ladder_median_row
-from app.utils.ladder_monotonicity import cumulative_outcome_ladder
+from app.utils.ladder_monotonicity import cumulative_outcome_ladder, ladder_is_incoherent
 from app.utils.outcome_display import (
     LADDER_MIN_DRAWN_RUNGS,
     incoherent_ladder_verdict,
@@ -300,6 +300,28 @@ def _market_row(
     if incoherent and not collapsed:
         rejected_ids = {outcomes[i].id for i in incoherent}
         priced = [o for o in priced if o.id not in rejected_ids]
+    # #4751: the shared trim tolerates 2pp, but 88/90 and 35/36 are visible
+    # contradictions. Keep its attribution policy; refuse this card's numbers
+    # if the surviving numeric field still conflicts. This does not choose a
+    # new "wrong" rung or manufacture a replacement probability. Parse the
+    # FULL grammar so an unpriced exception cannot invent a cumulative field.
+    # Dates retain their existing policy pending rule-backed #11620 adoption.
+    numeric_ladder = cumulative_outcome_ladder(
+        [{"name": o.name, "outcome": o} for o in outcomes],
+        question=market.name,
+    )
+    refused = collapsed
+    if numeric_ladder is not None:
+        legs, direction = numeric_ladder
+        eligible_ids = {o.id for o in priced}
+        refused = refused or ladder_is_incoherent(
+            {
+                value: row["outcome"].current_probability
+                for value, row in legs
+                if row["outcome"].id in eligible_ids
+            },
+            direction,
+        )
     # #6255 — A RUNG WE HOLD NO PRICE FOR IS NOT A RUNG AT 0%.
     #
     # The refusal above is the same rule ONE LEVEL UP. It never reached inside
@@ -324,7 +346,7 @@ def _market_row(
     return {
         **(
             {"headline": None}
-            if collapsed else _ladder_headline(market, priced, outcomes)
+            if refused else _ladder_headline(market, priced, outcomes)
         ),
         # This flag is cumulative IDENTITY, not price coherence: Spotify uses
         # it to avoid ranking nested dates as competing artists. Preserve that
@@ -334,7 +356,7 @@ def _market_row(
         # non-ladder, so it cannot prohibit the client's numeric fallback.
         # Legacy numbers retain decoder/ranking compatibility; updated readers
         # must not render them when this flag is true. No stored price changes.
-        **({"ladder_treatment_refused": True} if collapsed else {}),
+        **({"ladder_treatment_refused": True} if refused else {}),
         "q": market.name,
         # #6255 — `priced[0]`, not `outcomes[0]`. Both name the leader on every
         # ladder that has one priced rung above zero, but they part when every
@@ -407,7 +429,7 @@ def _market_row(
         # staleness gate cannot come to disagree with the leader the card shows.
         "hook": (
             None
-            if collapsed or is_hook_stale(
+            if refused or is_hook_stale(
                 hook_description=market.hook_description,
                 hook_generated_at=getattr(market, "hook_generated_at", None),
                 hook_leader_at_generation=getattr(
