@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -41,7 +42,6 @@ from app.utils.search_cache import (
     adapt_cached_futures_row,
     adapt_cached_search_response,
     adapt_cached_typeahead_response,
-    attest_represented_top_outcomes,
     is_attested_top_outcomes,
     is_current_represented_futures_row,
     search_response_cache_key,
@@ -243,7 +243,13 @@ class TestProducerAttestationAndEligibility:
         assert adapted["top_outcomes"][0]["probability"] is None
         assert adapted["top_outcomes"][0]["rendered_percent"] is None
 
-        spoofed_ungraded_true_winner = {
+        # Actual producer rows on open markets pass through raw (is_winner=True,
+        # resolution_source=None) while explicitly serializing resolution_source=None
+        # so outcomeRowVerdict returns null. When attested with valid outcome fields,
+        # the current row keeps its supported price; when unattested (legacy) or when
+        # a spoofed settlement_display claims "won" without a known source, it is
+        # rejected and stripped.
+        attested_open_raw_true_without_source = {
             "id": 66031970,
             "name": "NBA MVP",
             "status": "open",
@@ -259,8 +265,57 @@ class TestProducerAttestationAndEligibility:
                 }
             ],
         }
-        assert not is_current_represented_futures_row(spoofed_ungraded_true_winner)
-        adapted_true = adapt_cached_futures_row(spoofed_ungraded_true_winner)
+        assert is_current_represented_futures_row(attested_open_raw_true_without_source)
+        adapted_attested = adapt_cached_futures_row(
+            attested_open_raw_true_without_source
+        )
+        assert adapted_attested["top_outcomes"][0]["probability"] == 0.275
+        assert adapted_attested["top_outcomes"][0]["rendered_percent"] == 28
+
+        legacy_ungraded_true_winner = {
+            "id": 66031970,
+            "name": "NBA MVP",
+            "status": "open",
+            "top_outcomes": [
+                {
+                    "name": "Victor Wembanyama",
+                    "probability": 0.275,
+                    "rendered_percent": 28,
+                    "movement": 0.04,
+                    "is_winner": True,
+                    "resolution_source": None,
+                }
+            ],
+        }
+        assert not is_current_represented_futures_row(legacy_ungraded_true_winner)
+        adapted_legacy_true = adapt_cached_futures_row(legacy_ungraded_true_winner)
+        assert adapted_legacy_true["top_outcomes"][0]["probability"] is None
+        assert adapted_legacy_true["top_outcomes"][0]["is_winner"] is None
+
+        spoofed_contract_ungraded_true_winner = {
+            "id": 66031970,
+            "name": "NBA MVP",
+            "status": "resolved",
+            "representation_policy": SEARCH_FUTURES_REPRESENTATION_POLICY,
+            "top_outcomes": [
+                {
+                    "name": "Victor Wembanyama",
+                    "probability": 0.275,
+                    "rendered_percent": 28,
+                    "movement": 0.04,
+                    "is_winner": True,
+                    "resolution_source": None,
+                    "settlement_display": {
+                        "verdict": "won",
+                        "basis": "stored_terminal_agreement",
+                    },
+                }
+            ],
+        }
+        assert not is_current_represented_futures_row(
+            spoofed_contract_ungraded_true_winner
+        )
+        adapted_true = adapt_cached_futures_row(spoofed_contract_ungraded_true_winner)
         assert adapted_true["top_outcomes"][0]["probability"] is None
         assert adapted_true["top_outcomes"][0]["is_winner"] is None
 
@@ -1789,3 +1844,539 @@ class TestCoordinatorResidualCorrectionsR1R2C1:
         assert adapted["settlement_display"]["basis"] == (
             "nonterminal_stored_price" if price == 0.50 else "missing_stored_price"
         )
+
+    @pytest.mark.parametrize("lean", [False, True])
+    @pytest.mark.parametrize("grade,source", [(True, None), (False, "pass2_guess")])
+    def test_r3_open_current_metadata_does_not_discard_supported_prices(
+        self, lean: bool, grade: bool, source: str | None
+    ):
+        now = datetime(2026, 10, 24, 18, 0, tzinfo=timezone.utc)
+        market = _make_market(
+            outcomes=[
+                _make_outcome(
+                    1,
+                    "First Contender",
+                    0.55,
+                    is_winner=grade,
+                    resolution_source=source,
+                    last_updated=now,
+                ),
+                _make_outcome(
+                    2,
+                    "Second Contender",
+                    0.45,
+                    is_winner=False,
+                    resolution_source=None,
+                    last_updated=now,
+                ),
+            ],
+            updated_at=now,
+        )
+        detail = _format_market_detail(market)
+        if lean:
+            row = stamp_futures_representation_policy(
+                {
+                    "type": "futures",
+                    "text": market.name,
+                    "market_id": market.id,
+                    "status": market.status,
+                    "top_outcomes": _build_search_top_outcomes(
+                        market, limit=3, lean=True
+                    ),
+                }
+            )
+        else:
+            row = _format_futures_for_search(market)
+
+        assert [o["probability"] for o in detail["outcomes"]] == [0.55, 0.45]
+        assert [o["probability"] for o in row["top_outcomes"]] == [0.55, 0.45]
+        assert is_current_represented_futures_row(row)
+        before = copy.deepcopy(row)
+        hit = adapt_cached_futures_row(row)
+        assert row == before
+        assert hit == row
+
+    @pytest.mark.parametrize("lean", [False, True])
+    def test_r3_current_explicit_result_contract_remains_identical_to_detail(
+        self, lean: bool
+    ):
+        now = datetime(2026, 10, 24, 18, 0, tzinfo=timezone.utc)
+        market = _make_market(
+            status="resolved",
+            source="polymarket",
+            outcomes=[
+                _make_outcome(
+                    1,
+                    "Resolved Winner",
+                    1.0,
+                    is_winner=True,
+                    resolution_source="pass2_guess",
+                    last_updated=now,
+                ),
+                _make_outcome(
+                    2,
+                    "Resolved Loser",
+                    0.0,
+                    is_winner=False,
+                    resolution_source="pass2_guess",
+                    last_updated=now,
+                ),
+            ],
+            updated_at=now,
+        )
+        detail = _format_market_detail(market)
+        if lean:
+            row = stamp_futures_representation_policy(
+                {
+                    "type": "futures",
+                    "text": market.name,
+                    "market_id": market.id,
+                    "status": market.status,
+                    "source": market.source,
+                    "top_outcomes": _build_search_top_outcomes(
+                        market, limit=3, lean=True
+                    ),
+                }
+            )
+        else:
+            row = _format_futures_for_search(market)
+
+        assert [o["settlement_display"] for o in detail["outcomes"]] == [
+            {"verdict": "won", "basis": "stored_terminal_agreement"},
+            {"verdict": "lost", "basis": "stored_terminal_agreement"},
+        ]
+        assert [o["settlement_display"] for o in row["top_outcomes"]] == [
+            {"verdict": "won", "basis": "stored_terminal_agreement"},
+            {"verdict": "lost", "basis": "stored_terminal_agreement"},
+        ]
+        assert is_current_represented_futures_row(row)
+        assert adapt_cached_futures_row(row) == row
+
+    def test_committed_web_fixture_matches_actual_backend_producers(self):
+        fixture_path = (
+            Path(__file__).resolve().parents[2]
+            / "frontend"
+            / "__tests__"
+            / "fixtures"
+            / "backend_to_web_fixtures_11616.json"
+        )
+        assert fixture_path.is_file(), (
+            f"Committed backend-to-web fixture missing at {fixture_path}"
+        )
+        expected = build_backend_to_web_fixtures_11616()
+        raw_text = fixture_path.read_text(encoding="utf-8")
+        assert json.loads(raw_text) == expected
+        assert raw_text == json.dumps(expected, indent=2, sort_keys=True) + "\n"
+
+
+def build_backend_to_web_fixtures_11616() -> dict:
+    """Deterministically build the backend-to-web parity fixture from live producers."""
+    now = datetime(2026, 10, 24, 18, 0, tzinfo=timezone.utc)
+
+    # 1. R1: open market with database-default is_winner=False, resolution_source=None
+    r1_open_market = _make_market(
+        market_id=66031970,
+        name="NBA MVP",
+        status="open",
+        source="polymarket",
+        outcomes=[
+            _make_outcome(
+                1,
+                "First Contender",
+                0.55,
+                is_winner=False,
+                resolution_source=None,
+                last_updated=now,
+            ),
+            _make_outcome(
+                2,
+                "Second Contender",
+                0.45,
+                is_winner=False,
+                resolution_source=None,
+                last_updated=now,
+            ),
+        ],
+        updated_at=now,
+    )
+    r1_open_fresh_search = _format_futures_for_search(r1_open_market)
+    r1_open_fresh_detail = _format_market_detail(r1_open_market)
+    r1_open_adapted_search = adapt_cached_search_response(
+        {"query": "mvp", "futures": [r1_open_fresh_search], "futures_families": []}
+    )["futures"][0]
+    r1_open_ta_row = stamp_futures_representation_policy(
+        {
+            "type": "futures",
+            "text": r1_open_market.name,
+            "market_id": r1_open_market.id,
+            "market_tier": r1_open_market.market_tier,
+            "status": r1_open_market.status,
+            "market_type_label": "Award",
+            "sport_key": "basketball",
+            "top_outcomes": _build_search_top_outcomes(
+                r1_open_market, limit=3, lean=True
+            ),
+        }
+    )
+    r1_open_adapted_ta = adapt_cached_typeahead_response(
+        {"query": "mvp", "suggestions": [r1_open_ta_row]}
+    )["suggestions"][0]
+
+    # 2. R1: open non-exclusive ladder mixing priced default-False and priceless settled Won
+    r1_mixed_market = _make_market(
+        market_id=261,
+        name="Fed Funds Rate Thresholds",
+        status="open",
+        source="kalshi",
+        mutually_exclusive=False,
+        outcomes=[
+            _make_outcome(
+                1,
+                "3.75%",
+                0.68,
+                is_winner=False,
+                resolution_source=None,
+                last_updated=now,
+            ),
+            _make_outcome(
+                2,
+                "4.25%",
+                None,
+                is_winner=True,
+                resolution_source="api_settlement",
+                last_updated=now,
+            ),
+        ],
+        updated_at=now,
+    )
+    r1_mixed_fresh_search = _format_futures_for_search(r1_mixed_market)
+    r1_mixed_adapted_search = adapt_cached_futures_row(r1_mixed_fresh_search)
+
+    # 3. R2: resolved Polymarket missing stored price (current_probability=None)
+    r2_poly_market = _make_market(
+        market_id=68149297,
+        name="US Club Golf Championship",
+        status="resolved",
+        source="polymarket",
+        outcomes=[
+            _make_outcome(
+                10,
+                "Jon Rahm",
+                None,
+                is_winner=True,
+                resolution_source="api_settlement",
+                last_updated=now,
+            ),
+        ],
+        updated_at=now,
+    )
+    r2_poly_fresh_search = _format_futures_for_search(r2_poly_market)
+    r2_poly_fresh_detail = _format_market_detail(r2_poly_market)
+    r2_poly_legacy_search = adapt_cached_futures_row(
+        {
+            "id": 68149297,
+            "name": "US Club Golf Championship",
+            "status": "resolved",
+            "source": "polymarket",
+            "top_outcomes": [
+                {
+                    "id": 10,
+                    "name": "Jon Rahm",
+                    "probability": None,
+                    "is_winner": True,
+                    "resolution_source": "api_settlement",
+                }
+            ],
+        }
+    )
+    r2_poly_legacy_ta = adapt_cached_typeahead_response(
+        {
+            "query": "rahm",
+            "suggestions": [
+                {
+                    "type": "futures",
+                    "text": "US Club Golf Championship",
+                    "market_id": 68149297,
+                    "status": "resolved",
+                    "source": "polymarket",
+                    "top_outcomes": [
+                        {
+                            "name": "Jon Rahm",
+                            "probability": None,
+                            "is_winner": True,
+                            "resolution_source": "api_settlement",
+                        }
+                    ],
+                }
+            ],
+        }
+    )["suggestions"][0]
+    r2_poly_legacy_normalized_one = adapt_cached_futures_row(
+        {
+            "id": 68149297,
+            "name": "US Club Golf Championship",
+            "status": "resolved",
+            "source": "polymarket",
+            "top_outcomes": [
+                {
+                    "id": 10,
+                    "name": "Jon Rahm",
+                    "probability": 1.0,
+                    "is_winner": True,
+                    "resolution_source": "api_settlement",
+                }
+            ],
+        }
+    )
+
+    # 4. R2: resolved Kalshi priceless winner (legitimate Won)
+    r2_kalshi_market = _make_market(
+        market_id=555001,
+        name="Kalshi Award Market",
+        status="resolved",
+        source="kalshi",
+        outcomes=[
+            _make_outcome(
+                20,
+                "Confirmed Kalshi Winner",
+                None,
+                is_winner=True,
+                resolution_source="api_settlement",
+                last_updated=now,
+            ),
+        ],
+        updated_at=now,
+    )
+    r2_kalshi_fresh_search = _format_futures_for_search(r2_kalshi_market)
+    r2_kalshi_fresh_detail = _format_market_detail(r2_kalshi_market)
+    r2_kalshi_legacy_search = adapt_cached_futures_row(
+        {
+            "id": 555001,
+            "name": "Kalshi Award Market",
+            "status": "resolved",
+            "source": "kalshi",
+            "top_outcomes": [
+                {
+                    "id": 20,
+                    "name": "Confirmed Kalshi Winner",
+                    "probability": None,
+                    "is_winner": True,
+                    "resolution_source": "api_settlement",
+                }
+            ],
+        }
+    )
+    r2_kalshi_legacy_ta = adapt_cached_typeahead_response(
+        {
+            "query": "kalshi",
+            "suggestions": [
+                {
+                    "type": "futures",
+                    "text": "Kalshi Award Market",
+                    "market_id": 555001,
+                    "status": "resolved",
+                    "source": "kalshi",
+                    "top_outcomes": [
+                        {
+                            "name": "Confirmed Kalshi Winner",
+                            "probability": None,
+                            "is_winner": True,
+                            "resolution_source": "api_settlement",
+                        }
+                    ],
+                }
+            ],
+        }
+    )["suggestions"][0]
+
+    # 5. C1: source-less legacy typeahead row with price=None and price=0.50
+    c1_legacy_ta_none = adapt_cached_typeahead_response(
+        {
+            "query": "marchi",
+            "suggestions": [
+                {
+                    "type": "futures",
+                    "text": "Marchi vs. Lokoli: Match O/U 21.5",
+                    "market_id": 62134744,
+                    "status": "resolved",
+                    "top_outcomes": [
+                        {
+                            "name": "Over 21.5",
+                            "probability": None,
+                            "movement": None,
+                            "is_winner": True,
+                            "resolution_source": "api_settlement",
+                        }
+                    ],
+                }
+            ],
+        }
+    )["suggestions"][0]
+    c1_legacy_ta_half = adapt_cached_typeahead_response(
+        {
+            "query": "marchi",
+            "suggestions": [
+                {
+                    "type": "futures",
+                    "text": "Marchi vs. Lokoli: Match O/U 21.5",
+                    "market_id": 62134744,
+                    "status": "resolved",
+                    "top_outcomes": [
+                        {
+                            "name": "Under 21.5",
+                            "probability": 0.50,
+                            "movement": None,
+                            "is_winner": True,
+                            "resolution_source": "api_settlement",
+                        }
+                    ],
+                }
+            ],
+        }
+    )["suggestions"][0]
+
+    # 6. R3: open 55/45 with raw (is_winner=True, resolution_source=None) and (is_winner=False, resolution_source="pass2_guess")
+    r3_open_raw_market = _make_market(
+        market_id=66031971,
+        name="NBA MVP Raw Open Metadata",
+        status="open",
+        source="polymarket",
+        outcomes=[
+            _make_outcome(
+                1,
+                "First Contender",
+                0.55,
+                is_winner=True,
+                resolution_source=None,
+                last_updated=now,
+            ),
+            _make_outcome(
+                2,
+                "Second Contender",
+                0.45,
+                is_winner=False,
+                resolution_source="pass2_guess",
+                last_updated=now,
+            ),
+        ],
+        updated_at=now,
+    )
+    r3_open_fresh_search = _format_futures_for_search(r3_open_raw_market)
+    r3_open_fresh_detail = _format_market_detail(r3_open_raw_market)
+    r3_open_adapted_search = adapt_cached_futures_row(r3_open_fresh_search)
+    r3_open_ta_row = stamp_futures_representation_policy(
+        {
+            "type": "futures",
+            "text": r3_open_raw_market.name,
+            "market_id": r3_open_raw_market.id,
+            "status": r3_open_raw_market.status,
+            "top_outcomes": _build_search_top_outcomes(
+                r3_open_raw_market, limit=3, lean=True
+            ),
+        }
+    )
+    r3_open_adapted_ta = adapt_cached_futures_row(r3_open_ta_row)
+
+    # 7. R3: resolved Polymarket 1/0 with resolution_source="pass2_guess"
+    r3_poly_guess_market = _make_market(
+        market_id=66031972,
+        name="Resolved Polymarket Terminal Guess Source",
+        status="resolved",
+        source="polymarket",
+        outcomes=[
+            _make_outcome(
+                1,
+                "Resolved Winner",
+                1.0,
+                is_winner=True,
+                resolution_source="pass2_guess",
+                last_updated=now,
+            ),
+            _make_outcome(
+                2,
+                "Resolved Loser",
+                0.0,
+                is_winner=False,
+                resolution_source="pass2_guess",
+                last_updated=now,
+            ),
+        ],
+        updated_at=now,
+    )
+    r3_poly_fresh_search = _format_futures_for_search(r3_poly_guess_market)
+    r3_poly_fresh_detail = _format_market_detail(r3_poly_guess_market)
+    r3_poly_adapted_search = adapt_cached_futures_row(r3_poly_fresh_search)
+    r3_poly_ta_row = stamp_futures_representation_policy(
+        {
+            "type": "futures",
+            "text": r3_poly_guess_market.name,
+            "market_id": r3_poly_guess_market.id,
+            "status": r3_poly_guess_market.status,
+            "source": r3_poly_guess_market.source,
+            "top_outcomes": _build_search_top_outcomes(
+                r3_poly_guess_market, limit=3, lean=True
+            ),
+        }
+    )
+    r3_poly_adapted_ta = adapt_cached_futures_row(r3_poly_ta_row)
+
+    return {
+        "r1_open_default_false": {
+            "fresh_search": r1_open_fresh_search,
+            "fresh_detail": r1_open_fresh_detail,
+            "adapted_search": r1_open_adapted_search,
+            "adapted_typeahead": r1_open_adapted_ta,
+        },
+        "r1_open_mixed_priceless": {
+            "fresh_search": r1_mixed_fresh_search,
+            "adapted_search": r1_mixed_adapted_search,
+        },
+        "r2_resolved_poly_missing_price": {
+            "fresh_search": r2_poly_fresh_search,
+            "fresh_detail": r2_poly_fresh_detail,
+            "legacy_search": r2_poly_legacy_search,
+            "legacy_typeahead": r2_poly_legacy_ta,
+            "legacy_normalized_one": r2_poly_legacy_normalized_one,
+        },
+        "r2_resolved_kalshi_priceless_winner": {
+            "fresh_search": r2_kalshi_fresh_search,
+            "fresh_detail": r2_kalshi_fresh_detail,
+            "legacy_search": r2_kalshi_legacy_search,
+            "legacy_typeahead": r2_kalshi_legacy_ta,
+        },
+        "c1_sourceless_legacy_typeahead": {
+            "missing_price": c1_legacy_ta_none,
+            "nonterminal_price": c1_legacy_ta_half,
+        },
+        "r3_open_raw_metadata": {
+            "fresh_search": r3_open_fresh_search,
+            "fresh_detail": r3_open_fresh_detail,
+            "adapted_search": r3_open_adapted_search,
+            "adapted_typeahead": r3_open_adapted_ta,
+        },
+        "r3_resolved_poly_pass2_guess": {
+            "fresh_search": r3_poly_fresh_search,
+            "fresh_detail": r3_poly_fresh_detail,
+            "adapted_search": r3_poly_adapted_search,
+            "adapted_typeahead": r3_poly_adapted_ta,
+        },
+    }
+
+
+def write_backend_to_web_fixtures_11616(target_path: Path | None = None) -> Path:
+    """Write the deterministic backend-to-web fixture JSON file."""
+    if target_path is None:
+        target_path = (
+            Path(__file__).resolve().parents[2]
+            / "frontend"
+            / "__tests__"
+            / "fixtures"
+            / "backend_to_web_fixtures_11616.json"
+        )
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = build_backend_to_web_fixtures_11616()
+    target_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return target_path

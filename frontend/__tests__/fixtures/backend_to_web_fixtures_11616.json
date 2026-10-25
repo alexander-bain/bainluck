@@ -1,0 +1,1008 @@
+{
+  "c1_sourceless_legacy_typeahead": {
+    "missing_price": {
+      "market_id": 62134744,
+      "status": "resolved",
+      "text": "Marchi vs. Lokoli: Match O/U 21.5",
+      "top_outcomes": [
+        {
+          "is_winner": null,
+          "movement": null,
+          "name": "Over 21.5",
+          "probability": null,
+          "rendered_percent": null,
+          "resolution_source": null,
+          "settlement_display": {
+            "basis": "missing_stored_price",
+            "verdict": "unknown"
+          }
+        }
+      ],
+      "type": "futures"
+    },
+    "nonterminal_price": {
+      "market_id": 62134744,
+      "status": "resolved",
+      "text": "Marchi vs. Lokoli: Match O/U 21.5",
+      "top_outcomes": [
+        {
+          "is_winner": null,
+          "movement": null,
+          "name": "Under 21.5",
+          "probability": null,
+          "rendered_percent": null,
+          "resolution_source": null,
+          "settlement_display": {
+            "basis": "nonterminal_stored_price",
+            "verdict": "unknown"
+          }
+        }
+      ],
+      "type": "futures"
+    }
+  },
+  "r1_open_default_false": {
+    "adapted_search": {
+      "category": "award",
+      "id": 66031970,
+      "llm_sport_category": "basketball",
+      "market_tier": 3,
+      "market_type": "award",
+      "market_type_label": "Award",
+      "name": "NBA MVP",
+      "outcome_count": 2,
+      "prices_updated_at": "2026-10-24T18:00:00+00:00",
+      "representation_policy": "futures_outcome_representation_v1",
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "polymarket",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "status": "open",
+      "top_outcomes": [
+        {
+          "american_odds": null,
+          "id": 1,
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "First Contender",
+          "price_changed_at": null,
+          "probability": 0.55,
+          "rank": 1,
+          "rendered_percent": 55,
+          "resolution_source": null
+        },
+        {
+          "american_odds": null,
+          "id": 2,
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "Second Contender",
+          "price_changed_at": null,
+          "probability": 0.45,
+          "rank": 2,
+          "rendered_percent": 45,
+          "resolution_source": null
+        }
+      ],
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    },
+    "adapted_typeahead": {
+      "market_id": 66031970,
+      "market_tier": 3,
+      "market_type_label": "Award",
+      "representation_policy": "futures_outcome_representation_v1",
+      "sport_key": "basketball",
+      "status": "open",
+      "text": "NBA MVP",
+      "top_outcomes": [
+        {
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "First Contender",
+          "price_changed_at": null,
+          "probability": 0.55,
+          "rendered_percent": 55,
+          "resolution_source": null
+        },
+        {
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "Second Contender",
+          "price_changed_at": null,
+          "probability": 0.45,
+          "rendered_percent": 45,
+          "resolution_source": null
+        }
+      ],
+      "type": "futures"
+    },
+    "fresh_detail": {
+      "bookmakers": [],
+      "canonical_market_key": null,
+      "category": "award",
+      "category_page": null,
+      "category_tags": [],
+      "commence_time": null,
+      "created_at": "2026-10-24T18:00:00+00:00",
+      "description": null,
+      "edition_year": null,
+      "event_concept_key": null,
+      "expired_rungs_dropped": 0,
+      "external_id": "poly-66031970",
+      "group_id": null,
+      "hook_description": null,
+      "hook_withheld": false,
+      "hub_slug": null,
+      "id": 66031970,
+      "image_url": null,
+      "lead_outcome_id": null,
+      "llm_sport_category": "basketball",
+      "market_type": "award",
+      "mutually_exclusive": true,
+      "name": "NBA MVP",
+      "openings_withheld": false,
+      "outcome_count": 2,
+      "outcomes": [
+        {
+          "american_odds": null,
+          "id": 1,
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "name": "First Contender",
+          "opening_american_odds": null,
+          "opening_probability": null,
+          "price_changed_at": null,
+          "probability": 0.55,
+          "probability_change_24h": null,
+          "rank": 1,
+          "rank_change_24h": null,
+          "rendered_percent": 55,
+          "resolution_source": null
+        },
+        {
+          "american_odds": null,
+          "id": 2,
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "name": "Second Contender",
+          "opening_american_odds": null,
+          "opening_probability": null,
+          "price_changed_at": null,
+          "probability": 0.45,
+          "probability_change_24h": null,
+          "rank": 2,
+          "rank_change_24h": null,
+          "rendered_percent": 45,
+          "resolution_source": null
+        }
+      ],
+      "prices_withheld": 0,
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "polymarket",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "sport_page_key": "basketball_nba",
+      "status": "open",
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    },
+    "fresh_search": {
+      "category": "award",
+      "id": 66031970,
+      "llm_sport_category": "basketball",
+      "market_tier": 3,
+      "market_type": "award",
+      "market_type_label": "Award",
+      "name": "NBA MVP",
+      "outcome_count": 2,
+      "prices_updated_at": "2026-10-24T18:00:00+00:00",
+      "representation_policy": "futures_outcome_representation_v1",
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "polymarket",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "status": "open",
+      "top_outcomes": [
+        {
+          "american_odds": null,
+          "id": 1,
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "First Contender",
+          "price_changed_at": null,
+          "probability": 0.55,
+          "rank": 1,
+          "rendered_percent": 55,
+          "resolution_source": null
+        },
+        {
+          "american_odds": null,
+          "id": 2,
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "Second Contender",
+          "price_changed_at": null,
+          "probability": 0.45,
+          "rank": 2,
+          "rendered_percent": 45,
+          "resolution_source": null
+        }
+      ],
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    }
+  },
+  "r1_open_mixed_priceless": {
+    "adapted_search": {
+      "category": "award",
+      "id": 261,
+      "llm_sport_category": "basketball",
+      "market_tier": 3,
+      "market_type": "award",
+      "market_type_label": "Award",
+      "name": "Fed Funds Rate Thresholds",
+      "outcome_count": 2,
+      "prices_updated_at": "2026-10-24T18:00:00+00:00",
+      "representation_policy": "futures_outcome_representation_v1",
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "kalshi",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "status": "open",
+      "top_outcomes": [
+        {
+          "american_odds": null,
+          "id": 1,
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "3.75%",
+          "price_changed_at": null,
+          "probability": 0.68,
+          "rank": 1,
+          "rendered_percent": 68,
+          "resolution_source": null
+        },
+        {
+          "american_odds": null,
+          "id": 2,
+          "is_winner": true,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "4.25%",
+          "price_changed_at": null,
+          "probability": null,
+          "rank": null,
+          "rendered_percent": null,
+          "resolution_source": "api_settlement"
+        }
+      ],
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    },
+    "fresh_search": {
+      "category": "award",
+      "id": 261,
+      "llm_sport_category": "basketball",
+      "market_tier": 3,
+      "market_type": "award",
+      "market_type_label": "Award",
+      "name": "Fed Funds Rate Thresholds",
+      "outcome_count": 2,
+      "prices_updated_at": "2026-10-24T18:00:00+00:00",
+      "representation_policy": "futures_outcome_representation_v1",
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "kalshi",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "status": "open",
+      "top_outcomes": [
+        {
+          "american_odds": null,
+          "id": 1,
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "3.75%",
+          "price_changed_at": null,
+          "probability": 0.68,
+          "rank": 1,
+          "rendered_percent": 68,
+          "resolution_source": null
+        },
+        {
+          "american_odds": null,
+          "id": 2,
+          "is_winner": true,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "4.25%",
+          "price_changed_at": null,
+          "probability": null,
+          "rank": null,
+          "rendered_percent": null,
+          "resolution_source": "api_settlement"
+        }
+      ],
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    }
+  },
+  "r2_resolved_kalshi_priceless_winner": {
+    "fresh_detail": {
+      "bookmakers": [],
+      "canonical_market_key": null,
+      "category": "award",
+      "category_page": null,
+      "category_tags": [],
+      "commence_time": null,
+      "created_at": "2026-10-24T18:00:00+00:00",
+      "description": null,
+      "edition_year": null,
+      "event_concept_key": null,
+      "expired_rungs_dropped": 0,
+      "external_id": "poly-555001",
+      "group_id": null,
+      "hook_description": null,
+      "hook_withheld": false,
+      "hub_slug": null,
+      "id": 555001,
+      "image_url": null,
+      "lead_outcome_id": null,
+      "llm_sport_category": "basketball",
+      "market_type": "award",
+      "mutually_exclusive": true,
+      "name": "Kalshi Award Market",
+      "openings_withheld": false,
+      "outcome_count": 1,
+      "outcomes": [
+        {
+          "american_odds": null,
+          "id": 20,
+          "is_winner": true,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "name": "Confirmed Kalshi Winner",
+          "opening_american_odds": null,
+          "opening_probability": null,
+          "price_changed_at": null,
+          "probability": null,
+          "probability_change_24h": null,
+          "rank": 1,
+          "rank_change_24h": null,
+          "rendered_percent": null,
+          "resolution_source": "api_settlement"
+        }
+      ],
+      "prices_withheld": 0,
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "kalshi",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "sport_page_key": "basketball_nba",
+      "status": "resolved",
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    },
+    "fresh_search": {
+      "category": "award",
+      "id": 555001,
+      "llm_sport_category": "basketball",
+      "market_tier": 3,
+      "market_type": "award",
+      "market_type_label": "Award",
+      "name": "Kalshi Award Market",
+      "outcome_count": 1,
+      "prices_updated_at": null,
+      "representation_policy": "futures_outcome_representation_v1",
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "kalshi",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "status": "resolved",
+      "top_outcomes": [
+        {
+          "american_odds": null,
+          "id": 20,
+          "is_winner": true,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "Confirmed Kalshi Winner",
+          "price_changed_at": null,
+          "probability": null,
+          "rank": null,
+          "rendered_percent": null,
+          "resolution_source": "api_settlement"
+        }
+      ],
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    },
+    "legacy_search": {
+      "id": 555001,
+      "name": "Kalshi Award Market",
+      "source": "kalshi",
+      "status": "resolved",
+      "top_outcomes": [
+        {
+          "id": 20,
+          "is_winner": true,
+          "name": "Confirmed Kalshi Winner",
+          "probability": null,
+          "rendered_percent": null,
+          "resolution_source": "api_settlement"
+        }
+      ]
+    },
+    "legacy_typeahead": {
+      "market_id": 555001,
+      "source": "kalshi",
+      "status": "resolved",
+      "text": "Kalshi Award Market",
+      "top_outcomes": [
+        {
+          "is_winner": true,
+          "name": "Confirmed Kalshi Winner",
+          "probability": null,
+          "rendered_percent": null,
+          "resolution_source": "api_settlement"
+        }
+      ],
+      "type": "futures"
+    }
+  },
+  "r2_resolved_poly_missing_price": {
+    "fresh_detail": {
+      "bookmakers": [],
+      "canonical_market_key": null,
+      "category": "award",
+      "category_page": null,
+      "category_tags": [],
+      "commence_time": null,
+      "created_at": "2026-10-24T18:00:00+00:00",
+      "description": null,
+      "edition_year": null,
+      "event_concept_key": null,
+      "expired_rungs_dropped": 0,
+      "external_id": "poly-68149297",
+      "group_id": null,
+      "hook_description": null,
+      "hook_withheld": false,
+      "hub_slug": null,
+      "id": 68149297,
+      "image_url": null,
+      "lead_outcome_id": null,
+      "llm_sport_category": "basketball",
+      "market_type": "award",
+      "mutually_exclusive": true,
+      "name": "US Club Golf Championship",
+      "openings_withheld": false,
+      "outcome_count": 1,
+      "outcomes": [
+        {
+          "american_odds": null,
+          "id": 10,
+          "is_winner": true,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "name": "Jon Rahm",
+          "opening_american_odds": null,
+          "opening_probability": null,
+          "price_changed_at": null,
+          "probability": null,
+          "probability_change_24h": null,
+          "rank": 1,
+          "rank_change_24h": null,
+          "rendered_percent": null,
+          "resolution_source": "api_settlement",
+          "settlement_display": {
+            "basis": "missing_stored_price",
+            "verdict": "unknown"
+          }
+        }
+      ],
+      "prices_withheld": 0,
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "polymarket",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "sport_page_key": "basketball_nba",
+      "status": "resolved",
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    },
+    "fresh_search": {
+      "category": "award",
+      "id": 68149297,
+      "llm_sport_category": "basketball",
+      "market_tier": 3,
+      "market_type": "award",
+      "market_type_label": "Award",
+      "name": "US Club Golf Championship",
+      "outcome_count": 1,
+      "prices_updated_at": null,
+      "representation_policy": "futures_outcome_representation_v1",
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "polymarket",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "status": "resolved",
+      "top_outcomes": [],
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    },
+    "legacy_normalized_one": {
+      "id": 68149297,
+      "name": "US Club Golf Championship",
+      "source": "polymarket",
+      "status": "resolved",
+      "top_outcomes": [
+        {
+          "id": 10,
+          "is_winner": null,
+          "name": "Jon Rahm",
+          "probability": null,
+          "rendered_percent": null,
+          "resolution_source": "api_settlement",
+          "settlement_display": {
+            "basis": "missing_stored_price",
+            "verdict": "unknown"
+          }
+        }
+      ]
+    },
+    "legacy_search": {
+      "id": 68149297,
+      "name": "US Club Golf Championship",
+      "source": "polymarket",
+      "status": "resolved",
+      "top_outcomes": [
+        {
+          "id": 10,
+          "is_winner": null,
+          "name": "Jon Rahm",
+          "probability": null,
+          "rendered_percent": null,
+          "resolution_source": "api_settlement",
+          "settlement_display": {
+            "basis": "missing_stored_price",
+            "verdict": "unknown"
+          }
+        }
+      ]
+    },
+    "legacy_typeahead": {
+      "market_id": 68149297,
+      "source": "polymarket",
+      "status": "resolved",
+      "text": "US Club Golf Championship",
+      "top_outcomes": [
+        {
+          "is_winner": null,
+          "name": "Jon Rahm",
+          "probability": null,
+          "rendered_percent": null,
+          "resolution_source": "api_settlement",
+          "settlement_display": {
+            "basis": "missing_stored_price",
+            "verdict": "unknown"
+          }
+        }
+      ],
+      "type": "futures"
+    }
+  },
+  "r3_open_raw_metadata": {
+    "adapted_search": {
+      "category": "award",
+      "id": 66031971,
+      "llm_sport_category": "basketball",
+      "market_tier": 3,
+      "market_type": "award",
+      "market_type_label": "Award",
+      "name": "NBA MVP Raw Open Metadata",
+      "outcome_count": 2,
+      "prices_updated_at": "2026-10-24T18:00:00+00:00",
+      "representation_policy": "futures_outcome_representation_v1",
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "polymarket",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "status": "open",
+      "top_outcomes": [
+        {
+          "american_odds": null,
+          "id": 1,
+          "is_winner": true,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "First Contender",
+          "price_changed_at": null,
+          "probability": 0.55,
+          "rank": 1,
+          "rendered_percent": 55,
+          "resolution_source": null
+        },
+        {
+          "american_odds": null,
+          "id": 2,
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "Second Contender",
+          "price_changed_at": null,
+          "probability": 0.45,
+          "rank": 2,
+          "rendered_percent": 45,
+          "resolution_source": "pass2_guess"
+        }
+      ],
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    },
+    "adapted_typeahead": {
+      "market_id": 66031971,
+      "representation_policy": "futures_outcome_representation_v1",
+      "status": "open",
+      "text": "NBA MVP Raw Open Metadata",
+      "top_outcomes": [
+        {
+          "is_winner": true,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "First Contender",
+          "price_changed_at": null,
+          "probability": 0.55,
+          "rendered_percent": 55,
+          "resolution_source": null
+        },
+        {
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "Second Contender",
+          "price_changed_at": null,
+          "probability": 0.45,
+          "rendered_percent": 45,
+          "resolution_source": "pass2_guess"
+        }
+      ],
+      "type": "futures"
+    },
+    "fresh_detail": {
+      "bookmakers": [],
+      "canonical_market_key": null,
+      "category": "award",
+      "category_page": null,
+      "category_tags": [],
+      "commence_time": null,
+      "created_at": "2026-10-24T18:00:00+00:00",
+      "description": null,
+      "edition_year": null,
+      "event_concept_key": null,
+      "expired_rungs_dropped": 0,
+      "external_id": "poly-66031971",
+      "group_id": null,
+      "hook_description": null,
+      "hook_withheld": false,
+      "hub_slug": null,
+      "id": 66031971,
+      "image_url": null,
+      "lead_outcome_id": null,
+      "llm_sport_category": "basketball",
+      "market_type": "award",
+      "mutually_exclusive": true,
+      "name": "NBA MVP Raw Open Metadata",
+      "openings_withheld": false,
+      "outcome_count": 2,
+      "outcomes": [
+        {
+          "american_odds": null,
+          "id": 1,
+          "is_winner": true,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "name": "First Contender",
+          "opening_american_odds": null,
+          "opening_probability": null,
+          "price_changed_at": null,
+          "probability": 0.55,
+          "probability_change_24h": null,
+          "rank": 1,
+          "rank_change_24h": null,
+          "rendered_percent": 55,
+          "resolution_source": null
+        },
+        {
+          "american_odds": null,
+          "id": 2,
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "name": "Second Contender",
+          "opening_american_odds": null,
+          "opening_probability": null,
+          "price_changed_at": null,
+          "probability": 0.45,
+          "probability_change_24h": null,
+          "rank": 2,
+          "rank_change_24h": null,
+          "rendered_percent": 45,
+          "resolution_source": "pass2_guess"
+        }
+      ],
+      "prices_withheld": 0,
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "polymarket",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "sport_page_key": "basketball_nba",
+      "status": "open",
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    },
+    "fresh_search": {
+      "category": "award",
+      "id": 66031971,
+      "llm_sport_category": "basketball",
+      "market_tier": 3,
+      "market_type": "award",
+      "market_type_label": "Award",
+      "name": "NBA MVP Raw Open Metadata",
+      "outcome_count": 2,
+      "prices_updated_at": "2026-10-24T18:00:00+00:00",
+      "representation_policy": "futures_outcome_representation_v1",
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "polymarket",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "status": "open",
+      "top_outcomes": [
+        {
+          "american_odds": null,
+          "id": 1,
+          "is_winner": true,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "First Contender",
+          "price_changed_at": null,
+          "probability": 0.55,
+          "rank": 1,
+          "rendered_percent": 55,
+          "resolution_source": null
+        },
+        {
+          "american_odds": null,
+          "id": 2,
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "Second Contender",
+          "price_changed_at": null,
+          "probability": 0.45,
+          "rank": 2,
+          "rendered_percent": 45,
+          "resolution_source": "pass2_guess"
+        }
+      ],
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    }
+  },
+  "r3_resolved_poly_pass2_guess": {
+    "adapted_search": {
+      "category": "award",
+      "id": 66031972,
+      "llm_sport_category": "basketball",
+      "market_tier": 3,
+      "market_type": "award",
+      "market_type_label": "Award",
+      "name": "Resolved Polymarket Terminal Guess Source",
+      "outcome_count": 2,
+      "prices_updated_at": null,
+      "representation_policy": "futures_outcome_representation_v1",
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "polymarket",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "status": "resolved",
+      "top_outcomes": [
+        {
+          "american_odds": null,
+          "id": 1,
+          "is_winner": true,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "Resolved Winner",
+          "price_changed_at": null,
+          "probability": 1.0,
+          "rank": 1,
+          "rendered_percent": 100,
+          "resolution_source": "pass2_guess",
+          "settlement_display": {
+            "basis": "stored_terminal_agreement",
+            "verdict": "won"
+          }
+        },
+        {
+          "american_odds": null,
+          "id": 2,
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "Resolved Loser",
+          "price_changed_at": null,
+          "probability": 0.0,
+          "rank": 2,
+          "rendered_percent": 0,
+          "resolution_source": "pass2_guess",
+          "settlement_display": {
+            "basis": "stored_terminal_agreement",
+            "verdict": "lost"
+          }
+        }
+      ],
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    },
+    "adapted_typeahead": {
+      "market_id": 66031972,
+      "representation_policy": "futures_outcome_representation_v1",
+      "source": "polymarket",
+      "status": "resolved",
+      "text": "Resolved Polymarket Terminal Guess Source",
+      "top_outcomes": [
+        {
+          "is_winner": true,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "Resolved Winner",
+          "price_changed_at": null,
+          "probability": 1.0,
+          "rendered_percent": 100,
+          "resolution_source": "pass2_guess",
+          "settlement_display": {
+            "basis": "stored_terminal_agreement",
+            "verdict": "won"
+          }
+        },
+        {
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "Resolved Loser",
+          "price_changed_at": null,
+          "probability": 0.0,
+          "rendered_percent": 0,
+          "resolution_source": "pass2_guess",
+          "settlement_display": {
+            "basis": "stored_terminal_agreement",
+            "verdict": "lost"
+          }
+        }
+      ],
+      "type": "futures"
+    },
+    "fresh_detail": {
+      "bookmakers": [],
+      "canonical_market_key": null,
+      "category": "award",
+      "category_page": null,
+      "category_tags": [],
+      "commence_time": null,
+      "created_at": "2026-10-24T18:00:00+00:00",
+      "description": null,
+      "edition_year": null,
+      "event_concept_key": null,
+      "expired_rungs_dropped": 0,
+      "external_id": "poly-66031972",
+      "group_id": null,
+      "hook_description": null,
+      "hook_withheld": false,
+      "hub_slug": null,
+      "id": 66031972,
+      "image_url": null,
+      "lead_outcome_id": null,
+      "llm_sport_category": "basketball",
+      "market_type": "award",
+      "mutually_exclusive": true,
+      "name": "Resolved Polymarket Terminal Guess Source",
+      "openings_withheld": false,
+      "outcome_count": 2,
+      "outcomes": [
+        {
+          "american_odds": null,
+          "id": 1,
+          "is_winner": true,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "name": "Resolved Winner",
+          "opening_american_odds": null,
+          "opening_probability": null,
+          "price_changed_at": null,
+          "probability": 1.0,
+          "probability_change_24h": null,
+          "rank": 1,
+          "rank_change_24h": null,
+          "rendered_percent": 100,
+          "resolution_source": "pass2_guess",
+          "settlement_display": {
+            "basis": "stored_terminal_agreement",
+            "verdict": "won"
+          }
+        },
+        {
+          "american_odds": null,
+          "id": 2,
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "name": "Resolved Loser",
+          "opening_american_odds": null,
+          "opening_probability": null,
+          "price_changed_at": null,
+          "probability": 0.0,
+          "probability_change_24h": null,
+          "rank": 2,
+          "rank_change_24h": null,
+          "rendered_percent": 0,
+          "resolution_source": "pass2_guess",
+          "settlement_display": {
+            "basis": "stored_terminal_agreement",
+            "verdict": "lost"
+          }
+        }
+      ],
+      "prices_withheld": 0,
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "polymarket",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "sport_page_key": "basketball_nba",
+      "status": "resolved",
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    },
+    "fresh_search": {
+      "category": "award",
+      "id": 66031972,
+      "llm_sport_category": "basketball",
+      "market_tier": 3,
+      "market_type": "award",
+      "market_type_label": "Award",
+      "name": "Resolved Polymarket Terminal Guess Source",
+      "outcome_count": 2,
+      "prices_updated_at": null,
+      "representation_policy": "futures_outcome_representation_v1",
+      "resolution_date": "2026-12-23T18:00:00+00:00",
+      "source": "polymarket",
+      "sport": "basketball_nba",
+      "sport_name": "NBA",
+      "status": "resolved",
+      "top_outcomes": [
+        {
+          "american_odds": null,
+          "id": 1,
+          "is_winner": true,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "Resolved Winner",
+          "price_changed_at": null,
+          "probability": 1.0,
+          "rank": 1,
+          "rendered_percent": 100,
+          "resolution_source": "pass2_guess",
+          "settlement_display": {
+            "basis": "stored_terminal_agreement",
+            "verdict": "won"
+          }
+        },
+        {
+          "american_odds": null,
+          "id": 2,
+          "is_winner": false,
+          "last_updated": "2026-10-24T18:00:00+00:00",
+          "movement": null,
+          "name": "Resolved Loser",
+          "price_changed_at": null,
+          "probability": 0.0,
+          "rank": 2,
+          "rendered_percent": 0,
+          "resolution_source": "pass2_guess",
+          "settlement_display": {
+            "basis": "stored_terminal_agreement",
+            "verdict": "lost"
+          }
+        }
+      ],
+      "updated_at": "2026-10-24T18:00:00+00:00"
+    }
+  }
+}

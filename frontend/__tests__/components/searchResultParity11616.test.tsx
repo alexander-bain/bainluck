@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import fs from "fs";
+import path from "path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import SearchBar from "@/components/SearchBar";
@@ -226,250 +227,16 @@ describe("cache-adapted payload mounted controls (#11616)", () => {
     expect(link.textContent).not.toMatch(/28%|19%|↑|↓/);
   });
 
-  test("backend-exported R1/R2/C1 cache fixtures render identical truth across SearchBar, MobileSearchOverlay, FuturesCard, and detailVerdict", async () => {
-    const exportedFixturePath =
-      "/Users/bain/bainluck-dev/packet-11616-cache-compatibility-r2/backend_to_web_fixtures_11616.json";
-    const exported = fs.existsSync(exportedFixturePath)
-      ? JSON.parse(fs.readFileSync(exportedFixturePath, "utf8"))
-      : {
-          current_default_false_search_hit: [
-            {
-              american_odds: null,
-              id: 1,
-              is_winner: false,
-              last_updated: "2026-10-24T18:00:00+00:00",
-              movement: null,
-              name: "Shai Gilgeous-Alexander",
-              price_changed_at: null,
-              probability: 0.55,
-              rank: 1,
-              rendered_percent: 55,
-              resolution_source: null,
-            },
-            {
-              american_odds: null,
-              id: 2,
-              is_winner: false,
-              last_updated: "2026-10-24T18:00:00+00:00",
-              movement: null,
-              name: "Nikola Jokic",
-              price_changed_at: null,
-              probability: 0.45,
-              rank: 2,
-              rendered_percent: 45,
-              resolution_source: null,
-            },
-          ],
-          fresh_missing_price_poly_detail: {
-            id: 10,
-            is_winner: true,
-            name: "Jon Rahm",
-            probability: null,
-            rendered_percent: null,
-            resolution_source: "api_settlement",
-            settlement_display: {
-              basis: "missing_stored_price",
-              verdict: "unknown",
-            },
-          },
-          legacy_missing_price_poly_adapted: {
-            id: 10,
-            is_winner: null,
-            name: "Jon Rahm",
-            probability: null,
-            rendered_percent: null,
-            resolution_source: "api_settlement",
-            settlement_display: {
-              basis: "missing_stored_price",
-              verdict: "unknown",
-            },
-          },
-          legacy_kalshi_priceless_winner_adapted: {
-            id: 10,
-            is_winner: true,
-            name: "Jon Rahm",
-            probability: null,
-            rendered_percent: null,
-            resolution_source: "api_settlement",
-          },
-          source_less_legacy_ta_hit: {
-            is_winner: null,
-            movement: null,
-            name: "Player A",
-            probability: null,
-            rendered_percent: null,
-            resolution_source: null,
-            settlement_display: {
-              basis: "missing_stored_price",
-              verdict: "unknown",
-            },
-          },
-          envelopes: {
-            current_default_false_search_card_hit: {
-              category: "award",
-              id: 66031970,
-              llm_sport_category: "basketball",
-              market_tier: 3,
-              market_type: "award",
-              market_type_label: "Award",
-              name: "NBA MVP",
-              outcome_count: 2,
-              prices_updated_at: "2026-10-24T18:00:00+00:00",
-              representation_policy: "futures_outcome_representation_v1",
-              resolution_date: "2026-12-23T18:00:00+00:00",
-              source: "polymarket",
-              sport: "basketball_nba",
-              sport_name: "NBA",
-              status: "open",
-              top_outcomes: [
-                {
-                  american_odds: null,
-                  id: 1,
-                  is_winner: false,
-                  last_updated: "2026-10-24T18:00:00+00:00",
-                  movement: null,
-                  name: "Shai Gilgeous-Alexander",
-                  price_changed_at: null,
-                  probability: 0.55,
-                  rank: 1,
-                  rendered_percent: 55,
-                  resolution_source: null,
-                },
-                {
-                  american_odds: null,
-                  id: 2,
-                  is_winner: false,
-                  last_updated: "2026-10-24T18:00:00+00:00",
-                  movement: null,
-                  name: "Nikola Jokic",
-                  price_changed_at: null,
-                  probability: 0.45,
-                  rank: 2,
-                  rendered_percent: 45,
-                  resolution_source: null,
-                },
-              ],
-              updated_at: "2026-10-24T18:00:00+00:00",
-            },
-            current_default_false_ta_suggestion_hit: {
-              market_id: 66031970,
-              market_tier: 3,
-              market_type_label: "Award",
-              representation_policy: "futures_outcome_representation_v1",
-              sport_key: "basketball",
-              status: "open",
-              text: "NBA MVP",
-              top_outcomes: [
-                {
-                  is_winner: false,
-                  last_updated: "2026-10-24T18:00:00+00:00",
-                  movement: null,
-                  name: "Shai Gilgeous-Alexander",
-                  price_changed_at: null,
-                  probability: 0.55,
-                  rendered_percent: 55,
-                  resolution_source: null,
-                },
-                {
-                  is_winner: false,
-                  last_updated: "2026-10-24T18:00:00+00:00",
-                  movement: null,
-                  name: "Nikola Jokic",
-                  price_changed_at: null,
-                  probability: 0.45,
-                  rendered_percent: 45,
-                  resolution_source: null,
-                },
-              ],
-              type: "futures",
-            },
-            legacy_missing_price_poly_card_hit: {
-              category: "championship",
-              id: 68149297,
-              llm_sport_category: "golf",
-              market_tier: 2,
-              market_type: "championship",
-              market_type_label: "Winner",
-              name: "US Club Golf Championship",
-              outcome_count: 1,
-              prices_updated_at: null,
-              resolution_date: "2026-10-20T00:00:00+00:00",
-              source: "polymarket",
-              sport: "golf_pga",
-              sport_name: "Golf",
-              status: "resolved",
-              top_outcomes: [
-                {
-                  id: 10,
-                  is_winner: null,
-                  name: "Jon Rahm",
-                  probability: null,
-                  rendered_percent: null,
-                  resolution_source: "api_settlement",
-                  settlement_display: {
-                    basis: "missing_stored_price",
-                    verdict: "unknown",
-                  },
-                },
-              ],
-              updated_at: "2026-10-24T18:00:00+00:00",
-            },
-            legacy_kalshi_priceless_winner_card_hit: {
-              category: "championship",
-              id: 68149298,
-              llm_sport_category: "golf",
-              market_tier: 2,
-              market_type: "championship",
-              market_type_label: "Winner",
-              name: "Kalshi Golf Championship",
-              outcome_count: 1,
-              prices_updated_at: null,
-              resolution_date: "2026-10-20T00:00:00+00:00",
-              source: "kalshi",
-              sport: "golf_pga",
-              sport_name: "Golf",
-              status: "resolved",
-              top_outcomes: [
-                {
-                  id: 10,
-                  is_winner: true,
-                  name: "Jon Rahm",
-                  probability: null,
-                  rendered_percent: null,
-                  resolution_source: "api_settlement",
-                },
-              ],
-              updated_at: "2026-10-24T18:00:00+00:00",
-            },
-            source_less_legacy_ta_suggestion_hit: {
-              market_id: 62134744,
-              market_tier: 2,
-              market_type_label: "Match",
-              sport_key: "tennis",
-              status: "resolved",
-              text: "Resolved Polymarket Board",
-              top_outcomes: [
-                {
-                  is_winner: null,
-                  movement: null,
-                  name: "Player A",
-                  probability: null,
-                  rendered_percent: null,
-                  resolution_source: null,
-                  settlement_display: {
-                    basis: "missing_stored_price",
-                    verdict: "unknown",
-                  },
-                },
-              ],
-              type: "futures",
-            },
-          },
-        };
+  test("committed backend-exported R1/R2/C1/R3 cache fixtures render identical truth across SearchBar, MobileSearchOverlay, FuturesCard, and detailVerdict", async () => {
+    const exportedFixturePath = path.join(
+      __dirname,
+      "../fixtures/backend_to_web_fixtures_11616.json"
+    );
+    const exported = JSON.parse(fs.readFileSync(exportedFixturePath, "utf8"));
 
     // 1. R1: Current default-False board retains 55% / 45% in both typeahead and FuturesCard:
     const r1TaAnswer = futuresAnswer(
-      exported.envelopes.current_default_false_ta_suggestion_hit
+      exported.r1_open_default_false.adapted_typeahead
     );
     expect(r1TaAnswer?.leader.displayValue).toBe("55%");
     expect(r1TaAnswer?.second?.displayValue).toBe("45%");
@@ -477,28 +244,58 @@ describe("cache-adapted payload mounted controls (#11616)", () => {
       root.render(
         <FuturesCard
           market={
-            exported.envelopes
-              .current_default_false_search_card_hit as unknown as FuturesMarket
+            exported.r1_open_default_false
+              .adapted_search as unknown as FuturesMarket
           }
         />
       );
     });
-    expect(host.textContent).toContain("Shai Gilgeous-Alexander55%");
-    expect(host.textContent).toContain("Nikola Jokic45%");
+    expect(host.textContent).toContain("First Contender55%");
+    expect(host.textContent).toContain("Second Contender45%");
+    expect(host.textContent).not.toMatch(/Won|Lost/);
 
-    // 2. R2: Legacy missing-price Polymarket retains unknown (null verdict, never Won), matching fresh detail:
+    // 2. R1: Open non-exclusive ladder mixes 68% priced default-False and priceless settled Won:
+    await act(async () => {
+      root.render(
+        <FuturesCard
+          market={
+            exported.r1_open_mixed_priceless
+              .adapted_search as unknown as FuturesMarket
+          }
+        />
+      );
+    });
+    expect(host.textContent).toContain("3.75%68%");
+    expect(host.textContent).toContain("4.25%✓Won");
+    expect(host.textContent).not.toContain("Lost");
+
+    // 3. R2: Legacy missing-price Polymarket retains unknown (null verdict, never Won), matching fresh detail:
+    expect(exported.r2_resolved_poly_missing_price.fresh_search.top_outcomes).toEqual([]);
     expect(
-      outcomeRowVerdict(exported.legacy_missing_price_poly_adapted, true)
+      outcomeRowVerdict(
+        exported.r2_resolved_poly_missing_price.legacy_search.top_outcomes[0],
+        true
+      )
     ).toBeNull();
     expect(
-      detailVerdict(exported.fresh_missing_price_poly_detail, true)
+      outcomeRowVerdict(
+        exported.r2_resolved_poly_missing_price.legacy_normalized_one
+          .top_outcomes[0],
+        true
+      )
+    ).toBeNull();
+    expect(
+      detailVerdict(
+        exported.r2_resolved_poly_missing_price.fresh_detail.outcomes[0],
+        true
+      )
     ).toBeNull();
     await act(async () => {
       root.render(
         <FuturesCard
           market={
-            exported.envelopes
-              .legacy_missing_price_poly_card_hit as unknown as FuturesMarket
+            exported.r2_resolved_poly_missing_price
+              .legacy_search as unknown as FuturesMarket
           }
         />
       );
@@ -506,28 +303,148 @@ describe("cache-adapted payload mounted controls (#11616)", () => {
     expect(host.textContent).toContain("Jon Rahm-");
     expect(host.textContent).not.toContain("Won");
     expect(host.textContent).not.toContain("Lost");
+    const r2TaAnswer = futuresAnswer(
+      exported.r2_resolved_poly_missing_price.legacy_typeahead
+    );
+    expect(r2TaAnswer?.leader.displayValue).toBe("Result unknown");
 
-    // 3. Positive control: Authoritative priceless Kalshi winner retains Won:
+    // 4. Positive control: Authoritative priceless Kalshi winner retains Won across fresh/detail/cache:
     expect(
-      outcomeRowVerdict(exported.legacy_kalshi_priceless_winner_adapted, true)
+      outcomeRowVerdict(
+        exported.r2_resolved_kalshi_priceless_winner.legacy_search
+          .top_outcomes[0],
+        true
+      )
+    ).toBe("won");
+    expect(
+      detailVerdict(
+        exported.r2_resolved_kalshi_priceless_winner.fresh_detail.outcomes[0],
+        true
+      )
     ).toBe("won");
     await act(async () => {
       root.render(
         <FuturesCard
           market={
-            exported.envelopes
-              .legacy_kalshi_priceless_winner_card_hit as unknown as FuturesMarket
+            exported.r2_resolved_kalshi_priceless_winner
+              .legacy_search as unknown as FuturesMarket
           }
         />
       );
     });
-    expect(host.textContent).toContain("Jon Rahm✓Won");
-
-    // 4. C1: Source-less legacy typeahead abstains from Won and renders Result unknown:
-    expect(outcomeRowVerdict(exported.source_less_legacy_ta_hit, true)).toBeNull();
-    const c1Answer = futuresAnswer(
-      exported.envelopes.source_less_legacy_ta_suggestion_hit
+    expect(host.textContent).toContain("Confirmed Kalshi Winner✓Won");
+    const r2KalshiTaAnswer = futuresAnswer(
+      exported.r2_resolved_kalshi_priceless_winner.legacy_typeahead
     );
-    expect(c1Answer?.leader.displayValue).toBe("Result unknown");
+    expect(r2KalshiTaAnswer?.leader.displayValue).toBe("Won");
+
+    // 5. C1: Source-less legacy typeahead abstains from Won and renders Result unknown:
+    expect(
+      outcomeRowVerdict(
+        exported.c1_sourceless_legacy_typeahead.missing_price.top_outcomes[0],
+        true
+      )
+    ).toBeNull();
+    expect(
+      outcomeRowVerdict(
+        exported.c1_sourceless_legacy_typeahead.nonterminal_price
+          .top_outcomes[0],
+        true
+      )
+    ).toBeNull();
+    expect(
+      futuresAnswer(exported.c1_sourceless_legacy_typeahead.missing_price)
+        ?.leader.displayValue
+    ).toBe("Result unknown");
+    expect(
+      futuresAnswer(exported.c1_sourceless_legacy_typeahead.nonterminal_price)
+        ?.leader.displayValue
+    ).toBe("Result unknown");
+
+    // 6. R3: Open 55/45 with raw (is_winner=True, resolution_source=None) and (is_winner=False, resolution_source="pass2_guess"):
+    const r3OpenTaAnswer = futuresAnswer(
+      exported.r3_open_raw_metadata.adapted_typeahead
+    );
+    expect(r3OpenTaAnswer?.leader.displayValue).toBe("55%");
+    expect(r3OpenTaAnswer?.second?.displayValue).toBe("45%");
+    expect(
+      detailVerdict(
+        exported.r3_open_raw_metadata.fresh_detail.outcomes[0],
+        false
+      )
+    ).toBeNull();
+    expect(
+      detailVerdict(
+        exported.r3_open_raw_metadata.fresh_detail.outcomes[1],
+        false
+      )
+    ).toBeNull();
+    await act(async () => {
+      root.render(
+        <FuturesCard
+          market={
+            exported.r3_open_raw_metadata
+              .fresh_search as unknown as FuturesMarket
+          }
+        />
+      );
+    });
+    const r3FreshCardText = host.textContent;
+    await act(async () => {
+      root.render(
+        <FuturesCard
+          market={
+            exported.r3_open_raw_metadata
+              .adapted_search as unknown as FuturesMarket
+          }
+        />
+      );
+    });
+    expect(host.textContent).toBe(r3FreshCardText);
+    expect(host.textContent).toContain("55%");
+    expect(host.textContent).toContain("45%");
+    expect(host.textContent).not.toMatch(/Won|Lost/);
+
+    // 7. R3: Resolved Polymarket 1/0 with resolution_source="pass2_guess" retains Won/Lost:
+    expect(
+      outcomeRowVerdict(
+        exported.r3_resolved_poly_pass2_guess.adapted_search.top_outcomes[0],
+        true
+      )
+    ).toBe("won");
+    expect(
+      outcomeRowVerdict(
+        exported.r3_resolved_poly_pass2_guess.adapted_search.top_outcomes[1],
+        true
+      )
+    ).toBe("lost");
+    expect(
+      detailVerdict(
+        exported.r3_resolved_poly_pass2_guess.fresh_detail.outcomes[0],
+        true
+      )
+    ).toBe("won");
+    expect(
+      detailVerdict(
+        exported.r3_resolved_poly_pass2_guess.fresh_detail.outcomes[1],
+        true
+      )
+    ).toBe("lost");
+    const r3PolyTaAnswer = futuresAnswer(
+      exported.r3_resolved_poly_pass2_guess.adapted_typeahead
+    );
+    expect(r3PolyTaAnswer?.leader.displayValue).toBe("Won");
+    await act(async () => {
+      root.render(
+        <FuturesCard
+          market={
+            exported.r3_resolved_poly_pass2_guess
+              .adapted_search as unknown as FuturesMarket
+          }
+        />
+      );
+    });
+    expect(host.textContent).toContain("Resolved Winner✓Won");
+    expect(host.textContent).toContain("Resolved LoserLost");
   });
 });

@@ -315,6 +315,9 @@ _VALID_RESULT_SOURCES: frozenset[str] = frozenset(
     (AUTHORITATIVE_SOURCES | DETERMINISTIC_SOURCES | TERMINAL_SOURCES)
     - {"ungradeable_result"}
 )
+_KNOWN_RESULT_SOURCES: frozenset[str] = frozenset(
+    KNOWN_SOURCES - {"ungradeable_result"}
+)
 _CLOB_PRICE_INFERRED_SOURCES: frozenset[str] = frozenset(
     {
         "clob_authoritative",
@@ -454,25 +457,11 @@ def is_current_represented_futures_row(row: Any) -> bool:
             if verdict not in ("won", "lost", "unknown") or not isinstance(basis, str):
                 return False
             if verdict == "won":
-                if is_winner is not True or res_source not in _VALID_RESULT_SOURCES:
+                if is_winner is not True or res_source not in _KNOWN_RESULT_SOURCES:
                     return False
             elif verdict == "lost":
-                if is_winner is not False or res_source not in _VALID_RESULT_SOURCES:
+                if is_winner is not False or res_source not in _KNOWN_RESULT_SOURCES:
                     return False
-            continue
-
-        # No settlement_display contract attached:
-        if res_source is None:
-            # Database default on ungraded rows is is_winner=False, resolution_source=None.
-            # An ungraded is_winner=True without a resolution_source or contract is invalid.
-            if is_winner is True:
-                return False
-        else:
-            if (
-                res_source != "ungradeable_result"
-                and res_source not in _VALID_RESULT_SOURCES
-            ):
-                return False
     return True
 
 
