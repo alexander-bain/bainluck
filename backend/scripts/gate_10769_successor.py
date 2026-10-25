@@ -41,7 +41,11 @@ does not read the new index may still pass when ALL of these hold:
       decision's "permits another valid open-only plan". It is flagged for the
       reviewer as an interpretation, not as adopted text.
   That pass is labelled PASS_EXCEPTION and carries "no claim that the new index
-  helped this term". Bystanders keep the original pass. D1 (failing a bystander
+  helped this term". A RETAINED SHAPE failure whose plan read the forbidden index
+  stays OWED: a later read that happens to choose another plan does not show the
+  plan cannot flip back. Term 2 defines no clearing and the original graded each
+  run fresh, so this too is this file's reading, flagged. Bystanders keep the
+  original pass. D1 (failing a bystander
   that reads the whole-table index) was NOT adopted and is not applied.
   Because `no_trgm` disables every trigram path on `name` by construction, (a)
   discriminates only two things: the rewrite was complete, and no index the
@@ -62,7 +66,9 @@ ratio_after <= 1.5 x ratio_before (outcome-arm controlled, the 10/08 baseline).
 The original SQL is proven unchanged before any read: the 24 G0 statements must
 hash to `G0_SQL_SHA16`, the values compiled at the baseline's own commit
 (`3908c039e5`), at the 10/12 RED run (`89031000dc`) and at `2f18107550`. A
-mismatch exits 2: changed SQL is never compared with the old baseline. One fix in
+mismatch exits 2: changed SQL is never compared with the old baseline. The
+original SEQUENCE is kept too: all 8 terms' timed rounds run back to back, in
+TERMS order, before any SHAPE, faithful or semantics read (`run_se` pass 1). One fix in
 the fail-closed direction: a term with no before ratio is NOT_EVALUABLE (the
 original passed it). Every retained failure is listed and stays OWED: no harness
 observation clears it, because the amendment defines no clearing observation and
@@ -110,7 +116,8 @@ USAGE
         --track ta --out ~/bainluck/artifacts/<dir>/lat-10769-successor-ta-<UTC>.json
 
 `--dry-run` compiles every statement, checks the original-SQL hashes and the
-retained-record hashes, prints the request count and exits. It makes no request.
+retained-record hashes, refuses (exit 2) if either same-instant rewrite cannot be
+built on any statement, prints the request count and exits. It makes no request.
 """
 
 from __future__ import annotations
@@ -232,7 +239,9 @@ CRITERIA = {
         "old": "subject (before read ix_futures_name_trgm): EXPECTED in plan AND FORBIDDEN not in plan; bystander passes",
         "new": "old rule, OR for a subject: no_trgm control reads no trigram index AND FORBIDDEN not in plan AND "
                "plan is open-only [open-only = this file's reading, flagged]; labelled PASS_EXCEPTION, "
-               f"{NO_CREDIT_NOTE}; /search graded on G0 AND the faithful arm; typeahead terms all graded as subjects",
+               f"{NO_CREDIT_NOTE}; /search graded on G0 AND the faithful arm; typeahead terms all graded as subjects; "
+               "a retained SHAPE failure whose plan read FORBIDDEN stays OWED and no later read clears it "
+               "[this file's reading, flagged: term 2 defines no clearing and the original graded each run fresh]",
         "source": "DECISION.md term 2",
     },
     "C3.BUDGET(/search)": {
@@ -242,7 +251,8 @@ CRITERIA = {
     },
     "C3.NO-REGRESSION(/search)": {
         "old": "per term ratio_after <= 1.5 x ratio_before, original SQL, 10/08 baseline",
-        "new": "unchanged; original SQL proven by hash; no before ratio = NOT_EVALUABLE; every retained failure OWED "
+        "new": "unchanged; original SQL proven by hash; original sequence (all 8 terms' timed rounds back to back, "
+               "in TERMS order, before any other read); no before ratio = NOT_EVALUABLE; every retained failure OWED "
                "(no clearing observation is defined)",
         "source": "DECISION.md term 4",
     },
@@ -523,12 +533,12 @@ def shape_verdict(a_fp, t_fp, classes: dict, was_subject: bool, t_problem: str |
     control could not be read, with `t_problem` saying why."""
     if not was_subject:
         return PASS, "bystander: original rule (D1 not adopted)"
-    unknown = _unclassified(a_fp, classes)
-    if unknown:
-        return NOT_EVALUABLE, f"plan reads index(es) absent from the catalog snapshot: {unknown}"
     a_idx = _indexes(a_fp)
     if FORBIDDEN_INDEX in a_idx:
         return FAIL, f"plan reads {FORBIDDEN_INDEX} (fails the original and the amended rule)"
+    unknown = _unclassified(a_fp, classes)
+    if unknown:
+        return NOT_EVALUABLE, f"plan reads index(es) absent from the catalog snapshot: {unknown}"
     if EXPECTED_INDEX in a_idx:
         return PASS, f"original rule: reads {EXPECTED_INDEX}, not {FORBIDDEN_INDEX}"
     if t_fp is None:
@@ -807,15 +817,19 @@ def c4_read(word: str) -> dict:
 
 
 def run_se(rounds: int, classes: dict, record: dict) -> dict[str, str]:
+    """Two passes, in the original gate's sequence. Pass 1 is NO-REGRESSION's
+    timing: all 8 terms back to back, in TERMS order, name/outcome interleaved per
+    round, exactly as the original `main()` times them, with no other statement
+    between one term's rounds and the next. Only then pass 2: the SHAPE controls,
+    the faithful arm and the semantics reads (~21 statements per term, some with
+    an index disabled), which would otherwise land between terms the 10/08
+    before timed consecutively."""
     with open(G.BASELINE) as fh:
         baseline = json.load(fh)
     clauses: dict[str, str] = {}
-    g0_ids = {}
-    faithful_digests = {}
+    timed: dict[str, dict] = {}
+    # Pass 1 -- NO-REGRESSION: the original procedure, byte for byte (fatal posts).
     for term in TERMS:
-        base = (baseline.get("terms") or {}).get(term) or {}
-        was_subject = FORBIDDEN_INDEX in (base.get("name_arm_indexes") or [])
-        # NO-REGRESSION: the original procedure, byte for byte (fatal posts).
         name_sql, ctrl_sql = G._sql_for(term, "name"), G._sql_for(term, "outcome")
         name_ms, ctrl_ms, g0_a = [], [], []
         for _ in range(rounds):
@@ -823,20 +837,28 @@ def run_se(rounds: int, classes: dict, record: dict) -> dict[str, str]:
             name_ms.append(G._exec_ms(p_name))
             g0_a.append(_plan_summary(p_name))
             ctrl_ms.append(G._exec_ms(G._post(ctrl_sql, analyze=True)))
+        timed[term] = {"name_sql": name_sql, "name_ms": name_ms, "ctrl_ms": ctrl_ms, "g0_a": g0_a}
+    record["sequence"] = "pass 1: timed rounds, all terms in TERMS order; pass 2: SHAPE/faithful/semantics"
+    # Pass 2 -- SHAPE on G0 and on the faithful arm, then the semantics reads.
+    g0_ids = {}
+    faithful_digests = {}
+    for term in TERMS:
+        base = (baseline.get("terms") or {}).get(term) or {}
+        was_subject = FORBIDDEN_INDEX in (base.get("name_arm_indexes") or [])
+        t1 = timed[term]
+        name_ms, ctrl_ms = t1["name_ms"], t1["ctrl_ms"]
         c_med = statistics.median(ctrl_ms)
         ratio = statistics.median(name_ms) / c_med if c_med else float("inf")
         noreg = no_regression_verdict(ratio, base.get("ratio"))
-        # SHAPE on G0 (its no_trgm reads follow the timed rounds, so the original
-        # timing procedure is not perturbed), then on the faithful arm.
         try:
-            g0_t_sql, g0_t_problem = rewrite(name_sql, "no_trgm"), None
+            g0_t_sql, g0_t_problem = rewrite(t1["name_sql"], "no_trgm"), None
         except VariantUnavailable as exc:
             g0_t_sql, g0_t_problem = None, str(exc)
         g0_t = []
         for _ in range(rounds if g0_t_sql else 0):
             t = _analyze(g0_t_sql)
             g0_t.append(t if isinstance(t, str) else _plan_summary(t))
-        g0_reads = {"a": g0_a, "t": g0_t, "t_problem": g0_t_problem, "faithful_required": False}
+        g0_reads = {"a": t1["g0_a"], "t": g0_t, "t_problem": g0_t_problem, "faithful_required": False}
         shape_g0 = arm_shape(g0_reads, classes, was_subject)
         member = compile_sql(search_name_member(term, datetime.now(timezone.utc)))
         faithful = _arm_reads(member, rounds, faithful=True)
@@ -886,6 +908,20 @@ def run_ta(rounds: int, classes: dict, record: dict) -> dict[str, str]:
     return clauses
 
 
+def rewrite_problems(members: dict[str, str]) -> dict[str, str]:
+    """{member|variant: reason} for every rewrite that cannot be built. During a
+    read an unbuildable variant is excluded like an unread one; before a read it
+    is refused, so route drift stops the read instead of thinning it."""
+    bad = {}
+    for key, sql in members.items():
+        for variant in VARIANTS:
+            try:
+                rewrite(sql, variant)
+            except VariantUnavailable as exc:
+                bad[f"{key}|{variant}"] = str(exc)
+    return bad
+
+
 def dry_run(track: str) -> int:
     print(f"gate_10769_successor --track {track} --dry-run (no request is made)")
     if track == "se":
@@ -897,15 +933,21 @@ def dry_run(track: str) -> int:
     print("  retained RED records: byte-identical (2/2)")
     now = datetime.now(timezone.utc)
     if track == "se":
-        for term in TERMS:
-            compile_sql(search_name_member(term, now))
+        members = {f"faithful|{t}": compile_sql(search_name_member(t, now)) for t in TERMS}
+        members.update({f"g0|{t}": G._sql_for(t, "name") for t in TERMS})
         n = len(TERMS) * (5 * ROUNDS + 6) + 2
     elif track == "ta":
-        for term in TERMS:
-            compile_sql(typeahead_ilike_member(term, now))
+        members = {f"ta|{t}": compile_sql(typeahead_ilike_member(t, now)) for t in TERMS}
         n = len(TERMS) * (2 * ROUNDS + 3) + 2
     else:
+        members = {}
         n = len(C4_WORDS)
+    unbuildable = rewrite_problems(members)
+    if unbuildable:
+        print(f"  ERROR: a same-instant control cannot be built (route drift?): {unbuildable}")
+        return 2
+    if members:
+        print(f"  both rewrites build on all {len(members)} statements")
     print(f"  statements compiled; a read would make {n} requests")
     print(f"  owed retained failures: {len(owed(retained_failures(load_retained())))}")
     return 0

@@ -350,6 +350,8 @@ def test_catalog_classification():
         # an index the catalog cannot classify
         (fp((BH, "ix_psql_only")), fp(("Seq Scan", None)), True, S.NOT_EVALUABLE),
         (fp((BH, "ix_futures_name_fts_open")), fp((BH, "ix_psql_only")), True, S.NOT_EVALUABLE),
+        # the forbidden index beside an unclassified one is a FAIL, not NOT_EVALUABLE
+        (fp((BH, "ix_futures_name_trgm"), (BH, "ix_psql_only")), None, True, S.FAIL),
         # bystanders keep the original pass, including one reading the whole-table
         # index (D1 was not adopted)
         (fp((BH, "ix_futures_name_trgm")), None, False, S.PASS),
@@ -459,6 +461,7 @@ def _c4(word="ranger", fq=120, oa=300, shed=False, status=200, source="reader"):
         (_c4(), S.PASS),
         (_c4(fq=170), S.FAIL),
         (_c4(oa=239), S.UNMATCHED),
+        (_c4(oa=240), S.PASS),
         (_c4(shed=True), S.NOT_EVALUABLE),
         (_c4(oa=None), S.NOT_EVALUABLE),
         (_c4(fq=None), S.NOT_EVALUABLE),
@@ -511,3 +514,51 @@ def test_arm_reads_are_labelled_custom_plan_not_reader():
     src = inspect.getsource(S.main)
     assert "NOT the reader's prepared statement" in src
     assert re.search(r"c4_read\(word\) for word in C4_WORDS", src)
+
+
+# --- R-a: /search runs in the original gate's sequence ---------------------------
+
+def test_search_track_times_every_term_before_any_other_read(monkeypatch):
+    """Kills: interleaving a term's ~21 SHAPE/faithful/semantics reads (some with
+    an index disabled) between its timed rounds and the next term's. The original
+    `main()` times all 8 terms back to back; so must pass 1."""
+    monkeypatch.setenv("ADMIN_TOKEN", "test")
+    payload = {**plan("anti_join"), "rows": [[1, "x"]]}
+    calls = []
+
+    def fake_post(sql, *, analyze, fatal=True, **_):
+        calls.append((S.normalise(sql), analyze))
+        return payload
+
+    record = {"terms": {}}
+    with patch.object(G, "_post", side_effect=fake_post):
+        S.run_se(S.ROUNDS, CLASSES, record)
+    timed = [
+        (S.normalise(G._sql_for(term, arm)), True)
+        for term in S.TERMS for _ in range(S.ROUNDS) for arm in ("name", "outcome")
+    ]
+    n = len(timed)
+    assert calls[:n] == timed
+    assert not set(calls[n:]) & set(timed), "a timed statement ran after pass 2 began"
+    assert len(calls) == len(S.TERMS) * (5 * S.ROUNDS + 6)  # the dry run's count, less the 2 catalog reads
+    assert record["sequence"].startswith("pass 1: timed rounds")
+    assert "back to back" in S.CRITERIA["C3.NO-REGRESSION(/search)"]["new"]
+
+
+# --- R-b: the retained-SHAPE OWED reading is in the record -----------------------
+
+def test_the_retained_shape_owed_reading_is_flagged_in_criteria():
+    new = S.CRITERIA["C3.SHAPE"]["new"]
+    assert "retained SHAPE failure" in new and "stays OWED" in new
+    assert new.count("this file's reading, flagged") == 2
+
+
+# --- N3: the pre-read gate refuses an unbuildable control ------------------------
+
+def test_dry_run_refuses_when_a_control_cannot_be_built(capsys):
+    with patch.object(S, "compile_sql", return_value="SELECT 1"):
+        assert S.dry_run("ta") == 2
+        assert S.dry_run("se") == 2
+    assert "cannot be built" in capsys.readouterr().out
+    assert S.rewrite_problems({"ok": "x WHERE futures_markets.status = 'open' "
+                                     "AND futures_markets.name ILIKE '%a%'"}) == {}
