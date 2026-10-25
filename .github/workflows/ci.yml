@@ -331,7 +331,13 @@ jobs:
             exit 1
           fi
           echo "shard ${{ matrix.shard }}/${{ strategy.job-total }}: $(echo $FILES | wc -w) test files"
-          python -m pytest $FILES -q --durations=0
+          # Temporary diagnostic branch only: stack output does not abort a test.
+          # Preserve the complete shard selection and every assertion/deadline.
+          if [ "${{ matrix.shard }}" = "1" ]; then
+            python -m pytest $FILES -vv --setup-show --durations=0 -o faulthandler_timeout=60 -o faulthandler_exit_on_timeout=false
+          else
+            python -m pytest $FILES -q --durations=0
+          fi
 
   # Item 1.4 — the assertion that makes sharding safe to trust.
   #
