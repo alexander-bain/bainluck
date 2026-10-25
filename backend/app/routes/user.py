@@ -1594,6 +1594,13 @@ async def _query_team_futures(
                 if isinstance(player_name, str) and len(player_name) >= 4:
                     player_to_team_id[player_name.lower()] = t.id
 
+    def _outcome_names_roster_player(outcome_name: str | None, team_id: int) -> bool:
+        outcome_lower = (outcome_name or "").lower()
+        return bool(outcome_lower) and any(
+            tid == team_id and player_lower in outcome_lower
+            for player_lower, tid in player_to_team_id.items()
+        )
+
     # NOTE (#1197 r259 team-route latency): the per-market outcome count + field
     # probability sum ("#3 of 30" context; #237 Item 3 coherence signal) used to be
     # an outcome_count_sq subquery — a GROUP BY over the ENTIRE 1.2M-row
@@ -1958,6 +1965,13 @@ async def _query_team_futures(
             # so the frontend only labels the True case.)
             "is_winner": bool(outcome.is_winner),
             "matched_team": matched,
+            # #11634 — THE OUTCOME IS ONE OF THE CLUB'S PLAYERS, NOT THE CLUB.
+            # A stored team_id is no proof the leg is the team: player legs are
+            # FK-linked to their club (Max Muncy's Silver Slugger leg carries the
+            # Dodgers' id), and that leg's 27% led the eliminated Dodgers' hero
+            # as "CHAMPIONSHIP 27%". True only on positive roster evidence (the
+            # roster branch's own test); False also means "no roster to ask".
+            "outcome_is_player": _outcome_names_roster_player(outcome.name, matched["id"]),
             "canonical_market_key": market.canonical_market_key,
             "season_year": season_year,
             # #237 Item 3 (private, stripped before return): illiquid Kalshi
