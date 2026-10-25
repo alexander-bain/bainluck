@@ -1138,11 +1138,43 @@ export function conceptCountdownHeadline(
   return null;
 }
 
+const AWARDS_SETTLING_VENUE_LABELS: Record<string, string> = {
+  kalshi: "Settled by Kalshi",
+  polymarket: "Settled by Polymarket",
+};
+
 // #5349: trading closed is not a category announcement. Read only own grades;
 // never the price-ranked leader or a standalone convenience winner string.
-export function awardsResult(child: EventConceptChild): { state: "announced" | "closed" | "pending"; names: string[]; prop: boolean } {
-  const names = Array.from(new Set((child.outcomes ?? []).filter((outcome) => outcome.won === true && outcome.name.trim()).map((outcome) => outcome.name.trim())));
-  return { state: names.length ? "announced" : child.settled === true ? "closed" : "pending", names, prop: child.kind === "prop" };
+export function awardsResult(child: EventConceptChild): {
+  state: "announced" | "closed" | "pending";
+  names: string[];
+  prop: boolean;
+  nominations: boolean;
+  settledByLabel: string | null;
+} {
+  const names = Array.from(
+    new Set(
+      (child.outcomes ?? [])
+        .filter((outcome) => outcome.won === true && outcome.name.trim())
+        .map((outcome) => outcome.name.trim()),
+    ),
+  );
+  const state: "announced" | "closed" | "pending" = names.length
+    ? "announced"
+    : child.settled === true
+      ? "closed"
+      : "pending";
+  const prop = child.kind === "prop";
+  const nominations = prop && child.prop_type === "nominations";
+  const venueKey =
+    state === "announced" &&
+    child.result?.state === "announced" &&
+    child.result?.evidence_kind === "venue_settlement" &&
+    typeof child.result?.venue === "string"
+      ? child.result.venue.trim().toLowerCase()
+      : "";
+  const settledByLabel = venueKey ? (AWARDS_SETTLING_VENUE_LABELS[venueKey] ?? null) : null;
+  return { state, names, prop, nominations, settledByLabel };
 }
 
 export function awardsRefreshInterval(latest: { event?: { domain?: string; key?: string; status?: string | null; end_date?: string | null }; children?: EventConceptChild[] } | null | undefined, openedAt: number, now = Date.now(), routeKey?: string): number {

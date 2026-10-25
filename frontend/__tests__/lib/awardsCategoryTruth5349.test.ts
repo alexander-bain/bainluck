@@ -16,7 +16,60 @@ test("announcement requires own outcome grade, never price or standalone conveni
 test("ties preserve every grade; prop result keeps its distinction", () => {
   const tie = { ...pending, graded_winner: null, outcomes: [{ name: "A", probability: .1, won: true }, { name: "B", probability: null, won: true }, { name: "Favorite", probability: .99, won: false }] };
   expect(awardsResult(tie).names).toEqual(["A", "B"]);
-  expect(awardsResult({ ...tie, kind: "prop", prop_type: "nominations" }).prop).toBe(true);
+  expect(awardsResult({ ...tie, kind: "prop", prop_type: "nominations" })).toMatchObject({
+    prop: true,
+    nominations: true,
+    settledByLabel: null,
+  });
+  expect(awardsResult({ ...tie, kind: "prop", prop_type: "occurrence" })).toMatchObject({
+    prop: true,
+    nominations: false,
+    settledByLabel: null,
+  });
+});
+
+test("result.venue maps supported settling providers and never invents a provider when null or unconfirmed", () => {
+  const announcedOutcomes = [{ name: "The Pitt", probability: 1, won: true }];
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "announced", evidence_kind: "venue_settlement", venue: "kalshi" },
+    }).settledByLabel,
+  ).toBe("Settled by Kalshi");
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "announced", evidence_kind: "venue_settlement", venue: "Polymarket" },
+    }).settledByLabel,
+  ).toBe("Settled by Polymarket");
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "announced", evidence_kind: "venue_settlement", venue: null },
+    }).settledByLabel,
+  ).toBeNull();
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "announced", evidence_kind: "venue_settlement", venue: "oddschecker" },
+    }).settledByLabel,
+  ).toBeNull();
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: [{ name: "Favorite", probability: 0.99, won: false }],
+      result: { state: "closed", evidence_kind: "unconfirmed_grade", venue: "kalshi" },
+    }).settledByLabel,
+  ).toBeNull();
 });
 test("bounded relevant unknown edition uses existing cadence and stops with own results", () => {
   expect(awardsRefreshInterval(edition(), NOW, NOW)).toBe(30000);

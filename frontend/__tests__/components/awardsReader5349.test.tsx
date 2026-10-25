@@ -42,6 +42,74 @@ test("prop grade is a result, never labelled an award winner", () => {
   const html = renderToStaticMarkup(<AwardsCategoryCard child={card({ kind: "prop", settled: true, outcomes: [grade("Guest1")] })} />);
   expect(html).toContain("Guest1"); expect(html).toContain(">Result<"); expect(html).not.toContain("Winner");
 });
+test("nominations prop distinguishes Nominated candidates and explains partial market coverage", () => {
+  const announcedNom = renderToStaticMarkup(
+    <AwardsCategoryCard
+      child={card({
+        kind: "prop",
+        prop_type: "nominations",
+        settled: true,
+        outcomes: [grade("Nominated film A"), grade("Nominated film B")],
+        result: { state: "announced", evidence_kind: "venue_settlement", venue: "kalshi" },
+      })}
+    />,
+  );
+  expect(announcedNom).toContain(">Nominated<");
+  expect(announcedNom).toContain("Settled by Kalshi");
+  expect(announcedNom).toContain("From listed market candidates — not the full official ballot");
+  expect(announcedNom).not.toContain(">Winner<");
+  expect(announcedNom).not.toContain(">Joint winners<");
+  expect(announcedNom).not.toContain(">Result<");
+
+  const openNom = renderToStaticMarkup(
+    <AwardsCategoryCard
+      child={card({
+        kind: "prop",
+        prop_type: "nominations",
+        settled: false,
+        outcomes: [{ name: "Dune: Part Three", probability: 0.85, won: false }],
+        result: { state: "pending", evidence_kind: "none", venue: null },
+      })}
+    />,
+  );
+  expect(openNom).toContain(">Not announced<");
+  expect(openNom).toContain("Covers candidates listed in available markets");
+  expect(openNom).not.toContain("Settled by");
+});
+test("announced category renders supported settling provider attribution and omits it when venue is null", () => {
+  const withVenue = renderToStaticMarkup(
+    <AwardsCategoryCard
+      child={card({
+        settled: true,
+        outcomes: [grade("The Pitt")],
+        result: { state: "announced", evidence_kind: "venue_settlement", venue: "kalshi" },
+      })}
+    />,
+  );
+  expect(withVenue).toContain(">Winner<");
+  expect(withVenue).toContain("The Pitt");
+  expect(withVenue).toContain("Settled by Kalshi");
+
+  const withoutVenue = renderToStaticMarkup(
+    <AwardsCategoryCard
+      child={card({
+        settled: true,
+        outcomes: [grade("The Pitt")],
+        result: { state: "announced", evidence_kind: "venue_settlement", venue: null },
+      })}
+    />,
+  );
+  expect(withoutVenue).toContain(">Winner<");
+  expect(withoutVenue).toContain("The Pitt");
+  expect(withoutVenue).not.toContain("Settled by");
+});
+test("awards page sections explain that coverage reflects available prediction markets", () => {
+  const html = renderToStaticMarkup(<EventConceptPage />);
+  expect(html).toContain("Covers categories with available prediction markets, not every official award category.");
+  expect(html).toContain("Covers nominations and side markets from available prediction markets, not the full official ballot.");
+  expect(html).toContain(">Nominated<");
+  expect(html).toContain("From listed market candidates — not the full official ballot");
+});
 test("non-awards retain combat main-event deduplication and cadence", () => {
   mockDomain = "ufc"; mockEnvelope = { ...envelope(), event: { ...envelope().event, domain: "ufc", status: "live" } };
   const html = renderToStaticMarkup(<EventConceptPage />);
