@@ -90,6 +90,11 @@ enum UITestLaunch {
         // says why in its header; this target never did, so every journey in it
         // has been exposed to a race it did not need to run.
         "-suppress_notification_prompt", "YES",
+        // ContextualTipLaunchOption10876.key — `hidden` keeps TipKit's
+        // contextual tips (#10876) off screen. A popover over a control eats
+        // the tap aimed at it, exactly like the permission alert above; the
+        // tips' own journeys pass `reset` instead to start as a fresh reader.
+        "-contextual_tips_10876", "hidden",
     ] }
 
     /// The activity every launch logs, naming which mode the run is in.

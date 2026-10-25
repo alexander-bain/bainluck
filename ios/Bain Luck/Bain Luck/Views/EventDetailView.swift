@@ -432,6 +432,9 @@ struct EventDetailView: View {
                                     heroBottom: proxy.frame(in: .named(Self.scrollSpace)).maxY,
                                     viewportTop: scrollViewportTop))
                         })
+                        // #10876 — no tip (the bar's pin tip, the chart's tip)
+                        // opens while this hero is on screen.
+                        .contextualTipHero10876(type: "event", id: eventId, scrollSpace: Self.scrollSpace)
                     VStack(spacing: 0) {
                         TimelineView(.periodic(from: .now, by: 60)) { tick in
                             OddsChartView(eventId: event.id, teamColors: teamColors(event),

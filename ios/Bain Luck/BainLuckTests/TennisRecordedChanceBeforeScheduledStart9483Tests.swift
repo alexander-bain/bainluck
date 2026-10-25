@@ -616,7 +616,8 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
                       "the enlarged plot no longer keeps the inline chart's height")
         XCTAssertTrue(chart.contains(".modifier(FullscreenOverflowScroll10796(scrolls:enlargedPlotFloor!=nil))"),
                       "the enlarged cover no longer scrolls")
-        XCTAssertTrue(chart.contains("iflettennis,letdate=selection.date{tennisPin.hold(tennis.inspect(at:date))}selection.end()"),
+        XCTAssertTrue(chart.contains("iflettennis,letdate=selection.date{tennisPin.hold(tennis.inspect(at:date))}"
+                                     + "ifselection.isScrubbing{ContextualTips10876.chartLearned()}selection.end()"),
                       "a lifted finger must hold its reading before the selection clears")
         XCTAssertTrue(chart.contains("tennisPanel(tennis,expanded:false)"), "the page lost the held reading")
         XCTAssertTrue(chart.contains("TennisHeldReadingMarker9483(pin:tennisPin,selection:selection,series:tennis,"))

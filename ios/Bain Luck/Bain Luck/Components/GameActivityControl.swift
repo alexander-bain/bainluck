@@ -26,6 +26,9 @@ struct GameActivityControl: View {
                         }
                         .accessibilityIdentifier("game.activity.stop")
                         .disabled(controller.isBusy)
+                        // #10876 — Stop appears only once this game's activity
+                        // started: the follow-live tip's action is done.
+                        .task { ContextualTips10876.followLiveLearned() }
                     } else {
                         compactAction("Start Live Activity",
                                       systemImage: "dot.radiowaves.left.and.right") {
@@ -34,6 +37,20 @@ struct GameActivityControl: View {
                             .accessibilityIdentifier("game.activity.start")
                             .disabled(controller.isBusy || snapshot.isTerminal
                                       || !controller.activeEventIDs.isEmpty || scenePhase != .active)
+                            // #10876 — the follow-live tip, only while this
+                            // button is shown, enabled and the game is live.
+                            .followLiveTip10876(
+                                eventId: snapshot.eventID,
+                                game: "\(snapshot.awayTeam) vs \(snapshot.homeTeam)",
+                                usable: ContextualTipEligibility10876.followLiveUsable(
+                                    controlShown: presentation.showsControl,
+                                    activitiesEnabled: controller.isEnabled,
+                                    gameIsLive: snapshot.lifecycle == .live,
+                                    isBusy: controller.isBusy,
+                                    activeActivityCount: controller.activeEventIDs.count,
+                                    sceneIsActive: scenePhase == .active),
+                                learned: ContextualTipEligibility10876.followLiveLearned(
+                                    activeActivityCount: controller.activeEventIDs.count))
                         if !controller.activeEventIDs.isEmpty {
                             Text("Another game has a Live Activity. Stop it before starting this game.")
                                 .font(.footnote).foregroundStyle(.secondary)
