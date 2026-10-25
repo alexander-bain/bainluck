@@ -281,7 +281,11 @@ nonisolated struct PreviewEnvelopeV3: Sendable, Equatable {
 extension BlendPreview {
     /// The reader after a validated `preview_open_v3`. The open must name the
     /// page's adopted membership exactly; a mismatch activates no session and
-    /// moves no fence (the page's membership change reopens the stream).
+    /// moves no fence (the page's membership change reopens the stream). An
+    /// open that arrives before the page has adopted any membership is refused
+    /// the same way and recorded (`v3OpenAwaitingMembership`), because the
+    /// first adoption is not a change: it reopens the stream instead
+    /// (`membershipReopens`).
     ///
     /// - First entry, or a NEWER incarnation: every preview identity of the old
     ///   domain is retired (`clearingPreviewIdentity`); committed floors —
@@ -293,8 +297,13 @@ extension BlendPreview {
     /// - The exact active session again: nothing changes.
     /// - An older incarnation, or the same one under another namespace: refused.
     static func readerOpenedV3(_ reader: BlendPreviewReader, _ open: PreviewEnvelopeV3) -> BlendPreviewReader {
-        guard let members = open.members, reader.authorityMembers == members,
-              !reader.evidenceSaturated else { return reader }
+        guard let members = open.members, !reader.evidenceSaturated else { return reader }
+        guard reader.authorityMembers != nil else {
+            var next = reader
+            next.v3OpenAwaitingMembership = true
+            return next
+        }
+        guard reader.authorityMembers == members else { return reader }
         var next: BlendPreviewReader
         switch reader.v3Authority.map({ $0.order(open.authority) }) ?? .newer {
         case .refused:
@@ -318,6 +327,16 @@ extension BlendPreview {
             next.evidenceSaturated = true
         }
         return next
+    }
+
+    /// Whether adopting `members` closes the stream so the page reopens it: a
+    /// changed membership (`membershipChanges`), or the first membership after
+    /// this connection's open was refused for want of one — that refused open
+    /// is never replayed, and without a reopen the connection would carry no
+    /// preview until it ends.
+    static func membershipReopens(_ reader: BlendPreviewReader, members: Set<String>) -> Bool {
+        guard !members.isEmpty else { return false }
+        return membershipChanges(reader, members: members) || reader.v3OpenAwaitingMembership
     }
 
     /// `reader` with every preview identity retired and every committed floor kept.

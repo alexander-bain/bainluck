@@ -342,6 +342,11 @@ nonisolated struct BlendPreviewReader: Sendable, Equatable {
     /// resets it; past `maxRowsV3` the visit saturates.
     var v3Rows: Set<String> = []
     static let maxRowsV3 = 32
+    /// This connection's `preview_open_v3` was refused because the page had
+    /// no adopted membership yet (`readerOpenedV3`). The open is never
+    /// replayed: the first membership the page adopts reopens the stream
+    /// instead (`membershipReopens`). The connection ending clears it.
+    var v3OpenAwaitingMembership = false
     /// Whether the page row's singleton frames order against its recorded
     /// fence: after a fold, and always in the v3 domain, where a new session
     /// can neither revive an equal tuple nor renew its first-seen deadline.
@@ -393,6 +398,7 @@ nonisolated enum BlendPreview {
         next.foldSeq = -1
         next.sessionOrigins = []
         next.v3Session = nil
+        next.v3OpenAwaitingMembership = false
         return next
     }
 
@@ -438,6 +444,7 @@ nonisolated enum BlendPreview {
         guard !members.isEmpty else { return reader }
         var next = reader
         next.authorityMembers = members
+        next.v3OpenAwaitingMembership = false
         if members.count >= 2 { next.hasFolded = true }
         guard membershipChanges(reader, members: members) else { return next }
         next = readerReset(next)

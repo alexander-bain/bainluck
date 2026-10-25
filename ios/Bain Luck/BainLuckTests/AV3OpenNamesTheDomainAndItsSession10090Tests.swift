@@ -77,6 +77,14 @@ final class AV3OpenNamesTheDomainAndItsSession10090Tests: XCTestCase {
                 .open, "33 rows")
         let padded = with(Self.singletonBlend, [#""sport":"#: #""pad":"\#(String(repeating: "x", count: 16 * 1024))","sport":"#])
         refused(padded, .preview, "over 16 KiB")
+        // lane1b O1: the bound is inclusive — exactly 16384 bytes is a message.
+        func pad(_ count: Int) -> String {
+            with(Self.singletonBlend, [#""sport":"#: #""pad":"\#(String(repeating: "x", count: count))","sport":"#])
+        }
+        let room = BlendPreviewFrame.maxFrameBytes - pad(0).utf8.count
+        XCTAssertEqual(pad(room).utf8.count, 16384)
+        XCTAssertNotNil(PreviewEnvelopeV3.decode(pad(room), kind: .preview, eventId: 42)?.frame(), "16384 bytes")
+        refused(pad(room + 1), .preview, "16385 bytes")
         let additive = with(Self.singletonBlend, [#""kind":"blend","#: #""kind":"blend","pending":{"kalshi":0.6},"#])
         XCTAssertNotNil(PreviewEnvelopeV3.decode(additive, kind: .preview, eventId: 42)?.frame(),
                         "an inner additive key alone refuses nothing")
@@ -159,7 +167,42 @@ final class AV3OpenNamesTheDomainAndItsSession10090Tests: XCTestCase {
     func testAnOpenThatDisagreesWithTheDetailMovesNothing() throws {
         let folded = page(["42", "43"])
         XCTAssertEqual(try open(folded, Self.singletonOpen), folded)
-        XCTAssertEqual(try open(.empty, Self.singletonOpen), .empty, "nor before the detail names one")
+        XCTAssertFalse(BlendPreview.membershipReopens(folded, members: ["42", "43"]),
+                       "a disagreeing open leaves the page's own membership change to reopen")
+    }
+
+    /// lane1b R1 on cb9a5e47d1: an open that arrives before the detail names
+    /// any membership activates nothing, and is never replayed. The first
+    /// adoption is not a membership change, so the refusal itself is what
+    /// makes that adoption reopen the stream — and only the connection that
+    /// was refused: a reset (open, close, reconnect) forgets it.
+    func testAnOpenBeforeAnyMembershipActivatesNothingAndTheFirstAdoptionReopens() throws {
+        let refused = try open(.empty, Self.foldedOpen)
+        XCTAssertNil(refused.v3Authority)
+        XCTAssertNil(refused.v3Session)
+        XCTAssertNil(refused.foldSession)
+        XCTAssertEqual(refused.v3Rows, [])
+        XCTAssertTrue(refused.v3OpenAwaitingMembership)
+        XCTAssertNil(frame(refused, Self.foldedBlend).held, "no session, so no frame")
+
+        XCTAssertFalse(BlendPreview.membershipReopens(.empty, members: ["42", "43"]),
+                       "with no refused open, the first membership is not a change")
+        XCTAssertTrue(BlendPreview.membershipReopens(refused, members: ["42", "43"]))
+        XCTAssertTrue(BlendPreview.membershipReopens(refused, members: ["42"]), "whatever membership it is")
+        XCTAssertFalse(BlendPreview.membershipReopens(refused, members: []))
+        let adopted = BlendPreview.readerAfterMembership(refused, members: ["42", "43"])
+        XCTAssertFalse(adopted.v3OpenAwaitingMembership)
+        XCTAssertFalse(BlendPreview.membershipReopens(adopted, members: ["42", "43"]), "it reopens once")
+        XCTAssertFalse(BlendPreview.readerReset(refused).v3OpenAwaitingMembership, "the refused connection ended")
+
+        // The reopened connection's open is admitted, never the refused one.
+        let reopened = try open(BlendPreview.readerReset(adopted), Self.foldedOpen)
+        XCTAssertEqual(reopened.v3Session, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+        XCTAssertEqual(frame(reopened, Self.foldedBlend, now: 0).held?.p, 0.6)
+
+        var saturated = BlendPreviewReader.empty
+        saturated.evidenceSaturated = true
+        XCTAssertEqual(try open(saturated, Self.foldedOpen), saturated, "a saturated visit records nothing")
     }
 
     func testTheShapeMustMatchTheOpensMembership() throws {

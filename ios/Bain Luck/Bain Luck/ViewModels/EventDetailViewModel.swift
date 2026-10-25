@@ -672,9 +672,11 @@ final class EventDetailViewModel: ObservableObject {
         // whose server-side composition is bound to the membership it opened
         // with, is closed so the caller's `configureAutoRefresh()` opens the new
         // fold. An unchanged membership records nothing and keeps the stream.
+        // The first membership a visit adopts reopens too when this
+        // connection's v3 open was refused for want of one (#11564).
         if let revision = LiveEventPriceReconciliation.pairedFoldRevision(in: fetched) {
             let members = Set(revision.rows.keys)
-            let changed = BlendPreview.membershipChanges(blendPreviewReader, members: members)
+            let changed = BlendPreview.membershipReopens(blendPreviewReader, members: members)
             blendPreviewReader = BlendPreview.readerAfterMembership(blendPreviewReader, members: members)
             if changed {
                 publishPreview(nil, at: previewNow())
