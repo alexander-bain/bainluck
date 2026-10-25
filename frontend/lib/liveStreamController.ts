@@ -108,9 +108,12 @@ export interface LiveStreamDeps {
    */
   onPreview?: (raw: unknown) => void;
   /** #10090: previews are never replayed, so every (re)open and the end of the match clear them. */
-  onPreviewReset?: () => void;
+  onPreviewReset?: (endSession?: boolean) => void;
   onPreviewFloor?: (raw: unknown) => void;
   onPreviewOpen?: (raw: unknown) => void;
+  onAuthorityPreviewOpen?: (raw: unknown) => void;
+  onAuthorityPreview?: (raw: unknown, receivedAt: number) => void;
+  previewNow?: () => number;
   /**
    * #10200 — what the TRANSPORT is doing, for the reader-facing status only.
    *
@@ -306,6 +309,7 @@ export function createLiveStreamController(
   };
 
   const stop = () => {
+    onPreviewReset?.();
     stopped = true;
     reopenAt = null;
     disarmReopen();
@@ -323,6 +327,7 @@ export function createLiveStreamController(
    */
   const rollOver = () => {
     if (stopped) return;
+    onPreviewReset?.();
     const lived = now() - openedAt;
     closeHandle();
     setDelivering(false);
@@ -422,7 +427,7 @@ export function createLiveStreamController(
       recoveryGeneration = generation;
       // The hub has discarded its provisional authority. Withdraw the held
       // headline/chart/clock before requesting committed recovery coverage.
-      onPreviewReset?.();
+      onPreviewReset?.(false);
       // Recovery signals delivery debt, never fresh data or a new quote clock.
       onRecovery?.(++recoveryNotifications);
     });
@@ -471,6 +476,15 @@ export function createLiveStreamController(
       if (stopped || handle !== next) return;
       onPreview?.((event as { data?: unknown })?.data);
     });
+    next.addEventListener('preview_open_v3', (event) => {
+      if (stopped || handle !== next) return;
+      deps.onAuthorityPreviewOpen?.((event as { data?: unknown })?.data);
+    });
+    next.addEventListener('preview_v3', (event) => {
+      if (stopped || handle !== next) return;
+      const receivedAt = (deps.previewNow ?? now)();
+      deps.onAuthorityPreview?.((event as { data?: unknown })?.data, receivedAt);
+    });
     next.addEventListener('fold_preview_floor', (event) => {
       if (stopped || handle !== next) return;
       deps.onPreviewFloor?.((event as { data?: unknown })?.data);
@@ -489,7 +503,6 @@ export function createLiveStreamController(
     // on the final number.
     next.addEventListener('closed', () => {
       if (handle !== next) return;
-      onPreviewReset?.();
       stop();
       setStatus('closed');
     });
@@ -508,6 +521,7 @@ export function createLiveStreamController(
         stop();
         setStatus('unavailable');
       } else {
+        onPreviewReset?.();
         transportRecoveryPending = true;
         setDelivering(false);
         setStatus('retrying');
