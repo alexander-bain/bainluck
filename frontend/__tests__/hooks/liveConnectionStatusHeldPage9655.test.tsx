@@ -541,7 +541,11 @@ describe("#10200 navigation resets", () => {
 
 
 describe("#10090 preview readout follows actual transport admission", () => {
-  const previewFrame = (clock: string | null = T(5), p = .601) => JSON.stringify({
+  const authority = { incarnation: "1", namespace: "11111111-1111-4111-8111-111111111111" };
+  const stream_session = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const opening = JSON.stringify({ protocol: 3, event_id: A, authority, stream_session, members: [A] });
+  const wrap = (frame: unknown) => JSON.stringify({ protocol: 3, event_id: A, authority, stream_session, frame });
+  const previewFrame = (clock: string | null = T(5), p = .601) => wrap({
     event_id: A, p, status: "live", observed_at: T(99), display_observed_at: clock,
     preview: { kind: "blend", epoch: 1, seq: 1, base_rev: 10, ttl_ms: 1000 },
   });
@@ -550,11 +554,12 @@ describe("#10090 preview readout follows actual transport admission", () => {
     const page = await mountHeldPage(initial);
     try {
       await page.emit("open");
-      await page.emit("preview", previewFrame());
+      await page.emit("preview_open_v3", opening);
+      await page.emit("preview_v3", previewFrame());
       expect(page.read()).toMatchObject({ pct: "60", clock: T(5) });
       // The hook schedules its expiry render at expiresAt + 1 ms.
       if (reason === "expiry") await page.advance(1001);
-      if (reason === "revoke") await page.emit("preview", JSON.stringify({
+      if (reason === "revoke") await page.emit("preview_v3", wrap({
         event_id: A, p: null, preview: {kind: "revoke", epoch: 1, seq: 2, through_seq: 1},
       }));
       if (reason === "reconnect") {
@@ -586,7 +591,8 @@ describe("#10090 preview readout follows actual transport admission", () => {
     const page = await mountHeldPage({ ...held({p: .6, at: T(0)}), blend_fold_revision: {[A]: 10} });
     try {
       await page.emit("open");
-      await page.emit("preview", previewFrame(null, .7));
+      await page.emit("preview_open_v3", opening);
+      await page.emit("preview_v3", previewFrame(null, .7));
       expect(page.read()).toMatchObject({pct: "70", clock: "null", label: "Connected · waiting"});
     } finally { page.unmount(); }
   });
