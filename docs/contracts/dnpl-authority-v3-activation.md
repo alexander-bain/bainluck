@@ -10,8 +10,13 @@ and provider qualification. It does not authorize any production operation.
 ## Operator boundary
 
 `ActivationController` is not called by startup, producer code, a scheduler or
-an automatic retry. Integrator must hold the existing approved all-writer
-interlock before preparing an exact fresh authority and retain that identity.
+an automatic retry. Integrator must establish the approved all-writer
+stop/drain interlock before preparing an exact fresh authority and retain that
+identity. This is a prerequisite, not an existing reusable implementation:
+the operation owner confirmed that the prior formation checks alone do not
+satisfy it. The [command preparation boundary](dnpl-authority-v3-command.md)
+therefore exposes only read-only preview until that prerequisite is implemented
+and independently reviewed.
 No controller method allocates a namespace, restarts a provider, changes policy,
 starts writers or grants the interlock. The existing ready authority remains the
 only producer authority; preparing/disabled continues committed-only delivery.

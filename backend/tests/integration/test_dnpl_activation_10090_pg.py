@@ -66,6 +66,48 @@ async def wire(r, script, authority, *, predecessor=None, bootstrap=False):
     )
 
 
+async def test_command_preview_preserves_actual_recovery_state(recovery):
+    from app.services.dnpl_activation_command import preview
+
+    r = recovery
+    prepared = await r.prepare()
+    primary = (prepared.redis_run_id, prepared.redis_master_replid)
+    for action in (None, r.controller.arm, r.controller.initialize, r.controller.ready):
+        if action is not None:
+            await action(prepared)
+        current = await r.store.read()
+        before = (
+            current,
+            await r.store.activation_step(current),
+            await r.store.read_retirement(),
+        )
+        keys = sorted(await r.client.keys("*"))
+        values = [await r.client.dump(key) for key in keys]
+        result = await preview(r.store, r.client, current, primary)
+        assert result["status"] == "SNAPSHOT_MATCH"
+        assert result["mutation_permitted"] is False
+        assert result["activation_step"] == before[1]
+        assert (
+            await r.store.read(),
+            await r.store.activation_step(current),
+            await r.store.read_retirement(),
+        ) == before
+        assert sorted(await r.client.keys("*")) == keys
+        assert [await r.client.dump(key) for key in keys] == values
+
+
+async def test_command_preview_rejects_wrong_actual_primary_without_mutation(recovery):
+    from app.services.dnpl_activation_command import preview
+
+    r = recovery
+    prepared = await r.prepare()
+    with pytest.raises(AuthorityConflict, match="expected Redis primary differs"):
+        await preview(r.store, r.client, prepared, ("0" * 40, "0" * 40))
+    assert await r.store.read() == prepared
+    assert await r.store.activation_step(prepared) == 0
+    assert await r.client.dbsize() == 0
+
+
 async def test_actual_controller_recovers_and_keeps_namespace_count_bounded(recovery):
     r = recovery
     first = await r.prepare()
