@@ -167,7 +167,13 @@ class _FakeDB:
         return self._correct(slug, "market", child_id, "readmit")
 
     def publish(self, slug):
+        self.state["containers"][self.container_id(slug)]["publication"] = "published"
         return self._correct(slug, None, None, "publish")
+
+    def withdraw_publication(self, slug):
+        """``withdraw_publication``: membership kept, the collection off readers' screens."""
+        self.state["containers"][self.container_id(slug)]["publication"] = "withdrawn"
+        return self._correct(slug, None, None, "withdraw")
 
     def bump(self, slug):
         """An ancestor or ``container_assembly`` bump: a revision, no ledger row."""
@@ -221,7 +227,8 @@ class _FakeSession:
             return _Result()
         if "FOR UPDATE OF c" in sql:
             c = w["containers"].get(params["cid"])
-            return _Result([(c["id"], "unpublished", c["revision"], 0)] if c else [])
+            return _Result([(c["id"], c.get("publication", "unpublished"), c["revision"], 0)]
+                           if c else [])
         if sql.startswith("SELECT DISTINCT revision FROM container_corrections"):
             return _Result(sorted({(rev,) for cid, _t, _c, _a, rev in w["ledger"]
                                    if cid == params["cid"]
@@ -371,12 +378,16 @@ async def test_flag_unset_writes_nothing_anywhere(db, redis, monkeypatch):
     monkeypatch.delenv(ta.THEME_ASSEMBLY_ENABLED_ENV, raising=False)
     db.add_markets(OPENAI_IPO, slug="ai")
 
-    for run in (_assemble(only=None), ta._run_rebuild_theme_snapshot(1)):
-        report = await run
-        assert report["terminal"] == "skipped"
-        assert report["reason"] == "theme_assembly_disabled"
+    report = await _assemble(only=None)
+    assert (report["terminal"], report["reason"]) == ("skipped", "theme_assembly_disabled")
+    assert db.statements == []  # the pass: not one statement, so certainly no non-SELECT
 
-    assert db.statements == []  # not one statement, so certainly no non-SELECT
+    # #9936 D1b: a rebuild while stopped reads (it finishes a correction on a
+    # published collection); with no such collection it writes nothing.
+    report = await ta._run_rebuild_theme_snapshot(1)
+    assert (report["terminal"], report["reason"]) == ("skipped", "container_absent")
+    assert not any(s.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+                   or "UPDATE containers" in s for s, _ in db.statements)
     assert redis.log == []
     assert db.state["containers"] == {}
 
