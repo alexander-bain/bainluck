@@ -269,12 +269,36 @@ async def test_a_stale_crown_beside_the_venue_answer_is_not_a_joint_winner():
 
 
 async def test_closed_retracted_and_open_retracted_stay_unannounced():
+    retracted_sound = _market(
+        99013,
+        "Oscar Winner: Best Sound",
+        "KXOSCARSOUND-27",
+        [
+            _o("The Odyssey", 0.285, False, "ungradeable_result"),
+            _o("Dune: Part Three", 0.25, False, "ungradeable_result"),
+        ],
+        status="resolved",
+    )
     body = await _build(
-        [_oscars_best_picture_open(), _oscars_makeup_open(), _oscars_retracted_category()],
+        [
+            _oscars_best_picture_open(),
+            _oscars_makeup_open(),
+            retracted_sound,
+            _oscars_retracted_category(),
+        ],
         "oscars-2027",
     )
     children = _children(body)
-    retracted = children[59164593]
+    # 59164593 (KXOSCARVIS-27 titled "Oscar Winner: Best Makeup and Hairstyling")
+    # is held off the category list under N1 (C07/C19 venue_title_conflict), while
+    # its own category_result remains closed/retracted_grade:
+    assert 59164593 not in children
+    assert category_result(_oscars_retracted_category(), settled=True) == {
+        "state": RESULT_CLOSED,
+        "evidence_kind": EVIDENCE_RETRACTED_GRADE,
+        "venue": None,
+    }
+    retracted = children[99013]
     assert retracted["settled"] is True and _won(retracted) == []
     assert retracted["result"] == {
         "state": RESULT_CLOSED,
@@ -580,6 +604,17 @@ async def test_event_concept_route_serves_r1_result_authority(monkeypatch):
         status="resolved",
     )
 
+    retracted_sound = _market(
+        99013,
+        "Oscar Winner: Best Sound",
+        "KXOSCARSOUND-27",
+        [
+            _o("The Odyssey", 0.285, False, "ungradeable_result"),
+            _o("Dune: Part Three", 0.25, False, "ungradeable_result"),
+        ],
+        status="resolved",
+    )
+
     body = await get_event_concept(
         "event:awards:oscars-2027",
         db=_DB(
@@ -588,6 +623,7 @@ async def test_event_concept_route_serves_r1_result_authority(monkeypatch):
                 venue_settled_director,
                 price_crowned_actor,
                 missing_source_actress,
+                retracted_sound,
                 _oscars_retracted_category(),
                 _oscars_makeup_open(),
             ]
@@ -597,6 +633,7 @@ async def test_event_concept_route_serves_r1_result_authority(monkeypatch):
     assert body["event"]["key"] == "event:awards:oscars-2027"
     assert body["event"]["status"] == "unknown"
     children = _children(body)
+    assert 59164593 not in children
 
     # 1. Venue-settled category -> announced with venue="kalshi"
     assert children[99010]["result"] == {
@@ -626,12 +663,12 @@ async def test_event_concept_route_serves_r1_result_authority(monkeypatch):
     assert _won(children[99012]) == []
 
     # 4. Retracted closed category -> closed with retracted_grade, no winner
-    assert children[59164593]["result"] == {
+    assert children[99013]["result"] == {
         "state": RESULT_CLOSED,
         "evidence_kind": EVIDENCE_RETRACTED_GRADE,
         "venue": None,
     }
-    assert _won(children[59164593]) == []
+    assert _won(children[99013]) == []
 
     # 5. Open retracted category (Best Picture) -> pending with retracted_grade
     assert children[6173044]["result"] == {

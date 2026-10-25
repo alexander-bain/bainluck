@@ -214,7 +214,10 @@ CEREMONIES: dict[str, AwardsCeremonyConfig] = {
         slug="emmys",
         display="The Emmys",
         ticker="KXEMMY",  # excludes KXSPORTSEMMY (different ceremony) — not a substring
-        marquee_re=re.compile(r"drama series", re.IGNORECASE),
+        marquee_re=re.compile(
+            r"^(?:emmy\s+(?:winner|award\s+for):?\s*)?(?:outstanding\s+|best\s+)?drama\s+series\s*\??$",
+            re.IGNORECASE,
+        ),
         aliases=("emmy", "the-emmys"),
     ),
     "grammys": AwardsCeremonyConfig(
@@ -267,15 +270,22 @@ def parse_awards_slug(slug: str) -> tuple[AwardsCeremonyConfig | None, int | Non
 def edition_year(external_id: str | None, resolution_date=None) -> int | None:
     """The 2-digit ceremony edition year for a market.
 
-    The Kalshi ticker carries it as the first ``-NN`` group
+    The Kalshi ticker carries it either as the first ``-NN`` group
     (``KXOSCARPIC-27`` -> 27; ``KXEMMYDSERIES-26SEP14`` -> 26;
-    ``KXEMMYNOMS-26-DS`` -> 26). A 2-digit token is only accepted as an edition
-    year when it's PLAUSIBLE (2020s–2040s) — Grammy tickers end in a Kalshi series
-    id (``KXGRAMAOTY-69``), not a year, so an implausible token falls through to
-    the resolution date's year (2027) instead of yielding "The Grammys 2069"."""
-    m = re.search(r"-(\d{2})(?!\d)", external_id or "")
+    ``KXEMMYNOMS-26-DS`` -> 26) or after a hyphenated category code before a
+    month-day suffix (``KXEMMY-GADS26SEP14`` -> 26; ``KXEMMY-OVS26SEP14`` -> 26).
+    A 2-digit token is only accepted as an edition year when it's PLAUSIBLE
+    (2020s–2040s) — Grammy tickers end in a Kalshi series id (``KXGRAMAOTY-69``),
+    not a year, so an implausible token falls through to the resolution date's
+    year (2027) instead of yielding "The Grammys 2069"."""
+    eid = external_id or ""
+    m = re.search(
+        r"-(\d{2})(?!\d)|-[A-Z]+(\d{2})(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d{2}(?!\d)",
+        eid,
+        re.IGNORECASE,
+    )
     if m:
-        yr = int(m.group(1))
+        yr = int(m.group(1) or m.group(2))
         if 20 <= yr <= 45:  # a real ceremony edition year, not a series id
             return yr
     if resolution_date is not None:
@@ -349,6 +359,66 @@ def clean_category_label(name: str | None) -> str:
     return s or (name or "")
 
 
+# Non-Primetime Emmy ceremonies (Daytime, International, Sports, News & Documentary,
+# Children's & Family, Regional) are separate organizations/ceremonies and must not
+# attach to `event:awards:emmys` by a longer `KXEMMY*` stem or a bare "Emmy" title (#5349 C03).
+_NON_PRIMETIME_EMMY_TICKER_RE = re.compile(
+    r"KX(?:SPORTS?EMMY|DAYTIMEEMMY|INTLEMMY|EMMY(?:DAYTIME|INTL|INTERNATIONAL|SPORTS?|NEWS|CHILDREN|REGIONAL))",
+    re.IGNORECASE,
+)
+_NON_PRIMETIME_EMMY_NAME_RE = re.compile(
+    r"\b(?:daytime|international|sports?|news\s*(?:&|and)\s*documentary|children'?s\s*(?:&|and)\s*family|regional)\s+emmys?\b",
+    re.IGNORECASE,
+)
+
+# Kalshi Oscars category codes whose title keyword is unambiguous (mirrors
+# `theme_definitions._OSCAR_TICKER_CATEGORY_KEYWORDS`, #5349 C07/C19).
+_OSCAR_TICKER_CATEGORY_KEYWORDS: dict[str, re.Pattern] = {
+    "PIC": re.compile(r"\bpicture\b", re.IGNORECASE),
+    "ACTO": re.compile(r"\bactor\b", re.IGNORECASE),
+    "ACTR": re.compile(r"\bactress\b", re.IGNORECASE),
+    "DIR": re.compile(r"\bdirect(?:or|ing)\b", re.IGNORECASE),
+    "VIS": re.compile(r"\bvisual effects?\b", re.IGNORECASE),
+}
+
+
+def is_excluded_emmy_ceremony(
+    external_id: str | None, name: str | None = None
+) -> bool:
+    """True when a ticker or title names a non-Primetime Emmy ceremony (Daytime,
+    International, Sports, News & Documentary, Children's & Family, Regional)."""
+    if external_id and _NON_PRIMETIME_EMMY_TICKER_RE.search(external_id):
+        return True
+    if name and _NON_PRIMETIME_EMMY_NAME_RE.search(name):
+        return True
+    return False
+
+
+def has_venue_title_conflict(external_id: str | None, name: str | None) -> bool:
+    """True when a Kalshi Oscars category ticker code (`PIC`, `ACTO`, `ACTR`,
+    `DIR`, `VIS`) disagrees with the category named in its title (e.g.
+    `KXOSCARVIS-27` titled 'Oscar Winner: Best Makeup and Hairstyling', #5349 C07).
+    Only rows whose title positively classifies as `"category"` are checked:
+    missing/blank titles, nomination markets, novelty props, and unknown codes
+    return `False` (matching `theme_definitions.py` clause 5). Evaluated
+    deterministically from the market's own external_id and name on every build
+    so a refused attachment never returns on refresh (C19)."""
+    eid = (external_id or "").strip().upper()
+    if eid.startswith("KALSHI:"):
+        eid = eid[len("KALSHI:") :]
+    if not eid.startswith("KXOSCAR"):
+        return False
+    code = eid[len("KXOSCAR") :].split("-", 1)[0]
+    if code.startswith("NOM"):
+        return False
+    keyword = _OSCAR_TICKER_CATEGORY_KEYWORDS.get(code)
+    if keyword is None:
+        return False
+    if classify_market(external_id, name) != "category":
+        return False
+    return not bool(keyword.search(name or ""))
+
+
 def derive_awards_concept(
     external_id: str | None, name: str | None = None
 ) -> dict | None:
@@ -365,6 +435,8 @@ def derive_awards_concept(
     eid = (external_id or "").upper()
     for cfg in CEREMONIES.values():
         if cfg.ticker.upper() in eid:
+            if cfg.slug == "emmys" and is_excluded_emmy_ceremony(external_id, name):
+                return None
             return {"key": f"event:awards:{cfg.slug}", "name": cfg.display, "domain": "awards"}
     # Name fallback: category/novelty markets carry the ceremony word ("Oscar",
     # "Emmy Award", "Grammy", "Tony Award"). Keyed off the display stem, longest
@@ -379,6 +451,8 @@ def derive_awards_concept(
     )
     for stem, slug in _NAME_STEMS:
         if stem in n:
+            if slug == "emmys" and is_excluded_emmy_ceremony(external_id, name):
+                return None
             cfg = CEREMONIES.get(slug)
             if cfg is not None:
                 return {"key": f"event:awards:{cfg.slug}", "name": cfg.display, "domain": "awards"}
@@ -441,13 +515,19 @@ class AwardsEventAdapter:
         # Classify + tag each market with its edition year.
         tagged = []
         for m in markets:
-            # Defensive: a foreign ticker that happens to contain the stem but
-            # isn't this ceremony (none known today) still classifies harmlessly.
+            if cfg.slug == "emmys" and is_excluded_emmy_ceremony(m.external_id, m.name):
+                continue
             kind = classify_market(m.external_id, m.name)
             yr = edition_year(m.external_id, getattr(m, "resolution_date", None))
             tagged.append((m, kind, yr))
 
-        winner_cats_all = [t for t in tagged if t[1] == "category" and _real_count(t[0]) >= 2]
+        winner_cats_all = [
+            t
+            for t in tagged
+            if t[1] == "category"
+            and _real_count(t[0]) >= 2
+            and not has_venue_title_conflict(t[0].external_id, t[0].name)
+        ]
         if not winner_cats_all:
             return None
 
@@ -469,9 +549,12 @@ class AwardsEventAdapter:
             chosen_year = (rich or years_present or [None])[0]
 
         def _in_edition(t) -> bool:
-            # When no edition year could be parsed for a ceremony (e.g. Grammys via
-            # a null resolution date), don't filter it out.
-            return chosen_year is None or t[2] == chosen_year or t[2] is None
+            # #5349 C02: When an edition year is chosen (`chosen_year is not None`),
+            # require matching edition evidence (`t[2] == chosen_year`). An edition-less
+            # market (`t[2] is None`) is held off every dated edition until its edition
+            # is evidenced. When no edition year exists for the entire ceremony
+            # (`chosen_year is None`), keep the markets together.
+            return chosen_year is None or t[2] == chosen_year
 
         winner_cats = [t[0] for t in winner_cats_all if _in_edition(t)]
         if not winner_cats:
