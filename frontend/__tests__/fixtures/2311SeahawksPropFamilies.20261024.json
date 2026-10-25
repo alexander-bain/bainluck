@@ -1,0 +1,430 @@
+{
+ "team": {
+  "id": 12,
+  "name": "Seattle Seahawks",
+  "slug": "seattle-seahawks"
+ },
+ "families": [
+  {
+   "family_key": "next team",
+   "label": "Next Team",
+   "sport": "football",
+   "entity_count": 11,
+   "sources": [
+    "kalshi",
+    "polymarket"
+   ],
+   "rows": [
+    {
+     "entity": "Rashid Shaheed",
+     "market_id": 3452980,
+     "outcome_id": null,
+     "probability": 0.95,
+     "source": "kalshi",
+     "sources": [
+      "kalshi"
+     ],
+     "cross_source": {
+      "kalshi": 0.95
+     },
+     "group_id": "kalshi:KXNEXTTEAMNFL-26RSHAHEED",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": "Stays with Seattle or Retires"
+    },
+    {
+     "entity": "Brian Thomas Jr.",
+     "market_id": 66638568,
+     "outcome_id": null,
+     "probability": 0.11,
+     "source": "kalshi",
+     "sources": [
+      "kalshi"
+     ],
+     "cross_source": {
+      "kalshi": 0.11
+     },
+     "group_id": "kalshi:KXNFLNEXTTEAM-26BTHOMAS7",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": "Seattle"
+    },
+    {
+     "entity": "Zxavian Harris",
+     "market_id": 66547962,
+     "outcome_id": null,
+     "probability": 0.04,
+     "source": "kalshi",
+     "sources": [
+      "kalshi"
+     ],
+     "cross_source": {
+      "kalshi": 0.04
+     },
+     "group_id": "kalshi:KXNFLNEXTTEAM-26ZHAR",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": "Seattle"
+    },
+    {
+     "entity": "T.J. Watt",
+     "market_id": 34277073,
+     "outcome_id": null,
+     "probability": 0.02,
+     "source": "kalshi",
+     "sources": [
+      "kalshi"
+     ],
+     "cross_source": {
+      "kalshi": 0.02
+     },
+     "group_id": "kalshi:KXNEXTTEAMNFL-26TWATT90",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": "Seattle"
+    },
+    {
+     "entity": "Kayvon Thibodeaux",
+     "market_id": 12821421,
+     "outcome_id": null,
+     "probability": 0.02,
+     "source": "kalshi",
+     "sources": [
+      "kalshi"
+     ],
+     "cross_source": {
+      "kalshi": 0.02
+     },
+     "group_id": "kalshi:KXNEXTTEAMNFL-26KTHIBODEAUX5",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": "Seattle"
+    },
+    {
+     "entity": "Jonathan Taylor",
+     "market_id": 66755767,
+     "outcome_id": null,
+     "probability": 0.02,
+     "source": "kalshi",
+     "sources": [
+      "kalshi"
+     ],
+     "cross_source": {
+      "kalshi": 0.02
+     },
+     "group_id": "kalshi:KXNFLNEXTTEAM-26JTAYLOR28",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": "Seattle"
+    },
+    {
+     "entity": "Aaron Rodgers",
+     "market_id": 19529192,
+     "outcome_id": null,
+     "probability": 0.01,
+     "source": "kalshi",
+     "sources": [
+      "kalshi"
+     ],
+     "cross_source": {
+      "kalshi": 0.01
+     },
+     "group_id": "kalshi:KXNEXTTEAMNFL-26ARODGERS8",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": "Seattle"
+    },
+    {
+     "entity": "Alec Pierce",
+     "market_id": 3452987,
+     "outcome_id": null,
+     "probability": 0.01,
+     "source": "kalshi",
+     "sources": [
+      "kalshi"
+     ],
+     "cross_source": {
+      "kalshi": 0.01
+     },
+     "group_id": "kalshi:KXNEXTTEAMNFL-26APIERCE",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": "Seattle"
+    },
+    {
+     "entity": "Maxx Crosby",
+     "market_id": 9512,
+     "outcome_id": null,
+     "probability": 0.01,
+     "source": "kalshi",
+     "sources": [
+      "kalshi"
+     ],
+     "cross_source": {
+      "kalshi": 0.01
+     },
+     "group_id": "kalshi:KXNEXTTEAMNFL-26MCROSBY",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": "Seattle"
+    },
+    {
+     "entity": "Vita Vea",
+     "market_id": 58015907,
+     "outcome_id": null,
+     "probability": 0.01,
+     "source": "kalshi",
+     "sources": [
+      "kalshi"
+     ],
+     "cross_source": {
+      "kalshi": 0.01
+     },
+     "group_id": "kalshi:KXNFLNEXTTEAM-26VVEA50",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": "Seattle"
+    },
+    {
+     "entity": "Tyreek Hill",
+     "market_id": 96147,
+     "outcome_id": null,
+     "probability": 0.01,
+     "source": "kalshi",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "cross_source": {
+      "kalshi": 0.01,
+      "polymarket": 0.0075
+     },
+     "group_id": "kalshi:KXNEXTTEAMNFL-26THILL",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": "Seattle",
+     "merged_market_ids": [
+      96147,
+      64286068
+     ]
+    }
+   ]
+  },
+  {
+   "family_key": "defensive player of the year",
+   "label": "Defensive Player Of The Year",
+   "sport": "football",
+   "entity_count": 4,
+   "sources": [
+    "kalshi",
+    "polymarket"
+   ],
+   "rows": [
+    {
+     "entity": "Devon Witherspoon",
+     "market_id": 56947548,
+     "outcome_id": 211437908,
+     "probability": 0.0135,
+     "source": "polymarket",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "cross_source": {
+      "polymarket": 0.0135,
+      "kalshi": 0.01
+     },
+     "group_id": "polymarket:741441",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": null,
+     "merged_market_ids": [
+      56947548,
+      53663
+     ]
+    },
+    {
+     "entity": "Leonard Williams",
+     "market_id": 53663,
+     "outcome_id": 846362,
+     "probability": 0.01,
+     "source": "kalshi",
+     "sources": [
+      "kalshi"
+     ],
+     "cross_source": {
+      "kalshi": 0.01
+     },
+     "group_id": "kalshi:KXNFLDPOTY-27",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": null
+    },
+    {
+     "entity": "Byron Murphy II",
+     "market_id": 53663,
+     "outcome_id": 235665254,
+     "probability": 0.01,
+     "source": "kalshi",
+     "sources": [
+      "kalshi"
+     ],
+     "cross_source": {
+      "kalshi": 0.01
+     },
+     "group_id": "kalshi:KXNFLDPOTY-27",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": null
+    },
+    {
+     "entity": "Nick Emmanwori",
+     "market_id": 53663,
+     "outcome_id": 219769674,
+     "probability": 0.01,
+     "source": "kalshi",
+     "sources": [
+      "kalshi"
+     ],
+     "cross_source": {
+      "kalshi": 0.01
+     },
+     "group_id": "kalshi:KXNFLDPOTY-27",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": null
+    }
+   ]
+  },
+  {
+   "family_key": "mvp",
+   "label": "MVP",
+   "sport": "football",
+   "entity_count": 2,
+   "sources": [
+    "kalshi",
+    "polymarket"
+   ],
+   "rows": [
+    {
+     "entity": "Sam Darnold",
+     "market_id": 40532,
+     "outcome_id": 643786,
+     "probability": 0.01,
+     "source": "kalshi",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "cross_source": {
+      "kalshi": 0.01,
+      "polymarket": 0.0005
+     },
+     "group_id": "kalshi:KXNFLMVP-27",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": null,
+     "merged_market_ids": [
+      40532,
+      7585490
+     ]
+    },
+    {
+     "entity": "Jaxon Smith-Njigba",
+     "market_id": 40532,
+     "outcome_id": 643797,
+     "probability": 0.01,
+     "source": "kalshi",
+     "sources": [
+      "kalshi"
+     ],
+     "cross_source": {
+      "kalshi": 0.01
+     },
+     "group_id": "kalshi:KXNFLMVP-27",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": null
+    }
+   ]
+  },
+  {
+   "family_key": "season receiving yards",
+   "label": "Season Receiving Yards",
+   "sport": "football",
+   "entity_count": 2,
+   "sources": [
+    "polymarket"
+   ],
+   "rows": [
+    {
+     "entity": "Jaxon Smith-Njigba",
+     "market_id": 61352702,
+     "outcome_id": null,
+     "probability": 0.545,
+     "source": "polymarket",
+     "sources": [
+      "polymarket"
+     ],
+     "cross_source": {
+      "polymarket": 0.545
+     },
+     "group_id": "polymarket:830438",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": "1,725+ receiving yards"
+    },
+    {
+     "entity": "Rashid Shaheed",
+     "market_id": 63957215,
+     "outcome_id": null,
+     "probability": 0.52,
+     "source": "polymarket",
+     "sources": [
+      "polymarket"
+     ],
+     "cross_source": {
+      "polymarket": 0.52
+     },
+     "group_id": "polymarket:830441",
+     "status": "open",
+     "settled": false,
+     "result": null,
+     "top_outcome": "500+ receiving yards"
+    }
+   ]
+  }
+ ],
+ "total_families": 4,
+ "roster_search": {
+  "searched": 40,
+  "total": 82,
+  "truncated": true
+ },
+ "cache": {
+  "generation": 3,
+  "created_at": "2026-10-24T12:08:56.542216+00:00",
+  "quality": "full",
+  "availability": "live",
+  "lifecycle_watermark": null,
+  "quality_reasons": []
+ }
+}
