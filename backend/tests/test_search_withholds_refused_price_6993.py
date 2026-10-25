@@ -216,7 +216,8 @@ def test_the_stored_rank_goes_with_the_price_because_it_is_seeded_from_it():
     # route already answers it correctly and differently (#2556 overwrites it
     # from the display order at `assign_display_ranks`).
     assert "rank" not in WITHHELD_PRICE_FIELDS
-    assert _by_id(served)[GRADED_CONTROL_ID]["rank"] == 2
+    assert _by_id(served)[GRADED_CONTROL_ID]["rank"] is None
+    assert _by_id(served)[GRADED_CONTROL_ID]["resolution_source"] == "api_settlement"
 
 
 def test_the_typeahead_dropdown_is_withheld_too_although_it_carries_no_id():
@@ -248,21 +249,17 @@ def test_the_typeahead_dropdown_is_withheld_too_although_it_carries_no_id():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_the_graded_leg_with_the_identical_book_keeps_its_price():
-    """Settled means settled: withholding a graded row deletes a result.
-
-    On the SHORT ladder since #8640: this is an open multi-winner board, so its
-    graded rungs now sort below every live one, and on the full nineteen legs
-    the six live rungs fill the five-row slice. The control is about the row
-    being priced, not about where it sorts.
-    """
+def test_the_graded_leg_keeps_its_result_when_relative_age_refuses_its_price():
+    """#11616: detail refuses this older quote; the confirmed grade survives."""
     short = {WITHHELD_ID, GRADED_CONTROL_ID, 1597363}
     served = _build_search_top_outcomes(
         _market(_legs(only=short)), limit=5, lean=False, withheld={WITHHELD_ID}
     )
     control = _by_id(served)[GRADED_CONTROL_ID]
-    assert control["probability"] is not None
-    assert control["rank"] == 2
+    assert control["probability"] is None
+    assert control["rank"] is None
+    assert control["is_winner"] is False
+    assert control["resolution_source"] == "api_settlement"
 
 
 def test_no_other_leg_loses_its_price():
@@ -274,29 +271,15 @@ def test_no_other_leg_loses_its_price():
         assert row["probability"] is not None, row["name"]
 
 
-def test_withheld_none_is_a_pass_through():
-    """Every pre-existing caller keeps its behaviour byte for byte."""
+def test_omitted_async_refusal_still_applies_the_destinations_local_age_policy():
+    """None and an empty async set both retain the shared local refusal arm."""
     before = _build_search_top_outcomes(_market(), limit=5, lean=False)
-    explicit_empty = _build_search_top_outcomes(
-        _market(), limit=5, lean=False, withheld=set()
-    )
+    explicit_empty = _build_search_top_outcomes(_market(), limit=5, lean=False, withheld=set())
     assert before == explicit_empty
-    # And the pass-through still serves the defect, which is what makes the
-    # tests above meaningful rather than vacuous: with nobody asking, the
-    # refused leg is still printed at 1.0.
-    #
-    # #8834: ON THE SHORT LADDER, because the full nineteen-leg specimen no
-    # longer reaches it on either path. A cumulative ladder's card is now the
-    # rungs around its crossing (22,400–23,200 here), and `24,800 or below` sits
-    # far above it, so "the refused leg leads the full card" stopped being true
-    # for a reason that has nothing to do with the refusal. The short ladder is
-    # where the withholding tests above actually bite, so the defect is shown
-    # there.
     short = {WITHHELD_ID, GRADED_CONTROL_ID, 1597363, 1597362}
-    unrefused = _by_id(
-        _build_search_top_outcomes(_market(_legs(only=short)), limit=5, lean=False)
-    )
-    assert unrefused[WITHHELD_ID]["probability"] == pytest.approx(1.0)
+    unrefused = _by_id(_build_search_top_outcomes(_market(_legs(only=short)), limit=5, lean=False))
+    assert unrefused[WITHHELD_ID]["probability"] is None
+    assert unrefused[WITHHELD_ID]["resolution_source"] is None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -320,14 +303,19 @@ def test_a_withheld_leg_cannot_date_the_cards_age_pip():
     )
     assert WITHHELD_ID in _by_id(served), "the row is still ON the card"
 
-    stale = _served_prices_as_of(market, served)
-    fresh = _served_prices_as_of(market, served, withheld={WITHHELD_ID})
+    # #11616: the final wire refusal is authoritative even when the caller does
+    # not repeat the async refusal set. Detail's local age policy also refuses
+    # the May quote, so only the June quote still prints a price.
+    assert _by_id(served)[WITHHELD_ID]["probability"] is None
+    assert _by_id(served)[GRADED_CONTROL_ID]["probability"] is None
+    assert _served_prices_as_of(market, served).startswith("2026-06-09")
+    assert _served_prices_as_of(market, served, withheld={WITHHELD_ID}).startswith("2026-06-09")
 
-    # Unwithheld, the April row wins the min and claims five months of decay
-    # over prices written in May and June.
-    assert stale.startswith("2026-04-13")
-    # Withheld, the oldest row that actually PRINTS a price dates the card.
-    assert fresh.startswith("2026-05-28")
+    # Retain the original raw-price control: when those numbers actually print,
+    # the April quote dates the card; explicit refusal moves it to May.
+    raw_wire = [{"id": o.id, "probability": o.current_probability} for o in legs]
+    assert _served_prices_as_of(market, raw_wire).startswith("2026-04-13")
+    assert _served_prices_as_of(market, raw_wire, withheld={WITHHELD_ID}).startswith("2026-05-28")
 
 
 def test_the_age_pip_is_none_when_every_served_row_is_refused():

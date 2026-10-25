@@ -48,6 +48,7 @@ from app.utils.scheduled_start import (
 # so there is no cycle to defer around; `tests/test_startup.py` is the guard.
 from app.utils.market_label_normalization import non_sport_topic_label, rewrite_venue_league_vocabulary
 from app.utils.market_display_name import rewrite_question_colon_display
+from app.utils.grid_out_division_legs import drop_out_division_legs, out_legs_by_market
 # #6993: the four-arm price refusal, asked here so the search surfaces cannot
 # serve a number the detail page refuses. Imported from the route that owns it
 # rather than copied, which is the whole point of the hook — its own docstring
@@ -59,8 +60,6 @@ from app.utils.market_display_name import rewrite_question_colon_display
 # (its three cross-route imports — feed, golf — are function-local), so there is
 # no cycle to defer around. `tests/test_startup.py` is the standing guard.
 from app.routes.futures import (
-    WITHHELD_PRICE_FIELDS,
-    _board_has_a_verdict,
     _fleet_newest_observation,
     _withheld_price_outcome_ids,
 )
@@ -72,7 +71,6 @@ from app.utils.game_market_club_names import (
     repair_card_club_names,
     repair_club_names,
 )
-from app.utils.market_staleness import board_touched_at, unobserved_board_keys
 from app.utils.nation_flags import flag_nation
 from app.utils.series_card_labels import (
     market_threshold_label,
@@ -958,7 +956,7 @@ def _search_boards_list_the_same_field(names: frozenset, kept_names: frozenset) 
 
 
 def _search_same_question_folded_ids(
-    markets: list, withheld_by_market: dict
+    markets: list, withheld_by_market: dict, out_divisions_by_market: Optional[dict] = None
 ) -> set[int]:
     """The ids of rows that ask a question a better-ranked row from ANOTHER venue
     already asks — Discover's fold, run over the search page (#8851).
@@ -998,13 +996,16 @@ def _search_same_question_folded_ids(
     kept: list[tuple] = []  # (listed names, card item), rank order
     for m in markets:
         if _search_same_question_as_a_kept_card(
-            m, withheld_by_market.get(m.id), kept
+            m, withheld_by_market.get(m.id), kept,
+            out_division_labels=(out_divisions_by_market or {}).get(m.id),
         ):
             folded.add(m.id)
     return folded
 
 
-def _search_same_question_as_a_kept_card(market, withheld, kept: list) -> bool:
+def _search_same_question_as_a_kept_card(
+    market, withheld, kept: list, *, out_division_labels=None
+) -> bool:
     """#8851's per-row decision: True if a better-ranked row from another venue,
     already in `kept`, asks this row's question. Otherwise the row is appended to
     `kept` and False is returned.
@@ -1029,7 +1030,9 @@ def _search_same_question_as_a_kept_card(market, withheld, kept: list) -> bool:
                 "name": market.name,
                 "source": market.source,
                 "resolution_date": market.resolution_date,
-                "top_outcomes": _build_search_top_outcomes(market, withheld=withheld),
+                "top_outcomes": _build_search_top_outcomes(
+                    market, withheld=withheld, out_division_labels=out_division_labels
+                ),
             },
         }
         names = _search_listed_names(market)
@@ -12886,8 +12889,14 @@ async def search_events(
     # #10028: a refusal check that times out withholds instead of 500ing, and
     # lands here so the answer is marked degraded and never cached.
     _withheld_shed: list = []
+    # #11616: the same cached grid verdict as detail, once for this pool.
+    # Non-division boards do not read Redis; a miss never builds the grid.
+    _out_divisions_by_market = await out_legs_by_market(deduped_futures)
     _withheld_by_market = {
-        m.id: await _search_withheld_price_ids(db, m, _withheld_shed)
+        m.id: await _search_withheld_price_ids(
+            db, m, _withheld_shed,
+            out_division_labels=_out_divisions_by_market.get(m.id),
+        )
         for m in deduped_futures
     }
     # #8734: the events this response serves. A game's own winner market is left
@@ -12907,7 +12916,7 @@ async def search_events(
     ]
     # #8851: one question, one row — filter-then-slice; families reuse the ids.
     _same_question_folded_ids = _search_same_question_folded_ids(
-        futures_markets, _withheld_by_market
+        futures_markets, _withheld_by_market, _out_divisions_by_market
     )
     futures_markets = [
         m for m in futures_markets if m.id not in _same_question_folded_ids
@@ -13223,10 +13232,16 @@ async def search_events(
     # #8661: the deduped rows were asked before the filter above; only a
     # promoted headline contender can be new here, and one whose every price is
     # refused leaves the page like any other withdrawn card.
+    # A promoted market can be outside the original pool. Only those new rows
+    # need context; this batch is normally non-division boards and reads nothing.
+    _out_divisions_by_market.update(await out_legs_by_market(
+        m for m in futures_markets if m.id not in _withheld_by_market
+    ))
     for m in futures_markets:
         if m.id not in _withheld_by_market:
             _withheld_by_market[m.id] = await _search_withheld_price_ids(
-                db, m, _withheld_shed
+                db, m, _withheld_shed,
+                out_division_labels=_out_divisions_by_market.get(m.id),
             )
     if _withheld_shed:
         degraded.append("price_refusal")
@@ -13240,7 +13255,8 @@ async def search_events(
     ]
     _formatted_by_id = {
         m.id: _format_futures_for_search(
-            m, _withheld_by_market.get(m.id), query_terms=expanded  # #8842
+            m, _withheld_by_market.get(m.id), query_terms=expanded,  # #8842
+            out_division_labels=_out_divisions_by_market.get(m.id),
         )
         for m in (*deduped_futures, *futures_markets)
     }
@@ -15754,6 +15770,7 @@ async def typeahead_search(
     #: `(market id, kalshi ticker, event id)` for every row that reaches the
     #: dropdown — plain scalars, read while the ORM row is live. #6447 residual.
     _ta_market_facts: list[tuple[int, Optional[str], Optional[int]]] = []
+    _ta_out_divisions = await out_legs_by_market(ta_futures_ranked)
     for market in ta_futures_ranked:
         if len(futures_pool) >= 5:
             break
@@ -15809,8 +15826,13 @@ async def typeahead_search(
         # and so never reached this loop. `oscars` (production 2026-09-28)
         # printed Polymarket's `Oscars 2027: Best Picture Winner` and Kalshi's
         # `Oscar Winner: Best Picture` on consecutive rows, both at 49%.
-        _ta_withheld = await _search_withheld_price_ids(db, market)
-        if _search_same_question_as_a_kept_card(market, _ta_withheld, _ta_kept_cards):
+        _ta_out_labels = _ta_out_divisions.get(market.id)
+        _ta_withheld = await _search_withheld_price_ids(
+            db, market, out_division_labels=_ta_out_labels
+        )
+        if _search_same_question_as_a_kept_card(
+            market, _ta_withheld, _ta_kept_cards, out_division_labels=_ta_out_labels
+        ):
             continue
         # #6447 residual: the two scalars the club-name repair needs, read HERE
         # while the row is certainly live and kept as plain data. The repair
@@ -15856,6 +15878,7 @@ async def typeahead_search(
                 lean=True,
                 withheld=_ta_withheld,
                 query_terms=ta_expanded,  # #8842
+                out_division_labels=_ta_out_labels,
             ),
             # RANKING evidence, private and stripped before the response. The
             # three rows above are a DISPLAY cut; using them as the market's
@@ -36788,9 +36811,8 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
 from app.utils.outcome_display import (  # noqa: E402
     is_placeholder_outcome_name as _is_placeholder_outcome_name,
     is_field_outcome as _is_field_outcome,
-    normalize_display_probs as _normalize_search_outcome_probs,
+    normalize_display_probs as _normalize_search_outcome_probs,  # noqa: F401 - existing test/consumer import
     leader_pick_order as _leader_pick_order,
-    drop_dominant_field_outcomes as _drop_dominant_field_outcomes,
     drop_incoherent_near_certain as _drop_incoherent_near_certain,
     drop_incoherent_ladder_outcomes as _drop_incoherent_ladder_outcomes,
     drop_unbacked_legs as _drop_unbacked_legs,
@@ -37984,44 +38006,37 @@ def _build_search_top_outcomes(
     lean: bool = False,
     withheld: Optional[set[int]] = None,
     query_terms: Optional[list[tuple[str, str | None]]] = None,
+    *,
+    out_division_labels=None,
 ) -> list[dict]:
-    """Top-N real outcomes for search surfaces, normalized (#23). Shared by the
-    full search formatter and the typeahead futures branch.
+    """Select search rows from the destination's full-field representation.
 
-    #8842: ``query_terms`` (the handler's expanded terms) lets a card that was
-    recalled through an OUTCOME name carry that outcome. See
-    `_search_query_matched_leg`.
-
-    ``lean=True`` returns the minimal typeahead payload (name / probability /
-    movement only — no id/odds/rank) to keep the dropdown response small.
-    Placeholder outcomes are filtered; probabilities are #23-normalized so the
-    displayed distribution reads sensibly (e.g. "Lakers 62% · Cavs 18%").
-
-    ``withheld`` is #6993's fourth and last surface. The four-arm refusal union
-    lives in ``routes/futures.py::_withheld_price_outcome_ids`` and reaches the
-    detail, group, browse and faceted routes; THIS builder never asked it, so
-    ``/api/events/search?q=Nasdaq-100`` served outcome ``1597367`` at
-    ``probability: 1.0`` — rank 1, the card's whole headline — while
-    ``/futures/109485`` served the same leg as ``None`` in the same minute, and
-    the search card is one tap above the page that contradicts it.
-
-    IT IS PASSED IN, NOT COMPUTED HERE, and that is forced rather than chosen:
-    the union is ``async(db, market)`` because two of its arms read the snapshot
-    table, while this builder is synchronous and is called from a dict
-    comprehension that formats each market exactly once (the L2-38 latency
-    shape). Both callers are ``async`` route handlers holding a session, so they
-    build the map and hand each market its own set. ``None`` means "nobody
-    asked" and is a pass-through — every existing caller keeps its behaviour.
+    Numerical admission, relative age, movement validity and result metadata
+    are established before the visible limit or query pin. Search keeps its
+    existing reachability, live/result ordering and cumulative-window choices.
+    ``lean`` omits ID/odds/rank, but retains result and observation fields so a
+    client can distinguish a confirmed result from a withheld prediction.
+    Async quote/fleet refusal inputs are supplied by the caller; this function
+    makes no database or network call and never mutates source rows (#11616).
     """
     # Q480 / #6524 / #4253 / #6676 — the four pre-sort refusals, and the reason
     # every one of them is applied BEFORE the sort and the `[:limit]` slice, now
     # live in `_search_surviving_legs`. They were lifted there by #5516 so that
     # the withdrawal predicate judges the same legs this builder draws; nothing
     # about the chain itself changed.
-    # #10248 D5. Function-local: the module's top-level imports are reserved.
-    from app.utils.futures_market_snapshot import reader_change_24h
+    from app.utils.futures_outcome_representation import represent_futures_outcomes
 
-    real = _search_surviving_legs(market)
+    # The existing date-rung clock governs both admission and window selection.
+    today = int(_search_today_ymd())
+    represented = represent_futures_outcomes(
+        market, withheld,
+        out_division_labels=out_division_labels,
+        now=datetime(today // 10000, (today // 100) % 100, today % 100, tzinfo=timezone.utc),
+    )
+    by_id = {row["id"]: row for row in represented.outcomes}
+    # Surface reachability/selection remains bounded, but its values and state
+    # come from the destination's whole eligible field before the top-N cut.
+    real = [o for o in _search_surviving_legs(market) if o.id in by_id]
     # #5516: an exclusive board whose whole served ladder sums far under 100% is
     # incoherent as a SET even when every rung in it is honest — `Cubs 24% ·
     # Reds 18%` on a three-way inning market whose tie leg was never stored.
@@ -38076,7 +38091,7 @@ def _build_search_top_outcomes(
     # `0`, not `-1`: a genuine `0.0` price sorts here too, and the two are
     # equally uninteresting as headlines. The nulling below is what tells them
     # apart on the wire, not this ordering.
-    _withheld_ids = withheld or set()
+    _withheld_ids = (withheld or set()) | {oid for oid, row in by_id.items() if row["probability"] is None}
     # #8640: A GRADED RUNG ON A STILL-OPEN LADDER IS A RESULT, NOT THE ANSWER.
     # Measured live 2026-09-25, `?q=Fed rate` led market 113427 *What will Fed
     # Rate hit before 2027* (polymarket, open, `mutually_exclusive=false`) with
@@ -38152,7 +38167,7 @@ def _build_search_top_outcomes(
         real.sort(
             key=lambda o: (
                 _headline_tier(o),
-                0 if o.id in _withheld_ids else (o.current_probability or 0),
+                by_id[o.id]["probability"] or 0,
             ),
             reverse=True,
         )
@@ -38196,106 +38211,25 @@ def _build_search_top_outcomes(
     # the #993 pair went wrong, and this serializer exists so that cannot
     # recur. Completed from each rung's own ticker; see
     # `game_market_club_names.repair_field_outcome_name`.
-    threshold_label = market_threshold_label(market)  # #9383
-    named = [
-        (o, reader_outcome_name(o.external_id, o.name, threshold_label) or o.name)
-        for o in top
-    ]
-    # #6195: A `0.0` IS A PRICE, AND THIS IS THE LINE THAT PRINTED IT AS A DASH.
-    #
-    # Measured on production 2026-09-21: `?q=Super Bowl` served this card for
-    # *Sports Emmy Award for Outstanding Live Sports Special: Championship
-    # Event?* (13886744) drawing FIVE rungs of which FOUR were `probability:
-    # null` — NBA Finals, College Football Playoff, Super Bowl LX, The Masters —
-    # while `futures_outcomes` holds `0.000000` for every one of them and
-    # `/api/futures/13886744` serves them as `0.0`. One tap apart, two answers
-    # about the same four numbers, and the near-empty board is on the surface a
-    # reader meets FIRST. `0.000000` is not a missing price; it is the field
-    # saying this candidate is out, on a market where we know every answer.
-    #
-    # `_outcome_prints_a_price` RATHER THAN A LOCAL `is not None`, and that is
-    # the load-bearing half. `_served_prices_as_of` — the age pip under this
-    # same card — scopes itself to rows that print a price by calling that
-    # predicate, and its docstring states the coupling as a contract: a `0.0`
-    # leg "regains its vote here with no edit to this function". A local test
-    # here would satisfy this issue and re-open #6256 in the same diff, because
-    # the two sides of the card would once again be deciding "is this a price"
-    # in two places. They decide it in one.
-    #
-    # `movement` is deliberately NOT moved with it. Its truthiness answers a
-    # different question — "did this leg move" — and a change of exactly zero is
-    # honestly absent rather than a number worth drawing; UX-P275 is the ruling
-    # that a move which rounds to nothing must not print as a move. Only the
-    # price is a claim about the world that `0` can correctly make.
-    if lean:
-        out = [
-            {
-                "name": name,
-                "probability": (
-                    float(o.current_probability) if _outcome_prints_a_price(o) else None
-                ),
-                # #10248 D5 — `reader_change_24h`.
-                "movement": (
-                    float(chg)
-                    if (chg := reader_change_24h(
-                        market, o.id, o.current_probability, o.probability_change_24h
-                    ))
-                    else None
-                ),
-            }
-            for o, name in named
-        ]
-    else:
-        out = [
-            {
-                "id": o.id,
-                "name": name,
-                "probability": (
-                    float(o.current_probability) if _outcome_prints_a_price(o) else None
-                ),
-                "american_odds": o.current_american_odds,
-                "rank": o.rank,
-                # #10248 D5 — `reader_change_24h`.
-                "movement": (
-                    float(chg)
-                    if (chg := reader_change_24h(
-                        market, o.id, o.current_probability, o.probability_change_24h
-                    ))
-                    else None
-                ),
-                # #8640: the grade, in the detail payload's own two fields
-                # (`FuturesOutcome` in `lib/types.ts`), so a client can tell a
-                # graded 1.0 from a live one. Both are needed: `is_winner`
-                # defaults to false, and only `resolution_source` separates
-                # "graded a loss" from "never graded".
-                "is_winner": getattr(o, "is_winner", None),
-                "resolution_source": getattr(o, "resolution_source", None),
-            }
-            for o, name in named
-        ]
-    # #6993: null the refused price, keyed on presence, exactly as the detail,
-    # group, browse and faceted arms do — `WITHHELD_PRICE_FIELDS` is the one
-    # place the spellings of "the price" are listed, so `movement` (this
-    # payload's name for the 24h delta) is covered without a local rule.
-    #
-    # HERE, ABOVE `_normalize_search_outcome_probs`, AND THAT IS LOAD-BEARING —
-    # the same ordering the detail serializer documents. A refused `1.0` left in
-    # place until after the #23 squeeze would still sit in the divisor and go on
-    # halving every honest row on the board, which is the refusal leaking back
-    # in as a quieter lie about the legs we DO print.
-    #
-    # `_drop_dominant_field_outcomes` and `_leader_pick_order` below then judge
-    # the number RENDERED rather than the stored one, which is what they both
-    # document wanting: a withheld row reads as priceless and can neither
-    # headline the card nor be mistaken for a dominant field.
-    #
-    # KEYED ON THE ORM ROW, NOT ON `od["id"]`, AND THAT IS NOT A STYLE CHOICE:
-    # the lean typeahead shape has no `id` key at all (the docstring above says
-    # so, and `_served_prices_as_of` relies on it). `od.get("id")` would be
-    # `None` for every dropdown row, match nothing, and leave the refused price
-    # headlining the one surface a reader meets FIRST — a fix that reads as
-    # shipped and withholds nothing. `named` and `out` are built from the same
-    # list in the same order in both branches, so the zip is exact.
+    named = [(o, by_id[o.id]["name"]) for o in top]
+    out = []
+    for o, name in named:
+        row = by_id[o.id]
+        item = {
+            "name": name,
+            "probability": row["probability"],
+            "movement": row["probability_change_24h"],
+            "is_winner": row["is_winner"],
+            "resolution_source": row["resolution_source"],
+            "last_updated": row["last_updated"],
+            "price_changed_at": row["price_changed_at"],
+        }
+        if "settlement_display" in row:
+            item["settlement_display"] = row["settlement_display"]
+        if not lean:
+            item.update(id=o.id, american_odds=row["american_odds"], rank=row["rank"] if row["probability"] is not None else None)
+        out.append(item)
+
     if pinned is not None and not lean:
         for (o, _name), od in zip(named, out):
             if o is pinned:
@@ -38303,64 +38237,14 @@ def _build_search_top_outcomes(
                 od["matched_rank"] = 1 + sum(
                     1 for leg in real
                     if leg.id not in _withheld_ids
-                    and (leg.current_probability or 0) > (o.current_probability or 0)
+                    and (by_id[leg.id]["probability"] or 0) > (by_id[o.id]["probability"] or 0)
                 )
-    if _withheld_ids:
-        for (o, _name), od in zip(named, out):
-            if o.id in _withheld_ids:
-                for field in WITHHELD_PRICE_FIELDS:
-                    if field in od:
-                        od[field] = None
-                # `rank` IS NOT IN THE TUPLE AND MUST NOT JOIN IT. The stored
-                # column is seeded from the price at ingest — outcome 1597367's
-                # stored rank is literally `1` BECAUSE its price is the refused
-                # `1.0` — so serving it beside `probability: null` publishes
-                # "this is the favourite", the refused claim in a third costume.
-                #
-                # Nulled HERE rather than in the shared tuple because the other
-                # four surfaces already answer this correctly and differently:
-                # `_format_market_detail` treats the column as "the SEED, not
-                # the served answer" and overwrites it from the display order at
-                # `assign_display_ranks` (#2556), which is why detail serves this
-                # same leg as rank 19 of 19. Adding `rank` to the tuple would
-                # null a number that is already honest there. Bringing #2556's
-                # display-rank pass to search is the fuller answer and it belongs
-                # to that ship, not this one — it would move `rank` on every row
-                # of every search card, and this arm is about one refused price.
-                #
-                # Safe on the wire: no search surface renders this field, and the
-                # clients that read `rank` elsewhere already handle null
-                # (`rank={outcome.rank ?? index + 1}` on the futures page, and
-                # the team/my-stuff cards gate `#{rank} of {total}` on truthiness).
-                if "rank" in od:
-                    od["rank"] = None
-    # #199: don't sum-to-1 non-mutually-exclusive participation families
-    # (golf make-cut/top-N) — that squashed an honest 87% make-cut to ~20% in search.
-    _normalize_search_outcome_probs(
-        out, mutually_exclusive=getattr(market, "mutually_exclusive", True)
-    )
-    # UX-P164: search is the OTHER half of the #993 pair and it had the identical
-    # defect — measured live 2026-08-29, `/api/events/search?q=which party will win
-    # the house` served `Democratic Party 0.855 | Republican Party 0.145 | Other
-    # 1.0`, byte-for-byte what `/api/futures/112903` served. Demotion alone cannot
-    # help here either: this list is already sliced to `limit`, so "the end" is
-    # inside the dropdown. Fixing only the detail page would have moved the
-    # disagreement between two surfaces instead of ending it — the exact failure
-    # this module exists to prevent, and UX-P162's lesson applied before it bites.
-    #
-    # Placed AFTER normalization for the same reason as the detail serializer:
-    # `_FIELD_DOMINANT_MIN` judges the number RENDERED, so a field row that the
-    # #23 squeeze brings below the threshold is real information and survives.
-    # This can return `limit - 1` rows; that is honest — a dropdown showing four
-    # real answers beats four real answers plus a no-bid ask printed as 100%.
-    out = _drop_dominant_field_outcomes(
-        out, lambda o: o.get("name"), lambda o: o.get("probability")
-    )
-    return _leader_pick_order(out)  # #993 shared leader-pick (Other/Field never headlines)
+    return _leader_pick_order(out)
 
 
 async def _search_withheld_price_ids(
-    db, market: "FuturesMarket", shed: Optional[list] = None
+    db, market: "FuturesMarket", shed: Optional[list] = None,
+    *, out_division_labels=None,
 ) -> set[int]:
     """#6993's refusal set for one market, or an empty set if the row cannot say.
 
@@ -38458,12 +38342,12 @@ async def _search_withheld_price_ids(
         # its own recency gate), and `unobserved_board_keys` reads None as
         # "withhold nothing", so a live board pays nothing and a graded board
         # keeps its result by construction.
-        outcomes = getattr(market, "outcomes", None) or []
-        withheld |= unobserved_board_keys(
-            ((o.id, o.last_updated) for o in outcomes),
-            board_touched_at=board_touched_at(market),
+        from app.utils.futures_outcome_representation import (
+            eligible_futures_outcomes, local_futures_withheld_ids,
+        )
+        withheld = local_futures_withheld_ids(
+            market, eligible_futures_outcomes(market, out_division_labels), withheld,
             fleet_newest_observation=await _fleet_newest_observation(db, market),
-            board_has_a_verdict=_board_has_a_verdict(outcomes),
         )
         await _close(commit=True)
         return withheld
@@ -39385,8 +39269,10 @@ def _served_prices_as_of(
     as printable moves in one place. In particular its truthiness on `0.0` is
     reproduced on purpose — a `0.0` leg renders `—` today, so it may not date the
     mark today, and when #6195 makes it render `0%` it regains its vote here with
-    no edit to this function. Keying on the served dict's `probability` instead
-    would read the same value one step later and duplicate that decision.
+    no edit to this function. Since #11616, the final represented probability
+    can also be withheld by local detail policy. An explicit wire null therefore
+    excludes a row before the raw-row predicate; ID-only callers retain the
+    original predicate. A genuine served zero is still a price.
 
     None when no served row both prints a price and carries a stamp (the lean
     typeahead shape omits the id, a market can have no outcomes at all, and a
@@ -39394,7 +39280,14 @@ def _served_prices_as_of(
     renders nothing on None rather than falling back to `updated_at`: an empty
     space is honest and the old pip was not.
     """
-    served_ids = {o.get("id") for o in served if o.get("id") is not None}
+    # #11616: the representation can refuse a stored quote locally, after the
+    # async refusal set was computed. An explicit wire null prints no price and
+    # must not date the footer. ID-only legacy callers retain the raw-row check.
+    served_ids = {
+        o.get("id") for o in served
+        if o.get("id") is not None
+        and ("probability" not in o or o["probability"] is not None)
+    }
     if not served_ids:
         return None
     # #6993 IS THIS DOCSTRING'S OWN DEFECT ARRIVING BY A THIRD DOOR. The section
@@ -39557,6 +39450,8 @@ def _format_futures_for_search(
     market: FuturesMarket,
     withheld: Optional[set[int]] = None,
     query_terms: Optional[list[tuple[str, str | None]]] = None,
+    *,
+    out_division_labels=None,
 ) -> dict:
     """Format a futures market for search results (answer-first, #23-normalized).
 
@@ -39573,6 +39468,7 @@ def _format_futures_for_search(
         lean=False,
         withheld=withheld,
         query_terms=query_terms,  # #8842
+        out_division_labels=out_division_labels,
     )
     # #6585: COUNT THE LEGS THE LADDER DRAWS FROM, not the rows behind it.
     #
@@ -39608,7 +39504,9 @@ def _format_futures_for_search(
     # 236) per card — measured, ~0.2 ms on a 20-card response worst case. The
     # single-pass win (filter once, hand the same list to both call sites) is
     # latency's under notice 41 and is named in #5516's remainder.
-    real_count = len(_search_surviving_legs(market))
+    real_count = len(drop_out_division_legs(
+        _search_surviving_legs(market), out_division_labels
+    ))
 
     _TIER_LABELS_SEARCH = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
     return {
