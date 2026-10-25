@@ -174,8 +174,9 @@ _AWARD_SPAN_RE = re.compile(
     + r")\b"
 )
 _AWARD_JOIN_RE = re.compile(
-    r"\s*(?:(?:award|trophy|winner)\s+)?(?:\b(?:and|or)\b|[&+])\s*"
+    r"\s*(?:(?:award|trophy|winner)\s+)?(?:\b(?:and|or)\b|[&+/])\s*"
     r"(?:(?:the|win|wins|winning)\s+)*"
+    r"(?:(?:al|nl|nba|wnba|nfl|nhl|mlb|mls)\s+)?"
 )
 
 
@@ -1286,18 +1287,18 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
             families.setdefault(fk, []).append((scope, row))
 
     result: list[dict] = []
+    # An aged-out result cannot create an edition boundary for visible rows.
+    # Remove it before season partitioning, not after the cards have split.
     buckets = [
         (season_key, fk, scope, season_label, season_rows)
         for fk, scoped_rows in families.items()
         for emitted_key, scope, rows in _scoped_buckets(fk, scoped_rows)
         for season_key, season_label, season_rows in _award_season_buckets(
-            emitted_key, fk, rows
+            emitted_key, fk, _drop_earlier_results(rows)
         )
     ]
     for emitted_key, fk, scope, season_label, rows in buckets:
-        merged = _collapse_cross_source(
-            _drop_superseded_editions(_drop_earlier_results(rows))
-        )
+        merged = _collapse_cross_source(_drop_superseded_editions(rows))
         distinct = {r["entity_key"] for r in merged if r.get("entity_key")}
         if len(distinct) < 2:
             continue
