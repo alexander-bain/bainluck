@@ -337,24 +337,61 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         }
 
         /// When the last `capture` finished drawing, on the process clock: the
-        /// image's content is fixed here, before it is encoded and written.
+        /// image's content is fixed here, after the wait and the draw, before it
+        /// is encoded and written.
         private(set) var drawnAt: UInt64 = 0
 
-        /// The final page as drawn, taken after the measured burst.
-        @discardableResult
-        func capture(to url: URL) throws -> UIImage {
+        /// The final page, taken after the measured burst: the frame one display
+        /// tick after the forced commit. `layoutIfNeeded` forces the pending
+        /// update; then, value-blind (no condition on the image, no loop, no
+        /// retry), the commit's completion and ONE display-link tick; then the
+        /// window is drawn as it stands. Drawing inside the forced update
+        /// (`afterScreenUpdates: true`) could, under load, snapshot Charts'
+        /// image-queue layers an update behind the tip layer — a picture the
+        /// screen never showed (#740: `0.3253970462539013`). One tick can still
+        /// be too few under load; that red is a result, not a reason to wait more.
+        /// `atDraw` runs straight after the draw, so what the test reads beside
+        /// the image is from the same moment.
+        func capture<T>(to url: URL, atDraw: () -> T) async throws -> (image: UIImage, atDraw: T) {
             window.layoutIfNeeded()
-            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
-                _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            await withCheckedContinuation { (committed: CheckedContinuation<Void, Never>) in
+                CATransaction.begin()
+                CATransaction.setCompletionBlock { committed.resume() }
+                CATransaction.commit()
             }
+            await DisplayTick.next()
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
+            }
+            let observed = atDraw()
             drawnAt = DispatchTime.now().uptimeNanoseconds
             try XCTUnwrap(image.pngData()).write(to: url)
-            return image
+            return (image, observed)
         }
 
         func close() {
             window.isHidden = true
             previousKeyWindow?.makeKey()
+        }
+    }
+
+    /// One display-link tick, once: `next()` returns at the first callback.
+    @MainActor
+    private final class DisplayTick: NSObject {
+        private var ticked: CheckedContinuation<Void, Never>?
+
+        static func next() async {
+            let tick = DisplayTick()
+            await withCheckedContinuation { (ticked: CheckedContinuation<Void, Never>) in
+                tick.ticked = ticked
+                CADisplayLink(target: tick, selector: #selector(fire(_:))).add(to: .main, forMode: .common)
+            }
+        }
+
+        @objc private func fire(_ link: CADisplayLink) {
+            link.invalidate()
+            ticked?.resume()
+            ticked = nil
         }
     }
 
@@ -420,7 +457,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-10090-subsecond-hosted")
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let url = dir.appendingPathComponent("final-\(quarter ? "250ms" : "1s").png")
-            try page.capture(to: url)
+            _ = try await page.capture(to: url) {}
             print("SUBSECOND-10090 capture=\(url.path)")
         }
         marks = Array(marks.prefix(measured))
@@ -594,13 +631,12 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         await waitUntil(Self.burstAfter + 1) {
             PacedStream.done && marks.contains { $0.mark.name == .modelHeadlineAdopted && $0.mark.basis == last }
         }
-        let readsBefore = client.reads
-        let heldAtCapture = vm.event
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-10090-subsecond-hosted")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("final-burst-\(final ?? "saved").png")
         let captureStart = DispatchTime.now().uptimeNanoseconds
-        let image = try page.capture(to: url)
+        // The reads and the held event are taken at the draw, after the wait.
+        let (image, (readsBefore, heldAtCapture)) = try await page.capture(to: url) { (client.reads, vm.event) }
         let writtenAt = DispatchTime.now().uptimeNanoseconds
         // The pixels go into the result bundle whatever happens (665 review R8):
         // the temp PNG dies with the simulator's app container.
