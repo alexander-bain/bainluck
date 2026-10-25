@@ -578,7 +578,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     /// drawn.
     func testHostedPageDrainsThePhonesNineFrameBurstToTheLatestHeadlineAndChart() async throws {
         try await burstCase(final: nil) { image, event in
-            let drawn = try Self.readDrawn(image, expected: Self.burstWindow)
+            let drawn = try Self.readDrawn(image, expected: Self.burstWindow, final: 0.995)
             let labels = try XCTUnwrap(event.map(LivePriceActivity.displayedLabels(in:)))
             let (home, away) = try (XCTUnwrap(labels.home), XCTUnwrap(labels.away))
             print("SUBSECOND-10090 drawn=burst-final-saved \(drawn.ends) labels=\(away)|\(home) hero=\(drawn.hero.joined(separator: "|")) \(drawn.detail)")
@@ -703,7 +703,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     /// control checks, so they are printed, not required.
     func testHostedPageDrawsTheBurstsChangedLastFrameInTheHeroAndAtTheChartEnd() async throws {
         try await burstCase(final: "0.6") { image, _ in
-            let drawn = try Self.readDrawn(image, expected: Self.burstWindow)
+            let drawn = try Self.readDrawn(image, expected: Self.burstWindow, final: 0.6)
             print("SUBSECOND-10090 drawn=burst-final-0.6 \(drawn.ends) hero=\(drawn.hero.joined(separator: "|")) \(drawn.detail)")
             XCTAssertTrue(drawn.hero.contains { $0.contains("60%") } && drawn.hero.contains { $0.contains("40%") },
                           "the hero prints the last frame: \(drawn.hero)")
@@ -940,6 +940,24 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         return nil
     }
 
+    /// On a STALE-AXIS read only (lane1b 1841Z): where the line's raw end sits on
+    /// the full window the labels fitted. MIXED when that is the height the
+    /// expected window gives `final` (the tail projected on the new window under
+    /// an old plot and axis: 0.33 for 60% on 40–100); COHERENT-STALE when it is
+    /// 0.97 or above (the whole chart from before the last frame). Printed in the
+    /// record so a red classifies itself without its pixels; it never changes
+    /// what passes or fails.
+    nonisolated static func staleClass(_ plot: PlotRead, expected: ChartProbabilityAxis9483.Window,
+                                       final: Double) -> String? {
+        guard plot.failure?.hasPrefix("STALE-AXIS:") == true, let full = plot.fullFit,
+              let last = plot.ink?.last, let tail = full.probability(last) else { return nil }
+        let projected = (final * 100 - Double(expected.lowerPercent))
+            / Double(expected.upperPercent - expected.lowerPercent)
+        let (mixed, stale) = (abs(tail - projected) <= 0.04, tail >= 0.97)
+        let name = mixed && stale ? "MIXED-OR-COHERENT-STALE" : mixed ? "MIXED" : stale ? "COHERENT-STALE" : "UNCLASSIFIED"
+        return String(format: "stale_class=%@ tail_full_p=%.3f new_window_p=%.3f", name, tail, projected)
+    }
+
     nonisolated private static func describe(_ fit: AxisFit, gutter: [GutterText]) -> String {
         gutter.map { g in
             let at = String(format: "%@@%.1f", g.text, g.y)
@@ -957,8 +975,10 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     /// rightmost drawn column read on the chart's own axis labels, matched to
     /// `expected` (#11356: a focused window, not 0–100). Only text under the
     /// chart's own header is the gutter, so a hero number at the page's left edge
-    /// is never read as a tick.
-    nonisolated private static func readDrawn(_ image: UIImage, expected: ChartProbabilityAxis9483.Window) throws -> Drawn {
+    /// is never read as a tick. `final` is the fixture's last frame, used only by
+    /// the stale-axis class.
+    nonisolated private static func readDrawn(_ image: UIImage, expected: ChartProbabilityAxis9483.Window,
+                                              final: Double) throws -> Drawn {
         let cg = try XCTUnwrap(image.cgImage)
         let (w, h) = (cg.width, cg.height)
         let request = VNRecognizeTextRequest()
@@ -982,6 +1002,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             + " expected=\(expected.lowerPercent)-\(expected.upperPercent)/\(expected.tickPercents.map(String.init).joined(separator: ","))"
             + " fit=\(line) gutter=[\(describe(plot.fit, gutter: gutter))]"
         if let full = plot.fullFit { detail += " full_fit=[\(describe(full, gutter: gutter))]" }
+        if let stale = staleClass(plot, expected: expected, final: final) { detail += " " + stale }
         detail += plot.ink.map { " ink_x=\($0.x) ink_y=\($0.first)-\($0.last)" } ?? " ink=none"
         detail += String(format: " img=%dx%d@%.0fx", w, h, image.scale)
         return Drawn(hero: texts.filter { $0.1.maxY < top.y }.map(\.0), plot: plot, detail: detail)
@@ -1062,6 +1083,23 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         let r = try read(stale, inkTo: 1834)
         XCTAssertTrue(r.failure?.hasPrefix("STALE-AXIS:") == true, r.failure ?? "passed")
         XCTAssertNil(r.end, "no end is read from a failed axis")
+    }
+
+    /// K12 (lane1b 1841Z) — the stale axis classifies its line's end on the full
+    /// fit and still fails exactly as K4: MIXED at 1834 (0.33, the 60% tail on
+    /// 40–100), COHERENT-STALE near the top, UNCLASSIFIED at 50%.
+    func testDrawnReaderK12ClassifiesAStaleAxisWithoutChangingItsFailure() throws {
+        let stale = [("100%", 100.0), ("75%", 75), ("50%", 50), ("75%", 25), ("100%", 0)]
+            .map { GutterText(text: $0.0, y: Self.fullAxisY($0.1)) }
+        for (bottom, name) in [(1834, "MIXED"), (1289, "COHERENT-STALE"), (Int(Self.fullAxisY(50)), "UNCLASSIFIED")] {
+            let r = try read(stale, inkTo: bottom)
+            XCTAssertTrue(r.failure?.hasPrefix("STALE-AXIS:") == true, r.failure ?? "passed")
+            XCTAssertNil(r.end, "no end is read from a failed axis")
+            let line = try XCTUnwrap(Self.staleClass(r, expected: Self.burstWindow, final: 0.6))
+            XCTAssertTrue(line.hasPrefix("stale_class=\(name) "), line)
+        }
+        XCTAssertNil(Self.staleClass(try read(sevenLabels, inkTo: Int(Self.gridY(60))), expected: Self.burstWindow, final: 0.6),
+                     "a passing axis has no stale class")
     }
 
     /// K5 — the retained failure as a misread: "70%" read as "50%", the rest
