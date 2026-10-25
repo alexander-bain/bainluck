@@ -4,6 +4,7 @@ SQLAlchemy database models.
 
 from datetime import date, datetime
 from typing import Optional
+from uuid import UUID
 
 from sqlalchemy import (
     DDL,
@@ -22,6 +23,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    Uuid,
     func,
     text,
 )
@@ -2450,6 +2452,42 @@ class DiscoverLabelEvalRun(Base):
     __table_args__ = (
         Index("ix_discover_label_eval_name_captured", "eval_name", "captured_at"),
         Index("ix_discover_label_eval_status_captured", "status", "captured_at"),
+    )
+
+
+class DnplAuthority(Base):
+    """One durable ordering domain; Redis is never allowed to recreate it."""
+
+    __tablename__ = "dnpl_authority"
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    protocol: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    incarnation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    namespace: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    operation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    state: Mapped[str] = mapped_column(String(9), nullable=False)
+    redis_run_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    redis_master_replid: Mapped[str] = mapped_column(String(40), nullable=False)
+    policy_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("id = 1 AND protocol = 3", name="dnpl_authority_singleton"),
+        CheckConstraint(
+            "incarnation BETWEEN 0 AND 9007199254740991", name="dnpl_authority_range"
+        ),
+        CheckConstraint(
+            "state IN ('preparing', 'ready', 'disabled')", name="dnpl_authority_state"
+        ),
+        CheckConstraint(
+            "(incarnation = 0 AND state = 'disabled' AND "
+            "namespace = '00000000-0000-0000-0000-000000000000'::uuid AND "
+            "operation_id = '00000000-0000-0000-0000-000000000000'::uuid AND "
+            "redis_run_id = '' AND redis_master_replid = '' AND policy_fingerprint = '') OR "
+            "(incarnation > 0 AND namespace <> '00000000-0000-0000-0000-000000000000'::uuid AND "
+            "operation_id <> '00000000-0000-0000-0000-000000000000'::uuid AND "
+            "redis_run_id ~ '^[0-9a-f]{40}$' AND redis_master_replid ~ '^[0-9a-f]{40}$' AND "
+            "length(policy_fingerprint) BETWEEN 1 AND 128)",
+            name="dnpl_authority_identity",
+        ),
     )
 
 
