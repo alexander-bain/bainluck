@@ -31,6 +31,19 @@ export function isPlayerDestinationMarket(marketName: string | null | undefined)
   return PLAYER_DESTINATION_RE.test(marketName ?? "");
 }
 
+function isDeclaredAward(future: TeamFutureItem): boolean {
+  // #9858: an award-only team response made the finalist's 80% (or the
+  // joint award's 1%) read as CHAMPIONSHIP, and charted that award as the
+  // team's season. Honor the served classification on this shared picker;
+  // Prop Races and standalone award links keep their original rows/prices.
+  // This is a refusal of declared award inventory, not title-based proof
+  // that every other market is a championship. Unknown classifications
+  // retain their existing behavior and still need the semantic contract.
+  const category = (future.category ?? "").trim().toLowerCase();
+  return (future.display_tier ?? future.market_tier) === 3 ||
+    category === "award" || category === "awards";
+}
+
 /**
  * #11493 — the grid's verdict a path step or futures row carries, or null.
  *
@@ -119,6 +132,7 @@ export function pickJourneyFuture(
       f.market_id != null &&
       f.outcome_id != null &&
       f.is_winner !== true &&
+      !isDeclaredAward(f) &&
       !isPlayerDestinationMarket(f.market_name),
   );
   if (eligible.length === 0) return null;
