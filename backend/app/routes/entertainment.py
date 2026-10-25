@@ -330,6 +330,11 @@ def _market_row(
         # it to avoid ranking nested dates as competing artists. Preserve that
         # identity on collapse, but never infer it from a truncated mixed board.
         "ladder": priced_rungs > 0,
+        # Explicit reader refusal: headline=None also means an ordinary
+        # non-ladder, so it cannot prohibit the client's numeric fallback.
+        # Legacy numbers retain decoder/ranking compatibility; updated readers
+        # must not render them when this flag is true. No stored price changes.
+        **({"ladder_treatment_refused": True} if collapsed else {}),
         "q": market.name,
         # #6255 — `priced[0]`, not `outcomes[0]`. Both name the leader on every
         # ladder that has one priced rung above zero, but they part when every
@@ -402,7 +407,7 @@ def _market_row(
         # staleness gate cannot come to disagree with the leader the card shows.
         "hook": (
             None
-            if is_hook_stale(
+            if collapsed or is_hook_stale(
                 hook_description=market.hook_description,
                 hook_generated_at=getattr(market, "hook_generated_at", None),
                 hook_leader_at_generation=getattr(
@@ -520,6 +525,11 @@ def _group_threshold_markets(markets: list[dict]) -> tuple[list[dict], list[dict
     ungrouped = []
 
     for row in markets:
+        if row.get("ladder_treatment_refused"):
+            # A heatmap cell would lose the refusal and resurrect row['prob'].
+            # Keep the complete linked row available to the ordinary cards.
+            ungrouped.append(row)
+            continue
         key = _normalize_group_key(row["q"])
         if key:
             by_entity[key].append(row)
