@@ -72,15 +72,21 @@ nonisolated func futuresDetailRenderedPercents(_ outcomes: [FuturesOutcome]) -> 
 /// so the highest-priced one is only the most one-sided.
 ///
 /// The server names the match-winner leg as `lead_outcome_id`. It leads while
-/// it is on the board with a price and the market is not resolved: a settled
-/// hero is decided by the grade, not by a pre-game pointer. Otherwise, and on
-/// every board that serves no lead, this is the highest-priced outcome exactly
-/// as before.
+/// it is on the board with a supported price/result and the market is not resolved.
+/// Otherwise a supported winner leads, in served order; when no winner is
+/// supported the highest-priced fallback remains unchanged.
 nonisolated func futuresDetailHeroOutcome(_ market: FuturesMarketDetail) -> FuturesOutcome? {
     if let leadId = market.leadOutcomeId, market.status != "resolved",
        let lead = market.outcomes.first(where: { $0.id == leadId }),
-       lead.probability != nil {
+       FuturesDetailRowValue.of(lead, marketStatus: market.status, marketSource: market.source) != .none {
         return lead
+    }
+    // #11616: a supported winner remains the answer after its price is withheld.
+    // Keep served order when several outcomes won; do not imply exclusivity.
+    if let winner = market.outcomes.first(where: {
+        FuturesDetailRowValue.of($0, marketStatus: market.status, marketSource: market.source) == .verdict(.won)
+    }) {
+        return winner
     }
     return market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
 }
@@ -97,17 +103,18 @@ func futuresDetailShareMessage(_ market: FuturesMarketDetail?) -> String {
         return "\(market.name) on Bain Luck"
     }
     // The hero's own choice, so a share never quotes a leg the page does not lead with (#8892).
-    let leader = futuresDetailHeroOutcome(market)
-    // #698: a settled leg whose result is unknown is not quoted as a live chance.
-    if let leader, let prob = leader.probability, !SettledResultDisplay698.isUnknown(leader, in: market) {
-        // The sentence quotes the same integer the hero and the leader row
-        // print. Rounding it here again is how a share read "60%" off a page
-        // that said 59% — and the share is the copy that leaves the app.
+    guard let leader = futuresDetailHeroOutcome(market) else { return "\(market.name) on Bain Luck" }
+    switch FuturesDetailRowValue.of(leader, marketStatus: market.status, marketSource: market.source) {
+    case .verdict(let verdict):
+        return "\(leader.name): \(verdict.label) — \(market.name) on Bain Luck"
+    case .price(let prob):
+        // The same full-field integer and boundary label as the hero and rows.
         let percent = futuresDetailRenderedPercents(market.outcomes)[leader.id]
         let label = futuresProbabilityLabel(prob, renderedPercent: percent)
         return "\(leader.name) at \(label) — \(market.name) on Bain Luck"
+    case .resultUnknown, .none:
+        return "\(market.name) on Bain Luck"
     }
-    return "\(market.name) on Bain Luck"
 }
 
 // MARK: - View
@@ -275,8 +282,11 @@ struct FuturesDetailView: View {
         // One decision for the whole market, shared with the rows below and the
         // share sentence above (#8097).
         let heroPercent = leader.flatMap { futuresDetailRenderedPercents(market.outcomes)[$0.id] }
-        // #698: a settled hero whose result is unknown prints no price as if live.
-        let heroResultUnknown = leader.map { SettledResultDisplay698.isUnknown($0, in: market) } ?? false
+        // #11616: hero, rows and search consume one result decision, with no
+        // price precondition for a supported result or explicit unknown.
+        let heroValue: FuturesDetailRowValue = leader.map {
+            FuturesDetailRowValue.of($0, marketStatus: market.status, marketSource: market.source)
+        } ?? .none
 
         // #7074, the second instance. The Discover card had this exact shape — a
         // backdrop pinned to a height, a sibling overlay free to exceed it, and a
@@ -328,41 +338,41 @@ struct FuturesDetailView: View {
 
             Spacer(minLength: 16)
 
-            // Probability + movement
-            if heroResultUnknown {
-                Text("Result unknown")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
-            } else if let leader, let prob = leader.probability {
-                HStack(alignment: .bottom, spacing: 10) {
-                    // #5899: the 52pt figure said `0%` for a leader the venue
-                    // prices at 0.05%, three scrolls above `<1%` on every
-                    // other row of the same market.
-                    Text(futuresProbabilityLabel(prob, renderedPercent: heroPercent))
-                        .font(.system(size: 52, weight: .black).monospacedDigit())
+            if let leader {
+                switch heroValue {
+                case .verdict(let verdict):
+                    Text(verdict.label)
+                        .font(.system(size: 52, weight: .black))
                         .minimumScaleFactor(0.76)
                         .foregroundStyle(.white)
                         .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
+                case .resultUnknown:
+                    Text("Result unknown")
+                        .font(.system(size: 28, weight: .bold))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
+                case .price(let prob):
+                    HStack(alignment: .bottom, spacing: 10) {
+                        Text(futuresProbabilityLabel(prob, renderedPercent: heroPercent))
+                            .font(.system(size: 52, weight: .black).monospacedDigit())
+                            .minimumScaleFactor(0.76)
+                            .foregroundStyle(.white)
+                            .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
 
-                    detailMovementBadge(leader.probabilityChange24h)
-                        .padding(.bottom, 8)
+                        detailMovementBadge(leader.probabilityChange24h)
+                            .padding(.bottom, 8)
+                    }
+                case .none:
+                    EmptyView()
                 }
 
-                Text(leader.name)
-                    .font(.headline.weight(.bold))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .lineLimit(3)
-                    .minimumScaleFactor(0.92)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if SettledResultDisplay698.heroWearsWinnerBadge(leader, in: market) {
-                    Text("Winner")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(DS.emerald.opacity(0.6), in: Capsule())
+                if heroValue != .none {
+                    Text(leader.name)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.92)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
