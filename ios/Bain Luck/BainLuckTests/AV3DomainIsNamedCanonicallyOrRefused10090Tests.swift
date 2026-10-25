@@ -36,7 +36,10 @@ final class AV3DomainIsNamedCanonicallyOrRefused10090Tests: XCTestCase {
                     "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"] {
             XCTAssertFalse(PreviewAuthorityV3.isCanonicalUUID(bad), bad)
         }
-        XCTAssertNil(PreviewAuthorityV3(incarnation: "1", namespace: one.uppercased()))
+        // A namespace with letters, so uppercasing it changes it.
+        let lettered = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        XCTAssertNotNil(PreviewAuthorityV3(incarnation: "1", namespace: lettered))
+        XCTAssertNil(PreviewAuthorityV3(incarnation: "1", namespace: lettered.uppercased()))
     }
 
     func testIncarnationOrdersAndTheNamespaceOnlyGuardsEquality() throws {
