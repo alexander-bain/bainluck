@@ -368,6 +368,16 @@ def scan_touch_stamp_writes(
         tree = ast.parse(text)
         lines = text.splitlines()
         skip = _docstring_lines(tree)
+        # A parenthesized mapping value can span lines. Read its complete
+        # expression rather than treating the opening '(' as an unknown stamp.
+        # Unknown expressions still fail; multiline clocks remain writers.
+        mapping_values = {
+            key.lineno: ast.unparse(value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Dict)
+            for key, value in zip(node.keys, node.values)
+            if isinstance(key, ast.Constant) and key.value == COLUMN
+        }
 
         for number, line in enumerate(lines, start=1):
             if number in skip or COLUMN not in line:
@@ -384,6 +394,8 @@ def scan_touch_stamp_writes(
                 continue
 
             value = _normalise(match.group("v"))
+            if kind == "mapping" and value == "(" and number in mapping_values:
+                value = mapping_values[number]
             if _READ_VALUE.search(value):
                 continue
             if value not in _CLOCK_VALUES:
@@ -629,6 +641,46 @@ def _synthetic(tmp_path: pathlib.Path, name: str, body: str) -> pathlib.Path:
     path = tmp_path / name
     path.write_text(body)
     return path
+
+
+@pytest.mark.parametrize(
+    "expression,expected",
+    [
+        ("row.last_updated.isoformat() if row.last_updated else None", []),
+        ("now", [NON_PRICE]),
+    ],
+)
+def test_multiline_mapping_reads_and_writes_remain_distinct(
+    tmp_path, expression, expected
+):
+    path = _synthetic(
+        tmp_path,
+        "multiline.py",
+        (
+            "def render(row, now):\n"
+            "    return {\n"
+            '        "last_updated": (\n'
+            f"            {expression}\n"
+            "        ),\n"
+            "    }\n"
+        ),
+    )
+    assert [site.klass for site in scan_touch_stamp_writes([path])] == expected
+
+
+def test_an_unknown_multiline_mapping_still_fails_closed(tmp_path):
+    path = _synthetic(
+        tmp_path,
+        "unknown.py",
+        (
+            "def render():\n"
+            '    return {"last_updated": (\n'
+            "        unknown_clock()\n"
+            "    )}\n"
+        ),
+    )
+    with pytest.raises(AssertionError, match="value this scan cannot read"):
+        scan_touch_stamp_writes([path])
 
 
 def test_a_bare_touch_added_to_a_price_poll_is_caught(tmp_path):
