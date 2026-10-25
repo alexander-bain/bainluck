@@ -260,8 +260,14 @@ async def started(rig, *, overlay=True):
     return c, v0
 
 
-async def test_a_held_kalshi_row_stamps_the_received_quote_and_a_restart_cannot_undo_it(rig):
+async def test_a_held_kalshi_row_stamps_the_received_quote_and_a_restart_cannot_undo_it(rig, monkeypatch):
     c, v0 = await started(rig)
+    # This case tests a quote DURING the cooldown, not database-machine speed.
+    # Control the shared cadence/retry clock; SQL locks, clock samples, commit
+    # and timeouts remain real. Advance explicitly for the after-deadline arm.
+    from app.tasks import live_blend_refresh
+    clock = [live_blend_refresh._mono()]
+    monkeypatch.setattr(live_blend_refresh, "_mono", lambda: clock[0])
     held = c.refresher.held_quotes
     conn, tx = await hold_row(rig, HOME)
     try:
@@ -295,7 +301,7 @@ async def test_a_held_kalshi_row_stamps_the_received_quote_and_a_restart_cannot_
         await conn.close()
 
     # Released: past the cooldown the ordinary write lands the newest price.
-    c.prices.lock_retry_until.clear()
+    clock[0] = c.prices.lock_retry_until[HOME] + 0.01
     assert await c.flush() is True
     price, final = await stored(rig)
     assert price == 0.395 and final == v2
@@ -395,3 +401,28 @@ async def test_parent_stamps_nothing_while_the_kalshi_row_is_held(rig):
     assert await c.flush() is True
     assert (await stored(rig))[0] == 0.375
     c.close()
+
+
+async def test_successful_price_returning_supplies_bound_without_another_clock_read(rig):
+    c, v0 = await started(rig)
+    held = c.refresher.held_quotes
+    old_bound = held._database_bound
+
+    async def redundant_read(_sessions):
+        pytest.fail("committed RETURNING clock must replace the separate clock read")
+
+    held.sample_database_clock = redundant_read
+    try:
+        c.accept(HOME, 0.395)
+        accepted = c.ns["input_marks"][HOME]
+        assert await c.flush() is True
+        async with rig.engine.connect() as conn:
+            updated = await conn.scalar(text(
+                "SELECT last_updated FROM futures_outcomes WHERE id = :id"
+            ), {"id": HOME})
+        assert held._database_bound > updated.timestamp()
+        assert held.bound_for(accepted) == old_bound
+        c.accept(HOME, 0.375)
+        assert held.bound_for(c.ns["input_marks"][HOME]) == held._database_bound
+    finally:
+        c.close()

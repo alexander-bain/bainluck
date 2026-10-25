@@ -2002,6 +2002,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 written_outcome_ids: list[int] = []
                 written_observations: dict = {}
                 primary_observations: dict = {}
+                phase_clock = None
+                clock_ticket = (
+                    held_quotes.begin_write_clock()
+                    if held_quotes is not None and not final_drain else None
+                )
                 if (
                     beside is None and live_event_ids and not final_drain
                 ):
@@ -2145,6 +2150,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                 # #9526).
                                 for row in result.all():
                                     written_outcome_ids.append(row.id)
+                                    returned_clock = getattr(row, "database_clock", None)
+                                    if returned_clock is not None:
+                                        phase_clock = (returned_clock if phase_clock is None
+                                                       else max(phase_clock, returned_clock))
                                     primary_observations[row.id] = row.last_updated
                                     if exact_trace is not None:
                                         with contextlib.suppress(Exception):
@@ -2322,6 +2331,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     prices.short_probe_refused.discard(oid)
                 unfinished_price_ids.difference_update(phase)
                 registered = queue_committed(index, phase, written_outcome_ids)
+                # The enclosing session exited normally: publish its returned
+                # DB time before another await, never before COMMIT or on failure.
+                price_clock_ready = (
+                    held_quotes.publish_write_clock(clock_ticket, phase_clock)
+                    if clock_ticket is not None else False
+                )
 
                 if exact_trace is not None:
                     with contextlib.suppress(Exception):
@@ -2337,9 +2352,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 await end_beside()
 
                 clock_after_delivery = (
-                    bool(written_outcome_ids) and not final_drain and held_quotes is not None
+                    bool(written_outcome_ids) and not final_drain
+                    and held_quotes is not None and not price_clock_ready
                 )
-                if not final_drain and held_quotes is not None and not clock_after_delivery:
+                if (not final_drain and held_quotes is not None
+                        and not clock_after_delivery and not price_clock_ready):
                     # A committed write advanced last_updated: sample AFTER it,
                     # for future inputs only.
                     await held_quotes.sample_database_clock(get_task_session)
