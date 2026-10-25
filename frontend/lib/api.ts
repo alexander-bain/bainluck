@@ -639,6 +639,7 @@ export interface TeamSeasonAnswer {
 
 /** Lean outcome shape carried by typeahead futures suggestions (#993). */
 export interface TypeaheadOutcome {
+  rendered_percent?: number | null;
   name: string;
   probability: number | null;
   movement: number | null;

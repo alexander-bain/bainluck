@@ -1381,7 +1381,7 @@ struct SearchView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    searchFuturesValue(leader.rowValue(in: market), font: .subheadline, priceWeight: .semibold)
+                    searchFuturesValue(leader.rowValue(in: market), font: .subheadline, priceWeight: .semibold, renderedPercent: leader.renderedPercent)
                 }
                 .layoutPriority(1)
             } else if let count = market.outcomeCount {
@@ -1443,7 +1443,7 @@ struct SearchView: View {
                     Text(top.name)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    searchFuturesValue(top.rowValue(in: market), font: .caption, priceWeight: .medium)
+                    searchFuturesValue(top.rowValue(in: market), font: .caption, priceWeight: .medium, renderedPercent: top.renderedPercent)
                 }
             }
         }
@@ -1453,14 +1453,14 @@ struct SearchView: View {
     /// #11616: both search doors consume Market Details' result decision. A
     /// supported result needs no price, and unknown never falls through to Lost.
     @ViewBuilder
-    private func searchFuturesValue(_ value: FuturesDetailRowValue, font: Font, priceWeight: Font.Weight) -> some View {
+    private func searchFuturesValue(_ value: FuturesDetailRowValue, font: Font, priceWeight: Font.Weight, renderedPercent: Int?) -> some View {
         switch value {
         case .verdict(let verdict):
             searchVerdictText(verdict, font: font)
         case .resultUnknown:
             Text("Result unknown").font(font).foregroundStyle(.secondary)
         case .price(let probability):
-            Text(formatProbability(probability))
+            Text(futuresProbabilityLabel(probability, renderedPercent: renderedPercent))
                 .font(font)
                 .fontWeight(priceWeight)
                 .monospacedDigit()

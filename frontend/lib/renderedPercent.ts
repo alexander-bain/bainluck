@@ -266,6 +266,21 @@ export function renderedOutcomeRowPercents(
   return renderedDuelPercents(values[0], values[1]);
 }
 
+/** #11616: prefer the server's full-field integers over a selected-row pair.
+ * Legacy payloads keep their existing pair behavior. If any integer is served,
+ * an absent/invalid sibling value falls back to scalar formatting, never a
+ * second pair decision over the selected subset. */
+export function representedOutcomeRowPercents(
+  outcomes: ReadonlyArray<{ probability: number | null; rendered_percent?: number | null }>,
+): Array<number | null> {
+  const valid = (value: number | null | undefined): value is number =>
+    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value);
+  if (!outcomes.some(row => valid(row.rendered_percent))) {
+    return renderedOutcomeRowPercents(outcomes.map(row => row.probability));
+  }
+  return outcomes.map(row => valid(row.rendered_percent) ? row.rendered_percent : null);
+}
+
 // ── A SETTLED ZERO IS NOT ONE OF THE TWO (#7796) ─────────────────────────────
 //
 // #5961 moved the pair rule onto the rows a reader is actually shown, which is

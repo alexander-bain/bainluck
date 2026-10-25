@@ -316,6 +316,8 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
     let probability: Double?
+    /// #11616: server integer from the full represented field, before selection.
+    @LenientDecode var renderedPercent: Int? = nil
     let americanOdds: Int?
     let rank: Int?
     /// `rank_change_24h` / `probability_change_24h`. See `TolerantNumeric`.
@@ -341,7 +343,7 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     @LenientDecode var settlementDisplay: SettlementDisplay698? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, probability, americanOdds, rank
+        case id, name, probability, renderedPercent, americanOdds, rank
         case rankChange24h = "rankChange24H"
         case probabilityChange24h = "probabilityChange24H"
         case openingProbability, openingAmericanOdds, isWinner, resolutionSource, lastUpdated

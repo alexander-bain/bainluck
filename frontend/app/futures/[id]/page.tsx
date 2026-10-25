@@ -43,7 +43,7 @@ import {
   type FuturesRangeKey,
 } from "@/lib/futuresHistoryRange";
 import { archiveWidenedRange, historyRangeDataAttributes, historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
-import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
+import { renderedOutcomeRowPercents, representedOutcomeRowPercents } from "@/lib/renderedPercent";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -527,7 +527,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // sides of one question, exactly as `EventCard` treats its `opened` pair.
   const renderedById = useMemo(() => {
     const outs = market?.outcomes ?? [];
-    const current = renderedOutcomeRowPercents(outs.map((o) => o.probability));
+    const current = representedOutcomeRowPercents(outs);
     // #8313: a side-swapped opening is withheld from the pair, not paired with its sibling.
     const opening = renderedOutcomeRowPercents(outs.map((o) => readableOpeningProbability(o)));
     return new Map(

@@ -38270,6 +38270,7 @@ def _build_search_top_outcomes(
         item = {
             "name": name,
             "probability": row["probability"],
+            "rendered_percent": row["rendered_percent"],
             "movement": row["probability_change_24h"],
             "is_winner": row["is_winner"],
             "resolution_source": row["resolution_source"],

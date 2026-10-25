@@ -397,7 +397,7 @@ class TestBuildTopOutcomes:
         out = _build_search_top_outcomes(self._market(), limit=3, lean=True)
         assert set(out[0].keys()) == {
             "name", "probability", "movement", "is_winner", "resolution_source",
-            "last_updated", "price_changed_at",
+            "last_updated", "price_changed_at", "rendered_percent",
         }
 
     def test_full_shape_has_odds_rank(self):

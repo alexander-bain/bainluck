@@ -41,6 +41,13 @@ private enum FuturesSortField: String, CaseIterable {
 /// Ties are broken by id so the headline is stable across reloads rather than
 /// left to `sorted(by:)`, which is not guaranteed stable.
 nonisolated func futuresDetailRenderedPercents(_ outcomes: [FuturesOutcome]) -> [Int: Int] {
+    // A served field decision survives row ordering and partial selections.
+    // Legacy payloads with no integers retain the existing local pair rule.
+    if outcomes.contains(where: { $0.renderedPercent != nil }) {
+        return Dictionary(uniqueKeysWithValues: outcomes.compactMap { outcome in
+            outcome.renderedPercent.map { (outcome.id, $0) }
+        })
+    }
     let headlineOrder = outcomes.sorted { a, b in
         let lhs = a.probability ?? -1
         let rhs = b.probability ?? -1
@@ -97,9 +104,8 @@ func futuresDetailShareMessage(_ market: FuturesMarketDetail?) -> String {
         // print. Rounding it here again is how a share read "60%" off a page
         // that said 59% — and the share is the copy that leaves the app.
         let percent = futuresDetailRenderedPercents(market.outcomes)[leader.id]
-            ?? renderedPercent(prob)
-            ?? Int((prob * 100).rounded())
-        return "\(leader.name) at \(percent)% — \(market.name) on Bain Luck"
+        let label = futuresProbabilityLabel(prob, renderedPercent: percent)
+        return "\(leader.name) at \(label) — \(market.name) on Bain Luck"
     }
     return "\(market.name) on Bain Luck"
 }
@@ -333,7 +339,7 @@ struct FuturesDetailView: View {
                     // #5899: the 52pt figure said `0%` for a leader the venue
                     // prices at 0.05%, three scrolls above `<1%` on every
                     // other row of the same market.
-                    Text("\(percentNumber(prob * 100, renderedPercent: heroPercent))%")
+                    Text(futuresProbabilityLabel(prob, renderedPercent: heroPercent))
                         .font(.system(size: 52, weight: .black).monospacedDigit())
                         .minimumScaleFactor(0.76)
                         .foregroundStyle(.white)
@@ -849,7 +855,7 @@ struct FuturesDetailView: View {
                             if let opening = FuturesReadableOpening8313.of(outcome), let current = outcome.probability {
                                 let diff = current - opening
                                 if abs(diff) >= 0.005 {
-                                    Text("from \(formatProbability(opening))")
+                                    Text("from \(futuresProbabilityLabel(opening))")
                                         .font(.system(size: 11, design: .monospaced))
                                         .foregroundStyle(DS.textMuted)
                                 }
@@ -874,10 +880,10 @@ struct FuturesDetailView: View {
                             value: prob * 100,
                             size: 28,
                             color: DS.probColor(prob * 100),
-                            renderedPercent: percent
+                            formattedNumber: futuresProbabilityNumber(prob, renderedPercent: percent)
                         )
                     } else {
-                        Text(formatProbability(prob, renderedPercent: percent))
+                        Text(futuresProbabilityLabel(prob, renderedPercent: percent))
                             .font(.system(size: 18, weight: .semibold, design: .monospaced))
                             .foregroundStyle(DS.probColor(probPct))
                     }
@@ -888,7 +894,7 @@ struct FuturesDetailView: View {
                             .font(.system(size: 15, weight: .medium))
                             .foregroundStyle(DS.textSecondary)
                         if let lastRecorded {
-                            Text("Last recorded \(formatProbability(lastRecorded, renderedPercent: percent))")
+                            Text("Last recorded \(futuresProbabilityLabel(lastRecorded, renderedPercent: percent))")
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(DS.textMuted)
                         }

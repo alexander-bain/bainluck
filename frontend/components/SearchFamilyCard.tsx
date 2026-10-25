@@ -182,7 +182,7 @@ function AnswerRow({
             <span className="flex-shrink-0 text-text-muted">Result unknown</span>
           ) : ld.probability != null ? (
             <span className="flex-shrink-0 text-text-primary font-medium">
-              {formatProbabilityPercent(ld.probability)}
+              {formatProbabilityPercent(ld.probability, { rendered: ld.rendered_percent })}
             </span>
           ) : null}
           {arrow && (

@@ -171,7 +171,7 @@ export function futuresAnswer(s: TypeaheadSuggestion): FuturesAnswer | null {
       answers.push({
         ...outcome,
         displayKind: "probability",
-        displayValue: formatProbabilityPercent(outcome.probability),
+        displayValue: formatProbabilityPercent(outcome.probability, { rendered: outcome.rendered_percent }),
       });
     }
   }

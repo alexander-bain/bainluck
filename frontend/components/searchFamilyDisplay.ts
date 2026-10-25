@@ -62,7 +62,7 @@ export function leaderLabel(market: FuturesMarket): string | null {
     const labels = { won: "Won", lost: "Lost", out: "Out", unknown: "Result unknown" };
     return `${ld.name} ${labels[result]}`;
   }
-  return ld.probability == null ? null : `${ld.name} ${formatProbabilityPercent(ld.probability)}`;
+  return ld.probability == null ? null : `${ld.name} ${formatProbabilityPercent(ld.probability, { rendered: ld.rendered_percent })}`;
 }
 
 /** Movement arrow only when |Δ24h| ≥ 2pts (0.02 on the 0-1 scale). */

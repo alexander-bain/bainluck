@@ -191,11 +191,11 @@ final class FuturesDetailSumsTo100_8097Tests: XCTestCase {
         )
 
         XCTAssertTrue(
-            source.contains("percentNumber(prob * 100, renderedPercent: heroPercent)"),
+            source.contains("futuresProbabilityLabel(prob, renderedPercent: heroPercent)"),
             "the 52pt hero numeral must print the market's decision, not its own rounding"
         )
         XCTAssertTrue(
-            source.contains("formatProbability(prob, renderedPercent: percent)"),
+            source.contains("futuresProbabilityLabel(prob, renderedPercent: percent)"),
             "a non-leader row must print the market's decision"
         )
         // BOTH row renderers, counted rather than merely found.
@@ -209,11 +209,11 @@ final class FuturesDetailSumsTo100_8097Tests: XCTestCase {
         // the non-leader's `formatProbability`, and #698's settled-unknown
         // "Last recorded N%" line, which prints the same decision.
         XCTAssertTrue(
-            source.contains("Last recorded \\(formatProbability(lastRecorded, renderedPercent: percent))"),
+            source.contains("Last recorded \\(futuresProbabilityLabel(lastRecorded, renderedPercent: percent))"),
             "#698: a settled row's last recorded price must print the market's decision"
         )
         XCTAssertEqual(
-            source.components(separatedBy: "renderedPercent: percent").count - 1, 3,
+            source.components(separatedBy: "switch value {").last!.components(separatedBy: "renderedPercent: percent").count - 1, 3,
             "every row renderer must carry the decision — the leader's ProbabilityNumber, every other row's formatProbability, and #698's Last recorded line"
         )
 

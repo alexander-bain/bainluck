@@ -182,7 +182,9 @@ def test_missing_polymarket_settlement_price_does_not_invent_a_result():
     m.status = "resolved"
     assert events._search_supported_result_ids(m) == set()
     detail = futures._format_market_detail(m)
-    assert all(row["settlement_display"]["verdict"] == "unknown" for row in detail["outcomes"])
+    assert all(
+        row["settlement_display"]["verdict"] == "unknown" for row in detail["outcomes"]
+    )
     assert events._futures_card_has_no_answer(m)
 
 
@@ -191,7 +193,9 @@ def test_query_pins_a_supported_result_without_inventing_price_rank():
     for index in (0, 5):
         m.outcomes[index].is_winner = True
         m.outcomes[index].resolution_source = "api_settlement"
-    selected = events._build_search_top_outcomes(m, limit=1, query_terms=[("jalen", None)])
+    selected = events._build_search_top_outcomes(
+        m, limit=1, query_terms=[("jalen", None)]
+    )
     assert len(selected) == 1
     assert selected[0]["name"] == "Jalen Brunson"
     assert selected[0]["query_match"] is True
@@ -260,3 +264,49 @@ def test_detail_policy_retains_full_field_rounding_and_withholding(observed):
         None,
     ]
     assert observed["shared_withholding"]["prices_withheld"] == 1
+
+
+@pytest.mark.parametrize(
+    "exclusive,prices,expected",
+    [
+        (True, [0.605, 0.395], [61, 39]),
+        (True, [0.395, 0.605], [39, 61]),
+        (False, [0.605, 0.395], [61, 40]),
+        (False, [0.605, 0.395, 0.2], [61, 40, 20]),
+        (True, [0.605, 0.395, None], [61, 40, None]),
+        (True, [0.0, 0.999], [0, 100]),
+    ],
+)
+def test_full_field_integer_decision_survives_every_search_limit(
+    exclusive, prices, expected
+):
+    m = market(prices, exclusive=exclusive)
+    payload = outputs(m)
+    by_name = {name: integer for name, integer in zip(NAMES, expected)}
+    assert {
+        row["name"]: row["rendered_percent"] for row in payload["detail"]
+    } == by_name
+    for lean in [False, True]:
+        for limit in [1, 2, 3, 5]:
+            rows = events._build_search_top_outcomes(m, limit=limit, lean=lean)
+            assert rows
+            assert all(row["rendered_percent"] == by_name[row["name"]] for row in rows)
+
+
+def test_query_pinned_nonleader_keeps_full_field_integer():
+    m = market([0.605, 0.395, 0.2], exclusive=False)
+    rows = events._build_search_top_outcomes(
+        m, limit=2, lean=False, query_terms=[("nikola", None), ("jokic", None)]
+    )
+    assert any(row.get("query_match") for row in rows)
+    expected = dict(zip(NAMES, [61, 40, 20]))
+    assert all(row["rendered_percent"] == expected[row["name"]] for row in rows)
+
+
+def test_withheld_probability_has_no_integer_even_when_result_survives():
+    payload = outputs(market([0.995, 0.005], settled=True), withheld={1})
+    for surface in ["detail", "search", "typeahead"]:
+        winner = next(row for row in payload[surface] if row["name"] == NAMES[0])
+        assert winner["probability"] is None
+        assert winner["rendered_percent"] is None
+        assert winner["is_winner"] is True

@@ -18,7 +18,7 @@ import { Card } from "@/components/ui/card";
 import { fadeIn, staggerContainer, staggerItem } from "@/lib/animations";
 import { outcomeDisplayNames } from "@/lib/outcomeLabels";
 import { answerRung, inThresholdOrder, ladderSlice, leaderFirstSlice } from "@/lib/discover/leaderOrder";
-import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
+import { representedOutcomeRowPercents } from "@/lib/renderedPercent";
 import { renderedPricesAsOf } from "@/lib/futuresCardPriceAge";
 // #5552 — the SAME predicate `components/futures/OutcomeRow` uses, imported rather
 // than restated. Its docstring records that restating `isResolved && is_winner === X`
@@ -149,7 +149,7 @@ export default function FuturesCard({
   // the pair once. Keyed over the WHOLE shipped set rather than the sliced five,
   // for the same reason `outcomeLabels` is: two rows out of a longer field are
   // not a duel, and `slice` must not be able to manufacture one.
-  const rowPercents = renderedOutcomeRowPercents(outcomes.map((o) => o.probability));
+  const rowPercents = representedOutcomeRowPercents(outcomes);
   const renderedById = new Map(outcomes.map((o, i) => [o.id, rowPercents[i] ?? null]));
   // #4416: the rank badge below is swapped for a Wikipedia avatar on the eight
   // non-sports categories, on the premise that a non-sports outcome names an

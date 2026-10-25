@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from app.utils.graded_card import rendered_duel_percents, rendered_percent
 from app.utils.futures_liveness import leg_is_graded
 from app.utils.futures_market_snapshot import dated_movement_points
 from app.utils.futures_unsupported_price import WITHHELD_PRICE_FIELDS
@@ -267,6 +268,16 @@ def represent_futures_outcomes(
     )
     leader_pick_order(outcomes, is_winner_of=_is_graded_winner)
     assign_display_ranks(outcomes)
+    # Decide on the complete represented field, before any top-N/query pinning.
+    # A selected pair from a larger field is not a complete two-sided market.
+    # Independent/multi-winner outcomes never acquire a sum-to-one constraint.
+    prices = [row["probability"] for row in outcomes]
+    if len(prices) == 2 and getattr(market, "mutually_exclusive", True):
+        integers = rendered_duel_percents(prices[0], prices[1])
+    else:
+        integers = [rendered_percent(price) for price in prices]
+    for row, integer in zip(outcomes, integers):
+        row["rendered_percent"] = integer
     return FuturesOutcomeRepresentation(
         outcomes,
         sorted_outcomes,

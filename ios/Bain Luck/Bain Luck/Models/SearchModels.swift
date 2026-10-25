@@ -275,6 +275,8 @@ nonisolated struct SearchFuturesOutcome: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
     let probability: Double?
+    /// #11616: server integer from the full represented field, before selection.
+    @LenientDecode var renderedPercent: Int? = nil
     let americanOdds: Int?
     let rank: Int?
     let movement: Double?
