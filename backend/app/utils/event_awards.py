@@ -27,6 +27,12 @@ Honest v1 limitations (design §6 said "fast-follow", so this is deliberately th
     full-ceremony completion signal, so the parent phase stays unknown. Prices
     and resolution deadlines never announce a result or complete the ceremony.
     The placeholder is NEVER published as the ceremony date (`ceremony_end_date`).
+  * A result is announced only by an independent settlement: the venue's own
+    settled answer, never a grade inferred from the market's price, the clock or a
+    guess (`is_result_grade`). Each child serves its `result` (state, the kind of
+    evidence and the settling venue) so a withheld price crown, a retracted grade
+    and plain silence are not one state (#5349). The organizer's own winners list
+    is not read here; a venue settlement is labelled as one.
   * MatchupsRail shows the top-2 nominees per category (no "+N more"); a 10-nominee
     Best Picture shows its two frontrunners. A richer awards section is a later,
     additive frontend change.
@@ -43,15 +49,109 @@ from sqlalchemy.orm import selectinload
 
 from app.utils.futures_market_snapshot import concept_price_observed_at_iso
 
+from app.utils.resolution_authority import PRICE_DERIVED_SOURCES, is_authoritative
 from app.utils.settledness import (
     market_assigned_settled,
     settled_under_assigned_state,
 )
+from app.utils.settlement_display import RETRACTED_SOURCE
 
 # Day-of-year on which a Kalshi award market resolves when the ceremony has no
 # published date: the exchange's end-of-year backstop, not a schedule (gotcha #14)
 # or a ceremony-completion signal.
 _PLACEHOLDER_RESOLUTION_DAY = (12, 31)
+
+# #5349: a category's served `result`. The values are contract strings read by
+# tests and later readers, so they are named once here.
+RESULT_ANNOUNCED = "announced"  # an independent settlement names its winner(s)
+RESULT_CLOSED = "closed"  # its own assigned state is settled; no result evidence
+RESULT_PENDING = "pending"  # still open; no result evidence
+EVIDENCE_VENUE_SETTLEMENT = "venue_settlement"
+EVIDENCE_UNCONFIRMED_GRADE = "unconfirmed_grade"  # a winner flag we do not count
+EVIDENCE_RETRACTED_GRADE = "retracted_grade"  # grades withdrawn as unknowable
+EVIDENCE_NONE = "none"
+
+
+# Known settling venues for each independent authoritative resolution_source.
+# A listing provider on `market.source` (or a provider that disagrees with the
+# settlement source) is never presented as the settling authority (#5349).
+_SETTLING_VENUES_BY_RESOLUTION_SOURCE: dict[str, frozenset[str]] = {
+    "api_settlement": frozenset({"kalshi", "polymarket"}),
+    "clob_authoritative": frozenset({"polymarket"}),
+    "clob_field_repair": frozenset({"polymarket"}),
+    "clob_never_graded": frozenset({"polymarket"}),
+    "clob_ordinal": frozenset({"polymarket"}),
+}
+
+
+def _has_outcome_name(outcome) -> bool:
+    """True when `outcome.name` is a non-blank string a reader can display."""
+    name = getattr(outcome, "name", None)
+    return isinstance(name, str) and bool(name.strip())
+
+
+def is_result_grade(outcome) -> bool:
+    """True when this outcome's stored grade may name an award result (#5349).
+
+    Only an independent settlement on a named outcome qualifies: the venue's own
+    settled answer (`resolution_authority.is_authoritative`, tier 3) that was not
+    inferred from the market's own price (`PRICE_DERIVED_SOURCES`). A price crown
+    (`clean_resolution`), a clock rule (`date_passed`), a guess, a retraction, a
+    missing source, or a missing/blank outcome name is a stored flag, not an
+    announcement. A row missing any required attribute fails closed."""
+    if not _has_outcome_name(outcome):
+        return False
+    if not bool(getattr(outcome, "is_winner", False)):
+        return False
+    source = getattr(outcome, "resolution_source", None)
+    return is_authoritative(source) and source not in PRICE_DERIVED_SOURCES
+
+
+def _settling_venue(market, result_outcomes) -> str | None:
+    """Return the verified settling venue, or None when provenance is uncertain.
+
+    A listing provider on `market.source` must not be presented as the settling
+    authority unless every qualifying result grade's `resolution_source` belongs
+    to that venue's independent settlement channel."""
+    raw = getattr(market, "source", None)
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    venue = raw.strip().lower()
+    for o in result_outcomes:
+        res_source = getattr(o, "resolution_source", None)
+        allowed = _SETTLING_VENUES_BY_RESOLUTION_SOURCE.get(res_source, frozenset())
+        if venue not in allowed:
+            return None
+    return venue
+
+
+def category_result(market, *, settled: bool) -> dict:
+    """The served `result` of one award category or prop market (#5349).
+
+    `announced` when at least one of its own named outcomes carries a result
+    grade, and then `venue` names the settling venue when verified (or None when
+    uncertain). Otherwise `closed` when its own assigned state is settled, else
+    `pending`, naming the evidence that exists without counting it. Reads only
+    this market's own rows: never a sibling, the ceremony, a price or a date."""
+    rows = getattr(market, "outcomes", None) or []
+    result_rows = [o for o in rows if is_result_grade(o)]
+    if result_rows:
+        return {
+            "state": RESULT_ANNOUNCED,
+            "evidence_kind": EVIDENCE_VENUE_SETTLEMENT,
+            "venue": _settling_venue(market, result_rows),
+        }
+    if any(bool(getattr(o, "is_winner", False)) for o in rows):
+        evidence = EVIDENCE_UNCONFIRMED_GRADE
+    elif any(getattr(o, "resolution_source", None) == RETRACTED_SOURCE for o in rows):
+        evidence = EVIDENCE_RETRACTED_GRADE
+    else:
+        evidence = EVIDENCE_NONE
+    return {
+        "state": RESULT_CLOSED if settled else RESULT_PENDING,
+        "evidence_kind": evidence,
+        "venue": None,
+    }
 
 # A category winner market names an award category. Nomination + novelty markets
 # are excluded from this by the checks in `classify_market`.
@@ -333,7 +433,7 @@ class AwardsEventAdapter:
             return sum(
                 1
                 for o in (m.outcomes or [])
-                if o.name
+                if _has_outcome_name(o)
                 and not is_field_outcome(o.name)
                 and not is_placeholder_outcome_name(o.name)
             )
@@ -398,19 +498,18 @@ class AwardsEventAdapter:
             real = [
                 o
                 for o in outs
-                if o.name
+                if _has_outcome_name(o)
                 and not is_field_outcome(o.name)
                 and not is_placeholder_outcome_name(o.name)
             ]
             displayed = real[:limit]
             # #5349: price-ranked previews can omit the actual winner. Keep every
-            # named authoritative grade from the FULL category, even when its
-            # price is absent or it was outside the nominee/field preview.
+            # named result grade (`is_result_grade`) from the FULL category, even
+            # when its price is absent or it was outside the nominee/field preview.
             displayed.extend(
                 o
                 for o in (m.outcomes or [])
-                if o.name
-                and bool(getattr(o, "is_winner", False))
+                if is_result_grade(o)
                 and not any(o is shown for shown in displayed)
             )
             return displayed
@@ -431,7 +530,7 @@ class AwardsEventAdapter:
                         if o.current_probability is not None
                         else None
                     ),
-                    "won": bool(getattr(o, "is_winner", False)),
+                    "won": is_result_grade(o),
                 }
             )
 
@@ -459,10 +558,12 @@ class AwardsEventAdapter:
                 inferred=False,
                 assigned_settled=market_assigned_settled(m),
             )
+            # #5349: a winner is named only by an independent settlement; a price
+            # crown or other stored flag leaves the category unannounced.
             winners = [
                 o.name
                 for o in (m.outcomes or [])
-                if o.name and bool(getattr(o, "is_winner", False))
+                if o.name and is_result_grade(o)
             ]
             row = {
                 "market_id": m.id,
@@ -470,11 +571,12 @@ class AwardsEventAdapter:
                 "source": m.source,  # data-only (audit); not rendered
                 "settled": settled,
                 "graded_winner": winners[0] if len(winners) == 1 else None,
+                "result": category_result(m, settled=settled),
                 "probability": lead_prob,
                 "outcomes": [
                     {
                         "name": o.name,
-                        "won": bool(getattr(o, "is_winner", False)),
+                        "won": is_result_grade(o),
                         "probability": (
                             round(float(o.current_probability), 4)
                             if o.current_probability is not None
