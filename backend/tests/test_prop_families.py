@@ -646,6 +646,14 @@ class TestKeyStabilityOverProduction6630:
         "Pro Basketball Finals: Players to Record 20+ Points in Every Game": None,
     }
 
+    # #9858/#11619: the conference-finals award is not the league-finals
+    # award. Declare the exact two changed titles in this retained corpus;
+    # every other title keeps the same key and the fixture stays intact.
+    MOVED_9858 = {
+        "Pro Basketball Eastern Conference Finals MVP Winner": "eastern conference finals mvp",
+        "Pro Basketball Western Conference Finals MVP Winner": "western conference finals mvp",
+    }
+
     @staticmethod
     def _fixture():
         path = (
@@ -666,11 +674,17 @@ class TestKeyStabilityOverProduction6630:
         assert set(self.MOVED) <= set(keys)
         assert set(self.MOVED_8385) <= set(keys)
         assert set(self.MOVED_10017) <= set(keys)
+        assert set(self.MOVED_9858) <= set(keys)
 
     def test_only_the_named_titles_changed_key(self):
         keys = self._fixture()
         moved, drifted = [], []
-        declared = {**self.MOVED, **self.MOVED_8385, **self.MOVED_10017}
+        declared = {
+            **self.MOVED,
+            **self.MOVED_8385,
+            **self.MOVED_10017,
+            **self.MOVED_9858,
+        }
         for title, before in keys.items():
             now = family_key(title)
             if title in declared:
