@@ -367,7 +367,11 @@ if not isinstance(app_props, dict) or not app_props:
 a_bid = app_props.get("CFBundleIdentifier", "")
 a_ver = str(app_props.get("CFBundleShortVersionString", ""))
 a_build = str(app_props.get("CFBundleVersion", ""))
-a_team = app_props.get("SigningIdentity", "") or app_props.get("Team", "")
+a_team = app_props.get("Team", "") or ""
+# SigningIdentity names the certificate, not the team: an archive signed with
+# "Apple Development: Alex Bain (ZSTGL24PX4)" carries Team J893F72P4R, because the
+# bracketed code of a development certificate is the member. Read it only when Team is absent.
+a_ident = app_props.get("SigningIdentity", "") or ""
 rel_app = app_props.get("ApplicationPath", "")
 
 if a_bid != exp_app_bid:
@@ -376,8 +380,11 @@ if a_bid != exp_app_bid:
 if a_ver != exp_ver or a_build != exp_build:
     print(f"VERSION_BUILD_MISMATCH|archive ApplicationProperties carries {a_ver} ({a_build}), expected {exp_ver} ({exp_build})")
     sys.exit(1)
-if a_team and exp_team not in a_team and a_team != exp_team:
-    print(f"WRONG_TEAM_ID|archive ApplicationProperties Team/SigningIdentity={a_team!r} does not match {exp_team!r}")
+if a_team and a_team != exp_team:
+    print(f"WRONG_TEAM_ID|archive ApplicationProperties Team={a_team!r} does not match {exp_team!r}")
+    sys.exit(1)
+if not a_team and a_ident and exp_team not in a_ident:
+    print(f"WRONG_TEAM_ID|archive ApplicationProperties SigningIdentity={a_ident!r} does not match {exp_team!r}")
     sys.exit(1)
 
 prov_path = os.path.join(archive_path, "BainLuckSourceProvenance.plist")
@@ -1006,6 +1013,25 @@ EOF
     echo "SELF-CHECK FAIL: wrong TeamIdentifier was accepted: $out"; return 1
   fi
   [[ "$out" == *WRONG_TEAM_ID* ]] || { echo "SELF-CHECK FAIL: expected WRONG_TEAM_ID, got $out"; return 1; }
+
+  # Control 3e2: an archive signed with a development certificate whose bracketed code is the
+  # member, not the team, is accepted when ApplicationProperties.Team is the expected team
+  # (the shape of every real `xcodebuild archive`; build 86 was refused on it).
+  local dev_ident_arch="$tmp_root/dev_ident.xcarchive"
+  make_valid_archive "$dev_ident_arch"
+  /usr/libexec/PlistBuddy -c "Add :ApplicationProperties:SigningIdentity string 'Apple Development: Alex Bain (ZSTGL24PX4)'" "$dev_ident_arch/Info.plist"
+  if ! out=$(verify_archive_bundle "$dev_ident_arch" "1.0.4" "81" "J893F72P4R" "$APP_BUNDLE_ID" "$WIDGET_BUNDLE_ID" "1"); then
+    echo "SELF-CHECK FAIL: development-signed archive with the right Team was refused: $out"; return 1
+  fi
+
+  # Mutation 3e3: ApplicationProperties.Team names another team
+  local bad_props_team_arch="$tmp_root/bad_props_team.xcarchive"
+  make_valid_archive "$bad_props_team_arch"
+  /usr/libexec/PlistBuddy -c "Set :ApplicationProperties:Team OTHERTEAM9" "$bad_props_team_arch/Info.plist"
+  if out=$(verify_archive_bundle "$bad_props_team_arch" "1.0.4" "81" "J893F72P4R" "$APP_BUNDLE_ID" "$WIDGET_BUNDLE_ID" "1"); then
+    echo "SELF-CHECK FAIL: archive Team OTHERTEAM9 was accepted: $out"; return 1
+  fi
+  [[ "$out" == *WRONG_TEAM_ID* ]] || { echo "SELF-CHECK FAIL: expected WRONG_TEAM_ID for archive Team, got $out"; return 1; }
 
   # Mutation 3f: Reused archive missing provenance fails when --expected-source-sha is set,
   # and warns UNRECORDED when --expected-source-sha is omitted.
