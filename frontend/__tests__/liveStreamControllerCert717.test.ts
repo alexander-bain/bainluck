@@ -26,10 +26,14 @@ import {
   HEALTHY_STREAM_MS,
   RECONNECT_BASE_DELAY_MS,
   RECONNECT_MAX_DELAY_MS,
+  HEALTHY_ROLLOVER_MAX_DELAY_MS,
+  HEALTHY_ROLLOVER_MIN_DELAY_MS,
   RETRY_GIVEUP_MS,
   SILENCE_TIMEOUT_MS,
   TICK_INTERVAL_MS,
   createLiveStreamController,
+  timerSchedule,
+  type LiveStreamFrame,
   type LiveTransportStatus,
   type StreamHandle,
 } from '@/lib/liveStreamController';
@@ -589,5 +593,375 @@ describe('#10200 the observational status follows the lifecycle', () => {
       expect.arrayContaining(['open', 'quiet', 'retrying', 'rollover', 'unavailable']),
     );
     expect(silent.statuses).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #10090 — a healthy rollover reopens at its own deadline, not at the next tick
+// ---------------------------------------------------------------------------
+
+/**
+ * The hook's wiring, driven by real timer APIs on Jest's fake clock: the same
+ * `timerSchedule`, `Date.now` and a `setInterval(tick, TICK_INTERVAL_MS)`
+ * anchored at mount, torn down by `clearInterval` + `stop()`. The `harness()`
+ * above re-anchors its ticks on every `advance()`, so it cannot show where the
+ * reopen lands against the hook's actual 5 s phase; this can.
+ *
+ * `serve` plays the server: when a socket is constructed it opens and replays
+ * the latest frame on the next timer turn, as the route does. Node (and so
+ * Jest's clock) floors a zero-ms timer at 1 ms, so a replayed frame lands 1 ms
+ * after its socket opened: `SERVER_TURN_MS` below.
+ */
+function hookDriven(opts: {
+  schedule?: boolean;
+  healthyDelay?: number;
+  serve?: (index: number) => string | null;
+} = {}) {
+  const sources: FakeSource[] = [];
+  const openedAt: number[] = [];
+  const frameAt: number[] = [];
+  const frames: LiveStreamFrame[] = [];
+  const delivering: boolean[] = [];
+  const statuses: LiveTransportStatus[] = [];
+  const controller = createLiveStreamController({
+    open: () => {
+      const source = new FakeSource();
+      const index = sources.length;
+      sources.push(source);
+      openedAt.push(Date.now());
+      const replay = opts.serve?.(index);
+      if (replay !== undefined) {
+        setTimeout(() => {
+          if (source.closed) return;
+          source.emit('open');
+          if (replay !== null) source.emit('probability', replay);
+        }, 0);
+      }
+      return source;
+    },
+    now: () => Date.now(),
+    onFrame: (frame) => {
+      frames.push(frame);
+      frameAt.push(Date.now());
+    },
+    onDeliveringChange: (value) => delivering.push(value),
+    onStatusChange: (value) => statuses.push(value),
+    ...(opts.schedule === false ? {} : { schedule: timerSchedule }),
+    ...(opts.healthyDelay !== undefined
+      ? { healthyRolloverDelay: () => opts.healthyDelay as number }
+      : {}),
+  });
+  const mountedAt = Date.now();
+  controller.start();
+  const timer = setInterval(() => controller.tick(), TICK_INTERVAL_MS);
+  const live = () => sources[sources.length - 1];
+  const advance = (ms: number) => jest.advanceTimersByTime(ms);
+  /** A healthy server: a heartbeat every 20 s on whichever socket is current. */
+  const advanceLive = (ms: number) => {
+    for (let elapsed = 0; elapsed < ms; elapsed += 20_000) {
+      advance(Math.min(20_000, ms - elapsed));
+      if (!live().closed) live().emit('heartbeat');
+    }
+  };
+  /** Advance to `phase` ms past the hook's most recent tick. */
+  const toTickPhase = (phase: number) => {
+    const sinceTick = (Date.now() - mountedAt) % TICK_INTERVAL_MS;
+    advance((phase - sinceTick + TICK_INTERVAL_MS) % TICK_INTERVAL_MS);
+  };
+  const unmount = () => {
+    clearInterval(timer);
+    controller.stop();
+  };
+  return {
+    controller, sources, openedAt, frameAt, frames, delivering, statuses,
+    live, advance, advanceLive, toTickPhase, unmount,
+  };
+}
+
+/** The fake server's replay turn: Node's floor on a zero-ms timer. */
+const SERVER_TURN_MS = 1;
+
+const pushed = (p: number, rev?: Record<string, number>) =>
+  JSON.stringify({
+    event_id: 42,
+    p,
+    source: 'kalshi',
+    source_value: p,
+    updated_at: new Date(Date.now()).toISOString(),
+    status: 'live',
+    ...(rev ? { rev } : {}),
+  });
+
+describe('#10090 a healthy rollover reopens at its own deadline', () => {
+  beforeEach(() => {
+    jest.useFakeTimers({ now: 1_760_000_000_000 });
+  });
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it('the replacement opens AT the deadline and its changed final frame reaches the page, then silence changes nothing', () => {
+    // The server replays 0.55 on the first socket and the CHANGED 0.61 on the
+    // replacement, then publishes nothing more: the final frame the reader
+    // must see is the one the new socket carries.
+    const h = hookDriven({ healthyDelay: 300, serve: (i) => pushed(i === 0 ? 0.55 : 0.61) });
+    h.advance(0);
+    h.advanceLive(MAX_CONNECTION_MS);
+    h.toTickPhase(1_000);
+    const rolledAt = Date.now();
+    h.live().emit('reconnect');
+
+    h.advance(299);
+    expect(h.sources).toHaveLength(1);
+    h.advance(1);
+    expect(h.sources).toHaveLength(2);
+    expect(h.openedAt[1] - rolledAt).toBe(300);
+    h.advance(SERVER_TURN_MS);
+    expect(h.frames.map((f) => f.p)).toEqual([0.55, 0.61]);
+    expect(h.frameAt[1] - rolledAt).toBe(300 + SERVER_TURN_MS);
+    expect(h.controller.state.delivering).toBe(true);
+    expect(h.controller.state.reopenAt).toBeNull();
+
+    // Silence after the final frame: ticks keep running, nothing reopens, and
+    // the publication rail still demotes to polling on its own schedule.
+    h.advanceLive(DATA_SILENCE_TIMEOUT_MS + 20_000);
+    expect(h.sources).toHaveLength(2);
+    expect(h.frames).toHaveLength(2);
+    expect(h.controller.state.delivering).toBe(false);
+    expect(h.statuses.slice(-1)).toEqual(['quiet']);
+  });
+
+  it('adoption is under a second at EVERY phase of the 5 s tick; a tick-only owner (CONTROL) waits for the tick', () => {
+    const latency = (schedule: boolean, phase: number) => {
+      const h = hookDriven({ schedule, healthyDelay: HEALTHY_ROLLOVER_MAX_DELAY_MS, serve: (i) => pushed(0.5 + i / 100) });
+      h.advance(0);
+      h.advanceLive(MAX_CONNECTION_MS);
+      h.toTickPhase(phase);
+      const rolledAt = Date.now();
+      h.live().emit('reconnect');
+      h.advance(2 * TICK_INTERVAL_MS);
+      const adopted = h.frameAt[1] - rolledAt;
+      h.unmount();
+      jest.clearAllTimers();
+      return adopted;
+    };
+    const phases = Array.from({ length: 20 }, (_, i) => i * 250);
+    const deadline = phases.map((phase) => latency(true, phase));
+    const tickOnly = phases.map((phase) => latency(false, phase));
+
+    for (const ms of deadline) expect(ms).toBe(HEALTHY_ROLLOVER_MAX_DELAY_MS + SERVER_TURN_MS);
+    // The strawman: the same controller with no `schedule` reopens only on the
+    // hook's tick, so at most phases the reader waits seconds, not a fraction
+    // of one. If this ever reads under a second, the test above proves nothing.
+    expect(Math.max(...tickOnly)).toBeGreaterThan(4_000);
+    expect(tickOnly.filter((ms) => ms >= 1_000).length).toBeGreaterThan(phases.length / 2);
+  });
+
+  it('the default healthy wait is jittered inside 250–500 ms', () => {
+    const random = jest.spyOn(Math, 'random');
+    try {
+      for (const [r, expected] of [[0, HEALTHY_ROLLOVER_MIN_DELAY_MS], [0.5, 375], [0.999, 499.75]] as const) {
+        random.mockReturnValue(r);
+        const h = hookDriven({ serve: () => null });
+        h.advance(0);
+        h.advanceLive(MAX_CONNECTION_MS);
+        const rolledAt = Date.now();
+        h.live().emit('reconnect');
+        expect((h.controller.state.reopenAt as number) - rolledAt).toBeCloseTo(expected, 6);
+        h.advance(HEALTHY_ROLLOVER_MAX_DELAY_MS);
+        expect(h.sources).toHaveLength(2);
+        h.unmount();
+        jest.clearAllTimers();
+      }
+    } finally {
+      random.mockRestore();
+    }
+    expect(HEALTHY_ROLLOVER_MAX_DELAY_MS).toBeLessThan(RECONNECT_BASE_DELAY_MS);
+  });
+
+  it('a tick landing on the same instant as the deadline opens ONE socket', () => {
+    const h = hookDriven({ healthyDelay: 300, serve: () => null });
+    h.advance(0);
+    h.advanceLive(MAX_CONNECTION_MS);
+    // Roll over 300 ms before the next tick, so both fire at the same instant.
+    h.toTickPhase(TICK_INTERVAL_MS - 300);
+    h.live().emit('reconnect');
+    h.advance(300);
+    expect(h.sources).toHaveLength(2);
+    h.advance(3 * TICK_INTERVAL_MS);
+    expect(h.sources).toHaveLength(2);
+    expect(h.sources[1].closed).toBe(false);
+  });
+
+  it('a stale deadline opens nothing: after the tick won, and after a newer rollover replaced it', () => {
+    let clock = 1_000_000;
+    const armed: { action: () => void; cancelled: boolean }[] = [];
+    const sources: FakeSource[] = [];
+    const controller = createLiveStreamController({
+      open: () => {
+        const source = new FakeSource();
+        sources.push(source);
+        return source;
+      },
+      now: () => clock,
+      onFrame: () => {},
+      onDeliveringChange: () => {},
+      // A timer whose cancel is ignored — the generation alone must retire it.
+      schedule: (action) => {
+        const entry = { action, cancelled: false };
+        armed.push(entry);
+        return () => {
+          entry.cancelled = true;
+        };
+      },
+      healthyRolloverDelay: () => 300,
+    });
+    controller.start();
+    sources[0].emit('open');
+    clock += HEALTHY_STREAM_MS;
+    sources[0].emit('reconnect');
+    expect(armed).toHaveLength(1);
+
+    // The tick gets there first.
+    clock += 300;
+    controller.tick();
+    expect(sources).toHaveLength(2);
+    expect(armed[0].cancelled).toBe(true);
+    armed[0].action();
+    expect(sources).toHaveLength(2);
+
+    // The replacement rolls over at once (fast: 1 s backoff); the first
+    // deadline firing now must not cut that backoff short.
+    sources[1].emit('open');
+    sources[1].emit('reconnect');
+    expect(controller.state.reopenAt).toBe(clock + RECONNECT_BASE_DELAY_MS);
+    armed[0].action();
+    expect(sources).toHaveLength(2);
+    expect(controller.state.reopenAt).toBe(clock + RECONNECT_BASE_DELAY_MS);
+    armed[1].action();
+    expect(sources).toHaveLength(3);
+  });
+
+  it('unmount between the rollover and its deadline opens nothing and leaves no timer behind', () => {
+    const h = hookDriven({ healthyDelay: 300, serve: () => null });
+    h.advance(0);
+    h.advanceLive(MAX_CONNECTION_MS);
+    h.live().emit('reconnect');
+    expect(jest.getTimerCount()).toBe(2); // the tick interval + the armed reopen
+    h.unmount();
+    expect(jest.getTimerCount()).toBe(0);
+    h.advance(RECONNECT_MAX_DELAY_MS);
+    expect(h.sources).toHaveLength(1);
+    expect(h.controller.state.reopenAt).toBeNull();
+  });
+
+  it('repeated healthy rotations each come back inside the healthy wait, frames passed through in arrival order with their revisions', () => {
+    let rev = 100;
+    const h = hookDriven({ healthyDelay: 400, serve: () => pushed(0.5, { '7': (rev += 1) }) });
+    h.advance(0);
+    const gaps: number[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      h.advanceLive(MAX_CONNECTION_MS);
+      const rolledAt = Date.now();
+      const before = h.sources.length;
+      h.live().emit('reconnect');
+      h.advance(HEALTHY_ROLLOVER_MAX_DELAY_MS);
+      expect(h.sources).toHaveLength(before + 1);
+      gaps.push(h.openedAt[h.openedAt.length - 1] - rolledAt);
+    }
+    expect(gaps).toEqual([400, 400, 400, 400]);
+    expect(h.frames.map((f) => f.rev?.['7'])).toEqual([101, 102, 103, 104, 105]);
+    expect(h.controller.state.delivering).toBe(true);
+  });
+
+  it('a server that rolls over instantly still backs off 1 s → 30 s, and each reopen fires at its deadline', () => {
+    const h = hookDriven({ healthyDelay: 300, serve: () => null });
+    h.advance(0);
+    const gaps: number[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      h.advance(0); // the socket opens
+      const rolledAt = Date.now();
+      const before = h.sources.length;
+      h.live().emit('reconnect');
+      const due = (h.controller.state.reopenAt as number) - rolledAt;
+      h.advance(due - 1);
+      expect(h.sources).toHaveLength(before);
+      h.advance(1);
+      expect(h.sources).toHaveLength(before + 1);
+      gaps.push(h.openedAt[h.openedAt.length - 1] - rolledAt);
+    }
+    expect(gaps).toEqual([1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000]);
+  });
+
+  it('terminal and refused connections never reopen; the browser\'s own network retry is left alone', () => {
+    // closed: the match ended.
+    const ended = hookDriven({ healthyDelay: 300, serve: () => null });
+    ended.advance(0);
+    ended.live().emit('closed');
+    ended.live().emit('reconnect');
+    ended.advance(RECONNECT_MAX_DELAY_MS * 2);
+    expect(ended.sources).toHaveLength(1);
+    expect(ended.statuses.slice(-1)).toEqual(['closed']);
+    ended.unmount();
+
+    // refused: the browser closed it.
+    const refused = hookDriven({ healthyDelay: 300 });
+    refused.live().readyState = 2;
+    refused.live().emit('error');
+    refused.advance(RECONNECT_MAX_DELAY_MS * 2);
+    expect(refused.sources).toHaveLength(1);
+    expect(refused.controller.state.stopped).toBe(true);
+    refused.unmount();
+
+    // A replacement that refuses to construct at the deadline is a refused
+    // connect too: one attempt, then polling.
+    let opens = 0;
+    let first: FakeSource | null = null;
+    const statuses: LiveTransportStatus[] = [];
+    const throwsOnReplacement = createLiveStreamController({
+      open: () => {
+        opens += 1;
+        if (first) throw new Error('refused');
+        first = new FakeSource();
+        return first;
+      },
+      now: () => Date.now(),
+      onFrame: () => {},
+      onDeliveringChange: () => {},
+      onStatusChange: (value) => statuses.push(value),
+      schedule: timerSchedule,
+      healthyRolloverDelay: () => 300,
+    });
+    throwsOnReplacement.start();
+    (first as unknown as FakeSource).emit('open');
+    jest.advanceTimersByTime(HEALTHY_STREAM_MS);
+    (first as unknown as FakeSource).emit('reconnect');
+    jest.advanceTimersByTime(300);
+    expect(opens).toBe(2);
+    expect(throwsOnReplacement.state.stopped).toBe(true);
+    expect(statuses.slice(-1)).toEqual(['unavailable']);
+    jest.advanceTimersByTime(RECONNECT_MAX_DELAY_MS * 2);
+    expect(opens).toBe(2);
+    expect(jest.getTimerCount()).toBe(0);
+    throwsOnReplacement.stop();
+
+    // EventSource's own network-error recovery on the REPLACEMENT: the
+    // controller neither opens a third socket nor retires the second.
+    const blip = hookDriven({ healthyDelay: 300, serve: () => pushed(0.5) });
+    blip.advance(0);
+    blip.advanceLive(MAX_CONNECTION_MS);
+    blip.live().emit('reconnect');
+    blip.advance(300);
+    blip.live().readyState = 0;
+    blip.live().emit('error');
+    expect(blip.statuses.slice(-1)).toEqual(['retrying']);
+    blip.advance(10_000);
+    blip.live().readyState = 1;
+    blip.live().emit('open');
+    blip.live().emit('probability', pushed(0.52));
+    expect(blip.sources).toHaveLength(2);
+    expect(blip.controller.state.delivering).toBe(true);
+    expect(blip.frames.map((f) => f.p)).toEqual([0.5, 0.5, 0.52]);
   });
 });

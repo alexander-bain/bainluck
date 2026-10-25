@@ -6,8 +6,10 @@ import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverIntera
 import type { FeedItem, FeedFuturesData, FeedThemeCollectionRef } from "@/lib/types";
 import { BundleActionBar } from "./BundleActionBar";
 import { BundleHeader } from "./BundleHeader";
-import { bundleSeatCount } from "./constants";
+import { bundleExpandLabel, bundleSeatCount } from "./constants";
 import { FuturesCard, FuturesCompactRow } from "./FuturesCard";
+import { PartyControlRow } from "./PartyControlRow";
+import { isCongressControlStoryKey } from "@/lib/discover/partyControlRow";
 import {
   CollectionEntryLink,
   admitCollectionRef,
@@ -52,7 +54,7 @@ interface ThemeBundleCardProps {
  * exactly that — a count of what is behind the chevron, which is navigation, not
  * a reason to read. It now carries the question the members are all answers to.
  * The count has not been lost: the peek rows beneath are the members, and
- * "All N questions" still prints it.
+ * the footer ("All N markets", #10877) still prints it.
  */
 export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positionIndex, bundleId, collectionRef }: ThemeBundleCardProps) {
   const [expanded, setExpanded] = useState(false);
@@ -112,7 +114,11 @@ export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positi
             {peek.map((member, i) => (
               <div key={i} className="px-4 py-3">
                 {member.type === "futures" ? (
-                  <FuturesCompactRow item={member} data={member.data as FeedFuturesData} />
+                  isCongressControlStoryKey(storyKey) ? (
+                    <PartyControlRow member={member} data={member.data as FeedFuturesData} />
+                  ) : (
+                    <FuturesCompactRow item={member} data={member.data as FeedFuturesData} />
+                  )
                 ) : (
                   <div className="text-sm font-semibold text-text-primary line-clamp-2">{member.headline || "Market"}</div>
                 )}
@@ -123,7 +129,7 @@ export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positi
             onClick={toggleExpanded}
             className="w-full text-center py-2.5 text-xs font-medium text-accent-brand hover:text-accent-brand/80 border-t border-surface-border"
           >
-            {items.length > peek.length ? `All ${items.length} questions` : "Expand"}
+            {items.length > peek.length ? bundleExpandLabel(items) : "Expand"}
           </button>
         </>
       )}

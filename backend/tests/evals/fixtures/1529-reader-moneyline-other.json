@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "issue": 1529,
+  "pillar": "TRUTH",
+  "ship": "Event pages show game-winner questions and player props in their correct sections.",
+  "source_snapshot": "f289d556eed8d175672472eb98b12bd2ade5dc92",
+  "evidence_kind": "rendered labels and source boundary; not a captured API response",
+  "observed": {
+    "url": "https://www.bainluck.com/events/15195694",
+    "viewport_css_px": 390,
+    "reported_at_utc": "2026-10-21T03:57:00Z",
+    "event_label": "Knicks 100 - 76ers 106, Final",
+    "winner_question": "Philadelphia vs New York",
+    "source_label": "Kalshi",
+    "outcome_labels": ["Philadelphia", "New York"],
+    "catalog_family": "Other",
+    "game_lines_contents": ["totals", "spreads"],
+    "ordinary_player_props_family": "Player props",
+    "special_matchup_named_player_container": "UNKNOWN"
+  },
+  "expected_reader_contract": {
+    "full_game_winner_family": "Game lines",
+    "ordinary_player_props_family": "Player props",
+    "special_matchup_named_player_container_family": "Player props",
+    "full_game_winner_must_not_be": "Other",
+    "period_winner_must_not_be": "full-game moneyline",
+    "unknown_semantics": "remain explicit; do not guess from a title"
+  },
+  "synthetic_guard_specs_not_venue_evidence": [
+    {
+      "case": "full-game winner survives response projection",
+      "upstream_semantic_class": "moneyline",
+      "market_name": "Philadelphia vs New York",
+      "outcome_names": ["Philadelphia", "New York"],
+      "expected_catalog_family": "Game lines"
+    },
+    {
+      "case": "same matchup name is a player-contract container",
+      "market_name": "Celtics at Warriors",
+      "outcome_names": ["Jaylen Brown: 25+"],
+      "expected_after_existing_rescue": "player_props",
+      "expected_catalog_family": "Player props"
+    },
+    {
+      "case": "segment winner is not a full-game winner",
+      "upstream_semantic_class": "segment_winner",
+      "market_name": "TeamA vs TeamB: Map 2",
+      "must_not_be_relabelled": "full-game moneyline"
+    },
+    {
+      "case": "unclassified question remains unknown",
+      "upstream_semantic_class": "other",
+      "market_name": "SYNTHETIC ambiguous question",
+      "expected_catalog_family": "Other"
+    }
+  ],
+  "unpaid": [
+    "literal live ticker and classifier result",
+    "actual rendered special player-contract-container specimen",
+    "full current classifier census and CORE thresholds",
+    "post-correction deployed web and native reader acceptance"
+  ]
+}

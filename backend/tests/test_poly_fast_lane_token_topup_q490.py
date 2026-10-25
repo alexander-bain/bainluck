@@ -24,6 +24,10 @@ import json
 
 import pytest
 from tests.pm_bulk_test_support import price_writes
+from tests.test_ws_flush_retry_q491 import (
+    is_stored_live_slate_read,
+    stored_live_batches,
+)
 import websockets
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql.dml import Update
@@ -31,6 +35,7 @@ from sqlalchemy.sql.dml import Update
 import app.tasks.live_blend_refresh as blend_mod
 import app.tasks.polymarket_ws as poly_task
 from app.tasks.polymarket_token_topup import condition_id_of, topup_clob_tokens
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 CONDITION_ID = "0xabc"
 YES_TOKEN = "111"
@@ -246,10 +251,16 @@ class _Result:
 
 
 class _Session:
-    def __init__(self, batches, writes, meta_writes):
+    def __init__(self, batches, writes, meta_writes, scenario=None):
+        # #10090: a real session's `.info` — one dict per session, kept
+        # through commit, rollback and close; the flush detaches committed
+        # market frames from it. These writes return no moved quote, so
+        # no frame is ever staged and it stays empty.
+        self.info = {}
         self._batches = batches
         self._writes = writes
         self._meta_writes = meta_writes
+        self._scenario = scenario
 
     async def execute(self, stmt):
         if isinstance(stmt, Update):
@@ -262,7 +273,32 @@ class _Session:
             elif stmt.table.name == "futures_markets":
                 self._meta_writes.append(params["id_1"])
             return _Result([])
-        return _Result(self._batches.pop(0) if self._batches else [])
+        if self._scenario is not None and is_stored_live_slate_read(stmt):
+            # #10090 attempt156: the stored-live load reads its own three
+            # batches; the full slate stays queued for the full read.
+            self._batches[:0] = stored_live_batches(*self._scenario)
+        rows = self._batches.pop(0) if self._batches else []
+        return _Result(answer_slate_market_read(stmt, rows))  # #10663
+
+
+def test_the_fake_session_has_its_own_empty_info_like_a_real_session():
+    """#10090: the flush detaches committed market frames from `session.info`
+    (`AsyncSession.info`, one dict per session). This fake must stand in for
+    that attribute: its own dict per session and, because its writes return no
+    moved quote, nothing committed for the flush to publish. A shared or
+    pre-filled dict would hand the flush a frame no commit here produced, and
+    the fake refresher would only log the failed publish, not fail a test."""
+    import inspect
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.market_quote_push import take_committed_market_changes
+
+    assert isinstance(inspect.getattr_static(AsyncSession, "info"), property)
+    first, second = _Session([], [], []), _Session([], [], [])
+    assert first.info is not second.info
+    assert take_committed_market_changes(first) == []
+    assert first.info == {}
 
 
 class _NoopRefresher:
@@ -318,10 +354,11 @@ class TestTheSocketSubscribesToAMarketItHadToAskFor:
                 (NO_OUTCOME_ID, MARKET_ID, f"{CONDITION_ID}_no"),
             ],
         ]
+        scenario = [list(b) for b in batches]
 
         class _Ctx:
             async def __aenter__(self):
-                return _Session(batches, writes, meta_writes)
+                return _Session(batches, writes, meta_writes, scenario)
 
             async def __aexit__(self, *_exc):
                 return False
@@ -405,10 +442,11 @@ class TestTheSocketSubscribesToAMarketItHadToAskFor:
                 (81, 8, "0xdef_yes"),
             ],
         ]
+        scenario = [list(b) for b in batches]
 
         class _Ctx:
             async def __aenter__(self):
-                return _Session(batches, writes, meta_writes)
+                return _Session(batches, writes, meta_writes, scenario)
 
             async def __aexit__(self, *_exc):
                 return False

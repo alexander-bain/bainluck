@@ -111,10 +111,19 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     (
         "M2-NO-LIMIT",
         "the planner cannot stop early if nothing tells it how few rows are wanted",
-        """            .limit(_TYPEAHEAD_FUTURES_POOL)
+        # The arm's own ORDER BY rides in BOTH halves. Without it the replacement
+        # is a call's closing paren plus a bare-`noqa` handler — the shape of any
+        # awaited call in a try block — and Pass B read precompute_admin_health's
+        # `run_db_panel(...)` (and two repair-script handlers before it) as this
+        # mutant copied out of its target.
+        """                FuturesMarket.volume.desc().nulls_last(),
+            )
+            .limit(_TYPEAHEAD_FUTURES_POOL)
         )
     except Exception as exc:  # noqa: BLE001""",
-        """        )
+        """                FuturesMarket.volume.desc().nulls_last(),
+            )
+        )
     except Exception as exc:  # noqa: BLE001""",
     ),
     (

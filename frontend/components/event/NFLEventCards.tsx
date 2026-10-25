@@ -494,9 +494,12 @@ function ladderReadout(card: LadderCard, p: LadderPoint): { main: string; sub: s
       : card.phase === "before"
         ? `${p.label} · No recent price`
         : p.label;
+  // A final names its pregame chance apart from the verdict: "Before tip-off · MISS".
+  // A line with none, on a card where others have one, says so itself.
   const parts: string[] = [];
+  if (p.chance !== null) parts.push(card.phase === "before" ? "Pregame chance" : "Before tip-off");
+  else if (card.phase === "after" && card.points.some((q) => q.chance !== null)) parts.push("Pregame chance unavailable");
   if (p.result !== null) parts.push(propVerdictLabel(p.result));
-  else if (p.chance !== null) parts.push(card.phase === "before" ? "Pregame chance" : "Before tip-off");
   if (p.now !== null) parts.push(`now ${formatProbability(p.now)}`);
   return { main, sub: parts.join(" · ") };
 }

@@ -3,19 +3,19 @@ import Combine
 
 private enum DiscoverGroupedItem: Identifiable {
     case single(FeedItem)
-    case group(title: String, items: [FeedItem], kind: String? = nil, theme: String? = nil, sharedQuestion: String? = nil)
+    case group(title: String, items: [FeedItem], kind: String? = nil, theme: String? = nil, sharedQuestion: String? = nil, collectionRef: FeedThemeCollectionRef? = nil)
 
     var priceCards: [FeedItem] {
         switch self {
         case .single(let item): return [item]
-        case .group(_, let items, _, _, _): return items
+        case .group(_, let items, _, _, _, _): return items
         }
     }
 
     var id: String {
         switch self {
         case .single(let item): return item.id
-        case .group(let title, _, let kind, let theme, _): return "group-\(kind ?? "related")-\(theme ?? title)"
+        case .group(let title, _, let kind, let theme, _, _): return "group-\(kind ?? "related")-\(theme ?? title)"
         }
     }
 }
@@ -107,7 +107,19 @@ enum NativeDiscoverDebugState {
 }
 
 struct DiscoverView: View {
-    @StateObject private var vm = DiscoverView.makeViewModel()
+    @StateObject private var vm: DiscoverViewModel
+
+    /// #10878 — the Mac window's kept place for this screen: the feed (the view
+    /// model), the open detail, how many cards were revealed and the scroll
+    /// offset. `nil` everywhere else, which is today's behaviour.
+    private let macPlace: MacReadingPlace<DiscoverViewModel>?
+
+    init(macPlace: MacReadingPlace<DiscoverViewModel>? = nil) {
+        self.macPlace = macPlace
+        _vm = StateObject(wrappedValue: macPlace?.models(orMake: { DiscoverView.makeViewModel() }) ?? DiscoverView.makeViewModel())
+        _visibleCount = State(initialValue: macPlace?.revealedCount ?? 20)
+        _navigationPath = State(initialValue: macPlace?.path ?? NavigationPath())
+    }
 
     /// The view model this launch runs. Production: the ordinary client, network
     /// feed and last-good cache. A DEBUG launch passing `-launch_fixed_feed`
@@ -127,7 +139,7 @@ struct DiscoverView: View {
     @State private var priceViewVisible = false
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
-    @State private var visibleCount = 20
+    @State private var visibleCount: Int
 
     /// Width available to the card area, in points. 0 until the first
     /// geometry pass resolves, which `DiscoverMasonry.columnCount` reads as one
@@ -253,7 +265,7 @@ struct DiscoverView: View {
     @State private var resolutions: [Resolution] = []
     @State private var interactionProfile: DiscoverInteractionProfile?
     @State private var seenImpressions: Set<String> = []
-    @State private var navigationPath = NavigationPath()
+    @State private var navigationPath: NavigationPath
     @State private var showSwipeHint = !UserDefaults.standard.bool(forKey: "discover_swipe_hinted")
     @State private var showChallenge = false
     @State private var challengeIndex = 0
@@ -512,7 +524,7 @@ struct DiscoverView: View {
     private func primaryItem(_ grouped: DiscoverGroupedItem) -> FeedItem? {
         switch grouped {
         case .single(let item): return item
-        case .group(_, let items, _, _, _): return items.first
+        case .group(_, let items, _, _, _, _): return items.first
         }
     }
 
@@ -994,7 +1006,7 @@ struct DiscoverView: View {
         let isGuessSlot = ReleaseSurfaces.insertsInlineGuessSlot(at: idx)
         Group {
             switch gi {
-            case .group(let title, let items, let kind, let theme, let sharedQuestion):
+            case .group(let title, let items, let kind, let theme, let sharedQuestion, let collectionRef):
                 // #1773: group cards were the largest of three
                 // archetypes rendered with NO swipe wrapper at all
                 // (group / tournament / concept — 10 of 30 cards on
@@ -1018,7 +1030,7 @@ struct DiscoverView: View {
                     },
                     onRequiresSignIn: inviteSignInForFeedback
                 ) {
-                    NativeGroupCard(title: title, items: items, kind: kind, theme: theme, sharedQuestion: sharedQuestion, navigationPath: $navigationPath)
+                    NativeGroupCard(title: title, items: items, kind: kind, theme: theme, sharedQuestion: sharedQuestion, collectionRef: collectionRef, navigationPath: $navigationPath)
                 }
             case .single(let item):
                 if item.type == "collection", let entry = DiscoverCollectionFeed.entry(for: item.collection) {
@@ -1239,7 +1251,7 @@ struct DiscoverView: View {
         .onAppear {
             switch gi {
             case .single(let item): vm.setPriceCardsVisible(owner: gi.id, cards: [item], visible: true)
-            case .group(_, let members, _, _, _): vm.setPriceCardsVisible(owner: gi.id, cards: members, visible: true)
+            case .group(_, let members, _, _, _, _): vm.setPriceCardsVisible(owner: gi.id, cards: members, visible: true)
             }
             // The first eligible card actually on screen → the
             // true first-render milestone, once per generation
@@ -1558,7 +1570,8 @@ struct DiscoverView: View {
                     items: eligibleChildren,
                     kind: bundle.kind,
                     theme: bundle.comparisonTheme,
-                    sharedQuestion: bundle.sharedQuestion
+                    sharedQuestion: bundle.sharedQuestion,
+                    collectionRef: bundle.themeCollectionRef
                 ))
                 continue
             }
@@ -1583,7 +1596,7 @@ struct DiscoverView: View {
     }
 
     private func groupItemCount(_ item: DiscoverGroupedItem) -> Int {
-        if case .group(_, let items, _, _, _) = item { return items.count }
+        if case .group(_, let items, _, _, _, _) = item { return items.count }
         return 1
     }
 
@@ -1610,7 +1623,7 @@ struct DiscoverView: View {
         var result = items
         while result.count < Self.groupExpansionFloor {
             let expandable = result.enumerated().filter { entry in
-                if case .group(_, let its, let kind, _, _) = entry.element {
+                if case .group(_, let its, let kind, _, _, _) = entry.element {
                     return kind == nil && its.count >= 2
                 }
                 return false
@@ -1618,7 +1631,7 @@ struct DiscoverView: View {
             guard let target = expandable.max(by: { groupItemCount($0.element) < groupItemCount($1.element) }) else {
                 break
             }
-            if case .group(_, let its, _, _, _) = result[target.offset] {
+            if case .group(_, let its, _, _, _, _) = result[target.offset] {
                 result.replaceSubrange(target.offset...target.offset, with: its.map { DiscoverGroupedItem.single($0) })
                 if target.offset < boundary { boundary += its.count - 1 }
             } else {
@@ -2044,6 +2057,7 @@ struct DiscoverView: View {
             .frame(maxWidth: contentMaxWidth)
             .frame(maxWidth: .infinity)
         }
+        .macReadingOffset(macPlace)
         // #7074. HOW A REFRESH ENDED, drawn where the reader is looking whichever
         // end of the feed they started it from.
         //
@@ -2134,11 +2148,21 @@ struct DiscoverView: View {
                 // already-populated Discover stamps no new render generation, so
                 // arming it would report a full screen as blank.
                 ScreenTimingSession.armScreen(surface: ScreenTimingSurface.discover)
+                let model = vm
                 #if DEBUG
-                await Self.loadForInitialAppearanceObservingRestoredDeck(vm)
+                let initialLoad: @MainActor () async -> Void = { await Self.loadForInitialAppearanceObservingRestoredDeck(model) }
                 #else
-                await Self.loadForInitialAppearance(vm)
+                let initialLoad: @MainActor () async -> Void = { await Self.loadForInitialAppearance(model) }
                 #endif
+                if let macPlace {
+                    // #10878: the Mac keeps this model while the reader is on
+                    // another screen. Coming back mid-load joins the load already
+                    // running, and a model still running its cold-start recovery
+                    // is left to it — never a second load beside either.
+                    if !vm.isRecovering { await macPlace.runInitialLoad(initialLoad) }
+                } else {
+                    await initialLoad()
+                }
             }
             // Gated with the refresh path's copy (#1472): the only view that
             // reads `resolutions` is the digest card above, and it is behind this
@@ -2160,6 +2184,8 @@ struct DiscoverView: View {
             // actually waited on and never saw a card in.
             ScreenTimingSession.disarmScreen(surface: ScreenTimingSurface.discover)
         }
+        .onChange(of: navigationPath) { _, newPath in macPlace?.path = newPath }
+        .onChange(of: visibleCount) { _, count in macPlace?.revealedCount = count }
         .onChange(of: vm.loading) { _, loading in
             // A load that resolved with no cards KNOWS why, and saying so keeps a
             // legitimate empty state out of the failure bucket.
@@ -2707,8 +2733,12 @@ private struct NativeGroupCard: View {
     var kind: String? = nil
     var theme: String? = nil
     var sharedQuestion: String? = nil
+    /// #9925: present only when the server proved this theme's preview sits on a
+    /// published, complete collection (`FeedBundle.themeCollectionRef`).
+    var collectionRef: FeedThemeCollectionRef? = nil
     @Binding var navigationPath: NavigationPath
     @State private var expanded = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var category: String {
         items.first?.futures?.llmSportCategory?.lowercased() ?? ""
@@ -2780,7 +2810,7 @@ private struct NativeGroupCard: View {
                 }
             }
 
-            if let footer = DiscoverGroupRows.footerTitle(itemCount: items.count, kind: kind, expanded: expanded) {
+            if let footer = DiscoverGroupRows.footerTitle(memberTypes: items.map(\.type), kind: kind, expanded: expanded) {
                 Divider()
                 Button { withAnimation { expanded = true } } label: {
                     Text(footer)
@@ -2791,11 +2821,55 @@ private struct NativeGroupCard: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            // #9925: outside both branches, as on web — the whole collection is
+            // one tap away whether the reader is peeking or reading every member.
+            if let collectionRef {
+                Divider()
+                collectionRow(collectionRef)
+            }
         }
         .background(DS.cardBg)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(DS.border, lineWidth: 0.5))
         .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 3)
+    }
+
+    /// The existing hub route on the card's own stack, so Back returns to this
+    /// card where the reader left it. A Button, like the footer: a
+    /// NavigationLink here turns a swipe into navigation on touch-up (#7074).
+    private func collectionRow(_ ref: FeedThemeCollectionRef) -> some View {
+        let countOnOwnLine = dynamicTypeSize.isAccessibilitySize
+        let layout = countOnOwnLine
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 12))
+        return Button { navigationPath.append(DiscoverGroupRows.collectionRoute(for: ref)) } label: {
+            layout {
+                Text(DiscoverGroupRows.collectionTitle(for: ref))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(DS.blue)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 2) {
+                    Text(DiscoverGroupRows.collectionCountLabel(for: ref))
+                        .font(.caption)
+                        .foregroundStyle(DS.textSecondary)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(DS.textMuted)
+                        .accessibilityHidden(true)
+                }
+                .fixedSize()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(DiscoverGroupRows.collectionTitle(for: ref))
+        .accessibilityValue(DiscoverGroupRows.collectionCountLabel(for: ref))
+        .accessibilityIdentifier("discover.group.collection")
     }
 
     private func compactRow(_ data: FeedFuturesData) -> some View {

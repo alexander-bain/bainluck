@@ -153,6 +153,7 @@ describe("#6548 — FuturesChart passes its settledness to the anchor", () => {
   test("`settled` is in the effect's deps, so a late resolution re-anchors", () => {
     // The page can hydrate before it knows the question is decided. An anchor
     // computed while it still believed itself live must not be the final word.
-    expect(CODE).toMatch(/\[\s*mini\s*,\s*displayedOutcomes\s*,\s*settled\s*,/);
+    // #10955: the series dep is the drawn one, `plottedOutcomes`.
+    expect(CODE).toMatch(/\[\s*mini\s*,\s*plottedOutcomes\s*,\s*settled\s*,/);
   });
 });

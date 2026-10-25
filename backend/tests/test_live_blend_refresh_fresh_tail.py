@@ -20,6 +20,7 @@ from app.tasks.live_blend_refresh import (
     TailReceipts,
 )
 from app.utils.kalshi_exact_trace import ExactKalshiTrace
+from tests.test_live_blend_refresh import is_normal_publication_intent
 
 
 OLD = datetime(2026, 10, 8, tzinfo=timezone.utc)
@@ -51,14 +52,16 @@ class Board:
     def __init__(self, source, schedule):
         self.source, self.schedule = source, schedule
         self.reads, self.writes, self.commits = [], {}, []
+        self.intents = 0
         self.release = asyncio.Event()
         self.events, self.markets, self.quotes = {}, {}, {}
         for eid in range(1, SINGLE + 1):
             self.events[eid] = SimpleNamespace(
-                id=eid, home_team_name="Boston Celtics",
+                id=eid, sport_key="basketball_nba", home_team_name="Boston Celtics",
                 away_team_name="Golden State Warriors", status="live",
                 completed_at=None, commence_time=None, win_probability_sources={},
                 espn_win_prob_home=None, opening_home_probability=None,
+                win_probability_sources_rev=0,
             )
             self.markets[eid] = SimpleNamespace(
                 id=eid, event_id=eid, source=source, external_id=TICKER,
@@ -90,6 +93,10 @@ class Session:
 
     async def execute(self, statement, *args):
         board = self.board
+        if is_normal_publication_intent(statement):
+            # attempt151: the stamp's publication intent, not a source read.
+            board.intents += 1
+            return Result()
         params = statement.compile().params
         if isinstance(statement, Update):
             eid = params["id_1"]
@@ -113,6 +120,10 @@ class Session:
         ids = params["event_id_1"]
         board.reads.append(tuple(sorted(ids)))
         rows = []
+        columns = list(statement.selected_columns)
+        preview = [c.name for c in columns[-3:]] == [
+            "preview_sources", "preview_rev", "preview_context_at",
+        ]
         for eid in ids:
             for quote in board.quotes[eid]:
                 rows.append(tuple(
@@ -123,7 +134,8 @@ class Session:
                         (board.events[eid], PREPARED_EVENT_FIELDS),
                         (quote, PREPARED_OUTCOME_FIELDS),
                     ) for key in fields
-                ))
+                ) + ((board.events[eid].win_probability_sources,
+                      board.events[eid].win_probability_sources_rev, NEW) if preview else ()))
         return Result(rows=rows)
 
     async def rollback(self):

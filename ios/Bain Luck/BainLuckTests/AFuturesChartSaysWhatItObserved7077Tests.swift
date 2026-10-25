@@ -225,12 +225,12 @@ final class AFuturesChartSaysWhatItObserved7077Tests: XCTestCase {
             XCTAssertEqual(
                 EvolutionRangeVocabulary.seasonWord(
                     sportCategory: category, hasTournamentDates: false),
-                "6M",
+                "Max",
                 "\(category) markets were being labelled Season")
         }
         XCTAssertEqual(
             EvolutionRangeVocabulary.seasonWord(sportCategory: nil, hasTournamentDates: false),
-            "6M",
+            "Max",
             "an unknown category takes the honest generic, never the specific claim")
     }
 
@@ -250,24 +250,24 @@ final class AFuturesChartSaysWhatItObserved7077Tests: XCTestCase {
     }
 
     func testOnlyTheWidestChipTakesTheSubstitutedWord() {
-        XCTAssertEqual(EvolutionTimeRange.season.label(seasonWord: "6M"), "6M")
+        XCTAssertEqual(EvolutionTimeRange.season.label(seasonWord: "Max"), "Max")
         for range in [EvolutionTimeRange.week, .day, .today, .tournament] {
             XCTAssertEqual(
-                range.label(seasonWord: "6M"), range.rawValue,
+                range.label(seasonWord: "Max"), range.rawValue,
                 "every other chip already names a real duration")
         }
     }
 
     /// The bar draws the substituted word on one line at the narrowest phone.
-    /// `6M` is shorter than `Season`, so this cannot regress #4199's fix — it is
+    /// `Max` is shorter than `Season`, so this cannot regress #4199's fix — it is
     /// here so that a future vocabulary change cannot quietly get longer.
     @MainActor
     func testTheSubstitutedChipStillFitsOnOnePhoneRow() {
         let ranges: [EvolutionTimeRange] = [.season, .week, .day, .today]
-        let oneLine = barHeight(ranges, seasonWord: "6M", width: 1200)
+        let oneLine = barHeight(ranges, seasonWord: "Max", width: 1200)
         for width in [CGFloat(375), 402] {
             XCTAssertEqual(
-                barHeight(ranges, seasonWord: "6M", width: width), oneLine, accuracy: 0.5,
+                barHeight(ranges, seasonWord: "Max", width: width), oneLine, accuracy: 0.5,
                 "the bar wrapped at \(width)pt")
         }
     }
@@ -347,7 +347,9 @@ final class AFuturesChartSaysWhatItObserved7077Tests: XCTestCase {
             chart.contains("Self.coverageNote("),
             "the caption must come from the rule, not from a second copy in the body")
         XCTAssertTrue(
-            chart.contains(".symbolSize(showsObservationMarks ? 14 : 0)"),
+            // #11184 widened the condition (a point alone in its gap-split run is
+            // marked too); the sparse-series arm is unchanged.
+            chart.contains(".symbolSize(showsObservationMarks || point.standsAlone ? 14 : 0)"),
             "a sparse series must carry its observations")
     }
 

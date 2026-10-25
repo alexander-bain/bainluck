@@ -127,6 +127,94 @@ final class HeadlineDisclosure9483Tests: XCTestCase {
         }
     }
 
+    // MARK: #11285 — every status behind the adopted headline's info control
+
+    /// Alex, build 65: "Waiting for updates" beside the top-right control
+    /// squeezed the headline. In the adopted header no state prints words
+    /// there; each is said in the details and the control's label instead.
+    func testTheAdoptedControlPrintsNoStatusWordsInAnyState() {
+        for status in [LiveUpdateStatus.hidden, .live, .awaitingUpdate, .autoRefresh, .interrupted] {
+            let shown = CompactEventPriceStatus(status: status, isDisclosure: true, statusInDetails: true)
+            XCTAssertTrue(shown.isVisible, "\(status): the info control is always reachable")
+            XCTAssertFalse(shown.showsTitle, "\(status): status words beside the control")
+            XCTAssertFalse(shown.showsTrailingInfo, "\(status): one glyph slot only")
+        }
+    }
+
+    /// An interruption keeps a warning mark (and its amber tint) without the
+    /// words; every other state is the plain info mark.
+    func testAnInterruptionStillShowsAWarningMarkWithoutWords() {
+        XCTAssertEqual(CompactEventPriceStatus(status: .interrupted, isDisclosure: true, statusInDetails: true).glyph,
+                       "exclamationmark.triangle.fill")
+        for status in [LiveUpdateStatus.hidden, .live, .awaitingUpdate, .autoRefresh] {
+            XCTAssertEqual(CompactEventPriceStatus(status: status, isDisclosure: true, statusInDetails: true).glyph,
+                           "info.circle", "\(status)")
+        }
+    }
+
+    /// `statusInDetails` means nothing outside the disclosure: a bare cue
+    /// keeps its words and glyph.
+    func testStatusInDetailsDoesNotReachANonDisclosureCue() {
+        for status in [LiveUpdateStatus.live, .awaitingUpdate, .autoRefresh, .interrupted] {
+            let bare = CompactEventPriceStatus(status: status, statusInDetails: true)
+            XCTAssertTrue(bare.showsTitle, "\(status)")
+            XCTAssertEqual(bare.glyph, CompactEventPriceStatus(status: status).glyph, "\(status)")
+        }
+    }
+
+    /// The details still say every state: the popover heads with the status
+    /// title and VoiceOver hears the delivery sentence.
+    func testEveryStateIsStillSaidInTheDetailsAndToVoiceOver() {
+        for status in [LiveUpdateStatus.live, .awaitingUpdate, .autoRefresh, .interrupted] {
+            XCTAssertFalse(status.title.isEmpty, "\(status): the popover's heading")
+            XCTAssertFalse(LivePriceReceiptCue.accessibilityText(status: status, receivedAt: nil).isEmpty,
+                           "\(status): the control's spoken status")
+        }
+    }
+
+    @MainActor
+    private func renderAdopted(_ status: LiveUpdateStatus, at size: DynamicTypeSize) throws -> (UIImage, CGSize) {
+        let renderer = rendererForMeasurement(
+            CompactEventPriceStatusView(status: status, sequence: 0, receivedAt: nil,
+                                        isDisclosure: true, statusInDetails: true)
+                .frame(maxWidth: EventDetailView.heroVerdictWidth(at: size), minHeight: 44)
+                .frame(minWidth: 44)
+                .fixedSize()
+                .background(Color.white)
+                .environment(\.colorScheme, .light),
+            at: size)
+        renderer.scale = 3
+        let image = try XCTUnwrap(renderer.uiImage, "\(status) \(size) did not render")
+        return (image, image.size)
+    }
+
+    @MainActor
+    func testTheAdoptedControlRendersOnlyItsMarkInEveryStateAndSize() throws {
+        for status in [LiveUpdateStatus.awaitingUpdate, .autoRefresh, .interrupted, .live] {
+            for size in [DynamicTypeSize.large, .xxxLarge, .accessibility3] {
+                let (image, fitted) = try renderAdopted(status, at: size)
+                let text = try recognizedText(image)
+                XCTAssertFalse(text.localizedCaseInsensitiveContains("update"),
+                               "\(status) \(size): status words printed beside the control: \(text)")
+                XCTAssertFalse(text.localizedCaseInsensitiveContains("refresh"), "\(status) \(size): \(text)")
+                XCTAssertGreaterThan(try ink(image), 0.002, "\(status) \(size): no mark was drawn")
+                XCTAssertGreaterThanOrEqual(fitted.height, 44, "\(status) \(size): the 44pt target")
+                XCTAssertGreaterThanOrEqual(fitted.width, 44, "\(status) \(size): the 44pt target")
+                // A mark, not a sentence: the old "Waiting for update ⓘ" took
+                // the whole 150pt slot.
+                XCTAssertLessThan(fitted.width, 80, "\(status) \(size): the control still takes headline width")
+            }
+        }
+    }
+
+    func testTheAdoptedHeaderMountsItsControlWithEveryStatusInDetails() throws {
+        let text = try page()
+        let start = try XCTUnwrap(text.range(of: "private func nflPairedDetails(_ event: EventDetail) -> some View {"))
+        let body = String(text[start.upperBound...].prefix(600))
+        XCTAssertTrue(body.contains("statusInDetails: true)"),
+                      "the adopted header's control prints status words beside the headline again")
+    }
+
     // MARK: Phase label
 
     /// A quote one minute older than the instant it is read at.
@@ -265,10 +353,13 @@ final class HeadlineDisclosure9483Tests: XCTestCase {
 
     func testTheHeroMountsTheDisclosureModeAndNoRoutineLabel() throws {
         let text = try page()
-        let start = try XCTUnwrap(text.range(of: "private func probabilityDetails(confidenceTier: String?) -> some View {"))
+        // #11285 — the signature gained `statusInDetails` (default false).
+        let start = try XCTUnwrap(text.range(of: "private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false) -> some View {"))
         let end = try XCTUnwrap(text.range(of: "// MARK: - Chart Header Bar", range: start.upperBound..<text.endIndex))
         let body = String(text[start.upperBound..<end.lowerBound])
         XCTAssertTrue(body.contains("isDisclosure: true"))
+        XCTAssertTrue(body.contains("statusInDetails: statusInDetails)"),
+                      "the control drops the caller's choice")
         XCTAssertFalse(body.contains("Text(\"Win Probability\")"), "the routine label is back in the hero")
         XCTAssertFalse(body.contains("SignalBarsView("), "confidence bars belong in the popover")
         XCTAssertTrue(body.contains("FreshnessRevealView(status: vm.liveUpdateStatus"),
@@ -285,9 +376,11 @@ final class HeadlineDisclosure9483Tests: XCTestCase {
         let text = try page()
         let call = try XCTUnwrap(text.range(of: "EventHeadlinePhase9483.resolve("))
         let args = String(text[call.upperBound...].prefix(500))
-        XCTAssertTrue(args.contains("observedAt: event.heroProbabilityObservedAt?.asDate"),
+        // #10090 — the displayed number's clock: committed, or a shown preview's own.
+        XCTAssertTrue(args.contains("observedAt: vm.displayedProbabilityObservedAt(event)"),
                       "the phase must read the hero quote's own clock")
-        XCTAssertTrue(args.contains("now: tick.date"), "the phase must age on the minute tick")
+        // #9483 — on the page's display clock, which is the tick in production.
+        XCTAssertTrue(args.contains("now: displayNow(tick.date)"), "the phase must age on the minute tick")
         let before = String(text[..<call.lowerBound].suffix(300))
         XCTAssertTrue(before.contains("TimelineView(.periodic(from: .now, by: 60)) { tick in"))
     }

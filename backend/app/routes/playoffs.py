@@ -10,6 +10,7 @@ import os
 import re
 import statistics
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -1655,11 +1656,27 @@ def _collect_trend_outcomes(
       outcome's own. Venues spell a club differently and the old fallback was
       the lowercase normalized form, so naming per outcome would split one club
       into two differently-named series the moment the ``break`` came out.
+
+    * **A club the grid has put OUT is not drawn** (#11493). Its championship
+      cell says ``eliminated`` (or ``lost``) and prints ✕, but ``grid_raw`` still
+      holds the venue's leftover 0.1% quote, so the legend beside the table used
+      to list the Reds, Orioles and Athletics — none of which made the MLB
+      playoffs — at "0%" next to the two live clubs. The ``top`` seats go to the
+      next clubs still in it, which is the shape the WNBA legend already had.
+      Dropping a name never moves a drawn club's number: the de-vig denominator
+      is the market's whole column, not the names drawn.
     """
     trend_outcome_ids: list[int] = []
     trend_outcome_names: dict[int, str] = {}
 
-    for team in teams[:top]:
+    drawn = 0
+    for team in teams:
+        if drawn >= top:
+            break
+        cell = (team.get("cells") or {}).get(championship_col) or {}
+        if cell.get("state") in _GRID_OUT_STATES:
+            continue
+        drawn += 1
         norm_name = _normalize_team_name(team["name"])
         for entry in grid_raw.get(norm_name, {}).get(championship_col, []):
             outcome_id = entry.get("outcome_id")
@@ -2194,6 +2211,7 @@ def _team_meta_for_label(
     team_meta: dict[str, dict],
     primary_key: str | None,
     display_name: str | None,
+    ticker_suffixes: Iterable[str] = (),
 ) -> dict:
     """The metadata a row shows: by its grid key, else its label, else the college form.
 
@@ -2249,11 +2267,54 @@ def _team_meta_for_label(
     meta = (team_meta.get(primary_key) if primary_key else None) or {}
     if meta or not display_name:
         return meta
-    meta = team_meta.get(_normalize_team_name(display_name)) or {}
+    label_key = _grid_identity_key(display_name)
+    if _qualified_key_base(label_key) is not None:
+        return _qualified_label_meta(team_meta, label_key, ticker_suffixes)
+    meta = team_meta.get(label_key) or {}
     if meta:
         return meta
     college_form = _normalize_team_name_for_matching(display_name)
     return (team_meta.get(college_form) or {}) if college_form else {}
+
+
+def _qualified_label_meta(
+    team_meta: dict[str, dict],
+    label_key: str,
+    ticker_suffixes: Iterable[str],
+) -> dict:
+    """The metadata for a state-qualified label (``Miami (OH)``), or none (#11148).
+
+    The label rung used to look ``_normalize_team_name(label)`` up, and that
+    strips the qualifier: ``Miami (OH)`` read as ``miami``, which the Hurricanes
+    own by alias. So the RedHawks' row — Kalshi's ``Miami (OH)`` legs, left
+    unbound by #7829 exactly because the venue named two schools — wore the
+    Hurricanes' crest and ``team_id``, and the event page's Season outcomes
+    served Miami (OH)'s 3% as the 5-0 Hurricanes' playoff chance.
+
+    The qualifier is the identity, so the stripped base is never trusted on its
+    own. Two anchors, the same two :func:`_resolve_qualified_merge` uses:
+
+    1. **Textual identity.** Exactly one team name continues the qualified
+       spelling: ``miami (oh)`` → ``miami (oh) redhawks``.
+    2. **The venue's own ticker suffix.** The base's owner (``miami`` → the
+       Hurricanes, ``MIA``) is accepted only when this row's suffix names that
+       abbreviation, so ``Miami (FL)`` (``MIA``) keeps its crest and
+       ``Miami (OH)`` (``MOH``) cannot take it.
+
+    Neither ⇒ a bare row, which is the benign face.
+    """
+    prefix = label_key + " "
+    direct = [k for k in team_meta if k.startswith(prefix)]
+    if len(direct) == 1:
+        return team_meta[direct[0]] or {}
+    base = _qualified_key_base(label_key) or ""
+    meta = team_meta.get(base) or {}
+    suffixes = {c for c in (_canon_ticker(s) for s in ticker_suffixes) if c}
+    suffixes |= {a for s in suffixes if (a := _TICKER_SUFFIX_ALIASES.get(s))}
+    abbreviation = _canon_ticker(meta.get("abbreviation"))
+    if abbreviation and abbreviation in suffixes:
+        return meta
+    return {}
 
 
 def _grid_row_display_name(label: str, meta: dict) -> str:
@@ -2273,7 +2334,10 @@ def _grid_row_display_name(label: str, meta: dict) -> str:
     team_name = meta.get("name")
     if not label or not team_name:
         return label
-    if _normalize_team_name(team_name).startswith(_normalize_team_name(label) + " "):
+    # #11148: compared with the state qualifier kept. `_normalize_team_name`
+    # strips it, so `Miami (OH)` read as a prefix of `Miami Hurricanes` and a
+    # mis-crested RedHawks row printed the Hurricanes' name.
+    if _grid_identity_key(team_name).startswith(_grid_identity_key(label) + " "):
         return team_name
     return label
 
@@ -4529,6 +4593,10 @@ async def get_playoff_grid_cached(
 #: probability and needs none: the outcome has been graded.
 _GRID_DECIDED_STATES = frozenset({"won", "eliminated", "lost"})
 
+#: The decided states that put a club OUT of the question — every decided state
+#: but a win. A club in one of these is not drawn on the trend chart (#11493).
+_GRID_OUT_STATES = _GRID_DECIDED_STATES - {"won"}
+
 #: Fraction of the grid's rows that must carry a cell before the column may be
 #: called DECIDED (#6442). Measured on all 14 live grids 2026-09-17 06:26Z: of
 #: the 33 columns the fleet serves, 22 cover 100% of their rows and the lowest
@@ -6764,7 +6832,9 @@ async def get_playoff_grid(
         # Look up team metadata. Register grids key rows by the register's
         # canonical entity, which may not be spelled the way the Team table
         # normalizes, so fall back to the display name before giving up.
-        meta = _team_meta_for_label(team_meta, norm_name, display_name)
+        meta = _team_meta_for_label(
+            team_meta, norm_name, display_name, ticker_suffixes.get(norm_name, ())
+        )
         venue_label = display_name
         display_name = _grid_row_display_name(display_name, meta)
 

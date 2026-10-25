@@ -1,8 +1,10 @@
+import { PROBABILITY_SOURCE_KEYS } from "./confidence";
 import { isQuoteStreamStatus } from "./eventQuoteStream";
 import { isFinishedStatus } from "./eventState";
 import { compareFoldRevision, frameFoldOrder, parseFoldRevision } from "./foldRevision";
 import { PINNABLE_HERO_SOURCE } from "./chartEdgePin";
 import type { LiveStreamFrame } from "./liveStreamController";
+import { frameCarriesUnpricedSnapshot } from "./sourceSnapshot";
 import type { OddsHistoryPoint, WinProbHistoryPoint } from "./types";
 
 // One hour at the nominal five-second publication cadence. This is a bound on
@@ -27,6 +29,8 @@ export type LiveChartFrame = LiveChartPoint & {
   rev?: Record<string, number> | null;
 };
 
+export type SourceChartObservation = Pick<LiveChartFrame, "timestamp" | "source" | "source_probability" | "rev">;
+
 export type ChartHistory = {
   aggregate_line?: LiveChartPoint[] | null;
   win_prob_history?: Record<string, WinProbHistoryPoint[]> | null;
@@ -39,7 +43,10 @@ export function rememberLiveChartFrame(
 ): LiveChartFrame[] {
   if (frame.event_id !== eventId || !isQuoteStreamStatus(frame.status) ||
       typeof frame.p !== "number" || !Number.isFinite(frame.p) ||
-      frame.p < 0 || frame.p > 1 || !Number.isFinite(Date.parse(frame.updated_at))) {
+      frame.p < 0 || frame.p > 1 || !Number.isFinite(Date.parse(frame.updated_at)) ||
+      // #10090: a valid snapshot with no real source marks `p` as a fallback,
+      // not a blend observation.
+      frameCarriesUnpricedSnapshot(frame)) {
     return points;
   }
   const instant = Date.parse(frame.updated_at);
@@ -118,7 +125,7 @@ export function rememberLiveChartFrame(
  */
 function extendServedSourceSeries(
   served: Record<string, WinProbHistoryPoint[]> | null | undefined,
-  points: LiveChartFrame[],
+  points: SourceChartObservation[],
 ): Record<string, WinProbHistoryPoint[]> | null {
   if (!served) return null;
   let next: Record<string, WinProbHistoryPoint[]> | null = null;
@@ -178,7 +185,7 @@ function extendServedSourceSeries(
   return next;
 }
 
-function sessionReading(point: LiveChartFrame): WinProbHistoryPoint {
+function sessionReading(point: SourceChartObservation): WinProbHistoryPoint {
   return {
     timestamp: point.timestamp,
     home_probability: point.source_probability as number,
@@ -528,6 +535,7 @@ export type AdmittedChartFrames = {
   eventId: number;
   points: LiveChartFrame[];
   foldRevision: unknown;
+  sourcePoints?: SourceChartObservation[];
 };
 
 export function admitChartFrames(
@@ -620,4 +628,136 @@ export function finishedChartFrames(
     return Number.isFinite(at) && at <= bound &&
       typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
   });
+}
+
+/** Current-source observations have their own price/time, never a blend price. */
+type SourceObservationHistory = ChartHistory & { event_id?: number; history_fold_revision?: unknown; completed_at?: string | null };
+type SourceObservationDetail = FinishedHero & { win_probability_sources?: Record<string, unknown> };
+function currentSourceObservations(history: SourceObservationHistory | undefined, detail: unknown): SourceChartObservation[] {
+  if (!history || !detail || typeof detail !== "object") return [];
+  const hero = detail as SourceObservationDetail;
+  if (!Number.isSafeInteger(hero.id) || history.event_id !== hero.id || hero.completed_at ||
+      !isQuoteStreamStatus(hero.status)) return [];
+  const revision = parseFoldRevision(hero.blend_fold_revision);
+  if (!revision || Object.keys(revision).length !== 1 || !(String(hero.id) in revision)) return [];
+  const historyRevision = parseFoldRevision(history.history_fold_revision);
+  if (historyRevision) {
+    const order = compareFoldRevision(revision, historyRevision);
+    if (order === "older" || order === "incomparable") return [];
+  }
+  const points: SourceChartObservation[] = [];
+  for (const [source, raw] of Object.entries(hero.win_probability_sources ?? {})) {
+    if (!PROBABILITY_SOURCE_KEYS.has(source) || source === "final_result" ||
+        !history.win_prob_history?.[source]?.length || !raw || typeof raw !== "object") continue;
+    const reading = raw as { value?: unknown; updated_at?: unknown };
+    const value = reading.value, timestamp = reading.updated_at;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1 ||
+        typeof timestamp !== "string" || !Number.isFinite(Date.parse(timestamp))) continue;
+    points.push({ timestamp, source, source_probability: value, rev: revision });
+  }
+  return points.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+}
+
+/** Bank received source observations alongside admitted blend frames. This
+ * independent, bounded source list cannot be merged into aggregate_line. */
+export function admitCurrentSourceObservations(
+  admitted: AdmittedChartFrames, previous: AdmittedChartFrames | null,
+  history: SourceObservationHistory | undefined, detail: SourceObservationDetail | undefined,
+): AdmittedChartFrames {
+  const revision = parseFoldRevision(detail?.blend_fold_revision);
+  if (!detail || detail.id !== admitted.eventId || history?.event_id !== admitted.eventId ||
+      detail.completed_at || !isQuoteStreamStatus(detail.status) || !revision ||
+      Object.keys(revision).length !== 1 || !(String(admitted.eventId) in revision)) return admitted;
+  const retained = previous?.eventId === admitted.eventId ? previous.sourcePoints ?? [] : [];
+  const points = new Map<string, SourceChartObservation>();
+  for (const point of [...retained, ...currentSourceObservations(history, detail)]) {
+    const order = frameFoldOrder(revision, point.rev);
+    if (order !== "same" && order !== "older") continue;
+    if (!point.source || !history.win_prob_history?.[point.source]?.length) continue;
+    const key = `${point.source}:${Date.parse(point.timestamp)}`;
+    const old = points.get(key);
+    if (old?.rev && point.rev && compareFoldRevision(point.rev, old.rev) === "older") continue;
+    points.set(key, point);
+  }
+  return { ...admitted, sourcePoints: [...points.values()]
+    .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+    .slice(-MAX_LIVE_CHART_FRAMES) };
+}
+
+/** Preserve an eligible source reading received by a covering pair even if
+ * replaying newer writes replaces that reading before the next render. Only
+ * source points enter the existing bounded bank; the adopted headline wins. */
+export function admitRecoveredSourceObservations(
+  previous: AdmittedChartFrames | null,
+  history: SourceObservationHistory | undefined,
+  recovered: SourceObservationDetail,
+  adopted: SourceObservationDetail,
+): AdmittedChartFrames | null {
+  const revision = parseFoldRevision(adopted.blend_fold_revision);
+  const recoveredRevision = parseFoldRevision(recovered.blend_fold_revision);
+  if (!Number.isSafeInteger(adopted.id) || recovered.id !== adopted.id ||
+      history?.event_id !== adopted.id || adopted.completed_at ||
+      !isQuoteStreamStatus(adopted.status) || !revision || !recoveredRevision ||
+      Object.keys(revision).length !== 1 || !(String(adopted.id) in revision)) return previous;
+  const order = compareFoldRevision(revision, recoveredRevision);
+  if (order !== "same" && order !== "newer") return previous;
+  if (previous) {
+    const previousRevision = parseFoldRevision(previous.foldRevision);
+    if (previous.eventId !== adopted.id || !previousRevision) return previous;
+    const since = compareFoldRevision(revision, previousRevision);
+    if (since !== "same" && since !== "newer") return previous;
+  }
+  const base = previous ?? { eventId: adopted.id!, points: [], foldRevision: revision };
+  // This pair may be older than the history the page keeps. It can add its
+  // own readings, but cannot prune sources already admitted under that newer
+  // history. The next memo applies the retained served history's authority.
+  const points = new Map<string, SourceChartObservation>();
+  for (const point of [...(base.sourcePoints ?? []), ...currentSourceObservations(history, recovered)]) {
+    const relation = frameFoldOrder(revision, point.rev);
+    if (relation !== "same" && relation !== "older") continue;
+    const key = `${point.source}:${Date.parse(point.timestamp)}`;
+    const old = points.get(key);
+    if (old?.rev && point.rev && compareFoldRevision(point.rev, old.rev) === "older") continue;
+    points.set(key, point);
+  }
+  return { ...base, foldRevision: revision, sourcePoints: [...points.values()]
+    .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+    .slice(-MAX_LIVE_CHART_FRAMES) };
+}
+
+/** Render only the source bank already admitted while eligible. A completed
+ * detail may retain pre-finish observations, never admit a new one. */
+export function appendAdmittedSourceObservations<T extends SourceObservationHistory>(
+  history: T | undefined, admitted: AdmittedChartFrames | null, detail: FinishedHero | undefined,
+): T | undefined {
+  if (!history || !admitted || !detail || detail.id !== admitted.eventId ||
+      history.event_id !== admitted.eventId) return history;
+  const revision = parseFoldRevision(detail.blend_fold_revision);
+  const previous = parseFoldRevision(admitted.foldRevision);
+  if (!revision || Object.keys(revision).length !== 1 || !(String(admitted.eventId) in revision) || !previous) return history;
+  const order = compareFoldRevision(revision, previous);
+  if (order !== "same" && order !== "newer") return history;
+  let bound = Infinity;
+  if (isFinishedStatus(detail.status)) {
+    bound = Date.parse(detail.completed_at ?? "");
+    if (!Number.isFinite(bound)) return history;
+    if (history.completed_at != null) {
+      const servedBound = Date.parse(history.completed_at);
+      if (!Number.isFinite(servedBound)) return history;
+      bound = Math.min(bound, servedBound);
+    }
+  } else if (!isQuoteStreamStatus(detail.status) || detail.completed_at) return history;
+  const points = (admitted.sourcePoints ?? []).filter(point => {
+    const relation = frameFoldOrder(revision, point.rev);
+    return (relation === "same" || relation === "older") && Date.parse(point.timestamp) <= bound;
+  });
+  const sources = extendServedSourceSeries(history.win_prob_history, points);
+  return sources === null ? history : { ...history, win_prob_history: sources };
+}
+
+/** Standalone current endpoint; the page uses the admission bank for continuity. */
+export function appendCurrentSourceObservations<T extends SourceObservationHistory>(history: T | undefined, detail: unknown): T | undefined {
+  if (!history) return history;
+  const sources = extendServedSourceSeries(history.win_prob_history, currentSourceObservations(history, detail));
+  return sources === null ? history : { ...history, win_prob_history: sources };
 }

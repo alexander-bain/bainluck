@@ -30,6 +30,9 @@ class ReadSession:
         self.events, self.markets, self.outcomes = events, markets, outcomes
         self.statements = []
         self.outcome_ids = None
+        # Scalar values supplied by the joined Sports table in this fixture.
+        self.sport_keys = {e.id: "basketball_nba" for e in events}
+        self.read_at = datetime.now(timezone.utc)
 
     async def execute(self, statement):
         self.statements.append(statement)
@@ -43,12 +46,20 @@ class ReadSession:
         column = columns[len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
             "win_probability_sources"
         )] if columns else None
-        source = column.element.right.value if hasattr(column, "element") else None
+        from sqlalchemy.sql.elements import Cast, Null
+        null_source = (hasattr(column, "element") and isinstance(column.element, Cast)
+                       and isinstance(column.element.clause, Null))
+        source = column.element.right.value if hasattr(getattr(column, "element", None), "right") else None
 
         def field(obj, key):
+            if key == "sport_key":
+                return self.sport_keys.get(obj.id)
             raw = getattr(obj, key, None)
-            if key == "win_probability_sources" and source is not None:
-                return raw.get(source) if isinstance(raw, dict) else None
+            if key == "win_probability_sources":
+                if null_source:
+                    return None
+                if source is not None:
+                    return copy.deepcopy(raw.get(source)) if isinstance(raw, dict) else None
             return raw
 
         self.outcome_ids = []
@@ -84,14 +95,20 @@ class ReadSession:
                 o for o in self.outcomes if o.market_id == market.id
             ] if eligible else []
             for outcome in outcomes or [None]:
-                rows.append(tuple(
+                row = tuple(
                     field(obj, key)
                     for obj, keys in (
                         (market, PREPARED_MARKET_FIELDS),
                         (event, PREPARED_EVENT_FIELDS),
                         (outcome, PREPARED_OUTCOME_FIELDS),
                     ) for key in keys
-                ))
+                )
+                if columns and columns[-1].name == "preview_context_at":
+                    # DNPL reads the committed bag and revision alongside the
+                    # narrow restamp projection; emulate the actual SQL row.
+                    row += (copy.deepcopy(event.win_probability_sources),
+                            event.win_probability_sources_rev, self.read_at)
+                rows.append(row)
         return Result(rows)
 
 
@@ -203,15 +220,30 @@ async def test_read_projects_one_event_context_and_omits_only_impossible_kalshi_
     source_position = len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
         "win_probability_sources"
     )
-    assert [str(column) for i, column in enumerate(columns) if i != source_position] == [
-        f"{table}.{key}"
+    assert [str(column) for i, column in enumerate(columns) if i not in (source_position, PREPARED_MARKET_FIELDS.index("market_metadata"))] == [
+        "sports.key" if key == "sport_key" else f"{table}.{key}"
         for table, fields in (
             ("futures_markets", PREPARED_MARKET_FIELDS),
             ("events", PREPARED_EVENT_FIELDS),
             ("futures_outcomes", PREPARED_OUTCOME_FIELDS),
-        ) for key in fields if key != "win_probability_sources"
+        ) for key in fields if key not in ("win_probability_sources", "market_metadata")
+    ] + ["events.win_probability_sources", "events.win_probability_sources_rev", "statement_timestamp()"]
+    metadata_projection = columns[PREPARED_MARKET_FIELDS.index("market_metadata")]
+    assert metadata_projection.name == "market_metadata"
+    assert metadata_projection.element.name == "jsonb_build_object"
+    assert list(metadata_projection.element.clauses)[0].value == "content_understanding_v1"
+    assert [column.name for column in columns[-3:]] == [
+        "preview_sources", "preview_rev", "preview_context_at",
     ]
-    assert columns[source_position].element.right.value == "kalshi"
+    assert "LEFT OUTER JOIN sports ON sports.id = events.sport_id" in sql
+    from sqlalchemy.sql.elements import Cast, Null
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    source_projection = columns[source_position].element
+    assert isinstance(source_projection, Cast)
+    assert isinstance(source_projection.clause, Null)
+    assert isinstance(source_projection.type, JSONB)
+    assert grouped[1][0].win_probability_sources == {"kalshi": None}
     assert session.statements[0].compile().params["event_id_1"] == [1, 999]
 
 
@@ -302,7 +334,7 @@ async def test_prepared_context_keeps_fallbacks_and_detaches_json_without_copyin
 
     class GuardedEvent:
         def __getattr__(self, key):
-            if key not in PREPARED_EVENT_FIELDS:
+            if key not in (*PREPARED_EVENT_FIELDS, "win_probability_sources_rev"):
                 raise AssertionError(f"unprojected Event field: {key}")
             # The scalar read selects columns, never entities: the driver
             # decodes a fresh JSON object on every execution (no identity map).
@@ -320,7 +352,15 @@ async def test_prepared_context_keeps_fallbacks_and_detaches_json_without_copyin
     refresher = LiveBlendRefresher("kalshi", session_factory=factory)
     prepared = await refresher._prepare_groups([1])
     context = prepared[1][0]
-    assert set(vars(context)) == set(PREPARED_EVENT_FIELDS)
+    assert set(vars(context)) == set(PREPARED_EVENT_FIELDS) | {
+        "preview_sources", "preview_rev", "preview_read_ticket", "preview_context_at",
+    }
+    assert context.sport_key == "basketball_nba"
+    assert context.preview_context_at == session.read_at
+    assert context.preview_sources == e.win_probability_sources
+    assert context.preview_rev == e.win_probability_sources_rev
+    context.preview_sources["espn"]["value"] = 0.2
+    assert e.win_probability_sources["espn"]["value"] == 0.7
     assert context.espn_win_prob_home == 0.7
     assert context.opening_home_probability == 0.6
     assert set(vars(prepared[1][1][0].market)) == set(PREPARED_MARKET_FIELDS)

@@ -55,7 +55,10 @@ from tests.test_ws_flush_retry_q491 import (
     _install_socket,
     _poly_frame,
     _Result,
+    is_stored_live_slate_read,
+    stored_live_batches,
 )
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 #: A URL whose engine can be built and disposed without a server: nothing in
 #: these tests executes SQL on it.
@@ -93,6 +96,7 @@ class _Rig:
     """
 
     def __init__(self, slate):
+        self.slate = slate
         self.batches = [list(b) for b in slate]
         self.log: list[tuple] = []
         self.engines: list[_FakeEngine] = []
@@ -129,7 +133,12 @@ class _Rig:
                             (oid, _prob), = price_writes(stmt, params)
                             return _Result([returned(oid, quote_moved=False)])
                     return _Result([])
-                return _Result(rig.batches.pop(0) if rig.batches else [])
+                if is_stored_live_slate_read(stmt):
+                    # #10090 attempt156: the stored-live load reads its own
+                    # three batches; the full slate stays queued.
+                    rig.batches[:0] = stored_live_batches(*rig.slate[:3])
+                rows = rig.batches.pop(0) if rig.batches else []
+                return _Result(answer_slate_market_read(stmt, rows))  # #10663
 
         class _Ctx:
             async def __aenter__(self_inner):

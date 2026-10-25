@@ -7,6 +7,15 @@ import pytest
 
 from app.routes import event_stream as route
 from app.utils import live_fanout
+from tests._event_stream_legacy_view import install_legacy_view
+
+
+@pytest.fixture(autouse=True)
+def _legacy_wire_view(monkeypatch):
+    """#10090: these tests predate the stream's owned coverage read and
+    assert chunk position, so reconcile controls are dropped too; see
+    tests/_event_stream_legacy_view.py."""
+    install_legacy_view(monkeypatch, drop_reconcile=True)
 
 
 class Request:

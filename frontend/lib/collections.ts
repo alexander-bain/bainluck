@@ -84,7 +84,7 @@ const themeLabel = (edition: ObjectValue, slug: string): string | null =>
 const isTheme = (value: unknown): boolean => { const edition = object(value); return edition?.kind === "theme_continuing" || edition?.kind === "theme_edition"; };
 const themeSectionTitles: Record<string, Record<string, string>> = {
   oscars: { title: "Award winners", advancement: "Nominations", side_question: "More questions" },
-  ai: { side_question: "Questions" },
+  ai: { side_question: "Markets" },
 };
 const cursorText = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 64 && /^[A-Za-z0-9_-]+$/.test(value);
 
@@ -176,6 +176,17 @@ function relate(members: CollectionMember[]): Record<string, CollectionMember[]>
   return related;
 }
 
+// #5342: a game's attached markets keep their own served routes on the hub. The
+// game page does not draw every one (Week 5's Polymarket "O/U 47.5" is reachable
+// only from here), so a game with a short served list names each as a plain
+// link, in served order, with no number, count or ranking. A longer list stays
+// behind "More on this game": hundreds of rungs never go inline (#10146).
+export const RELATED_LINK_LIMIT = 12;
+export function relatedMarketLinks(hub: CollectionHub, gameKey: string): CollectionMember[] {
+  const related = hub.related[gameKey] ?? [];
+  return related.length <= RELATED_LINK_LIMIT ? related : [];
+}
+
 export interface CollectionPageRequest { revision: number; cursor: string }
 export async function fetchCollection(slug: string, signal?: AbortSignal, page?: CollectionPageRequest): Promise<CollectionHub> {
   if (!safeCollectionSlug(slug)) throw new Error("This collection isn't available right now.");
@@ -204,7 +215,7 @@ let readsIssued = 0;
 const closedBelow = new Map<string, number>();
 export const openCollectionRead = (): number => ++readsIssued;
 export const collectionReadAdmitted = (slug: string, ticket: number): boolean => ticket >= (closedBelow.get(slug) ?? 0);
-export const forgetAcceptedCollections = (): void => { acceptedHubs.clear(); closedBelow.clear(); };
+export const forgetAcceptedCollections = (): void => { acceptedHubs.clear(); closedBelow.clear(); drawnWeekNavigation.clear(); };
 const accept = (slug: string, hub: CollectionHub): CollectionHub => {
   acceptedHubs.delete(slug);
   if (hub.slug === slug && hub.state === "published") {
@@ -236,7 +247,16 @@ function combine(earlier: CollectionHub, later: CollectionHub, nextCursor: strin
     if (last?.cls === section.cls) sections[sections.length - 1] = { ...last, members: [...last.members, ...add] };
     else sections.push({ ...section, key: `${sections.length}:${section.cls}`, members: add });
   }
-  return { ...later, members, sections, related: relate(members), note, theme: { ...later.theme!, nextCursor } };
+  const related = relate(members);
+  const relatedKeys = new Set(Object.values(related).flat().map((m) => m.key));
+  return {
+    ...later,
+    members,
+    sections: sections.map((s) => ({ ...s, members: s.members.filter((m) => !relatedKeys.has(m.key)) })).filter((s) => s.members.length > 0),
+    related,
+    note,
+    theme: { ...later.theme!, nextCursor },
+  };
 }
 
 // "Load more": `page` answers `requested` (the hub's revision and next_cursor
@@ -287,6 +307,17 @@ export function collectionRefreshInterval(hub: CollectionHub | null, now = Date.
 
 export interface CollectionWeekLink { slug: string; label: string; href: string }
 export interface CollectionWeekNavigation { slug: string; state: "available" | "unavailable" | "not_applicable"; previous: CollectionWeekLink | null; next: CollectionWeekLink | null }
+
+// #11567: the week navigation each hub last drew, held in memory like the hub
+// itself (#9982). While the next read is in flight (Back, a refresh) the hub
+// holds the links' place, so the games below them do not move when they draw.
+const drawnWeekNavigation = new Map<string, CollectionWeekNavigation>();
+export const lastWeekNavigation = (slug: string): CollectionWeekNavigation | null => drawnWeekNavigation.get(slug) ?? null;
+export function rememberWeekNavigation(navigation: CollectionWeekNavigation): void {
+  drawnWeekNavigation.delete(navigation.slug);
+  drawnWeekNavigation.set(navigation.slug, navigation);
+  for (const oldest of drawnWeekNavigation.keys()) { if (drawnWeekNavigation.size <= ACCEPTED_HUB_LIMIT) break; drawnWeekNavigation.delete(oldest); }
+}
 
 export function parseCollectionWeekNavigation(value: unknown, slug: string): CollectionWeekNavigation {
   const row = object(value);

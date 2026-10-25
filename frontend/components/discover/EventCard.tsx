@@ -20,6 +20,7 @@ import {
   SUSPENDED_LABEL,
   isFinishedStatus,
   isSuspendedStatus,
+  scoresShowPlay,
   suspendedSummary,
 } from "@/lib/eventState";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
@@ -224,7 +225,15 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // is sized for "Q3". The full sentence lives in the row below the crests,
   // where the settled card puts its winner line — same place, same weight, so a
   // reader's eye finds the state in the position it already looks for it.
-  const timeLabel = isLive ? (formatLiveClockLabel(data.espn?.period, null) || "Live") : isDone ? "Final" : isSuspended ? "Paused" : pregameSlotLabel(data.commence_time);
+  // #9208 — a rained-out ALCS game (15330795) read POSTPONED in the row below
+  // and "Paused" between the crests over 0 · 0: two claims the row had already
+  // refused — that play stopped mid-game, and that it stood at 0-0. The slot
+  // takes the authority's word where #8810 gave the row one, and ESPN's 0-0
+  // filler under a stoppage word is not drawn (#8960's rule, `suspendedSummary`).
+  // A match stopped WITH a score keeps it; with no stoppage word, unchanged.
+  const stoppageLabel = isSuspended ? authorityStoppageLabel(data.espn?.period) : null;
+  const heroScores = (isLive || isDone || isSuspended) && !(stoppageLabel && !scoresShowPlay(data.away_score, data.home_score));
+  const timeLabel = isLive ? (formatLiveClockLabel(data.espn?.period, null) || "Live") : isDone ? "Final" : isSuspended ? (stoppageLabel ?? "Paused") : pregameSlotLabel(data.commence_time);
 
   // Build context blurb from tags
   const contextLines: string[] = [];
@@ -249,7 +258,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
     : `Track ${data.away_team} vs ${data.home_team} on Bain Luck.`;
 
   return (
-    <article className="relative rounded-[10px] overflow-hidden border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.away_team} vs ${data.home_team}${isLive ? " - Live" : isDone ? " - Final" : isSuspended ? ` - ${SUSPENDED_LABEL}` : ""}`} data-card-format="event">
+    <article className="relative rounded-[10px] overflow-hidden border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.away_team} vs ${data.home_team}${isLive ? " - Live" : isDone ? " - Final" : isSuspended ? ` - ${stoppageLabel ?? SUSPENDED_LABEL}` : ""}`} data-card-format="event">
       <DismissBtn onDismiss={onDismiss} />
       {trending && <TrendBadge />}
 
@@ -277,12 +286,12 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
 
         <div className="flex flex-col items-center gap-2">
           {data.away_team_data?.logo_small ? (awayCrestPlate ? <div data-crest-plate="away" className="w-16 h-16 rounded-full bg-white/90 shadow-lg grid place-items-center"><img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-12 h-12 object-contain" /></div> : <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" />) : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{discoverCrestBadge(data.away_team, data.sport)}</div>}
-          {(isLive || isDone || isSuspended) && data.away_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.away_score}</span>}
+          {heroScores && data.away_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.away_score}</span>}
         </div>
         <span className="text-white/70 text-sm font-semibold">{timeLabel}</span>
         <div className="flex flex-col items-center gap-2">
           {data.home_team_data?.logo_small ? (homeCrestPlate ? <div data-crest-plate="home" className="w-16 h-16 rounded-full bg-white/90 shadow-lg grid place-items-center"><img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-12 h-12 object-contain" /></div> : <img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" />) : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>{discoverCrestBadge(data.home_team, data.sport)}</div>}
-          {(isLive || isDone || isSuspended) && data.home_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.home_score}</span>}
+          {heroScores && data.home_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.home_score}</span>}
         </div>
       </div>
 
@@ -451,7 +460,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               {/* #2786 — AWAY-HOME, unchanged. This is the one surface whose
                   own scores really are away-first: the hero above paints
                   `away_score` on the left and `home_score` on the right. */}
-              {suspendedSummary(data.away_score, data.home_score, "away-home", authorityStoppageLabel(data.espn?.period))}
+              {suspendedSummary(data.away_score, data.home_score, "away-home", stoppageLabel)}
             </span>
             {/* #6361 — mirrors the `finishedLabel` span in the `isDone` block
                 above: same slot, same weight, same muted treatment. AFTER the

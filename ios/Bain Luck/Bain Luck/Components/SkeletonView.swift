@@ -3,6 +3,10 @@ import SwiftUI
 // MARK: - Shimmer Effect
 
 struct ShimmerModifier: ViewModifier {
+    /// #11288 — lighter than the old 0.35 so the sweep no longer washes the
+    /// darker bars back toward the row colour.
+    static let sweepOpacity: Double = 0.25
+
     @State private var phase: CGFloat = -1
 
     func body(content: Content) -> some View {
@@ -10,7 +14,7 @@ struct ShimmerModifier: ViewModifier {
             .overlay(
                 GeometryReader { geo in
                     LinearGradient(
-                        colors: [.clear, .white.opacity(0.35), .clear],
+                        colors: [.clear, .white.opacity(Self.sweepOpacity), .clear],
                         startPoint: .init(x: phase - 0.3, y: phase - 0.3),
                         endPoint: .init(x: phase + 0.3, y: phase + 0.3)
                     )
@@ -34,6 +38,18 @@ extension View {
 
 // MARK: - Skeleton Primitives
 
+extension Color {
+    /// #11288 — placeholder bars. `systemGray5` (#E5E5EA) sat at about 1.26:1 on
+    /// a white row, so 5–10 s of skeleton read as a blank screen on a phone.
+    /// `systemGray3` (#C7C7CC) is about 1.7:1 and still reads as a placeholder,
+    /// not content; the caption on `SkeletonFeedView` is what says "loading".
+    #if os(iOS)
+    static let skeletonFill = Color(.systemGray3)
+    #else
+    static let skeletonFill = Color.gray.opacity(0.35)
+    #endif
+}
+
 struct SkeletonShape: View {
     var width: CGFloat? = nil
     var height: CGFloat = 14
@@ -41,7 +57,7 @@ struct SkeletonShape: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius)
-            .fill(Color.systemGray5)
+            .fill(Color.skeletonFill)
             .frame(width: width, height: height)
     }
 }
@@ -61,7 +77,7 @@ struct SkeletonEventCard: View {
 
             // Away team row
             HStack(spacing: 8) {
-                Circle().fill(Color.systemGray5).frame(width: 24, height: 24)
+                Circle().fill(Color.skeletonFill).frame(width: 24, height: 24)
                 SkeletonShape(width: .random(in: 90...140), height: 14)
                 Spacer()
                 SkeletonShape(width: 32, height: 14)
@@ -72,7 +88,7 @@ struct SkeletonEventCard: View {
 
             // Home team row
             HStack(spacing: 8) {
-                Circle().fill(Color.systemGray5).frame(width: 24, height: 24)
+                Circle().fill(Color.skeletonFill).frame(width: 24, height: 24)
                 SkeletonShape(width: .random(in: 90...140), height: 14)
                 Spacer()
                 SkeletonShape(width: 32, height: 14)
@@ -121,8 +137,27 @@ struct SkeletonFuturesCard: View {
 // MARK: - Skeleton Feed (full loading state)
 
 struct SkeletonFeedView: View {
+    /// #11288 — a short visible line with a spinner, e.g. "Loading games…". The
+    /// bars alone carry no words, so a slow load looked like an empty screen.
+    var caption: String? = nil
+
     var body: some View {
         List {
+            if let caption {
+                Section {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text(caption)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(caption)
+                }
+            }
+
             Section {
                 SkeletonEventCard()
                 SkeletonEventCard()

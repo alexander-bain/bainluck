@@ -31,11 +31,28 @@ CODEQL_WORKFLOW = ".github/workflows/codeql.yml"
 CODEQL_ANALYSIS_KEY = CODEQL_WORKFLOW + ":analyze"
 SECURITY_LANGUAGES = ("python", "javascript-typescript")
 SARIF_MAX_BYTES = 8_000_000  # >2x the observed 3.54 MB Python snapshot; SARIF ONLY.
+# Pending analysis-step rereads: 1/2/4 s, then every 4 s. The sleeps total the
+# 75 s API deadline, so that deadline (request time included), never this
+# count, ends a pending wait; the count only keeps the reads finite (#11445).
+ANALYSIS_READINESS_DELAYS = (1, 2, 4) + (4,) * 17
 SECURITY_RECORD_STEP = "Record CodeQL checkout provenance"
 SECURITY_QUALIFY_STEP = "Qualify compose security or record master baseline"
 SECURITY_PUBLISH_STEP = "Publish CodeQL security receipt"
 UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 REFUSAL = re.compile(r"high|critical|medium|security vulnerabilit", re.I)
+# Integrator 2135Z ruling, explicitly approved by Alex: repair-only transition.
+# These remain COMPOSE receipts; the failed master is never called paid.
+TRANSITION_BASE = "d714d4a62318175bc750201ad42514eeee595f73"
+TRANSITION_TREE = "f3ab18e65903289f3ea8c4acfcc3c49a96fba15d"
+TRANSITION_PARENT = "761227a49d721e764edbdd41b3bb357ac584efd5"
+TRANSITION_REPOSITORY = "alexander-bain/bainluck"
+TRANSITION_REPOSITORY_ID = 1143038283
+TRANSITION_MASTER_RUN = 38964094925
+TRANSITION_MASTER_ATTEMPT = 2
+TRANSITION_RUN = 38962211223
+TRANSITION_ATTEMPT = 1
+TRANSITION_BRANCH = "integrator/compose-683-11131-d714d4a6"
+TRANSITION_SELECTION = "d714-compose-transition"
 
 
 def require(condition, message):
@@ -692,7 +709,9 @@ def security_record(env, language):
     return {**proof, "tree": tree, "base": base}
 
 
-def _validate_codeql_run(run, head, branch, repo_id, *, attempt=None, successful=True):
+def _validate_codeql_run(
+    run, head, branch, repo_id, *, attempt=None, successful=True, queued=False
+):
     require(
         run["path"] == CODEQL_WORKFLOW
         and run["event"] == "push"
@@ -718,6 +737,7 @@ def _validate_codeql_run(run, head, branch, repo_id, *, attempt=None, successful
     else:
         require(
             run["status"] == "in_progress"
+            or (queued and run["status"] == "queued" and run["conclusion"] is None)
             or (run["status"] == "completed" and run["conclusion"] == "success"),
             "CodeQL producer attempt unpaid",
         )
@@ -763,46 +783,276 @@ def _official_jobs(api, run, *, producer=False):
     return mapped
 
 
-def _producer_analysis_step(api, run, language):
-    """Bind the action's upload to THIS attempt's successful official step.
+def _security_diagnostic(checkpoint, **fields):
+    """Print only fixed checkpoints and bounded, allowlisted primitive fields.
 
-    The qualification step is still running, so the producer job may be in
-    progress; its analysis step must already be completed/success. Other matrix
-    legs need not have finished. An older attempt's UUID cannot pass this window.
+    Never render an API string, exception, URL, environment or response body.
+    Unrecognized values are represented by a fixed sentinel.
     """
-    jobs = api.pages(f"actions/runs/{run['id']}/jobs?filter=latest", "jobs")
-    require(
-        len(jobs) == len(SECURITY_LANGUAGES)
-        and {job["name"] for job in jobs}
-        == {f"Analyze ({lang})" for lang in SECURITY_LANGUAGES},
-        "wrong producer matrix membership",
+    checkpoints = {
+        "context",
+        "provenance",
+        "run-lookup",
+        "run-validation",
+        "liveness-witness",
+        "repository-binding",
+        "jobs-lookup",
+        "matrix-membership",
+        "matrix-attempts",
+        "producer-job",
+        "analysis-step",
+        "analysis-window",
+        "analysis-readiness-wait",
+        "upload-lookup",
+        "upload-count",
+        "upload-identity",
+        "upload-window",
+        "candidate-snapshot",
+        "baseline",
+        "alert-comparison",
+        "analysis-reread",
+        "run-reread",
+        "run-revalidation",
+        "liveness-rebind",
+        "qualified",
+    }
+    numeric = {
+        "run_id",
+        "attempt",
+        "expected_attempt",
+        "job_id",
+        "job_attempt",
+        "matrix_count",
+        "step_count",
+        "upload_count",
+        "analysis_id",
+        "read_count",
+        "wait_seconds",
+    }
+    enums = {
+        "status": {
+            "queued",
+            "waiting",
+            "pending",
+            "requested",
+            "in_progress",
+            "completed",
+        },
+        "conclusion": {
+            "success",
+            "failure",
+            "cancelled",
+            "timed_out",
+            "skipped",
+            "neutral",
+            "action_required",
+            "stale",
+            "startup_failure",
+        },
+        "language": set(SECURITY_LANGUAGES),
+    }
+    label = checkpoint if checkpoint in checkpoints else "untrusted"
+    values = []
+    for key in sorted(fields):
+        value = fields[key]
+        if key in numeric:
+            safe = (
+                str(value)
+                if type(value) is int and 0 <= value <= 10**15
+                else "untrusted"
+            )
+        elif key in enums:
+            safe = (
+                "null"
+                if value is None
+                else (
+                    value if type(value) is str and value in enums[key] else "untrusted"
+                )
+            )
+        else:
+            continue
+        values.append(f"{key}={safe}")
+    print("SECURITY CHECKPOINT " + label + (" " + " ".join(values) if values else ""))
+
+
+def _producer_run(api, expected, branch):
+    """Read and fully validate the producer's own attempt once.
+
+    The runs API can report the exact attempt `queued conclusion=null` for
+    minutes while its own jobs run (#11445, 39793061366 attempts 1 and 2), so
+    a queued read is returned unpaid: it qualifies nothing unless the
+    producer's own executing job and completed analysis step witness it.
+    """
+    require(time.monotonic() < api.deadline, "evidence decision deadline")
+    run = api.get(f"actions/runs/{expected['run_id']}")
+    require(time.monotonic() < api.deadline, "evidence decision deadline")
+    _security_diagnostic(
+        "run-validation",
+        run_id=run.get("id"),
+        attempt=run.get("run_attempt"),
+        expected_attempt=expected["attempt"],
+        status=run.get("status"),
+        conclusion=run.get("conclusion"),
     )
-    require(
-        all(job["run_attempt"] == run["run_attempt"] for job in jobs),
-        "mixed producer attempts; re-run ALL jobs of this exact CodeQL run",
+    _validate_codeql_run(
+        run,
+        expected["head"],
+        branch,
+        expected["repository_id"],
+        attempt=expected["attempt"],
+        successful=False,
+        queued=True,
     )
-    job = next(job for job in jobs if job["name"] == f"Analyze ({language})")
-    require(
-        job["run_attempt"] == run["run_attempt"]
-        and (
+    return run
+
+
+def _producer_analysis_step(api, run, language, *, diagnostic=False, rebind=None):
+    """Bounded rereads of only the observed current analysis-step pending state.
+
+    All other states/errors refuse immediately. Identity pins and the original
+    API deadline survive every read; the selected step must still finish green.
+    The jobs API can lag the finished step by more than 7 s (#11445), so a
+    pending read waits on until the next wait would reach that same deadline.
+    A queued run read is witnessed only by every job of this exact run, head
+    and attempt with the producer's own job executing since before its
+    analysis step started. `rebind` is the identity a final reread must
+    match on its first read, with no wait. Returns (step, identity).
+    """
+    witness = run["status"] == "queued"
+    pinned = rebind
+    for read_index in range(len(ANALYSIS_READINESS_DELAYS) + 1):
+        require(time.monotonic() < api.deadline, "evidence decision deadline")
+        if diagnostic:
+            _security_diagnostic("jobs-lookup")
+        jobs = api.pages(f"actions/runs/{run['id']}/jobs?filter=latest", "jobs")
+        require(time.monotonic() < api.deadline, "evidence decision deadline")
+        if diagnostic:
+            _security_diagnostic("matrix-membership", matrix_count=len(jobs))
+        require(
+            len(jobs) == len(SECURITY_LANGUAGES)
+            and {job["name"] for job in jobs}
+            == {f"Analyze ({lang})" for lang in SECURITY_LANGUAGES},
+            "wrong producer matrix membership",
+        )
+        if diagnostic:
+            _security_diagnostic("matrix-attempts")
+            for item in jobs:
+                _security_diagnostic(
+                    "matrix-attempts",
+                    job_id=item.get("id"),
+                    job_attempt=item.get("run_attempt"),
+                    expected_attempt=run.get("run_attempt"),
+                )
+        require(
+            all(job["run_attempt"] == run["run_attempt"] for job in jobs),
+            "mixed producer attempts; re-run ALL jobs of this exact CodeQL run",
+        )
+        job = next(job for job in jobs if job["name"] == f"Analyze ({language})")
+        if diagnostic:
+            _security_diagnostic(
+                "producer-job",
+                language=language,
+                job_id=job.get("id"),
+                job_attempt=job.get("run_attempt"),
+                status=job.get("status"),
+                conclusion=job.get("conclusion"),
+            )
+        require(
+            job["run_attempt"] == run["run_attempt"]
+            and (
+                (job["status"] == "in_progress" and job["conclusion"] is None)
+                or (job["status"] == "completed" and job["conclusion"] == "success")
+            ),
+            "producer job belongs to an unpaid attempt",
+        )
+        steps = [
+            step for step in job["steps"] if step["name"] == "Perform CodeQL Analysis"
+        ]
+        if diagnostic:
+            _security_diagnostic("analysis-step", step_count=len(steps))
+            if len(steps) == 1:
+                _security_diagnostic(
+                    "analysis-step",
+                    status=steps[0].get("status"),
+                    conclusion=steps[0].get("conclusion"),
+                )
+        require(len(steps) == 1, "producer analysis step is unpaid")
+        step = steps[0]
+        require(
+            _positive(job["id"]) and _positive(step["number"]),
+            "invalid producer step identity",
+        )
+        require(
+            all(
+                _positive(item["id"]) and _positive(item["run_attempt"])
+                for item in jobs
+            )
+            and len({item["id"] for item in jobs}) == len(jobs),
+            "invalid producer matrix identity",
+        )
+        stamp(step["started_at"])
+        identity = (
+            tuple(
+                sorted((item["id"], item["name"], item["run_attempt"]) for item in jobs)
+            ),
+            job["id"],
+            step["number"],
+            step["name"],
+            step["started_at"],
+        )
+        require(
+            pinned is None or pinned == identity, "producer readiness identity moved"
+        )
+        pinned = identity
+        if witness:
+            if diagnostic:
+                _security_diagnostic(
+                    "liveness-witness",
+                    job_id=job.get("id"),
+                    job_attempt=job.get("run_attempt"),
+                    status=job.get("status"),
+                    conclusion=job.get("conclusion"),
+                )
+            require(
+                job["status"] == "in_progress"
+                and job["conclusion"] is None
+                and all(
+                    item["run_id"] == run["id"]
+                    and item["head_sha"] == run["head_sha"]
+                    and item["head_branch"] == run["head_branch"]
+                    for item in jobs
+                )
+                and isinstance(job["started_at"], str)
+                and stamp(job["started_at"]) <= stamp(step["started_at"]),
+                "producer liveness witness unpaid",
+            )
+        if step["status"] == "completed" and step["conclusion"] == "success":
+            if diagnostic:
+                _security_diagnostic("analysis-window")
+            require(
+                stamp(step["started_at"]) <= stamp(step["completed_at"]),
+                "invalid producer analysis window",
+            )
+            return step, identity
+        pending = (
             job["status"] == "in_progress"
-            or (job["status"] == "completed" and job["conclusion"] == "success")
-        ),
-        "producer job belongs to an unpaid attempt",
-    )
-    steps = [step for step in job["steps"] if step["name"] == "Perform CodeQL Analysis"]
-    require(
-        len(steps) == 1
-        and steps[0]["status"] == "completed"
-        and steps[0]["conclusion"] == "success",
-        "producer analysis step is unpaid",
-    )
-    step = steps[0]
-    require(
-        stamp(step["started_at"]) <= stamp(step["completed_at"]),
-        "invalid producer analysis window",
-    )
-    return step
+            and job["conclusion"] is None
+            and step["status"] == "in_progress"
+            and step["conclusion"] is None
+            and step["completed_at"] is None
+        )
+        require(
+            pending and rebind is None and read_index < len(ANALYSIS_READINESS_DELAYS),
+            "producer analysis step is unpaid",
+        )
+        delay = ANALYSIS_READINESS_DELAYS[read_index]
+        require(time.monotonic() + delay < api.deadline, "evidence decision deadline")
+        if diagnostic:
+            _security_diagnostic(
+                "analysis-readiness-wait", read_count=read_index + 1, wait_seconds=delay
+            )
+        time.sleep(delay)
+    raise ValueError("producer analysis step is unpaid")
 
 
 def _analysis_identity(metadata):
@@ -1089,9 +1339,17 @@ def _receipt_identity(
             and _positive(baseline["attempt"])
             and _positive(baseline["analysis_id"])
             and UUID.fullmatch(baseline["sarif_id"])
-            and baseline["selection"] in ("receipt", "legacy-window"),
+            and baseline["selection"]
+            in ("receipt", "legacy-window", TRANSITION_SELECTION),
             "invalid qualified baseline identity",
         )
+        if baseline["selection"] == TRANSITION_SELECTION:
+            require(
+                base == TRANSITION_BASE
+                and baseline["run_id"] == TRANSITION_RUN
+                and baseline["attempt"] == TRANSITION_ATTEMPT,
+                "foreign transition baseline",
+            )
     else:
         require(
             receipt["qualified"] is False
@@ -1128,6 +1386,120 @@ def _base_declares_producer(api, base):
     return all(markers)
 
 
+def _transition_base_security(api, master, base, repo_id, language):
+    """One explicitly ruled exact-base transition; no failed receipt promotion."""
+    require(
+        base == TRANSITION_BASE
+        and repo_id == TRANSITION_REPOSITORY_ID
+        and master["id"] == TRANSITION_MASTER_RUN
+        and master["run_attempt"] == TRANSITION_MASTER_ATTEMPT
+        and master["head_sha"] == base
+        and master["head_branch"] == "master"
+        and master["path"] == CODEQL_WORKFLOW
+        and master["event"] == "push"
+        and master["status"] == "completed"
+        and master["conclusion"] == "failure"
+        and master["repository"]["id"] == repo_id
+        and master["head_repository"]["id"] == repo_id
+        and master["repository"]["full_name"] == TRANSITION_REPOSITORY,
+        "transition is not the ruled unpaid master attempt",
+    )
+    if isinstance(api, API):
+        api.bind_repository(master["repository"])
+
+    def current_master():
+        ref = api.get("git/ref/heads/master")
+        require(
+            ref["ref"] == "refs/heads/master"
+            and ref["object"]["type"] == "commit"
+            and ref["object"]["sha"] == base,
+            "master moved; transition ruling is void",
+        )
+
+    current_master()
+    commit = api.get(f"git/commits/{base}")
+    require(
+        commit["sha"] == base and commit["tree"]["sha"] == TRANSITION_TREE,
+        "transition base tree mismatch",
+    )
+    run = api.get(f"actions/runs/{TRANSITION_RUN}")
+    _validate_codeql_run(
+        run, base, TRANSITION_BRANCH, repo_id, attempt=TRANSITION_ATTEMPT
+    )
+    require(
+        run["repository"]["full_name"] == TRANSITION_REPOSITORY,
+        "foreign transition repository",
+    )
+    jobs = _official_jobs(api, run, producer=True)
+    artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
+    selected = {}
+    for lang in SECURITY_LANGUAGES:
+        receipt = _security_artifact(api, artifacts, run, lang)
+        _receipt_identity(
+            receipt,
+            run,
+            repo_id,
+            lang,
+            role="compose",
+            head=base,
+            tree=TRANSITION_TREE,
+            base=TRANSITION_PARENT,
+        )
+        require(
+            receipt["repository"] == TRANSITION_REPOSITORY,
+            "foreign transition receipt",
+        )
+        metadata = api.get(f"code-scanning/analyses/{receipt['analysis_id']}")
+        _validate_analysis(
+            metadata,
+            base,
+            f"refs/heads/{TRANSITION_BRANCH}",
+            lang,
+            sarif_id=receipt["sarif_id"],
+        )
+        step = jobs[lang]["step"]
+        require(
+            stamp(step["started_at"])
+            <= stamp(metadata["created_at"])
+            <= stamp(step["completed_at"]),
+            "transition upload outside official attempt",
+        )
+        snapshot = parse_security_snapshot(
+            api.sarif(f"code-scanning/analyses/{metadata['id']}"),
+            metadata,
+            TRANSITION_REPOSITORY,
+        )
+        require(
+            metadata["results_count"] == receipt["results_count"]
+            and metadata["rules_count"] == receipt["rules_count"]
+            and snapshot["sarif_digest"] == receipt["sarif_digest"]
+            and len(snapshot["qualifying_ids"]) == receipt["qualifying_count"],
+            "transition receipt snapshot mismatch",
+        )
+        reread = api.get(f"code-scanning/analyses/{metadata['id']}")
+        require(
+            _analysis_identity(reread) == _analysis_identity(metadata),
+            "transition analysis moved",
+        )
+        selected[lang] = {
+            "run": run,
+            "metadata": metadata,
+            "snapshot": snapshot,
+            "selection": TRANSITION_SELECTION,
+        }
+    latest = api.get(f"actions/runs/{run['id']}")
+    _validate_codeql_run(
+        latest, base, TRANSITION_BRANCH, repo_id, attempt=TRANSITION_ATTEMPT
+    )
+    require(latest["updated_at"] == run["updated_at"], "transition source moved")
+    require(
+        api.get(f"actions/runs/{master['id']}") == master,
+        "master baseline changed during transition",
+    )
+    current_master()
+    return selected[language]
+
+
 def select_base_security(api, base, repo_id, language):
     """Select exact successful master CodeQL attempt and one complete analysis.
 
@@ -1148,6 +1520,18 @@ def select_base_security(api, base, repo_id, language):
     row = candidates[0]
     try:
         run = api.get(f"actions/runs/{row['id']}")
+        require(
+            run["id"] == row["id"] and run["run_attempt"] == row["run_attempt"],
+            "baseline listing/latest attempt mismatch",
+        )
+        # A paid ordinary master always wins. No exception catch selects this
+        # path: API errors, missing receipts and any other failure still refuse.
+        if (
+            base == TRANSITION_BASE
+            and run["status"] == "completed"
+            and run["conclusion"] == "failure"
+        ):
+            return _transition_base_security(api, run, base, repo_id, language)
         _validate_codeql_run(run, base, "master", repo_id, attempt=row["run_attempt"])
         if isinstance(api, API):
             api.bind_repository(run["repository"])
@@ -1243,7 +1627,9 @@ def select_base_security(api, base, repo_id, language):
 
 def qualify_security(api, env, provenance, sarif_id, language):
     """Produce a baseline or paid compose receipt; errors are UNKNOWN to the CLI."""
+    _security_diagnostic("context", language=language)
     expected = _security_context(env, language)
+    _security_diagnostic("provenance")
     for key, value in expected.items():
         require(
             provenance[key] == value, "security checkout provenance context mismatch"
@@ -1253,33 +1639,36 @@ def qualify_security(api, env, provenance, sarif_id, language):
         "invalid security checkout provenance",
     )
     require(UUID.fullmatch(sarif_id), "missing official SARIF upload output")
-    run = api.get(f"actions/runs/{expected['run_id']}")
-    branch = expected["ref"].removeprefix("refs/heads/")
-    _validate_codeql_run(
-        run,
-        expected["head"],
-        branch,
-        expected["repository_id"],
-        attempt=expected["attempt"],
-        successful=False,
+    _security_diagnostic(
+        "run-lookup", run_id=expected["run_id"], expected_attempt=expected["attempt"]
     )
+    branch = expected["ref"].removeprefix("refs/heads/")
+    run = _producer_run(api, expected, branch)
+    _security_diagnostic("repository-binding")
     if isinstance(api, API):
         api.bind_repository(run["repository"])
-    upload_step = _producer_analysis_step(api, run, language)
+    upload_step, pinned_witness = _producer_analysis_step(
+        api, run, language, diagnostic=True
+    )
+    _security_diagnostic("upload-lookup")
     rows = api.array_pages(
         "code-scanning/analyses?sarif_id=" + urllib.parse.quote(sarif_id, safe="")
     )
+    _security_diagnostic("upload-count", upload_count=len(rows))
     require(len(rows) == 1, "missing or ambiguous actual SARIF upload")
     metadata = rows[0]
+    _security_diagnostic("upload-identity", analysis_id=metadata.get("id"))
     _validate_analysis(
         metadata, expected["head"], expected["ref"], language, sarif_id=sarif_id
     )
+    _security_diagnostic("upload-window")
     require(
         stamp(upload_step["started_at"])
         <= stamp(metadata["created_at"])
         <= stamp(upload_step["completed_at"]),
         "SARIF upload is outside the current official analysis attempt",
     )
+    _security_diagnostic("candidate-snapshot")
     snapshot = parse_security_snapshot(
         api.sarif(f"code-scanning/analyses/{metadata['id']}"),
         metadata,
@@ -1299,9 +1688,11 @@ def qualify_security(api, env, provenance, sarif_id, language):
         "delta": None,
     }
     if expected["role"] == "compose":
+        _security_diagnostic("baseline")
         base = select_base_security(
             api, provenance["base"], expected["repository_id"], language
         )
+        _security_diagnostic("alert-comparison")
         delta = compare_security_snapshots(base["snapshot"], snapshot)
         receipt.update(
             {
@@ -1318,12 +1709,22 @@ def qualify_security(api, env, provenance, sarif_id, language):
                 },
             }
         )
+    _security_diagnostic("analysis-reread")
     reread = api.get(f"code-scanning/analyses/{metadata['id']}")
     require(
         _analysis_identity(reread) == _analysis_identity(metadata),
         "candidate analysis moved",
     )
+    _security_diagnostic("run-reread")
     latest = api.get(f"actions/runs/{run['id']}")
+    _security_diagnostic(
+        "run-revalidation",
+        run_id=latest.get("id"),
+        attempt=latest.get("run_attempt"),
+        expected_attempt=expected["attempt"],
+        status=latest.get("status"),
+        conclusion=latest.get("conclusion"),
+    )
     _validate_codeql_run(
         latest,
         expected["head"],
@@ -1331,7 +1732,20 @@ def qualify_security(api, env, provenance, sarif_id, language):
         expected["repository_id"],
         attempt=expected["attempt"],
         successful=False,
+        queued=True,
     )
+    if latest["status"] == "queued":
+        _security_diagnostic("liveness-rebind")
+        rebound, _ = _producer_analysis_step(
+            api, latest, language, rebind=pinned_witness
+        )
+        require(rebound == upload_step, "producer liveness witness moved")
+    if receipt["baseline"] and receipt["baseline"]["selection"] == TRANSITION_SELECTION:
+        require(
+            api.get("git/ref/heads/master")["object"]["sha"] == TRANSITION_BASE,
+            "master moved before transition qualification",
+        )
+    _security_diagnostic("qualified")
     return receipt
 
 
@@ -1358,6 +1772,7 @@ def validate_security_receipts(
         )
     _official_jobs(api, run, producer=True)
     artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
+    transition = False
     for language in SECURITY_LANGUAGES:
         receipt = _security_artifact(api, artifacts, run, language)
         _receipt_identity(
@@ -1374,12 +1789,14 @@ def validate_security_receipts(
             receipt["repository"] == run["repository"]["full_name"],
             "foreign security receipt repository",
         )
+        transition |= receipt["baseline"]["selection"] == TRANSITION_SELECTION
     latest = api.get(f"actions/runs/{run['id']}")
     _validate_codeql_run(latest, head, branch, repo_id, attempt=run["run_attempt"])
     require(
         latest["updated_at"] == run["updated_at"],
         "CodeQL source updated during decision",
     )
+    require(not transition, "transition requires full master tests; no evidence reuse")
 
 
 def _security_recovery(env):
@@ -1387,6 +1804,20 @@ def _security_recovery(env):
     if not str(run_id).isdigit():
         run_id = "unknown"
     if env.get("GITHUB_REF") == "refs/heads/master":
+        try:
+            event_path = Path(env["GITHUB_EVENT_PATH"])
+            require(event_path.stat().st_size <= 1_000_000, "oversize push event")
+            event = json.loads(event_path.read_text())
+            require(
+                event["ref"] == "refs/heads/master"
+                and event["after"] == env["GITHUB_SHA"]
+                and SHA.fullmatch(event["before"]),
+                "unbound push recovery context",
+            )
+            if event["before"] == TRANSITION_BASE and event["after"] != TRANSITION_BASE:
+                return "STOP: transition master qualification failed; return to Integrator. No retry or second transition is authorized."
+        except Exception:
+            return "STOP: master recovery context unavailable; obtain Integrator's ruling before any retry."
         return f"Recovery: re-run that exact master CodeQL run {run_id} with a fresh full attempt; a declared producer never uses legacy bootstrap."
     return f"Recovery: use a fresh full attempt of the exact compose CodeQL run {run_id}. No manual override; a full test run does not clear security uncertainty."
 
@@ -1451,7 +1882,10 @@ def main():
             print(f"SECURITY EVIDENCE INCOMPLETE ({type(exc).__name__})")
             if isinstance(exc, SecurityIncomplete):
                 print(exc.recovery)
-            print(_security_recovery(os.environ))
+            recovery = _security_recovery(os.environ)
+            print(recovery)
+            if recovery.startswith("STOP:"):
+                raise SystemExit(1)
             print(
                 "Re-run ALL jobs, not only failed jobs. Successful security recovery "
                 "does not grant test reuse: historical failed checks still force "

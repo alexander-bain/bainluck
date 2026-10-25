@@ -81,6 +81,8 @@ export interface PlayerStat {
   grade?: PropGrade;
   /** #9454: the rungs' split, when `grade` withholds for conflicting rungs. */
   settledLadder?: SettledLadderRead;
+  /** #10879: highest typed HIT when every rung of a multi-line group hit. */
+  settledAllHitLine?: number;
 }
 
 export interface PlayerData {
@@ -446,6 +448,15 @@ function splitOf(statData: StatAccumulator, rungs: readonly StatRung[]): { settl
   if (!statData.identified) return {};
   const split = readSettledLadder(rungs, statData.gradeRows);
   return split ? { settledLadder: split } : {};
+}
+
+/** Keep the upper result even when a two-rung group uses the one-line layout.
+ * This reads typed verdicts only; a missing rung grade is not a HIT. The
+ * renderer still requires the authoritative group grade before using it. */
+function allHitLineOf(statData: StatAccumulator, rungs: readonly StatRung[]): { settledAllHitLine?: number } {
+  if (!statData.identified || rungs.length < 2 ||
+      !rungs.every((r) => r.hit === true && Number.isFinite(r.threshold))) return {};
+  return { settledAllHitLine: Math.max(...rungs.map((r) => r.threshold)) };
 }
 
 interface PlayerAccumulator {
@@ -1119,6 +1130,7 @@ function groupPlayerPropsTraced(
             serverIsWinner: statData.serverIsWinner ?? null,
             grade: readPropGrade(statData.gradeRows, { samePlayerStat: statData.identified }),
             ...splitOf(statData, sortedRungs),
+            ...allHitLineOf(statData, sortedRungs),
           });
           if (statData.identified) traceDrawn(sortedRungs);
         } else {
@@ -1137,6 +1149,7 @@ function groupPlayerPropsTraced(
             grade: readPropGrade(statData.gradeRows, { samePlayerStat: statData.identified }),
             // A two-rung "line" (Nix TDs: HIT 1+, MISS 2+) splits the same way.
             ...splitOf(statData, sortedRungs),
+            ...allHitLineOf(statData, sortedRungs),
           });
           // A line draws ONE rung; a second threshold is not on the card.
           if (statData.identified) traceDrawn([best]);

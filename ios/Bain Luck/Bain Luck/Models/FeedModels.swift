@@ -212,9 +212,12 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     let items: [FeedItem]
     let kind: String?
     let comparisonTheme: String?
+    /// #9925: the published collection this theme's whole preview sits on, as
+    /// the server proved it. Absent = no link; the card never guesses one.
+    let collectionRef: FeedThemeCollectionRef?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, sharedQuestion, items, kind, comparisonTheme
+        case id, title, sharedQuestion, items, kind, comparisonTheme, collectionRef
     }
 
     init(from decoder: Decoder) throws {
@@ -225,18 +228,21 @@ nonisolated struct FeedBundle: Decodable, Sendable {
         items = try c.decodeIfPresent([FeedItem].self, forKey: .items) ?? []
         kind = try c.decodeIfPresent(String.self, forKey: .kind)
         comparisonTheme = try c.decodeIfPresent(String.self, forKey: .comparisonTheme)
+        // Optional enrichment: a malformed ref costs the link, never the bundle.
+        collectionRef = (try? c.decodeIfPresent(FeedThemeCollectionRef.self, forKey: .collectionRef)) ?? nil
     }
 
     /// Memberwise init so a sanitized bundle can be rebuilt with a lifecycle-
     /// admitted child list while preserving identity, title, kind, and comparison
     /// theme (C29 P2 — see `withItems`).
-    init(id: String, title: String, items: [FeedItem], kind: String?, comparisonTheme: String?, sharedQuestion: String? = nil) {
+    init(id: String, title: String, items: [FeedItem], kind: String?, comparisonTheme: String?, sharedQuestion: String? = nil, collectionRef: FeedThemeCollectionRef? = nil) {
         self.id = id
         self.title = title
         self.sharedQuestion = sharedQuestion
         self.items = items
         self.kind = kind
         self.comparisonTheme = comparisonTheme
+        self.collectionRef = collectionRef
     }
 
     /// Rebuild the bundle with a new child list, preserving all other metadata
@@ -245,7 +251,64 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     /// every consumer derives its primary/category from the first ELIGIBLE child,
     /// never a stale raw first child.
     func withItems(_ newItems: [FeedItem]) -> FeedBundle {
-        FeedBundle(id: id, title: title, items: newItems, kind: kind, comparisonTheme: comparisonTheme, sharedQuestion: sharedQuestion)
+        FeedBundle(id: id, title: title, items: newItems, kind: kind, comparisonTheme: comparisonTheme, sharedQuestion: sharedQuestion, collectionRef: collectionRef)
+    }
+
+    /// #9925: the link a grouped card may draw. Theme bundles only, as on web
+    /// (`ThemeBundleCard`); a comparison bundle never links, whatever it carries.
+    var themeCollectionRef: FeedThemeCollectionRef? {
+        kind == "theme" ? collectionRef : nil
+    }
+}
+
+/// #9925: where a theme card's "View collection" goes — the feed's
+/// `collection_ref` (`backend/app/utils/theme_collection_ref.py`, web
+/// `FeedThemeCollectionRef`). `name` is the collection's own name, not the
+/// card's header; `collectionCount` is the page's full shown count, not the
+/// card's preview count. Every instance has passed `admits`, the same checks
+/// as web's `admitCollectionRef`: a ref that fails any of them is no ref.
+nonisolated struct FeedThemeCollectionRef: Decodable, Equatable, Sendable {
+    let slug: String
+    let name: String
+    let revision: Int
+    let collectionCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case slug, name, revision, collectionCount
+    }
+
+    init?(slug: String, name: String, revision: Int, collectionCount: Int) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.admits(slug: slug, name: trimmed, revision: revision, collectionCount: collectionCount) else { return nil }
+        self.slug = slug
+        self.name = trimmed
+        self.revision = revision
+        self.collectionCount = collectionCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let ref = FeedThemeCollectionRef(
+            slug: try c.decode(String.self, forKey: .slug),
+            name: try c.decode(String.self, forKey: .name),
+            revision: try c.decode(Int.self, forKey: .revision),
+            collectionCount: try c.decode(Int.self, forKey: .collectionCount)
+        ) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: c.codingPath, debugDescription: "collection_ref fails admission"))
+        }
+        self = ref
+    }
+
+    /// Web's `safeCollectionSlug` (`^[a-z0-9]+(?:-[a-z0-9]+)*$`, ≤200) read
+    /// byte by byte: the slug becomes a URL path, and an ICU `$` would also
+    /// match before a trailing newline.
+    static func admits(slug: String, name: String, revision: Int, collectionCount: Int) -> Bool {
+        let bytes = Array(slug.utf8)
+        guard !bytes.isEmpty, bytes.count <= 200, !name.isEmpty, revision > 0, collectionCount > 0 else { return false }
+        let words = bytes.split(separator: UInt8(ascii: "-"), omittingEmptySubsequences: false)
+        return words.allSatisfy { word in
+            !word.isEmpty && word.allSatisfy { (UInt8(ascii: "a")...UInt8(ascii: "z")).contains($0) || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) }
+        }
     }
 }
 
@@ -571,6 +634,13 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     /// because an older server or cache omits it; absent reads as `false` — read
     /// it as `startIsTbd == true`, never as a third state.
     let startIsTbd: Bool?
+    /// #10880 — the server's word that `commenceTime` was written by a sports
+    /// schedule provider (ESPN, StatPal, The Odds API), decoded from
+    /// `start_is_from_schedule`. False for a market's time: a Kalshi
+    /// expiration, a Polymarket listing stamp. Absent (an older server, a
+    /// cached payload, a card built from the detail route) reads as false.
+    /// "Add to Calendar" is offered only on `true` (`CalendarEntry10880`).
+    var startIsFromSchedule: Bool? = nil
     let status: String?
     var homeScore: Int?
     var awayScore: Int?
@@ -584,6 +654,24 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     let openingOdds: OpeningOdds?
     /// #8622 — see `PrematchOdds`. Read through `PrematchReading.resolve`.
     let prematchOdds: PrematchOdds?
+    /// #11296 — the sportsbooks' last pair before the SCHEDULED start, decoded
+    /// from `pregame_projection`; served on settled rows only. Read through
+    /// `FinalForecastComparison11296.resolve`, never printed raw. Absent (an
+    /// older server, a cached payload, a card built from the detail route)
+    /// prints nothing.
+    var pregameProjection: PregameProjection? = nil
+    /// #11296 — the producer's reason a settled row has no `pregame_projection`
+    /// (`format_unsupported`, `no_pregame_reading`, …). Decoded, and rendered
+    /// NOWHERE: a card without a forecast looks exactly as it did (notice 34).
+    var pregameProjectionUnavailable: String? = nil
+    /// #11296 — the producer's word on what a settled row's actual score
+    /// covers, decoded from `final_score_period`. Its one value is
+    /// `"regulation"` (a soccer match the row's own period says ended at full
+    /// time); extra time, penalties and an unknown finish serve no key. Read
+    /// only through `FinalForecastComparison11296.actualPeriod`, never printed.
+    /// Lenient: a value this build cannot read is nil — it withholds the
+    /// forecast line, never the card.
+    @LenientDecode var finalScorePeriod: String? = nil
     let highlight: Highlight?
     let homeTeamData: TeamData?
     let awayTeamData: TeamData?

@@ -3,6 +3,13 @@
 import Link from "next/link";
 import type { RelatedEvent, RelatedEventLinkedTeam } from "@/lib/types";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import {
+  SUSPENDED_DESCRIPTION,
+  SUSPENDED_LABEL,
+  hasNoReportedResult,
+  isFinishedStatus,
+  scoresShowPlay,
+} from "@/lib/eventState";
 
 /**
  * #7416 — THE ROW DELETED ITS OWN FIXTURE AT PHONE WIDTH.
@@ -65,18 +72,59 @@ export function fixtureOrderedTeams(
 }
 
 /**
+ * #11182 — A ROW ONLY DRAWS A SCORE ITS STATE CAN STAND BEHIND.
+ *
+ * Production 2026-10-17 13:44Z, `/futures/199045` (AL Champion) at 390px:
+ * `Fri 5:00 PM · Tampa Bay Rays 0 - 0 Cleveland Guardians`, under "Today" and
+ * "Tomorrow" rows for the same two teams. Row 15330795 is `suspended` with
+ * both scores `0` and no `status_detail`. The row knew three states (live,
+ * completed, closed); everything else got a start time, and any two non-null
+ * scores got drawn. Together that reads as a game played on Friday that ended
+ * 0-0.
+ *
+ * - Live or finished: the pair is drawn as served. A live or final 0-0 is a
+ *   real score.
+ * - No reported result (`hasNoReportedResult`: `suspended`, or `scheduled` well
+ *   past its own start): the badge is the shared `SUSPENDED_LABEL`, never a
+ *   start time. The pair is drawn only when `scoresShowPlay` (#8960's
+ *   scores-only play evidence), so a suspended 2-1 keeps its last score
+ *   beside the badge, and a 0-0 placeholder is not taken as proof of play.
+ *   No winner is bolded, because nothing reported an end.
+ * - Anything else (scheduled, or a status this row has no reading for): no
+ *   score. A pre-game pair is filler, not a result.
+ *
+ * Not "Suspended" and not "Postponed": the row has no `status_detail`, and
+ * `SUSPENDED_LABEL`'s own note says why the bare word would invent a stoppage
+ * nobody reported. Which neighbouring fixture (if any) replaces this one is
+ * the server's question (#11182's Live half), not this row's.
+ */
+export function rowScoreIsShown(
+  event: Pick<RelatedEvent, "status" | "home_score" | "away_score">,
+  noReportedResult: boolean,
+): boolean {
+  if (event.home_score === null || event.away_score === null) return false;
+  if (event.status === "live" || isFinishedStatus(event.status)) return true;
+  if (noReportedResult) return scoresShowPlay(event.away_score, event.home_score);
+  return false;
+}
+
+/**
  * Compact row for a related event on the futures detail page
  */
 export function RelatedEventRow({
   event,
   showOdds = true,
+  now = Date.now(),
 }: {
   event: RelatedEvent;
   showOdds?: boolean;
+  /** Injected so tests can pin the clock (gotcha #44). */
+  now?: number;
 }) {
   const isLive = event.status === "live";
-  const isFinished = event.status === "completed" || event.status === "closed";
-  const hasScore = event.home_score !== null && event.away_score !== null;
+  const isFinished = isFinishedStatus(event.status);
+  const noReportedResult = hasNoReportedResult(event.status, event.commence_time, now);
+  const hasScore = rowScoreIsShown(event, noReportedResult);
 
   // Format time
   let timeLabel = "";
@@ -84,11 +132,13 @@ export function RelatedEventRow({
     timeLabel = "Live";
   } else if (isFinished) {
     timeLabel = "Final";
+  } else if (noReportedResult) {
+    timeLabel = SUSPENDED_LABEL;
   } else {
     const d = new Date(event.commence_time);
-    const now = new Date();
-    const isToday = d.toDateString() === now.toDateString();
-    const tomorrow = new Date(now);
+    const nowDate = new Date(now);
+    const isToday = d.toDateString() === nowDate.toDateString();
+    const tomorrow = new Date(nowDate);
     tomorrow.setDate(tomorrow.getDate() + 1);
     const isTomorrow = d.toDateString() === tomorrow.toDateString();
     const timeStr = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -117,6 +167,10 @@ export function RelatedEventRow({
           </span>
         ) : isFinished ? (
           <span className="text-xs font-semibold text-text-muted">FINAL</span>
+        ) : noReportedResult ? (
+          <span className="text-xs font-semibold text-text-muted" title={SUSPENDED_DESCRIPTION}>
+            {timeLabel}
+          </span>
         ) : (
           <span className="text-xs text-text-secondary">{timeLabel}</span>
         )}

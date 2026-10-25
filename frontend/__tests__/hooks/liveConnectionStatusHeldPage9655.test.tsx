@@ -17,9 +17,8 @@
  * is left off (a REST adoption is driven explicitly with `poll()`, so no timer
  * fires a request the test did not ask for), the paired quote read is absent
  * (the scheduler falls through to the detail refetch, its second branch), and
- * the printed percent is `round(hero_probability × 100)` rather than the full
- * `resolveProbability` — the status compares what the hero prints, and on a
- * live blend that is this number.
+ * history is absent. The real `resolveProbability` selects the hero and
+ * its provenance; the accepted clock follows that selection, as on the page.
  *
  * Network is a list of deferred promises the test resolves; time is fake
  * (`jest.useFakeTimers`, `Date.now` included). No assertion branches on the
@@ -33,12 +32,17 @@ import fs from "fs";
 import path from "path";
 import useSWR, { SWRConfig } from "swr";
 
+import { displayedProbabilityObservedAt, overlayBlendPreview } from "../../lib/blendPreview";
 import { heldFrameAfter, useLiveEventStream, type LiveFrame } from "../../hooks/useLiveEventStream";
 import { applyLiveFrame, frameInvalidatesFoldedBlend } from "../../lib/eventLivePush";
+import { frameFoldOrder } from "../../lib/foldRevision";
+import { frameCarriesUnpricedSnapshot } from "../../lib/sourceSnapshot";
 import { canSubscribeEventQuotes } from "../../lib/eventQuoteStream";
 import { fetchEventWithLiveFrame } from "../../lib/reconcileEventPoll";
 import { createFoldedRefetchScheduler, takeFreshRead } from "../../lib/foldedRefetchScheduler";
 import { isFinishedStatus } from "../../lib/eventState";
+import { resolveProbability } from "../../lib/eventKeyStats";
+import type { EventDetailResponse } from "../../lib/types";
 import { DATA_SILENCE_TIMEOUT_MS, TICK_INTERVAL_MS } from "../../lib/liveStreamController";
 import {
   CONNECTION_FEEDBACK_MS,
@@ -82,6 +86,7 @@ type Held = {
   hero_probability_away: number;
   hero_probability_source: string;
   hero_probability_observed_at: string;
+  blend_fold_revision?: Record<string, number> | null;
   win_probability_sources: Record<string, { value: number; updated_at: string }>;
 };
 class Deferred {
@@ -143,6 +148,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   currentMutate = () => refreshEvent();
   const pairedQuoteReadRef = useRef<(() => Promise<unknown>) | null>(null);
   const quoteTriggerRef = useRef<LiveFrame | null>(null);
+  const sourceAddedHistoryRef = useRef<unknown>(null);
   const quoteEventIdRef = useRef(eventId);
   if (quoteEventIdRef.current !== eventId) quoteTriggerRef.current = null;
   quoteEventIdRef.current = eventId;
@@ -171,17 +177,20 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
     if (held && canSubscribeEventQuotes(held) && (
       liveFrame.p === null || held.hero_probability_source !== "blend" ||
       (liveFrame.status && liveFrame.status !== held.status) ||
-      (held.status !== "live" && frameInvalidatesFoldedBlend(held, liveFrame))
+      (held.status !== "live" && frameInvalidatesFoldedBlend(held, liveFrame)) ||
+      (frameCarriesUnpricedSnapshot(liveFrame) &&
+        frameFoldOrder(held.blend_fold_revision, liveFrame.rev) === "newer")
     )) {
       quoteTriggerRef.current = liveFrame;
+      sourceAddedHistoryRef.current = null;
       foldedRefetch.request();
       return;
     }
     if (frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)) {
-      foldedRefetch.request();
+      foldedRefetch.request({ keepBackoff: true });
       return;
     }
-    if (liveFrame.p === null || liveFrame.p === undefined) return;
+    if (liveFrame.p === null || liveFrame.p === undefined || frameCarriesUnpricedSnapshot(liveFrame)) return;
     latestLiveFrameRef.current = heldFrameAfter(latestLiveFrameRef.current, liveFrame);
     const frame = { ...liveFrame, p: liveFrame.p };
     refreshEvent(
@@ -194,7 +203,9 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   const {
     connected: streamConnected,
     status: reportedStreamStatus,
-  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame);
+    blendPreview,
+    blendPreviewNow,
+  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame, undefined, event?.blend_fold_revision);
   const streamStatus = reportedStreamStatus ?? (streamConnected ? "open" : "idle");
 
   // The page returns its loading view here; the status is drawn only below.
@@ -202,10 +213,20 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
 
   // ── app/events/[id]/page.tsx — the status wiring, as the page writes it ────
   const freshestSourceStamp = Object.values(event.win_probability_sources)[0]?.updated_at ?? null;
-  const homePct = Math.round(event.hero_probability * 100);
-  const awayPct = 100 - homePct;
+  const resolvedProbability = resolveProbability(
+    overlayBlendPreview(event, blendPreview, blendPreviewNow) as unknown as EventDetailResponse,
+    undefined, null, event.status === "live", isFinishedStatus(event.status),
+    event.status === "suspended", false, true,
+  );
+  const { homePct, awayPct } = resolvedProbability;
   const connectionTerminalLabel = isFinishedStatus(event.status) ? "Finished" : null;
-  const acceptedPriceClock = event.hero_probability_observed_at ?? freshestSourceStamp;
+  const acceptedPriceClock = resolvedProbability?.selectedProbabilitySource === "hero-blend"
+    && typeof resolvedProbability.homeProb === "number" && Number.isFinite(resolvedProbability.homeProb)
+      ? displayedProbabilityObservedAt(
+        event, blendPreview, blendPreviewNow,
+        event?.hero_probability_observed_at ?? freshestSourceStamp,
+      )
+      : null;
   connectionTrackerRef.current = stepConnectionTracker(
     connectionTrackerRef.current,
     {
@@ -304,18 +325,22 @@ afterEach(() => {
 describe("structural pin: the harness carries the page's own wiring", () => {
   it("app/events/[id]/page.tsx still reads as the lines HeldPage mounts", () => {
     // The fetcher, with the held-event getter a REST read reconciles against.
-    expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId, takeFreshRead\(freshNextEventReadRef\)\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
+    expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId, takeFreshRead\(freshNextEventReadRef\)\)\.then\(\(polled\) => \{\s*(?:\/\/[^\n]*\n\s*)*pairJournalRef\.current\?\.record\(\(onto\) => replayJournaledPoll\(polled, onto\)\);\s*return polled;\s*\}\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
     // The scheduler and its two branches.
-    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{\s*if \(\(quoteTriggerRef\.current \|\| recoveryIntentRef\.current\) && pairedQuoteReadRef\.current\) return pairedQuoteReadRef\.current\(\);\s*freshNextEventReadRef\.current = true;\s*return refreshEventRef\.current\(\);\s*\}, FOLDED_FRAME_REFETCH_MS,/);
+    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(read\) => \{\s*(?:\/\/[^\n]*\n\s*)*const reconcile = reconcileIntentRef\.current \|\| \(read\.backoff && reconcileLedger\.owed\(\)\);\s*reconcileIntentRef\.current = false;\s*if \(\(quoteTriggerRef\.current \|\| recoveryIntentRef\.current \|\| reconcile\) && pairedQuoteReadRef\.current\) return pairedQuoteReadRef\.current\(\);\s*freshNextEventReadRef\.current = true;\s*return refreshEventRef\.current\(\);\s*\}, FOLDED_FRAME_REFETCH_MS,/);
     // The hook, its status, and the fallback for a stream that reports only `connected`.
-    expect(PAGE).toMatch(/status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame\);/);
+    expect(PAGE).toMatch(/status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl, event\?\.blend_fold_revision\);/);
     expect(PAGE).toMatch(/const streamStatus = reportedStreamStatus \?\? \(streamConnected \? "open" : "idle"\);/);
     // The push effect: refuse-and-refetch first, then the one guarded write.
-    expect(PAGE).toMatch(/if \(held && canSubscribeEventQuotes\(held\) && \(\s*liveFrame\.p === null \|\| held\.hero_probability_source !== "blend" \|\|\s*\(liveFrame\.status && liveFrame\.status !== held\.status\) \|\|\s*\(held\.status !== "live" && frameInvalidatesFoldedBlend\(held, liveFrame\)\)\s*\)\) \{\s*quoteTriggerRef\.current = liveFrame;\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
-    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined\) return;\s*(?:\/\/[^\n]*\n\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*refreshEvent\(/);
-    expect(PAGE.match(/applyLiveFrame\(prev, frame\)/g)).toHaveLength(1);
+    expect(PAGE).toMatch(/if \(held && canSubscribeEventQuotes\(held\) && \(\s*liveFrame\.p === null \|\| held\.hero_probability_source !== "blend" \|\|\s*\(liveFrame\.status && liveFrame\.status !== held\.status\) \|\|\s*\(held\.status !== "live" && frameInvalidatesFoldedBlend\(held, liveFrame\)\) \|\|\s*(?:\/\/[^\n]*\n\s*)*\(frameCarriesUnpricedSnapshot\(liveFrame\) &&\s*frameFoldOrder\(held\.blend_fold_revision, liveFrame\.rev\) === "newer"\)\s*\)\) \{\s*quoteTriggerRef\.current = liveFrame;\s*sourceAddedHistoryRef\.current = null;\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
+    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined \|\| frameCarriesUnpricedSnapshot\(liveFrame\)\) return;\s*(?:\/\/[^\n]*\n\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*let sourceAdded = false;\s*pairJournalRef\.current\?\.record\(\(prev\) => applyLiveFrame\(prev, frame\)\);\s*void refreshEvent\(/);
+    expect(PAGE.match(/const adopted = applyLiveFrameRail\(prev, frame\);/g)).toHaveLength(1);
+    // #10090 G1: plus its journal entry while a paired read is in flight — a replay, not a write.
+    expect(PAGE.match(/pairJournalRef\.current\?\.record\(\(prev\) => applyLiveFrame\(prev, frame\)\);/g)).toHaveLength(1);
     // The status wiring: the ACCEPTED clock, and one step per render from the held result.
-    expect(PAGE).toMatch(/const acceptedPriceClock = event\.hero_probability_observed_at \?\? freshestSourceStamp;/);
+    const harness = fs.readFileSync(__filename, "utf8");
+    const clockBlock = (source: string) => source.match(/  const acceptedPriceClock =[^;]+;/)![0].replace(/\s+/g, " ");
+    expect(clockBlock(PAGE)).toBe(clockBlock(harness));
     expect(PAGE).toMatch(/connectionTrackerRef\.current = stepConnectionTracker\(\s*connectionTrackerRef\.current,\s*\{\s*eventId,\s*status: streamStatus,\s*priceObservedAt: acceptedPriceClock,/);
     expect(PAGE).toMatch(/valueKey: homePct === null \? null : `\$\{homePct\}\/\$\{awayPct \?\? ""\}`,\s*terminal: Boolean\(connectionTerminalLabel\),\s*\},\s*Date\.now\(\),/);
     expect(PAGE).toMatch(/const connectionPresentation = presentConnectionStatus\(\s*connectionTrackerRef\.current,\s*\{\s*status: streamStatus,\s*terminalLabel: connectionTerminalLabel,/);
@@ -356,6 +381,19 @@ describe("#10200 quiet is quiet: open, heartbeat-only, publication silence", () 
     expect(page.read().label).toBe("Connected · waiting");
     page.unmount();
   });
+});
+
+test("a non-blend held payload cannot earn observations from its unrelated advancing source clock", async () => {
+  const initial = { ...held({ p: .6, at: T(0) }), hero_probability_source: "opening" };
+  const page = await mountHeldPage(initial);
+  await page.emit("open");
+  expect(page.read()).toMatchObject({ pct: "null", clock: "null" });
+  await page.poll();
+  await page.resolveLast({ ...initial, hero_probability_observed_at: T(5),
+    win_probability_sources: { kalshi: { value: .6, updated_at: T(5) } } });
+  expect(page.read()).toMatchObject({ pct: "null", clock: "null" });
+  expect(page.seen.filter((label) => RECEIPTS.includes(label))).toEqual([]);
+  page.unmount();
 });
 
 describe("#10200 receipts come from adoption, never from arrival", () => {
@@ -498,5 +536,58 @@ describe("#10200 navigation resets", () => {
     await page.emit("probability", frame({ id: B, p: 0.31, at: T(3) }));
     expect(page.read()).toMatchObject({ pct: "31", label: "Updated" });
     page.unmount();
+  });
+});
+
+
+describe("#10090 preview readout follows actual transport admission", () => {
+  const previewFrame = (clock: string | null = T(5), p = .601) => JSON.stringify({
+    event_id: A, p, status: "live", observed_at: T(99), display_observed_at: clock,
+    preview: { kind: "blend", epoch: 1, seq: 1, base_rev: 10, ttl_ms: 1000 },
+  });
+  it.each(["expiry", "revoke", "reconnect", "commit", "terminal"])("uses the selected probability clock after %s", async reason => {
+    const initial = { ...held({ p: .6, at: T(0) }), blend_fold_revision: { [A]: 10 } };
+    const page = await mountHeldPage(initial);
+    try {
+      await page.emit("open");
+      await page.emit("preview", previewFrame());
+      expect(page.read()).toMatchObject({ pct: "60", clock: T(5) });
+      // The hook schedules its expiry render at expiresAt + 1 ms.
+      if (reason === "expiry") await page.advance(1001);
+      if (reason === "revoke") await page.emit("preview", JSON.stringify({
+        event_id: A, p: null, preview: {kind: "revoke", epoch: 1, seq: 2, through_seq: 1},
+      }));
+      if (reason === "reconnect") {
+        // Native EventSource retries reopen this same handle; open clears the
+        // held preview before the replacement worker publishes anything.
+        page.stream().readyState = 0;
+        await page.emit("error");
+        await page.emit("open");
+      }
+      if (reason === "commit" || reason === "terminal") {
+        await page.poll();
+        await page.resolveLast({
+          ...initial, hero_probability: .65, hero_probability_away: .35,
+          hero_probability_observed_at: T(8), blend_fold_revision: { [A]: 11 },
+          status: reason === "terminal" ? "completed" : "live",
+        });
+      }
+      if (reason === "terminal") {
+        // The actual resolver no longer selects a live blend on a completed
+        // page. The old simplified harness wrongly kept its live value/clock.
+        expect(page.read()).toMatchObject({ pct: "null", label: "Finished", clock: "null" });
+      } else {
+        expect(page.read().clock).toBe(reason === "commit" ? T(8) : T(0));
+      }
+    } finally { page.unmount(); }
+  });
+
+  it("does not give an unknown-clock preview the producer attempt or committed time", async () => {
+    const page = await mountHeldPage({ ...held({p: .6, at: T(0)}), blend_fold_revision: {[A]: 10} });
+    try {
+      await page.emit("open");
+      await page.emit("preview", previewFrame(null, .7));
+      expect(page.read()).toMatchObject({pct: "70", clock: "null", label: "Connected · waiting"});
+    } finally { page.unmount(); }
   });
 });

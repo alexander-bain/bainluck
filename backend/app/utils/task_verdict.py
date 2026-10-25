@@ -305,6 +305,11 @@ ENFORCED_TASKS = frozenset({
     "mlb_reschedule_ghost_sweep",      # terminal + measured + fold_live + rows_read
     # #9187. The NHL run of the same pass, same summary shape, enrolled from birth.
     "nhl_adjacent_day_ghost_sweep",    # terminal + measured + fold_live + rows_read
+    # #11152. Enrolled from birth: retires the playoff game left listed after
+    # its series ended. Clinches are episodic, so `complete` with nothing
+    # written is the healthy state; the red zeros are every board dark, a plan
+    # over its ceiling and a read that raised.
+    "unplayed_series_game_sweep",      # terminal + measured + rows_read
     # #5821 (CERT-3030). The Polymarket-container arm of the same fold. Enrolled
     # in the change that gives it real terminals, because enrolment alone would
     # have been a no-op in the literal sense this file keeps warning about: it

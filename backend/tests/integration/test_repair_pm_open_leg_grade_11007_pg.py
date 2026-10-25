@@ -728,6 +728,19 @@ async def _grade(monkeypatch, *, gate_open=False):
     monkeypatch.setattr(polymarket_api, "PolymarketAPIService", _Service)
     if gate_open:
         monkeypatch.setattr(mint_mod, "venue_has_closed_the_leg", lambda closed: True)
+        # #698: the negRisk arm also grades only a venue-verified payout now, so
+        # "the pre-#11008 grader" needs that second gate replaced by the old
+        # quote rule too (`prices[0] >= 0.90`). Forcing `closed` alone would
+        # leave October and December refused by #698 and make the paired
+        # "not regraded even ungated" control pass for the wrong reason.
+        import json as _json
+
+        import app.utils.polymarket_settlement_scan as scan_mod
+
+        def _old_quote_rule(m):
+            return float(_json.loads(m["outcomePrices"])[0]) >= 0.90
+
+        monkeypatch.setattr(scan_mod, "venue_terminal_leg_result", _old_quote_rule)
     return await bw._backfill_polymarket_winners_from_api(limit=50)
 
 

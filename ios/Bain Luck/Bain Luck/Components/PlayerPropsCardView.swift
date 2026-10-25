@@ -29,6 +29,11 @@ struct PlayerPropsCardView: View {
     @State private var selectedTargets: [String: Double] = [:]
     /// Alex 10/10 — the protected-touchdown ladder whose rule sheet is open.
     @State private var openRule: PropItem?
+    /// #11285 (Alex, build 65: "unreadably small") — the ladder and field rows
+    /// draw in the reader's text style, so their figure columns grow with it,
+    /// and accessibility sizes put each row's track under its words.
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .subheadline) private var figureColumn: CGFloat = 40
 
     /// #3430 — both competitors of one matchup, so the pair rule decides. A
     /// prop attributed to a team the other side shares a label with is
@@ -768,8 +773,10 @@ struct PlayerPropsCardView: View {
                     }
                 } label: {
                     Text(isOpen ? "Show less" : "+\(hiddenCount) more")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.footnote.weight(.semibold))
                         .foregroundStyle(.blue)
+                        .frame(minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -789,18 +796,36 @@ struct PlayerPropsCardView: View {
     /// One player in a field, drawn in the rung's vocabulary — track, pregame
     /// tick, ✓/– once graded, percentage — with the name where the threshold
     /// goes. No team colour: the served legs name no side.
+    ///
+    /// #11285 — the name and its chance share the top line at the reader's
+    /// text size (the name wraps, never shrinks or truncates) and the track
+    /// takes the full width beneath them; at 10pt beside a 96pt track they
+    /// were unreadable on the phone.
     private func fieldRow(_ candidate: PlayerPropsField.Candidate) -> some View {
         let graded = isDone && candidate.hit != nil
         let led = candidate.hit == true
 
-        return HStack(spacing: 4) {
-            Text(candidate.name)
-                .font(.system(size: 10))
-                .foregroundStyle(graded && led ? .primary : .secondary)
-                .fontWeight(graded && led ? .bold : .regular)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(candidate.name)
+                    .font(.subheadline.weight(graded && led ? .bold : .regular))
+                    .foregroundStyle(graded && !led ? .secondary : .primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if graded {
+                    Image(systemName: led ? "checkmark" : "minus")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(led ? .green : .secondary)
+                }
+
+                Text("\(PlayerPropsPricing.displayPercent(candidate.probability))%")
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
+                    .fixedSize()
+                    .frame(minWidth: figureColumn, alignment: .trailing)
+            }
 
             GeometryReader { geo in
                 Capsule()
@@ -828,24 +853,9 @@ struct PlayerPropsCardView: View {
                         }
                     }
             }
-            .frame(width: 96, height: 8)
-
-            if graded {
-                Image(systemName: led ? "checkmark" : "minus")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundStyle(led ? .green : .secondary)
-                    .frame(width: 10)
-            }
-
-            Text("\(PlayerPropsPricing.displayPercent(candidate.probability))%")
-                .font(.system(size: 10, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .frame(width: 28, alignment: .trailing)
-                .fixedSize(horizontal: true, vertical: false)
+            .frame(height: 8)
         }
+        .padding(.vertical, 3)
     }
 
     // MARK: - Unpriced ladders (#5137)
@@ -868,16 +878,17 @@ struct PlayerPropsCardView: View {
             : []
 
         return VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                // #11285 — the reader's caption style; wraps rather than clips.
                 Text(displayStat(group, card: card).uppercased())
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.caption.weight(.bold))
                     .tracking(0.5)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 if isDone, let final = group.finalValue {
                     Spacer(minLength: 2)
                     Text("Final \(Self.formatStatValue(final))")
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -896,20 +907,17 @@ struct PlayerPropsCardView: View {
     private func unpricedRungRow(_ rung: Rung, card: PlayerCard, statType: String) -> some View {
         let isHit = verdict(for: rung, card: card, statType: statType).hit ?? false
 
-        return HStack(spacing: 4) {
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("\(Int(rung.threshold))+")
-                .font(.system(size: 10))
+                .font(.subheadline.weight(isHit ? .bold : .regular))
+                .monospacedDigit()
                 .foregroundStyle(isHit ? card.color : .secondary)
-                .fontWeight(isHit ? .bold : .regular)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .frame(width: 28, alignment: .trailing)
-                .fixedSize(horizontal: true, vertical: false)
+                .fixedSize()
+                .frame(minWidth: figureColumn, alignment: .trailing)
 
             Image(systemName: isHit ? "checkmark" : "minus")
-                .font(.system(size: 7, weight: .bold))
+                .font(.caption.weight(.bold))
                 .foregroundStyle(isHit ? .green : .secondary)
-                .frame(width: 10)
 
             Spacer(minLength: 0)
         }
@@ -941,67 +949,84 @@ struct PlayerPropsCardView: View {
         let isHit = verdict.hit ?? false
         let showActual = (isDone || isLive) && verdict.hit != nil
 
-        return HStack(spacing: 4) {
-            Text("\(Int(rung.threshold))+")
-                .font(.system(size: 10))
-                .foregroundStyle(showActual && isHit ? card.color : .secondary)
-                .fontWeight(showActual && isHit ? .bold : .regular)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .frame(width: 28, alignment: .trailing)
-                .fixedSize(horizontal: true, vertical: false)
-
-            GeometryReader { geo in
-                Capsule()
-                    .fill(Color.secondary.opacity(0.08))
-                    .overlay(alignment: .leading) {
-                        Capsule()
-                            .fill(isDone
-                                ? (isHit ? card.color.opacity(0.5) : Color.secondary.opacity(0.15))
-                                : card.color.opacity(0.3))
-                            .frame(width: max(4, geo.size.width * rung.probability))
-                    }
-                    // #4577 — THE SCRIPT's tick: where this market opened. Drawn
-                    // OVER the fill, because the interesting case is a market
-                    // that has moved up and would otherwise bury its own
-                    // baseline. See ``PlayerPropsScript`` for why there is no
-                    // caption and no fallback.
-                    .overlay(alignment: .leading) {
-                        if let fraction = PlayerPropsScript.tickFraction(
-                            pregameMark: rung.pregameMark,
-                            isFinished: isDone
-                        ) {
-                            Capsule()
-                                .fill(Color.primary.opacity(0.45))
-                                .frame(width: Self.pregameTickWidth)
-                                .offset(x: PlayerPropsScript.tickOffset(
-                                    fraction: fraction,
-                                    trackWidth: geo.size.width,
-                                    tickWidth: Self.pregameTickWidth
-                                ))
-                        }
-                    }
-            }
-            .frame(height: 8)
-
+        // #11285 — the line and its chance in the reader's text style (they
+        // were 10pt, shrinking to 7), in columns that grow with it; at
+        // accessibility sizes the track drops under them.
+        let threshold = Text("\(Int(rung.threshold))+")
+            .font(.subheadline.weight(showActual && isHit ? .bold : .regular))
+            .monospacedDigit()
+            .foregroundStyle(showActual && isHit ? card.color : .secondary)
+            .fixedSize()
+            .frame(minWidth: figureColumn, alignment: .trailing)
+        // #5137 — through the same rounding the flat-ladder rule reads, so a
+        // ladder judged flat is exactly a ladder printing one repeated number.
+        let percent = Text("\(PlayerPropsPricing.displayPercent(rung.probability))%")
+            .font(.subheadline.weight(.semibold))
+            .monospacedDigit()
+            .foregroundStyle(.primary)
+            .fixedSize()
+            .frame(minWidth: figureColumn, alignment: .trailing)
+        let mark = Group {
             if isDone, verdict.hit != nil {
                 Image(systemName: isHit ? "checkmark" : "minus")
-                    .font(.system(size: 7, weight: .bold))
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(isHit ? .green : .secondary)
-                    .frame(width: 10)
             }
-
-            // #5137 — through the same rounding the flat-ladder rule reads, so a
-            // ladder judged flat is exactly a ladder printing one repeated number.
-            Text("\(PlayerPropsPricing.displayPercent(rung.probability))%")
-                .font(.system(size: 10, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .frame(width: 28, alignment: .trailing)
-                .fixedSize(horizontal: true, vertical: false)
         }
+        let track = GeometryReader { geo in
+            Capsule()
+                .fill(Color.secondary.opacity(0.08))
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(isDone
+                            ? (isHit ? card.color.opacity(0.5) : Color.secondary.opacity(0.15))
+                            : card.color.opacity(0.3))
+                        .frame(width: max(4, geo.size.width * rung.probability))
+                }
+                // #4577 — THE SCRIPT's tick: where this market opened. Drawn
+                // OVER the fill, because the interesting case is a market
+                // that has moved up and would otherwise bury its own
+                // baseline. See ``PlayerPropsScript`` for why there is no
+                // caption and no fallback.
+                .overlay(alignment: .leading) {
+                    if let fraction = PlayerPropsScript.tickFraction(
+                        pregameMark: rung.pregameMark,
+                        isFinished: isDone
+                    ) {
+                        Capsule()
+                            .fill(Color.primary.opacity(0.45))
+                            .frame(width: Self.pregameTickWidth)
+                            .offset(x: PlayerPropsScript.tickOffset(
+                                fraction: fraction,
+                                trackWidth: geo.size.width,
+                                tickWidth: Self.pregameTickWidth
+                            ))
+                    }
+                }
+        }
+        .frame(height: 8)
+
+        return Group {
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        threshold
+                        Spacer(minLength: 8)
+                        mark
+                        percent
+                    }
+                    track
+                }
+            } else {
+                HStack(spacing: 8) {
+                    threshold
+                    track
+                    mark
+                    percent
+                }
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     private func lookupActualValue(player: String, stat: String) -> Double? {

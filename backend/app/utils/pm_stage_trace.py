@@ -33,6 +33,19 @@ WS_PM_TRACE_EXPIRES_AT no more than 600 s away. WS_PM_TRACE_MAX_LINES defaults t
 named. No mapped outcome, pending overflow, expiry or budget emits STOP and
 discards all state. No payloads, SQL parameters or credentials are recorded.
 
+Warm arming (optional). WS_PM_TRACE_ARM_AT, an absolute epoch second at most
+1800 s away, delays collection so the window can sit inside a warm worker rather
+than on its restart. EXPIRES_AT must then be after ARM_AT and at most 600 s after
+it. START still says the configuration was accepted (`collection` reads
+WAITING_FOR_ARM) and is the only line before arming: until then every entry point
+returns before touching any state, so nothing observed before arming is kept or
+emitted. ARMED is the actual start: written by the first entry point at or after
+the arm instant, with how late that was, the window left, and the mapping re-read
+then (the run's outcome map can grow). Arm and expiry are both fixed on the
+monotonic clock when the trace is built, so a wall-clock change cannot lengthen
+the window. A run that begins inside the window arms at its first entry point. A
+present but malformed ARM_AT disables the trace. Absent, nothing here changes.
+
 Volume. Only a CHANGED selected value opens a chain. Repeats keep their
 identity without spending lines. Flush, admission and attempt lines are written
 only while a chain is open, or for an attempt that fenced one.
@@ -67,6 +80,8 @@ from app.utils.kalshi_exact_trace import MAX_PENDING, ExactKalshiTrace
 logger = logging.getLogger(__name__)
 ACCEPT_CLOCK = "HANDLER_CALLBACK_UNDER_BUFFER_LOCK_NOT_WIRE_INGRESS"
 MAX_COVERS = 8
+MAX_ARM_WAIT_S = 1800
+MAX_WINDOW_S = 600
 
 
 def _guarded(fn):
@@ -101,8 +116,22 @@ class PMStageTrace(ExactKalshiTrace):
             outcomes = _ids(raw, 4)
             expiry = float(env.get("WS_PM_TRACE_EXPIRES_AT", "0"))
             limit = int(env.get("WS_PM_TRACE_MAX_LINES", "128"))
-            remaining = expiry - wall()
-            if outcomes is None or not 0 < remaining <= 600 or not 4 <= limit <= 256:
+            raw_arm = env.get("WS_PM_TRACE_ARM_AT")
+            now = wall()
+            remaining = expiry - now
+            if raw_arm is None:
+                arm_at = None
+                window_ok = 0 < remaining <= MAX_WINDOW_S
+            else:
+                if len(raw_arm) > 32:
+                    return None
+                arm_at = float(raw_arm)
+                window_ok = (
+                    arm_at - now <= MAX_ARM_WAIT_S
+                    and 0 < expiry - arm_at <= MAX_WINDOW_S
+                    and remaining > 0
+                )
+            if outcomes is None or not window_ok or not 4 <= limit <= 256:
                 return None
             if run is None:
                 import uuid
@@ -110,6 +139,7 @@ class PMStageTrace(ExactKalshiTrace):
                 run = uuid.uuid4().hex[:8]
             trace = cls(outcomes, expiry, limit, run, wall, mono, emit)
             trace.event = event
+            trace.event_of = event_of
             mapping = {}
             for oid in sorted(outcomes):
                 mapped = event_of.get(oid)
@@ -118,8 +148,7 @@ class PMStageTrace(ExactKalshiTrace):
                     else "UNMAPPED" if mapped is None
                     else "OTHER_EVENT"
                 )
-            trace._record(
-                "START",
+            start = dict(
                 event=event,
                 outcomes=sorted(outcomes),
                 mapping=mapping,
@@ -127,9 +156,16 @@ class PMStageTrace(ExactKalshiTrace):
                 max_lines=limit,
                 accept_clock=ACCEPT_CLOCK,
             )
+            if arm_at is not None:
+                start.update(arm_at=arm_at, collection="WAITING_FOR_ARM")
+            trace._record("START", **start)
             trace.targets = frozenset(int(k) for k, v in mapping.items() if v == "MAPPED")
             if not trace.targets:
                 trace._stop("NO_MAPPED_OUTCOME")
+            elif arm_at is not None:
+                # Same offset as the deadline: the window is expiry - arm_at.
+                trace.arm_mono = trace.deadline - (expiry - arm_at)
+                trace.warm = True
             return trace
         except (ValueError, TypeError, OverflowError):
             return None
@@ -144,6 +180,10 @@ class PMStageTrace(ExactKalshiTrace):
             ),
         )
         self.event = None
+        self.event_of = {}
+        self.arm_mono = None  # set only while a warm arm is still waiting
+        self.warm = False
+        self.untracked_attempt = "QUEUED_NOT_STARTED"
         self.last_value = {}
         self.waiting = {}  # changed seq -> (outcome, value), until a stamp joins it
         self.written = set()  # waiting seqs a PRICE_COMMITTED already carried
@@ -162,10 +202,48 @@ class PMStageTrace(ExactKalshiTrace):
         self.fenced_attempts = set()
 
     def _stop(self, reason):
+        self.arm_mono = None
         if not self.stopped:
             self.stopped = True
             self._clear()
             self._send(dict(stage="STOP", reason=reason))
+
+    def active(self):
+        if self.arm_mono is not None and not self.stopped:
+            if self.mono() < self.arm_mono:
+                return False  # waiting: no state, no line
+            self._arm()
+        return super().active()
+
+    def _arm(self):
+        arm_mono, self.arm_mono = self.arm_mono, None
+        now = self.mono()
+        if now >= self.deadline or self.wall() >= self.expiry:
+            self._stop("EXPIRED_BEFORE_ARMED")
+            return
+        mapping = {}
+        for oid in sorted(self.targets):
+            mapped = self.event_of.get(oid)
+            mapping[str(oid)] = (
+                "MAPPED" if mapped == self.event
+                else "UNMAPPED" if mapped is None
+                else "OTHER_EVENT"
+            )
+        self.targets = frozenset(int(k) for k, v in mapping.items() if v == "MAPPED")
+        # An attempt already running when collection began was never seen.
+        self.untracked_attempt = "UNTRACKED_MAY_PREDATE_ARMED"
+        self._send(dict(
+            stage="ARMED",
+            event=self.event,
+            mapping=mapping,
+            arm_mono=arm_mono,
+            armed_mono=now,
+            late_by_s=round(now - arm_mono, 6),
+            window_left_s=round(self.deadline - now, 6),
+            armed_by="FIRST_ENTRY_POINT_AT_OR_AFTER_ARM",
+        ))
+        if not self.targets:
+            self._stop("NO_MAPPED_OUTCOME")
 
     def _open(self, outcome=None, seq=None):
         return any(
@@ -212,7 +290,6 @@ class PMStageTrace(ExactKalshiTrace):
             input_recv_mono=mark.recv_mono,
             accept_clock=ACCEPT_CLOCK,
             changed=changed and not first,
-            first_of_run=first,
             _receive=None,
             _receive_logged=True,
             _decision_logged=False,
@@ -220,6 +297,7 @@ class PMStageTrace(ExactKalshiTrace):
             _decision_mono=mark.recv_mono,
             _signature=(oid, mark.seq),
         )
+        entry["first_since_armed" if self.warm else "first_of_run"] = first
         self._put(self.accepted, mark.seq, entry)
         if changed:
             if mark.seq not in self.waiting and len(self.waiting) >= MAX_PENDING:
@@ -294,7 +372,7 @@ class PMStageTrace(ExactKalshiTrace):
         if self.event not in fenced_events:
             return
         attempt = self.attempt
-        ident = attempt["attempt"] if attempt is not None else "QUEUED_NOT_STARTED"
+        ident = attempt["attempt"] if attempt is not None else self.untracked_attempt
         token["fenced_by"] = ident
         if ident in self.fenced_attempts:
             token["fenced_repeat"] = True
@@ -506,6 +584,7 @@ class PMStageTrace(ExactKalshiTrace):
         if not self.active() or self.event not in event_ids:
             return
         self.attempt_seq += 1
+        self.untracked_attempt = "QUEUED_NOT_STARTED"
         previous = self.attempt
         self.attempt = dict(
             attempt=self.attempt_seq,

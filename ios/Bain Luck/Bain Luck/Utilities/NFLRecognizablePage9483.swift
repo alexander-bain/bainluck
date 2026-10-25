@@ -9,12 +9,18 @@ import Foundation
 /// lets a substantial paired journey — one line per team — anchor the page.
 /// This file holds the decisions; the views only draw them.
 ///
-/// NFL ONLY, by the release brief: no other sport changes shape here, so every
-/// gate starts with `applies(sportKey:)`.
+/// NFL and NBA (v328's NBA slice adopts the same headline, paired journey and
+/// card deck), by the release brief: no other sport changes shape here, so
+/// every gate starts with `applies(sportKey:)`. Player milestone cards stay
+/// NFL only (`isNFL`).
 nonisolated enum NFLRecognizablePage9483 {
     static let sportKey = "americanfootball_nfl"
 
     static func applies(sportKey: String?) -> Bool {
+        isNFL(sportKey: sportKey) || NBAEventCards9483.applies(sportKey: sportKey)
+    }
+
+    static func isNFL(sportKey: String?) -> Bool {
         sportKey == Self.sportKey
     }
 }

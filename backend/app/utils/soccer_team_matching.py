@@ -16,6 +16,7 @@ serve, both pinned as `tests/fixtures/statpal_soccer_join_corpus_20260907.json`:
     this module's rule, as first written          67 / 90   74.4%
     with the alias tables (#5829)                 73 / 90   81.1%
     with the whole-name initialisms (#6022)       74 / 90   82.2%
+    with `Sporting Lisbon`/`Sporting CP` (#2823)   75 / 90   83.3%
 
 Neither number is a guess about the remainder: every one of them was read
 against the boards by hand and is accounted for in `THE MISSES` below.
@@ -117,6 +118,9 @@ module was written, 17 after the alias tables:
     one real RENAME (`Sangju Sangmu FC`/`Gimcheon Sangmu`, where our side is
     the stale one). Each is a different mechanism, so none of them is this
     table's next entry — they are their own tiers, and none has been measured.
+    (#2823 later took `Sporting Lisbon`/`Sporting CP` as one whole-name entry,
+    on a pair of production rows a reader was shown twice; see
+    :data:`CLUB_NAME_ALIASES`. The other seven are unchanged.)
 
     **The ninth was the PREFIX initialism (`Go Ahead Eagles`/`G.A. Eagles`), and
     #6022 measured it as a tier and REFUSED it.** The grammar is easy and it
@@ -343,6 +347,15 @@ CLUB_NAME_ALIASES: dict[tuple[str, ...], tuple[str, ...]] = {
     # every token but `bull`/`bulls`, so the subset tier misses them. Rare (four
     # `Red Bull New York` rows this season against 23 of the other), but whole.
     ("red", "bull", "new", "york"): ("new", "york", "red", "bulls"),
+    # #2823: an alternative club name, the tier THE MISSES deferred. The Odds API
+    # and ESPN write `Sporting Lisbon`; Polymarket and StatPal write `Sporting CP`.
+    # Production 2026-10-21, Champions League at 19:00Z: 15330361 `Sporting Lisbon
+    # v LASK` (odds_api, ESPN 401915391) finished 2-3, while 15327076 `Sporting
+    # CP v LASK Linz` (polymarket, StatPal soccer:9543347) still served Live with
+    # no score on the same Sports payload. The two spellings share only
+    # `sporting`, and `lisbon`/`cp` are both core, so no tier reached them. Whole
+    # name, so Sporting Braga, Sporting Gijón and Sporting KC stay out of reach.
+    ("sporting", "lisbon"): ("sporting", "cp"),
 }
 
 #: Tokens that mark a DIFFERENT SQUAD of the same club. Disagreement about any

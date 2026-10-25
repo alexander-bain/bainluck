@@ -48,6 +48,7 @@ import app.services.polymarket_api as poly_api_mod
 import app.tasks.backfill_winners as bw
 import app.tasks.redis_state as redis_state
 import app.utils.polymarket_champion_mint as mint_mod
+import app.utils.polymarket_settlement_scan as scan_mod
 
 FIXTURE = (
     Path(__file__).resolve().parent
@@ -153,7 +154,18 @@ def _install(monkeypatch, recorder, *, rows, event=None, market_by_id=None):
             cid = p.get("cid")
             if cid in recorder.stored:
                 if "is_winner" in sql:
-                    recorder.grades[cid] = (p.get("won"), "api_settlement")
+                    won = p.get("won")
+                    # #698: the negRisk arm's single settling statement carries
+                    # its grade and terminal price as SQL literals, not binds.
+                    if "SET is_winner = true," in sql:
+                        won = True
+                    elif "SET is_winner = false," in sql:
+                        won = False
+                    recorder.grades[cid] = (won, "api_settlement")
+                    if "current_probability=1.0" in sql:
+                        recorder.price_syncs[cid] = 1.0
+                    elif "current_probability=0.0" in sql:
+                        recorder.price_syncs[cid] = 0.0
                 else:
                     recorder.price_syncs[cid] = p.get("price")
                 return MagicMock(rowcount=1)
@@ -246,15 +258,40 @@ class TestTheParentBranch:
         assert stats["losers_set"] == len(CLOSED_STORED_CIDS)
 
     async def test_control_without_the_gate_reproduces_production(self, monkeypatch):
-        # CONTROL: with the flag test forced open, the real rail writes exactly
-        # what production holds for 113883: October and December
-        # `is_winner=false, resolution_source='api_settlement'`, at their quotes.
+        # CONTROL: with the flag test forced open AND #698's verified-payout
+        # test replaced by the old quote rule (`prices[0] >= 0.90`), the real
+        # rail grades what production holds for 113883: October and December
+        # `is_winner=false, resolution_source='api_settlement'`.
+        #
+        # #698 changed two things this control used to pin. Forcing `closed`
+        # open alone no longer reproduces it — the payout test refuses October's
+        # 0.0055 quote on its own (see the next test) — and the price written
+        # beside the grade is now the terminal 0 in the same statement, never
+        # the quote, so the quote cannot reappear even under a forced grade.
         monkeypatch.setattr(mint_mod, "venue_has_closed_the_leg", lambda closed: True)
+
+        def _old_quote_rule(m):
+            prices = json.loads(m["outcomePrices"])
+            return float(prices[0]) >= 0.90
+
+        monkeypatch.setattr(scan_mod, "venue_terminal_leg_result", _old_quote_rule)
         stats, rec = await _run_parent(monkeypatch)
         assert rec.grades[OCT_CID] == (False, "api_settlement")
         assert rec.grades[DEC_CID] == (False, "api_settlement")
-        assert rec.price_syncs[OCT_CID] == pytest.approx(0.0055)
+        assert rec.price_syncs[OCT_CID] == 0.0
         assert stats["legs_open_at_venue"] == 0
+
+    async def test_forcing_only_the_closed_flag_no_longer_grades_a_quote(
+        self, monkeypatch
+    ):
+        # #698: the two gates are independent. With `closed` forced open, the
+        # verified-payout test still refuses October and December (no UMA
+        # resolution, a quote rather than a 1/0 payout): nothing is written.
+        monkeypatch.setattr(mint_mod, "venue_has_closed_the_leg", lambda closed: True)
+        stats, rec = await _run_parent(monkeypatch)
+        assert OCT_CID not in rec.touched(), rec.grades
+        assert DEC_CID not in rec.touched(), rec.grades
+        assert stats["legs_closed_without_verified_result"] == len(OPEN_AT_VENUE)
 
     async def test_a_string_false_flag_is_open(self, monkeypatch):
         event = copy.deepcopy(SPECIMEN)
@@ -277,6 +314,9 @@ class TestTheParentBranch:
         leg = next(m for m in event["markets"] if m["conditionId"] == OCT_CID)
         leg["closed"] = True
         leg["outcomePrices"] = json.dumps(["0", "1"])
+        # #698: and the venue's UMA resolution, as every settled leg of this
+        # event carries — `closed` alone is no longer a result.
+        leg["umaResolutionStatus"] = "resolved"
         _st, rec = await _run_parent(monkeypatch, event)
         assert rec.grades[OCT_CID] == (False, "api_settlement")
 

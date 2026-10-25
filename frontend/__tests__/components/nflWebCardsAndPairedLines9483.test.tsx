@@ -1,12 +1,11 @@
 /**
  * #9483 — the NFL web slice's ink (design freeze v328): the game-story deck
- * under the chart, the full-size reader, a line's exact details, and the
- * chart's second team line. The decisions are pinned in
+ * under the chart, the full-size reader and a line's exact details. The
+ * chart's second team line was retired by #11356 (one line, two poles). The decisions are pinned in
  * `__tests__/nflEventCardDeck9483.test.ts`; this file reads the markup.
  *
- * Controls: a chart without `pairedAwayLine` is byte-identical to today's, and
- * the pair is refused on a draw-priced winner and where no backend blend is the
- * line on the plot (a single source, or sportsbooks only).
+ * Control: `pairedAwayLine` is inert since #11356 — a chart with it is
+ * byte-identical to one without.
  *
  * 🪤 recharts draws nothing inside a `ResponsiveContainer` without a viewport,
  * so it is mocked to 390×300, as in `oddsChartDrawsRecordedCheckpoints4974`.
@@ -315,54 +314,27 @@ function chart(over: ChartProps = {}): string {
     .replace(/recharts-(line|scatter)-\d+/g, "recharts-$1-#");
 }
 
-describe("#9483 the chart draws both teams' lines on an admitted NFL blend", () => {
-  it("adds the away line in its team colour, keys both lines, and drops the up/down poles", () => {
+// #11356 RETIRED the second team line this block used to pin: Alex's approved
+// direction is one line between the two team poles, and the decisions live in
+// `chartSingleTrajectory11356.test.tsx`. What remains here is that the prop
+// the page still passes asks for nothing.
+describe("#11356 the NFL chart draws one line; the #9483 paired-line prop is inert", () => {
+  it("with the prop: one blend line, both poles, no away copy, no team keys", () => {
     const html = chart({ pairedAwayLine: true });
-    expect(html).toContain("paired-away-line");
-    expect(html).toMatch(new RegExp(`class="recharts-curve recharts-line-curve"[^>]*stroke="${strokes.away}"|stroke="${strokes.away}"[^>]*class="recharts-curve`));
-    expect(html).toMatch(new RegExp(`stroke="${strokes.home}"`));
-    expect((html.match(/data-testid="paired-team-key"/g) ?? []).length).toBe(2);
-    expect(html).toContain("Each line is that team&#x27;s chance to win.");
-    expect(html).not.toContain("The line rises towards");
-    // Two navies are not drawn as one line (#10547's rescue).
-    expect(strokes.home).not.toBe(HOME_HEX);
-    // The faint per-source lines wait behind "+ N sources" while both teams are drawn.
-    expect(html).not.toContain('name="Kalshi"');
-    expect(chart()).toMatch(/stroke-opacity="0.28"/);
-    expect(html).not.toMatch(/stroke-opacity="0.28"/);
+    expect(html).not.toContain("paired-away-line");
+    expect(html).not.toContain('data-testid="paired-team-key"');
+    expect(html).not.toMatch(new RegExp(`stroke="${strokes.away}"`));
+    expect(html).toContain("The line rises towards");
     expect(html).toContain("+ 3 sources");
   });
 
-  it("the away line is the blend read from the other side, vertex for vertex", () => {
-    const html = chart({ pairedAwayLine: true });
-    const paths = [...html.matchAll(/<path[^>]*class="recharts-curve recharts-line-curve"[^>]*d="([^"]+)"/g)].map((m) => m[1]);
-    expect(paths.length).toBeGreaterThanOrEqual(2);
-    const points = (d: string) => (d.match(/-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?/g) ?? []).map((p) => p.split(",").map(Number));
-    const byLen = paths.map(points).filter((p) => p.length > 100);
-    const [home, away] = [byLen[byLen.length - 2], byLen[byLen.length - 1]];
-    expect(home.length).toBe(away.length);
-    // Same x for every vertex; the two y's sit symmetric about the 50% line.
-    const mid = (home[0][1] + away[0][1]) / 2;
-    for (let i = 0; i < home.length; i += 17) {
-      expect(home[i][0]).toBeCloseTo(away[i][0], 3);
-      expect((home[i][1] + away[i][1]) / 2).toBeCloseTo(mid, 0);
-    }
+  it("CONTROL: with or without the prop the chart is byte-identical", () => {
+    expect(chart({ pairedAwayLine: true })).toBe(chart());
   });
 
-  it("CONTROL: without the prop the chart is byte-identical to today's", () => {
-    expect(chart({ pairedAwayLine: false })).toBe(chart());
-  });
-
-  it("CONTROL: a draw-priced winner keeps one line", () => {
-    const html = chart({ pairedAwayLine: true, awayWithheld: true });
-    expect(html).not.toContain("paired-away-line");
-    expect(html).toBe(chart({ awayWithheld: true }));
-  });
-
-  it("CONTROL: no backend blend on the plot keeps one line", () => {
-    const html = chart({ pairedAwayLine: true, backendBlendServed: false });
-    expect(html).not.toContain("paired-away-line");
-    expect(html).toBe(chart({ backendBlendServed: false }));
+  it("CONTROL: a draw-priced winner and a chart with no backend blend are unchanged by it", () => {
+    expect(chart({ pairedAwayLine: true, awayWithheld: true })).toBe(chart({ awayWithheld: true }));
+    expect(chart({ pairedAwayLine: true, backendBlendServed: false })).toBe(chart({ backendBlendServed: false }));
   });
 });
 
@@ -406,6 +378,77 @@ describe("#9483 NBA ladder cards", () => {
     // Opens on the line nearest what happened, with the producer's verdict.
     expect(html).toContain("Over 204.5");
     expect(html).toContain("HIT");
+  });
+
+  it("a final with the producer's pregame_reading: one dot, its chance named apart from the verdict", () => {
+    const m = JSON.parse(JSON.stringify(nbaFinal.game_question_matrix));
+    for (const q of m.questions)
+      for (const o of q.options)
+        if (o.option_key === "o:240505185")
+          o.pregame_reading = { state: "available", reason: null, probability: 0.61, observed_at: "2026-10-04T22:50:00+00:00", basis: "pregame_pin", outcome_id: 240505185 };
+    const total = totalLadderCard(nbaInputs({ game_question_matrix: m }, {}))!;
+    const html = deck([total]);
+    expect(html).toContain("Chance before tip-off of finishing above each line");
+    expect((html.match(/<circle/g) ?? []).length).toBe(1);
+    expect(html).toContain("Over 206.5 · 61%");
+    expect(html).toContain("Before tip-off · MISS");
+    expect(html).toContain('data-actual="205"');
+    expect(html).not.toMatch(/>Pregame chance unavailable for these lines</);
+    // A line beside it with no reading (Over 204.5, won) says so itself, and keeps its verdict.
+    const selected = renderToStaticMarkup(
+      <NFLEventCardDeck cards={[total]} teams={TEAMS} selection={{ total: "o:240505186" }} onSelect={noop} onOpen={noop} openerRef={noop} />,
+    );
+    expect(selected).toContain("Pregame chance unavailable · HIT");
+    expect(selected).not.toContain("Before tip-off · MISS");
+    // Details: the reading is the pregame baseline, dated; the result stays its own row.
+    const line = total.points.find((x) => x.optionKey === "o:240505185")!;
+    const details = renderToStaticMarkup(<LineDetails row={line.detail} onDone={noop} />);
+    expect(details).toContain("Pregame baseline");
+    expect(details).toMatch(/61%/);
+    expect(details).toContain("Graded");
+    expect(details).not.toContain("Last quote");
+  });
+
+  // Lane1's review (19:11Z): the line-level "Pregame chance unavailable" belongs only to a
+  // final where a sibling line has a chance. An all-null final says it once, in the caption;
+  // during play the line says nothing about it.
+  const LINE_UNAVAILABLE = /Pregame chance unavailable(?! for these lines)/;
+
+  it("an all-null final: the caption says unavailable, the selected line does not repeat it", () => {
+    const total = totalLadderCard(nbaInputs(nbaFinal, {}))!;
+    const selected = renderToStaticMarkup(
+      <NFLEventCardDeck cards={[total]} teams={TEAMS} selection={{ total: "o:240505186" }} onSelect={noop} onOpen={noop} openerRef={noop} />,
+    );
+    expect(selected).toContain(">Pregame chance unavailable for these lines<");
+    expect(selected).toContain("HIT");
+    expect(selected).not.toMatch(LINE_UNAVAILABLE);
+  });
+
+  it("during play beside a pinned sibling: an unpinned line says nothing about unavailability", () => {
+    const m = JSON.parse(JSON.stringify(nbaPregame.game_question_matrix));
+    const overs: string[] = [];
+    for (const q of m.questions)
+      for (const o of q.options)
+        if (o.side === "over" && o.published?.value_state === "quoted" && Array.isArray(o.contributor_outcome_ids)) overs.push(o.option_key);
+    expect(overs.length).toBeGreaterThanOrEqual(2);
+    for (const q of m.questions)
+      for (const o of q.options)
+        if (o.option_key === overs[0])
+          o.comparison = { state: "comparable", reason: null, baseline: { probability: 0.44, observed_at: "2026-10-15T23:20:00Z", basis: "pregame_pin" } };
+    const live = totalLadderCard(
+      nbaInputs(
+        { game_question_matrix: m },
+        { status: "live", commenceTime: "2026-10-15T23:30:00Z", homeScore: 20, awayScore: 18, nowMs: Date.parse("2026-10-15T23:40:00Z") },
+      ),
+    )!;
+    expect(live.phase).toBe("during");
+    expect(live.points.find((p) => p.optionKey === overs[0])!.chance).toBe(0.44);
+    const unpinned = live.points.find((p) => p.optionKey !== overs[0] && p.chance === null)!;
+    const selected = renderToStaticMarkup(
+      <NFLEventCardDeck cards={[live]} teams={TEAMS} selection={{ total: unpinned.optionKey }} onSelect={noop} onOpen={noop} openerRef={noop} />,
+    );
+    expect(selected).toContain(unpinned.label);
+    expect(selected).not.toMatch(/Pregame chance unavailable/);
   });
 
   it("before tip-off: each recent quote is a dot on its own team's side, with the Tie axis", () => {

@@ -91,7 +91,8 @@ func futuresDetailShareMessage(_ market: FuturesMarketDetail?) -> String {
     }
     // The hero's own choice, so a share never quotes a leg the page does not lead with (#8892).
     let leader = futuresDetailHeroOutcome(market)
-    if let leader, let prob = leader.probability {
+    // #698: a settled leg whose result is unknown is not quoted as a live chance.
+    if let leader, let prob = leader.probability, !SettledResultDisplay698.isUnknown(leader, in: market) {
         // The sentence quotes the same integer the hero and the leader row
         // print. Rounding it here again is how a share read "60%" off a page
         // that said 59% — and the share is the copy that leaves the app.
@@ -268,6 +269,8 @@ struct FuturesDetailView: View {
         // One decision for the whole market, shared with the rows below and the
         // share sentence above (#8097).
         let heroPercent = leader.flatMap { futuresDetailRenderedPercents(market.outcomes)[$0.id] }
+        // #698: a settled hero whose result is unknown prints no price as if live.
+        let heroResultUnknown = leader.map { SettledResultDisplay698.isUnknown($0, in: market) } ?? false
 
         // #7074, the second instance. The Discover card had this exact shape — a
         // backdrop pinned to a height, a sibling overlay free to exceed it, and a
@@ -320,7 +323,12 @@ struct FuturesDetailView: View {
             Spacer(minLength: 16)
 
             // Probability + movement
-            if let leader, let prob = leader.probability {
+            if heroResultUnknown {
+                Text("Result unknown")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
+            } else if let leader, let prob = leader.probability {
                 HStack(alignment: .bottom, spacing: 10) {
                     // #5899: the 52pt figure said `0%` for a leader the venue
                     // prices at 0.05%, three scrolls above `<1%` on every
@@ -342,7 +350,7 @@ struct FuturesDetailView: View {
                     .minimumScaleFactor(0.92)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if leader.isWinner == true {
+                if SettledResultDisplay698.heroWearsWinnerBadge(leader, in: market) {
                     Text("Winner")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.white)
@@ -678,7 +686,8 @@ struct FuturesDetailView: View {
                     color: color,
                     leaderId: sorted.first?.id,
                     percent: percents[outcome.id],
-                    marketStatus: market.status
+                    marketStatus: market.status,
+                    marketSource: market.source
                 )
                 if index < displayed.count - 1 {
                     Divider()
@@ -785,12 +794,13 @@ struct FuturesDetailView: View {
         color: Color,
         leaderId: Int?,
         percent: Int?,
-        marketStatus: String?
+        marketStatus: String?,
+        marketSource: String?
     ) -> some View {
         let isLeader = outcome.id == leaderId
         let probPct = (outcome.probability ?? 0) * 100
         // #10964: a graded row names its result instead of its last quote.
-        let value = FuturesDetailRowValue.of(outcome, marketStatus: marketStatus)
+        let value = FuturesDetailRowValue.of(outcome, marketStatus: marketStatus, marketSource: marketSource)
 
         return VStack(spacing: 6) {
             HStack(alignment: .top) {
@@ -835,7 +845,8 @@ struct FuturesDetailView: View {
                             if let change = outcome.probabilityChange24h, abs(change) >= 0.005 {
                                 DeltaBadge(value: change * 100)
                             }
-                            if let opening = outcome.openingProbability, let current = outcome.probability {
+                            // #8313: an opening its own odds give to the other side is not printed.
+                            if let opening = FuturesReadableOpening8313.of(outcome), let current = outcome.probability {
                                 let diff = current - opening
                                 if abs(diff) >= 0.005 {
                                     Text("from \(formatProbability(opening))")
@@ -870,6 +881,19 @@ struct FuturesDetailView: View {
                             .font(.system(size: 18, weight: .semibold, design: .monospaced))
                             .foregroundStyle(DS.probColor(probPct))
                     }
+                case .resultUnknown(let lastRecorded):
+                    // #698: settled, result not known. No Won/Lost, no tint.
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("Result unknown")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(DS.textSecondary)
+                        if let lastRecorded {
+                            Text("Last recorded \(formatProbability(lastRecorded, renderedPercent: percent))")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(DS.textMuted)
+                        }
+                    }
+                    .multilineTextAlignment(.trailing)
                 case .none:
                     EmptyView()
                 }

@@ -91,6 +91,125 @@ jobs:
         with:
           category: "/language:${{ matrix.language }}"
 
+      # #11155: readiness only. Never accepts security evidence or changes the
+      # qualifier's inputs/deadline; every outcome returns to that same gate.
+      - name: Wait for parent master CodeQL baseline
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        shell: python
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          import json
+          import os
+          import re
+          import subprocess
+          import time
+
+          CAP_SECONDS = 720
+          REQUEST_SECONDS = 20
+          POLL_SECONDS = 20
+          MAX_RESPONSE_BYTES = 1_000_000
+
+          def wait_for_parent():
+              started = time.monotonic()
+              deadline = started + CAP_SECONDS
+
+              def finish(reason):
+                  elapsed = max(0, time.monotonic() - started)
+                  print(f"Parent baseline wait: {reason} after {elapsed:.1f}s; qualifier decides.")
+
+              if os.environ.get("GITHUB_EVENT_NAME") != "push" or not os.environ.get(
+                  "GITHUB_REF", ""
+              ).startswith("refs/heads/integrator/compose-"):
+                  finish("not a compose push")
+                  return
+              repository = os.environ.get("GITHUB_REPOSITORY", "")
+              if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+                  finish("invalid repository")
+                  return
+              with open("codeql-provenance.json", encoding="utf-8") as source:
+                  base = json.load(source)["base"]
+              if not isinstance(base, str) or not re.fullmatch(r"[0-9a-f]{40}", base):
+                  finish("invalid base")
+                  return
+              repository_id = int(os.environ["GITHUB_REPOSITORY_ID"])
+              if repository_id <= 0:
+                  finish("invalid repository identity")
+                  return
+
+              def read(endpoint):
+                  remaining = deadline - time.monotonic()
+                  if remaining <= 0:
+                      raise TimeoutError()
+                  response = subprocess.run(
+                      ["gh", "api", f"repos/{repository}/{endpoint}"],
+                      check=True, capture_output=True, text=True,
+                      timeout=min(REQUEST_SECONDS, remaining),
+                  )
+                  if time.monotonic() >= deadline:
+                      raise TimeoutError()
+                  if len(response.stdout.encode("utf-8")) > MAX_RESPONSE_BYTES:
+                      raise ValueError()
+                  return json.loads(response.stdout)
+
+              def bound_run(run):
+                  return (
+                      isinstance(run, dict)
+                      and type(run.get("id")) is int and run["id"] > 0
+                      and type(run.get("run_attempt")) is int and run["run_attempt"] > 0
+                      and run.get("path") == ".github/workflows/codeql.yml"
+                      and run.get("head_sha") == base
+                      and run.get("head_branch") == "master"
+                      and run.get("event") == "push"
+                      and run.get("repository", {}).get("id") == repository_id
+                      and run.get("repository", {}).get("full_name") == repository
+                      and run.get("head_repository", {}).get("id") == repository_id
+                  )
+
+              listing = read(
+                  "actions/workflows/codeql.yml/runs?"
+                  f"head_sha={base}&event=push&branch=master&per_page=100"
+              )
+              rows = listing.get("workflow_runs")
+              if (
+                  not isinstance(rows, list) or not rows or len(rows) > 100
+                  or type(listing.get("total_count")) is not int
+                  or listing["total_count"] != len(rows)
+                  or not all(bound_run(row) for row in rows)
+                  or len({row["id"] for row in rows}) != 1
+              ):
+                  finish("missing, ambiguous or invalid run listing")
+                  return
+              run_id = rows[0]["id"]
+              while time.monotonic() < deadline:
+                  # Same ID may have a new attempt. Read its current status;
+                  # neither an old listing nor the other matrix leg is a gate.
+                  run = read(f"actions/runs/{run_id}")
+                  if not bound_run(run) or run["id"] != run_id:
+                      finish("run identity changed")
+                      return
+                  status = run.get("status")
+                  if status == "completed":
+                      finish("parent run completed")
+                      return
+                  if status not in ("queued", "in_progress", "waiting", "pending", "requested") or run.get("conclusion") is not None:
+                      finish("unexpected run state")
+                      return
+                  remaining = deadline - time.monotonic()
+                  if remaining <= 0:
+                      break
+                  time.sleep(min(POLL_SECONDS, remaining))
+              finish("deadline reached")
+
+          # This step decides no security outcome. Do not expose raw API data,
+          # exception text or credentials. The following qualifier still runs.
+          try:
+              wait_for_parent()
+          except (TimeoutError, subprocess.TimeoutExpired):
+              print("Parent baseline wait: request/deadline timeout; qualifier decides.")
+          except Exception:
+              print("Parent baseline wait: unavailable evidence; qualifier decides.")
+
       - name: Qualify compose security or record master baseline
         if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/integrator/compose-'))
         env:

@@ -28,7 +28,7 @@ helper, and it must never be the reason one of them acquires a cycle
 (same discipline as `sport_keys.py`, gotcha #3).
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
 
 from sqlalchemy import (
@@ -330,6 +330,31 @@ def stamp_score_observation(
     event.score_source = source
     event.score_observed_at = observed_at
     return True
+
+
+def authority_score_age_seconds(
+    score_source: object,
+    score_observed_at: object,
+    *,
+    at: Optional[datetime],
+) -> Optional[float]:
+    """Seconds from the AUTHORITY's observation of the row's score to ``at``.
+
+    ``None`` unless the stamp is ESPN's and both clocks are datetimes: a score
+    another feed put there, or one with no stamp, gives the #6056 unplaced-feed
+    rule nothing to defer to (`game_state.live_write_would_revert`). Negative
+    when ESPN read the score after ``at``, which the caller reads as fresh.
+    A naive clock is read as UTC, the zone every writer stamps in.
+    """
+    if score_source != SCORE_SOURCE_ESPN:
+        return None
+    if not isinstance(score_observed_at, datetime) or not isinstance(at, datetime):
+        return None
+    if score_observed_at.tzinfo is None:
+        score_observed_at = score_observed_at.replace(tzinfo=timezone.utc)
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return (at - score_observed_at).total_seconds()
 
 
 def score_observation_fields(event: Any) -> dict:

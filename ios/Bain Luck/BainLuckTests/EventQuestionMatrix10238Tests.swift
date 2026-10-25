@@ -450,7 +450,7 @@ final class EventQuestionMatrix10238Tests: XCTestCase {
         let shown = try XCTUnwrap(comparison.shownDelta)
         XCTAssertEqual(shown.points, 14.0)
         XCTAssertEqual(shown.latest.probability, 0.54)
-        XCTAssertEqual(QuestionMatrixComparison.caption, "since the saved pregame price")
+        XCTAssertEqual(QuestionMatrixComparison.caption, "since the saved pregame chance")
         XCTAssertEqual(try question(m, points211).options[0].comparison?.reason, "leg_is_complement")
         XCTAssertNil(try question(m, points211).options[0].comparison?.shownDelta)
         XCTAssertNil(try question(m, awaySpread).options[0].comparison?.shownDelta, "no_pregame_pin")

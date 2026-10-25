@@ -221,9 +221,15 @@ class TestWriterSideCaptureGuard:
         # TestPrecomputeQueryEmbedsExclusion above — which makes it STRONGER than
         # the body-only read it replaces: the threshold arm now has to survive
         # into the resolved SQL, not merely appear somewhere in the function.
+        # #683 moved Part A's value expression into `_part_a_value_sql` (so the
+        # archive switch can extend it); the SHIPPED value is rendered here, which
+        # is stronger than reading it out of the task body.
         src = (
             inspect.getsource(backfill_winners._compute_calibration_prices)
             + inspect.getsource(backfill_winners._part_a_calibration_sql)
+            + backfill_winners._part_a_value_sql(
+                backfill_winners.KALSHI_ARCHIVE_FORECAST_ENABLED
+            )
             + backfill_winners._part_a_calibration_sql(
                 "", "COALESCE(closing.probability, nc.opening_probability)"
             )

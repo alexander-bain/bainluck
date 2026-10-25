@@ -171,7 +171,7 @@ final class MarketDetailsGradedRowsSayWonOrLost10964Tests: XCTestCase {
         let end = try XCTUnwrap(source.range(of: "// MARK: - Golf Tournament Dates",
                                              range: start.upperBound..<source.endIndex))
         let row = String(source[start.upperBound..<end.lowerBound])
-        XCTAssertTrue(row.contains("FuturesDetailRowValue.of(outcome, marketStatus: marketStatus)"))
+        XCTAssertTrue(row.contains("FuturesDetailRowValue.of(outcome, marketStatus: marketStatus, marketSource: marketSource)"))
         XCTAssertTrue(row.contains("case .verdict(let verdict):"))
         XCTAssertTrue(row.contains("if case .price = value {"), "the bar is drawn only for a price")
         XCTAssertTrue(row.contains("if value.printsMovement {"))

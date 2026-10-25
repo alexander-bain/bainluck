@@ -16,6 +16,9 @@ export interface MovementLeader {
   name?: string | null;
   probability: number | null;
   opening_probability?: number | null;
+  // #8313 — the opening as American odds. Read only to spot a side-swapped
+  // opening probability; never printed (D1) and never substituted.
+  opening_american_odds?: number | null;
   probability_change_24h?: number | null;
 }
 
@@ -1092,6 +1095,85 @@ export function pickCaptionSubject<
 }
 
 /**
+ * #8313 — AN OPENING THAT IS THE OTHER SIDE'S PRICE IS NOT A BASELINE.
+ *
+ * Production `/futures/13795456` ("Iran leadership change by December 31?"),
+ * 2026-10-17 05:45Z, chart caption: **"No up 57.5 pts from opening."** The served
+ * No leg read
+ *
+ *     probability 0.885   opening_probability 0.31   opening_american_odds -223
+ *
+ * and the Yes leg 0.31 / +223. −223 is 0.6905: the No leg's own opening odds sit
+ * on the COMPLEMENT of its opening probability. That is the side-swap the
+ * decomposed Polymarket writer made before #137 (`231e39c301`, 2026-07-08): the
+ * No/Under insert stored the Yes/Over price as `opening_probability` and the
+ * No/Under leg's own price as `opening_american_odds`. The #137 regrade flips such
+ * an opening to 1 − p and leaves the odds alone, so a repaired row agrees with its
+ * odds; this one was left unrepaired. 0.885 − 0.31 = 57.5 is a move nobody saw.
+ *
+ * Not every disagreement is that class. Several writers set the opening
+ * probability without its odds: the open-sparse and pregame history backfills,
+ * the empty-book opening repairs (which keep the discredited value's odds), and
+ * the pollers' per-column `coalesce(opening_american_odds, current)`, which can
+ * stamp odds from a LATER price beside a backfilled opening. Those openings are
+ * honest and their odds are just stale, so a plain mismatch is not read. Only the
+ * complement signature is: the odds say 1 − opening, and not the opening.
+ *
+ * Then the caption has no opening to measure from and says nothing about one. It
+ * does NOT substitute the converted odds (19.5 pts), the leg's complement, or its
+ * first retained history point (5 pts): none of those is proven to be this leg's
+ * opening. The caption falls through to the existing 24h branch exactly as a
+ * missing opening does.
+ *
+ * Rounding: odds are integers, so the round trip moves an implied probability by
+ * at most 50/(|odds|+100)², 0.00125 at ±100. Measured on 69 saved served legs
+ * (frontend fixtures + shopper pass-0462), the largest honest gap is 0.00055; the
+ * specimen sits 0.0005 from the complement and 0.38 from its opening.
+ *
+ * Residuals: a stale odds value that happens to land within the tolerance of
+ * 1 − opening is still withheld (except within 1 pt of 50%, where it is not
+ * read), and a copied leg whose odds are not this leg's own complement is not
+ * caught.
+ *
+ * Deliberately per leg. Two legs opening at different times, or openings that do
+ * not sum to 1 (independent boards), say nothing about either leg and are not read.
+ * Absent, null, non-finite or impossible odds (|odds| < 100), and an opening outside
+ * (0, 1) where no writer derives odds, keep today's behaviour unchanged.
+ */
+const OPENING_ODDS_ROUNDING_TOLERANCE = 0.005;
+
+function openingIsTheOtherSidesPrice(leader: MovementLeader): boolean {
+  const open = leader.opening_probability;
+  const odds = leader.opening_american_odds;
+  if (open == null || odds == null) return false;
+  if (!Number.isFinite(open) || open <= 0 || open >= 1) return false;
+  if (!Number.isFinite(odds) || Math.abs(odds) < 100) return false;
+  // `utils/odds_math.american_to_probability`, mirrored: the client has no odds
+  // helper because it never shows odds (D1).
+  const implied = odds > 0 ? 100 / (odds + 100) : -odds / (-odds + 100);
+  return (
+    // Near 50% the two readings overlap and a swap moves the caption < 1 pt;
+    // the #137 flip skips that band for the same reason.
+    Math.abs(1 - 2 * open) > 2 * OPENING_ODDS_ROUNDING_TOLERANCE &&
+    Math.abs(implied - open) > OPENING_ODDS_ROUNDING_TOLERANCE &&
+    Math.abs(implied - (1 - open)) <= OPENING_ODDS_ROUNDING_TOLERANCE
+  );
+}
+
+/**
+ * #8313 — the opening a reader may be shown for this leg: the served
+ * `opening_probability`, or null when its own odds say it is the other side's
+ * price (`openingIsTheOtherSidesPrice` above). The caption, the table's OPEN cell
+ * and the table's opening pair all read the opening through here, so a withheld
+ * opening is withheld everywhere on the page, never compared in one place and
+ * printed in another. Null means the same as a missing opening: nothing to print.
+ */
+export function readableOpeningProbability(leader: MovementLeader): number | null {
+  if (openingIsTheOtherSidesPrice(leader)) return null;
+  return leader.opening_probability ?? null;
+}
+
+/**
  * The clarification that explains the blend line's movement. Deterministic,
  * blend-only (no per-source detail): prefer opening→current ("up X pts from
  * opening"), fall back to the 24h change, else null (nothing to say). Movements
@@ -1117,7 +1199,7 @@ export function movementExplanation(
   const served = leaderLabel(leader);
   const label = served === null ? served : withoutBoardNamePrefix(served, marketName);
   const cur = leader.probability;
-  const open = leader.opening_probability;
+  const open = readableOpeningProbability(leader);
 
   if (cur != null && open != null) {
     const delta = (cur - open) * 100;

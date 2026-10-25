@@ -52,6 +52,12 @@ def test_exact_actual_writer_sql_positional_types_and_processed_values(
     # storage, returning expressions and bind precision remain exactly pinned.
     assert len(candidate._where_criteria) == 3
     candidate._where_criteria = candidate._where_criteria[:-1]
+    # #10090 adds only a returned DB-clock observation, not stored data or
+    # binds. Pin that addition, then compare every original expression exactly.
+    assert len(candidate._returning) == 5
+    clock = candidate._returning[3]
+    assert clock.name == "database_clock" and str(clock.element) == "clock_timestamp()"
+    candidate._returning = candidate._returning[:3] + candidate._returning[4:]
     parameters = kalshi_price_parameters(17, probability, bid, ask)
     assert compiled_signature(original) == compiled_signature(candidate, parameters)
 

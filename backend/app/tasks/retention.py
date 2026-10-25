@@ -65,6 +65,27 @@ logger = logging.getLogger(__name__)
 # Table-specific configuration
 # ---------------------------------------------------------------------------
 
+#: #11286: an odds row is one book's whole observation, so a run ends when ANY
+#: observed value changes — not only the home price. Merging on home price alone
+#: deleted rows whose spread, total or projected pair moved under a flat
+#: moneyline, which is exactly the projected-points chart's evidence, and
+#: stretched a keeper's `valid_until` across rows that never asked for a pair.
+#: Every value column is listed, so two rows merge only when nothing differs.
+_ODDS_EVIDENCE_COLS = (
+    "home_moneyline",
+    "away_moneyline",
+    "home_spread",
+    "home_spread_odds",
+    "away_spread_odds",
+    "over_under",
+    "over_odds",
+    "under_odds",
+    "home_win_probability",
+    "away_win_probability",
+    "projected_home_score",
+    "projected_away_score",
+)
+
 _TABLE_CONFIG = {
     "odds": {
         "table": "odds_snapshots",
@@ -72,6 +93,8 @@ _TABLE_CONFIG = {
         "sub_partition_col": "bookmaker",   # sub-partition key
         "value_col": "home_win_probability",
         "parent_table": "odds_snapshots",   # for finding partition IDs
+        # #11286: the run boundary is the whole row, not `value_col`.
+        "run_cols": _ODDS_EVIDENCE_COLS,
     },
     "winprob": {
         "table": "win_prob_snapshots",
@@ -162,6 +185,41 @@ async def _collapse_snapshots_impl(min_age_hours: int = 48, table: str = "odds",
     }
 
 
+def _run_boundary_sql(cfg: dict) -> tuple[str, str]:
+    """The ``ordered`` CTE's comparison columns and the ``is_new_run`` expression.
+
+    A table with ``run_cols`` (odds, #11286) starts a new run at its first row
+    and wherever any listed column IS DISTINCT FROM the previous row's. Every
+    other table keeps the single-``value_col`` comparison unchanged.
+    """
+    scol = cfg["sub_partition_col"]
+    window = f"OVER (PARTITION BY {scol} ORDER BY captured_at, id)"
+    run_cols = cfg.get("run_cols")
+    if not run_cols:
+        vcol = cfg["value_col"]
+        select_sql = f"""{vcol},
+                LAG({vcol}) {window} AS prev_value"""
+        case_sql = f"""CASE
+                    WHEN prev_value IS NULL AND {vcol} IS NULL THEN 0
+                    WHEN {vcol} IS DISTINCT FROM prev_value THEN 1
+                    ELSE 0
+                END"""
+        return select_sql, case_sql
+    select_sql = ",\n                ".join(
+        [f"LAG(id) {window} AS prev_id"]
+        + [f"{c},\n                LAG({c}) {window} AS prev_{c}" for c in run_cols]
+    )
+    changed = "\n                        OR ".join(
+        f"{c} IS DISTINCT FROM prev_{c}" for c in run_cols
+    )
+    case_sql = f"""CASE
+                    WHEN prev_id IS NULL THEN 1
+                    WHEN {changed} THEN 1
+                    ELSE 0
+                END"""
+    return select_sql, case_sql
+
+
 async def _collapse_partition_sql(session, cfg: dict, partition_id: int, cutoff: datetime) -> tuple[int, int]:
     """Collapse consecutive identical rows for one partition using pure SQL.
 
@@ -177,7 +235,7 @@ async def _collapse_partition_sql(session, cfg: dict, partition_id: int, cutoff:
     tbl = cfg["table"]
     pcol = cfg["partition_col"]
     scol = cfg["sub_partition_col"]
-    vcol = cfg["value_col"]
+    compare_sql, new_run_sql = _run_boundary_sql(cfg)
 
     # ------------------------------------------------------------------
     # CTE-based approach:
@@ -207,11 +265,7 @@ async def _collapse_partition_sql(session, cfg: dict, partition_id: int, cutoff:
                 captured_at,
                 valid_until,
                 reading_count,
-                {vcol},
-                LAG({vcol}) OVER (
-                    PARTITION BY {scol}
-                    ORDER BY captured_at, id
-                ) AS prev_value
+                {compare_sql}
             FROM {tbl}
             WHERE {pcol} = :part_id
               AND captured_at < :cutoff
@@ -219,11 +273,7 @@ async def _collapse_partition_sql(session, cfg: dict, partition_id: int, cutoff:
         run_marked AS (
             SELECT
                 *,
-                CASE
-                    WHEN prev_value IS NULL AND {vcol} IS NULL THEN 0
-                    WHEN {vcol} IS DISTINCT FROM prev_value THEN 1
-                    ELSE 0
-                END AS is_new_run
+                {new_run_sql} AS is_new_run
             FROM ordered
         ),
         run_grouped AS (
@@ -265,11 +315,7 @@ async def _collapse_partition_sql(session, cfg: dict, partition_id: int, cutoff:
                 id,
                 {scol},
                 captured_at,
-                {vcol},
-                LAG({vcol}) OVER (
-                    PARTITION BY {scol}
-                    ORDER BY captured_at, id
-                ) AS prev_value
+                {compare_sql}
             FROM {tbl}
             WHERE {pcol} = :part_id
               AND captured_at < :cutoff
@@ -277,11 +323,7 @@ async def _collapse_partition_sql(session, cfg: dict, partition_id: int, cutoff:
         run_marked AS (
             SELECT
                 *,
-                CASE
-                    WHEN prev_value IS NULL AND {vcol} IS NULL THEN 0
-                    WHEN {vcol} IS DISTINCT FROM prev_value THEN 1
-                    ELSE 0
-                END AS is_new_run
+                {new_run_sql} AS is_new_run
             FROM ordered
         ),
         run_grouped AS (

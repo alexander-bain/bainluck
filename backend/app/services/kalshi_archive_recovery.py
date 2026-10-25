@@ -1,31 +1,33 @@
-"""#683 archive recovery: a bounded, read-only, exact-ID DRY-RUN planner.
+"""#683 archive recovery: a bounded, read-only, exact-ID, resumable DRY-RUN planner.
 
 PILLAR: TRUTH. SHIP: settled Kalshi questions that have no price history get
 back their real pre-resolution probability timeline, and archive provenance stays
 separate from live capture.
 
-This module READS. It selects stored Kalshi outcomes that have zero snapshots,
-asks Kalshi's historical tier about each one by its exact stored ticker, and
-returns the plan :mod:`app.utils.kalshi_archive_history` decides. It writes
-nothing to the database, Redis or the scheduler. It has no apply path, so
-"disabled" is structural, not a flag someone can flip. Entry point:
-``backend/scripts/kalshi_archive_recovery_dry_run.py``.
+This module READS. Keyset discovery selects stored Kalshi outcomes that have
+zero snapshots (the #683 cohort); exact ids are planned whatever their live
+coverage, because archive evidence between and after live observations is
+recoverable too. It asks Kalshi's historical tier about each one by its exact
+stored ticker and returns the plan :mod:`app.utils.kalshi_archive_history`
+decides. It writes nothing to the database, Redis or the scheduler. Entry
+point: ``backend/scripts/kalshi_archive_recovery_dry_run.py``.
 
-WHY THERE IS NO WRITE PATH YET. It is a schema decision, and the decision belongs
-to Goal Root, not this slice. ``futures_odds_snapshots`` has no provenance column
-other than ``bookmaker`` and no unique key, so ``ON CONFLICT DO NOTHING`` there
-dedups nothing. Every calibration phase also reads it WITHOUT a bookmaker filter.
-Part A bounds by ``LEAST(start, resolution)``. Part B takes the first snapshot at
-least an hour after the opening and applies NO cutoff at all
-(``tasks/backfill_winners.py``). So a ``reader_only`` archive row written there
-WOULD reach calibration, and an archive row written as ``bookmaker='kalshi'``
-would be indistinguishable from live capture. Both break this ship's own terms.
-The plan therefore carries full provenance per row, and the write waits for one of:
-(a) a provenance column on snapshots plus an exclusion in every calibration
-lateral (a migration, attended), (b) a separate archive table that readers union
-and calibration reads only for ``forecast`` rows (a migration, attended), or
-(c) ``bookmaker='kalshi_archive'`` plus an exclusion clause in every calibration
-reader (no migration, but every reader must change in the same release).
+WHERE A PLAN GOES. Goal Root chose a separate archive store (option b,
+``ROOT-STORAGE-DECISION.md``): ``futures_odds_snapshots`` has no provenance
+column beyond ``bookmaker`` and no unique key, and every calibration phase reads
+it without a bookmaker filter, so a ``reader_only`` archive row written there
+WOULD reach the curve. The store is ``kalshi_archive_*`` (migration
+``kalshi_archive_store_683``). Its only writer is the attended import,
+:mod:`app.services.kalshi_archive_apply`, which takes this module's report,
+re-derives every point from the response bytes the report carries, and refuses
+any plan whose digest the operator did not type. "Already stored" here means
+already in that store at the same period and interval end.
+
+A RUN THAT STOPS MID-OUTCOME is resumable without replay. Its report carries a
+sealed ``continuation``: the listing pages already read (markets and cursor), or
+the candle windows already read WITH their exact response text. The next run,
+under its own request budget, re-verifies those bytes, never asks for them
+again, and reads only what is still owed.
 
 BOUNDS, all enforced here and none of them a guess at Kalshi's rate budget:
 at most :data:`MAX_OUTCOMES` outcomes and :data:`MAX_REQUESTS` GETs per run,
@@ -36,6 +38,18 @@ is waited out once, but only when ``Retry-After`` fits
 ``_TRADE_429_MAX_WAIT_S`` and the deadline. Otherwise the run stops, with the
 cursor held BEFORE the refused outcome. A 429 is never recorded as "no data".
 The deadline is re-checked after every pacing or 429 sleep, before the next GET.
+
+AN ATTENDED RUN (``backend/scripts/kalshi_archive_recovery_dry_run.py``) adds
+the rail's operational bounds (:mod:`app.services.kalshi_archive_bounds`):
+``stop_on_first_429`` sends no further request after any 429, whatever its
+``Retry-After`` (0 included), and refuses to start when the shared cooldown
+cannot be read; ``byte_budget`` streams every response and stops the run once
+one response or the run's total passes its cap; ``hard_deadline_seconds`` makes
+the deadline inclusive of the database read, the cooldown read, cancelling an
+in-flight request and closing the client. Every one of those stops is a held
+stop (``budget_stop`` names it): the cursor stays before the outcome, nothing
+half-read is planned, and the plan is never reported complete. The database
+session carries the archive statement and lock bounds on every connection.
 
 WHAT IS NEVER WRITTEN DOWN AS DONE. A listing the run could not finish (budget,
 429) holds the outcome with its listing cursor in ``held_outcome``; only an
@@ -67,14 +81,18 @@ from app.utils.kalshi_archive_history import (
     candle_is_wellformed,
     choose_period,
     classify_candles,
+    continuation_refusal,
     forecast_cutoff,
     identity_refusal,
     importable,
+    input_fingerprint,
+    listed_identity,
     owed_window,
     parse_instant,
     plan_digest,
     request_windows,
     route_market,
+    seal_continuation,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,12 +125,17 @@ CANDIDATE_SQL = """
     SELECT fo.id AS outcome_id,
            fo.external_id AS ticker,
            fm.external_id AS event_ticker,
+           fo.market_id AS market_id,
+           fm.event_id AS event_id,
+           fo.resolution_source AS resolution_source,
            fm.resolution_date AS resolution_date,
            (e.id IS NOT NULL) AS has_event,
            e.commence_time AS commence_time,
            e.commence_time_source AS commence_time_source,
            e.created_at AS created_at,
-           e.completed_at AS completed_at
+           e.completed_at AS completed_at,
+           (SELECT COUNT(*) FROM futures_odds_snapshots fos
+             WHERE fos.outcome_id = fo.id) AS live_snapshots
     FROM futures_outcomes fo
     JOIN futures_markets fm ON fm.id = fo.market_id
     LEFT JOIN events e ON e.id = fm.event_id
@@ -121,15 +144,20 @@ CANDIDATE_SQL = """
       AND fm.external_id IS NOT NULL
       AND COALESCE(fo.resolution_source, '') NOT IN
           ('no_pregame_trading', 'did_not_play', 'withdrew')
-      AND NOT EXISTS (
-          SELECT 1 FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id
-      )
       AND {id_clause}
     ORDER BY fo.id ASC
     LIMIT :lim
 """
+#: Keyset discovery walks the #683 cohort itself: outcomes with ZERO live
+#: snapshots. Exact ids do not require that. Archive evidence BETWEEN and AFTER
+#: live observations is recoverable too (Root's storage decision), and the
+#: reader resolves actual overlap, so a named outcome with sparse live capture
+#: is planned and its live count is reported beside the plan.
 _ID_AFTER = (
-    "fm.status = 'resolved'"
+    "NOT EXISTS ("
+    " SELECT 1 FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id"
+    ")"
+    " AND fm.status = 'resolved'"
     " AND (fm.resolution_date IS NULL OR fm.resolution_date < :archive_cutoff)"
     " AND fo.id > :after_id"
 )
@@ -142,21 +170,34 @@ KEYSET_SELECTOR_LIMITS = (
     "an early-finalized market can fall in either group; name it with --outcome-ids",
 )
 
+#: The archive store is checked first: before its migration is applied the
+#: planner still runs and reports ``archive_store: absent``.
+ARCHIVE_STORE_PRESENT_SQL = "SELECT to_regclass('public.kalshi_archive_intervals') IS NOT NULL"
+
+#: Interval ends this outcome already holds IN THE ARCHIVE STORE. Live
+#: snapshots are not duplicates of an archive interval: they are a different
+#: kind of evidence, kept in their own table, and the reader resolves overlap.
 STORED_INSTANTS_SQL = """
-    SELECT outcome_id, captured_at
-    FROM futures_odds_snapshots
+    SELECT outcome_id, period_minutes, interval_end
+    FROM kalshi_archive_intervals
     WHERE outcome_id = ANY(:ids)
 """
 
 
 class _RateLimited(Exception):
-    def __init__(self, wait: float):
-        super().__init__(f"429, cooldown {wait:.1f}s")
+    def __init__(self, wait: Optional[float]):
+        super().__init__(
+            "429, cooldown unknown" if wait is None else f"429, cooldown {wait:.1f}s"
+        )
         self.wait = wait
 
 
 class _BudgetSpent(Exception):
-    pass
+    """The run must stop here, held. ``reason`` names the budget that ended it."""
+
+    def __init__(self, reason: str = "budget"):
+        super().__init__(reason)
+        self.reason = reason
 
 
 class _ListingUnreadable(Exception):
@@ -175,6 +216,11 @@ class _Listing:
     seen_cursors: set = field(default_factory=set)
 
 
+def _is_429(exc: BaseException) -> bool:
+    response = getattr(exc, "response", None)
+    return getattr(response, "status_code", None) == 429
+
+
 def _read_shared_cooldown() -> Optional[float]:
     """Seconds left on the trade rail's shared Kalshi cooldown; ``None`` if unreadable."""
     try:
@@ -189,9 +235,10 @@ def _read_shared_cooldown() -> Optional[float]:
 
 
 def _default_session_factory():
-    from app.tasks.base import get_task_session
+    """Every connection carries the archive statement/lock bounds (and proves it)."""
+    from app.services.kalshi_archive_bounds import archive_session
 
-    return get_task_session()
+    return archive_session()
 
 
 def _default_service_factory():
@@ -227,8 +274,31 @@ async def plan_archive_recovery(
     max_wait_seconds: Optional[float] = None,
     sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
+    continuation: Optional[dict] = None,
+    stop_on_first_429: bool = False,
+    byte_budget: Any = None,
+    hard_deadline_seconds: Optional[float] = None,
+    progress: Optional[dict] = None,
 ) -> dict:
-    """Plan, never write. Returns a JSON-serialisable report (see module doc)."""
+    """Plan, never write. Returns a JSON-serialisable report (see module doc).
+
+    ``continuation`` is the sealed ``continuation`` block of an earlier report
+    whose run stopped mid-outcome. That outcome resumes where it stopped, under
+    THIS run's request budget: a held listing continues from its cursor with
+    the markets it already read, and held candle windows are re-verified from
+    their stored response text and never asked again. A carry that fails any
+    check leaves the outcome owed with the reason; it is never silently re-read
+    from the first window.
+
+    ``stop_on_first_429``, ``byte_budget`` (an
+    :class:`~app.services.kalshi_archive_bounds.ArchiveByteBudget`, applied by
+    wrapping the service in ``BoundedArchiveService``) and
+    ``hard_deadline_seconds`` (the inclusive end, at or after the work
+    ``deadline_seconds``) are the attended-run bounds in the module doc.
+    Omitted, each behaves exactly as before. ``progress`` receives the running
+    report under ``"report"`` so a caller whose outer wall expires can still
+    say what this run had done.
+    """
     limit = max(1, min(int(limit), MAX_OUTCOMES))
     max_requests = max(1, min(int(max_requests), MAX_REQUESTS))
     pace_seconds = max(float(pace_seconds), MIN_PACE_SECONDS)
@@ -240,7 +310,15 @@ async def plan_archive_recovery(
         else min(float(max_wait_seconds), house_max_wait)
     )
     exact = [int(i) for i in outcome_ids][:limit] if outcome_ids else None
-    deadline = monotonic() + max(float(deadline_seconds), 0.0)
+    started = monotonic()
+    deadline = started + max(float(deadline_seconds), 0.0)
+    # The inclusive end: cancel and close must finish by then. ``None`` keeps
+    # the old unbounded collection of a cancelled request and of ``close()``.
+    hard_deadline = (
+        None
+        if hard_deadline_seconds is None
+        else max(started + float(hard_deadline_seconds), deadline)
+    )
 
     report: dict = {
         "mode": "dry_run",
@@ -265,38 +343,123 @@ async def plan_archive_recovery(
         "plan_digest": None,
         "next_after_id": None if exact is not None else int(after_id),
         "terminal": None,
+        "archive_store": None,
+        "continuation": None,
+        "continuation_in": None,
+        "budget_stop": None,
+        "stop_on_first_429": bool(stop_on_first_429),
     }
+    if byte_budget is not None:
+        report["response_bytes"] = byte_budget.as_report()
+    if progress is not None:
+        progress["report"] = report
+    if continuation is not None:
+        report["continuation_in"] = {
+            "outcome_id": (continuation or {}).get("outcome_id")
+            if isinstance(continuation, dict)
+            else None,
+            "status": "not_reached",
+        }
     if exact is None:
         report["selector_limits"] = list(KEYSET_SELECTOR_LIMITS)
 
-    cooldown_left = cooldown_reader()
+    def _bump_progress(phase: str) -> None:
+        if progress is not None:
+            progress["phase"] = phase
+
+    async def _collect_cancelled(task: "asyncio.Future", phase: str) -> None:
+        """Wait for a cancelled task to unwind: unbounded (legacy) or to the hard end."""
+        if hard_deadline is None:
+            await asyncio.gather(task, return_exceptions=True)
+            return
+        done, _ = await asyncio.wait(
+            {task}, timeout=max(hard_deadline - monotonic(), 0.0)
+        )
+        if task not in done:
+            report.setdefault("cancel_unacknowledged", []).append(phase)
+        elif not task.cancelled():
+            task.exception()
+
+    async def _within_deadline(call: Callable[[], Awaitable[Any]], phase: str = "request") -> Any:
+        """Await one step for at most the time left; on expiry cancel it, stop held.
+
+        ``asyncio.wait`` (not ``wait_for``) so only OUR deadline reads as a budget
+        stop. A timeout raised by the call itself stays an ordinary owed error.
+        """
+        task = asyncio.ensure_future(call())
+        done, _ = await asyncio.wait({task}, timeout=max(deadline - monotonic(), 0.0))
+        if task in done:
+            return task.result()
+        task.cancel()
+        # Collect the cancelled step (its outcome is not evidence) without
+        # swallowing a cancellation of the planner itself.
+        await _collect_cancelled(task, phase)
+        raise _BudgetSpent("deadline")
+
+    _bump_progress("cooldown_read")
+    if hard_deadline is None:
+        cooldown_left = cooldown_reader()
+    else:
+        try:
+            cooldown_left = await _within_deadline(
+                lambda: asyncio.to_thread(cooldown_reader), "cooldown_read"
+            )
+        except _BudgetSpent:
+            cooldown_left = None
     report["shared_cooldown_s"] = (
         "unreadable" if cooldown_left is None else round(max(cooldown_left, 0.0), 1)
     )
     if cooldown_left is not None and cooldown_left > 0:
         report["terminal"] = "cooldown"
         return report
+    if cooldown_left is None and stop_on_first_429:
+        # Strict: an unknown shared cooldown is not permission to ask.
+        report["terminal"] = "cooldown_unknown"
+        return report
 
     state = {"sent": 0}
 
-    def _spent() -> bool:
-        return state["sent"] >= max_requests or monotonic() >= deadline
+    def _spent_reason() -> Optional[str]:
+        if state["sent"] >= max_requests:
+            return "requests"
+        if monotonic() >= deadline:
+            return "deadline"
+        return None
 
     async def _get(call: Callable[[], Awaitable[Any]]) -> Any:
+        from app.services.kalshi_archive_bounds import ArchiveBudgetExceeded
+
         for attempt in range(2):
-            if _spent():
-                raise _BudgetSpent()
+            if _spent_reason():
+                raise _BudgetSpent(_spent_reason())
             if state["sent"]:
                 await sleep(pace_seconds)
                 # The pace (and a 429 wait before it) spends wall time: re-check,
                 # so no GET leaves after the run's stated deadline.
-                if _spent():
-                    raise _BudgetSpent()
+                if _spent_reason():
+                    raise _BudgetSpent(_spent_reason())
             state["sent"] += 1
             report["requests_sent"] = state["sent"]
             try:
                 return await _within_deadline(call)
+            except ArchiveBudgetExceeded as e:
+                # A byte cap is a budget stop, never an error that reads as a
+                # 429 (its message may well contain the digits "429").
+                raise _BudgetSpent(e.reason) from e
+            except _BudgetSpent:
+                raise
             except Exception as e:
+                if stop_on_first_429:
+                    if _is_429(e):
+                        try:
+                            wait = rate_limit_wait(e)
+                        except Exception:  # unknown policy: stop, honestly
+                            wait = None
+                        raise _RateLimited(wait) from e
+                    wait = rate_limit_wait(e)
+                    if wait is None:
+                        raise
+                    raise _RateLimited(wait) from e
                 wait = rate_limit_wait(e)
                 if wait is None:
                     raise
@@ -308,32 +471,27 @@ async def plan_archive_recovery(
                 raise _RateLimited(wait) from e
         raise AssertionError("unreachable")
 
-    async def _within_deadline(call: Callable[[], Awaitable[Any]]) -> Any:
-        """Await one GET for at most the time left; on expiry cancel it, stop partial.
-
-        ``asyncio.wait`` (not ``wait_for``) so only OUR deadline reads as a budget
-        stop. A timeout raised by the call itself stays an ordinary owed error.
-        """
-        task = asyncio.ensure_future(call())
-        done, _ = await asyncio.wait({task}, timeout=max(deadline - monotonic(), 0.0))
-        if task in done:
-            return task.result()
-        task.cancel()
-        # Collect the cancelled GET (its outcome is not evidence) without
-        # swallowing a cancellation of the planner itself.
-        await asyncio.gather(task, return_exceptions=True)
-        raise _BudgetSpent()
-
     service = service_factory()
+    if byte_budget is not None:
+        from app.services.kalshi_archive_bounds import BoundedArchiveService
+
+        service = BoundedArchiveService(service, byte_budget)
+
+    def _stop(e: BaseException) -> str:
+        if isinstance(e, _RateLimited):
+            report["stopped_on_cooldown_s"] = (
+                "unknown" if e.wait is None else e.wait
+            )
+            return "rate_limited"
+        report["budget_stop"] = getattr(e, "reason", "budget")
+        return "partial"
+
     try:
+        _bump_progress("cutoff")
         try:
             cutoff_payload = await _get(service.get_historical_cutoff)
         except (_BudgetSpent, _RateLimited) as e:
-            report["terminal"] = (
-                "rate_limited" if isinstance(e, _RateLimited) else "partial"
-            )
-            if isinstance(e, _RateLimited):
-                report["stopped_on_cooldown_s"] = e.wait
+            report["terminal"] = _stop(e)
             return report
         except Exception as e:
             report["errors"].append(f"cutoff: {str(e)[:120]}")
@@ -347,24 +505,46 @@ async def plan_archive_recovery(
             return report
         report["archive_cutoff"] = archive_cutoff.isoformat()
 
-        async with session_factory() as session:
-            await session.execute(text("SET TRANSACTION READ ONLY"))
-            params: dict = {"ticker_like": TICKER_LIKE, "lim": limit}
-            if exact is not None:
-                params["outcome_ids"] = exact
-                sql = CANDIDATE_SQL.replace("{id_clause}", _ID_EXACT)
-            else:
-                params["after_id"] = int(after_id)
-                params["archive_cutoff"] = archive_cutoff
-                sql = CANDIDATE_SQL.replace("{id_clause}", _ID_AFTER)
-            rows = (await session.execute(text(sql), params)).fetchall()
-            stored: dict[int, list] = {}
-            ids = [int(r.outcome_id) for r in rows]
-            if ids:
-                for s in (
-                    await session.execute(text(STORED_INSTANTS_SQL), {"ids": ids})
-                ).fetchall():
-                    stored.setdefault(int(s.outcome_id), []).append(s.captured_at)
+        async def _read_candidates():
+            async with session_factory() as session:
+                await session.execute(text("SET TRANSACTION READ ONLY"))
+                params: dict = {"ticker_like": TICKER_LIKE, "lim": limit}
+                if exact is not None:
+                    params["outcome_ids"] = exact
+                    sql = CANDIDATE_SQL.replace("{id_clause}", _ID_EXACT)
+                else:
+                    params["after_id"] = int(after_id)
+                    params["archive_cutoff"] = archive_cutoff
+                    sql = CANDIDATE_SQL.replace("{id_clause}", _ID_AFTER)
+                rows = (await session.execute(text(sql), params)).fetchall()
+                stored: dict[int, dict[int, list]] = {}
+                ids = [int(r.outcome_id) for r in rows]
+                present = bool(
+                    (await session.execute(text(ARCHIVE_STORE_PRESENT_SQL))).scalar()
+                )
+                if ids and present:
+                    for s in (
+                        await session.execute(text(STORED_INSTANTS_SQL), {"ids": ids})
+                    ).fetchall():
+                        stored.setdefault(int(s.outcome_id), {}).setdefault(
+                            int(s.period_minutes), []
+                        ).append(s.interval_end)
+            return rows, stored, ids, present
+
+        _bump_progress("candidate_read")
+        if hard_deadline is None:
+            rows, stored, ids, present = await _read_candidates()
+        else:
+            # Inclusive deadline: the read is cancelled at the deadline like a
+            # GET, and nothing is planned or advanced from a read that never ended.
+            try:
+                rows, stored, ids, present = await _within_deadline(
+                    _read_candidates, "candidate_read"
+                )
+            except _BudgetSpent as e:
+                report["terminal"] = _stop(e)
+                return report
+        report["archive_store"] = "present" if present else "absent"
         report["candidates"] = len(rows)
         if exact is not None:
             report["ids_not_candidates"] = sorted(set(exact) - set(ids))
@@ -376,8 +556,51 @@ async def plan_archive_recovery(
             oid = int(row.outcome_id)
             ticker = row.ticker
             event_ticker = row.event_ticker
-            plan = OutcomePlan(outcome_id=oid, ticker=ticker, route="unknown")
+            plan = OutcomePlan(
+                outcome_id=oid,
+                ticker=ticker,
+                route="unknown",
+                event_ticker=event_ticker,
+                input_fingerprint=input_fingerprint(row),
+                live_snapshots=int(getattr(row, "live_snapshots", 0) or 0),
+            )
+            carry = None
+            if isinstance(continuation, dict) and continuation.get("outcome_id") == oid:
+                why = continuation_refusal(
+                    continuation, outcome_id=oid, ticker=ticker, event_ticker=event_ticker
+                )
+                if why is None and continuation.get("stage") == "candles":
+                    for entry in continuation["read_windows"]:
+                        try:
+                            _payload_from_entry(ticker, entry)
+                        except Exception as e:  # the carried bytes do not verify
+                            why = f"carry_raw:{getattr(e, 'reason', type(e).__name__)}"
+                            break
+                report["continuation_in"] = {
+                    "outcome_id": oid,
+                    "status": "refused" if why else "resumed",
+                    "reason": why,
+                    "stage": continuation.get("stage"),
+                }
+                if why:
+                    report["errors"].append(f"{ticker}: continuation_refused:{why}")
+                    report["owed_ids"].append(oid)
+                    last_done = max(last_done, oid)
+                    continue
+                carry = continuation
+                if carry["stage"] == "listing":
+                    listings[event_ticker] = _Listing(
+                        markets=dict(carry["listing_markets"]),
+                        cursor=carry["listing_cursor"],
+                        pages=int(carry.get("listing_pages_read") or 0),
+                        seen_cursors=set(carry.get("seen_cursors") or ()),
+                    )
+                else:
+                    listings.setdefault(event_ticker, _Listing()).markets[ticker] = carry[
+                        "market"
+                    ]
             listing = listings.setdefault(event_ticker, _Listing())
+            _bump_progress(f"outcome:{oid}")
             stage = "listing"
             windows: list = []
             try:
@@ -413,6 +636,7 @@ async def plan_archive_recovery(
                     cutoff, cutoff_refusal = forecast_cutoff(event, settled_at)
                     plan.forecast_cutoff = cutoff.isoformat() if cutoff else None
                     plan.cutoff_refusal = cutoff_refusal
+                    plan.market = listed_identity(market)
                     open_time = parse_instant(market.get("open_time"))
                     period = choose_period(open_time, settled_at)
                     windows, opening_gap = request_windows(
@@ -431,21 +655,48 @@ async def plan_archive_recovery(
                     else:
                         stage = "candles"
                         candles: list = []
-                        for window in windows:
-                            batch = await _get(
-                                lambda w=window: service.get_historical_market_candlesticks_raw(
+                        lineage: list = []
+
+                        def _take(window, payload, entry):
+                            if payload.echoed_ticker != ticker:
+                                # Candles for another market are never filed
+                                # under this one, whoever built the payload.
+                                from app.services.kalshi_api import (
+                                    KalshiArchiveResponseMalformed,
+                                )
+
+                                raise KalshiArchiveResponseMalformed(
+                                    "historical_candlesticks", "ticker_mismatch"
+                                )
+                            plan.windows.append(entry)
+                            plan.windows_read += 1
+                            if not all(candle_is_wellformed(c) for c in payload.candles):
+                                plan.owed_windows.append(
+                                    owed_window(window, OWED_MALFORMED_CANDLES)
+                                )
+                            candles.extend(payload.candles)
+                            lineage.extend([payload.raw_sha256] * len(payload.candles))
+
+                        resumed = (carry or {}).get("read_windows") or []
+                        for window, entry in zip(windows, resumed):
+                            # Re-verified from its own bytes, never asked again.
+                            _take(
+                                window,
+                                _payload_from_entry(ticker, entry),
+                                dict(entry),
+                            )
+                        if resumed:
+                            report["continuation_in"]["windows_reused"] = len(resumed)
+                        for window in windows[len(resumed) :]:
+                            payload = await _get(
+                                lambda w=window: service.get_historical_market_candlesticks_payload(
                                     ticker,
                                     period_interval=w.period_minutes,
                                     start_ts=w.start_ts,
                                     end_ts=w.end_ts,
                                 )
                             )
-                            plan.windows_read += 1
-                            if not all(candle_is_wellformed(c) for c in batch):
-                                plan.owed_windows.append(
-                                    owed_window(window, OWED_MALFORMED_CANDLES)
-                                )
-                            candles.extend(batch)
+                            _take(window, payload, _window_entry(window, payload))
                         points, counts = classify_candles(
                             outcome_id=oid,
                             ticker=ticker,
@@ -454,7 +705,8 @@ async def plan_archive_recovery(
                             settled_at=settled_at,
                             cutoff=cutoff,
                             cutoff_refusal=cutoff_refusal,
-                            stored_instants=stored.get(oid, ()),
+                            stored_instants=stored.get(oid, {}).get(period, ()),
+                            candle_lineage=lineage,
                         )
                         plan.points = points
                         plan.counts = {**counts, "candles_returned": len(candles)}
@@ -468,11 +720,15 @@ async def plan_archive_recovery(
             except (_RateLimited, _BudgetSpent) as e:
                 # The cursor stays BEFORE this outcome; it is asked first next run.
                 # Nothing it half-read becomes a plan, an absence or a coverage claim.
-                stopped = "rate_limited" if isinstance(e, _RateLimited) else "partial"
-                if isinstance(e, _RateLimited):
-                    report["stopped_on_cooldown_s"] = e.wait
+                stopped = _stop(e)
                 report["held_outcome"] = _held(
                     oid, ticker, stage, listing, plan, windows
+                )
+                report["continuation"] = _carry(
+                    oid, ticker, event_ticker, stage, listing, plan
+                )
+                report["held_outcome"]["continuable"] = (
+                    report["continuation"] is not None
                 )
                 break
             except Exception as e:  # one bad outcome never wipes the pass (gotcha #42)
@@ -485,9 +741,21 @@ async def plan_archive_recovery(
             report["plans"].append(plan)
             last_done = max(last_done, oid)
     finally:
+        _bump_progress("close")
         close = getattr(service, "close", None)
         if close is not None:
-            await close()
+            if hard_deadline is None:
+                await close()
+            else:
+                task = asyncio.ensure_future(close())
+                done, _ = await asyncio.wait(
+                    {task}, timeout=max(hard_deadline - monotonic(), 0.0)
+                )
+                report["client_close"] = "acknowledged" if task in done else "unacknowledged"
+                if task in done and not task.cancelled() and task.exception() is not None:
+                    report["client_close"] = f"failed:{type(task.exception()).__name__}"
+                if task not in done:
+                    task.cancel()
 
     points_all = [p for plan in report["plans"] for p in plan.points]
     totals: dict = {}
@@ -509,6 +777,8 @@ async def plan_archive_recovery(
     if exact is None:
         report["next_after_id"] = last_done
         report["walk_ended"] = stopped is None and len(rows) < limit
+    if byte_budget is not None:
+        report["response_bytes"] = byte_budget.as_report()
     if stopped:
         report["terminal"] = stopped
     elif report["owed_ids"] or report["incomplete_ids"]:
@@ -516,6 +786,74 @@ async def plan_archive_recovery(
     else:
         report["terminal"] = "complete"
     return report
+
+
+def _window_entry(window: Any, payload: Any) -> dict:
+    """What a read window leaves behind: bounds, lineage and its exact bytes."""
+    return {
+        **asdict(window),
+        "echoed_ticker": payload.echoed_ticker,
+        "raw_sha256": payload.raw_sha256,
+        "retrieved_at": payload.retrieved_at,
+        "candles_returned": len(payload.candles),
+        "raw_body": payload.raw_body,
+    }
+
+
+def _payload_from_entry(ticker: str, entry: dict):
+    """A stored window entry back to a verified payload, or raise malformed."""
+    from app.services.kalshi_api import KalshiArchiveCandlePayload
+
+    return KalshiArchiveCandlePayload.from_raw(
+        requested_ticker=ticker,
+        raw_body=entry.get("raw_body") or "",
+        raw_sha256=entry.get("raw_sha256") or "",
+        retrieved_at=entry.get("retrieved_at") or "",
+    )
+
+
+def _carry(
+    oid: int,
+    ticker: str,
+    event_ticker: str,
+    stage: str,
+    listing: _Listing,
+    plan: OutcomePlan,
+) -> Optional[dict]:
+    """The sealed input the next run resumes from, or ``None`` if nothing was read.
+
+    A carry holds only verified progress: the listing pages already read (with
+    the markets they named and the cursor after them), or the candle windows
+    already read with their exact response text. Nothing unread is carried, so
+    the next run asks only for what is still owed, under its own budget.
+    """
+    base = {"outcome_id": oid, "ticker": ticker, "event_ticker": event_ticker}
+    if stage == "listing":
+        if not listing.cursor or listing.exhausted or listing.error:
+            return None
+        return seal_continuation(
+            {
+                **base,
+                "stage": "listing",
+                "listing_markets": {
+                    t: listed_identity(m) for t, m in listing.markets.items()
+                },
+                "listing_cursor": listing.cursor,
+                "listing_pages_read": listing.pages,
+                "seen_cursors": sorted(listing.seen_cursors),
+            }
+        )
+    if not plan.windows or plan.market is None:
+        return None
+    return seal_continuation(
+        {
+            **base,
+            "stage": "candles",
+            "market": plan.market,
+            "period_minutes": plan.period_minutes,
+            "read_windows": list(plan.windows),
+        }
+    )
 
 
 def _held(

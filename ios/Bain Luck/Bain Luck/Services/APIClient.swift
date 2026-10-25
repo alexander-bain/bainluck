@@ -65,6 +65,9 @@ actor APIClient {
     private struct CacheEntry {
         let data: Data
         let timestamp: Date
+        /// When the request that filled this entry STARTED (#10090 C1b): fills are
+        /// ordered by start, never by landing. `timestamp` stays the TTL clock.
+        let started: Date
     }
 
     /// What a single GET revealed about the SERVER's cache and its own build cost
@@ -473,6 +476,7 @@ actor APIClient {
         }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(sessionId, forHTTPHeaderField: "x-session-id")
+        let started = Date()
 
         // Measured over the token read alone, exactly as `fetchRaw` does it, so the
         // two rails' `auth_ready_ms` mean the same thing.
@@ -502,9 +506,14 @@ actor APIClient {
         }
         let http = response as? HTTPURLResponse
 
-        // Store in cache
-        if let key = cacheKey {
-            responseCache[key] = CacheEntry(data: data, timestamp: Date())
+        // Store in cache — unless a request that started after this one has
+        // already filled the key. #10090 (lane1b C1b): an ordinary and a fresh
+        // history read share one key, so an ordinary read issued before a
+        // reconcile pair and landing after it refilled the key with the build
+        // from before the withdrawal, and the next poll served it from here.
+        // The caller still gets its own body; only the cache keeps the newer one.
+        if let key = cacheKey, (responseCache[key]?.started ?? .distantPast) <= started {
+            responseCache[key] = CacheEntry(data: data, timestamp: Date(), started: started)
             cleanCacheIfNeeded()
         }
 
@@ -1107,23 +1116,30 @@ actor APIClient {
     }
 
     /// Fetches outcome probability history for a futures market.
+    /// #683 — `fullRange` adds `range=full`: the server reads the question's whole
+    /// recovered history and treats `hours` as a floor. Off by default, so every
+    /// other request is byte-for-byte what it was.
     func fetchProbabilityTimeline(marketId: Int, top: Int = 50, hours: Int = 168,
-                                  representation: FuturesRepresentation = .source) async throws -> ProbabilityTimelineResponse {
+                                  representation: FuturesRepresentation = .source,
+                                  fullRange: Bool = false) async throws -> ProbabilityTimelineResponse {
         return try await fetch("/api/futures/\(marketId)/probability-timeline", query: [
             "top": "\(top)",
             "hours": "\(hours)",
-        ].merging(Self.representationQuery(representation)) { current, _ in current },
+        ].merging(Self.representationQuery(representation)) { current, _ in current }
+            .merging(EvolutionFullRange.query(fullRange: fullRange)) { current, _ in current },
             requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
     /// #10244 — a futures market's own `/history`: per outcome, the de-vigged
     /// consensus the source page draws. The verified title chart draws these lines
     /// instead of the timeline's, whose sportsbook line medians raw prices.
-    func fetchFuturesHistory(marketId: Int, hours: Int, topN: Int = 50) async throws -> FuturesHistoryResponse {
+    func fetchFuturesHistory(marketId: Int, hours: Int, topN: Int = 50,
+                             fullRange: Bool = false) async throws -> FuturesHistoryResponse {
         return try await fetch("/api/futures/\(marketId)/history", query: [
             "hours": "\(hours)",
             "top_n": "\(topN)",
-        ], requiresNetwork: true, revalidationQuery: ["fresh": "true"])
+        ].merging(EvolutionFullRange.query(fullRange: fullRange)) { current, _ in current },
+            requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
     /// The opt-in is a query parameter only when it is not the default.
@@ -1326,6 +1342,13 @@ actor APIClient {
     /// Never reuse a slug-only cached publication after a withdrawal.
     func fetchContainerHub(slug: String) async throws -> ContainerHubResponse {
         try await fetch(ContainerHubService.path(for: slug), requiresNetwork: true)
+    }
+
+    /// Theme cursors are positions within their exact published revision.
+    func fetchContainerHub(slug: String, cursor: String, revision: Int, limit: Int) async throws -> ContainerHubResponse {
+        guard revision > 0, ContainerHubPage.validCursor(cursor), (1...100).contains(limit) else { throw APIError.invalidURL }
+        return try await fetch(ContainerHubService.path(for: slug),
+            query: ["cursor": cursor, "revision": String(revision), "limit": String(limit)], requiresNetwork: true)
     }
 
     /// #9653: optional Browse discovery always revalidates publication/flags.

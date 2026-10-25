@@ -578,14 +578,15 @@ class TestTheSoccerJoinStrategy:
         ]
         return fixtures, rows
 
-    def test_it_joins_74_of_the_pinned_90_where_the_default_join_gets_17(self, corpus):
+    def test_it_joins_75_of_the_pinned_90_where_the_default_join_gets_17(self, corpus):
         """THE CONTROL. Both rows built from identical inputs; the only thing
-        that differs is the strategy, and it is worth 57 games.
+        that differs is the strategy, and it is worth 58 games.
 
-        74 and 17 are the same two numbers `test_soccer_team_matching_3366`
+        75 and 17 are the same two numbers `test_soccer_team_matching_3366`
         pins on the rule itself, which is the point: the row and the writer
         agree about what a match is. 67 before the alias tables (#5829), 73
-        before the whole-name initialisms (#6022) — this assertion is here so
+        before the whole-name initialisms (#6022), 74 before `Sporting Lisbon`
+        (#2823) — this assertion is here so
         the rule cannot move without the ROW saying so.
         """
         fixtures, rows = self._sides(corpus)
@@ -604,9 +605,9 @@ class TestTheSoccerJoinStrategy:
             rows=rows,
             normalize=normalize_team,
         )
-        assert soccer["identity"]["both"] == 74
+        assert soccer["identity"]["both"] == 75
         assert default["identity"]["both"] == 17
-        assert soccer["identity"]["ours_only"] == 16
+        assert soccer["identity"]["ours_only"] == 15
         assert default["identity"]["ours_only"] == 73
 
     def test_it_declares_both_refusal_names_even_when_neither_fires(self, corpus):

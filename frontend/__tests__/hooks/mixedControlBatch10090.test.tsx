@@ -17,7 +17,9 @@ import vm from "vm";
 import ts from "typescript";
 
 import { heldFrameAfter, useLiveEventStream, type LiveFrame } from "../../hooks/useLiveEventStream";
-import { adoptFoldedQuote, applyLiveFrame, frameInvalidatesFoldedBlend } from "../../lib/eventLivePush";
+import { adoptFoldedQuote, applyLiveFrame, applyLiveFrameRail, frameInvalidatesFoldedBlend } from "../../lib/eventLivePush";
+import { frameFoldOrder } from "../../lib/foldRevision";
+import { frameCarriesUnpricedSnapshot, snapshotRailPaysPricelessTrigger } from "../../lib/sourceSnapshot";
 import { canSubscribeEventQuotes } from "../../lib/eventQuoteStream";
 
 const PAGE = fs.readFileSync(path.join(__dirname, "../../app/events/[id]/page.tsx"), "utf8");
@@ -85,7 +87,9 @@ function HeldPage({ throwOn }: { throwOn?: (f: LiveFrame) => boolean }) {
   const [refs] = useState(() => ({
     heldEventRef: { current: undefined as Held | undefined },
     quoteTriggerRef: { current: null as LiveFrame | null },
+    sourceAddedHistoryRef: { current: null },
     latestLiveFrameRef: { current: null as LiveFrame | null },
+    pairJournalRef: { current: null }, // #10090 G1: no paired read in flight here
     requests: 0,
     applied: [] as LiveFrame[],
   }));
@@ -98,9 +102,13 @@ function HeldPage({ throwOn }: { throwOn?: (f: LiveFrame) => boolean }) {
       refreshEvent: (update: (prev: Held) => Held, options: unknown) => {
         expect(options).toEqual({ revalidate: false });
         setCache(prev => update(prev));
+        // SWR mutate returns a promise; source-addition reads are scheduled
+        // only after that write. This fixture's legacy frames add no snapshot.
+        return Promise.resolve();
       },
       setLastRefresh: () => {},
       Date, adoptFoldedQuote, applyLiveFrame, frameInvalidatesFoldedBlend, canSubscribeEventQuotes, heldFrameAfter,
+      applyLiveFrameRail, frameCarriesUnpricedSnapshot, frameFoldOrder, snapshotRailPaysPricelessTrigger,
     }) as (f: LiveFrame) => void;
     return (f: LiveFrame) => {
       refs.applied.push(f);

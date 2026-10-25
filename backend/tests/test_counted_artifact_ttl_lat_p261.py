@@ -78,7 +78,13 @@ from app.utils import principal_independent_cache as pic
 #: Every namespace `get_or_build` is actually called with, from the three call
 #: sites in `routes/feed.py`. Spelled out rather than discovered, so ADDING a
 #: shared artifact is a decision someone makes here on purpose.
-COUNTED_NAMESPACES = ("concepts", "canonical_counts")
+COUNTED_NAMESPACES = (
+    "concepts",
+    "canonical_counts",
+    # #1480: the shared game readings (also counted on non-live pages).
+    "event_snapshot_fallback",
+    "event_prematch_prior",
+)
 INERT_NAMESPACES = ("market_load",)
 
 

@@ -58,14 +58,21 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.dml import Update
 from sqlalchemy.sql.selectable import Select
+from tests.test_ws_flush_retry_q491 import (
+    is_stored_live_slate_read,
+    stored_live_batches,
+)
 
 import app.services.kalshi_ws as kalshi_svc
 import app.services.polymarket_api as polymarket_api
 import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.live_blend_refresh as blend_mod
+import app.tasks.polymarket_ws as poly_task
 from app.models.models import FuturesOutcome
 from app.utils.market_quote_push import market_channel, parse_market_frame
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, SET_STATEMENT_TIMEOUT_SQL
 from tests._kalshi_price_session import bind_sessions
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 pytestmark = pytest.mark.asyncio
 
@@ -130,6 +137,15 @@ def _routes_to_the_database(stmt) -> bool:
     features' statements (and the re-rank is Postgres SQL); they get the
     replayed result, exactly as in the #5411 file.
     """
+    # DNPL arms and restores the real price transaction's statement budget.
+    # These statements must neither consume a replayed slate nor fake the
+    # prior timeout value that the writer restores after its price UPDATE.
+    if any(stmt is control for control in (
+        poly_task.ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+        SET_STATEMENT_TIMEOUT_SQL,
+        SET_LOCK_TIMEOUT_SQL,
+    )):
+        return True
     if isinstance(stmt, Select):
         # The Polymarket resolution reads back the `settled_at` its own UPDATE
         # stored. Only that read; the slate SELECTs stay replayed.
@@ -159,9 +175,10 @@ class _Replayed:
 class _HybridSession:
     """An AsyncSession-shaped wrapper over a REAL sync Session."""
 
-    def __init__(self, real, batches):
+    def __init__(self, real, batches, stored_live=None):
         self.sync_session = real
         self._batches = batches
+        self._stored_live = stored_live
         self.wrote_a_price = False
 
     @property
@@ -179,7 +196,12 @@ class _HybridSession:
             return self.sync_session.execute(stmt, *args, **kwargs)
         if isinstance(stmt, Update):
             return _Replayed([], rowcount=0)
-        return _Replayed(self._batches.pop(0) if self._batches else [])
+        if self._stored_live is not None and is_stored_live_slate_read(stmt):
+            # #10090 attempt156: the stored-live load reads its own three
+            # batches; the full slate stays queued for the full read.
+            self._batches[:0] = self._stored_live()
+        rows = self._batches.pop(0) if self._batches else []
+        return _Replayed(answer_slate_market_read(stmt, rows))  # #10663
 
 
 class _PipelinedPublish:
@@ -304,6 +326,12 @@ async def _drive_kalshi(monkeypatch, engine, messages, event_id=EVENT_ID,
         ]
     else:
         batches = [list(b) for b in POLY_SLATE]
+    # #10090 attempt156: only the Polymarket consumer issues the stored-live
+    # read. POLY_SLATE's event is `scheduled`, so that read maps nothing and the
+    # consumer takes the original full read, the row sequence master saw.
+    stored_live = (
+        None if venue == "kalshi" else lambda: stored_live_batches(*POLY_SLATE[:3])
+    )
     budget = {"fail_commits": fail_commits}
 
     class _Refresher(blend_mod.LiveBlendRefresher):
@@ -318,7 +346,7 @@ async def _drive_kalshi(monkeypatch, engine, messages, event_id=EVENT_ID,
     class _SessionCtx:
         async def __aenter__(self):
             self.real = Session(engine)
-            self.session = _HybridSession(self.real, batches)
+            self.session = _HybridSession(self.real, batches, stored_live)
             return self.session
 
         async def __aexit__(self, exc_type, *_exc):

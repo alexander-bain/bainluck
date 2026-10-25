@@ -14,6 +14,12 @@ import SwiftUI
 /// caption drops to its own line under the name. Nothing is truncated unless the
 /// name alone is wider than the column, and then "Final N" still keeps its
 /// priority over it (#4959).
+///
+/// #11285 (Alex, build 65: "unreadably small") — the three draw in the reader's
+/// caption style, not a fixed 8pt that never grew with the text setting. Where
+/// even the name and "Final N" cannot share a line (large text in a narrow
+/// column), the name wraps on its own lines and "Final N" leads the caption's
+/// line, rather than the name being clipped.
 struct PropsStatGroupHeader: View {
     let label: String
     let caption: String?
@@ -21,36 +27,44 @@ struct PropsStatGroupHeader: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 4) {
-                labelText
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                labelText(wraps: false)
                 captionText
                 finalReadout
             }
             VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
-                    labelText
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    labelText(wraps: false)
                     finalReadout
                 }
                 captionText
             }
+            VStack(alignment: .leading, spacing: 1) {
+                labelText(wraps: true)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    if let finalText { finalValue(finalText) }
+                    captionText
+                }
+            }
         }
     }
 
-    private var labelText: some View {
+    private func labelText(wraps: Bool) -> some View {
         Text(label)
-            .font(.system(size: 8, weight: .bold))
+            .font(.caption.weight(.bold))
             .tracking(0.5)
-            .foregroundStyle(.tertiary)
-            .lineLimit(1)
+            .foregroundStyle(.secondary)
+            .lineLimit(wraps ? nil : 1)
+            .fixedSize(horizontal: false, vertical: wraps)
     }
 
     @ViewBuilder
     private var captionText: some View {
         if let caption {
             Text(caption)
-                .font(.system(size: 8))
-                .foregroundStyle(.quaternary)
-                .lineLimit(1)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -58,13 +72,17 @@ struct PropsStatGroupHeader: View {
     private var finalReadout: some View {
         if let finalText {
             Spacer(minLength: 2)
-            Text(finalText)
-                .font(.system(size: 8, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+            finalValue(finalText)
                 .layoutPriority(1)
         }
+    }
+
+    private func finalValue(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
     }
 }

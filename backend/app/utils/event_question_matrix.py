@@ -15,7 +15,10 @@ This module builds two additive keys:
 
 Contract: ``10238.v1`` (Authority, frozen) with Live's riders R1–R6 and
 Authority note A1, all binding. Section marks below (§4.2, R3 …) point into
-that text.
+that text. #9483 adds one optional key to every Game option,
+``pregame_reading`` (`_pregame_reading`): the stored pregame pin on its own,
+so a settled option can show its pregame chance beside its result while
+``comparison`` keeps refusing it as ``not_quoted``. Series options do not carry it.
 
 Pure: no I/O, no provider query, no clock read. The route hands in its own
 rows, its own loaded legs and its own decision functions — `_verdict_is_provable`,
@@ -43,7 +46,7 @@ import re
 from collections import defaultdict
 from typing import Any, Callable, Iterable, Optional
 
-from app.utils.event_props_matrix import _comparison, _finite_probability, pin_evidence
+from app.utils.event_props_matrix import _comparison, _finite_probability, _parse_stamp, pin_evidence
 from app.utils.final_score_margin import _MARGIN_RE, _SPORT_SCORING_UNIT, _singular
 from app.utils.market_shape import _DRAW_TOKENS, _TOP_N_RE, _norm, venue_leg_count
 from app.utils.series_winner_correspondence import SERIES_BLEND_BASIS
@@ -875,6 +878,7 @@ def _game_option(entry: dict, side: str, lifecycle_state: str, shared: dict) -> 
         "source_evidence": evidence,
         "result": result,
         "comparison": comparison,
+        "pregame_reading": _pregame_reading(entry, value_state, leg, shared),
     }
 
 
@@ -940,6 +944,61 @@ def _game_comparison(entry: dict, value_state: str, leg: Any, shared: dict) -> d
         "baseline": decided["baseline"],
         "latest": latest if decided["state"] == "comparable" else None,
         "delta_points": decided["delta_points"],
+    }
+
+
+def _no_reading(reason: str) -> dict:
+    return {
+        "state": "unavailable",
+        "reason": reason,
+        "probability": None,
+        "observed_at": None,
+        "basis": None,
+        "outcome_id": None,
+    }
+
+
+def _pregame_reading(entry: dict, value_state: str, leg: Any, shared: dict) -> dict:
+    """#9483 — the option's stored pregame pin, read apart from the comparison.
+
+    ``comparison`` needs a current quote (R1 ``not_quoted`` comes first), so a
+    settled option carries no baseline there; this is the same pin on its own,
+    in every status. It is the RAW pin of the ONE contributor's own outcome, on
+    that leg's own market, admitted by the same `pin_evidence` and the route's
+    `_pregame_mark_is_pregame` the comparison uses — never the current quote,
+    never a settled 0/1, never the opening line, never a complement, never a
+    mean over two legs. One reason, first failing, in this order:
+    ``multiple_contributors`` → ``option_not_admitted`` →
+    ``contributor_not_loaded`` → ``leg_is_complement`` → pin reason →
+    ``start_time_unknown`` → ``pin_is_settlement_value``."""
+    if len(entry["contributor_ids"]) != 1:
+        return _no_reading("multiple_contributors")
+    if value_state not in ("quoted", "result"):
+        # The route declined (or had nothing) to publish this row; its pin is
+        # not offered beside a row the page does not stand behind.
+        return _no_reading("option_not_admitted")
+    if leg is None:
+        return _no_reading("contributor_not_loaded")
+    if entry["total_axis"] and _leg_reads_under(leg.name):
+        return _no_reading(LEG_IS_COMPLEMENT)
+    mark = _meta(shared["market_facts"].get(leg.market_id)).get("pregame_mark")
+    pin = pin_evidence(mark, leg.id, shared["commence_time"], shared["is_pregame"])
+    if "reason" in pin:
+        return _no_reading(pin["reason"])
+    # `_pregame_mark_is_pregame` admits a pin it cannot judge; a reading
+    # offered on a finished game must have had a start time to judge it by.
+    if _parse_stamp(shared["commence_time"]) is None and _parse_stamp(mark.get("commence_time")) is None:
+        return _no_reading("start_time_unknown")
+    # A pregame price of exactly 0 or 1 cannot be told from a settlement value.
+    if pin["probability"] in (0.0, 1.0):
+        return _no_reading("pin_is_settlement_value")
+    return {
+        "state": "available",
+        "reason": None,
+        "probability": pin["probability"],
+        "observed_at": pin["observed_at"],
+        "basis": "pregame_pin",
+        "outcome_id": leg.id,
     }
 
 
@@ -1054,6 +1113,7 @@ def _unblended_option(entries: list, side: str, lifecycle_state: str, shared: di
         "source_evidence": evidence,
         "result": result,
         "comparison": _unavailable("not_quoted"),
+        "pregame_reading": _no_reading("multiple_contributors"),
     }
 
 

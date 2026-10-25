@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { fetchTeamPage, fetchChampionshipGrid, fetchTeamPropFamilies } from "@/lib/api";
-import type { TeamPageResponse, PropFamily } from "@/lib/api";
+import { fetchTeamPage, fetchChampionshipGrid } from "@/lib/api";
+import type { TeamPageResponse } from "@/lib/api";
 import type { ChampionshipGridResponse } from "@/lib/types";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import { useTeamPropRaces } from "@/hooks/useTeamPropRaces";
 import { getSiteUrl } from "@/lib/siteUrl";
 import LoadingState from "@/components/LoadingState";
 import { teamLeagueLabel } from "@/lib/teamLeagueLabel";
@@ -21,7 +22,7 @@ import {
 } from "@/lib/probabilityDisplay";
 import { buildDivisionRace } from "@/lib/teamDivisionRace";
 import { teamTextColor } from "@/lib/teamColors";
-import { teamHeadline } from "@/lib/teamHeadline";
+import { decidedHeadlineText, teamHeadline } from "@/lib/teamHeadline";
 import { UpcomingGameCard, RecentGameCard } from "@/components/TeamGameCards";
 import { seasonFuturesRows } from "@/lib/teamSeasonFutures";
 import { TeamChampionshipPath } from "@/components/TeamChampionshipPath";
@@ -42,7 +43,6 @@ export default function TeamPage() {
 
   const [data, setData] = useState<TeamPageResponse | null>(null);
   const [grid, setGrid] = useState<ChampionshipGridResponse | null>(null);
-  const [propFamilies, setPropFamilies] = useState<PropFamily[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // The slug the page ACTUALLY resolved to (#5852): the URL's, or its
@@ -62,7 +62,6 @@ export default function TeamPage() {
     setLoading(true);
     setError(null);
     setGrid(null);
-    setPropFamilies([]);
     setResolvedSlug(teamSlug);
     resolveTeamForRoute(teamSlug, sport, league, fetchTeamPage)
       .then((result) => {
@@ -102,23 +101,9 @@ export default function TeamPage() {
     };
   }, [data?.team?.sport_key]);
 
-  // Prop families (L2-167): a team's futures/prop markets grouped into cohort
-  // races (Next Team, awards, ladders). Supplementary + best-effort — an
-  // empty/failed payload simply hides the Prop Races section. Sparse teams yield
-  // zero families and the card never renders.
-  useEffect(() => {
-    let cancelled = false;
-    fetchTeamPropFamilies(resolvedSlug)
-      .then((result) => {
-        if (!cancelled) setPropFamilies(result.families || []);
-      })
-      .catch(() => {
-        if (!cancelled) setPropFamilies([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [resolvedSlug]);
+  // Prop families (L2-167) plus the roster coverage they were found under
+  // (#2311), keyed on the resolved slug; see the hook for the reset contract.
+  const propRaces = useTeamPropRaces(resolvedSlug);
 
   // Document title
   useEffect(() => {
@@ -319,8 +304,14 @@ export default function TeamPage() {
               {headline.label}
             </span>
             <span
-              className="font-mono font-bold text-3xl leading-none tabular-nums"
-              style={{ color: teamTextColor(team.primary_color) || undefined }}
+              className={`${headline.state ? "" : "font-mono "}font-bold text-3xl leading-none tabular-nums${
+                headline.state === "eliminated" ? " text-text-muted" : ""
+              }`}
+              style={
+                headline.state === "eliminated"
+                  ? undefined
+                  : { color: teamTextColor(team.primary_color) || undefined }
+              }
             >
               {/* #7710 — the loudest instance of the same defect. This 3xl
                   number is the page's signature, and Baltimore's read `0%` in
@@ -328,7 +319,12 @@ export default function TeamPage() {
                   page said the season was over for them and that the price of
                   it being over had moved. Boundary rule, same as every other
                   number on the page. */}
-              {formatProbabilityPercent(headline.probability)}
+              {/* #11493 — a decided question prints the grid's verdict. The
+                  Braves, out in the NLCS, read `<1%` here off a title leg still
+                  trading at 0.001 while their own grid row read out. */}
+              {headline.state
+                ? decidedHeadlineText(headline.state)
+                : formatProbabilityPercent(headline.probability)}
             </span>
             {/* UX-P275: ask the STRING, not the number. `!== 0` let a move that
                 rounds to nothing through, so a 0.0034-point drift printed a
@@ -400,9 +396,11 @@ export default function TeamPage() {
       {race && <TeamDivisionRace race={race} teamColor={team.primary_color} />}
 
       {/* Prop Races — cohort-compare cards (Next Team, awards, ladders). Renders
-          nothing on sparse teams (component hides when no >=2-entity family). */}
+          nothing on sparse teams (component hides when no >=2-entity family),
+          unless the roster search was capped: then it says so (#2311). */}
       <TeamPropFamilies
-        families={propFamilies}
+        families={propRaces.families}
+        rosterCoverage={propRaces.coverage}
         teamColor={team.primary_color}
         teamName={team.name}
       />

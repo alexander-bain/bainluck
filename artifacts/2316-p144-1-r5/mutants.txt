@@ -1,0 +1,13 @@
+KILLED: N3' lane1b: restore 'whole pass at worst ... 18 minutes'
+KILLED: N3' restore old sentence beside the new one
+KILLED: N3' restore worst_case_pass_minutes key (runbook)
+KILLED: N3' restore worst_case_pass_minutes key (generator)
+KILLED: N3' each_further_holder_adds 0s (runbook)
+KILLED: N3' drop each_further_holder_adds (generator)
+KILLED: N3' drop 'restarts for each transaction'
+KILLED: N3' k x 60 s -> 60 s
+KILLED: N3' drop 'Each further one can add'
+KILLED: N3' end state is a clock
+KILLED: N3 pass minutes 6
+KILLED: N3 waits 1 generator
+EXIT CODE: 0

@@ -16,6 +16,8 @@ import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, use
 import { useCategoryInterests, getInterestLabel, isChosenLevel } from "@/hooks/useCategoryInterests";
 import {
   resolvePrincipal,
+  resolveScope,
+  scopeOwner,
   principalKey,
   bindToPrincipal,
   dataForPrincipal,
@@ -86,8 +88,8 @@ export default function PreferencesPage() {
 
   // The stable resolved principal for this viewer (UX-P017 / #1496). Null while
   // auth is restoring, when signed out, and during the supersession window where
-  // a user object exists without a usable uid — every personalized record below
-  // is suppressed until it resolves.
+  // a user object exists without a usable uid — the account's own record (Your
+  // Teams) is suppressed until it resolves.
   //
   // The defect this closes: these keys used to be constants ("user-preferences")
   // or id-only tuples. An authenticated A→B switch keeps `isAuthenticated` true,
@@ -100,22 +102,28 @@ export default function PreferencesPage() {
     uid: user?.uid,
   });
 
-  // Fetch pinned items data. `pinnedIds` is already principal-scoped by the pin
-  // hooks; the principal is in the key as well so a cached body can never be
-  // read across accounts even when two accounts pin the same id.
-  const { data: pinnedEventsRecord } = useSWR(
-    pinnedIds.length > 0 ? principalKey("prefs", principal, "pinned-events", pinnedIds) : null,
-    async () => bindToPrincipal(principal!, await fetchEventsByIds(pinnedIds)),
+  // Pins work signed out, so their cards are keyed on the pin hooks' own
+  // three-state scope, not the principal (#5593): the device bucket is the
+  // signed-out reader's real state, and keying it on the principal left the
+  // PINNED heading over a fetch that never dispatched. The owner is in the key
+  // and the binding, so the device bucket and each account never share a body,
+  // even when they pin the same id; `pending` still fetches nothing.
+  const pinOwner = scopeOwner(
+    resolveScope({ isLoading: authLoading, isAuthenticated, uid: user?.uid }),
   );
-  const pinnedEvents = dataForPrincipal(pinnedEventsRecord, principal);
+  const { data: pinnedEventsRecord } = useSWR(
+    pinnedIds.length > 0 ? principalKey("prefs", pinOwner, "pinned-events", pinnedIds) : null,
+    async () => bindToPrincipal(pinOwner!, await fetchEventsByIds(pinnedIds)),
+  );
+  const pinnedEvents = dataForPrincipal(pinnedEventsRecord, pinOwner);
 
   const { data: pinnedFuturesRecord } = useSWR(
     pinnedFuturesIds.length > 0
-      ? principalKey("prefs", principal, "pinned-futures", pinnedFuturesIds)
+      ? principalKey("prefs", pinOwner, "pinned-futures", pinnedFuturesIds)
       : null,
-    async () => bindToPrincipal(principal!, await fetchFuturesByIds(pinnedFuturesIds)),
+    async () => bindToPrincipal(pinOwner!, await fetchFuturesByIds(pinnedFuturesIds)),
   );
-  const pinnedFutures = dataForPrincipal(pinnedFuturesRecord, principal);
+  const pinnedFutures = dataForPrincipal(pinnedFuturesRecord, pinOwner);
 
   // #7529 — two cards of one fixture pair at one minute (a split-squad
   // home-and-home) are told apart by who is hosting. Empty map otherwise.

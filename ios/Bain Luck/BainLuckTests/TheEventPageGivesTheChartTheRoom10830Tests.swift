@@ -38,7 +38,7 @@ final class TheEventPageGivesTheChartTheRoom10830Tests: XCTestCase {
         let content = try span(code("Views", "EventDetailView.swift"),
                                from: "privatevarcontentView:someView{",
                                to: "staticfuncgameMarketsHaveContent(")
-        let hero = try XCTUnwrap(content.range(of: "heroSection(event)"))
+        let hero = try XCTUnwrap(content.range(of: "heroSection(vm.headline(event))"))
         let chart = try XCTUnwrap(content.range(of: "OddsChartView(eventId:"))
         let control = try XCTUnwrap(content.range(of: "GameActivityControl(snapshot:reading)"))
         XCTAssertLessThan(hero.lowerBound, chart.lowerBound)

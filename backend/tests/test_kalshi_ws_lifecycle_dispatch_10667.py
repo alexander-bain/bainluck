@@ -505,6 +505,11 @@ async def _settle_through_reader(connect, closing, *, prepare_mode):
         "price_buffer": buffer,
         "get_task_session": lambda: _Context(),
         "blend_refresher": _Refresher(),
+        # #10090 closure names: the settled-market refusal of the held overlay.
+        "prices": kalshi_task._KalshiPriceOwner(),
+        # #10090: which connection owns each ticker (bundled-pair settlement).
+        "ticker_owner": {},
+        "market_id_by_outcome": {2: 1},
         "logger": kalshi_task.logger,
         "stats": {"errors": 0, "settlements": 0},
         "_UNCAPTURED": object(),
@@ -585,6 +590,7 @@ async def test_prepare_leaves_ineligible_frames_to_the_callback_unchanged():
         "market_id_by_ext": {"GAME": 1},
         "buffer_lock": asyncio.Lock(),
         "price_buffer": {2: (0.42, 0.4, 0.44)},
+        "ticker_owner": {},
         "_UNCAPTURED": object(),
         "handle_lifecycle": lambda msg, **kw: None,
     }

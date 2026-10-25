@@ -24,6 +24,7 @@ from app.utils.kalshi_market_status import is_terminal
 from app.tasks.ws_consumer_sessions import owns_consumer_sessions  # #2471
 from app.utils.market_quote_push import queue_market_change
 from app.utils.market_settlement import settled_values
+from app.utils.heap_trim import release_free_heap  # #11218
 from app.utils.repair_lock_budget import (
     SET_LOCK_TIMEOUT_SQL,
     is_lock_timeout,
@@ -74,7 +75,26 @@ FINAL_FLUSH_ATTEMPTS = int(os.getenv("WS_FINAL_FLUSH_ATTEMPTS", "3"))
 #: carries it. It bounds each lock acquisition, not the phase or pool checkout.
 #: The final drain does NOT use it: `FINAL_FLUSH_ATTEMPTS` back-to-back attempts
 #: would otherwise give up on a lock held ~1.5 s and drop the last prices.
-PRICE_PHASE_LOCK_TIMEOUT_MS = 500
+#:
+#: #10090 — 50 ms, not 500, now that a held phase's quotes reach the stamp
+#: through `HeldRowQuotes` (#11138's overlay) the moment the write gives up:
+#: the budget only decides how long a received quote waits before that. Root's
+#: real-PG lab (attempt21, a foreign holder on the Kalshi home row ~3.35 s):
+#: Kalshi .375 reached headline and chart in 5087.73 ms on the parent, 568.84 ms
+#: held at 500 ms, 105.22 ms held at 50 ms. Not lower: at 1 ms (attempt23) a 20 ms
+#: lock that a newer stored row made ambiguous rendered in 2044 ms against 44 ms.
+PRICE_PHASE_LOCK_TIMEOUT_MS = 50
+
+#: #10090 — the first lock attempt of a live phase in a periodic flush that
+#: has the held overlay. A refusal costs no 50 ms wait for the phases after
+#: it; the same phase then gets its ordinary `PRICE_PHASE_LOCK_TIMEOUT_MS`
+#: attempt in this flush (overlay refused as ambiguous) or at the next flush
+#: start (overlay admitted or unknown), never a second short probe. Legs the
+#: overlay cannot carry (a settled market, a leg buffered without its mark)
+#: also wait for that next start. The beside pass never probes: it writes at
+#: the ordinary budget at once, because its own clock is not the main flush's
+#: cadence and a probe refusal there would wait past the next main start.
+SHORT_PROBE_LOCK_TIMEOUT_MS = 1
 
 #: #10090 — how long one periodic flush may keep STARTING phases that hold no
 #: live game. Production 2026-10-08 00:25–00:35Z (run b47fefde): a flush on the
@@ -204,7 +224,7 @@ class _KalshiHeadlineEvents(Mapping[int, int]):
 
 
 #: #10090 — True inside a flush's `serve_live_beside` task. Its awaits run
-#: beside that flush's own non-live transaction, so `_KalshiPriceOwner` keeps
+#: beside that flush's own phase transaction, so `_KalshiPriceOwner` keeps
 #: them out of the flush's sequential waits (`_FlushTimings.waited`).
 _WRITING_BESIDE = contextvars.ContextVar("kalshi_writing_beside", default=False)
 
@@ -435,6 +455,20 @@ class _KalshiPriceOwner:
         # The existing failed-price delay belongs to the failed whole cohort,
         # not unrelated inputs sharing the consumer's normal flush timer.
         self.lock_retry_until: dict[int, float] = {}
+        # #10090: per buffered outcome, when its phase's first lock failure
+        # with a KNOWN newer stored row began retrying on the flush cadence.
+        # Cleared when the phase commits: one `PRICE_FLUSH_SECONDS` window of
+        # cadence retries per write, then the ordinary backoff.
+        self.ambiguous_retry_since: dict[int, float] = {}
+        # #10090: buffered outcomes whose live phase's short first probe
+        # (`SHORT_PROBE_LOCK_TIMEOUT_MS`) was refused. Every later attempt on
+        # them takes the ordinary budget; cleared when the phase commits, so a
+        # write episode has at most one short probe.
+        self.short_probe_refused: set[int] = set()
+        # #10090: markets this run saw settle. Their legs never take the held
+        # overlay again: the linked settlement writer leaves `last_updated`
+        # alone, so no stored row would ever read as newer than the quote.
+        self.settled_market_ids: set[int] = set()
         # #10090: the consumer's `_FlushTimings`, when it keeps one.
         self.timings = None
         # #10090: the run's one blend refresh. It may outlive the flush that
@@ -510,8 +544,11 @@ class _KalshiPriceOwner:
         if interrupted is not None:
             raise interrupted
 
-    async def phase(self, session, phase, *, force_observation=False):
+    async def phase(self, session, phase, *, force_observation=False, forced_ids=()):
         """Yield `PriceRunResult`s for one phase. Consume in `aclosing`.
+
+        `forced_ids` are written even when the row already holds the value
+        (#10090: a held quote's landing write, see the caller).
 
         A successful phase is exhausted by its caller. A caller error closes
         this iterator (and the utility's) before the session rolls back.
@@ -528,7 +565,9 @@ class _KalshiPriceOwner:
                     {
                         oid: (
                             *values,
-                            force_observation or oid not in self.committed_outcome_ids,
+                            force_observation
+                            or oid in forced_ids
+                            or oid not in self.committed_outcome_ids,
                         )
                         for oid, values in phase.items()
                     },
@@ -779,27 +818,34 @@ def plan_stable_shards(current, scope, per_connection=None, extra=0, busy=()):
     return keep, replace, start, retire
 
 
-def _packed(groups, max_rows, max_groups=None):
+def _packed(groups, max_rows, max_groups=None, key=None):
     """Consecutive whole ``groups`` merged into phases of at most ``max_rows``
-    rows and ``max_groups`` groups."""
-    phases, current, count = [], {}, 0
+    rows and ``max_groups`` groups.
+
+    #10090 — with ``key``, groups with different keys never share a phase;
+    each key fills its own open phase, and phases keep the order they opened
+    in (the first group of each). Without it, every group has one key.
+    """
+    phases, open_phases = [], {}
     for group in groups:
-        if current and (
-            len(current) + len(group) > max_rows
-            or (max_groups is not None and count >= max_groups)
+        slot = open_phases.get(None if key is None else key(group))
+        if slot is not None and (
+            len(phases[slot[0]]) + len(group) > max_rows
+            or (max_groups is not None and slot[1] >= max_groups)
         ):
-            phases.append(current)
-            current, count = {}, 0
-        current.update(group)
-        count += 1
-    if current:
-        phases.append(current)
+            slot = None
+        if slot is None:
+            slot = [len(phases), 0]
+            open_phases[None if key is None else key(group)] = slot
+            phases.append({})
+        phases[slot[0]].update(group)
+        slot[1] += 1
     return phases
 
 
 def linked_first_phases(
     batch, market_id_by_outcome, event_id_by_outcome, pending_events=(),
-    live_events=None, pending_events_fenced=False,
+    live_events=None, pending_events_fenced=False, tail_event_by_outcome=None,
 ):
     """Publish independent games separately, followed by unrelated contracts.
 
@@ -830,6 +876,14 @@ def linked_first_phases(
     time, into phases of at most `NONLIVE_PHASE_MAX_ROWS` rows, in
     batch order — oldest buffered first, so a budget-deferred tail
     (`flush_budget_spent`) is the head of the next flush's non-live work.
+
+    #10090 — ``tail_event_by_outcome`` (the full owner map, known props
+    included) keeps a live game's futures/props markets out of phases holding
+    any other event's or unrelated contracts: one lock timeout rolls back its
+    whole phase (production v5771, 2026-10-17 22:52:49–22:54:07Z: 131 lock
+    timeouts held a live game's total-points lines ~78 s behind futures in
+    the same 200-row phases). They stay non-live tail work: same budget,
+    preemption and stamp cohort, at their batch-order position.
     """
     if not batch or any(market_id_by_outcome.get(oid) is None for oid in batch):
         return [batch]
@@ -876,10 +930,19 @@ def linked_first_phases(
     markets = {}
     for oid, entry in rest.items():
         markets.setdefault(market_id_by_outcome[oid], {})[oid] = entry
+
+    def live_owner(market):
+        if tail_event_by_outcome is None:
+            return None
+        return next((
+            event for event in map(tail_event_by_outcome.get, market)
+            if event is not None and event in live_events
+        ), None)
+
     return (
         live
         + _packed(other, NONLIVE_PHASE_MAX_ROWS, NONLIVE_PHASE_MAX_GAMES)
-        + _packed(markets.values(), NONLIVE_PHASE_MAX_ROWS)
+        + _packed(markets.values(), NONLIVE_PHASE_MAX_ROWS, key=live_owner)
     )
 
 
@@ -902,8 +965,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     from app.services.kalshi_ws import KalshiWebSocket
     from app.tasks.kalshi import _kalshi_yes_probability  # #8753
     from app.tasks.live_blend_refresh import (
-        LiveBlendRefresher, TailReceipts, adopt_handed_off, event_ids_for_outcomes,
-        LOOP_REAP_TIMEOUT_S, hand_off_pending, reap_stopped_loops, run_flush_cadence,
+        HeldRowQuotes, LiveBlendRefresher, TailReceipts, adopt_handed_off, event_ids_for_outcomes,
+        LOOP_REAP_TIMEOUT_S, OwedChartCustody, hand_off_pending, reap_stopped_loops,
+        run_flush_cadence,
     )
     from app.tasks import ws_admission, ws_open_contracts
     from app.tasks.ws_admission import (  # #9418
@@ -1014,6 +1078,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     market_id_by_ext, event_id_by_market, ticker_to_ids = linked_maps(
         rows, outcome_rows,
     )
+    # Scope and maps own the copied values now. Do not retain the startup
+    # result lists and SQLAlchemy row wrappers for this long-lived run.
+    del rows, outcome_rows
 
     market_tickers = list(ticker_to_ids.keys())
     if exact_trace is not None:
@@ -1161,6 +1228,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # because their event's stamp was still queued or running in the run's
         # refresh. Deferred like `budget_deferred`, never dropped.
         "stamp_fenced": 0,
+        # #10090: prices whose live phase's short first probe found a row
+        # lock. Retried at the ordinary budget (`short_probe_refused`); not an
+        # error and not in `requeued`, which count real failed writes.
+        "short_probe_refused": 0,
     }
 
     # -- Buffered price updates --
@@ -1231,7 +1302,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     blend_refresher = LiveBlendRefresher(
         "kalshi", session_factory=get_task_session,  # #2471
         min_refresh_interval_s=blend_floor,
+        chart_custody=OwedChartCustody(),  # #11181: no owed chart point is lost
     )
+    blend_refresher.held_quotes = HeldRowQuotes()
+    await blend_refresher.held_quotes.sample_database_clock(get_task_session)
+    # #10090: when this arm is the named preview source, claim its display
+    # epoch before any frame (`LiveBlendRefresher.claim_preview_display`).
+    if getattr(blend_refresher, "preview", False):
+        await blend_refresher.claim_preview_display()
     # #10090 — the receipt Polymarket has carried since #837: every accepted
     # input is marked (seq, receive instant) as it is buffered, so the
     # per-minute delivery receipt can say what this game received and which
@@ -1244,12 +1322,135 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         tail_receipts.run = exact_trace.run
     tail_receipts.exact_trace = exact_trace
     input_marks: dict = {}
+    from app.utils.kalshi_primary_quote import PrimaryQuoteCustody
+    primary_quote_custody = PrimaryQuoteCustody()
+    # Optional DNPL observations only: same quote retains continuity, while
+    # changes/invalidity/reconnection end it. Never durable write debt.
+    observation_continuity = {}
+    # One disposable same-BBO observation per eligible outcome. These never
+    # enter price_buffer, primary quote custody, held quotes or final-drain debt.
+    book_observation_pending = {}
+    book_observation_wake = asyncio.Event()
+    # #10090: the steady game clients (see "Connections" below), declared
+    # here because the bundled-pair proof readers iterate them.
+    game_clients: list[_KalshiClient] = []
+    # The bundled Challenger pair's current-book proof is installed on the
+    # refresher BEFORE adoption or any refresh path can stamp (lane1b P1):
+    # a refresh without it would stamp the pair with no book proof.
+    def steady_book_midpoint(ticker):
+        if not isinstance(ticker, str) or ticker not in ticker_to_ids:
+            return None
+        market_id = ticker_to_ids[ticker][0]
+        if market_id in prices.settled_market_ids:
+            return None
+        values = []
+        for client in game_clients:
+            if (ticker not in client.tickers or client.task is None or client.task.done()):
+                continue
+            value = client.sock.current_book_midpoint(ticker)
+            if value is not None:
+                values.append(value)
+        # Conflicting handover sockets are not interchangeable proof.
+        return values[0] if values and all(v == values[0] for v in values) else None
+    def steady_book_primary_price(ticker):
+        if not isinstance(ticker, str) or ticker not in ticker_to_ids:
+            return None
+        market_id = ticker_to_ids[ticker][0]
+        if market_id in prices.settled_market_ids:
+            return None
+        values = []
+        for client in game_clients:
+            if (ticker not in client.tickers or client.task is None or client.task.done()):
+                continue
+            value = client.sock.current_book_primary_price(ticker)
+            if value is not None:
+                values.append(value)
+        return values[0] if values and all(v == values[0] for v in values) else None
+    def steady_primary_input(row, held_quotes=None, *, overlaid=False):
+        ticker = getattr(row, "external_id", None)
+        if ticker not in ticker_to_ids or ticker_to_ids[ticker][0] in prices.settled_market_ids:
+            return None
+        found = []
+        for client in game_clients:
+            if ticker not in client.tickers or client.task is None or client.task.done():
+                continue
+            entry = client.sock.current_primary_input(ticker)
+            if entry is not None:
+                found.append(entry)
+        # Different input generations are not interchangeable, even at one price.
+        if not found or any(entry != found[0] for entry in found):
+            return None
+        return found[0][1] if primary_quote_custody.eligible(
+            row, found[0], held_quotes, overlaid=overlaid,
+        ) else None
+    def steady_book_signature(ticker):
+        # #11317 P2: every in-memory input the bundled proof reads for this
+        # ticker, compared (never interpreted) by the refresher: a refused
+        # pair is read again only once one of these differs. The stored row
+        # is not here; a new stored price reaches the refresher as a batch.
+        # The midpoint is its own term: the two-leg devig proves each leg on
+        # it, and an ask-only primary price can already equal the midpoint
+        # that later appears.
+        ids = ticker_to_ids.get(ticker) if isinstance(ticker, str) else None
+        if ids is None:
+            return None
+        market_id, oid = ids[0], ids[1]
+        socks = tuple(
+            (id(client.sock), client.sock.current_book_primary_price(ticker),
+             client.sock.current_book_midpoint(ticker),
+             client.sock.current_primary_input(ticker))
+            for client in game_clients
+            if ticker in client.tickers and client.task is not None
+            and not client.task.done()
+        )
+        held = getattr(blend_refresher.held_quotes, "_quotes", None) or {}
+        return (
+            market_id in prices.settled_market_ids, socks,
+            primary_quote_custody.received.get(oid),
+            primary_quote_custody.landed.get(oid),
+            primary_quote_custody.held.get(oid),
+            held.get(oid),
+        )
+    blend_refresher.current_book_signature = steady_book_signature
+    blend_refresher.current_primary_input = steady_primary_input
+    blend_refresher.current_book_primary_price = steady_book_primary_price
+    blend_refresher.require_current_book_proof = True
+    blend_refresher.current_book_midpoint = steady_book_midpoint
+    def observation_signature(ticker):
+        ids = ticker_to_ids.get(ticker)
+        if ids is None or ids[0] in prices.settled_market_ids:
+            return None
+        # A foreign-SID excursion can restore legacy BBO/primary identity
+        # without a new snapshot. Queued observations must retain that proof.
+        owners = tuple(
+            (id(client.sock), getattr(client.sock, "_primary_generation", None),
+             getattr(getattr(client.sock, "_book", None),
+                     "_observation_snapshot_sids", {}).get(ticker))
+            for client in game_clients
+            if ticker in client.tickers and client.task is not None and not client.task.done()
+        )
+        if len(owners) != 1:
+            return None
+        return ids, event_id_by_outcome.get(ids[1]), owners, steady_book_signature(ticker)
+
+    def note_observation_continuity(outcome_id, ticker, entry):
+        signature = observation_signature(ticker) if entry is not None else None
+        if (event_id_by_outcome.get(outcome_id) in blend_refresher.preview_events
+                and outcome_id not in non_blend_outcome_ids and signature is not None):
+            previous = observation_continuity.get(outcome_id)
+            if previous is None or previous[1:] != (entry, ticker, signature):
+                observation_continuity[outcome_id] = (object(), entry, ticker, signature)
+        else:
+            observation_continuity.pop(outcome_id, None)
+
     # #9462 review: stamps the previous run still owed when it recycled. Its
     # prices are already stored; the first flush below stamps them.
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
     stats["history_pending_adopted"] = len(getattr(blend_refresher, "_history", ()))
 
-    async def flush_prices(flush_started=None, *, final_drain=False, beside=None):
+    async def flush_prices(
+        flush_started=None, *, final_drain=False, beside=None, beside_stopping=None,
+    ):
         """Write buffered price updates to DB — #10640: game markets first.
 
         Returns False for a non-lock failure (the cadence waits before retrying).
@@ -1268,13 +1469,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         as long as Postgres does: the drain has no next flush to retry in.
 
         ``beside`` (#10090, `serve_live_beside`): this call runs while the
-        flush that made it waits on a non-live transaction. It takes only live
-        games' input, never an outcome, event or market of that flush's
-        unfinished ``(outcomes, events, markets)``, which it is given. With no
+        flush that made it waits on one of its phase transactions, live or
+        not. It takes only live games' input, newest whole event first, never
+        an outcome, event or market of that flush's unfinished
+        ``(outcomes, events, markets)``, which it is given. With no
         such input it stamps only owed debt that includes a live event, those
         events deferred, and it owes no flush budget or timing of its own.
+        ``beside_stopping`` is true once that flush is joining it: no further
+        whole event starts.
         """
-        from app.tasks.kalshi_ws import _KalshiHeadlineEvents
+        from app.tasks.kalshi_ws import SHORT_PROBE_LOCK_TIMEOUT_MS, _KalshiHeadlineEvents
 
         # Winner/source questions commit together. Known props still write and
         # publish, but cannot hold their event's headline stamp or live priority.
@@ -1283,6 +1487,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             event_id_by_outcome, () if final_drain else non_blend_outcome_ids,
         )
         exact_trace = getattr(tail_receipts, "exact_trace", None)
+        # #10090: the run's #11138 overlay, or None (no fast path at all).
+        held_quotes = getattr(blend_refresher, "held_quotes", None)
         from app.tasks.live_blend_refresh import _mono
 
         async with buffer_lock:
@@ -1292,6 +1498,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     oid: until for oid, until in prices.lock_retry_until.items()
                     if oid in batch and until > _mono()
                 }
+                prices.ambiguous_retry_since = {
+                    oid: since for oid, since in prices.ambiguous_retry_since.items()
+                    if oid in batch
+                }
+                prices.short_probe_refused.intersection_update(batch)
             else:
                 outcomes, events, markets = beside
                 batch = {
@@ -1304,6 +1515,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             batch_marks = {
                 oid: input_marks[oid] for oid in batch if oid in input_marks
             }
+            primary_quote_custody.retain(ids[1] for ids in ticker_to_ids.values())
+            batch_primary_inputs = primary_quote_custody.snapshot(batch)
+            if getattr(blend_refresher, "preview_events", ()):
+                for oid in tuple(observation_continuity):
+                    if cohort_event_ids.get(oid) not in blend_refresher.preview_events:
+                        observation_continuity.pop(oid, None)
             if exact_trace is not None:
                 with contextlib.suppress(Exception):
                     exact_trace.snapshot(batch_marks.values())
@@ -1354,11 +1571,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     else:
                         await stamp
             return True
-        # #10090: a snapshot with prices is actual work, held cohorts included,
-        # so a held game's quotes cannot buy more than one flush per period.
-        # A call beside a flush is that flush's work.
-        if beside is None:
-            prices.flush_work += 1
+        # Only attempted work spends the cadence budget. A cooled or fenced
+        # snapshot with no new held quote is an idle probe: a later input may
+        # wake its unused period. Writes, ambiguity reads and stamp attempts
+        # retain the existing ceiling; beside work belongs to its main flush.
+        work_counted = False
+
+        def count_work():
+            nonlocal work_counted
+            if beside is None and not work_counted:
+                prices.flush_work += 1
+                work_counted = True
         # Q491 repair 2 (CERT-659 BLOCK) — THE BUFFER IS DELIBERATELY *NOT*
         # CLEARED HERE. Draining first and putting the batch back on failure
         # only covers the failures you thought to catch, and two rounds of certs
@@ -1374,7 +1597,31 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             pending_events=blend_refresher.pending_event_ids(),
             live_events=live_event_ids,
             pending_events_fenced=True,
+            tail_event_by_outcome=event_id_by_outcome,
         )
+        if beside is not None:
+            # The main writer keeps oldest-first progress. Its helper serves
+            # the newest whole live event first, so a later quote does not
+            # inherit the helper's older buffered tail before the owner joins.
+            phases.sort(
+                key=lambda phase: max(
+                    (getattr(batch_marks.get(oid), "seq", 0) for oid in phase),
+                    default=0,
+                ),
+                reverse=True,
+            )
+        if not final_drain and live_event_ids and held_quotes is not None:
+            # Preserve whole phases and their intra-class order. Give live
+            # groups not yet offered a short attempt their first chance before
+            # retained normal-budget retries; those retries remain in this flush.
+            def first_attempt_order(phase):
+                if not any(cohort_event_ids.get(oid) in live_event_ids for oid in phase):
+                    return 2
+                return int(
+                    not prices.short_probe_refused.isdisjoint(phase)
+                    or any(oid in prices.ambiguous_retry_since for oid in phase)
+                )
+            phases.sort(key=first_attempt_order)
         # Includes failed/budget-deferred phases until a whole phase commits.
         # Re-resolve through the current map at each launch for late bridges.
         # Beside a flush, that flush's unfinished prices stay unfinished here.
@@ -1401,20 +1648,25 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # Preemption permits one non-live phase; the existing budget still
         # applies. Served hot non-live entries yield to the untouched tail.
         nonlive_started = 0
-        # #10090 — LIVE INPUT BESIDE AN IN-FLIGHT NON-LIVE TRANSACTION. The
+        # #10090 — LIVE INPUT BESIDE AN IN-FLIGHT TRANSACTION. The
         # preemption above is decided before a non-live phase opens; a live
         # tick arriving once it runs waited for all of it, then for the next
         # flush (production 2026-10-12 21:25:44Z: one 200-row non-live phase
-        # held its transaction 3.50 s, save 1.50 s + rerank 2.01 s). While a
-        # periodic non-live phase's transaction is open, live winner-leg input
+        # held its transaction 3.50 s, save 1.50 s + rerank 2.01 s). Another
+        # live game's slow phase held it the same way (Root attempt26). While
+        # any periodic phase's transaction is open, other live winner-leg input
         # is written by this same function (``beside``) on its own pooled
         # session and transaction: whole live cohorts, never a row, event or
         # market this flush has not finished, under every rule below. It
         # wakes as the held cadence would: on winner input, when the run's
         # refresh returns, and once a period, so a fenced quote or a floored
-        # live stamp still lands before the non-live commit (Root 2146Z). The
-        # non-live phase is never rolled back or cut for it, and the writer is
-        # joined, never abandoned, before this flush moves past that phase.
+        # live stamp still lands before the phase's commit (Root 2146Z). The
+        # phase is never rolled back or cut for it, and the writer is joined,
+        # never abandoned, before this flush moves past that phase. The join
+        # is cooperative: the writer finishes only its in-flight whole event
+        # and leaves untouched cohorts buffered for the next flush, so the
+        # owner never waits out the writer's whole snapshot (Root attempt26:
+        # a held quote's own lock-timeout join inherited that tail).
         beside_task = None
         beside_stop = False
         beside_failed = False
@@ -1430,7 +1682,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             while not beside_stop:
                 prices.input_wake.clear()
                 # Its own clock: the refresher's per-event floor reads it.
-                if await flush_prices(_mono(), beside=excluded) is False:
+                if await flush_prices(
+                    _mono(), beside=excluded, beside_stopping=lambda: beside_stop,
+                ) is False:
                     return False
                 if beside_stop:
                     break
@@ -1471,7 +1725,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 if task.exception() is not None:
                     beside_failed = True
                     logger.error(
-                        "Kalshi WS: live write beside a non-live phase raised",
+                        "Kalshi WS: live write beside a phase raised",
                         exc_info=task.exception(),
                     )
                 elif task.result() is False:
@@ -1486,6 +1740,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
         async def stamp_start():
             nonlocal queued_refresh
+            count_work()
             stamping_fresh = set(queued_events)
             unfinished_events = event_ids_for_outcomes(
                 cohort_event_ids, unfinished_price_ids,
@@ -1526,6 +1781,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             )
             if not admitted:
                 return
+            count_work()
             # Joined, fenced and adopted on cancellation with the running task.
             prices.stamping_fresh.update(admitted)
             prices.stamping_events.update(admitted)
@@ -1557,6 +1813,83 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 queued_refresh = True
             return linked_events
 
+        async def admit_held_phase(index, phase, phase_bounds):
+            """#10090 — Kalshi's #11138 overlay: a phase whose price write a
+            lock refused is stamped from its received quotes now; its rows stay
+            buffered and the ordinary write lands them as before.
+
+            Polymarket's rule on the unchanged helper: each linked winner
+            event's legs come from ONE snapshot (``phase`` and ``phase_bounds``,
+            taken together under the buffer lock), whole event or none. A leg
+            with no frozen bound, or whose buffered value is not its input
+            mark's, holds its whole event out; a known prop never joins (it
+            cannot move the headline). Nor does any leg of a market this run
+            saw settle (`prices.settled_market_ids`).
+
+            True only when the pre-hold read POSITIVELY found a stored row at
+            or after a bound: the overlay cannot carry that event, only the
+            ordinary write can. An unknown read (None) holds, as Polymarket's.
+            """
+            nonlocal queued_refresh
+            legs_of = {}
+            for oid in phase:
+                event_id = cohort_event_ids.get(oid)
+                if event_id is not None and oid not in non_blend_outcome_ids:
+                    legs_of.setdefault(event_id, []).append(oid)
+            quotes = {}
+            for oids in legs_of.values():
+                if all(
+                    phase_bounds.get(oid) is not None
+                    and getattr(batch_marks.get(oid), "probability", None) == phase[oid][0]
+                    and market_id_by_outcome.get(oid) not in prices.settled_market_ids
+                    for oid in oids
+                ):
+                    quotes.update({oid: (phase[oid][0], phase_bounds[oid]) for oid in oids})
+            # Outside the buffer lock, as Polymarket's: one bounded read, NEW
+            # quotes only, so a long hold costs no read per flush.
+            if held_quotes.has_new_quotes(quotes):
+                count_work()
+            ambiguous = (
+                await held_quotes.stored_at_or_after(get_task_session, quotes)
+                if quotes else set()
+            )
+            async with buffer_lock:
+                for oids in legs_of.values():
+                    refused = bool(ambiguous) and not ambiguous.isdisjoint(oids)
+                    if refused or any(
+                        market_id_by_outcome.get(oid) in prices.settled_market_ids
+                        for oid in oids
+                    ):
+                        # An older held quote must not outlive the newer input,
+                        # nor a settlement that arrived during the read.
+                        held_quotes.release(oids)
+                        for oid in oids:
+                            quotes.pop(oid, None)
+                moved = event_ids_for_outcomes(cohort_event_ids, held_quotes.hold(quotes))
+                primary_quote_custody.admitted(batch_primary_inputs, quotes)
+            # A held quote can still owe its first stamp after the refresh
+            # floor deferred it. Re-admit that debt even when the quote itself
+            # is unchanged; otherwise the unfinished-price fence keeps it out
+            # until the price-row lock releases. The refresher still owns its
+            # floor and same-event exclusion. Only changed quotes are fresh;
+            # unchanged pending quotes retain the ordinary debt budget.
+            owed_held = moved | set(blend_refresher.pending_event_ids())
+            held_ready = [oid for oid in quotes if cohort_event_ids.get(oid) in owed_held]
+            if held_ready:
+                # Its rows stay buffered and retried; its events may stamp now.
+                unfinished_price_ids.difference_update(held_ready)
+                newly_held = [oid for oid in held_ready if cohort_event_ids.get(oid) in moved]
+                if newly_held:
+                    queue_committed(index, phase, newly_held)
+                else:
+                    queued_refresh = True
+                if prices.stamping is None or prices.stamping.done():
+                    await stamp_done()
+                    await stamp_start()
+                else:
+                    stamp_admit()
+            return bool(ambiguous)
+
         def keep_queued():
             nonlocal queued_refresh
             blend_refresher.adopt_pending(queued_events)
@@ -1566,6 +1899,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
         try:
             for index, phase in enumerate(phases):
+                # The owner has finished its phase and is joining this writer.
+                # Finish only the in-flight whole event; untouched buffered
+                # cohorts belong to a later flush, not to this owner's wait.
+                if beside_stopping is not None and beside_stopping():
+                    break
                 if beside_failed:
                     # A non-lock failure beside the last phase: as any other,
                     # the unpaid tail stays buffered for the retry.
@@ -1575,6 +1913,35 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 ):
                     # Keep the planner's whole group and unfinished-price fence.
                     # New ticks on the same game cannot bypass its held cohort.
+                    #
+                    # #10090: but the write's retry cooldown must not delay a
+                    # NEWLY received quote (Root attempt21: Kalshi .395 waited
+                    # out the 2 s cooldown behind a held .375). No UPDATE and no
+                    # change to the retry deadline: the newest whole-event
+                    # snapshot is offered to the overlay, which stamps only a
+                    # changed quote, and only once the event's stamp is free.
+                    if held_quotes is not None:
+                        if prices.stamping is not None and prices.stamping.done():
+                            await stamp_done()
+                        if prices.held_events(blend_refresher).isdisjoint(
+                            event_ids_for_outcomes(cohort_event_ids, phase)
+                        ):
+                            async with buffer_lock:
+                                phase = {
+                                    oid: price_buffer.get(oid, entry)
+                                    for oid, entry in phase.items()
+                                }
+                                for oid in phase:
+                                    if oid in input_marks:
+                                        batch_marks[oid] = input_marks[oid]
+                                    else:
+                                        batch_marks.pop(oid, None)
+                                batch_primary_inputs.update(primary_quote_custody.snapshot(phase))
+                                phase_bounds = {
+                                    oid: held_quotes.bound_for(batch_marks.get(oid))
+                                    for oid in phase
+                                }
+                            await admit_held_phase(index, phase, phase_bounds)
                     continue
                 # #10090: live games are first and never budget-deferred; past the
                 # budget every later phase stays buffered for the next flush.
@@ -1619,15 +1986,33 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         # returned writes now and is admitted again.
                         stats["stamp_fenced"] += len(phase)
                         continue
+                # The overlay carries a refused probe's quotes to the stamp;
+                # an ambiguity episode, any earlier refusal and the beside
+                # pass (C1: its refusal would skip the next main start) take
+                # the budget.
+                short_live_probe = (
+                    phase_live and not final_drain and held_quotes is not None
+                    and flush_started is not None and beside is None
+                    and not any(oid in prices.ambiguous_retry_since for oid in phase)
+                    and prices.short_probe_refused.isdisjoint(phase)
+                )
                 declined = 0
+                phase_bounds = {}
+                held_ambiguous = False
                 written_outcome_ids: list[int] = []
                 written_observations: dict = {}
+                primary_observations: dict = {}
+                phase_clock = None
+                clock_ticket = (
+                    held_quotes.begin_write_clock()
+                    if held_quotes is not None and not final_drain else None
+                )
                 if (
                     beside is None and live_event_ids and not final_drain
-                    and not phase_live
                 ):
                     beside_task = asyncio.create_task(serve_live_beside())
                 try:
+                    count_work()
                     async with (
                         prices.waited("db", rows=len(phase), live=phase_live),
                         get_task_session() as session,
@@ -1638,7 +2023,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                             async with prices.waited("set_lock"):
                                 await session.execute(
                                     SET_LOCK_TIMEOUT_SQL,
-                                    {"ms": lock_timeout_value(PRICE_PHASE_LOCK_TIMEOUT_MS)},
+                                    {"ms": lock_timeout_value(
+                                        SHORT_PROBE_LOCK_TIMEOUT_MS if short_live_probe
+                                        else PRICE_PHASE_LOCK_TIMEOUT_MS
+                                    )},
                                 )
                         # The admitted whole-question phase keeps its IDs and
                         # ordering, but takes the newest eligible tuple and its
@@ -1655,6 +2043,22 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                     batch_marks[oid] = input_marks[oid]
                                 else:
                                     batch_marks.pop(oid, None)
+                            batch_primary_inputs.update(primary_quote_custody.snapshot(phase))
+                            # #11138: each input's frozen DB bound travels WITH
+                            # this snapshot (lane1 B1), for a lock refusal below.
+                            if held_quotes is not None:
+                                phase_bounds = {
+                                    oid: held_quotes.bound_for(batch_marks.get(oid))
+                                    for oid in phase
+                                }
+                            preview_observations = (
+                                getattr(blend_refresher, "preview_accepted_observations", None)
+                                if not final_drain and getattr(blend_refresher, "preview_events", ()) else None
+                            )
+                            observation_tokens = (
+                                {oid: observation_continuity.get(oid) for oid in phase}
+                                if callable(preview_observations) else {}
+                            )
                         # #10693: the phase's rows go through the run's price pipeline,
                         # in batch order. A run of two or more consecutive rows of one
                         # shape (full book / no book, `utils/kalshi_price_statement.py`)
@@ -1702,8 +2106,27 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         # playoff grid's liveness gate read actively-streaming rows as
                         # days stale — measured 2026-08-30 at up to 23 days on rows
                         # whose price had moved seconds earlier.
+                        #
+                        # #10090 — A HELD LEG'S LANDING WRITE ALWAYS WRITES. The
+                        # stamp already carries its held quote, with a basis later
+                        # than the row's `last_updated`. If the newest input has
+                        # returned to the value the row still stores (.395 →
+                        # held .375 → .395), the repeat predicate declines it,
+                        # nothing is returned, no refresh is owed, and a stamp
+                        # built from the row would be refused anyway. The page
+                        # kept .375 (Root attempt30, exact PR #11190 tree). The
+                        # forced write re-stamps `last_updated` past that basis
+                        # and returns the row. Held legs only: every other row
+                        # keeps the repeat predicate.
+                        held_ids = (
+                            () if held_quotes is None
+                            else {oid for oid in phase if oid in held_quotes}
+                        )
                         async with contextlib.aclosing(
-                            prices.phase(session, phase, force_observation=final_drain)
+                            prices.phase(
+                                session, phase, force_observation=final_drain,
+                                forced_ids=set(held_ids) | (set(phase) & primary_quote_custody.pending(batch_primary_inputs)),
+                            )
                         ) as price_results:
                             async for result in price_results:
                                 # #5411 — a settled row matches the id and fails the
@@ -1727,6 +2150,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                 # #9526).
                                 for row in result.all():
                                     written_outcome_ids.append(row.id)
+                                    returned_clock = getattr(row, "database_clock", None)
+                                    if returned_clock is not None:
+                                        phase_clock = (returned_clock if phase_clock is None
+                                                       else max(phase_clock, returned_clock))
+                                    primary_observations[row.id] = row.last_updated
                                     if exact_trace is not None:
                                         with contextlib.suppress(Exception):
                                             if exact_trace.tracks(batch_marks.get(row.id)):
@@ -1806,34 +2234,109 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         len(phase) if lock_timed_out
                         else sum(len(p) for p in phases[index:])
                     )
-                    stats["errors"] += 1
-                    stats["requeued"] += unpaid
+                    probe_refused = short_live_probe and lock_timed_out
+                    if probe_refused:
+                        # #10090: the short probe's expected answer under a
+                        # row lock. Not a failed write: the phase is retried at
+                        # the ordinary budget below, and only that retry's
+                        # refusal is an error.
+                        stats["short_probe_refused"] += len(phase)
+                        prices.short_probe_refused.update(phase)
+                    else:
+                        stats["errors"] += 1
+                        stats["requeued"] += unpaid
                     if exact_trace is not None:
                         with contextlib.suppress(Exception):
                             exact_trace.write_failed(
                                 [batch_marks[oid] for oid in phase if oid in batch_marks],
                                 "LOCK_TIMEOUT" if lock_timed_out else "ROLLED_BACK",
                             )
-                    logger.exception(
-                        "Kalshi WS: flush error (%d updates retained for retry)", unpaid
-                    )
+                    if probe_refused:
+                        logger.debug(
+                            "Kalshi WS: short probe refused (%d updates retried "
+                            "at the ordinary lock budget)", unpaid,
+                        )
+                    else:
+                        logger.exception(
+                            "Kalshi WS: flush error (%d updates retained for retry)", unpaid
+                        )
                     if lock_timed_out:
+                        if not final_drain and held_quotes is not None:
+                            # #10090: the received quotes reach the stamp now.
+                            held_ambiguous = await admit_held_phase(index, phase, phase_bounds)
+                            if short_live_probe and held_ambiguous:
+                                # Preserve this episode even if an admitted sibling
+                                # stamp fences the inserted attempt until next flush.
+                                if flush_started is not None:
+                                    since = min(
+                                        prices.ambiguous_retry_since.get(oid, flush_started)
+                                        for oid in phase
+                                    )
+                                    prices.ambiguous_retry_since.update(dict.fromkeys(phase, since))
+                                # Overlay refused: give this same whole phase
+                                # its ordinary 50 ms attempt before moving on.
+                                # Re-enter the original fencing and snapshot
+                                # path; no row is removed on the failed probe.
+                                # Inserting at index + 1 while enumerating
+                                # `phases` is deliberate: the loop reaches it
+                                # next, and `short_probe_refused` makes it the
+                                # ordinary budget, so it cannot re-insert.
+                                phases.insert(index + 1, phase)
+                                continue
+                            # For FUTURE inputs, never to re-date this batch.
+                            await held_quotes.sample_database_clock(get_task_session)
                         # The transaction rolled back; all its prices remain buffered.
                         # Only proceed to phases the unchanged planner separated.
                         had_lock_failure = True
                         if not final_drain:
                             until = _mono() + PRICE_FLUSH_SECONDS
+                            # #10090: a KNOWN newer stored row refused the overlay,
+                            # so only this write can deliver the live quote. Retry it
+                            # at the next flush START, the cadence's own start-to-start
+                            # clock (Root attempt24, 80 ms real lock: 2299.94 ms with
+                            # the 2 s backoff, 530.55 ms counting from the failure,
+                            # 278.29 ms from the flush start). For one window per
+                            # write, then the ordinary backoff: a sustained hold
+                            # costs at most PRICE_FLUSH_SECONDS / flush_period extra
+                            # 50 ms attempts, never a 4 Hz stream. Unknown reads,
+                            # non-live phases and every other failure keep 2 s.
+                            if held_ambiguous and phase_live and flush_started is not None:
+                                since = min(
+                                    prices.ambiguous_retry_since.get(oid, flush_started)
+                                    for oid in phase
+                                )
+                                prices.ambiguous_retry_since.update(dict.fromkeys(phase, since))
+                                if flush_started - since < PRICE_FLUSH_SECONDS:
+                                    until = flush_started + flush_period
+                            elif probe_refused:
+                                # #10090: the overlay carries the quotes to the
+                                # stamp, but the row, its chart point and REST
+                                # readers wait for this write: its ordinary-budget
+                                # attempt is at the next flush start, not 2 s on.
+                                until = flush_started + flush_period
                             prices.lock_retry_until.update(dict.fromkeys(phase, until))
                         continue
                     return False
 
+                if held_quotes is not None:
+                    # Landed (or refused as settled/missing): the row is the truth.
+                    held_quotes.release(phase)
                 # The transaction has committed. Register debt before any
                 # publication/bookkeeping await can be interrupted.
                 prices.committed_outcome_ids.update(written_outcome_ids)
+                primary_quote_custody.committed(batch_primary_inputs, primary_observations)
                 for oid in phase:
                     prices.lock_retry_until.pop(oid, None)
+                    prices.ambiguous_retry_since.pop(oid, None)
+                    prices.short_probe_refused.discard(oid)
                 unfinished_price_ids.difference_update(phase)
                 registered = queue_committed(index, phase, written_outcome_ids)
+                # The enclosing session exited normally: publish its returned
+                # DB time before another await, never before COMMIT or on failure.
+                price_clock_ready = (
+                    held_quotes.publish_write_clock(clock_ticket, phase_clock)
+                    if clock_ticket is not None else False
+                )
 
                 if exact_trace is not None:
                     with contextlib.suppress(Exception):
@@ -1848,6 +2351,65 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # Debt is registered: now join anything written beside it.
                 await end_beside()
 
+                clock_after_delivery = (
+                    bool(written_outcome_ids) and not final_drain
+                    and held_quotes is not None and not price_clock_ready
+                )
+                if (not final_drain and held_quotes is not None
+                        and not clock_after_delivery and not price_clock_ready):
+                    # A committed write advanced last_updated: sample AFTER it,
+                    # for future inputs only.
+                    await held_quotes.sample_database_clock(get_task_session)
+                if callable(preview_observations):
+                    observation_groups = {}
+                    written_events = event_ids_for_outcomes(cohort_event_ids, written_outcome_ids)
+                    for oid, (value, _bid, _ask) in phase.items():
+                        eid = cohort_event_ids.get(oid)
+                        if eid in blend_refresher.preview_events and eid not in written_events:
+                            observation_groups.setdefault(eid, {})[oid] = (
+                                value, phase_bounds.get(oid), batch_marks.get(oid),
+                            )
+                    window = getattr(blend_refresher, "_admission", None)
+                    releases = {eid: window.released.get(eid, 0) if window else 0
+                                for eid in observation_groups}
+
+                    async def validate_observations(event_ids):
+                        async with buffer_lock:
+                            held = (prices.held_events(blend_refresher)
+                                    if prices.stamping is not None and not prices.stamping.done() else set())
+                            current_window = getattr(blend_refresher, "_admission", None)
+                            if held is None or (current_window is not None and current_window is not window):
+                                return set()
+                            allowed = set()
+                            for eid in event_ids:
+                                if eid in held or (window and window.released.get(eid, 0) != releases[eid]):
+                                    continue
+                                valid = True
+                                for oid, (value, bound, mark) in observation_groups[eid].items():
+                                    token = observation_tokens.get(oid)
+                                    latest = input_marks.get(oid)
+                                    if (token is None or observation_continuity.get(oid) != token
+                                            or observation_signature(token[2]) != token[3]
+                                            or cohort_event_ids.get(oid) != eid
+                                            or market_id_by_outcome.get(oid) in prices.settled_market_ids
+                                            or oid in non_blend_outcome_ids
+                                            or mark is None or latest is None or bound is None
+                                            or getattr(mark, "probability", None) != value
+                                            or getattr(latest, "probability", None) != value
+                                            or getattr(latest, "seq", -1) < getattr(mark, "seq", 0)):
+                                        valid = False
+                                        break
+                                if valid:
+                                    allowed.add(eid)
+                            return allowed
+
+                    if observation_groups:
+                        # Preserve recovery before potentially blocked unrelated
+                        # observation work; its input bounds remain frozen.
+                        if clock_after_delivery:
+                            await held_quotes.sample_database_clock(get_task_session)
+                            clock_after_delivery = False
+                        await preview_observations(observation_groups, validate_observations)
                 # The event refresh uses its own session and committed prices.
                 # Start it before awaiting the separate MARKET notification;
                 # either delivery can progress while the other awaits Redis.
@@ -1857,6 +2419,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         await stamp_start()
                 elif queued_refresh:
                     stamp_admit()
+
+                if clock_after_delivery:
+                    # The committed cohort can start display work now. This
+                    # sample only bounds FUTURE inputs and still completes
+                    # before the next price phase starts.
+                    await held_quotes.sample_database_clock(get_task_session)
 
                 # #9484: keep every committed MARKET notification, including
                 # standalone futures/props which have no event blend.
@@ -1871,7 +2439,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # written". Same contract, enforced at removal instead of at re-queue.
                 async with buffer_lock:
                     for outcome_id, entry in phase.items():
-                        if price_buffer.get(outcome_id) == entry:
+                        if (price_buffer.get(outcome_id) == entry
+                                and primary_quote_custody.received.get(outcome_id) == batch_primary_inputs.get(outcome_id)):
                             del price_buffer[outcome_id]
                     if live_event_ids and not final_drain:
                         yield_written_nonlive_tail(
@@ -2113,6 +2682,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # The socket's historical open bounds, kept: a terminal 0 or 1 is
         # settlement's to write (`handle_lifecycle`), never a streamed tick's.
         if prob is None or not 0 < prob < 1:
+            if getattr(blend_refresher, "preview_events", ()):
+                note_observation_continuity(outcome_id, ticker, None)
             if exact_trace is not None:
                 with contextlib.suppress(Exception):
                     exact_trace.decided(
@@ -2125,7 +2696,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             return
 
         async with buffer_lock:
+            primary_quote_custody.receive(outcome_id, msg)
             price_buffer[outcome_id] = (prob, yes_bid, yes_ask)
+            if getattr(blend_refresher, "preview_events", ()):
+                note_observation_continuity(outcome_id, ticker, (prob, yes_bid, yes_ask))
             # Under the lock, so seq order is buffer order. Never raises into
             # the socket: a receipt is evidence about the price, not the price.
             try:
@@ -2136,6 +2710,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 mark = None
             if mark is not None:
                 input_marks[outcome_id] = mark
+                # #11138: freeze this input's DB-clock lower bound with it.
+                held = getattr(blend_refresher, "held_quotes", None)
+                if held is not None:
+                    held.note_input(mark)
             # #10090: evidence that this linked winner leg is trading now.
             if ticker in ticker_to_ids and outcome_id not in non_blend_outcome_ids:
                 event_id = event_id_by_outcome.get(outcome_id)
@@ -2155,6 +2733,106 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         msg, reason="ACCEPTED", market=market_id, outcome=outcome_id,
                         event=event_id_by_outcome.get(outcome_id), probability=prob, mark=mark,
                     )
+
+    async def handle_book_observation(msg, client):
+        ticker = (msg.get("market_ticker") or "").upper()
+        ids = ticker_to_ids.get(ticker)
+        if ids is None or ticker_owner.get(ticker) is not client:
+            return
+        market_id, oid = ids
+        eid = event_id_by_outcome.get(oid)
+        if (eid not in blend_refresher.preview_events or eid not in live_event_ids
+                or oid in non_blend_outcome_ids or market_id in prices.settled_market_ids):
+            return
+        bid, ask = _parse_dollar(msg.get("yes_bid_dollars")), _parse_dollar(msg.get("yes_ask_dollars"))
+        value = _kalshi_yes_probability(bid, ask, None)
+        midpoint = client.sock.current_book_midpoint(ticker)
+        # Re-observe only a current tight midpoint; no last-trade/ask fallback.
+        if (value is None or not 0 < value < 1
+                or midpoint is None or round(float(midpoint), 6) != round(value, 6)):
+            return
+        held = getattr(blend_refresher, "held_quotes", None)
+        # Read-only freeze BEFORE the first await. Do not replace the bound of
+        # a pending price input by calling held.note_input for display work.
+        bound = getattr(held, "_database_bound", None)
+        signature = observation_signature(ticker)
+        async with buffer_lock:
+            if (signature is None or observation_signature(ticker) != signature
+                    or ticker_owner.get(ticker) is not client):
+                return
+            mark = tail_receipts.note_input(eid, oid, value, "book_observation", msg.get("ts_ms"))
+            if mark is not None:
+                book_observation_pending[oid] = (eid, value, bound, mark, ticker, signature)
+                book_observation_wake.set()
+                flush_wake.set()
+
+    async def flush_book_observations():
+        async with buffer_lock:
+            if not book_observation_pending:
+                return
+            owned = (prices.held_events(blend_refresher)
+                     if prices.stamping is not None and not prices.stamping.done() else set())
+            if owned is None:
+                return
+            busy = owned | {event_id_by_outcome.get(oid) for oid in price_buffer}
+            snapshot = {oid: entry for oid, entry in book_observation_pending.items()
+                        if entry[0] not in busy}
+            if not snapshot:
+                return
+            for oid in snapshot:
+                book_observation_pending.pop(oid)
+            window = getattr(blend_refresher, "_admission", None)
+            releases = {entry[0]: window.released.get(entry[0], 0) if window else 0
+                        for entry in snapshot.values()}
+        prices.flush_work += 1  # observation work also obeys the flush cadence
+        groups = {}
+        for oid, (eid, value, bound, mark, _ticker, _signature) in snapshot.items():
+            groups.setdefault(eid, {})[oid] = (value, bound, mark)
+
+        async def validate(event_ids):
+            async with buffer_lock:
+                owned = (prices.held_events(blend_refresher)
+                         if prices.stamping is not None and not prices.stamping.done() else set())
+                if owned is None or getattr(blend_refresher, "_admission", None) is not window:
+                    return set()
+                # A price change always wins; optional observation work never
+                # borrows or advances its pending stamp's snapshot.
+                busy = {event_id_by_outcome.get(oid) for oid in price_buffer}
+                allowed = set()
+                for eid in event_ids:
+                    if (eid in owned or eid in busy or eid not in live_event_ids
+                            or eid not in blend_refresher.preview_events
+                            or (window and window.released.get(eid, 0) != releases[eid])):
+                        continue
+                    if all(event_id_by_outcome.get(oid) == eid
+                           and oid not in non_blend_outcome_ids
+                           and market_id_by_outcome.get(oid) not in prices.settled_market_ids
+                           and observation_signature(entry[4]) == entry[5]
+                           for oid, entry in snapshot.items() if entry[0] == eid):
+                        allowed.add(eid)
+                return allowed
+
+        async def restore():
+            async with buffer_lock:
+                for oid, entry in snapshot.items():
+                    # Newer arrivals own the slot. Never re-date the retry.
+                    book_observation_pending.setdefault(oid, entry)
+                book_observation_wake.set()
+
+        try:
+            accepted = await blend_refresher.preview_accepted_observations(groups, validate)
+        except asyncio.CancelledError:
+            await restore()
+            raise
+        if accepted is False:
+            await restore()
+            return
+        held = getattr(blend_refresher, "held_quotes", None)
+        if held is not None and any(entry[2] == getattr(held, "_database_bound", None)
+                                    for entry in snapshot.values()):
+            # No price transaction may have sampled during a quiet period.
+            # This sample is for FUTURE input only, never the drained snapshot.
+            await held.sample_database_clock(get_task_session)
 
     # Shared by every auxiliary socket and the main/fallback open-leg route.
     # Wait before opening a session; unwind the transaction before the permit.
@@ -2199,6 +2877,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # #5411 guard anyway; dropping it keeps the count honest.
             async with buffer_lock:
                 price_buffer.pop(outcome_id, None)
+                # #10090: and no held quote outlives it (no phase will carry
+                # this leg again to release it). The grade advanced
+                # `last_updated`, so the overlay already refuses it meanwhile.
+                held = getattr(blend_refresher, "held_quotes", None)
+                if held is not None:
+                    held.release((outcome_id,))
             stats["open_contract_settlements"] += 1
             if resolved is not None:
                 stats["open_contract_markets_resolved"] += 1
@@ -2269,6 +2953,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             and len(parts) == 2
             and parts[0] in market_id_by_ext
         ):
+            # #10090: terminal acceptance withdraws current-book authority
+            # before deferred settlement work or a lock wait can run.
+            owner = ticker_owner.get(ticker)
+            if (ticker.startswith("KXATPCHALLENGERMATCH-")
+                    and route is not None and route[0] == "linked"
+                    and (client is None or owner is None or owner is client
+                         or owner is client.pair)):
+                prices.settled_market_ids.add(market_id_by_ext[parts[0]])
             async with buffer_lock:
                 ids = ticker_to_ids.get(ticker)
                 buffered = price_buffer.get(ids[1]) if ids else None
@@ -2323,6 +3015,21 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         if route is None:
             return
         market_id = route[1]
+
+        # #10090: from the terminal frame on, this market's legs take no held
+        # overlay (`admit_held_phase`) and none already held survives. The
+        # write below sets `is_winner` but leaves `last_updated` alone, so no
+        # stored row would ever read as newer than a held quote, and a held
+        # stamp's basis would outrank every later reading of these rows.
+        # Before the write, the safe direction: a failed write costs only the
+        # fast path; the buffered price still goes through the ordinary write.
+        async with buffer_lock:
+            prices.settled_market_ids.add(market_id)
+            held = getattr(blend_refresher, "held_quotes", None)
+            if held is not None:
+                held.release(
+                    oid for oid, mid in market_id_by_outcome.items() if mid == market_id
+                )
 
         # Direct callers retain the original capture path. Prepared callbacks
         # carry an explicit value, including None, captured before offloading.
@@ -2402,7 +3109,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # -- Connections (#10090) --
     # Steady clients by kind; a replaced or retired client leaves these lists
     # at once and stays in `retiring` until its reader has stopped and drained.
-    game_clients: list[_KalshiClient] = []
+    # `game_clients` is declared above, with the bundled-pair proof readers
+    # that are installed before adoption.
     open_clients: list[_KalshiClient] = []
     retiring: list[_KalshiClient] = []
     handoff_tasks: set[asyncio.Task] = set()
@@ -2415,6 +3123,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         if kind == "game":
             sock.book_tickers = client.tickers & book_population()
         sock.on_ticker = functools.partial(handle_ticker, client=client)
+        if kind == "game" and getattr(blend_refresher, "preview_events", ()):
+            sock.on_book_observation = functools.partial(handle_book_observation, client=client)
         if kind == "game":
             sock.on_lifecycle = functools.partial(handle_lifecycle, client=client)
             sock.on_lifecycle_prepare = functools.partial(prepare_lifecycle, client=client)
@@ -2586,12 +3296,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # #10090: an in-place scope change swaps the maps between flushes, never
     # under one that planned its phases from the previous maps.
     flush_gate = asyncio.Lock()
+    from app.tasks.ws_observation_drain import ObservationDrain
+    observation_drain = ObservationDrain(
+        flush_book_observations, lambda: bool(book_observation_pending),
+        book_observation_wake, flush_period,
+    )
 
     async def timed_flush(flush_started):
         async with flush_gate:
             started = time.monotonic()
             try:
-                return await flush_prices(flush_started)
+                return await observation_drain.run_with(lambda: flush_prices(flush_started))
             finally:
                 flush_timings.flushed(time.monotonic() - started)
 
@@ -2625,7 +3340,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d "
                 "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
                 "preempted=%d beside=%d fenced=%d live=%d book=%d quotes=%d "
-                "resnapshots=%d quote_priority=%d",
+                "resnapshots=%d quote_priority=%d probe_refused=%d "
+                "bundled_refused=%d parked=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 game_messages(),
@@ -2645,6 +3361,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 sum(c.sock.stats.get("book_resnapshots", 0) for c in game_clients),
                 # #10090: of `live`, the not-live events lifted by their quotes.
                 len(quote_only_event_ids),
+                stats["short_probe_refused"],
+                # #11317: of no_reading, the bundled-pair proof's refusals;
+                # then the refused pairs parked until an input changes.
+                blend.get("bundled_refused", 0),
+                len(getattr(blend_refresher, "_book_refused", ())),
             )
             flush_timings.reset()
             _report_liveness(
@@ -2833,6 +3554,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         return changed
 
     async def refresh_subscription_scope():
+        """``_refresh_subscription_scope``, then the read's freed memory goes back.
+
+        #11218: whatever the verdict, the slate and open-contract reads ran and
+        their working set is garbage once the inner call returns.
+        """
+        try:
+            return await _refresh_subscription_scope()
+        finally:
+            release_free_heap("kalshi")
+
+    async def _refresh_subscription_scope():
         """``"keep"``, ``"applied"`` or ``"rebuild"`` (the old full recycle).
 
         #10090: an unchanged scope keeps everything; a changed one is applied
