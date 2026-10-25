@@ -4,8 +4,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import SearchBar from "@/components/SearchBar";
 import MobileSearchOverlay from "@/components/MobileSearchOverlay";
+import FuturesCard from "@/components/FuturesCard";
 import { fetchTypeahead } from "@/lib/api";
 import type { TypeaheadOutcome, TypeaheadSuggestion } from "@/lib/api";
+import type { FuturesMarket } from "@/lib/types";
 import { futuresAnswer } from "@/lib/searchSuggestionDisplay";
 import { outcomeRowVerdict } from "@/lib/futuresOutcomeVerdict";
 import { outcomeRowVerdict as detailVerdict } from "@/components/futures/OutcomeRow";
@@ -94,4 +96,132 @@ test("known result second row is retained beside a live prediction", () => {
   const row = suggestion({ probability: 0.4 });
   row.top_outcomes?.push({ name: "Shai", probability: null, movement: 0.2, is_winner: true, resolution_source: "api_settlement" });
   expect(futuresAnswer(row)?.second?.displayValue).toBe("Won");
+});
+
+describe("cache-adapted payload mounted controls (#11616)", () => {
+  test.each(["desktop", "phone"] as const)(
+    "%s mounted typeahead withholds adapted legacy prediction while keeping title and destination (negative control)",
+    async (surface) => {
+      const adaptedLegacyRow: TypeaheadSuggestion = {
+        type: "futures",
+        text: "NBA MVP",
+        market_id: 66031970,
+        status: "open",
+        top_outcomes: [
+          {
+            name: "Victor Wembanyama",
+            probability: null,
+            rendered_percent: null,
+            movement: null,
+            is_winner: null,
+            resolution_source: null,
+          },
+        ],
+      };
+      (fetchTypeahead as jest.Mock).mockResolvedValue({
+        query: "wembanyama",
+        suggestions: [adaptedLegacyRow],
+      });
+      await act(async () => {
+        root.render(
+          surface === "desktop" ? (
+            <SearchBar />
+          ) : (
+            <MobileSearchOverlay isOpen onClose={() => {}} />
+          )
+        );
+      });
+      const input = document.querySelector<HTMLInputElement>(
+        "input[placeholder='Search teams, games, futures...']"
+      )!;
+      act(() => {
+        input.focus();
+        Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          "value"
+        )!.set!.call(input, "wembanyama");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => {
+        jest.advanceTimersByTime(250);
+      });
+      const item = document.querySelector<HTMLElement>(
+        "[data-testid='search-suggestion']"
+      )!;
+      expect(item).not.toBeNull();
+      expect(item.textContent).toContain("NBA MVP");
+      expect(
+        document.querySelector("[data-testid='search-answer']")
+      ).toBeNull();
+      expect(item.textContent).not.toMatch(/28%|27\.5%|↑|↓|Won|Lost/);
+      act(() => item.click());
+      expect(mockPush).toHaveBeenCalledWith("/futures/66031970");
+    }
+  );
+
+  test("mounted FuturesCard renders dashes for adapted legacy outcomes and preserves destination and proven winners (negative + positive controls)", async () => {
+    const adaptedLegacyMarket: FuturesMarket = {
+      id: 66031970,
+      name: "NBA MVP",
+      sport: "basketball_nba",
+      sport_name: "NBA",
+      category: "award",
+      llm_sport_category: "basketball",
+      market_tier: 3,
+      market_type_label: "Award",
+      market_type: "award",
+      status: "open",
+      source: "polymarket",
+      resolution_date: "2027-06-01T00:00:00+00:00",
+      outcome_count: 2,
+      updated_at: "2026-10-24T18:00:00+00:00",
+      prices_updated_at: null,
+      top_outcomes: [
+        {
+          id: 101,
+          name: "Victor Wembanyama",
+          probability: null,
+          rendered_percent: null,
+          movement: null,
+          american_odds: null,
+          rank: null,
+          is_winner: null,
+          resolution_source: null,
+          last_updated: "2026-10-10T00:00:00+00:00",
+          price_changed_at: null,
+          rank_change_24h: null,
+          probability_change_24h: null,
+          opening_probability: null,
+          opening_american_odds: null,
+        },
+        {
+          id: 102,
+          name: "Shai Gilgeous-Alexander",
+          probability: null,
+          rendered_percent: null,
+          movement: null,
+          american_odds: null,
+          rank: null,
+          is_winner: true,
+          resolution_source: "api_settlement",
+          last_updated: "2026-10-24T18:00:00+00:00",
+          price_changed_at: null,
+          rank_change_24h: null,
+          probability_change_24h: null,
+          opening_probability: null,
+          opening_american_odds: null,
+        },
+      ],
+    };
+
+    await act(async () => {
+      root.render(<FuturesCard market={adaptedLegacyMarket} />);
+    });
+    const link = host.querySelector<HTMLAnchorElement>("a[href='/futures/66031970']")!;
+    expect(link).not.toBeNull();
+    expect(link.textContent).toContain("NBA MVP");
+    expect(link.textContent).toContain("Victor Wembanyama-");
+    expect(link.textContent).toContain("Shai Gilgeous-Alexander✓Won");
+    expect(link.textContent).not.toMatch(/28%|19%|↑|↓/);
+  });
 });

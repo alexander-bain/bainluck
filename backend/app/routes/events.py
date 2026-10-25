@@ -236,9 +236,13 @@ from app.utils.search_intent import (
 )
 from app.utils.search_cache import (
     SEARCH_CACHE_HEADER,
+    adapt_cached_search_response,
+    adapt_cached_typeahead_response,
+    attest_represented_top_outcomes,
     search_response_cache_enabled,
     search_response_cache_key,
     search_response_ttl_seconds,
+    stamp_futures_representation_policy,
 )
 from app.utils.participant_images import participant_images_for_event
 from app.utils.search_collections import attach_search_collections
@@ -10089,6 +10093,7 @@ async def search_events(
             # accelerator, never a dependency.
             _hit = None
         if _hit is not None:
+            _hit = adapt_cached_search_response(_hit)
             # OUTSIDE the try above, on purpose, and it is the #2117 lesson
             # transplanted rather than re-derived. Inside it, an exception here
             # would skip the `return` and silently convert a cache HIT into a
@@ -14308,6 +14313,7 @@ async def typeahead_search(
             # were already this block's behaviour and both must stay.
             _hit = None
         if _hit is not None:
+            _hit = adapt_cached_typeahead_response(_hit)
             # #2117: COUNT BEFORE RETURNING. This is the exit the trending write
             # could not see, and the reason a warmed term became uncountable.
             #
@@ -15877,7 +15883,7 @@ async def typeahead_search(
             label = _TIER_LABELS.get(market.market_tier, None)
         if not label and market.sport_id is None:
             label = (market.llm_sport_category or market.category or "Market").replace("_", " ").title()
-        futures_pool.append({
+        futures_pool.append(stamp_futures_representation_policy({
             "type": "futures",
             # #7397: same translation as the search card below it — the dropdown
             # is one tap above the page, so leaving it raw here would have the
@@ -15930,7 +15936,7 @@ async def typeahead_search(
             # slice, only when that game is among the rows the reader sees.
             "_listing_of_game": _game_listing_event_id(market),
             "_listing_questions": len(_search_surviving_legs(market)),
-        })
+        }))
 
     # L2-65 Item 1c: EVENT CONCEPT suggestions (tournament pages) from the same
     # ranked futures — tennis winner fields resolve to /event/[key] via the
@@ -38108,7 +38114,7 @@ def _build_search_top_outcomes(
     # dropdown keeps its row and its name-reachability (#4723's control) and
     # simply stops printing a set that does not add up.
     if _futures_board_is_mostly_unserved(market) and not _result_ids:
-        return []
+        return attest_represented_top_outcomes([])
     # #6327: a market where NOTHING is priced draws a ranked ladder of dashes —
     # sixteen rungs, an order implying a favourite, and not one number. Measured
     # live 2026-09-15: `?q=Sonmez` served market 61106176 "WTA Guadalajara
@@ -38133,7 +38139,7 @@ def _build_search_top_outcomes(
     # guard: the typeahead dropdown (`lean=True`) stops carrying three
     # `probability: None` rungs, and the search card is withdrawn by the caller.
     if not any(o.current_probability is not None for o in real) and not _result_ids:
-        return []
+        return attest_represented_top_outcomes([])
     # SORT ON THE SERVED VALUE, not the stored one — #6993, and the same line
     # browse and faceted needed for the same reason. Ordering by the raw column
     # is what put a withheld stored `1.0` at rank 1 in the first place, and on
@@ -38305,7 +38311,7 @@ def _build_search_top_outcomes(
                     if leg.id not in _withheld_ids
                     and (by_id[leg.id]["probability"] or 0) > (by_id[o.id]["probability"] or 0)
                 )
-    return _leader_pick_order(out)
+    return attest_represented_top_outcomes(_leader_pick_order(out))
 
 
 async def _search_withheld_price_ids(
@@ -39580,7 +39586,7 @@ def _format_futures_for_search(
     ))
 
     _TIER_LABELS_SEARCH = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
-    return {
+    return stamp_futures_representation_policy({
         "id": market.id,
         # #7397: the venue's league word, translated to ours, and nothing else.
         # `/search?q=chiefs` drew the chip `NFL (18)` and eighteen cards reading
@@ -39640,7 +39646,7 @@ def _format_futures_for_search(
         # byte-for-byte (it is the row's write time and other readers key off
         # it); this is the additive field the age pip reads instead.
         "prices_updated_at": _served_prices_as_of(market, top_outcomes, withheld),
-    }
+    }, top_outcomes)
 
 
 async def _stamp_linked_event_kickoff(

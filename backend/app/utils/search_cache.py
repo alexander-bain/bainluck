@@ -63,6 +63,14 @@ import hashlib
 import os
 from typing import Any, Optional
 
+from app.utils.resolution_authority import (
+    AUTHORITATIVE_SOURCES,
+    DETERMINISTIC_SOURCES,
+    TERMINAL_SOURCES,
+    is_authoritative,
+)
+from app.utils.settlement_display import settlement_display
+
 #: Namespace for every ``/search`` response entry. Deliberately a sibling of
 #: ``bainluck:typeahead:`` rather than a child, so an operator clearing one
 #: surface with a glob cannot silently clear the other.
@@ -283,3 +291,356 @@ SEARCH_WARM_SHAPE: dict[str, Any] = {
 def search_warm_cache_key(q: str) -> str:
     """The cache key for query ``q`` in the warmed shape."""
     return search_response_cache_key(q=q, **SEARCH_WARM_SHAPE)
+
+
+# ---------------------------------------------------------------------------
+# #11616: Search / typeahead cache representation compatibility
+# ---------------------------------------------------------------------------
+
+#: Per-row marker attesting that a cached futures card or futures suggestion's
+#: ``top_outcomes`` were produced by ``_build_search_top_outcomes`` on top of
+#: ``represent_futures_outcomes``.
+#:
+#: This marker attests ONLY that the producer ran the current full-field
+#: outcome representation policy (shared refusal gates, stale-relative outlier
+#: refusal, whole-field movement gate, ``rendered_percent`` emission, and
+#: provenance-backed settlement state) before slicing to ``top_outcomes``.
+#: It is NOT an observation revision and does NOT prove two responses read
+#: identical database snapshots.
+SEARCH_FUTURES_REPRESENTATION_POLICY_KEY = "representation_policy"
+SEARCH_FUTURES_REPRESENTATION_POLICY = "futures_outcome_representation_v1"
+
+_VALID_RESULT_SOURCES: frozenset[str] = frozenset(
+    (AUTHORITATIVE_SOURCES | DETERMINISTIC_SOURCES | TERMINAL_SOURCES)
+    - {"ungradeable_result"}
+)
+_CLOB_PRICE_INFERRED_SOURCES: frozenset[str] = frozenset(
+    {
+        "clob_authoritative",
+        "clob_field_repair",
+        "clob_never_graded",
+        "clob_ordinal",
+    }
+)
+_LEGACY_ROW_PREDICTION_CLAIMS: tuple[str, ...] = (
+    "hook_description",
+    "leader",
+    "favorite",
+    "lead_outcome_id",
+)
+_LEGACY_OUTCOME_PREDICTION_FIELDS: tuple[str, ...] = (
+    "probability_change_24h",
+    "american_odds",
+    "opening_probability",
+    "opening_american_odds",
+    "rank",
+    "rank_change_24h",
+    "matched_rank",
+)
+
+
+class _AttestedTopOutcomes(list):
+    """List of outcome dicts returned directly by ``_build_search_top_outcomes``."""
+
+    __slots__ = ("_representation_policy",)
+
+    def __init__(self, iterable: Any = ()) -> None:
+        super().__init__(iterable)
+        self._representation_policy = SEARCH_FUTURES_REPRESENTATION_POLICY
+
+
+def attest_represented_top_outcomes(
+    outcomes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Mark a ``top_outcomes`` list as produced by ``_build_search_top_outcomes``."""
+    return _AttestedTopOutcomes(outcomes)
+
+
+def is_attested_top_outcomes(outcomes: Any) -> bool:
+    """True only when ``outcomes`` was returned by ``attest_represented_top_outcomes``."""
+    return (
+        isinstance(outcomes, _AttestedTopOutcomes)
+        and getattr(outcomes, "_representation_policy", None)
+        == SEARCH_FUTURES_REPRESENTATION_POLICY
+    )
+
+
+def stamp_futures_representation_policy(
+    row: dict[str, Any],
+    top_outcomes: Any = None,
+) -> dict[str, Any]:
+    """Attach ``representation_policy`` only when ``top_outcomes`` is attested."""
+    if not isinstance(row, dict):
+        return row
+    candidate = row.get("top_outcomes") if top_outcomes is None else top_outcomes
+    if is_attested_top_outcomes(candidate):
+        row[SEARCH_FUTURES_REPRESENTATION_POLICY_KEY] = (
+            SEARCH_FUTURES_REPRESENTATION_POLICY
+        )
+    return row
+
+
+def is_current_represented_futures_row(row: Any) -> bool:
+    """Return True if a cached futures row is attested and structurally valid."""
+    if not isinstance(row, dict):
+        return False
+    if (
+        row.get(SEARCH_FUTURES_REPRESENTATION_POLICY_KEY)
+        != SEARCH_FUTURES_REPRESENTATION_POLICY
+    ):
+        return False
+    top_outcomes = row.get("top_outcomes")
+    if not isinstance(top_outcomes, list):
+        return False
+    market_status = row.get("status")
+    for outcome in top_outcomes:
+        if not isinstance(outcome, dict):
+            return False
+        if (
+            "rendered_percent" not in outcome
+            or "is_winner" not in outcome
+            or "resolution_source" not in outcome
+        ):
+            return False
+        prob = outcome.get("probability")
+        if prob is None:
+            if outcome.get("rendered_percent") is not None:
+                return False
+            if outcome.get("movement") is not None:
+                return False
+            if outcome.get("american_odds") is not None:
+                return False
+            if outcome.get("rank") is not None:
+                return False
+            if outcome.get("matched_rank") is not None:
+                return False
+        is_winner = outcome.get("is_winner")
+        res_source = outcome.get("resolution_source")
+        if is_winner is not None:
+            if not isinstance(is_winner, bool):
+                return False
+            if not isinstance(res_source, str) or res_source not in _VALID_RESULT_SOURCES:
+                return False
+            if market_status == "open" and not (
+                is_winner is True and is_authoritative(res_source)
+            ):
+                return False
+    return True
+
+
+def _clone_json(value: Any) -> Any:
+    """Fast deep copy for JSON-shaped dicts/lists without deepcopy memo overhead."""
+    if isinstance(value, dict):
+        return {k: _clone_json(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clone_json(item) for item in value]
+    return value
+
+
+def _adapt_legacy_outcome(
+    outcome: dict[str, Any],
+    *,
+    market_status: Any,
+    market_source: Any,
+) -> dict[str, Any]:
+    """Strip unverified prediction claims while preserving proven result state."""
+    out = _clone_json(outcome)
+    raw_prob = out.get("probability")
+
+    out["probability"] = None
+    out["rendered_percent"] = None
+    if "movement" in out:
+        out["movement"] = None
+    for field in _LEGACY_OUTCOME_PREDICTION_FIELDS:
+        if field in out:
+            out[field] = None
+
+    res_source = out.get("resolution_source")
+    is_winner = out.get("is_winner")
+    contract = out.get("settlement_display")
+
+    if res_source == "ungradeable_result":
+        out["is_winner"] = None
+        out["resolution_source"] = "ungradeable_result"
+        if isinstance(contract, dict) or (
+            market_source == "polymarket" and market_status == "resolved"
+        ):
+            out["settlement_display"] = {
+                "verdict": "unknown",
+                "basis": "retracted_grade",
+            }
+        else:
+            out.pop("settlement_display", None)
+        return out
+
+    if isinstance(contract, dict) and contract.get("verdict") in (
+        "won",
+        "lost",
+        "unknown",
+    ):
+        verdict = contract.get("verdict")
+        if verdict == "unknown":
+            out["is_winner"] = None
+            out["resolution_source"] = (
+                res_source if isinstance(res_source, str) else None
+            )
+            out["settlement_display"] = {
+                "verdict": "unknown",
+                "basis": str(contract.get("basis") or "nonterminal_stored_price"),
+            }
+            return out
+        if (
+            isinstance(res_source, str)
+            and res_source in _VALID_RESULT_SOURCES
+            and isinstance(is_winner, bool)
+            and (
+                (verdict == "won" and is_winner is True)
+                or (verdict == "lost" and is_winner is False)
+            )
+            and (
+                market_status != "open"
+                or (is_winner is True and is_authoritative(res_source))
+            )
+        ):
+            out["is_winner"] = is_winner
+            out["resolution_source"] = res_source
+            out["settlement_display"] = dict(contract)
+            return out
+        out["is_winner"] = None
+        out["resolution_source"] = None
+        out.pop("settlement_display", None)
+        return out
+
+    if (
+        isinstance(res_source, str)
+        and res_source in _VALID_RESULT_SOURCES
+        and isinstance(is_winner, bool)
+    ):
+        if market_status == "open" and not (
+            is_winner is True and is_authoritative(res_source)
+        ):
+            out["is_winner"] = None
+            out["resolution_source"] = None
+            out.pop("settlement_display", None)
+            return out
+        if res_source in _CLOB_PRICE_INFERRED_SOURCES or (
+            market_source == "polymarket"
+            and market_status == "resolved"
+            and raw_prob is not None
+        ):
+            sd = settlement_display(
+                is_winner=is_winner,
+                resolution_source=res_source,
+                stored_probability=raw_prob,
+            )
+            if sd["verdict"] in ("won", "lost"):
+                out["is_winner"] = is_winner
+                out["resolution_source"] = res_source
+                if market_source == "polymarket" and market_status == "resolved":
+                    out["settlement_display"] = sd
+                else:
+                    out.pop("settlement_display", None)
+            else:
+                out["is_winner"] = None
+                out["resolution_source"] = res_source
+                out["settlement_display"] = sd
+            return out
+        out["is_winner"] = is_winner
+        out["resolution_source"] = res_source
+        out.pop("settlement_display", None)
+        return out
+
+    out["is_winner"] = None
+    out["resolution_source"] = None
+    out.pop("settlement_display", None)
+    return out
+
+
+def adapt_cached_futures_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of a cached futures card or suggestion safe to serve on hit.
+
+    Current-attested rows with valid structure are returned unchanged.
+    Legacy or unattested rows keep market identity, titles, navigation fields,
+    and provenance-backed settlement results, while unverified prediction fields
+    (probability, rendered_percent, movement, odds, rank, prices_updated_at) are
+    withheld to ``None``.
+    """
+    if not isinstance(row, dict):
+        return _clone_json(row)
+    out_row = _clone_json(row)
+    if is_current_represented_futures_row(out_row):
+        return out_row
+
+    out_row.pop(SEARCH_FUTURES_REPRESENTATION_POLICY_KEY, None)
+    if "prices_updated_at" in out_row:
+        out_row["prices_updated_at"] = None
+    for claim in _LEGACY_ROW_PREDICTION_CLAIMS:
+        if claim in out_row:
+            out_row[claim] = None
+
+    top_outcomes = out_row.get("top_outcomes")
+    if isinstance(top_outcomes, list):
+        market_status = out_row.get("status")
+        market_source = out_row.get("source")
+        out_row["top_outcomes"] = [
+            _adapt_legacy_outcome(
+                item,
+                market_status=market_status,
+                market_source=market_source,
+            )
+            if isinstance(item, dict)
+            else item
+            for item in top_outcomes
+        ]
+    return out_row
+
+
+def adapt_cached_search_response(payload: Any) -> Any:
+    """Pure, non-mutating cache-hit adapter for ``GET /api/events/search``."""
+    if not isinstance(payload, dict):
+        return _clone_json(payload)
+    out = _clone_json(payload)
+    futures = out.get("futures")
+    if isinstance(futures, list):
+        out["futures"] = [
+            adapt_cached_futures_row(item) if isinstance(item, dict) else item
+            for item in futures
+        ]
+    families = out.get("futures_families")
+    if isinstance(families, list):
+        adapted_families: list[Any] = []
+        for family in families:
+            if not isinstance(family, dict):
+                adapted_families.append(family)
+                continue
+            fam_out = dict(family)
+            headline = fam_out.get("headline")
+            if isinstance(headline, dict):
+                fam_out["headline"] = adapt_cached_futures_row(headline)
+            members = fam_out.get("members")
+            if isinstance(members, list):
+                fam_out["members"] = [
+                    adapt_cached_futures_row(member)
+                    if isinstance(member, dict)
+                    else member
+                    for member in members
+                ]
+            adapted_families.append(fam_out)
+        out["futures_families"] = adapted_families
+    return out
+
+
+def adapt_cached_typeahead_response(payload: Any) -> Any:
+    """Pure, non-mutating cache-hit adapter for ``GET /api/events/typeahead``."""
+    if not isinstance(payload, dict):
+        return _clone_json(payload)
+    out = _clone_json(payload)
+    suggestions = out.get("suggestions")
+    if isinstance(suggestions, list):
+        out["suggestions"] = [
+            adapt_cached_futures_row(item)
+            if isinstance(item, dict) and item.get("type") == "futures"
+            else item
+            for item in suggestions
+        ]
+    return out
