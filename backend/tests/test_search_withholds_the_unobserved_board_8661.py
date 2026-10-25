@@ -294,9 +294,29 @@ def test_the_route_asks_before_it_filters_and_slices():
 
 def test_every_reader_list_passes_the_refusal_set():
     """The flat bucket and the families both — a family is the back door."""
+    import ast
+
     src = _route_source()
     assert "_futures_card_has_no_answer(m)" not in src
     assert src.count("_withheld_by_market.get(m.id)") == 3  # flat, map, families
-    assert "_futures_card_has_no_answer(m, _withheld_by_market.get(m.id))" in src
+    calls = [node for node in ast.walk(ast.parse(src)) if isinstance(node, ast.Call)]
+    card_calls = [
+        node for node in calls
+        if isinstance(node.func, ast.Name) and node.func.id == "_futures_card_has_no_answer"
+    ]
+    assert len(card_calls) == 2  # flat and families
+    for node in card_calls:
+        assert [ast.unparse(arg) for arg in node.args] == ["m", "_withheld_by_market.get(m.id)"]
+        assert {kw.arg: ast.unparse(kw.value) for kw in node.keywords} == {
+            "out_division_labels": "_out_divisions_by_market.get(m.id)",
+        }
     # And a promoted headline contender cannot walk a refused board back in.
-    assert "_futures_market_prices_all_withheld(m, _withheld_by_market[m.id])" in src
+    promoted_calls = [
+        node for node in calls
+        if isinstance(node.func, ast.Name) and node.func.id == "_futures_market_prices_all_withheld"
+    ]
+    assert len(promoted_calls) == 1
+    assert [ast.unparse(arg) for arg in promoted_calls[0].args] == ["m", "_withheld_by_market[m.id]"]
+    assert {kw.arg: ast.unparse(kw.value) for kw in promoted_calls[0].keywords} == {
+        "out_division_labels": "_out_divisions_by_market.get(m.id)",
+    }

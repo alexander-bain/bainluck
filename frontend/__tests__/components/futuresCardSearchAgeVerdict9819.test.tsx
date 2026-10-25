@@ -23,7 +23,13 @@ import wire from "../fixtures/searchAge9819.json";
 
 const NOW = new Date("2026-10-02T12:00:00.000Z");
 
-type Board = (typeof wire)[keyof typeof wire];
+type FixtureBoard = (typeof wire)[keyof typeof wire];
+type FixtureOutcome = FixtureBoard["top_outcomes"][number];
+// The zero-price control changes a nullable fixture quote into a real number.
+// Keep every other wire field while admitting both supported quote states.
+type Board = Omit<FixtureBoard, "top_outcomes"> & {
+  top_outcomes: (Omit<FixtureOutcome, "probability"> & { probability: number | null })[];
+};
 
 function card(board: Board): FuturesMarket {
   return {

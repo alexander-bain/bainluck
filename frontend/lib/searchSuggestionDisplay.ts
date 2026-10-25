@@ -18,6 +18,9 @@ import { getEmojiForLeague, getLeagueDisplay } from "@/lib/sportCategories";
 import { hasNoReportedResult, SUSPENDED_LABEL, venueSettledSummary } from "@/lib/eventState";
 import { authorityStoppageLabel } from "@/lib/gameTimeLabel";
 import { relatedGameListingText } from "@/lib/relatedGameListing";
+import { outcomeRowVerdict } from "@/lib/futuresOutcomeVerdict";
+import { isResultUnknown } from "@/lib/settledResultDisplay";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 
 /**
  * How many season facts a team row shows (T2-1 / #5058). Two, because two is
@@ -127,16 +130,21 @@ export function suggestionTypeLabel(s: TypeaheadSuggestion): string {
 }
 
 /** The answer carried by a futures suggestion (#993 Slice A). */
+export interface FuturesAnswerOutcome extends TypeaheadOutcome {
+  displayValue: string;
+  displayKind: "probability" | "result";
+}
+
 export interface FuturesAnswer {
-  leader: TypeaheadOutcome & { probability: number };
-  second: (TypeaheadOutcome & { probability: number }) | null;
+  leader: FuturesAnswerOutcome;
+  second: FuturesAnswerOutcome | null;
   /** 24h move as a fraction; 0 when the payload carries none. */
   movement: number;
 }
 
 /**
  * Leader + runner-up for a futures suggestion, or `null` when nothing in the
- * payload is actually priced.
+ * payload has a supported price or readable result state.
  *
  * Deliberately NOT coherence-checked. The live payload does contain incoherent
  * fields ("MLB: Next Red Sox Manager" returns three outcomes at 100%) — that is
@@ -148,14 +156,30 @@ export function futuresAnswer(s: TypeaheadSuggestion): FuturesAnswer | null {
   // #10298: a game listing beside its own game row answers nothing here, or the
   // dropdown prints two favourites for one game.
   if (relatedGameListingText(s.related_game_listing)) return null;
-  const priced = (s.top_outcomes ?? []).filter(
-    (o): o is TypeaheadOutcome & { probability: number } => o.probability != null
-  );
-  if (priced.length === 0) return null;
+  const answers: FuturesAnswerOutcome[] = [];
+  for (const outcome of s.top_outcomes ?? []) {
+    const resolved = s.status === "resolved";
+    const verdict = outcomeRowVerdict(outcome, resolved);
+    const unknown = isResultUnknown(outcome, resolved);
+    if (verdict || unknown) {
+      answers.push({
+        ...outcome,
+        displayKind: "result",
+        displayValue: unknown ? "Result unknown" : verdict === "won" ? "Won" : "Lost",
+      });
+    } else if (outcome.probability != null) {
+      answers.push({
+        ...outcome,
+        displayKind: "probability",
+        displayValue: formatProbabilityPercent(outcome.probability),
+      });
+    }
+  }
+  if (answers.length === 0) return null;
   return {
-    leader: priced[0],
-    second: priced[1] ?? null,
-    movement: priced[0].movement ?? 0,
+    leader: answers[0],
+    second: answers[1] ?? null,
+    movement: answers[0].displayKind === "probability" ? answers[0].movement ?? 0 : 0,
   };
 }
 

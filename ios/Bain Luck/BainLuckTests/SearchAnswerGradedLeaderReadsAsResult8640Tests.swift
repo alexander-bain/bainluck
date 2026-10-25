@@ -143,7 +143,7 @@ final class SearchAnswerGradedLeaderReadsAsResult8640Tests: XCTestCase {
     }
 
     func testTheRetractionMatchesWeb() throws {
-        let source = try repoFile("frontend/components/futures/OutcomeRow.tsx")
+        let source = try repoFile("frontend/lib/futuresOutcomeVerdict.ts")
         XCTAssertTrue(
             source.contains("export const RETRACTED_RESOLUTION_SOURCE = \"\(OutcomeVerdict.retractedResolutionSource)\";"),
             "web's retraction constant changed — route to ux"

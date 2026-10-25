@@ -128,3 +128,34 @@ async def test_excluded_new_quote_does_not_make_eligible_siblings_stale():
     assert {o["name"]: o["probability"] for o in selected} == {
         "NL Central": 0.5, "AL East": 0.5,
     }
+
+
+@pytest.mark.parametrize("endpoint", ["search", "typeahead"])
+@pytest.mark.parametrize("supported", [True, False])
+async def test_result_only_rows_survive_actual_route_admission(monkeypatch, endpoint, supported):
+    board = _board()
+    board.canonical_market_key = None
+    for outcome in board.outcomes:
+        outcome.current_probability = None
+        outcome.current_yes_bid = None
+        outcome.current_yes_ask = None
+        outcome.is_winner = False
+        outcome.resolution_source = None
+    if supported:
+        board.outcomes[0].is_winner = True
+        board.outcomes[0].resolution_source = "api_settlement"
+    body = await _request(monkeypatch, endpoint, [board])
+    rows = list(_rows(body, board.id))
+    if supported:
+        assert rows, body
+        for row in rows:
+            assert row[0]["name"] == "NL Central"
+            assert row[0]["is_winner"] is True
+            assert row[0]["probability"] is None
+        if endpoint == "typeahead":
+            suggestion = next(s for s in body["suggestions"] if s.get("market_id") == board.id)
+            assert suggestion["status"] == "open"
+    elif endpoint == "search":
+        assert rows == []
+    else:
+        assert rows == [[]], "unpriced/ungraded typeahead remains honest navigation"

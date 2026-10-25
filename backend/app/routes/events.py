@@ -1304,7 +1304,10 @@ def _search_market_is_past_and_frozen(market, now: Optional[datetime] = None) ->
     if ticker_date >= now.astimezone(ZoneInfo(_EASTERN_TZ_NAME)).date():
         return False
     stamp = _newest_price_stamp(market)
-    return stamp is not None and stamp < now - _SEARCH_TWIN_FROZEN_AFTER
+    return (
+        stamp is not None and stamp < now - _SEARCH_TWIN_FROZEN_AFTER
+        and not _search_supported_result_ids(market)
+    )
 
 
 # Common sport abbreviation mapping — short queries like "NBA", "NFL"
@@ -12909,7 +12912,8 @@ async def search_events(
     _served_event_ids = {r.get("id") for r in formatted_results} - {None}
     futures_markets = [
         m for m in deduped_futures if not _futures_card_has_no_answer(
-            m, _withheld_by_market.get(m.id)
+            m, _withheld_by_market.get(m.id),
+            out_division_labels=_out_divisions_by_market.get(m.id),
         )
         and m.id not in _container_parent_ids  # #8375
         and not _answers_a_served_game_card(m, _served_event_ids)  # #8734
@@ -13247,7 +13251,10 @@ async def search_events(
         degraded.append("price_refusal")
     futures_markets = [
         m for m in futures_markets
-        if not _futures_market_prices_all_withheld(m, _withheld_by_market[m.id])
+        if not _futures_market_prices_all_withheld(
+            m, _withheld_by_market[m.id],
+            out_division_labels=_out_divisions_by_market.get(m.id),
+        )
         # #8852: a promoted contender that closed in April is not the headline.
         and not _search_market_is_past_and_frozen(m)
         # #8734: a promoted headline contender is asked too.
@@ -13316,7 +13323,10 @@ async def search_events(
         [
             m
             for m in deduped_futures
-            if not _futures_card_has_no_answer(m, _withheld_by_market.get(m.id))
+            if not _futures_card_has_no_answer(
+                m, _withheld_by_market.get(m.id),
+                out_division_labels=_out_divisions_by_market.get(m.id),
+            )
             and m.id not in _container_parent_ids
             and not _answers_a_served_game_card(m, _served_event_ids)  # #8734
             and m.id not in _same_question_folded_ids  # #8851
@@ -15864,6 +15874,7 @@ async def typeahead_search(
             "text": rewrite_venue_league_vocabulary(market.name),
             "market_id": market.id,
             "market_tier": market.market_tier,
+            "status": market.status,
             "market_type_label": label or market.market_type or "Market",
             "sport_key": market.llm_sport_category,
             # #993 Slice A: carry the answer (top 3, #23-normalized) so the
@@ -37351,8 +37362,35 @@ def _futures_board_is_mostly_unserved(market: "FuturesMarket") -> bool:
     return 0 < served < _BOARD_MIN_SERVED_SUM  # all-zero rungs are #6327's
 
 
+def _search_supported_result_ids(market, outcomes=None, *, out_division_labels=None) -> set[int]:
+    """Results the destination's existing reader policy can actually print.
+
+    Price admission and result evidence are separate. The resolved Polymarket
+    contract can refuse a legacy grade, so a nonempty source alone is not enough.
+    No I/O; the common ungraded board exits before eligible-universe work.
+    """
+    if not any(getattr(o, "resolution_source", None) is not None for o in getattr(market, "outcomes", ())):
+        return set()
+    from app.utils.futures_outcome_representation import eligible_futures_outcomes
+    from app.utils.settlement_display import applies_to_market, settlement_display
+
+    resolved = getattr(market, "status", None) == "resolved"
+    targeted = applies_to_market(market)
+    eligible = outcomes if outcomes is not None else eligible_futures_outcomes(market, out_division_labels)
+    supported = set()
+    for outcome in eligible:
+        contract = settlement_display(
+            is_winner=getattr(outcome, "is_winner", None),
+            resolution_source=getattr(outcome, "resolution_source", None),
+            stored_probability=getattr(outcome, "current_probability", None),
+        ) if targeted else None
+        if _search_row_prints_a_verdict(outcome, resolved, contract=contract):
+            supported.add(outcome.id)
+    return supported
+
+
 def _futures_card_has_no_answer(
-    market: "FuturesMarket", withheld: Optional[set] = None
+    market: "FuturesMarket", withheld: Optional[set] = None, *, out_division_labels=None
 ) -> bool:
     """The card this market would draw can state no answer a reader can trust.
 
@@ -37386,6 +37424,9 @@ def _futures_card_has_no_answer(
     prices stopped (`_search_market_is_past_and_frozen`). Its numbers are real
     but they answer a question that already closed, printed as if it were open.
     """
+    # #11616: an absent/refused prediction does not erase a supported result.
+    if _search_supported_result_ids(market, out_division_labels=out_division_labels):
+        return False
     return (
         _futures_market_has_no_outcome_rows(market)
         or _futures_market_is_wholly_unpriced(market)
@@ -37397,7 +37438,7 @@ def _futures_card_has_no_answer(
 
 
 def _futures_market_prices_all_withheld(
-    market: "FuturesMarket", withheld: Optional[set]
+    market: "FuturesMarket", withheld: Optional[set], *, out_division_labels=None
 ) -> bool:
     """Every leg the search ladder would price is in the refusal set (#8661).
 
@@ -37408,6 +37449,8 @@ def _futures_market_prices_all_withheld(
     never withdraw a card.
     """
     if not withheld:
+        return False
+    if _search_supported_result_ids(market, out_division_labels=out_division_labels):
         return False
     priced = [
         o for o in _search_surviving_legs(market) if o.current_probability is not None
@@ -37909,7 +37952,9 @@ def _search_ladder_window(
     return [ordered[index] for index in priced[start : start + limit]]
 
 
-def _search_query_matched_leg(market, board: list, top: list, query_terms, withheld: set):
+def _search_query_matched_leg(
+    market, board: list, top: list, query_terms, withheld: set, *, result_ids=frozenset()
+):
     """The priced leg that NAMES the query and does not already lead the card, or None.
 
     #8842 — `?q=ohtani` (390px, 2026-09-26 ~15:15Z) served four cards on which
@@ -37952,8 +37997,7 @@ def _search_query_matched_leg(market, board: list, top: list, query_terms, withh
     matched = next(
         (
             o for o in board
-            if o.id not in withheld
-            and _outcome_prints_a_price(o)
+            if (o.id in result_ids or (o.id not in withheld and _outcome_prints_a_price(o)))
             and _text_names_every_term(o.name, remainder)
         ),
         None,
@@ -38037,6 +38081,7 @@ def _build_search_top_outcomes(
     # Surface reachability/selection remains bounded, but its values and state
     # come from the destination's whole eligible field before the top-N cut.
     real = [o for o in _search_surviving_legs(market) if o.id in by_id]
+    _result_ids = _search_supported_result_ids(market, real)
     # #5516: an exclusive board whose whole served ladder sums far under 100% is
     # incoherent as a SET even when every rung in it is honest — `Cubs 24% ·
     # Reds 18%` on a three-way inning market whose tie leg was never stored.
@@ -38049,7 +38094,7 @@ def _build_search_top_outcomes(
     # The search card is then WITHDRAWN by `_futures_card_has_no_answer`; the
     # dropdown keeps its row and its name-reachability (#4723's control) and
     # simply stops printing a set that does not add up.
-    if _futures_board_is_mostly_unserved(market):
+    if _futures_board_is_mostly_unserved(market) and not _result_ids:
         return []
     # #6327: a market where NOTHING is priced draws a ranked ladder of dashes —
     # sixteen rungs, an order implying a favourite, and not one number. Measured
@@ -38074,7 +38119,7 @@ def _build_search_top_outcomes(
     # Returning `[]` rather than a dashed list serves BOTH surfaces off the one
     # guard: the typeahead dropdown (`lean=True`) stops carrying three
     # `probability: None` rungs, and the search card is withdrawn by the caller.
-    if not any(o.current_probability is not None for o in real):
+    if not any(o.current_probability is not None for o in real) and not _result_ids:
         return []
     # SORT ON THE SERVED VALUE, not the stored one — #6993, and the same line
     # browse and faceted needed for the same reason. Ordering by the raw column
@@ -38121,10 +38166,13 @@ def _build_search_top_outcomes(
         market, "mutually_exclusive", True
     )
 
-    # Every other board gets one tier, so its order is byte-for-byte what it was.
+    # On other boards a supported result is the answer even without a price;
+    # ungraded rows retain their represented-price ordering within their tier.
     def _headline_tier(o) -> int:
         if not _demote_graded:
-            return 0
+            return 1 if o.id in _result_ids else 0
+        if o.id in _result_ids:
+            return 1
         if o.id in _withheld_ids or o.current_probability is None:
             return 0
         if leg_is_graded(
@@ -38137,6 +38185,8 @@ def _build_search_top_outcomes(
     # threshold order, and never reaches the probability sort below. See
     # `_search_ladder_window` for why the sort is wrong on exactly this shape.
     window = _search_ladder_window(market, real, _withheld_ids, limit, lean)
+    if window == [] and _result_ids:
+        window = None  # no live crossing remains, but the result still answers
     pinned = None
     if window is not None:
         top = window
@@ -38187,7 +38237,9 @@ def _build_search_top_outcomes(
         # first, since #10279, because the dropdown prints two rows and the
         # iPhone row one. Not on the ladder window above: a threshold rung is
         # never a player or a team.
-        pinned = _search_query_matched_leg(market, real, top, query_terms, _withheld_ids)
+        pinned = _search_query_matched_leg(
+            market, real, top, query_terms, _withheld_ids, result_ids=_result_ids
+        )
         if pinned is not None and any(o is pinned for o in top):
             top = [pinned] + [o for o in top if o is not pinned]
         elif pinned is not None:
@@ -38234,7 +38286,7 @@ def _build_search_top_outcomes(
         for (o, _name), od in zip(named, out):
             if o is pinned:
                 od["query_match"] = True
-                od["matched_rank"] = 1 + sum(
+                od["matched_rank"] = None if by_id[o.id]["probability"] is None else 1 + sum(
                     1 for leg in real
                     if leg.id not in _withheld_ids
                     and (by_id[leg.id]["probability"] or 0) > (by_id[o.id]["probability"] or 0)
@@ -39187,7 +39239,7 @@ def _search_team_evidence(row: dict, query: str | None = None) -> "_SearchEviden
     )
 
 
-def _search_row_prints_a_verdict(outcome, market_resolved: bool) -> bool:
+def _search_row_prints_a_verdict(outcome, market_resolved: bool, *, contract=None) -> bool:
     """Does FuturesCard draw this served search row as `Won`/`Lost` (no price)?
 
     #9819. A line-for-line mirror of `outcomeRowVerdict` in
@@ -39207,7 +39259,12 @@ def _search_row_prints_a_verdict(outcome, market_resolved: bool) -> bool:
     from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 
     source = getattr(outcome, "resolution_source", None)
-    if source == RETRACTION_SOURCE or source is None:
+    if source == RETRACTION_SOURCE:
+        return False
+    contract = contract if contract is not None else getattr(outcome, "settlement_display", None)
+    if contract is not None and market_resolved:
+        return contract.get("verdict") in ("won", "lost")
+    if source is None:
         return False
     is_winner = getattr(outcome, "is_winner", None)
     if is_winner is None:

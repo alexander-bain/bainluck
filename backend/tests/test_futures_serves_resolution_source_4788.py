@@ -127,7 +127,7 @@ class TestTheFrontendFenceThatMakesTheAbsentCaseSafe:
     def _outcome_row_src(self) -> str:
         here = pathlib.Path(__file__).resolve().parents[2]
         return (
-            here / "frontend" / "components" / "futures" / "OutcomeRow.tsx"
+            here / "frontend" / "lib" / "futuresOutcomeVerdict.ts"
         ).read_text()
 
     def test_the_verdict_withholds_on_strict_null_only(self):
@@ -204,7 +204,10 @@ class TestTheFrontendFenceThatMakesTheAbsentCaseSafe:
         `outcomeRowVerdict`. A branch that restates `isResolved && is_winner ===`
         for itself is the drift this predicate exists to prevent, and it is how
         the defect renders again on one surface while the tests watch another."""
-        src = self._outcome_row_src()
+        here = pathlib.Path(__file__).resolve().parents[2]
+        component = (here / "frontend" / "components" / "futures" / "OutcomeRow.tsx").read_text()
+        assert 'import { outcomeRowVerdict } from "@/lib/futuresOutcomeVerdict"' in component
+        src = component + self._outcome_row_src()
         # Strip block comments and line comments: the prose deliberately quotes
         # the banned pattern to explain why it is banned.
         code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)

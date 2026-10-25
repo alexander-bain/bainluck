@@ -157,6 +157,62 @@ def test_withholding_does_not_erase_confirmed_result(observed):
         assert winner["resolution_source"] == "api_settlement"
 
 
+@pytest.mark.parametrize("lean", [False, True])
+def test_supported_result_survives_without_any_prediction_price(lean):
+    m = market([None, None], settled=True)
+    selected = events._build_search_top_outcomes(m, lean=lean)
+    assert selected[0]["name"] == NAMES[0]
+    assert selected[0]["is_winner"] is True
+    assert selected[0]["resolution_source"] == "api_settlement"
+    assert all(row["probability"] is None for row in selected)
+    assert not events._futures_card_has_no_answer(m)
+
+
+@pytest.mark.parametrize("source", [None, "ungradeable_result", "unknown_source"])
+def test_no_price_without_supported_result_keeps_the_old_navigation_rule(source):
+    m = market([None, None], settled=True)
+    for outcome in m.outcomes:
+        outcome.resolution_source = source
+    assert events._build_search_top_outcomes(m) == []
+    assert events._futures_card_has_no_answer(m)
+
+
+def test_missing_polymarket_settlement_price_does_not_invent_a_result():
+    m = market([None, None], settled=True)
+    m.status = "resolved"
+    assert events._search_supported_result_ids(m) == set()
+    detail = futures._format_market_detail(m)
+    assert all(row["settlement_display"]["verdict"] == "unknown" for row in detail["outcomes"])
+    assert events._futures_card_has_no_answer(m)
+
+
+def test_query_pins_a_supported_result_without_inventing_price_rank():
+    m = market([None] * 6, exclusive=False)
+    for index in (0, 5):
+        m.outcomes[index].is_winner = True
+        m.outcomes[index].resolution_source = "api_settlement"
+    selected = events._build_search_top_outcomes(m, limit=1, query_terms=[("jalen", None)])
+    assert len(selected) == 1
+    assert selected[0]["name"] == "Jalen Brunson"
+    assert selected[0]["query_match"] is True
+    assert selected[0]["matched_rank"] is None
+    assert selected[0]["probability"] is None
+
+
+def test_withheld_and_old_prediction_cannot_withdraw_a_supported_result():
+    m = market([0.995, 0.005], settled=True)
+    m.source = "kalshi"
+    m.external_id = "KXEARNINGSMENTIONTFC-26APR17"
+    for outcome in m.outcomes:
+        outcome.last_updated = STAMP - timedelta(days=100)
+    refused = {o.id for o in m.outcomes}
+    assert not events._futures_market_prices_all_withheld(m, refused)
+    assert not events._search_market_is_past_and_frozen(m, now=STAMP)
+    selected = events._build_search_top_outcomes(m, withheld=refused)
+    assert selected[0]["is_winner"] is True
+    assert selected[0]["probability"] is None
+
+
 async def test_actual_search_refusal_union_covers_relative_observation_age():
     m = market([0.60, 0.25, 0.15], old_leg=True)
     db = AsyncMock()
