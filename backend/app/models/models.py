@@ -2491,7 +2491,7 @@ class DnplAuthority(Base):
             "redis_run_id ~ '^[0-9a-f]{40}$' AND redis_master_replid ~ '^[0-9a-f]{40}$' AND "
             "length(policy_fingerprint) BETWEEN 1 AND 128)",
             name="dnpl_authority_identity",
-        ),
+        ).ddl_if(dialect="postgresql"),
     )
 
 
@@ -2528,7 +2528,7 @@ class DnplNamespaceRetirement(Base):
             "redis_run_id ~ '^[0-9a-f]{40}$' AND redis_master_replid ~ '^[0-9a-f]{40}$' AND "
             "length(policy_fingerprint) BETWEEN 1 AND 128)",
             name="dnpl_authority_identity",
-        ),
+        ).ddl_if(dialect="postgresql"),
     )
 
 
