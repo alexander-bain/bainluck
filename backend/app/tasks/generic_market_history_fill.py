@@ -133,6 +133,17 @@ COARSE_FILL_CAP = HOURLY_FILL_CAP * 2 // 3
 #: on every page view.
 REFRESH_AFTER_SECONDS = 3 * 3600
 
+#: #10955 — how old the last attempt must be before a STORED PRICE THAT MOVED
+#: AFTER IT may ask again inside `REFRESH_AFTER_SECONDS`
+#: (`generic_market_history.headline_moved_past_history`). The three-hour
+#: cache assumes our captures cover a move the bank has not seen, and for a
+#: market priced by the Kalshi socket nothing does: the ITF specimens' captures
+#: were 4 h and 8 h old under a price written a minute earlier. Half an hour
+#: caps one live market at two such asks an hour while someone is reading it,
+#: and every ask is still a coarse-class claim inside `COARSE_FILL_CAP`, so
+#: this adds no venue traffic the hour's ceiling did not already allow.
+HEADLINE_MOVED_REFRESH_SECONDS = 30 * 60
+
 CACHE_TTL_SECONDS = 36 * 3600
 SETTLED_CACHE_TTL_SECONDS = 7 * 24 * 3600
 
@@ -575,6 +586,7 @@ def plan_on_demand_fill(
     *,
     chart_is_thin: bool,
     chart_is_coarse: bool = False,
+    headline_moved: bool = False,
     now: datetime | None = None,
     rc: Any = None,
 ) -> dict:
@@ -594,6 +606,14 @@ def plan_on_demand_fill(
     HOURLY captures of a market the venue publishes by the minute. It defaults
     False, so a caller that does not measure resolution behaves exactly as before.
     See `generic_market_history.captures_are_coarse` for what it may mean.
+
+    `headline_moved` (#10955) is the one thing that may ask again inside
+    `REFRESH_AFTER_SECONDS`, and only once the attempt is
+    `HEADLINE_MOVED_REFRESH_SECONDS` old: a stored price moved after the bank
+    was asked and no capture draws it
+    (`generic_market_history.headline_moved_past_history`). It never overrides
+    the settled short-circuit, and the caller passes it as coarse, so it spends
+    coarseness's share of the hour and never an empty chart's.
     """
     stamp = now or datetime.now(timezone.utc)
     if not market_is_fillable(market, outcomes):
@@ -622,7 +642,9 @@ def plan_on_demand_fill(
             # ANSWER TAKEN AFTER SETTLEMENT is the answer, and it is kept for the
             # 7-day settled TTL rather than re-fetched.
             return {"enqueue": False, "reason": "settled_and_already_answered"}
-        if age <= REFRESH_AFTER_SECONDS:
+        if age <= REFRESH_AFTER_SECONDS and not (
+            headline_moved and age >= HEADLINE_MOVED_REFRESH_SECONDS
+        ):
             return {"enqueue": False, "reason": "answered_recently"}
         if (
             not chart_is_thin
