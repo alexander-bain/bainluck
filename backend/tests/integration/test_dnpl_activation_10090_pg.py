@@ -108,6 +108,79 @@ async def test_command_preview_rejects_wrong_actual_primary_without_mutation(rec
     assert await r.client.dbsize() == 0
 
 
+@pytest.mark.parametrize("lost_reply", [False, True])
+async def test_command_runner_real_lifecycle_and_uncertain_readback(
+    recovery, tmp_path, monkeypatch, lost_reply
+):
+    import os
+    from app.services import dnpl_activation_runner as runner
+    from app.services.dnpl_operation_hold import DeskHold, OperationHoldRefused
+
+    r = recovery
+    server, repl = await r.client.info("server"), await r.client.info("replication")
+    primary = (server["run_id"], repl["master_replid"])
+    seed = await r.store.read()
+    prepared = preparing_candidate(
+        seed,
+        namespace=uuid4(),
+        operation_id=uuid4(),
+        redis_run_id=primary[0],
+        redis_master_replid=primary[1],
+        policy_fingerprint=ReservationPolicy().fingerprint,
+    )
+    lock = tmp_path / "local-only.lock"
+    lock.write_text(
+        f"status: HELD\nowner_identity: integrator-local-test\nowner_pid: {os.getpid()}\nclaimed_epoch_s: 1\n"
+    )
+    run = tmp_path / "run"
+    run.mkdir(mode=0o700)
+    # The disposable lab itself owns all writers. Platform observation is a
+    # local stand-in; real child execution/response validation has its own tests.
+    monkeypatch.setattr(
+        runner,
+        "execute_verifier",
+        lambda *a, **k: SimpleNamespace(validate=lambda: {"nonce": str(uuid4())}),
+    )
+    original = activation.eval_once
+    sends = []
+
+    async def transport(*args):
+        result = await original(*args)
+        sends.append(args[1])
+        if lost_reply and args[1] == activation.INITIALIZE_ONCE_SCRIPT:
+            raise ConnectionError("reply lost after actual initialization")
+        return result
+
+    monkeypatch.setattr(activation, "eval_once", transport)
+    with DeskHold.capture(lock, "integrator-local-test", run) as hold:
+        bound = dict(
+            hold=hold,
+            controller=r.controller,
+            run_dir=run,
+            run_id=str(uuid4()),
+            primary=primary,
+            apps={},
+        )
+        assert (
+            await runner.run_step(
+                **bound, step="prepare", expected=seed, candidate=prepared
+            )
+        ).status == "DONE"
+        assert (
+            await runner.run_step(**bound, step="arm", expected=prepared)
+        ).status == "DONE"
+        result = await runner.run_step(**bound, step="initialize", expected=prepared)
+        assert result.status == ("UNCERTAIN" if lost_reply else "DONE")
+        with pytest.raises(OperationHoldRefused, match="already consumed"):
+            await runner.run_step(**bound, step="initialize", expected=prepared)
+        assert (
+            await runner.run_step(**bound, step="ready", expected=prepared)
+        ).status == "DONE"
+        assert await r.controller.read_ready(prepared)
+    assert sends.count(activation.INITIALIZE_ONCE_SCRIPT) == 1
+    assert await r.client.dbsize() == 5
+
+
 async def test_actual_controller_recovers_and_keeps_namespace_count_bounded(recovery):
     r = recovery
     first = await r.prepare()
