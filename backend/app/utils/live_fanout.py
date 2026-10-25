@@ -148,10 +148,11 @@ def mailbox_age_ms(payload):
 class Subscription:
     """One stream's view of one channel: a bounded, drop-oldest mailbox."""
 
-    __slots__ = ("channel", "_queue", "_dropped", "awaiting_confirmation")
+    __slots__ = ("channel", "_queue", "_dropped", "awaiting_confirmation", "authority_v3")
 
-    def __init__(self, channel: str) -> None:
+    def __init__(self, channel: str, *, authority_v3: bool = False) -> None:
         self.channel = channel
+        self.authority_v3 = authority_v3
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAX)
         self._dropped = 0
         #: True until ``CONFIRMED`` is offered; only for subscribers that asked.
@@ -217,6 +218,7 @@ class LiveFanout:
         # SUBSCRIBE replies still owed per channel on the current connection.
         self._awaiting_ack: Dict[str, int] = {}
         self._quote_projector = None
+        self._authority_validator = None
 
     # -- what a guard test reads -------------------------------------------
 
@@ -235,9 +237,9 @@ class LiveFanout:
 
     # -- the stream's side --------------------------------------------------
 
-    async def subscribe(self, channel: str) -> Subscription:
+    async def subscribe(self, channel: str, *, authority_v3: bool = False) -> Subscription:
         """Join ``channel``, connecting the shared pub/sub if it is the first."""
-        sub = Subscription(channel)
+        sub = Subscription(channel, authority_v3=authority_v3)
         async with self._lock:
             # A channel released moments ago may still be subscribed at Redis
             # and merely pending. Claiming it back is cheaper — and cannot
@@ -490,8 +492,61 @@ class LiveFanout:
         if not subscribers:
             return
         payload = message.get("data")
+        received_at = monotonic()
+        from app.utils.dnpl_authority_transport import is_authority_payload, decode_preview
+
+        if is_authority_payload(payload):
+            if not any(sub.authority_v3 for sub in subscribers):
+                return
+            try:
+                receipt = decode_preview(channel, payload, received_at)
+            except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+                self._authority_reconnect(frozenset((channel,)))
+                return
+            if self._authority_validator is None:
+                self._authority_validator = self._new_authority_validator()
+                self._authority_validator.start()
+            self._authority_validator.offer(receipt)
+            return
+        # Committed frames bypass authority validation. All recipients inherit
+        # the SAME original receipt, including across future queue handoffs.
+        if isinstance(payload, (str, bytes)):
+            payload = _ReceivedText(payload) if isinstance(payload, str) else _ReceivedBytes(payload)
+            payload.received_at = received_at
         for sub in tuple(subscribers):
             sub.offer(payload)
+
+    def _new_authority_validator(self):
+        from app.services.database import async_session_maker
+        from app.services.dnpl_authority import AuthorityStore
+        from app.utils.dnpl_authority_fanout import AuthorityFanout
+        from app.utils.dnpl_redis_authority import validate_namespace
+
+        async def verify(authority):
+            # Hub-owned client/pool, never a new connection per page.
+            if self._client is None:
+                return False
+            return await validate_namespace(self._client, authority)
+
+        return AuthorityFanout(AuthorityStore(async_session_maker).read, verify,
+                               self._authority_deliver, self._authority_reconnect)
+
+    def _authority_deliver(self, receipt):
+        payload = _ReceivedText(receipt.payload)
+        payload.received_at = receipt.received_at
+        payload.authority = receipt.authority
+        for sub in tuple(self._subscribers.get(receipt.channel, ())):
+            if sub.authority_v3:
+                sub.offer(payload)
+
+    def _authority_reconnect(self, channels):
+        for channel in channels:
+            for sub in tuple(self._subscribers.get(channel, ())):
+                if sub.authority_v3:
+                    # Stop previews for this subscription immediately. Existing
+                    # CLOSED handling reconnects; committed delivery continues.
+                    sub.authority_v3 = False
+                    sub.offer(CLOSED)
 
     async def _housekeep(self) -> bool:
         """Send the deferred UNSUBSCRIBEs; report whether the hub went idle."""
@@ -523,6 +578,9 @@ class LiveFanout:
             sub.offer(CLOSED)
 
     async def _release_connection_locked(self) -> None:
+        validator, self._authority_validator = self._authority_validator, None
+        if validator is not None:
+            await validator.aclose()
         pubsub, client = self._pubsub, self._client
         self._pubsub = self._client = None
         self._pending_unsubscribe.clear()

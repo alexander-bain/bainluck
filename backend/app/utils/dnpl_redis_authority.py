@@ -85,6 +85,35 @@ return {'initial_verified'}
 """
 
 
+VALIDATE_NAMESPACE_SCRIPT = _IDENTITY + r"""
+if #KEYS ~= 6 or redis.call('GET', KEYS[6]) ~= 'clean:' .. ARGV[1]
+    or redis.call('TYPE', KEYS[1]).ok ~= 'hash'
+    or redis.call('HEXISTS', KEYS[1], 'epoch') ~= 1
+    or redis.call('HEXISTS', KEYS[1], 'retired') ~= 1
+    or redis.call('GET', KEYS[2]) ~= '1'
+    or redis.call('EXISTS', KEYS[3]) ~= 1 then return {'unavailable'} end
+local policy = redis.call('HGET', KEYS[1], 'reservation_policy')
+if policy and policy ~= ARGV[4] then return {'policy_mismatch'} end
+return {'valid'}
+"""
+
+
+async def validate_namespace(client, authority: Authority) -> bool:
+    """Read-only, atomic identity and clean-guard check for a fresh PG row."""
+    if authority.state != "ready":
+        return False
+    result = await client.eval(
+        VALIDATE_NAMESPACE_SCRIPT,
+        6,
+        *namespace_keys(authority),
+        guard_token(authority),
+        authority.redis_run_id,
+        authority.redis_master_replid,
+        authority.policy_fingerprint,
+    )
+    return result in (["valid"], [b"valid"])
+
+
 def guarded_ledger_script(ledger_script: str = LEDGER_SCRIPT) -> str:
     """Wrap the unchanged ledger; mark dirty only at its first actual mutation.
 
