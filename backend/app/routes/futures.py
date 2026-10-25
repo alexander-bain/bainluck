@@ -9386,8 +9386,12 @@ async def get_futures_history(
     _leg_absent = _leg_absent_beside_dense_sibling(venue, market, snapshots)
     if _leg_absent:
         venue.thin_basis = _LEG_ABSENT_BASIS
-    # #10955 — and the same fourth question as the timeline route.
-    _moved = _headline_moved_past_history(venue, market, snapshots)
+    # #10955 — and the same fourth question as the timeline route, asked of the
+    # WHOLE field's captures, not the drawn `snapshots`: the rule judges every
+    # fillable line, so a team page's `outcome_id=` or a golf board's `top_n`
+    # would hand it no capture for an undrawn leg and turn every poll move into
+    # an ask. The timeline route's `snapshots` already span the field.
+    _moved = _headline_moved_past_history(venue, market, _supported_field)
     if _moved:
         venue.thin_basis = (
             f"{venue.thin_basis} or {_HEADLINE_MOVED_BASIS}"

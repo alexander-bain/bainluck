@@ -249,9 +249,54 @@ def test_route_rule_ignores_settlement_markers_as_captures():
 def test_both_chart_readers_pass_the_move_to_the_planner():
     """`/history` (web) and `/probability-timeline` (iPhone) must not disagree."""
     src = (APP / "routes" / "futures.py").read_text()
-    assert len(re.findall(r"_moved = _headline_moved_past_history\(venue, market, snapshots\)", src)) == 2
+    timeline = _route_body(src, "get_probability_timeline")
+    history = _route_body(src, "get_futures_history")
+    # Each reader hands the rule its WHOLE field's captures: the timeline's
+    # `snapshots` span the field; `/history`'s are the drawn subset, so it hands
+    # in `_supported_field` instead (lane1 F1 on 334edae8ce).
+    assert "_moved = _headline_moved_past_history(venue, market, snapshots)" in timeline
+    assert "_moved = _headline_moved_past_history(venue, market, _supported_field)" in history
+    assert "_headline_moved_past_history(venue, market, snapshots)" not in history
     assert len(re.findall(r"headline_moved=_moved,", src)) == 2
     assert len(re.findall(r"or _leg_absent or _moved", src)) == 2
+
+
+def _route_body(src: str, name: str) -> str:
+    return src.split(f"async def {name}(", 1)[1].split("\n@router.", 1)[0]
+
+
+def _poll_priced_board():
+    """A poll-priced 3-leg board: the 19:03 poll moved every leg AND captured it."""
+    def leg(oid, p):
+        return SimpleNamespace(id=oid, external_id=f"KXNBA-27-T{oid}", name=f"Team {oid}",
+                               current_probability=p, price_changed_at=_z(19, 3), is_winner=None)
+
+    market = SimpleNamespace(id=1, source="kalshi", status="open",
+                             outcomes=[leg(1, 0.40), leg(2, 0.35), leg(3, 0.25)])
+    rows = [SimpleNamespace(outcome_id=o.id, captured_at=_z(19, 3, 1),
+                            probability=o.current_probability, bookmaker="kalshi")
+            for o in market.outcomes]
+    return market, rows
+
+
+def test_history_narrowed_to_one_drawn_leg_does_not_ask_for_undrawn_legs_moves():
+    """`/history?outcome_id=<leader>` (team pages) and `top_n` below the fillable
+    twelve (golf, winner evolution) draw a subset. The undrawn legs' captures at
+    their stored prices after the move still answer "the captures cover it"."""
+    from app.routes.futures import _headline_moved_past_history as moved
+
+    market, rows = _poll_priced_board()
+    venue = _venue(_bank(attempted_at=_z(18, 0).isoformat()))
+    drawn = [r for r in rows if r.outcome_id == 1]  # what `snapshots` holds on /history?outcome_id=1
+    # The defect lane1 probed: handed only the drawn leg, the rule fires.
+    assert moved(venue, market, drawn) is True
+    # The call site now hands in the field: no ask.
+    assert moved(venue, market, rows) is False
+    # A move on an UNDRAWN leg with no capture after it still stales the bank,
+    # so narrowing the lines to the drawn ids would be the wrong repair.
+    market.outcomes[2].current_probability = 0.31
+    market.outcomes[2].price_changed_at = _z(20, 0)
+    assert moved(venue, market, rows) is True
 
 
 def test_the_rule_reads_stored_prices_and_writes_no_chart_point():
