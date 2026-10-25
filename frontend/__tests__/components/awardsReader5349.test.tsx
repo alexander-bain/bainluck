@@ -57,7 +57,7 @@ test("nominations prop distinguishes Nominated candidates and explains partial m
     />,
   );
   expect(announcedNom).toContain(">Nominated<");
-  expect(announcedNom).toContain("Settled by Kalshi");
+  expect(announcedNom).toContain("Result source · Kalshi");
   expect(announcedNom).toContain("From listed market candidates — not the full official ballot");
   expect(announcedNom).not.toContain(">Winner<");
   expect(announcedNom).not.toContain(">Joint winners<");
@@ -76,12 +76,11 @@ test("nominations prop distinguishes Nominated candidates and explains partial m
   );
   expect(openNom).toContain(">Not announced<");
   expect(openNom).toContain("Covers candidates listed in available markets");
-  expect(openNom).not.toContain("Settled by");
+  expect(openNom).not.toContain("Result source ·");
 
   const openCat = renderToStaticMarkup(
     <AwardsCategoryCard
       child={card({
-        kind: "category",
         settled: false,
         outcomes: [{ name: "Dune: Part Three", probability: 0.85, won: false }],
         result: { state: "pending", evidence_kind: "none", venue: null },
@@ -104,7 +103,7 @@ test("announced category renders supported settling provider attribution and omi
   );
   expect(withVenue).toContain(">Winner<");
   expect(withVenue).toContain("The Pitt");
-  expect(withVenue).toContain("Settled by Kalshi");
+  expect(withVenue).toContain("Result source · Kalshi");
   expect(withVenue).not.toContain("From listed market candidates");
   expect(withVenue).not.toContain("Covers candidates listed in available markets");
 
@@ -119,7 +118,7 @@ test("announced category renders supported settling provider attribution and omi
   );
   expect(withoutVenue).toContain(">Winner<");
   expect(withoutVenue).toContain("The Pitt");
-  expect(withoutVenue).not.toContain("Settled by");
+  expect(withoutVenue).not.toContain("Result source ·");
 });
 test("awards page sections explain that coverage reflects available prediction markets", () => {
   const html = renderToStaticMarkup(<EventConceptPage />);

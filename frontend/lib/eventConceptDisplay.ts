@@ -1139,8 +1139,8 @@ export function conceptCountdownHeadline(
 }
 
 const AWARDS_SETTLING_VENUE_LABELS: Record<string, string> = {
-  kalshi: "Settled by Kalshi",
-  polymarket: "Settled by Polymarket",
+  kalshi: "Result source · Kalshi",
+  polymarket: "Result source · Polymarket",
 };
 
 // #5349: trading closed is not a category announcement. Read only own grades;
