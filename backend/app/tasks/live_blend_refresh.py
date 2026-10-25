@@ -3417,7 +3417,11 @@ class LiveBlendRefresher:
                     if preview_columns:
                         # Trailing columns; the outcome slice below zips by
                         # field name, so they never reach an outcome row.
-                        context["preview_sources"] = row[-3]
+                        # This SELECT proves an authoritative null bag is
+                        # empty at preview_rev, including before the first
+                        # source stamp commits. Missing reads and malformed
+                        # non-null roots must still fail closed downstream.
+                        context["preview_sources"] = {} if row[-3] is None else row[-3]
                         context["preview_rev"] = row[-2]
                         context["preview_context_at"] = row[-1]
                         context["preview_read_ticket"] = preview_ticket
