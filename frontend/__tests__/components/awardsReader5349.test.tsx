@@ -41,6 +41,8 @@ test("closed-ungraded card never prints its favorite or standalone winner as a r
 test("prop grade is a result, never labelled an award winner", () => {
   const html = renderToStaticMarkup(<AwardsCategoryCard child={card({ kind: "prop", settled: true, outcomes: [grade("Guest1")] })} />);
   expect(html).toContain("Guest1"); expect(html).toContain(">Result<"); expect(html).not.toContain("Winner");
+  expect(html).not.toContain("From listed market candidates");
+  expect(html).not.toContain("Covers candidates listed in available markets");
 });
 test("nominations prop distinguishes Nominated candidates and explains partial market coverage", () => {
   const announcedNom = renderToStaticMarkup(
@@ -75,6 +77,20 @@ test("nominations prop distinguishes Nominated candidates and explains partial m
   expect(openNom).toContain(">Not announced<");
   expect(openNom).toContain("Covers candidates listed in available markets");
   expect(openNom).not.toContain("Settled by");
+
+  const openCat = renderToStaticMarkup(
+    <AwardsCategoryCard
+      child={card({
+        kind: "category",
+        settled: false,
+        outcomes: [{ name: "Dune: Part Three", probability: 0.85, won: false }],
+        result: { state: "pending", evidence_kind: "none", venue: null },
+      })}
+    />,
+  );
+  expect(openCat).toContain(">Not announced<");
+  expect(openCat).not.toContain("Covers candidates listed in available markets");
+  expect(openCat).not.toContain("From listed market candidates");
 });
 test("announced category renders supported settling provider attribution and omits it when venue is null", () => {
   const withVenue = renderToStaticMarkup(
@@ -89,6 +105,8 @@ test("announced category renders supported settling provider attribution and omi
   expect(withVenue).toContain(">Winner<");
   expect(withVenue).toContain("The Pitt");
   expect(withVenue).toContain("Settled by Kalshi");
+  expect(withVenue).not.toContain("From listed market candidates");
+  expect(withVenue).not.toContain("Covers candidates listed in available markets");
 
   const withoutVenue = renderToStaticMarkup(
     <AwardsCategoryCard
@@ -105,8 +123,16 @@ test("announced category renders supported settling provider attribution and omi
 });
 test("awards page sections explain that coverage reflects available prediction markets", () => {
   const html = renderToStaticMarkup(<EventConceptPage />);
-  expect(html).toContain("Covers categories with available prediction markets, not every official award category.");
-  expect(html).toContain("Covers nominations and side markets from available prediction markets, not the full official ballot.");
+  const matchupsIdx = html.indexOf('id="matchups"');
+  const propsIdx = html.indexOf('id="props"');
+  expect(matchupsIdx).toBeGreaterThan(-1);
+  expect(propsIdx).toBeGreaterThan(matchupsIdx);
+  const categoriesSection = html.slice(matchupsIdx, propsIdx);
+  const propsSection = html.slice(propsIdx);
+  expect(categoriesSection).toContain("Covers categories with available prediction markets, not every official award category.");
+  expect(categoriesSection).not.toContain("Covers nominations and side markets from available prediction markets, not the full official ballot.");
+  expect(propsSection).toContain("Covers nominations and side markets from available prediction markets, not the full official ballot.");
+  expect(propsSection).not.toContain("Covers categories with available prediction markets, not every official award category.");
   expect(html).toContain(">Nominated<");
   expect(html).toContain("From listed market candidates — not the full official ballot");
 });

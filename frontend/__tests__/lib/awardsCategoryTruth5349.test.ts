@@ -26,6 +26,11 @@ test("ties preserve every grade; prop result keeps its distinction", () => {
     nominations: false,
     settledByLabel: null,
   });
+  expect(awardsResult({ ...tie, kind: "category", prop_type: "nominations" })).toMatchObject({
+    prop: false,
+    nominations: false,
+    settledByLabel: null,
+  });
 });
 
 test("result.venue maps supported settling providers and never invents a provider when null or unconfirmed", () => {
@@ -36,6 +41,14 @@ test("result.venue maps supported settling providers and never invents a provide
       settled: true,
       outcomes: announcedOutcomes,
       result: { state: "announced", evidence_kind: "venue_settlement", venue: "kalshi" },
+    }).settledByLabel,
+  ).toBe("Settled by Kalshi");
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "announced", evidence_kind: "venue_settlement", venue: "  Kalshi  " },
     }).settledByLabel,
   ).toBe("Settled by Kalshi");
   expect(
@@ -59,7 +72,39 @@ test("result.venue maps supported settling providers and never invents a provide
       ...pending,
       settled: true,
       outcomes: announcedOutcomes,
+      result: { state: "announced", evidence_kind: "venue_settlement", venue: "   " },
+    }).settledByLabel,
+  ).toBeNull();
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
       result: { state: "announced", evidence_kind: "venue_settlement", venue: "oddschecker" },
+    }).settledByLabel,
+  ).toBeNull();
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: [{ name: "Favorite", probability: 0.99, won: false }],
+      result: { state: "announced", evidence_kind: "venue_settlement", venue: "kalshi" },
+    }).settledByLabel,
+  ).toBeNull();
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "closed", evidence_kind: "venue_settlement", venue: "kalshi" },
+    }).settledByLabel,
+  ).toBeNull();
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "announced", evidence_kind: "unconfirmed_grade", venue: "kalshi" },
     }).settledByLabel,
   ).toBeNull();
   expect(
