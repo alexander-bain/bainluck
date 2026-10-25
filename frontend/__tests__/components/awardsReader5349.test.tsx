@@ -69,12 +69,19 @@ test("nominations prop distinguishes Nominated candidates and explains partial m
         kind: "prop",
         prop_type: "nominations",
         settled: false,
-        outcomes: [{ name: "Dune: Part Three", probability: 0.85, won: false }],
+        outcomes: [
+          { name: "The Odyssey", probability: 0.98, won: false },
+          { name: "The Black Ball", probability: 0.95, won: false },
+        ],
         result: { state: "pending", evidence_kind: "none", venue: null },
       })}
     />,
   );
-  expect(openNom).toContain(">Not announced<");
+  expect(openNom).toContain(">Best Picture<");
+  expect(openNom).toContain(">Chance of a nomination<");
+  expect(openNom).not.toContain(">Not announced<");
+  expect(openNom).not.toContain(">Nominated<");
+  expect(openNom).not.toContain(">Winner<");
   expect(openNom).toContain("Covers candidates listed in available markets");
   expect(openNom).not.toContain("Result source ·");
 
@@ -82,14 +89,33 @@ test("nominations prop distinguishes Nominated candidates and explains partial m
     <AwardsCategoryCard
       child={card({
         settled: false,
-        outcomes: [{ name: "Dune: Part Three", probability: 0.85, won: false }],
+        outcomes: [{ name: "The Odyssey", probability: 0.45, won: false }],
         result: { state: "pending", evidence_kind: "none", venue: null },
       })}
     />,
   );
+  expect(openCat).toContain(">Best Picture<");
   expect(openCat).toContain(">Not announced<");
+  expect(openCat).not.toContain(">Chance of a nomination<");
   expect(openCat).not.toContain("Covers candidates listed in available markets");
   expect(openCat).not.toContain("From listed market candidates");
+
+  const openSideProp = renderToStaticMarkup(
+    <AwardsCategoryCard
+      child={card({
+        market_name: "Who will attend the Oscars",
+        kind: "prop",
+        prop_type: "occurrence",
+        settled: false,
+        outcomes: [{ name: "Guest2", probability: 0.9, won: false }],
+        result: { state: "pending", evidence_kind: "none", venue: null },
+      })}
+    />,
+  );
+  expect(openSideProp).toContain(">Not announced<");
+  expect(openSideProp).not.toContain(">Chance of a nomination<");
+  expect(openSideProp).not.toContain("Covers candidates listed in available markets");
+  expect(openSideProp).not.toContain("From listed market candidates");
 });
 test("announced category renders supported settling provider attribution and omits it when venue is null", () => {
   const withVenue = renderToStaticMarkup(

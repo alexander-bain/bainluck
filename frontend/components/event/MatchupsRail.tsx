@@ -194,7 +194,7 @@ export function AwardsCategoryCard({ child }: { child: EventConceptChild }) {
         <p className="text-xs text-text-muted">From listed market candidates — not the full official ballot</p>
       )}
     </> : result.state === "closed" ? <p className="text-sm text-text-secondary">Trading closed · Result not yet confirmed</p> : <>
-      <p className="text-xs font-semibold text-text-secondary">Not announced</p>
+      <p className="text-xs font-semibold text-text-secondary">{result.nominations ? "Chance of a nomination" : "Not announced"}</p>
       <ul className="space-y-1 text-sm text-text-secondary">{topOutcomes(child).map((outcome) => <li key={outcome.name} className="flex justify-between gap-3"><span className="min-w-0 break-words">{display(outcome.name)}</span><span className="shrink-0 font-mono">{formatProbability(outcome.probability)}</span></li>)}</ul>
       {result.nominations && (
         <p className="text-xs text-text-muted">Covers candidates listed in available markets</p>
