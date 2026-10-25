@@ -41,6 +41,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 
 from app.utils.cross_source_matching import normalize_question
+from app.utils.venue_identity import venue_identity
 
 __all__ = [
     "family_key",
@@ -664,6 +665,7 @@ def _make_row(
         "top_outcome": top_outcome,
         # Internal, popped before the payload is emitted (like entity_key).
         "_resolves_at": _parse_resolution(market.get("resolution_date")),
+        "_award_season": _named_nba_mvp_season(market),
     }
 
 
@@ -1085,6 +1087,72 @@ def _scoped_buckets(
     ]
 
 
+def _named_nba_mvp_season(market: dict) -> tuple[int, int] | None:
+    """Read an explicit NBA MVP season for a negative grouping boundary.
+
+    KXNBAMVP-27's provider event subtitle names '2026-27 season' (2026-10-25).
+    Reuse the recovered venue parser only for that series' bare event identity;
+    a generic ticker year, resolution date or canonical key is not a season.
+    Polymarket's explicit 'NBA: 2026-27 MVP' title names both endpoints.
+    Equal seasons do NOT establish rules/settlement equivalence. Other awards
+    and unknown forms still require the shared #11619 contract.
+    """
+    source = (market.get("source") or "").strip().lower()
+    if source == "kalshi":
+        identity = venue_identity(source, market.get("group_id"))
+        if (
+            identity is not None
+            and identity.series == "KXNBAMVP"
+            and identity.rest == ""
+            and identity.edition is not None
+        ):
+            end = 2000 + identity.edition
+            return end - 1, end
+        return None
+    if source != "polymarket":
+        return None
+    title = market.get("name") or market.get("market_name") or ""
+    named = re.fullmatch(
+        r"NBA\s*:\s*(20\d{2})\s*[-–]\s*(20\d{2}|\d{2})\s+"
+        r"(?:MVP|Most Valuable Player)",
+        title.strip(),
+        re.IGNORECASE,
+    )
+    if not named:
+        return None
+    start, end = int(named[1]), int(named[2])
+    if end < 100:
+        end += (start // 100) * 100
+    return (start, end) if end == start + 1 else None
+
+
+def _award_season_buckets(emitted_key: str, fk: str, rows: list[dict]):
+    """Separate a proved season conflict before a result can cross editions.
+
+    With no known conflict, preserve the existing grouping rule. Once two
+    explicit seasons disagree, unknown rows cannot bridge them. Each bucket
+    still needs two entities and keeps its real source market/outcome IDs.
+    """
+    seasons = {r.get("_award_season") for r in rows} - {None}
+    if fk != "mvp" or len(seasons) < 2:
+        return [(emitted_key, None, rows)]
+    buckets = OrderedDict()
+    for row in rows:
+        buckets.setdefault(row.get("_award_season"), []).append(row)
+    return [
+        (
+            (
+                f"{emitted_key}:season:{season[0]}-{season[1]}"
+                if season
+                else f"{emitted_key}:season:unknown"
+            ),
+            f"{season[0]}–{str(season[1])[-2:]}" if season else "Season unspecified",
+            grouped,
+        )
+        for season, grouped in buckets.items()
+    ]
+
+
 def group_prop_families(markets: list[dict]) -> list[dict]:
     """Group markets into prop families with per-entity rows.
 
@@ -1122,11 +1190,14 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
 
     result: list[dict] = []
     buckets = [
-        (emitted_key, fk, scope, rows)
+        (season_key, fk, scope, season_label, season_rows)
         for fk, scoped_rows in families.items()
         for emitted_key, scope, rows in _scoped_buckets(fk, scoped_rows)
+        for season_key, season_label, season_rows in _award_season_buckets(
+            emitted_key, fk, rows
+        )
     ]
-    for emitted_key, fk, scope, rows in buckets:
+    for emitted_key, fk, scope, season_label, rows in buckets:
         merged = _collapse_cross_source(_drop_earlier_results(rows))
         distinct = {r["entity_key"] for r in merged if r.get("entity_key")}
         if len(distinct) < 2:
@@ -1143,6 +1214,7 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
         for r in merged:
             r.pop("entity_key", None)
             r.pop("_resolves_at", None)
+            r.pop("_award_season", None)
 
         result.append(
             {
@@ -1152,7 +1224,8 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
                 # "Defensive Player Of The Year", never "football:defensive…"
                 # — plus the sport, for a title only one sport uses (#9855).
                 "family_key": emitted_key,
-                "label": _family_label(fk, scope),
+                "label": _family_label(fk, scope)
+                + (f" · {season_label}" if season_label else ""),
                 "sport": scope,
                 "entity_count": len(distinct),
                 "sources": sorted({s for r in merged for s in r.get("sources", [])}),
