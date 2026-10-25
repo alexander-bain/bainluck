@@ -415,7 +415,7 @@ async def test_concurrent_activation_sends_have_one_permission(rig):
         rig.store.take_activation_step(current, 1),
         return_exceptions=True,
     )
-    assert sum(r is None for r in results) == 1
+    assert sum(r is True for r in results) == 1
     assert sum(isinstance(r, AuthorityConflict) for r in results) == 1
     assert await rig.store.activation_step(current) == 1
 
@@ -455,3 +455,21 @@ async def test_activation_step_lock_timeout_does_not_grant_late_send(rig):
             with pytest.raises(AuthorityWriteUncertain):
                 await rig.store.take_activation_step(current, 1)
     assert await rig.store.activation_step(current) == 0
+
+
+async def test_only_first_allocation_or_changed_primary_can_bootstrap_fence(rig):
+    seed = await rig.store.read()
+    first = await rig.store.prepare(seed, next_candidate(seed))
+    assert await rig.store.take_activation_step(first, 1) is True
+    second = await rig.store.prepare(first, next_candidate(first))
+    assert await rig.store.take_activation_step(second, 1) is False
+    await rig.store.complete_retirement(second, first)
+    third = await rig.store.prepare(
+        second, replace(next_candidate(second), redis_run_id="c" * 40)
+    )
+    assert await rig.store.take_activation_step(third, 1) is True
+    await rig.store.complete_retirement(third, second)
+    fourth = await rig.store.prepare(
+        third, replace(next_candidate(third), redis_master_replid="d" * 40)
+    )
+    assert await rig.store.take_activation_step(fourth, 1) is True

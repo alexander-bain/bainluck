@@ -57,6 +57,8 @@ _CAS = text(
     "UPDATE dnpl_authority SET "
     + ", ".join(f"{key} = :new_{key}" for key in _FIELDS)
     + ", activation_step = CASE WHEN :new_incarnation <> :old_incarnation THEN 0 ELSE activation_step END"
+    + ", activation_bootstrap = CASE WHEN :new_incarnation <> :old_incarnation THEN "
+    + ":allow_bootstrap ELSE activation_bootstrap END"
     + f" WHERE id = 1 AND {_MATCH} RETURNING {_COLUMNS}"
 )
 
@@ -207,12 +209,16 @@ class AuthorityStore:
                     raise AuthorityConflict("activation authority changed or missing")
                 return value
 
-    async def take_activation_step(self, expected: Authority, step: int) -> None:
+    async def take_activation_step(self, expected: Authority, step: int) -> bool:
         """Burn the one permitted Redis send BEFORE doing it, including on crash.
 
         1=arm admission fence; 2=initialize namespace. An uncertain database
         acknowledgement permits only readback, never sending on an assumption.
         A burned send cannot be replayed after a lost Redis reply or key loss.
+        Return whether this allocation may create an absent admission fence:
+        only the seed's successor or a changed primary identity. On the same
+        identity, a missing fence refuses recovery; an old delayed arm must not
+        recreate it after namespace cleanup. No automatic primary restart.
         """
         if expected.state != "preparing" or type(step) is not int or step not in (1, 2):
             raise ValueError("preparing activation step 1 or 2 required")
@@ -229,7 +235,7 @@ class AuthorityStore:
                         changed = await session.scalar(
                             text(
                                 f"UPDATE dnpl_authority SET activation_step = :step WHERE id = 1 AND {_MATCH} "
-                                "AND activation_step = :prior_step RETURNING id"
+                                "AND activation_step = :prior_step RETURNING activation_bootstrap"
                             ),
                             params,
                         )
@@ -237,6 +243,7 @@ class AuthorityStore:
                             raise AuthorityConflict(
                                 "activation send already consumed or authority changed"
                             )
+            return bool(changed)
         except AuthorityConflict:
             raise
         except Exception as exc:
@@ -320,6 +327,10 @@ class AuthorityStore:
     ) -> Authority:
         params = {f"old_{key}": value for key, value in asdict(expected).items()}
         params.update({f"new_{key}": value for key, value in asdict(candidate).items()})
+        params["allow_bootstrap"] = expected.incarnation == 0 or (
+            candidate.redis_run_id,
+            candidate.redis_master_replid,
+        ) != (expected.redis_run_id, expected.redis_master_replid)
         try:
             async with asyncio.timeout(self.budget_s):
                 async with self.sessions() as session:

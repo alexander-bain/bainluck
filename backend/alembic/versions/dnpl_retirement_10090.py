@@ -31,6 +31,10 @@ def upgrade():
         "ALTER TABLE dnpl_authority ADD CONSTRAINT dnpl_activation_step CHECK (activation_step BETWEEN 0 AND 2)"
     )
 
+    op.execute(
+        "ALTER TABLE dnpl_authority ADD COLUMN activation_bootstrap BOOLEAN NOT NULL DEFAULT FALSE"
+    )
+
 
 def downgrade():
     raise RuntimeError("DNPL retirement evidence must be retained; roll back code only")
