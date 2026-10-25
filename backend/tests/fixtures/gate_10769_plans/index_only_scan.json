@@ -1,0 +1,50 @@
+[
+  {
+    "Plan": {
+      "Node Type": "Index Only Scan",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Scan Direction": "Forward",
+      "Index Name": "ix_futures_name_trgm",
+      "Relation Name": "futures_markets",
+      "Alias": "futures_markets",
+      "Startup Cost": 0.42,
+      "Total Cost": 72.44,
+      "Plan Rows": 2001,
+      "Plan Width": 13,
+      "Actual Startup Time": 0.029,
+      "Actual Total Time": 2.361,
+      "Actual Rows": 4000,
+      "Actual Loops": 1,
+      "Index Cond": "((name >= 'World'::text) AND (name < 'Worle'::text))",
+      "Rows Removed by Index Recheck": 0,
+      "Heap Fetches": 0,
+      "Shared Hit Blocks": 29,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0
+    },
+    "Planning": {
+      "Shared Hit Blocks": 133,
+      "Shared Read Blocks": 0,
+      "Shared Dirtied Blocks": 0,
+      "Shared Written Blocks": 0,
+      "Local Hit Blocks": 0,
+      "Local Read Blocks": 0,
+      "Local Dirtied Blocks": 0,
+      "Local Written Blocks": 0,
+      "Temp Read Blocks": 0,
+      "Temp Written Blocks": 0
+    },
+    "Planning Time": 0.668,
+    "Triggers": [
+    ],
+    "Execution Time": 2.494
+  }
+]
