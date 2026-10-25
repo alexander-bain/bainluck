@@ -348,6 +348,8 @@ struct Bain_LuckApp: App {
                     _ = navCoordinator.handleURL(url)
                 }
             }
+            // #10874 — saved/recent Spotlight index + opening a tapped result.
+            .spotlight10874(userID: authManager.activeFeedUserId, pins: pinManager, navigation: navCoordinator)
             .preferredColorScheme(.light)
     }
 

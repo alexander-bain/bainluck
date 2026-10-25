@@ -251,6 +251,11 @@ struct FuturesDetailView: View {
             // Detail AND chart (#9387).
             await viewModel.refresh()
         }
+        // #10874 — a viewed market joins Spotlight's recent entries.
+        .spotlightViewed10874(viewModel.market.flatMap { market in
+            market.id == marketId ? SpotlightSubject10874.market(
+                id: market.id, name: market.name, category: market.llmSportCategory ?? market.sport) : nil
+        })
         .onChange(of: scenePhase) { _, phase in
             viewModel.setVisible(pageVisible && phase == .active)
         }
