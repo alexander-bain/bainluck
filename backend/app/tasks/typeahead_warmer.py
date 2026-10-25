@@ -736,8 +736,11 @@ def _cache_ttl_seconds(q: str) -> int | None:
 async def _warm_one(session, q: str, refresh_ahead: int = REFRESH_AHEAD_SECONDS) -> dict:
     """Run ONE query through the route's own code path. Never raises."""
     from app.routes.events import (
+        _TA_CACHE_RETAINED,
+        _TA_CACHE_SUPERSEDED,
         _force_cache_rebuild,
         _suppress_trending_write,
+        _typeahead_cache_receipt,
         typeahead_search,
     )
 
@@ -795,6 +798,10 @@ async def _warm_one(session, q: str, refresh_ahead: int = REFRESH_AHEAD_SECONDS)
     # paying a full build. Per-task context copies already make that unreachable;
     # the reset makes it unreachable without depending on that argument.
     _force_token = _force_cache_rebuild.set(True)
+    # #10225: installed BEFORE `wait_for` copies the context, so the route's
+    # task holds this same dict and can say what its write did.
+    receipt: dict = {}
+    _receipt_token = _typeahead_cache_receipt.set(receipt)
     try:
         await asyncio.wait_for(
             # PASS THE DEBUG FLAGS EXPLICITLY. They default to `Query(False)`,
@@ -830,6 +837,22 @@ async def _warm_one(session, q: str, refresh_ahead: int = REFRESH_AHEAD_SECONDS)
                 "seconds": round(time.monotonic() - started, 3)}
     finally:
         _force_cache_rebuild.reset(_force_token)
+        _typeahead_cache_receipt.reset(_receipt_token)
+
+    # 🔴 #10225: A RETAINED ENTRY IS NOT A REFRESH, AND IT IS NOT A DEFECT.
+    #
+    # The rebuild shed its outcome arm while a COMPLETE answer was live, so the
+    # route kept that answer and stored nothing. Readers are still served the
+    # complete body; its TTL keeps running down untouched. The TTL test below
+    # would call that `no_write` (a DEFECT) — and calling it `warmed` would
+    # invent a refresh that never happened. It is its own outcome, and so is
+    # losing the compare-and-set to another writer. Neither is `rebuilt`.
+    write = receipt.get("write")
+    if write in (_TA_CACHE_RETAINED, _TA_CACHE_SUPERSEDED):
+        return {"q": q, "ok": True, "reason": write,
+                "ttl_before": ttl_before, "rebuilt": False,
+                "ttl_after": _cache_ttl_seconds(q),
+                "seconds": round(time.monotonic() - started, 3)}
 
     # 🔴 "IT RETURNED" IS NOT "IT WROTE" (`app/utils/task_verdict.py`, gotcha #53).
     #
@@ -1185,6 +1208,8 @@ async def _warm_typeahead(
             # nothing, and both facts are stated rather than left absent.
             "no_writes": [],
             "unverified": 0,
+            "retained": [],
+            "superseded": [],
             "expired": 0,
             "refresh_ahead_s": REFRESH_AHEAD_SECONDS,
             "refresh_ahead_skip_reachable": REFRESH_AHEAD_SKIP_REACHABLE,
@@ -1267,6 +1292,10 @@ async def _warm_typeahead(
     # route would produce, and the whole reason `_warm_one` re-reads the TTL.
     no_writes = [r for r in results if r["reason"] == "no_write"]
     fresh = [r for r in results if r["reason"] == "fresh"]
+    # #10225: the route declined to store a shed rebuild — a complete entry was
+    # live (`retained`), or the entry changed under the write (`superseded`).
+    retained = [r for r in results if r["reason"] == "retained"]
+    superseded = [r for r in results if r["reason"] == "superseded"]
     # `_TTL_NO_KEY` exactly, never "falsy" and never "<= 0": `None` means Redis
     # did not answer and `_TTL_NO_EXPIRY` (-1) means a key with no expiry. All
     # three are non-positive and all three mean different things.
@@ -1314,6 +1343,12 @@ async def _warm_typeahead(
         # conflation gotcha #53 names.
         "no_writes": [r["q"] for r in no_writes],
         "unverified": len(unverified),
+        # #10225: terms whose shed rebuild was NOT stored — kept a live complete
+        # entry, or lost the write to a concurrent change. Not `rebuilt`, not a
+        # `no_write` defect; a growing `retained` list is a term starting to shed
+        # intermittently, which is what LAT-P241 said to watch for.
+        "retained": [r["q"] for r in retained],
+        "superseded": [r["q"] for r in superseded],
         # `None` on a pass that RAN. Present on both shapes because the summary
         # contract is that a consumer never branches on `terminal` to know
         # whether a field exists — `test_a_skipped_run_carries_the_same_keys_as_
