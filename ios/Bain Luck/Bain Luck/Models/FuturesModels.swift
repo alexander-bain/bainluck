@@ -479,15 +479,39 @@ nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
     let isWinner: Bool?
     let matchedTeam: TeamFutureTeam?
     let canonicalMarketKey: String?
+    /// `state` — the championship grid's verdict for this club on this market
+    /// (#11493). Only `/api/teams/{id}` serves it, and only on a row whose market
+    /// a decided grid column lists. Read it through ``gridVerdict``.
+    let state: String?
 
     var id: Int { outcomeId }
+
+    /// #11493 — the grid says the club is out of (or has won) this question.
+    var gridVerdict: TeamGridVerdict? { state.flatMap(TeamGridVerdict.init(rawValue:)) }
 
     private enum CodingKeys: String, CodingKey {
         case outcomeId, outcomeName, marketId, marketName, marketTier
         case category, source, probability
         case probabilityChange24h = "probabilityChange24H"
         case rank, totalOutcomes, resolutionDate, isWinner, matchedTeam, canonicalMarketKey
+        case state
     }
+}
+
+/// #11493 — the championship grid's verdict, republished on the team page.
+///
+/// The Braves' page said "Championship 0%" two weeks after the Dodgers put them
+/// out, beside a Division Race whose Champion cell already printed ✕: an
+/// eliminated club's leg keeps trading at 0.001 until the venue grades the
+/// series, so a price can never say "out". The server stamps the grid's own
+/// verdict as `state`; the probability is left exactly as it was.
+///
+/// Absent means undecided OR unknown — today's rendering, never a result. An
+/// unrecognised value decodes and is ignored, so a new server word cannot
+/// blank the page.
+nonisolated enum TeamGridVerdict: String, Sendable {
+    case eliminated
+    case won
 }
 
 /// Team metadata attached to a team futures item.

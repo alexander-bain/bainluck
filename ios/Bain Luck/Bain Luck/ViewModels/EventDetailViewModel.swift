@@ -661,6 +661,21 @@ final class EventDetailViewModel: ObservableObject {
             &latestSourceFrames, over: fetched, streamRecoverable: streamRecoverable
         )
         event = fetched
+        // #10090 — the adopted detail is the authority on the fold's membership.
+        // A change of it is a different fold: the old fold's preview authority
+        // is retired (`BlendPreview.readerAfterMembership`) and its connection,
+        // whose server-side composition is bound to the membership it opened
+        // with, is closed so the caller's `configureAutoRefresh()` opens the new
+        // fold. An unchanged membership records nothing and keeps the stream.
+        if let revision = LiveEventPriceReconciliation.pairedFoldRevision(in: fetched) {
+            let members = Set(revision.rows.keys)
+            let changed = BlendPreview.membershipChanges(blendPreviewReader, members: members)
+            blendPreviewReader = BlendPreview.readerAfterMembership(blendPreviewReader, members: members)
+            if changed {
+                publishPreview(nil, at: now())
+                if stream != nil { stopStream() }
+            }
+        }
         LiveTimingSeam.readAdopted(prior: prior, fetched: fetched)
         if recordsPriceActivity, let prior, LivePriceActivity.isNewer(fetched, than: prior) {
             recordPriceActivity(from: prior, to: fetched)
@@ -855,6 +870,8 @@ final class EventDetailViewModel: ObservableObject {
     private func receiveReconcile(_ control: LiveStreamReconcile) {
         guard control.eventId == eventId, let held = event, held.id == eventId,
               EventPriceStreaming.isEligible(held.status) else { return }
+        blendPreviewReader = BlendPreview.readerAfterCommitFloor(blendPreviewReader, control.removalRev)
+        publishPreview(blendPreviewReader.held, at: now())
         // A paid custody delivered again (a reconnect's re-send) asks nothing,
         // unless it now names rows past the floor that paid it.
         if reconcileSettled.contains(where: { $0.custody == control.custodyId && $0.floor.covers(control.removalRev) }) {
@@ -1227,7 +1244,7 @@ final class EventDetailViewModel: ObservableObject {
         let controller = LiveStreamController(
             open: {
                 if let make { return try make(id) }
-                let transport = try LiveEventStreamTransport(eventId: id)
+                let transport = try LiveEventStreamTransport(eventId: id, foldedPreviews: true)
                 transport.connect()
                 return transport
             },
@@ -1273,6 +1290,16 @@ final class EventDetailViewModel: ObservableObject {
             },
             onReconcile: { [weak self] control in self?.receiveReconcile(control) },
             onPreview: { [weak self] raw in self?.receivePreview(raw) },
+            onPreviewFloor: { [weak self] raw in self?.receivePreviewFloor(raw) },
+            onPreviewOpen: { [weak self] raw in
+                guard let self else { return }
+                self.blendPreviewReader = BlendPreview.readerOpened(self.blendPreviewReader, raw: raw, eventId: self.eventId)
+            },
+            onPreviewInvalidate: { [weak self] in
+                guard let self else { return }
+                self.blendPreviewReader.held = nil
+                self.publishPreview(nil, at: self.now())
+            },
             onPreviewReset: { [weak self] in self?.clearPreview() },
             deliversFoldedQuotes: true
         )
@@ -1333,7 +1360,7 @@ final class EventDetailViewModel: ObservableObject {
 
     /// `event` with the held provisional blend on its hero, or `event` itself
     /// (committed truth) when none applies — a newer committed revision, a
-    /// folded or non-blend hero, a changed status or an expired preview.
+    /// incompatible fold or non-blend hero, a changed status or an expired preview.
     @MainActor
     func headline(_ event: EventDetail) -> EventDetail {
         BlendPreview.overlay(event, blendPreview, now: now())
@@ -1365,10 +1392,18 @@ final class EventDetailViewModel: ObservableObject {
         publishPreview(next.held, at: at)
     }
 
-    /// Clears the held preview; keeps the epoch floor (epochs only rise).
+    @MainActor
+    private func receivePreviewFloor(_ raw: String) {
+        let next = BlendPreview.readerAfterCommitFloor(blendPreviewReader, raw: raw, eventId: eventId)
+        guard next != blendPreviewReader else { return }
+        blendPreviewReader = next
+        publishPreview(next.held, at: now())
+    }
+
+    /// Clears only the held preview; keeps epoch, sequence and commit floors.
     @MainActor
     private func clearPreview() {
-        blendPreviewReader.held = nil
+        blendPreviewReader = BlendPreview.readerReset(blendPreviewReader)
         publishPreview(nil, at: now())
     }
 

@@ -22,6 +22,7 @@ from tests.test_ws_flush_retry_q491 import (
     is_stored_live_slate_read,
     stored_live_batches,
 )
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 
 def _cells(callback):
@@ -74,7 +75,9 @@ async def _reconnect(monkeypatch, frame, *, flag="1", stale=False):
                 # #10090 attempt156: the stored-live load reads its own three
                 # batches; the full slate stays queued for the full read.
                 slate[:0] = stored_live_batches(*scenario)
-            rows = slate.pop(0) if slate else []
+            rows = answer_slate_market_read(  # #10663
+                statement, slate.pop(0) if slate else []
+            )
             return SimpleNamespace(all=lambda: rows)
 
     @asynccontextmanager
@@ -143,7 +146,7 @@ async def _reconnect(monkeypatch, frame, *, flag="1", stale=False):
 
     monkeypatch.setattr(websockets, "connect", connect)
     consumer = asyncio.create_task(task._run_polymarket_ws_consumer.__wrapped__(
-        sessions=SimpleNamespace(session=session), stop=stop,
+        sessions=SimpleNamespace(session=session, observation_read=session), stop=stop,
     ))
     try:
         await asyncio.wait_for(completed.wait(), 5)

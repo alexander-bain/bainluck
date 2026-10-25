@@ -652,30 +652,28 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
     private let contextPath = "Bain Luck/Components/TennisMatchContext9483.swift"
     private let pagePath = "Bain Luck/Views/EventDetailView.swift"
 
-    func testTheChartDrawsBothCompetitorsByTheTennisContract() throws {
-        let chart = try stripped(chartPath)
-        XCTAssertTrue(chart.contains(
-            "guardTennisChartReading9483.applies(sportKey:sportKey),checkpoints==nil,letteamColorselse{returnnil}"),
-                      "the tennis pair must stay off a checkpoint mount")
-        XCTAssertTrue(chart.contains("letsupplied=drawn==[\"consensus\"]?TennisChartReading9483.suppliedAways(in:vm.history):[:]"))
-        XCTAssertTrue(chart.contains("lettennisPaired=tennisPairedLines(for:dataPoints,checkpoints:checkpoints)letpaired=tennisPaired?.colors??pairedLineColors(admitted:balance)"),
-                      "the chart lost the tennis pair, or it displaced the NFL/MLB admission")
-        XCTAssertTrue(chart.contains("paired:paired,tennisSupplied:tennisPaired?.supplied)"))
-        XCTAssertTrue(chart.contains(
-            "letawayRuns=tennisSupplied.map{TennisChartReading9483.awayRuns(segment,source:source,supplied:$0)}??[PairedWinLines9483.awayRun(segment)]"),
-                      "tennis must draw its second line by source, every other paired page by complement")
-        XCTAssertTrue(chart.contains("ifletpaired,letsplit,tennisSupplied==nil||TennisChartReading9483.drawsAwayTail(source:source){"),
-                      "the consensus must never draw the blend's complement tail")
-        XCTAssertTrue(chart.contains("tennisPaired==nil||TennisChartReading9483.drawsAwayTail(source:liveSplit.source)"))
-        XCTAssertTrue(chart.contains("awayColor:tennisPaired?.colors.away)"), "the held marker lost its second dot")
-        // The axis: on the pair the side labels hide (each line is its own
-        // player's chance, read up one 0–100% scale) and the key names both.
-        XCTAssertTrue(chart.contains(
-            "ifTennisChartReading9483.applies(sportKey:sportKey){returntennisPairedLines(for:dataPoints,checkpoints:checkpointMount(for:dataPoints))?.colors}"),
-                      "the gutter must hide its above/below side labels on the tennis pair")
-        XCTAssertTrue(chart.contains(
-            "letpaired=(TennisChartReading9483.applies(sportKey:sportKey)?tennisPairedLines(for:dataPoints,checkpoints:checkpointMount(for:dataPoints))?.colors:nil)??pairedLineColors(admitted:admitted)"),
-                      "the key must name both players on the tennis pair")
+    /// #11356 (Design's native single-trajectory brief, from the web chart
+    /// accepted at 89f9ba03a2) supersedes Design C1's two tennis lines: every
+    /// two-competitor chart draws ONE line — the primary series, in its own
+    /// colour on both sides of 50% — and the two players are named as the
+    /// axis's two DIRECTIONS outside the plot (the gutter poles, which now stay
+    /// on), never as a second line. The tennis panel, its held reading and its
+    /// marker are unchanged; the marker loses only the second dot it put on
+    /// the second line. Unexecuted until Native's Apple run.
+    func testTheChartDrawsOneLineAndNamesBothPlayersAsDirections() throws {
+        let chart = try codeOnly(chartPath).filter { !$0.isWhitespace }
+        for retired in ["tennisPairedLines(", "PairedWinLines9483.awayRun(", "PairedWinLines9483.awayTail(",
+                        "TennisChartReading9483.awayRuns(", "TennisChartReading9483.suppliedAways(",
+                        "pairedGutterHidden9483(", "pairedLegendKey(", "PairedAwayEndpointLabel9483("] {
+            XCTAssertFalse(chart.contains(retired), "a second competitor line is drawn again: \(retired)")
+        }
+        XCTAssertTrue(chart.contains("TennisHeldReadingMarker9483(pin:tennisPin,selection:selection,series:tennis,"),
+                      "control: the scan reads the held marker's call")
+        XCTAssertTrue(chart.contains("awayColor:nil)"), "the held marker puts a dot on a line that is not drawn")
+        XCTAssertEqual(chart.components(separatedBy: "ChartGutterDirection9483(rising:true,").count - 1, 2,
+                       "both gutters name the home player as the line's upward direction")
+        XCTAssertEqual(chart.components(separatedBy: "ChartGutterDirection9483(rising:false,").count - 1, 2,
+                       "both gutters name the away player as its downward direction")
     }
 
     func testThePanelIsOneComparisonWithShowLatestAfterIt() throws {

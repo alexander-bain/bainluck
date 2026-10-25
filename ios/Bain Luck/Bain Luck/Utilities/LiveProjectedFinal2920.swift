@@ -95,25 +95,47 @@ enum LiveProjectedFinal2920 {
 
 /// The line both live cards draw under the actual score: the label, then both
 /// named teams' projected points. Caption size and secondary colour, so the
-/// live score above stays the primary number; wraps at any text size. One view
-/// so the two cards cannot drift — the finished cards' `FinalForecastLine11296`
-/// anatomy, holding a different quantity.
+/// live score above stays the primary number. One view so the two cards cannot
+/// drift — the finished cards' `FinalForecastLine11296` anatomy, holding a
+/// different quantity.
+///
+/// #11422 — ONE LINE AT NORMAL TEXT SIZE. The full names ("Indiana Pacers 117 ·
+/// New Orleans Pelicans 121") under a stacked label drew three lines on an
+/// iPhone, a paragraph under a card whose rows already name both teams. The
+/// visible pair uses the card's short names (`TeamShortName.shortPair`, which
+/// grows a pair that would collide) beside the label on one line; when even
+/// that does not fit — the larger text sizes — the label stacks over the pair
+/// and both wrap. VoiceOver keeps the full names.
 struct LiveProjectedFinalLine2920: View {
     let printed: LiveProjectedFinalAdmission2920.Printed
     let awayName: String
     let homeName: String
+    let sportKey: String?
 
     static let accessibilityIdentifier = "live-projected-final-2920"
 
+    /// What the reader sees after the label: the pair in short names.
+    nonisolated static func visiblePair(_ printed: LiveProjectedFinalAdmission2920.Printed,
+                                        awayName: String, homeName: String,
+                                        sportKey: String?) -> String {
+        let short = TeamShortName.shortPair(away: awayName, home: homeName, sportKey: sportKey)
+        return LiveProjectedFinal2920.pairText(printed, awayName: short.away, homeName: short.home)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(printed.label)
-            Text(LiveProjectedFinal2920.pairText(printed, awayName: awayName, homeName: homeName))
+        let pair = Self.visiblePair(printed, awayName: awayName, homeName: homeName, sportKey: sportKey)
+        ViewThatFits(in: .horizontal) {
+            Text("\(printed.label): \(pair)")
+                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(printed.label)
+                Text(pair)
+            }
+            .fixedSize(horizontal: false, vertical: true)
         }
         .font(.caption)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.leading)
-        .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(

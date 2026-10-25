@@ -115,9 +115,21 @@ struct TeamDetailView: View {
                             HStack {
                                 Text(entry.label).font(.subheadline)
                                 Spacer()
-                                if let prob = entry.probability {
-                                    Text(formatPct(prob))
+                                // #11493: the grid's verdict, never the residual 0.1%.
+                                switch ChampionshipPathPresentation.value(entry) {
+                                case .percent(let text):
+                                    Text(text)
                                         .font(.subheadline).bold().monospacedDigit()
+                                case .out:
+                                    Text(TeamFutureRowPresentation.outBadge)
+                                        .font(.subheadline).bold()
+                                        .foregroundStyle(.secondary)
+                                case .won:
+                                    Text(TeamFutureRowPresentation.wonBadge)
+                                        .font(.subheadline).bold()
+                                        .foregroundStyle(.green)
+                                case .none:
+                                    EmptyView()
                                 }
                                 // #10234: the division rank agrees with the race below.
                                 if let rank = TeamDivisionRace.pathRank(
@@ -178,6 +190,14 @@ struct TeamDetailView: View {
                                             .foregroundStyle(.green)
                                             .padding(.horizontal, 6).padding(.vertical, 1)
                                             .background(Color.green.opacity(0.12), in: Capsule())
+                                            .fixedSize()
+                                    } else if row.out {
+                                        // #11493: out of it, in the grid's words.
+                                        Text(TeamFutureRowPresentation.outBadge)
+                                            .font(.caption2).fontWeight(.semibold)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.horizontal, 6).padding(.vertical, 1)
+                                            .background(Color.secondary.opacity(0.12), in: Capsule())
                                             .fixedSize()
                                     }
                                 }

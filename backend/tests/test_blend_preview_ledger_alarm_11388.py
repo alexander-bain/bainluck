@@ -4,7 +4,7 @@ SHIP: broader live delivery can stop safely when an update is rejected. The
 admission review (artifacts/latency-11388-redis-cost-gate-85be05f092/
 ADMISSION-REVIEW.md, item 4) requires a bounded, fixed-shape warning for every
 ledger authority failure — fenced, lost, malformed, exhausted — in the
-mutation and publication paths, plus the admission refusals full and no_base,
+mutation and publication paths, plus full, no_base and the explicit reservation-policy refusals,
 so the operator can stop on the first. Supersession (stale, terminal) and
 expiry are normal and must stay quiet.
 
@@ -27,10 +27,12 @@ from tests.test_blend_preview_ledger_tsp1_10090 import EV, SOURCES, _blends, _pr
 redis_kwargs, rig = tsp1.redis_kwargs, tsp1.rig
 
 LOGGER = "app.utils.blend_preview"
-#: What the operator's immediate-stop matcher is handed. Searched, not anchored:
+#: Strict operator matcher contract; external operators must adopt added statuses.
+#: Searched, not anchored:
 #: production prefixes every line.
 OPERATOR_PATTERN = re.compile(
-    r"blend_preview ledger ALARM status=(fenced|lost|malformed|exhausted|full|no_base)"
+    r"blend_preview ledger ALARM status=(fenced|lost|malformed|exhausted|full|no_base|bucket_full|"
+    r"migration_pending|migration_debt|policy_mismatch|policy_required|legacy_owner)"
     r" phase=(claim|propose|settle|terminal|publish) source=(kalshi|polymarket)"
     r" count=([1-9][0-9]*) event_id=([0-9]+|-)$"
 )
@@ -53,7 +55,8 @@ def test_the_format_and_status_set_are_the_ones_handed_to_the_operator():
     assert blend_preview.LEDGER_ALARM_FORMAT == (
         "blend_preview ledger ALARM status=%s phase=%s source=%s count=%d event_id=%s")
     assert blend_preview.LEDGER_ALARM_STATUSES == frozenset(
-        {"fenced", "lost", "malformed", "exhausted", "full", "no_base"})
+        {"fenced", "lost", "malformed", "exhausted", "full", "no_base", "bucket_full",
+         "migration_pending", "migration_debt", "policy_mismatch", "policy_required", "legacy_owner"})
     assert blend_preview.LEDGER_ALARM_INTERVAL_S == 10.0
 
 
@@ -73,7 +76,9 @@ class TestMutation:
         assert await rig.run(rig.p, _propose(rig.p, "polymarket", 0.7, basis_s=2)) == []
         with pytest.raises(RuntimeError, match="lost"):
             await rig.registry().claim(rig.call, "kalshi")
-        assert _alarms(caplog) == [("lost", "propose", "polymarket", "1", str(EV)),
+        # Without the ledger, policy proof is absent before a proposal can read
+        # authority. A fresh claim still detects the retained lost-ledger marker.
+        assert _alarms(caplog) == [("policy_required", "propose", "polymarket", "1", str(EV)),
                                    ("lost", "claim", "kalshi", "1", "-")]
 
     async def test_a_malformed_event_field_alarms(self, rig, caplog):
@@ -159,6 +164,20 @@ def _settle(event_id, source="kalshi"):
 
 
 class TestBound:
+    @pytest.mark.parametrize("status", ["bucket_full", "migration_pending", "migration_debt",
+                                        "policy_mismatch", "policy_required", "legacy_owner"])
+    async def test_policy_refusals_keep_exact_alarm_shape_and_throttle(self, caplog, status):
+        clock = [100.0]
+        reg = _registry(clock)
+        await reg.prepare([_settle(3)], Scripted(status), {})
+        clock[0] = 109.9
+        await reg.prepare([_settle(4), _settle(5)], Scripted(status, status), {})
+        assert _alarms(caplog) == [(status, "settle", "kalshi", "1", "3")]
+        clock[0] = 110.0
+        await reg.prepare([_settle(6)], Scripted(status), {})
+        assert _alarms(caplog) == [(status, "settle", "kalshi", "1", "3"),
+                                   (status, "settle", "kalshi", "3", "4")]
+
     async def test_one_line_per_key_per_batch_with_the_count(self, caplog):
         reg, stats = _registry([0.0]), {}
         call = Scripted("fenced", "fenced", "lost", "fenced")

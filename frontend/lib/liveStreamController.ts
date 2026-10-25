@@ -110,6 +110,7 @@ export interface LiveStreamDeps {
   /** #10090: previews are never replayed, so every (re)open and the end of the match clear them. */
   onPreviewReset?: () => void;
   onPreviewFloor?: (raw: unknown) => void;
+  onPreviewOpen?: (raw: unknown) => void;
   /**
    * #10200 — what the TRANSPORT is doing, for the reader-facing status only.
    *
@@ -390,9 +391,10 @@ export function createLiveStreamController(
 
     let recoveryGeneration = 0;
     let transportRecoveryPending = false;
-    next.addEventListener('open', () => {
+    next.addEventListener('open', (event) => {
       if (stopped || handle !== next) return;
       onPreviewReset?.();
+      deps.onPreviewOpen?.((event as { data?: unknown })?.data);
       // Native retry can reopen this handle against another server worker.
       recoveryGeneration = 0;
       lastMessageAt = now();

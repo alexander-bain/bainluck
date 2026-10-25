@@ -44,6 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.tasks.base import get_task_session
 from app.tasks.live_blend_refresh import LiveBlendRefresher, hand_off_pending
+from app.utils.blend_preview import is_preview_frame
 from app.utils.live_push import event_channel, latest_frame_key
 from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: F401
     DB_URL,
@@ -64,6 +65,7 @@ from tests.integration.test_pm_withdrawal_debt_10090_pg import (
     setup,
 )
 from tests.integration.test_pm_withdrawal_peer_publication_and_startup_10090_pg import (  # noqa: F401
+    default_preview_redis,
     real_redis,
 )
 
@@ -1037,7 +1039,7 @@ def median(values):
 
 @pytest.mark.parametrize("cohort", [False, True])
 async def test_busy_timed_pm_flushes_recover_a_quiet_failed_game(
-    rig, consumer, monkeypatch, cohort,
+    rig, consumer, monkeypatch, cohort, default_preview_redis,
 ):
     t = await setup(rig, consumer, monkeypatch)
     t.r.min_refresh_interval_s = 0
@@ -1272,7 +1274,12 @@ async def test_sustained_retention_refusal_cost_is_bounded_per_event_per_flush(
     import logging
 
     from app.utils import live_push
+    from tests.test_blend_preview_ledger_tsp1_10090 import _VirtualTimeoutClock
 
+    # This case counts retention-refusal work under a healthy database, not
+    # host scheduling. Keep every production budget and real DB/Redis action;
+    # the companion COMMIT-held case explicitly expires the 250ms budget.
+    deadlines = _VirtualTimeoutClock(monkeypatch)
     flushes, games = 6, (1, 2, 3)
     client = real_redis.client()
     subscriber = real_redis.client()
@@ -1326,6 +1333,8 @@ async def test_sustained_retention_refusal_cost_is_bounded_per_event_per_flush(
         await subscriber.aclose()
         await client.aclose()
 
+    assert .25 in deadlines.durations and deadlines.expired == 0
+    assert not deadlines.active
     prices = [e for e in evals if e[2] == "price"]
     controls = [e for e in evals if e[2] == "control"]
     records = [r for r in caplog.records if r.name == "app.tasks.live_blend_refresh"]
@@ -1357,9 +1366,10 @@ async def test_sustained_retention_refusal_cost_is_bounded_per_event_per_flush(
     # control's ACK settles, and only its own revision.
     assert set(settled) <= set(control_revs), detail
     assert not remaining, (remaining, detail)
-    # Delivery despite refusal: readers got every price and every control.
+    # Delivery despite refusal: readers got every committed price and control.
+    # DNPL preview prices also share this channel, but have no committed rev.
     assert sorted((f["event_id"], f["rev"][str(f["event_id"])]) for f in received
-                  if f.get("p") is not None) == sorted(price_revs), detail
+                  if f.get("p") is not None and not is_preview_frame(f)) == sorted(price_revs), detail
     assert sorted((f["event_id"], f["rev"][str(f["event_id"])]) for f in received
                   if f.get("reconcile_only")) == sorted(control_revs), detail
     print(
@@ -1369,3 +1379,98 @@ async def test_sustained_retention_refusal_cost_is_bounded_per_event_per_flush(
         f"settled={len(settled)} max_record_bytes="
         f"{max(len(r.getMessage()) + len(r.exc_text or '') for r in records)}",
     )
+
+
+async def test_control_ack_commit_deadline_keeps_debt_for_fresh_owner(
+    rig, consumer, monkeypatch, real_redis, caplog,
+):
+    """Expire the exact 250ms budget while a real PostgreSQL COMMIT is blocked."""
+    from tests.integration.test_live_blend_grouped_commit_8129_pg import seed
+    from tests.test_blend_preview_ledger_tsp1_10090 import _VirtualTimeoutClock
+
+    await seed(rig, count=1)
+    async with rig.engine.begin() as db:
+        await add(db, 1, 1)
+    deadlines = _VirtualTimeoutClock(monkeypatch)
+    client, subscriber = real_redis.client(), real_redis.client()
+    pubsub = subscriber.pubsub()
+    await pubsub.subscribe(event_channel(1))
+    await pubsub.get_message(timeout=1)
+    r, fresh, task = ref_for(consumer), None, None
+    r._client = lambda: client
+    holder = await rig.engine.connect()
+    lock_id = await holder.scalar(text("SELECT pg_backend_pid()"))
+    await holder.execute(text("SELECT pg_advisory_lock(10090, :key)"), {"key": lock_id})
+    await holder.commit()  # session advisory lock stays held
+    try:
+        async with rig.engine.begin() as db:
+            await db.execute(text(f"""
+                CREATE FUNCTION dnpl_hold_ack_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    PERFORM pg_advisory_xact_lock(10090, {lock_id});
+                    RETURN OLD;
+                END $$
+            """))
+            await db.execute(text("""
+                CREATE CONSTRAINT TRIGGER dnpl_hold_ack_commit
+                AFTER DELETE ON owed_chart_points DEFERRABLE INITIALLY DEFERRED
+                FOR EACH ROW EXECUTE FUNCTION dnpl_hold_ack_commit()
+            """))
+        before = await owed(rig)
+        task = asyncio.create_task(r._recover_normal_prices())
+        # Observe COMMIT inside PostgreSQL before advancing logical time; do
+        # not infer the phase from elapsed host time or a pre-commit callback.
+        async with asyncio.timeout(3):
+            while True:
+                waiting = await holder.scalar(text("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid
+                        WHERE l.locktype='advisory' AND NOT l.granted
+                          AND l.classid=10090 AND l.objid=:key
+                          AND upper(a.query) LIKE 'COMMIT%'
+                    )
+                """), {"key": lock_id})
+                if waiting:
+                    break
+                await asyncio.sleep(.002)
+        first = await pubsub.get_message(ignore_subscribe_messages=True, timeout=.2)
+        first_frame = json.loads(first["data"]) if first else None
+        assert first_frame and first_frame.get("reconcile_only") is True
+        assert first_frame.get("p") is None and first_frame["rev"] == {"1": 1}
+        assert r.stats["published"] == 1 and await owed(rig) == before
+        assert len(deadlines.active) == 1
+        assert deadlines.active[0][0] - deadlines.now == .25
+        deadlines.advance(.25)
+        await asyncio.wait_for(task, 3)
+        assert deadlines.expired == 1 and not deadlines.active
+        assert await owed(rig) == before, "a canceled COMMIT falsely paid recovery custody"
+        assert not r._normal_acked
+        errors = [record for record in caplog.records if record.getMessage() ==
+                  "live_blend_refresh[polymarket]: durable normal recovery retained"]
+        assert len(errors) == 1 and isinstance(errors[0].exc_info[1], TimeoutError)
+        await holder.execute(text("SELECT pg_advisory_unlock(10090, :key)"), {"key": lock_id})
+        await holder.commit()
+        # A fresh owner has no remembered ACK; the durable row alone supplies
+        # a truthful price-free control and only its positive ACK pays the row.
+        fresh = ref_for(consumer)
+        fresh._client = lambda: client
+        await fresh._recover_normal_prices()
+        second = await pubsub.get_message(ignore_subscribe_messages=True, timeout=.2)
+        second_frame = json.loads(second["data"]) if second else None
+        assert second_frame == first_frame
+        from app.routes.event_stream import _withdrawal_reconcile
+        assert _withdrawal_reconcile(second_frame, 1, 1)
+        assert fresh.stats["published"] == 1 and not await owed(rig)
+        assert deadlines.expired == 1 and not deadlines.active
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await holder.execute(text("SELECT pg_advisory_unlock_all()"))
+        await holder.close()
+        if fresh is not None:
+            await close(fresh)
+        await close(r)
+        await pubsub.aclose()
+        await subscriber.aclose()
+        await client.aclose()

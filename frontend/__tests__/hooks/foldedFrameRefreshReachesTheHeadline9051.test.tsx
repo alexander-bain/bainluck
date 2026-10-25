@@ -276,7 +276,7 @@ describe("structural pin: the harness carries the page's own wiring", () => {
     expect(PAGE).toMatch(/const reconcileCatchupRef = useRef<ReturnType<typeof createReconnectCatchup> \| null>\(null\);\s*const reconcileOrdinalRef = useRef\(0\);\s*const applyPushedFrame = useCallback/);
     expect(PAGE).toMatch(/const adopted = applyLiveFrameRail\(prev, frame\);\s*const \{ next, snapshotRail \} = adopted;\s*sourceAdded = adopted\.sourceAdded === true;/);
     expect(PAGE).toMatch(/\}, \[refreshEvent, eventId, foldedRefetch\]\);\s*(?:\/\/[^\n]*\n\s*)*const applyReconcileControl[^]*?\}, \[eventId, reconcileLedger\]\);\s*const quoteEligible = canSubscribeEventQuotes\(event\);/);
-    expect(PAGE).toMatch(/\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl\);/);
+    expect(PAGE).toMatch(/\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl, event\?\.blend_fold_revision\);/);
     expect(PAGE.indexOf("frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)"))
       .toBeLessThan(PAGE.indexOf("if (liveFrame.p === null"));
     // The history effect: an incomparable edge requests a refetch and writes NOTHING.

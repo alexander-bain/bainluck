@@ -117,6 +117,7 @@ def rig(
         return True
 
     ns = {
+        "asyncio": asyncio,
         "Optional": Optional,
         "Iterable": Iterable,
         "Mapping": Mapping,
@@ -124,6 +125,9 @@ def rig(
         "OPEN_FLUSH_CHUNKS_PER_FLUSH": 2,
         "buffer_lock": asyncio.Lock(),
         "catalog_boundary": _PMCatalogFlushBoundary(),
+        "game_period": 0.01,
+        "routing_generation": 0,
+        "observation_continuity": {},
         "price_buffer": batch,
         "withdraw_buffer": books,
         "withdrawal_retry_until": {},
@@ -166,6 +170,7 @@ def rig(
             "_flush_standalone",
             "_flush_props",
             "flush_prices",
+            "flush_observations",
             "flush_standalone",
             "flush_props",
         ],

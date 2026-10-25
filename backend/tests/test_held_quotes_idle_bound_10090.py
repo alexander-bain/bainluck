@@ -167,6 +167,31 @@ class TestIdleBound:
 
 
 class TestNoDuplicateReads:
+    async def test_continuous_inputs_cannot_extend_one_phase_grace_forever(self):
+        clock = Clock()
+        db = FakeDB(clock)
+        held = _held(clock)
+        await held.sample_database_clock(db)
+        first = None
+        bounds = []
+        try:
+            for n in range(1, 36):
+                await _run_until(clock, n * 0.1)
+                mark = _mark(oid=100 + n)
+                held.note_input(mark)
+                if first is None:
+                    first = mark
+                bounds.append(held.bound_for(mark))
+                await _settle()
+            assert bounds[-1] > bounds[0] + 2.0
+            assert held.bound_for(first) == bounds[0]
+            assert 2 <= held.idle_samples <= 4
+            assert db.max_active == 1
+        finally:
+            task = held.close()
+            if task is not None:
+                await asyncio.gather(task, return_exceptions=True)
+
     async def test_no_idle_read_while_a_phase_read_is_in_flight(self):
         clock = Clock()
         db = FakeDB(clock)
@@ -305,20 +330,16 @@ class TestOwnerWiring:
         from app.tasks.live_blend_refresh import LiveBlendRefresher
         from app.utils import blend_preview
 
-        monkeypatch.delenv("LIVE_BLEND_PREVIEW_SOURCES", raising=False)
-        monkeypatch.setenv(blend_preview.SOURCE_ENV, "kalshi")
-        monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, str(EV))
-        refresher = LiveBlendRefresher("kalshi")
-        refresher.held_quotes = HeldRowQuotes()
-        assert set(refresher.held_quotes.preview_events()) == {EV}
-        off = LiveBlendRefresher("polymarket")  # not the preview source
-        off.held_quotes = HeldRowQuotes()
-        assert set(off.held_quotes.preview_events()) == set()
-        monkeypatch.delenv(blend_preview.SOURCE_ENV)
-        unset = LiveBlendRefresher("kalshi")  # default off
-        unset.held_quotes = HeldRowQuotes()
-        assert set(unset.held_quotes.preview_events()) == set()
-        assert unset.held_quotes is not None and LiveBlendRefresher("kalshi").held_quotes is None
+        for source in ("kalshi", "polymarket"):
+            refresher = LiveBlendRefresher(source)
+            refresher.held_quotes = HeldRowQuotes()
+            assert EV in refresher.held_quotes.preview_events()
+            assert EV + 1 in refresher.held_quotes.preview_events()
+            # The callback follows the actual worker scope, not a stale copy.
+            refresher.preview_events = frozenset({EV})
+            assert EV in refresher.held_quotes.preview_events()
+            assert EV + 1 not in refresher.held_quotes.preview_events()
+        assert LiveBlendRefresher("kalshi").held_quotes is None
 
 
 # ------------------------------------------------- lifecycle (812 review REVISE)

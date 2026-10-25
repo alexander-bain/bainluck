@@ -132,6 +132,15 @@ const NOT_PERIOD_PARSERS = new Map([
     "holds the protected-touchdown RULE COPY ('after halftime (overtime included)') — prose stating Kalshi's settlement rule, never parses or labels a period",
   ],
   [
+    join(IOS_ROOT, "Utilities/LivePregameComparison11296.swift"),
+    // #11296. Reader prose, like the protected-touchdown rule copy above: the
+    // information popover's basis sentence says the full-game pair includes
+    // overtime and the soccer pair excludes extra time. Nothing here reads a
+    // clock string or labels a period; the period is the admitted object's
+    // typed `ScorePeriod`. Dropping the word would make the sentence vaguer.
+    "holds the forecast BASIS COPY ('…for the full game, overtime included.') — prose keyed on the admitted object's typed period, never parses or labels a period",
+  ],
+  [
     join(IOS_ROOT, "Utilities/LiveProjectedFinalAdmission2920.swift"),
     // #2920. The fifth non-labelling mention: the live projected final's
     // admission asks "is this soccer match still in regulation", because the

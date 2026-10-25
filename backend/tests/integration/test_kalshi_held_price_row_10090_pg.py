@@ -55,6 +55,7 @@ from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: 
     DB_URL,
     rig,
 )
+from tests.test_event_frame_batching_10659 import private_redis_socket  # noqa: F401
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -66,6 +67,33 @@ pytestmark = [
 SOURCE = Path(__file__).resolve().parents[2] / "app/tasks/kalshi_ws.py"
 EVENT, MARKET, HOME, AWAY = 1, 1, 1, 2
 PERIOD = 0.25
+
+
+@pytest.fixture(autouse=True)
+async def default_preview_transport(monkeypatch, private_redis_socket):
+    """Healthy default ledger; never depend on a Redis at localhost:6379.
+
+    A missing ambient server adds connection waits that can expire the real
+    250 ms cooldown before the test's second quote. Keep the production timer
+    and ledger, and supply the private transport the consumer now requires.
+    """
+    from redis.asyncio import Redis
+    from app.tasks.live_blend_refresh import LiveBlendRefresher
+
+    client = Redis(unix_socket_path=str(private_redis_socket))
+    readers = set()
+
+    def connection(reader):
+        readers.add(reader)
+        return client
+
+    monkeypatch.setattr(LiveBlendRefresher, "_client", connection)
+    try:
+        yield
+    finally:
+        for reader in readers:
+            await reader.drain_history()
+        await client.aclose()
 
 
 async def seed(rig):
@@ -141,6 +169,7 @@ class Consumer:
             input_marks={}, tail_receipts=self.receipts,
             # #10090: the worker's primary-quote custody (bundled pair).
             primary_quote_custody=PrimaryQuoteCustody(), ticker_to_ids={},
+            observation_continuity={}, game_clients=[],
             open_contract_outcome_ids=set(), blend_refresher=self.refresher,
             non_blend_outcome_ids=set(), get_task_session=self.sessions,
             stats=defaultdict(int), logger=logging.getLogger(__name__),
@@ -148,8 +177,11 @@ class Consumer:
             live_event_ids={EVENT}, flush_budget=None, flush_period=PERIOD,
         )
         tree = ast.parse(SOURCE.read_text())
-        nodes = [n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)
-                 and n.name == "flush_prices"]
+        wanted = {"flush_prices", "steady_book_signature", "observation_signature",
+                  "note_observation_continuity"}
+        nodes = [n for n in ast.walk(tree)
+                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in wanted]
+        assert {n.name for n in nodes} == wanted and len(nodes) == len(wanted)
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), "exec"), ns)
         self.ns, self.prices = ns, ns["prices"]
         phase = self.prices.phase
@@ -228,8 +260,14 @@ async def started(rig, *, overlay=True):
     return c, v0
 
 
-async def test_a_held_kalshi_row_stamps_the_received_quote_and_a_restart_cannot_undo_it(rig):
+async def test_a_held_kalshi_row_stamps_the_received_quote_and_a_restart_cannot_undo_it(rig, monkeypatch):
     c, v0 = await started(rig)
+    # This case tests a quote DURING the cooldown, not database-machine speed.
+    # Control the shared cadence/retry clock; SQL locks, clock samples, commit
+    # and timeouts remain real. Advance explicitly for the after-deadline arm.
+    from app.tasks import live_blend_refresh
+    clock = [live_blend_refresh._mono()]
+    monkeypatch.setattr(live_blend_refresh, "_mono", lambda: clock[0])
     held = c.refresher.held_quotes
     conn, tx = await hold_row(rig, HOME)
     try:
@@ -263,7 +301,7 @@ async def test_a_held_kalshi_row_stamps_the_received_quote_and_a_restart_cannot_
         await conn.close()
 
     # Released: past the cooldown the ordinary write lands the newest price.
-    c.prices.lock_retry_until.clear()
+    clock[0] = c.prices.lock_retry_until[HOME] + 0.01
     assert await c.flush() is True
     price, final = await stored(rig)
     assert price == 0.395 and final == v2
@@ -363,3 +401,28 @@ async def test_parent_stamps_nothing_while_the_kalshi_row_is_held(rig):
     assert await c.flush() is True
     assert (await stored(rig))[0] == 0.375
     c.close()
+
+
+async def test_successful_price_returning_supplies_bound_without_another_clock_read(rig):
+    c, v0 = await started(rig)
+    held = c.refresher.held_quotes
+    old_bound = held._database_bound
+
+    async def redundant_read(_sessions):
+        pytest.fail("committed RETURNING clock must replace the separate clock read")
+
+    held.sample_database_clock = redundant_read
+    try:
+        c.accept(HOME, 0.395)
+        accepted = c.ns["input_marks"][HOME]
+        assert await c.flush() is True
+        async with rig.engine.connect() as conn:
+            updated = await conn.scalar(text(
+                "SELECT last_updated FROM futures_outcomes WHERE id = :id"
+            ), {"id": HOME})
+        assert held._database_bound > updated.timestamp()
+        assert held.bound_for(accepted) == old_bound
+        c.accept(HOME, 0.375)
+        assert held.bound_for(c.ns["input_marks"][HOME]) == held._database_bound
+    finally:
+        c.close()

@@ -1,0 +1,1 @@
+{'gamesInSeries': 3, 'seriesGameNumber': 1, 'seriesDescription': 'AL Wild Card Series', 'ifNecessary': 'N', 'gameNumber': 1} 2 {'wins': 1, 'losses': 0, 'ties': 0, 'pct': '1.000'}

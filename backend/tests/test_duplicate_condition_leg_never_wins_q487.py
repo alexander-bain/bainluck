@@ -249,7 +249,14 @@ def test_the_ast_scan_actually_found_the_known_writes():
     # still run it, both still splice DUPLICATE_CONDITION_LEG_SQL, and the
     # sibling assertions below still see the predicate on every write this
     # scan finds. Re-classified by hand 2026-09-21.
-    assert by_file == {"backfill_winners.py": 5, "polymarket.py": 1}, (
+    #
+    # #698: backfill_winners.py went 5 -> 6. Not a new crowner — the negRisk
+    # arm of `_backfill_polymarket_winners_from_api` already graded through a
+    # Core ORM `update()` this text scan could not see; it now grades a
+    # venue-verified leg through the `gamma_leg_settle_stmt` text() builder,
+    # which carries the predicate like its siblings. Re-classified by hand
+    # 2026-10-24.
+    assert by_file == {"backfill_winners.py": 6, "polymarket.py": 1}, (
         f"the in-class population changed: {by_file}. Re-classify by hand before "
         "adjusting this number — a shrinking population is how this guard goes "
         "vacuous."

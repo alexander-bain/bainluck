@@ -67,6 +67,7 @@ from app.utils.resolution_authority import (
     TERMINAL_SOURCES,
 )
 from tests._kalshi_price_session import bind_sessions, returned
+from tests._sqlite_returned_clock import install_returned_clock
 
 MARKET_ID = 7
 EVENT_ID = 900
@@ -248,6 +249,7 @@ def _run_against_a_real_row(write, resolution_source, is_winner=False,
     was built for, so the ONLY thing that can decide the outcome is the guard.
     """
     engine = create_engine("sqlite://")
+    install_returned_clock(engine)
     table = FuturesOutcome.__table__
     table.create(engine)
     with engine.begin() as conn:

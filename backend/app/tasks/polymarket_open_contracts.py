@@ -163,20 +163,27 @@ def open_contract_markets_stmt():
     last three are the market's own row, read so a game winner can be bridged
     to its event's blend (:func:`open_contract_event_candidates`, #10091)
     without re-imposing the window.
+
+    #10663: ``name`` and ``external_id`` are read only for a market that HAS an
+    event (``NULL`` otherwise). The bridge is the one reader of either column
+    and it skips every event-less row first, so the result is the same; what
+    changes is that ~34,000 names and condition ids no longer arrive, are
+    decoded and are held for the whole pairing on every catalog refresh.
     """
-    from sqlalchemy import select
+    from sqlalchemy import case, select
 
     from app.models.models import FuturesMarket
 
     meta = FuturesMarket.market_metadata
+    bridged = FuturesMarket.event_id.isnot(None)
     return select(
         FuturesMarket.id,
         meta["clob_token_ids"],
         meta["clobTokenIds"],
         meta[OUTCOME_TOKEN_METADATA_KEY],
         FuturesMarket.event_id,
-        FuturesMarket.name,
-        FuturesMarket.external_id,
+        case((bridged, FuturesMarket.name)).label("name"),
+        case((bridged, FuturesMarket.external_id)).label("external_id"),
     ).where(*_open_market_clauses())
 
 
@@ -240,6 +247,49 @@ def _token_list(raw: Any) -> list[str]:
     if not isinstance(raw, list):
         return []
     return [str(t) for t in raw if t is not None and str(t)]
+
+
+@dataclass
+class OpenContractLegs:
+    """The leg read, digested row by row into what the pairing reads (#10663).
+
+    ``open_contract_asset_map`` used to receive the leg read as one flat list
+    of result rows — ~71,000 ``Row`` objects at today's catalog, each holding
+    its own ``market_id`` int and a reference the pairing never uses after the
+    first pass — and rebuild exactly these three structures from it, so during
+    the pairing the catalog refresh held both. The reader now adds each chunk's
+    rows here as they arrive and passes this instead; the flat list is never
+    built. ``add`` is the one place a leg row is read, in both paths.
+    """
+
+    #: market → ``[(outcome_id, external_id)]`` in leg-read order
+    by_market: dict[int, list[tuple[int, str]]] = field(default_factory=dict)
+    #: outcome → its ``external_id`` (``""`` when stored NULL), every leg
+    ext_by_outcome: dict[int, str] = field(default_factory=dict)
+    #: outcomes already graded (``is_winner`` or a resolution source)
+    graded: set[int] = field(default_factory=set)
+    #: leg rows digested, for the read's own line
+    rows: int = 0
+
+    def add(self, outcome_id: int, market_id: int, ext: "str | None", is_graded: Any) -> None:
+        ext = ext or ""
+        self.by_market.setdefault(market_id, []).append((outcome_id, ext))
+        self.ext_by_outcome[outcome_id] = ext
+        if is_graded:
+            self.graded.add(outcome_id)
+        self.rows += 1
+
+    async def add_rows_cooperatively(self, rows: Iterable[tuple]) -> "OpenContractLegs":
+        """Add one leg chunk, giving the socket loop a turn every
+        ``OPEN_MAP_ROWS_PER_TURN`` rows — the turns the mapping's own first
+        pass used to take over the same rows (#10090)."""
+        import asyncio
+
+        for i, (outcome_id, market_id, ext, is_graded) in enumerate(rows):
+            if _pause(i):
+                await asyncio.sleep(0)
+            self.add(outcome_id, market_id, ext, is_graded)
+        return self
 
 
 @dataclass
@@ -323,7 +373,7 @@ def _tokens_by_contract_steps(asset_to_outcome, ext_by_outcome):
 
 def open_contract_asset_map(
     market_rows: Iterable[tuple],
-    outcome_rows: Iterable[tuple],
+    outcome_rows: "Iterable[tuple] | OpenContractLegs",
     taken_assets: Iterable[str] = (),
     excluded_market_ids: Iterable[int] = (),
     taken_tokens_by_contract: Optional[Mapping[str, str]] = None,
@@ -362,6 +412,11 @@ def open_contract_asset_map(
     whose id names the same ``(condition, token index)`` (``contract_key``):
     an open owner here, or the game socket's (``taken_tokens_by_contract``).
     Matched by id, never by position, so a shape it cannot read stays unpriced.
+
+    #10663: ``outcome_rows`` is the leg read either as rows ``(outcome_id,
+    market_id, external_id, graded)`` or already digested into
+    :class:`OpenContractLegs` by the reader, chunk by chunk, so the whole read
+    is never held as one list of rows beside the pairing's own structures.
     """
     return _finish(_open_contract_asset_map_steps(
         market_rows, outcome_rows, taken_assets, excluded_market_ids,
@@ -371,7 +426,7 @@ def open_contract_asset_map(
 
 async def open_contract_asset_map_cooperatively(
     market_rows: Iterable[tuple],
-    outcome_rows: Iterable[tuple],
+    outcome_rows: "Iterable[tuple] | OpenContractLegs",
     taken_assets: Iterable[str] = (),
     excluded_market_ids: Iterable[int] = (),
     taken_tokens_by_contract: Optional[Mapping[str, str]] = None,
@@ -395,16 +450,19 @@ def _open_contract_asset_map_steps(
     taken = set(taken_assets)
     excluded = set(excluded_market_ids)
 
-    legs_by_market: dict[int, list[tuple[int, str]]] = {}
-    graded: set[int] = set()
-    ext_by_outcome: dict[int, str] = {}
-    for i, (outcome_id, market_id, ext, is_graded) in enumerate(outcome_rows):
-        if _pause(i):
-            yield
-        legs_by_market.setdefault(market_id, []).append((outcome_id, ext or ""))
-        ext_by_outcome[outcome_id] = ext or ""
-        if is_graded:
-            graded.add(outcome_id)
+    # #10663: the consumer digests the leg read as it arrives and passes the
+    # result; a flat list of rows (every other caller, and the tests) is
+    # digested here, through the same `add`, so both paths read a row once.
+    if isinstance(outcome_rows, OpenContractLegs):
+        legs = outcome_rows
+    else:
+        legs = OpenContractLegs()
+        for i, (outcome_id, market_id, ext, is_graded) in enumerate(outcome_rows):
+            if _pause(i):
+                yield
+            legs.add(outcome_id, market_id, ext, is_graded)
+    legs_by_market, ext_by_outcome, graded = legs.by_market, legs.ext_by_outcome, legs.graded
+    legs = None
     #: markets with no usable tokens, for the by-condition pass below
     tokenless: list[int] = []
 

@@ -1,0 +1,357 @@
+/**
+ * #7382 — the desktop lead hero prints up to six of its own priced rungs; side
+ * cards and narrow widths keep three.
+ *
+ * At 1280px the lead used to span both grid rows, so its height was the two
+ * side cards stacked beside it (421px), not its content. With three rungs it
+ * carried a 196px blank band (production 2026-10-22 03:52Z, "Oscar Winner: Best
+ * Picture", 41 outcomes). Now (Root 324, wide lead) it spans two columns of one
+ * content-sized row and its rungs flow in two columns, top-to-bottom then
+ * left-to-right. The lead row carries up to six in `lead_outcomes`, a field
+ * only this page reads, while `top_outcomes` stays the shared three the app
+ * prints (backend `test_entertainment_lead_outcomes_web_only_7382.py`). This
+ * file pins the page half:
+ *
+ *   ARM 1  the lead renders min(6, `lead_outcomes`) rungs, in served order;
+ *   ARM 2  rungs 4–6 carry `leadRowExtra` and rungs 1–3 never do;
+ *   ARM 3  each side card renders three `top_outcomes` rungs and never reads
+ *          `lead_outcomes`, even when six of each are served;
+ *   ARM 4  a sparse lead prints what it has — no pad, no extra marker;
+ *   ARM 6  a payload without `lead_outcomes` (older server, stale cache), or
+ *          with one shorter than `top_outcomes`, prints the shared rungs;
+ *   ARM 5  the stylesheet hides `leadRowExtra` at <=900px and restores the side
+ *          cards' single column and 12px / 4px / 6px scale there, so the phone
+ *          card is unchanged; above it the rungs are two column-major columns;
+ *   ARM 7  `--ent-lead-rows` is half the printed count rounded up, so the two
+ *          columns stay balanced and DOM order is rank order.
+ *
+ * jest applies no media query, so ARM 5 reads the stylesheet text, the way
+ * `entertainmentLeadReservesNothingItCannotFill7356.test.ts` does.
+ */
+
+import fs from "fs";
+import path from "path";
+import { renderToStaticMarkup } from "react-dom/server";
+import React from "react";
+import type { EntertainmentData, EntMarketRow } from "@/lib/api";
+
+jest.mock("swr", () => ({
+  __esModule: true,
+  default: () => ({ data: (global as never as { __ENT__: EntertainmentData }).__ENT__, error: undefined }),
+}));
+jest.mock("@/hooks", () => ({
+  usePageTracking: () => undefined,
+  useScrollDepth: () => undefined,
+  useEngagementTime: () => undefined,
+}));
+jest.mock("@/lib/tmdb", () => ({
+  hasTMDBToken: () => false,
+  searchMovie: async () => null,
+  posterUrl: (p: string) => p,
+}));
+
+import EntertainmentPage from "@/app/entertainment/page";
+
+// Parser helpers copied from `entertainmentHeroLeadFillsItsCard5953.test.tsx`.
+interface Node {
+  tag: string;
+  attrs: string;
+  children: Node[];
+  parent: Node | null;
+}
+
+const VOID = new Set([
+  "area", "base", "br", "col", "embed", "hr", "img", "input",
+  "link", "meta", "param", "source", "track", "wbr",
+]);
+
+function parse(html: string): Node {
+  const root: Node = { tag: "#root", attrs: "", children: [], parent: null };
+  let cur = root;
+  /* The three attribute branches are DISJOINT on their first character, and
+     that is load bearing rather than tidy. Written with `[^>]` as the catch-all
+     — which can also match a quote — `""` is matchable two ways and CodeQL
+     rejects the file outright: `js/redos`, high severity, "may cause
+     exponential backtracking on strings starting with '<A' and containing many
+     repetitions of '\"\"'". Excluding quotes from the catch-all makes exactly
+     one branch able to consume a quote, so there is nothing to backtrack over.
+     The cost is that an UNTERMINATED quote inside a tag stops that tag matching
+     — `renderToStaticMarkup` never emits one, and a silently skipped tag would
+     red the depth arms rather than pass them. */
+  const re = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:"[^"]*"|'[^']*'|[^>"'])*?)(\/?)>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const [, closing, tag, attrs, selfClose] = m;
+    const name = tag.toLowerCase();
+    if (closing) {
+      // Tolerate a stray close only by refusing to walk above the root.
+      if (cur.parent) cur = cur.parent;
+      continue;
+    }
+    const node: Node = { tag: name, attrs, children: [], parent: cur };
+    cur.children.push(node);
+    if (!selfClose && !VOID.has(name)) cur = node;
+  }
+  return root;
+}
+
+function walk(n: Node, out: Node[] = []): Node[] {
+  for (const c of n.children) {
+    out.push(c);
+    walk(c, out);
+  }
+  return out;
+}
+
+/** Inline `style="a:b;c:d"` -> a lookup, so property ORDER cannot decide a test. */
+function styleOf(n: Node): Record<string, string> {
+  const m = /\bstyle="([^"]*)"/.exec(n.attrs);
+  if (!m) return {};
+  const out: Record<string, string> = {};
+  for (const decl of m[1].split(";")) {
+    const i = decl.indexOf(":");
+    if (i > 0) out[decl.slice(0, i).trim()] = decl.slice(i + 1).trim();
+  }
+  return out;
+}
+
+function classOf(n: Node): string {
+  return (/\bclass="([^"]*)"/.exec(n.attrs) || [, ""])[1] as string;
+}
+
+
+/* The production lead's field, `/api/futures/6173044` read 2026-10-22 04:08Z,
+   priced legs in price order — two more than the six-rung ceiling, so ARM 1
+   proves the page slices rather than echoing whatever the payload carries. */
+const OSCAR = [
+  { name: "The Odyssey", prob: 45.5, delta_24h: 0 },
+  { name: "You Can See Everything", prob: 24.5, delta_24h: 0 },
+  { name: "The Black Ball", prob: 16.5, delta_24h: 0 },
+  { name: "Dune: Part Three", prob: 9.5, delta_24h: 0 },
+  { name: "Wild Horse Nine", prob: 2.5, delta_24h: 0 },
+  { name: "Artificial", prob: 1.5, delta_24h: 0 },
+  { name: "Seventh Rung", prob: 1.0, delta_24h: 0 },
+  { name: "Eighth Rung", prob: 0.5, delta_24h: 0 },
+];
+
+function market(over: Partial<EntMarketRow> = {}): EntMarketRow {
+  return {
+    q: "Oscar Winner: Best Picture",
+    prob: 45.5,
+    src: "kalshi",
+    market_id: 6173044,
+    external_id: "KXOSCARPIC-27",
+    kind: "multi",
+    top_outcomes: OSCAR.slice(0, 3),
+    lead_outcomes: OSCAR,
+    outcome_count: 41,
+    volume_24h: 59366,
+    resolution_date: "2027-12-31T15:00:00+00:00",
+    image_url: null,
+    hook: null,
+    ...over,
+  };
+}
+
+const SIDE_SIX = OSCAR.slice(0, 6).map((o, i) => ({ ...o, name: `Side ${i + 1}` }));
+const SIDES: EntMarketRow[] = [2, 3, 4, 5].map((id) =>
+  market({
+    q: `Side market ${id}`,
+    market_id: id,
+    outcome_count: 16,
+    top_outcomes: SIDE_SIX,
+    lead_outcomes: SIDE_SIX.map((o) => ({ ...o, name: `Lead-only ${o.name}` })),
+  }),
+);
+
+function entData(trending: EntMarketRow[]): EntertainmentData {
+  const empty = { count: 0, side_markets: [] };
+  return {
+    total_markets: 97,
+    updated_at: "2026-10-22T03:05:00Z",
+    trending,
+    themes: {
+      music: { ...empty, spotify_race: [], billboard_watch: [], billboard_groups: [], album_drops: [], artist_streaming: [] },
+      movies_tv: { ...empty, rt_groups: [], rt_markets: [], box_office_groups: [], box_office: [], reality_tv: [] },
+      tech_culture: { count: 0, markets: [] },
+    },
+    cultural_moments: [],
+    by_source: { kalshi: 0, polymarket: 0 },
+  };
+}
+
+function renderHero(lead: EntMarketRow = market()) {
+  (global as never as { __ENT__: EntertainmentData }).__ENT__ = entData([lead, ...SIDES]);
+  const html = renderToStaticMarkup(React.createElement(EntertainmentPage));
+  const grid = walk(parse(html)).find((n) => /heroGrid/.test(classOf(n))) as Node;
+  expect(grid).toBeTruthy();
+  expect(grid.children).toHaveLength(5);
+  return grid;
+}
+
+const leadRows = (cell: Node) =>
+  walk(cell).filter((n) => /data-testid="ent-lead-row"/.test(n.attrs));
+
+/** A side card's rung: the `auto 1fr auto` grid row the side branch prints. */
+const sideRows = (cell: Node) =>
+  walk(cell).filter((n) => styleOf(n)["grid-template-columns"] === "auto 1fr auto");
+
+describe("#7382 — the desktop lead shows more of its own field", () => {
+  it("ARM 1: the lead renders six of eight `lead_outcomes`, in served order", () => {
+    const lead = renderHero().children[0];
+    expect(leadRows(lead)).toHaveLength(6);
+    // Each row's own markup, in document order: row i names served rung i.
+    const html = renderToStaticMarkup(React.createElement(EntertainmentPage));
+    // Each row's raw markup; a rung name is plain text inside one span.
+    const segments = html.split('data-testid="ent-lead-row"').slice(1);
+    expect(segments).toHaveLength(6);
+    OSCAR.slice(0, 6).forEach((o, i) => expect(segments[i]).toContain(o.name));
+    // The rows consume the scale the stylesheet sets per breakpoint (ARM 5);
+    // a fixed number or bar size here would ignore both the desktop and the
+    // narrow values.
+    for (const seg of segments) {
+      expect(seg).toContain("font-size:var(--ent-lead-pct, 12px)");
+      expect(seg).toContain("height:var(--ent-lead-bar, 4px)");
+    }
+    expect(html).not.toContain("Seventh Rung");
+    expect(html).not.toContain("Eighth Rung");
+  });
+
+  it("ARM 2: rungs 4–6 are marked narrow-hidden, rungs 1–3 never are", () => {
+    const rows = leadRows(renderHero().children[0]);
+    expect(rows.map((r) => /leadRowExtra/.test(classOf(r)))).toEqual([
+      false, false, false, true, true, true,
+    ]);
+  });
+
+  it("ARM 3: every side card renders three `top_outcomes` rungs, never `lead_outcomes`", () => {
+    const grid = renderHero();
+    for (const cell of grid.children.slice(1)) {
+      expect(leadRows(cell)).toHaveLength(0);
+      expect(sideRows(cell)).toHaveLength(3);
+    }
+    const html = renderToStaticMarkup(React.createElement(EntertainmentPage));
+    expect(html).toContain("Side 3");
+    expect(html).not.toContain("Side 4");
+    expect(html).not.toContain("Lead-only");
+  });
+
+  it("ARM 4: a sparse lead prints what it has — no pad, no extra marker", () => {
+    const three = leadRows(
+      renderHero(market({ outcome_count: 3, lead_outcomes: OSCAR.slice(0, 3) })).children[0],
+    );
+    expect(three).toHaveLength(3);
+    expect(three.some((r) => /leadRowExtra/.test(classOf(r)))).toBe(false);
+
+    const four = leadRows(
+      renderHero(market({ outcome_count: 4, lead_outcomes: OSCAR.slice(0, 4) })).children[0],
+    );
+    expect(four).toHaveLength(4);
+
+    // A one-leg contract keeps the binary body; it never becomes a rung list.
+    const binary = renderHero(
+      market({
+        kind: "binary",
+        outcome_count: 1,
+        prob: 51,
+        top_outcomes: [{ name: "Yes", prob: 51, delta_24h: 0 }],
+        lead_outcomes: [{ name: "Yes", prob: 51, delta_24h: 0 }],
+      }),
+    ).children[0];
+    expect(leadRows(binary)).toHaveLength(0);
+  });
+
+  it("ARM 6: without a usable `lead_outcomes` the lead prints the shared rungs", () => {
+    // An older server or a stale cache: no key at all.
+    const older = leadRows(renderHero(market({ lead_outcomes: undefined })).children[0]);
+    expect(older).toHaveLength(3);
+    expect(older.some((r) => /leadRowExtra/.test(classOf(r)))).toBe(false);
+
+    // A key shorter than the shared field is not trusted over it.
+    const short = renderHero(market({ lead_outcomes: OSCAR.slice(0, 2) })).children[0];
+    expect(leadRows(short)).toHaveLength(3);
+    const html = renderToStaticMarkup(React.createElement(EntertainmentPage));
+    expect(html).toContain("The Black Ball");
+  });
+});
+
+describe("#7382 ARM 7 — the two desktop columns stay balanced", () => {
+  const rowsVar = (lead: EntMarketRow) => {
+    const cell = renderHero(lead).children[0];
+    const list = walk(cell).find((n) => /data-testid="ent-lead-rows"/.test(n.attrs)) as Node;
+    expect(list).toBeTruthy();
+    return styleOf(list)["--ent-lead-rows"];
+  };
+
+  it("sets half the printed rungs, rounded up", () => {
+    expect(rowsVar(market())).toBe("3"); // eight served, six printed
+    expect(rowsVar(market({ outcome_count: 5, lead_outcomes: OSCAR.slice(0, 5) }))).toBe("3");
+    expect(rowsVar(market({ outcome_count: 4, lead_outcomes: OSCAR.slice(0, 4) }))).toBe("2");
+    expect(rowsVar(market({ outcome_count: 3, lead_outcomes: OSCAR.slice(0, 3) }))).toBe("2");
+    expect(rowsVar(market({ lead_outcomes: undefined }))).toBe("2"); // shared three
+  });
+});
+
+describe("#7382 ARM 5 — narrow widths keep the card they had", () => {
+  const CSS = fs
+    .readFileSync(path.join(__dirname, "..", "app", "entertainment", "entertainment.module.css"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+
+  function body(selector: string, scope: string): string {
+    const re = new RegExp(`(^|[},])\\s*([^{}]*?\\${selector}(?![\\w-])[^{}]*?)\\{`, "m");
+    const m = re.exec(scope);
+    if (!m) throw new Error(`#7382 guard: no rule for "${selector}"`);
+    const open = scope.indexOf("{", m.index + m[1].length);
+    return scope.slice(open + 1, scope.indexOf("}", open));
+  }
+
+  function narrowBlock(): string {
+    const at = CSS.indexOf("@media (max-width: 900px)");
+    expect(at).toBeGreaterThan(-1);
+    const open = CSS.indexOf("{", at);
+    let depth = 0;
+    for (let i = open; i < CSS.length; i++) {
+      if (CSS[i] === "{") depth++;
+      else if (CSS[i] === "}" && --depth === 0) return CSS.slice(open + 1, i);
+    }
+    throw new Error("unbalanced 900px block");
+  }
+
+  const decl = (b: string, prop: string) =>
+    (new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`).exec(b) || [])[1]?.trim();
+
+  it("hides rungs 4–6 at <=900px", () => {
+    expect(decl(body(".leadRowExtra", narrowBlock()), "display")).toBe("none");
+  });
+
+  it("restores the side cards' 12px number, 4px bar, 6px gap and 12px name there", () => {
+    const rows = body(".leadRows", narrowBlock());
+    expect(decl(rows, "--ent-lead-pct")).toBe("12px");
+    expect(decl(rows, "--ent-lead-bar")).toBe("4px");
+    expect(decl(rows, "gap")).toBe("6px");
+    expect(decl(body(".leadRowName", narrowBlock()), "font-size")).toBe("12px");
+  });
+
+  it("restores the single-column list and the side cards' row there", () => {
+    const rows = body(".leadRows", narrowBlock());
+    expect(decl(rows, "display")).toBe("flex");
+    expect(decl(rows, "flex-direction")).toBe("column");
+    expect(decl(body(".leadRow", narrowBlock()), "grid-template-columns")).toBe("auto 1fr auto");
+  });
+
+  it("the desktop rule is the lead scale in two column-major columns, outside any media block", () => {
+    const top = CSS.slice(0, CSS.indexOf("@media"));
+    const desk = body(".leadRows", top);
+    expect(decl(desk, "--ent-lead-pct")).toBe("14px");
+    expect(decl(desk, "--ent-lead-bar")).toBe("6px");
+    expect(decl(desk, "display")).toBe("grid");
+    expect(decl(desk, "grid-template-columns")).toBe("repeat(2, minmax(0, 1fr))");
+    expect(decl(desk, "grid-template-rows")).toBe("repeat(var(--ent-lead-rows, 3), auto)");
+    expect(decl(desk, "grid-auto-flow")).toBe("column");
+    expect(decl(desk, "row-gap")).toBe("10px");
+    // A long name may wrap, but never squeezes its bar below 56px.
+    expect(decl(body(".leadRow", top), "grid-template-columns")).toBe(
+      "minmax(0, max-content) minmax(56px, 1fr) auto",
+    );
+  });
+});

@@ -146,7 +146,26 @@ final class CompactEventPriceStatusTests: XCTestCase {
         XCTAssertTrue(body.contains("minHeight:44"), "the 44pt tap target")
         XCTAssertTrue(body.contains(".popover(isPresented:$showProbabilityDetails,arrowEdge:.top){FreshnessRevealView(status:vm.liveUpdateStatus,lastReceivedAt:vm.priceActivity?.receivedAt"))
         XCTAssertTrue(body.contains("LivePriceReceiptCue.accessibilityText(status:vm.liveUpdateStatus"))
-        XCTAssertTrue(body.contains(".accessibilityHint(\"Showsconnectionstatusandwhenthelastprobabilityupdatereachedthisphone\")"))
+        // #11296 — the hint is decided by the same forecast the popover reads.
+        XCTAssertTrue(body.contains(".accessibilityHint(Self.probabilityDetailsHint(forecastShown:revealForecast11296!=nil))"))
+        XCTAssertTrue(body.contains("forecast:revealForecast11296)"), "the popover reads the same forecast")
+    }
+
+    /// #11296 — without a forecast the hint is today's delivery sentence, byte
+    /// for byte; with one it says the popover also holds the forecast's
+    /// sportsbooks and times, and keeps the delivery half.
+    func testTheHintNamesTheForecastDetailsOnlyWhenThePopoverCarriesThem() {
+        let delivery = "Shows connection status and when the last probability update reached this phone"
+        XCTAssertEqual(EventDetailView.probabilityDetailsHint(forecastShown: false), delivery)
+        let withForecast = EventDetailView.probabilityDetailsHint(forecastShown: true)
+        XCTAssertNotEqual(withForecast, delivery)
+        XCTAssertTrue(withForecast.hasPrefix("Shows connection status, when the last probability update reached this phone, and "),
+                      "the delivery half stays: \(withForecast)")
+        XCTAssertTrue(withForecast.contains("sportsbooks") && withForecast.contains("times")
+                      && withForecast.contains("projected scores"), withForecast)
+        for word in ["bookmaker", " books", "eceived", "kickoff", "tip-off"] {
+            XCTAssertFalse(withForecast.contains(word), "'\(word)' in: \(withForecast)")
+        }
     }
 
     func testTheLeafHasNoButtonNoClockAndNoLoop() throws {

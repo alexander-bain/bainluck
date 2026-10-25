@@ -3,6 +3,7 @@
 // D1 binds: probabilities only, never odds.
 
 import { renderedOutcomeRowPercents } from "./renderedPercent";
+import { isSettlementPoint, splitSettlementPoints } from "./chartSettlementPoints";
 import type {
   EventConceptCompetitor,
   EventConceptChild,
@@ -655,11 +656,14 @@ export function seriesFromCompetitor(c: EventConceptCompetitor): number[] {
 
 /** The latest (most recent) non-null probability in an outcome's history, or -1
  *  when it has none. Walks from the end so sparse tails don't hide the last real
- *  price. */
+ *  price. #10955: a settlement point is the result, not a reading, so it is
+ *  skipped — every evidenced loser's 0 would otherwise tie and hand the order
+ *  back to the endpoint. */
 export function latestOutcomeProb(o: FuturesOutcomeHistory): number {
   for (let i = o.history.length - 1; i >= 0; i--) {
-    const p = o.history[i]?.probability;
-    if (p != null) return p;
+    const point = o.history[i];
+    if (!point || isSettlementPoint(point)) continue;
+    if (point.probability != null) return point.probability;
   }
   return -1;
 }
@@ -672,8 +676,12 @@ export function latestOutcomeProb(o: FuturesOutcomeHistory): number {
 export function outcomesByLatestProb(
   outcomes: FuturesOutcomeHistory[],
 ): FuturesOutcomeHistory[] {
+  // #10955: an evidenced winner leads AS A RESULT — an upset winner whose last
+  // real price was low must never fall out of the drawn set.
+  const { results } = splitSettlementPoints(outcomes || []);
+  const won = (o: FuturesOutcomeHistory) => (results.get(o.outcome_id) === "won" ? 1 : 0);
   return [...(outcomes || [])].sort(
-    (a, b) => latestOutcomeProb(b) - latestOutcomeProb(a),
+    (a, b) => won(b) - won(a) || latestOutcomeProb(b) - latestOutcomeProb(a),
   );
 }
 
@@ -1130,11 +1138,43 @@ export function conceptCountdownHeadline(
   return null;
 }
 
+const AWARDS_SETTLING_VENUE_LABELS: Record<string, string> = {
+  kalshi: "Result source · Kalshi",
+  polymarket: "Result source · Polymarket",
+};
+
 // #5349: trading closed is not a category announcement. Read only own grades;
 // never the price-ranked leader or a standalone convenience winner string.
-export function awardsResult(child: EventConceptChild): { state: "announced" | "closed" | "pending"; names: string[]; prop: boolean } {
-  const names = Array.from(new Set((child.outcomes ?? []).filter((outcome) => outcome.won === true && outcome.name.trim()).map((outcome) => outcome.name.trim())));
-  return { state: names.length ? "announced" : child.settled === true ? "closed" : "pending", names, prop: child.kind === "prop" };
+export function awardsResult(child: EventConceptChild): {
+  state: "announced" | "closed" | "pending";
+  names: string[];
+  prop: boolean;
+  nominations: boolean;
+  settledByLabel: string | null;
+} {
+  const names = Array.from(
+    new Set(
+      (child.outcomes ?? [])
+        .filter((outcome) => outcome.won === true && outcome.name.trim())
+        .map((outcome) => outcome.name.trim()),
+    ),
+  );
+  const state: "announced" | "closed" | "pending" = names.length
+    ? "announced"
+    : child.settled === true
+      ? "closed"
+      : "pending";
+  const prop = child.kind === "prop";
+  const nominations = prop && child.prop_type === "nominations";
+  const venueKey =
+    state === "announced" &&
+    child.result?.state === "announced" &&
+    child.result?.evidence_kind === "venue_settlement" &&
+    typeof child.result?.venue === "string"
+      ? child.result.venue.trim().toLowerCase()
+      : "";
+  const settledByLabel = venueKey ? (AWARDS_SETTLING_VENUE_LABELS[venueKey] ?? null) : null;
+  return { state, names, prop, nominations, settledByLabel };
 }
 
 export function awardsRefreshInterval(latest: { event?: { domain?: string; key?: string; status?: string | null; end_date?: string | null }; children?: EventConceptChild[] } | null | undefined, openedAt: number, now = Date.now(), routeKey?: string): number {

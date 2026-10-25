@@ -11,6 +11,7 @@ const SCORE = new Date(NOW - 60_000).toISOString();
 let eventPayload: ReturnType<typeof event>;
 let blendPreview: BlendPreviewState | null;
 let blendPreviewNow: number;
+let historyPayload: { aggregate_line: { timestamp: string; home_probability: number }[] } | undefined;
 function event() {
   return {
     id: ID, sport: "americanfootball_nfl", sport_key: "americanfootball_nfl",
@@ -37,7 +38,7 @@ function preview(clock: unknown = OBSERVED, p = .601) {
 jest.mock("swr", () => ({
   __esModule: true,
   default: (key: unknown) => ({
-    data: Array.isArray(key) && key[0] === "event" ? eventPayload : undefined,
+    data: Array.isArray(key) ? key[0] === "event" ? eventPayload : key[0] === "history" ? historyPayload : undefined : undefined,
     error: undefined, isLoading: false, mutate: () => undefined,
   }),
 }));
@@ -64,12 +65,15 @@ function draw() {
 function priceDetails(html: string) {
   return html.match(/Probability observed<\/dt><dd>(.*?)<\/dd>/)![1];
 }
+function deliveryWords(html: string) {
+  return html.match(/Current probability delivery<\/dt><dd>(.*?)<\/dd>/)?.[1];
+}
 function scoreDetails(html: string) {
   return html.match(/Score confirmed<\/dt><dd>(.*?)<\/dd>/)?.[1];
 }
 beforeEach(() => {
   jest.spyOn(Date, "now").mockReturnValue(NOW);
-  eventPayload = event(); blendPreview = null; blendPreviewNow = NOW;
+  eventPayload = event(); blendPreview = null; blendPreviewNow = NOW; historyPayload = undefined;
 });
 afterEach(() => jest.restoreAllMocks());
 
@@ -79,7 +83,14 @@ test("the real page reports the displayed preview observation before any commit,
   blendPreview = preview();
   const after = draw();
   expect(before).toContain('data-probability="0.6"');
+  expect(before).toContain('data-observation-delivery="committed"');
+  expect(before).toContain('data-observation-count="1"');
+  expect(deliveryWords(before)).toBe("Published update");
   expect(after).toContain('data-probability="0.601"');
+  expect(after).toContain('data-observation-delivery="dnpl"');
+  expect(after).toContain(`data-observation-at="${OBSERVED}"`);
+  expect(deliveryWords(after)).toBe("Live preview");
+  expect(after).toContain(`data-observation-event-id="${ID}"`);
   expect(before.match(/data-hero-digits="">([^<]+)/g)).toEqual(after.match(/data-hero-digits="">([^<]+)/g));
   expect(after).toContain('data-hero-digits="">60</span>');
   expect(priceDetails(after)).toContain(`dateTime="${OBSERVED}"`);
@@ -98,6 +109,9 @@ test.each([null, "", "bad-time", 42])("an admitted preview with unknown clock %p
   const html = draw();
   expect(priceDetails(html)).toBe("<span>Time unavailable</span>");
   expect(html).not.toContain("Oldest on screen");
+  expect(html).toContain('data-observation-at=""');
+  expect(html).toContain('data-observation-count="0"');
+  expect(html).toContain('data-observation-delivery="dnpl"');
 });
 
 test.each(["expiry", "reset", "newer commit", "terminal", "wrong event", "wrong status", "folded hero", "non-blend"])("%s restores the committed observation clock with committed truth", reason => {
@@ -114,5 +128,82 @@ test.each(["expiry", "reset", "newer commit", "terminal", "wrong event", "wrong 
   // A cold final page has no connection control; its final hero is the answer.
   // The mounted live -> final transition is covered by the real stream test.
   if (reason === "terminal") expect(html).not.toContain("Probability observed");
-  else expect(priceDetails(html)).toContain(`dateTime="${COMMITTED}"`);
+  else if (reason === "non-blend") {
+    expect(priceDetails(html)).toBe("<span>Time unavailable</span>");
+    expect(html).toContain('data-observation-delivery="unknown"');
+    expect(html).toContain('data-observation-at=""');
+    expect(html).toContain('data-observation-count="0"');
+    expect(html).not.toContain("Oldest on screen");
+  } else {
+    expect(priceDetails(html)).toContain(`dateTime="${COMMITTED}"`);
+    expect(html).toContain('data-observation-delivery="committed"');
+  }
+});
+
+
+test("a folded redirect counts the displayed canonical observation under the URL page session", () => {
+  eventPayload.id = ID + 1;
+  const html = draw();
+  expect(html).toContain('data-observation-count="1"');
+  expect(html).toContain(`data-observation-event-id="${ID}"`);
+  expect(html).toContain(`data-observation-at="${COMMITTED}"`);
+});
+
+test("a missing event renders no observation counter", () => {
+  eventPayload = undefined as unknown as ReturnType<typeof event>;
+  expect(draw()).not.toContain('data-observation-count');
+});
+
+
+test("unchanged history selection never borrows advancing source clocks or counts them as observations", () => {
+  eventPayload.hero_probability_source = "opening";
+  historyPayload = { aggregate_line: [{ timestamp: COMMITTED, home_probability: .6 }] };
+  for (const clock of [COMMITTED, OBSERVED, new Date(NOW).toISOString()]) {
+    eventPayload.hero_probability_observed_at = clock;
+    eventPayload.win_probability_sources.kalshi.updated_at = clock;
+    const html = draw();
+    expect(html).toContain('data-probability="0.6"');
+    expect(priceDetails(html)).toBe("<span>Time unavailable</span>");
+    expect(html).toContain('data-observation-at=""');
+    expect(html).toContain('data-observation-count="0"');
+    expect(html).toContain('data-observation-delivery="unknown"');
+    expect(html).not.toContain("Oldest on screen");
+  }
+});
+
+// Reader words only; the typed state, its data attribute and the capture tool
+// that reads it are unchanged. Receipts recorded before the wording change
+// printed "DNPL active" / "Committed delivery" for these same two states.
+test("the delivery row names each unchanged state in reader words", () => {
+  const committed = draw();
+  blendPreview = preview();
+  const dnpl = draw();
+  eventPayload.hero_probability_source = "opening"; blendPreview = null;
+  const unknown = draw();
+  expect(committed).toContain('data-observation-delivery="committed"');
+  expect(deliveryWords(committed)).toBe("Published update");
+  expect(dnpl).toContain('data-observation-delivery="dnpl"');
+  expect(deliveryWords(dnpl)).toBe("Live preview");
+  expect(unknown).toContain('data-observation-delivery="unknown"');
+  expect(deliveryWords(unknown)).toBe("Delivery unknown");
+  for (const html of [committed, dnpl, unknown]) {
+    expect(html).not.toMatch(/DNPL|Committed delivery/);
+  }
+});
+
+// Reader words only: the count is the hook's unchanged visit count (first
+// displayed reading plus strictly newer clocks), not the plotted history, so
+// the label says "this visit". The data attribute and its value are unchanged.
+test("the counter row says its count covers this visit, beside the unchanged count", () => {
+  const counterRow = (html: string) => html.match(/Readings shown this visit<\/dt><dd>(.*?)<\/dd>/)?.[1];
+  const committed = draw();
+  blendPreview = preview(null, .7);
+  const unknownClock = draw();
+  expect(committed).toContain('data-observation-count="1"');
+  expect(counterRow(committed)).toBe("1 · first reading plus newer updates");
+  expect(unknownClock).toContain('data-observation-count="0"');
+  expect(counterRow(unknownClock)).toBe("0 · first reading plus newer updates");
+  for (const html of [committed, unknownClock]) {
+    expect(html).not.toMatch(/Observations shown|first \+ newer times/);
+  }
 });

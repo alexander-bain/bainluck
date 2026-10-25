@@ -96,11 +96,18 @@ STEP_ENV_KEYS = {
         "owes, never via an old price (real Postgres + Redis)",
     ): {"PM_WITHDRAWAL_REDIS_URL"},
     # #10090 attempt151's ported controls: loopback redis:7 db 11; no secret.
+    # F3's capacity case reuses the job's bl_searchtest under its own random
+    # schema (created and dropped by the case); no secret.
     (
         "database-integration",
         "#10090 a held page receives the last committed price after a "
         "publication outage, without a new venue tick (real Postgres + Redis)",
-    ): {"PM_WITHDRAWAL_REDIS_URL"},
+    ): {"PM_WITHDRAWAL_REDIS_URL", "BLEND_DEADLOCK_DATABASE_URL"},
+    (
+        "database-integration",
+        "#10090 a lock-held KALSHI price row stamps the received quote; "
+        "a restart cannot undo it (real Postgres)",
+    ): {"EVENT_FRAME_REDIS_SERVER", "EVENT_FRAME_REDIS_REQUIRED"},
     ("search-recall", "Every database integration group passed"): {
         "SCOPE_RESULT",
         "INTEGRATION_RESULT",

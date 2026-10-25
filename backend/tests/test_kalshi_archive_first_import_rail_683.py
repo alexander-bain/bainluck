@@ -1253,6 +1253,24 @@ class _HeldClock:
             self.held_at = time.monotonic()
 
 
+def _record_walls(monkeypatch) -> list:
+    """Every OperationWall the CLI builds, unchanged: real clock, real alarm."""
+    walls: list = []
+
+    class SeenWall(bounds.OperationWall):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            walls.append(self)
+
+    monkeypatch.setattr(bounds, "OperationWall", SeenWall)
+    return walls
+
+
+def _full_collections() -> int:
+    """Full (generation-2) collections this process has run. Read only."""
+    return gc.get_stats()[2]["collections"]
+
+
 class TestCommitAcknowledgement:
     async def test_a_lost_create_import_ack_stops_and_claims_nothing(self):
         report = await _a_plan()
@@ -1371,24 +1389,46 @@ class TestCommitAcknowledgement:
             return real_fsync(fd)
 
         monkeypatch.setattr(bounds.os, "fsync", slow_fsync)
+        walls = _record_walls(monkeypatch)
+        cancelled_at = []
 
         async def hang():
-            await asyncio.sleep(10)
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled_at.append(time.monotonic())
+                raise
 
         mod = _load_script("kalshi_archive_import.py")
         deadline = 0.8
-        t0 = time.monotonic()
-        code = mod.main(
-            [
-                "apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
-                "--max-outcomes", "1", "--max-points", "26", "--deadline", str(deadline),
-                *_attended_argv(tmp_path, report), "--write", "--output", str(out),
-            ],
-            session_factory=_factory(_CommitSession(hang)),
-        )
-        elapsed = time.monotonic() - t0
+        # The wall stays real (no held clock): only the pytest heap's full
+        # collection is kept out of the receipt slice, which is what took
+        # +0.09-0.11 s from this case and two 0.8 s siblings in PR #11504's CI.
+        with _a_collection_scans_only_the_cli():
+            full_before = _full_collections()
+            t0 = time.monotonic()
+            code = mod.main(
+                [
+                    "apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
+                    "--max-outcomes", "1", "--max-points", "26", "--deadline", str(deadline),
+                    *_attended_argv(tmp_path, report), "--write", "--output", str(out),
+                ],
+                session_factory=_factory(_CommitSession(hang)),
+            )
+            elapsed = time.monotonic() - t0
+            full_during = _full_collections() - full_before
         assert code == 3 and elapsed < deadline + 0.15
-        summary = json.loads(capsys.readouterr().out)
+        # Precondition: one real 0.8 s wall, and the COMMIT was cancelled no
+        # sooner than its work deadline (1 ms: the loop's timer tolerance).
+        (wall,) = walls
+        assert wall.seconds == deadline
+        assert len(cancelled_at) == 1 and cancelled_at[0] >= wall.work_deadline - 1e-3
+        console = capsys.readouterr().out
+        assert console, (
+            f"no console receipt after {elapsed:.3f}s; R.json present {out.exists()}; "
+            f"full collections during the call {full_during} (frozen heap)"
+        )
+        summary = json.loads(console)
         assert summary["stopped"] == "wall_expired:create_import"
         assert summary["uncertain_commits"][-1]["error"] == "acknowledgement_not_received"
         assert summary["readback_owed"]["never"] == [
@@ -1566,10 +1606,18 @@ def _a_collection_scans_only_the_cli():
     the wall's ``SIGALRM``, and it lands where the CLI allocates: after the idle
     wait, inside the 0.8 s wall's receipt slice (work ends 0.72 s, artifact
     sealed by 0.78 s). Missing R.json in CI (#683) is that shape. ``gc.freeze``
-    moves what exists now into the permanent generation. It runs no collection
-    and prevents none: the CLI's own allocations are collected as in a fresh
-    attended process.
+    moves what exists now into the permanent generation. It prevents no
+    collection: the CLI's own allocations are collected as in a fresh attended
+    process.
+
+    One collection runs first, before the caller starts its clock. It settles
+    the heap's pending promotions, so no full collection falls due inside the
+    frozen window or just after it. One inside would be cheap, but CPython
+    would then size the old generation by the few objects it scanned, and the
+    next full collection, over the whole unfrozen heap, would fall due within
+    about ten young collections: inside a sibling's wall.
     """
+    gc.collect()
     gc.freeze()
     try:
         yield
@@ -1692,27 +1740,68 @@ class TestConsoleInsideTheWall:
     def test_a_line_written_while_working_cannot_hold_the_import_past_the_wall(
         self, tmp_path, capsys, monkeypatch, slow_console, delay
     ):
-        """A log line mid-operation is bounded by the work deadline, leaving the reserve."""
+        """A log line mid-operation is bounded by the work deadline, leaving the reserve.
+
+        The wall's clock holds still from the instant the line is written
+        (``_HeldClock``). The line is still cut on real time: the console's
+        alarm is armed for the real rest of the work slice, so a stalled sink
+        returns at the real work deadline, and the cut is asserted on both
+        sides. What the hold removes is the race this case never meant to
+        test: the receipt file had to be sealed in the 60 ms between the cut
+        (0.72 s) and ``artifact_deadline`` (0.78 s), against a real alarm, and
+        a runner that stalled ~80 ms after the cut lost R.json (#11582).
+        Writing the receipt inside the wall on real time is
+        ``test_import_cli_timeout_receipt_is_written_inside_the_wall``'s job.
+        """
         slow_console.update(delay=delay, prefix="PROGRESS")
+        returned_at = []
+        clock = _HeldClock()
+        walls = []
+        real_wall = bounds.OperationWall
+
+        def held_wall(seconds, **kw):
+            walls.append(real_wall(seconds, monotonic=clock, **kw))
+            return walls[-1]
 
         async def fake_apply(report, **kw):
+            clock.hold()
             print("PROGRESS one outcome", file=sys.stderr)
+            returned_at.append(time.monotonic())
             return {"status": "applied", "import_key": "k", "committed_outcomes": [{"outcome_id": 7}]}
 
         monkeypatch.setattr(imp, "apply_archive_plan", fake_apply)
+        monkeypatch.setattr(bounds, "OperationWall", held_wall)
         plan = tmp_path / "P.json"
         plan.write_text("{}")
         out = tmp_path / "R.json"
-        t0 = time.monotonic()
-        code = _load_script("kalshi_archive_import.py").main(
-            [
-                "apply", "--plan", str(plan), "--expected-digest", "d", "--max-outcomes", "1",
-                "--max-points", "1", "--deadline", "0.8", "--output", str(out),
-            ]
+        # Real alarm; only the pytest heap's full collection is kept out of the
+        # cut (a C-level collection defers the SIGALRM; see the timeout-receipt case).
+        with _a_collection_scans_only_the_cli():
+            full_before = _full_collections()
+            t0 = time.monotonic()
+            code = _load_script("kalshi_archive_import.py").main(
+                [
+                    "apply", "--plan", str(plan), "--expected-digest", "d", "--max-outcomes", "1",
+                    "--max-points", "1", "--deadline", "0.8", "--output", str(out),
+                ]
+            )
+            elapsed = time.monotonic() - t0
+            full_during = _full_collections() - full_before
+        (wall,) = walls
+        assert wall.seconds == 0.8 and len(returned_at) == 1 and clock.held_at is not None
+        assert out.exists(), (  # the reserve was left for the artifact
+            f"no artifact after {elapsed:.3f}s (exit {code}); the line returned "
+            f"{returned_at[0] - wall.started:.3f}s into the wall; "
+            f"full collections during the call {full_during} (frozen heap)"
         )
-        elapsed = time.monotonic() - t0
-        assert out.exists()  # the reserve was left for the artifact
         if delay:
+            # The stalled line was cut AT the work deadline: not before it, and
+            # by the work deadline's alarm, not the hard deadline's, which
+            # cannot fire before ``deadline`` (1 ms: the alarm's tolerance).
+            assert wall.work_deadline - 1e-3 <= returned_at[0] < wall.deadline - 1e-3, (
+                f"the line returned {returned_at[0] - wall.started:.3f}s into the wall; "
+                f"full collections during the call {full_during} (frozen heap)"
+            )
             assert code == 3 and elapsed < 0.8 + 0.15
             assert capsys.readouterr().out == ""  # a lost console is not tried again
         else:
@@ -1734,9 +1823,10 @@ class TestConsoleInsideTheWall:
         argv = PROFILE[: PROFILE.index("--deadline") + 1] + ["1.0"] + PROFILE[
             PROFILE.index("--deadline") + 2 :
         ]
-        t0 = time.monotonic()
-        code, _ = planner_cli(argv + ["--output", str(out)], handler=handler)
-        elapsed = time.monotonic() - t0
+        with _a_collection_scans_only_the_cli():
+            t0 = time.monotonic()
+            code, _ = planner_cli(argv + ["--output", str(out)], handler=handler)
+            elapsed = time.monotonic() - t0
         assert out.exists()
         if delay:
             assert code == 3 and elapsed < 1.0 + 0.15

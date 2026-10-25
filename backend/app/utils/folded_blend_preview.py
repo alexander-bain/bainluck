@@ -53,8 +53,8 @@ class FoldedPreviewBase:
                 and all(key in keys and _revision(value) and self.revision[key] >= value
                         for key, value in floors.items()))
 
-    def project(self, frame, *, members, floors, elapsed_ms=0):
-        """Replace only the already elected source owner's exact pending entry.
+    def pending_entries(self, frame, *, members, floors, elapsed_ms=0, split_origins=False):
+        """Project exact pending entries from one already elected origin event.
 
         The route supplies observed commit floors and elapsed time since receipt.
         No projection/retry creates a fresh sequence or extends its lifetime.
@@ -65,7 +65,7 @@ class FoldedPreviewBase:
         origin = frame.get("event_id")
         source = frame.get("source")
         if (type(origin) is not int or origin <= 0 or source not in PREVIEW_SOURCES
-                or self.owners.get(source) != origin or str(origin) not in self.revision
+                or str(origin) not in self.revision
                 or frame.get("status") != self.context["status"]
                 or self.context["status"] not in PREVIEW_STATUSES
                 or not isinstance(preview, dict) or preview.get("kind") != "blend"):
@@ -79,58 +79,96 @@ class FoldedPreviewBase:
         if ttl <= 0:
             return None
         entries, pending = preview.get("pending_entries"), preview.get("pending")
-        if (type(preview.get("pending_entries_version")) is not int
-                or preview["pending_entries_version"] != 1
-                or not isinstance(entries, dict) or set(entries) != {source}
-                or not isinstance(pending, dict) or set(pending) != {source}):
+        version = preview.get("pending_entries_version")
+        if (type(version) is not int or not isinstance(entries, dict) or not entries
+                or not isinstance(pending, dict) or set(entries) != set(pending)
+                or not set(entries) <= PREVIEW_SOURCES
+                or any(self.owners.get(name) != origin for name in entries)):
             return None
-        entry = entries[source]
-        value = pending[source]
-        if (not isinstance(entry, dict) or type(value) not in (int, float)
-                or not math.isfinite(value) or not 0 <= value <= 1
-                or entry.get("value") != value or entry.get("observed_value") != value
-                or frame.get("source_value") != value):
-            return None
-        basis = entry.get("observed_basis")
-        observed = _basis_observation_time(basis)
-        if (observed is None or not isinstance(entry.get("updated_at"), str)
-                or reading_regresses_stored_observation(self.sources, source, basis)):
-            return None
-        try:
-            if datetime.fromisoformat(entry["updated_at"]).utcoffset() is None:
+        if version == 1:
+            if set(entries) != {source}:
                 return None
-        except ValueError:
+        elif version == 2:
+            if (preview.get("pending_entries_authority") != "event-ledger-v1"
+                    or (not split_origins and any(
+                        owner != origin for name, owner in self.owners.items()
+                        if name in PREVIEW_SOURCES))):
+                # Even a one-entry frame must refuse a split-origin page:
+                # otherwise alternating one-entry frames would mix independent
+                # event generations in the reader's single ordering domain.
+                return None
+        else:
             return None
-        try:
-            # Refuse malformed legacy metadata, without repairing the evidence.
-            entry = json.loads(json.dumps(entry, allow_nan=False))
-        except (TypeError, ValueError):
+        # A settle can publish its still-pending sibling. The frame's source
+        # stays the publisher (and therefore its fenced owner claim); its
+        # legacy source_value describes the remaining mover in that case.
+        mover = source if source in entries else next(iter(entries))
+        if frame.get("source_value") != pending[mover]:
             return None
-        sources = {**self.sources, source: entry}
+        copied_entries, observed_times = {}, {}
+        for name, entry in entries.items():
+            value = pending[name]
+            if (not isinstance(entry, dict) or type(value) not in (int, float)
+                    or not math.isfinite(value) or not 0 <= value <= 1
+                    or entry.get("value") != value or entry.get("observed_value") != value):
+                return None
+            basis = entry.get("observed_basis")
+            observed = _basis_observation_time(basis)
+            if (observed is None or not isinstance(entry.get("updated_at"), str)
+                    or reading_regresses_stored_observation(self.sources, name, basis)):
+                return None
+            try:
+                if datetime.fromisoformat(entry["updated_at"]).utcoffset() is None:
+                    return None
+                # Refuse malformed metadata without repairing its evidence.
+                copied_entries[name] = json.loads(json.dumps(entry, allow_nan=False))
+            except (TypeError, ValueError):
+                return None
+            observed_times[name] = observed
+        return copied_entries, observed_times, ttl
+
+    def compose(self, copied_entries, observed_times):
+        """Resolve a validated complete pending set against this committed fold."""
+        sources = {**self.sources, **copied_entries}
         context = SimpleNamespace(**self.context)
         hero = resolve_hero(FoldedBlendView(context, sources))
         if hero is None or hero.source != "blend":
             return None
-        clock_sources = {**sources, source: {**entry, "updated_at": observed.isoformat()}}
+        clock_sources = {**sources, **{
+            name: {**entry, "updated_at": observed_times[name].isoformat()}
+            for name, entry in copied_entries.items()
+        }}
         clock = newest_source_reading_time(
             FoldedBlendView(context, clock_sources), require_complete=True,
         )
         result = {
-            **frame, "event_id": self.event_id,
+            "event_id": self.event_id, "status": self.context["status"],
             "p": hero.home_probability,
             "p_away": printable_away(hero.away_probability, hero.home_probability, self.sport),
             "sport": self.sport,
             "display_observed_at": clock.isoformat() if clock else None,
-            "preview": {
-                **preview, "origin_event_id": origin, "folded_version": 1,
-                "base_fold_revision": dict(self.revision), "ttl_ms": ttl,
-            },
         }
         try:
             json.dumps(result, allow_nan=False)
         except (TypeError, ValueError):
             return None
         return result
+
+    def project(self, frame, *, members, floors, elapsed_ms=0):
+        entries = self.pending_entries(frame, members=members, floors=floors,
+                                       elapsed_ms=elapsed_ms)
+        if entries is None:
+            return None
+        copied, observed, ttl = entries
+        result = self.compose(copied, observed)
+        if result is None:
+            return None
+        return {**frame, **result, "preview": {
+            **frame["preview"], "origin_event_id": frame["event_id"],
+            "folded_version": 1, "base_fold_revision": dict(self.revision),
+            "ttl_ms": ttl,
+        }}
+
 
 
 class QuoteWithPreviewBase(dict):

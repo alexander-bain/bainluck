@@ -215,7 +215,7 @@ let readsIssued = 0;
 const closedBelow = new Map<string, number>();
 export const openCollectionRead = (): number => ++readsIssued;
 export const collectionReadAdmitted = (slug: string, ticket: number): boolean => ticket >= (closedBelow.get(slug) ?? 0);
-export const forgetAcceptedCollections = (): void => { acceptedHubs.clear(); closedBelow.clear(); };
+export const forgetAcceptedCollections = (): void => { acceptedHubs.clear(); closedBelow.clear(); drawnWeekNavigation.clear(); };
 const accept = (slug: string, hub: CollectionHub): CollectionHub => {
   acceptedHubs.delete(slug);
   if (hub.slug === slug && hub.state === "published") {
@@ -247,7 +247,16 @@ function combine(earlier: CollectionHub, later: CollectionHub, nextCursor: strin
     if (last?.cls === section.cls) sections[sections.length - 1] = { ...last, members: [...last.members, ...add] };
     else sections.push({ ...section, key: `${sections.length}:${section.cls}`, members: add });
   }
-  return { ...later, members, sections, related: relate(members), note, theme: { ...later.theme!, nextCursor } };
+  const related = relate(members);
+  const relatedKeys = new Set(Object.values(related).flat().map((m) => m.key));
+  return {
+    ...later,
+    members,
+    sections: sections.map((s) => ({ ...s, members: s.members.filter((m) => !relatedKeys.has(m.key)) })).filter((s) => s.members.length > 0),
+    related,
+    note,
+    theme: { ...later.theme!, nextCursor },
+  };
 }
 
 // "Load more": `page` answers `requested` (the hub's revision and next_cursor
@@ -298,6 +307,17 @@ export function collectionRefreshInterval(hub: CollectionHub | null, now = Date.
 
 export interface CollectionWeekLink { slug: string; label: string; href: string }
 export interface CollectionWeekNavigation { slug: string; state: "available" | "unavailable" | "not_applicable"; previous: CollectionWeekLink | null; next: CollectionWeekLink | null }
+
+// #11567: the week navigation each hub last drew, held in memory like the hub
+// itself (#9982). While the next read is in flight (Back, a refresh) the hub
+// holds the links' place, so the games below them do not move when they draw.
+const drawnWeekNavigation = new Map<string, CollectionWeekNavigation>();
+export const lastWeekNavigation = (slug: string): CollectionWeekNavigation | null => drawnWeekNavigation.get(slug) ?? null;
+export function rememberWeekNavigation(navigation: CollectionWeekNavigation): void {
+  drawnWeekNavigation.delete(navigation.slug);
+  drawnWeekNavigation.set(navigation.slug, navigation);
+  for (const oldest of drawnWeekNavigation.keys()) { if (drawnWeekNavigation.size <= ACCEPTED_HUB_LIMIT) break; drawnWeekNavigation.delete(oldest); }
+}
 
 export function parseCollectionWeekNavigation(value: unknown, slug: string): CollectionWeekNavigation {
   const row = object(value);

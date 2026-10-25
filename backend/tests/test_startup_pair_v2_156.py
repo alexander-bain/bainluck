@@ -17,6 +17,8 @@ from tests.test_ws_consumer_session_lifetime_2471 import (
     _install, _assert_one_lent_engine, _assert_disposed_once_after_last_session,
 )
 from tests.test_ws_flush_retry_q491 import _Result
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
+from tests._pm_slate_link_read_10663 import answer_slate_link_read
 
 
 @pytest.mark.asyncio
@@ -86,10 +88,13 @@ async def test_stored_live_startup_pair(monkeypatch, mode):
                             isinstance(value, (list, tuple)) and set(value) == {"live", "suspended"}
                             for value in bound.values()):
                             marks.append("stored_live_select")
-                            return _Result([row for row in slate[0] if row[1] in live_markets])
+                            return _Result(answer_slate_link_read(  # #10663
+                                stmt, [row for row in slate[0] if row[1] in live_markets]))
                         if "linked_event_id" in sql:
                             return await execute(stmt, params)
-                        if "clock_timestamp()" in sql:
+                        # UPDATE RETURNING also contains this function; only
+                        # the standalone clock read returns a scalar result.
+                        if sql.startswith("SELECT clock_timestamp()"):
                             return SimpleNamespace(scalar_one=lambda: datetime.now(timezone.utc))
                         if "futures_markets.market_metadata" in sql and "LEFT OUTER JOIN" in sql:
                             return _Result([(8, parent_metadata, datetime.now(timezone.utc), "live"),
@@ -99,7 +104,8 @@ async def test_stored_live_startup_pair(monkeypatch, mode):
                             return _Result([(100, "Missing"), (110, "New")])
                         if "futures_markets.market_metadata" in sql:
                             assert selected is not None
-                            return _Result([row for row in metadata if row[0] in selected])
+                            return _Result(answer_slate_market_read(
+                                stmt, [row for row in metadata if row[0] in selected]))
                         if sql.startswith("SELECT futures_outcomes.id, futures_outcomes.market_id, futures_outcomes.external_id"):
                             assert selected is not None
                             return _Result([row for row in outcomes if row[1] in selected])

@@ -408,6 +408,7 @@ async def kalshi_field_series(
     service: Any, outcomes: Sequence[Any], *, listed_at: Optional[datetime],
     now: datetime, lifetime_hours: float, stats: dict,
     on_candle: Optional[Callable[[str, dict, int], None]] = None,
+    hourly_whole_life: bool = False,
 ) -> dict[str, list[Point]]:
     """The layered Kalshi series for a whole field, keyed by TICKER.
 
@@ -415,6 +416,10 @@ async def kalshi_field_series(
     tiers are layered independently — finest first. Layering per ticker rather
     than per tier is what keeps one outcome's missing minute tier from pulling
     the whole field down to hourly.
+
+    `hourly_whole_life` is :func:`candle_calls`' own flag, passed through
+    (#10955: the single-market venue bank asks for it, this module's concept
+    fill does not).
     """
     tickers = [
         t for t in (getattr(o, "external_id", None) for o in outcomes) if t
@@ -424,7 +429,7 @@ async def kalshi_field_series(
         return {}
 
     tiers_by_ticker: dict[str, list[list[Point]]] = {t: [] for t in tickers}
-    for call in candle_calls(lifetime_hours):
+    for call in candle_calls(lifetime_hours, hourly_whole_life=hourly_whole_life):
         tier = await fetch_candle_tier(
             service, tickers, call, listed_at=listed_at, now=now, stats=stats,
             on_candle=on_candle,

@@ -1,39 +1,11 @@
 name: CI
 
 on:
-  # NO `branches:` FILTER ON pull_request — deliberate, and load-bearing.
-  #
-  # It used to read `pull_request: branches: [master]`, which does NOT mean
-  # "PRs into master get CI". It means "ONLY PRs into master get CI" — a PR
-  # based on any other branch matches no trigger and gets NO RUN AT ALL. Not a
-  # pending check, not a red one: an empty checks list, which reads as "nothing
-  # to wait for" in exactly the place a reviewer looks for permission to merge.
-  #
-  # Two named failures, both in one week, both on stacked lane branches:
-  #
-  #   1. PR #1943 (`lane1/q363` -> `lane1/q362`) reported `mergeStateStatus:
-  #      DIRTY` and no checks. The base was retargeted to master; GitHub emits
-  #      `edited` on a retarget and this workflow listens to opened/synchronize/
-  #      reopened, so retargeting SCHEDULED NOTHING. A close+reopen is what
-  #      finally produced a run.
-  #   2. PR #1950 (`lane1/q365`, cut from `lane1/q364`) hit the same wall. Only
-  #      gitleaks reported, because `gitleaks.yml` has a BARE `pull_request:`
-  #      with no branch filter — the accidental control that proves the cause
-  #      is the filter here and not anything about the branches themselves.
-  #
-  # The workaround (retarget, then close+reopen) was rediscovered from scratch
-  # both times, because the symptom — a green-looking PR with no checks — does
-  # not point at a trigger. Removing the filter deletes the class: every PR gets
-  # a run regardless of base, and a stacked branch can never again be merged on
-  # the strength of checks that were never scheduled.
-  #
-  # Deploy is unaffected. The `deploy` job is separately gated on
-  # `github.ref == 'refs/heads/master' && github.event_name == 'push'`, so a PR
-  # into any base still cannot release — see the job's own comment. The `push:`
-  # filter below admits master plus the desk's compose branches only. The desk
-  # uses compose PUSH CI instead of a composition PR; lane PRs are unchanged.
-  #
-  # Guarded by `frontend/e2e/contract/ciTriggerCoverage.contract.test.js`.
+  # Keep pull_request unfiltered: stacked PRs (#1943, #1950) otherwise got no
+  # CI, and retargeting did not trigger a run. Every PR base must be tested.
+  # Deploy remains restricted to master pushes by its own job condition.
+  # Compose pushes serve Integrator; they do not replace lane PR validation.
+  # Guard: frontend/e2e/contract/ciTriggerCoverage.contract.test.js.
   pull_request:
   push:
     branches: [master, 'integrator/compose-**']
@@ -4062,6 +4034,7 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_container_assembly_real_postgres.py \
+            tests/integration/test_container_mlb_proven_duplicates_9886_pg.py \
             -v -s -rs 2>&1 | tee /tmp/assembly2927.txt
           if grep -qiE "[0-9]+ skipped" /tmp/assembly2927.txt; then
             echo "::error::#2927 container assembly SKIPPED — the gate did not run"
@@ -4997,30 +4970,9 @@ jobs:
           fi
 
       - name: Live blend concurrent stamp, two socket arms (real Postgres)
-        # live/305's hero flicker, #836/#837/#5661. `worker-ws` runs the Kalshi
-        # and Polymarket consumers under one `asyncio.gather`, each with its own
-        # `LiveBlendRefresher`, and both stamp `events.win_probability_sources`
-        # on the same row. Read-modify-write meant the later writer DROPPED the
-        # sibling's key — measured 2026-09-16, `{'betting','kalshi'}` and
-        # `{'betting','polymarket'}` written 250 ms apart, the row keeping only
-        # the second — so the same question published two hero numbers 89 ms
-        # apart and the page took whichever landed last.
-        #
-        # Only a real server can grade the fix. The claim is that `a || b` on
-        # JSONB is evaluated INSIDE the UPDATE, so a concurrent writer blocks and
-        # then re-evaluates against the committed row — a session double has no
-        # row lock and calls both shapes correct. Under sqlite the column is
-        # shimmed to JSON, `||` is string concatenation, and gotcha #4 is that a
-        # JSONB write which reads correctly can silently fail to persist.
-        #
-        # The file carries its own strawman control: the old read-modify-write
-        # shape run through the same interleaving, asserting it still loses the
-        # key. If that control ever stops failing, the harness has stopped
-        # reproducing the hazard and the rest of the file is vacuous.
-        #
-        # Same skip detection as every gate in this job: pytest exits 0 when
-        # each test skips, and a gate that silently did not run reads exactly
-        # like one that passed.
+        # #836/#837/#5661: concurrent Kalshi/PM stamps must retain both source keys.
+        # Real PostgreSQL verifies row-lock JSONB merge semantics; sqlite/fakes cannot.
+        # The read-modify-write strawman must still lose a key; reject skipped gates.
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -5091,8 +5043,8 @@ jobs:
             echo "::error::#11181 owed chart custody gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]9 passed[,[:space:]]" /tmp/owed-chart11181.txt || {
-            echo "::error::#11181 owed chart custody gate did not run all nine cases"
+          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/owed-chart11181.txt || {
+            echo "::error::#11181 owed chart custody gate did not run all twelve cases"
             exit 1
           }
 
@@ -5256,11 +5208,8 @@ jobs:
       - name: "#10090 a held page receives the last committed price after a publication outage, without a new venue tick (real Postgres + Redis)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         env:
-          # The job-local redis:7 service (#7351's, port 56379). Logical db 11 is
-          # this gate's alone: the reused fixture refuses a non-loopback URL or db 0
-          # and FLUSHES db 11 around each case. 12 and 13 are the reconcile-route
-          # and peer-publication gates'.
           PM_WITHDRAWAL_REDIS_URL: redis://localhost:56379/11
+          BLEND_DEADLOCK_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
         run: |
           if python -m pytest tests/integration/test_live_normal_publication_recovery_10090_pg.py \
             tests/test_blend_preview_ledger_tsp1_10090.py \
@@ -5276,15 +5225,35 @@ jobs:
             echo "::error::#10090 normal-publication recovery gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]69 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
-            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 69 cases"
+          grep -qE "[^0-9]106 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
+            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 106 cases"
             exit 1
           }
 
       - name: "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/held-row-redis"
+          wheel=redislite-6.2.912183-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          pip download --no-deps --only-binary=:all: redislite==6.2.912183 -d "$dir"
+          echo "d5ed8af4d03225a9b19e279d40f8d8feae872f87a9cd9f017751864fe7b224c6  $dir/$wheel" | sha256sum -c -
+          python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract('redislite/bin/redis-server', sys.argv[2])" "$dir/$wheel" "$dir"
+          chmod +x "$dir/redislite/bin/redis-server"
+          "$dir/redislite/bin/redis-server" --version
+          export EVENT_FRAME_REDIS_SERVER="$dir/redislite/bin/redis-server" EVENT_FRAME_REDIS_REQUIRED=1
           if python -m pytest tests/integration/test_pm_held_price_row_stamps_received_quote_11138_pg.py \
+            tests/integration/test_live_blend_source_projection_10090_pg.py \
+            tests/integration/test_live_blend_metadata_projection_10090_pg.py \
+            tests/integration/test_pm_price_returned_clock_10090_pg.py \
+            tests/integration/test_pm_price_statement_deadline_10090_pg.py \
+            tests/integration/test_dnpl_default_committed_fallback_10090_pg.py \
+            tests/integration/test_dnpl_capacity_lifecycle_10090_pg.py \
+            tests/integration/test_dnpl_reservations_10090_pg.py \
+            tests/test_preview_reservations_redis_10090.py \
+            tests/test_preview_reservation_policy_10090.py \
+            tests/integration/test_dnpl_post_cancel_idle_status_10090_pg.py \
+            tests/test_dnpl_idle_retirement_cancellation_10090.py \
             -v -rs > /tmp/held-row11138.txt 2>&1; then
             gate_status=0
           else
@@ -5297,8 +5266,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row gate did not run all twelve cases"
+          grep -qE "[^0-9]177 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row/default-DNPL/reservations/returned-clock gate did not run all 177 cases"
             exit 1
           }
 
@@ -5346,6 +5315,9 @@ jobs:
 
       - name: "#10090 a lock-held KALSHI price row stamps the received quote; a restart cannot undo it (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        env:
+          EVENT_FRAME_REDIS_SERVER: ${{ runner.temp }}/held-row-redis/redislite/bin/redis-server
+          EVENT_FRAME_REDIS_REQUIRED: '1'
         run: |
           if python -m pytest tests/integration/test_kalshi_held_price_row_10090_pg.py \
             tests/integration/test_kalshi_floor_deferred_owed_held_stamp_10090_pg.py \
@@ -5361,8 +5333,8 @@ jobs:
             echo "::error::#10090 Kalshi held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]5 passed[,[:space:]]" /tmp/kalshi-held10090.txt || {
-            echo "::error::#10090 Kalshi held-row gate did not run all five cases"
+          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/kalshi-held10090.txt || {
+            echo "::error::#10090 Kalshi held-row gate did not run all six cases"
             exit 1
           }
 
@@ -7641,7 +7613,7 @@ jobs:
         # file reddens this gate until the number below moves with it. That is
         # the point (it is how a silently-dropped case gets caught), but it means
         # the number is part of the test file's contract, not CI boilerplate.
-        # 12 = 7 age-floor cases + 4 settled-market cases + 1 consumer wiring case.
+        # 14 = 7 age-floor + 4 settled-market + 2 link-read (#10663) + 1 wiring case.
         if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -7651,12 +7623,12 @@ jobs:
             echo "::error::#837 slate contract SKIPPED — the gate did not run"
             exit 1
           fi
-          # `[^0-9]` so a future `112 passed` cannot satisfy a gate asking for 12.
+          # `[^0-9]` so a future `114 passed` cannot satisfy a gate asking for 14.
           # `[,[:space:]]` because pytest drops the comma when a run emits no
           # warnings (`12 passed in 3.4s`) — the old `passed,` form was green
           # only by the accident of this file currently raising warnings.
-          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/slate837.txt || {
-            echo "::error::#837 slate contract did not run all twelve cases"
+          grep -qE "[^0-9]14 passed[,[:space:]]" /tmp/slate837.txt || {
+            echo "::error::#837 slate contract did not run all 14 cases"
             exit 1
           }
 
@@ -7980,8 +7952,9 @@ jobs:
         # (era bound, same-second and nearest-observation witnesses), its pinned
         # apply (rows and priors re-read under lock, one leg per transaction) and
         # a restore that never overwrites a later writer are SQL a session double
-        # reads green on. Runs in its own throwaway database. 19 cases (the 9
-        # classifier/apply/restore cases + the backup-pair collision falsifiers).
+        # reads green on. Runs in its own throwaway database. 20 cases (the 9
+        # classifier/apply/restore cases + the backup-pair collision falsifiers
+        # + the #11158 16-point specimen).
         if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -7991,8 +7964,8 @@ jobs:
             echo "::error::#2027 Under-history repair gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]19 passed[,[:space:]]" /tmp/underhistory2027.txt || {
-            echo "::error::#2027 Under-history repair gate did not run all nineteen cases"
+          grep -qE "[^0-9]20 passed[,[:space:]]" /tmp/underhistory2027.txt || {
+            echo "::error::#2027 Under-history repair gate did not run all twenty cases"
             exit 1
           }
 

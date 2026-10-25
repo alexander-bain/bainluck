@@ -10,6 +10,8 @@
 import {
   resolvePrincipal,
   resolveScope,
+  scopeOwner,
+  ANONYMOUS_OWNER,
   sameScope,
   principalKey,
   bindToPrincipal,
@@ -77,6 +79,43 @@ describe("resolveScope — three states, because anonymous state is real state",
     expect(sameScope(resolveScope(A), resolveScope(B))).toBe(false);
     expect(sameScope(resolveScope(SIGNED_OUT), resolveScope(A))).toBe(false);
     expect(sameScope(resolveScope(RESTORING), resolveScope(SIGNED_OUT))).toBe(false);
+  });
+});
+
+describe("scopeOwner — device-owned state gets an owner token; pending gets none (#5593)", () => {
+  it("is null while pending, so a scope-keyed fetch still suppresses", () => {
+    expect(scopeOwner(resolveScope(RESTORING))).toBeNull();
+    expect(scopeOwner(resolveScope({ isLoading: false, isAuthenticated: true, uid: "" }))).toBeNull();
+    expect(principalKey("prefs", scopeOwner(resolveScope(RESTORING)), "pinned-futures", [1])).toBeNull();
+  });
+
+  it("names the device bucket when signed out, so the reader's own pins can load", () => {
+    expect(scopeOwner(resolveScope(SIGNED_OUT))).toBe(ANONYMOUS_OWNER);
+    expect(principalKey("prefs", scopeOwner(resolveScope(SIGNED_OUT)), "pinned-futures", [1])).toEqual([
+      "prefs",
+      "pinned-futures",
+      ANONYMOUS_OWNER,
+      1,
+    ]);
+  });
+
+  it("is the account principal when signed in, never the device owner", () => {
+    expect(scopeOwner(resolveScope(A))).toBe("user:acct-a");
+    expect(scopeOwner(resolveScope(A))).not.toBe(scopeOwner(resolveScope(SIGNED_OUT)));
+  });
+
+  it("a body bound to the device bucket never unwraps for an account, nor the reverse", () => {
+    const anon = bindToPrincipal(ANONYMOUS_OWNER, ["device-pins"]);
+    const acct = bindToPrincipal("user:acct-a", ["acct-pins"]);
+    expect(dataForPrincipal(anon, scopeOwner(resolveScope(A)))).toBeUndefined();
+    expect(dataForPrincipal(acct, scopeOwner(resolveScope(SIGNED_OUT)))).toBeUndefined();
+    expect(dataForPrincipal(anon, scopeOwner(resolveScope(SIGNED_OUT)))).toEqual(["device-pins"]);
+  });
+
+  it("no uid can mint the device owner token", () => {
+    expect(resolvePrincipal({ isLoading: false, isAuthenticated: true, uid: "device" })).not.toBe(
+      ANONYMOUS_OWNER,
+    );
   });
 });
 

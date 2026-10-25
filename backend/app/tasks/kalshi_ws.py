@@ -1078,6 +1078,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     market_id_by_ext, event_id_by_market, ticker_to_ids = linked_maps(
         rows, outcome_rows,
     )
+    # Scope and maps own the copied values now. Do not retain the startup
+    # result lists and SQLAlchemy row wrappers for this long-lived run.
+    del rows, outcome_rows
 
     market_tickers = list(ticker_to_ids.keys())
     if exact_trace is not None:
@@ -1999,6 +2002,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 written_outcome_ids: list[int] = []
                 written_observations: dict = {}
                 primary_observations: dict = {}
+                phase_clock = None
+                clock_ticket = (
+                    held_quotes.begin_write_clock()
+                    if held_quotes is not None and not final_drain else None
+                )
                 if (
                     beside is None and live_event_ids and not final_drain
                 ):
@@ -2142,6 +2150,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                 # #9526).
                                 for row in result.all():
                                     written_outcome_ids.append(row.id)
+                                    returned_clock = getattr(row, "database_clock", None)
+                                    if returned_clock is not None:
+                                        phase_clock = (returned_clock if phase_clock is None
+                                                       else max(phase_clock, returned_clock))
                                     primary_observations[row.id] = row.last_updated
                                     if exact_trace is not None:
                                         with contextlib.suppress(Exception):
@@ -2319,6 +2331,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     prices.short_probe_refused.discard(oid)
                 unfinished_price_ids.difference_update(phase)
                 registered = queue_committed(index, phase, written_outcome_ids)
+                # The enclosing session exited normally: publish its returned
+                # DB time before another await, never before COMMIT or on failure.
+                price_clock_ready = (
+                    held_quotes.publish_write_clock(clock_ticket, phase_clock)
+                    if clock_ticket is not None else False
+                )
 
                 if exact_trace is not None:
                     with contextlib.suppress(Exception):
@@ -2333,7 +2351,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # Debt is registered: now join anything written beside it.
                 await end_beside()
 
-                if not final_drain and held_quotes is not None:
+                clock_after_delivery = (
+                    bool(written_outcome_ids) and not final_drain
+                    and held_quotes is not None and not price_clock_ready
+                )
+                if (not final_drain and held_quotes is not None
+                        and not clock_after_delivery and not price_clock_ready):
                     # A committed write advanced last_updated: sample AFTER it,
                     # for future inputs only.
                     await held_quotes.sample_database_clock(get_task_session)
@@ -2381,6 +2404,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                             return allowed
 
                     if observation_groups:
+                        # Preserve recovery before potentially blocked unrelated
+                        # observation work; its input bounds remain frozen.
+                        if clock_after_delivery:
+                            await held_quotes.sample_database_clock(get_task_session)
+                            clock_after_delivery = False
                         await preview_observations(observation_groups, validate_observations)
                 # The event refresh uses its own session and committed prices.
                 # Start it before awaiting the separate MARKET notification;
@@ -2391,6 +2419,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         await stamp_start()
                 elif queued_refresh:
                     stamp_admit()
+
+                if clock_after_delivery:
+                    # The committed cohort can start display work now. This
+                    # sample only bounds FUTURE inputs and still completes
+                    # before the next price phase starts.
+                    await held_quotes.sample_database_clock(get_task_session)
 
                 # #9484: keep every committed MARKET notification, including
                 # standalone futures/props which have no event blend.

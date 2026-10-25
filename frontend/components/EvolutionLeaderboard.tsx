@@ -9,6 +9,10 @@ import {
   SERIES_COLORS,
   ELIMINATED_SERIES_COLOR,
 } from "@/lib/seriesColors";
+import { splitSettlementPoints, type SettlementResult } from "@/lib/chartSettlementPoints";
+import { latestOutcomeProb, outcomesByLatestProb } from "@/lib/eventConceptDisplay";
+import { LOST_LEGEND_WORD_CLASS } from "@/components/FuturesChart";
+import { SettledMark } from "@/components/SettledOutcomeMark";
 
 /**
  * Fallback dot palette — the canonical shared series palette (L2-157). When
@@ -39,10 +43,68 @@ interface EvolutionLeaderboardProps {
 interface SidebarRow {
   outcomeId: number;
   name: string;
-  currentProbability: number;
+  /** Last REAL reading; null when the leg has none. Never a settlement point. */
+  currentProbability: number | null;
   currentPriceAvailable?: boolean;
+  /** The leg's served grade, when its history ends in a settlement point. */
+  result?: SettlementResult;
   color: string;
   eliminated?: boolean;
+}
+
+/** The leg's last real reading, or null — a settlement point is skipped and an
+ *  empty history is not a 0%. */
+function lastReading(o: FuturesOutcomeHistory): number | null {
+  const p = latestOutcomeProb(o);
+  return p < 0 ? null : p;
+}
+
+/**
+ * #10955 (360): what the sidebar prints beside a name. EvolutionView draws its
+ * chart with no legend, so this column IS the legend, and it reads results in
+ * the chart legend's own vocabulary:
+ *
+ * - a graded leg shows its RESULT ("Won" / "Lost"), never the settlement point's
+ *   1 or 0 dressed up as a latest chance. A settlement value that is neither 1
+ *   nor 0 says a result exists that the chart will not name: "Settled", no word
+ *   for who won and no percent.
+ * - an ungraded leg shows its last real reading — a genuinely observed 0% or
+ *   100% is a price and prints as one.
+ * - an ungraded leg with no reading prints a dash, not "0.0%".
+ *
+ * The result outranks "Unavailable now": a settled market has no current price
+ * because it is settled.
+ */
+function Reading({
+  result,
+  probability,
+  currentPriceAvailable,
+}: {
+  result?: SettlementResult;
+  probability: number | null;
+  currentPriceAvailable?: boolean;
+}) {
+  if (result === "won" || result === "lost") {
+    return (
+      <span
+        data-testid="evolution-leaderboard-result"
+        data-result={result}
+        className={result === "lost" ? LOST_LEGEND_WORD_CLASS : undefined}
+      >
+        <SettledMark won={result === "won"} />
+      </span>
+    );
+  }
+  if (result === "recorded") {
+    return (
+      <span data-testid="evolution-leaderboard-result" data-result={result} title="Result recorded">
+        Settled
+      </span>
+    );
+  }
+  if (currentPriceAvailable === false) return <>Unavailable now</>;
+  if (probability === null) return <span title="No price recorded">—</span>;
+  return <>{`${(probability * 100).toFixed(1)}%`}</>;
 }
 
 export function EvolutionLeaderboard({
@@ -56,20 +118,22 @@ export function EvolutionLeaderboard({
   outcomeColors,
   className,
 }: EvolutionLeaderboardProps) {
-  // Build sidebar rows: only show selected outcomes
+  // #10955 (360): each leg's served grade. Read from the full history the parent
+  // passes (never windowed), so a result does not come and go with the range.
+  const results = useMemo(() => splitSettlementPoints(historyData).results, [historyData]);
+
+  // Build sidebar rows: only show selected outcomes. #10955: winner first, then
+  // last real reading — the order EvolutionView assigns colors in.
   const selectedRows = useMemo(() => {
-    const sorted = historyData
-      .filter((o) => selectedOutcomeIds.has(o.outcome_id))
-      .sort((a, b) => {
-        const aLast = a.history[a.history.length - 1]?.probability ?? 0;
-        const bLast = b.history[b.history.length - 1]?.probability ?? 0;
-        return bLast - aLast;
-      });
+    const sorted = outcomesByLatestProb(
+      historyData.filter((o) => selectedOutcomeIds.has(o.outcome_id)),
+    );
     return sorted.map((o, i): SidebarRow => ({
       outcomeId: o.outcome_id,
       name: shortName(o.name),
       currentPriceAvailable: o.current_price_available,
-      currentProbability: o.history[o.history.length - 1]?.probability ?? 0,
+      currentProbability: lastReading(o),
+      result: results.get(o.outcome_id),
       // L2-149: prefer the shared map so a dot matches its line exactly; else
       // fall back to the local eliminated-grey / index palette.
       color:
@@ -77,17 +141,14 @@ export function EvolutionLeaderboard({
         (o.eliminated ? ELIMINATED_SERIES_COLOR : EVOLUTION_COLORS[i % EVOLUTION_COLORS.length]),
       eliminated: o.eliminated,
     }));
-  }, [historyData, selectedOutcomeIds, outcomeColors]);
+  }, [historyData, selectedOutcomeIds, outcomeColors, results]);
 
-  // Build unselected outcomes for the dropdown
+  // Build unselected outcomes for the dropdown. A leg graded lost stays
+  // addable — a result is not an elimination.
   const unselected = useMemo(() => {
-    return historyData
-      .filter((o) => !selectedOutcomeIds.has(o.outcome_id) && !o.eliminated)
-      .sort((a, b) => {
-        const aLast = a.history[a.history.length - 1]?.probability ?? 0;
-        const bLast = b.history[b.history.length - 1]?.probability ?? 0;
-        return bLast - aLast;
-      });
+    return outcomesByLatestProb(
+      historyData.filter((o) => !selectedOutcomeIds.has(o.outcome_id) && !o.eliminated),
+    );
   }, [historyData, selectedOutcomeIds]);
 
   return (
@@ -101,6 +162,7 @@ export function EvolutionLeaderboard({
       {unselected.length > 0 && (
         <PlayerSearch
           unselected={unselected}
+          results={results}
           onAddOutcome={onAddOutcome}
           entityLabel={entityLabel}
         />
@@ -134,7 +196,11 @@ export function EvolutionLeaderboard({
 
               {/* Probability */}
               <span className="text-[11px] text-text-secondary tabular-nums flex-shrink-0">
-                {row.currentPriceAvailable === false ? "Unavailable now" : `${(row.currentProbability * 100).toFixed(1)}%`}
+                <Reading
+                  result={row.result}
+                  probability={row.currentProbability}
+                  currentPriceAvailable={row.currentPriceAvailable}
+                />
               </span>
 
               {/* Remove button */}
@@ -159,10 +225,12 @@ export function EvolutionLeaderboard({
 /** Searchable player/team picker — replaces native <select> */
 function PlayerSearch({
   unselected,
+  results,
   onAddOutcome,
   entityLabel,
 }: {
   unselected: FuturesOutcomeHistory[];
+  results: Map<number, SettlementResult>;
   onAddOutcome: (outcomeId: number) => void;
   entityLabel: string;
 }) {
@@ -210,7 +278,11 @@ function PlayerSearch({
             >
               <span className="truncate">{shortName(o.name)}</span>
               <span className="text-text-muted tabular-nums ml-1 flex-shrink-0">
-                {o.current_price_available === false ? "Unavailable now" : `${((o.history[o.history.length - 1]?.probability ?? 0) * 100).toFixed(1)}%`}
+                <Reading
+                  result={results.get(o.outcome_id)}
+                  probability={lastReading(o)}
+                  currentPriceAvailable={o.current_price_available}
+                />
               </span>
             </button>
           ))}

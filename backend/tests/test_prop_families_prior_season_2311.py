@@ -102,7 +102,10 @@ def test_a_recent_grading_still_wins_over_a_lagging_venue():
 
 
 def test_an_all_settled_family_is_a_results_card_and_is_kept():
-    markets = [m for m in _mvp_markets() if m["status"] == "resolved"]
+    # A RECENT grading. #11568 ages an all-settled family too, so the 592-day
+    # 2024 board this test used to carry is now (correctly) no card at all.
+    markets = [_market(34617731, "NFL MVP", "polymarket", "resolved", -10,
+                       [("Josh Allen", 1.0, True), ("Patrick Mahomes", 0.0, False)])]
     fam = _family(group_prop_families(markets), "mvp")
     assert _row(fam, "Josh Allen")["result"] == "won"
     assert _row(fam, "Patrick Mahomes")["settled"] is True

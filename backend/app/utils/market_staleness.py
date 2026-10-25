@@ -8,6 +8,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.utils.futures_liveness import VENUE_SETTLED_KEY
 from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 
 _MONTH_NAME_TO_NUMBER = {
@@ -1140,6 +1141,63 @@ def stale_observation_keys(
 #: clear of the cliff and 2.5x the largest lag measured on any board that hand
 #: inspection found still live (12.0 days).
 BOARD_UNOBSERVED_DAYS = 30
+
+
+def board_touched_at(market) -> datetime | None:
+    """The parent stamp #8011's second clause reads, for one board (#11579).
+
+    ``FuturesMarket.updated_at``, CAPPED at the moment a venue first said the
+    board was over (``futures_liveness.VENUE_SETTLED_KEY``) when that marker is
+    present. Every caller of `unobserved_board_keys` and
+    `board_cannot_be_unobserved` passes this, never the bare column.
+
+    ═══ WHAT A READER SAW ═══
+
+    The Hawks team page, 2026-10-24 02:12Z, Season Futures row 1: "Nickeil
+    Alexander-Walker · Most Improved Player Winner · >99%". Market 412,
+    ``KXNBAMIMP-26``, is LAST season's award: Kalshi titles the event
+    "2025-26 season" and serves no market for it, and every one of its 59 legs
+    was last written 2026-04-24. The leg clause was 182 days behind the fleet.
+    The parent clause acquitted it, because ``updated_at`` read 00:53Z that
+    same day.
+
+    ═══ 🔴 ``updated_at`` IS ANY WRITE, NOT A VISIT ═══
+
+    The column is ``onupdate``, so the Discover LLM pass (``discover_llm``
+    ``generated_at`` 00:53:05Z, ``updated_at`` 00:53:16Z) counted as somebody
+    observing the board. On production 2026-10-24, 12 open Kalshi boards were
+    acquitted this way — 2025-26 NBA awards, the Met Gala, the NJ-11 special
+    election — each one touched in the last four days and every one with legs
+    last written in April or May.
+
+    ═══ WHY THE VENUE MARKER, AND WHY ONLY AS A CAP ═══
+
+    ``price_refresh_venue_settled_since`` is written ONCE, on the first read at
+    which the venue reported the market over, and one successful price clears
+    it (`futures_liveness`). So while it stands, no observation of a live price
+    has happened since it — which is exactly the question the parent clause
+    asks. It is our own write compared against the FLEET, never against
+    ``now``, so #8011's outage guarantee is unchanged: a fleet-wide stall
+    freezes the fleet stamp and nothing newly qualifies. A one-hour venue blip
+    cannot qualify either: the stamp must sit 30 days behind the fleet, and the
+    first good price in that time erases it.
+
+    It only ever moves the stamp EARLIER. An absent or unparseable marker
+    leaves ``updated_at`` exactly as before, so every board without a venue
+    verdict reads as it did yesterday.
+    """
+    touched = _as_utc(getattr(market, "updated_at", None))
+    metadata = getattr(market, "market_metadata", None)
+    raw = metadata.get(VENUE_SETTLED_KEY) if isinstance(metadata, dict) else None
+    if touched is None or not isinstance(raw, str):
+        return touched
+    try:
+        settled = _as_utc(datetime.fromisoformat(raw))
+    except ValueError:
+        return touched
+    if settled is None:
+        return touched
+    return min(touched, settled)
 
 
 def board_cannot_be_unobserved(

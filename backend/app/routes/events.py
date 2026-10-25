@@ -72,7 +72,7 @@ from app.utils.game_market_club_names import (
     repair_card_club_names,
     repair_club_names,
 )
-from app.utils.market_staleness import unobserved_board_keys
+from app.utils.market_staleness import board_touched_at, unobserved_board_keys
 from app.utils.nation_flags import flag_nation
 from app.utils.series_card_labels import (
     market_threshold_label,
@@ -4929,6 +4929,18 @@ def _compose_futures_families(
 
 _SEARCH_TS_CONFIG_SQL = literal_column("'english'")
 _SEARCH_EVENT_TEAM_WEIGHT = "A"
+
+#: #10769: the futures pools' `status = 'open'`, rendered INLINE rather than bound.
+#: The reader runs these arms through asyncpg as prepared statements, where
+#: `status == "open"` becomes `status = $1::VARCHAR`; once Postgres keeps a
+#: generic plan it cannot prove `$1` implies the open-only partial's
+#: `WHERE status = 'open'`, so the arm falls back to the whole-table
+#: `ix_futures_name_trgm` and scans the settled tail. A fixed constant keeps
+#: `ix_futures_name_trgm_open` eligible under generic and custom plans alike;
+#: same truth value, no caller input. (#4506 measured this class on the
+#: last-match arm.) Not covered here: `ix_futures_name_fts_open`'s expression,
+#: whose `coalesce(name, '')` default the arm also binds.
+_FUTURES_OPEN_STATUS_SQL = literal_column("'open'", String)
 
 #: How much a last-token PREFIX match is worth against a whole-lexeme match on
 #: the Teams surface (#4126). Strictly between 0 and 1: above 0 so a prefix-only
@@ -12096,7 +12108,8 @@ async def search_events(
     # vs 701ms. The outer copy is deliberate redundancy — it keeps the predicate
     # correct if the pushed-down copy is ever removed.
     _futures_open_now = (
-        FuturesMarket.status == "open",
+        # #10769: inline, so a generic plan can still use the open-only trigram partial.
+        FuturesMarket.status == _FUTURES_OPEN_STATUS_SQL,
         or_(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= datetime.now(timezone.utc),
@@ -13977,6 +13990,78 @@ _force_cache_rebuild: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "bainluck_typeahead_force_cache_rebuild", default=False
 )
 
+#: #10225: where the route says what its cache write actually DID, for the one
+#: caller that has to report it — the warmer. A dict the CALLER installs and the
+#: route fills in, never a value the route sets, because `_warm_one` wraps the
+#: route in `asyncio.wait_for`: the route runs in a task holding a COPY of the
+#: context, so a `.set()` in there would never reach the warmer, while a mutation
+#: of the shared dict does. `None` (every reader request) means nobody is asking.
+#:
+#: Keys: `"write"` → one of `_TA_CACHE_WRITTEN` / `_TA_CACHE_RETAINED` /
+#: `_TA_CACHE_SUPERSEDED`. Absent when the route never reached a write at all
+#: (degraded, debug, Redis down) — which the warmer's TTL re-read already grades.
+_typeahead_cache_receipt: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "bainluck_typeahead_cache_receipt", default=None
+)
+
+#: This build's body is now the entry.
+_TA_CACHE_WRITTEN = "written"
+#: A COMPLETE answer was already the entry, so this outcome-arm-shed build was not
+#: stored. The entry keeps its own bytes and its own TTL; nothing was refreshed.
+_TA_CACHE_RETAINED = "retained"
+#: The entry changed between the read and the conditional write (another writer
+#: landed, or it expired), so this build was not stored either.
+_TA_CACHE_SUPERSEDED = "superseded"
+
+
+def _typeahead_cached_body_is_complete(raw) -> bool:
+    """Does a stored `/typeahead` entry hold a COMPLETE answer?
+
+    Read from the completeness metadata the body already carries (#1740), not a
+    new field: `degraded` is absent or empty exactly when nothing shed. A
+    futures-stage loss is never written (LAT-P007), so a stored `degraded` can
+    only be the outcome-arm shed. Anything unreadable is NOT complete — the safe
+    direction, since the alternative is protecting bytes that are not an answer.
+    An absent or empty entry is that case too: `json.loads` refuses both.
+    """
+    try:
+        body = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return False
+    return (
+        isinstance(body, dict)
+        and isinstance(body.get("suggestions"), list)
+        and not body.get("degraded")
+    )
+
+
+def _typeahead_publish_thinner(rc, key: str, ttl: int, body: str) -> str:
+    """Write an outcome-arm-shed `/typeahead` body unless a complete one is there.
+
+    #10225 / LAT-P241's stated residual. A shed build must stay cacheable — a
+    term that sheds on every request has no fuller answer to wait for (#3399) —
+    but a term that normally completes and sheds ONCE must not replace its own
+    complete entry with the thinner one for a whole TTL.
+
+    The judgement and the write are anchored to ONE read. The write goes through
+    `setex_if_unchanged` on the exact bytes judged, so a complete answer that
+    lands in between survives, a newer thin one is not clobbered, and an entry
+    that expired in between is not refilled on a stale reading. A retained entry
+    is left exactly as it is: no rewrite, so its TTL is not extended and it does
+    not look newly computed — it expires on its own clock, after which the next
+    shed build fills the empty slot.
+
+    Raises only what `rc.get` raises; the caller's `try` already owns that.
+    """
+    from app.utils.event_concept_cache import setex_if_unchanged
+
+    raw = rc.get(key)
+    if _typeahead_cached_body_is_complete(raw):
+        return _TA_CACHE_RETAINED
+    if setex_if_unchanged(rc, key, raw, ttl, body):
+        return _TA_CACHE_WRITTEN
+    return _TA_CACHE_SUPERSEDED
+
 
 def _record_trending(q: str) -> None:
     """Count one `/typeahead` query, from EITHER of the route's two exits (#2117).
@@ -15147,7 +15232,8 @@ async def typeahead_search(
     # by construction. Filters pushed into each arm (AND distributes over UNION);
     # kept on the outer query as deliberate redundancy.
     _ta_open_now = (
-        FuturesMarket.status == "open",
+        # #10769: the same inline constant as `_futures_open_now`.
+        FuturesMarket.status == _FUTURES_OPEN_STATUS_SQL,
         or_(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
@@ -16463,6 +16549,16 @@ async def typeahead_search(
     # would make this trade a bad one. `futures_outcome_arm_SHED` is already a
     # `logger.error` with the term in it, so the evidence is on the record.
     #
+    # #10225 CLOSES THE HALF OF THAT RESIDUAL WHERE A COMPLETE ENTRY IS LIVE. It
+    # did happen: the warmer shed under the reader's 2 s bound and wrote over the
+    # complete answer. A shed body now goes through `_typeahead_publish_thinner`,
+    # which leaves a live complete entry alone (bytes AND TTL) and writes only
+    # into an empty, expired or already-thin slot — so the #3399 permanent
+    # shedders stay cached exactly as before. What remains is the half no cache
+    # can fix: after a complete entry EXPIRES, a shed build is the best answer
+    # there is and is stored. A complete build still writes unconditionally,
+    # which is the partial→complete direction.
+    #
     # LAT-P050: nor is a debug-evidence answer, for the mirror-image reason. It
     # is not incomplete, it is EXTRA — and writing it here would serve
     # `_evidence` to every normal user typing that prefix for the full TTL.
@@ -16476,7 +16572,18 @@ async def typeahead_search(
             # 45 -> 65, LAT-P075, on Fable's ratification (GO ruling 4, 2026-08-19).
             # Mirrored by `typeahead_beat_budget.RESPONSE_CACHE_TTL_S`; a drift
             # between the two is a RED TEST, never a silently wrong derivation.
-            _get_rc().setex(_cache_key, 65, _json.dumps(result, default=str))
+            _ta_body = _json.dumps(result, default=str)
+            if _ta_outcome_arm_shed:
+                # #10225: never over a live complete entry — see the block above.
+                _ta_write = _typeahead_publish_thinner(
+                    _get_rc(), _cache_key, 65, _ta_body
+                )
+            else:
+                _get_rc().setex(_cache_key, 65, _ta_body)
+                _ta_write = _TA_CACHE_WRITTEN
+            _ta_receipt = _typeahead_cache_receipt.get()
+            if _ta_receipt is not None:
+                _ta_receipt["write"] = _ta_write
         except Exception:
             pass
 
@@ -23311,6 +23418,29 @@ def _match_scope_tennis_totals(
     return _match_scope_totals(game_totals, sport_prefix)
 
 
+def _game_total_leg_prices_a_period(outcome_name: Optional[str]) -> bool:
+    """True when a `game_total` row's own LEG names a period (#11488).
+
+    A row is typed by its MARKET's name, and a Polymarket game container is
+    named for the matchup alone, with one leg per sub-market
+    (`_parent_outcome_data`). "Nuggets vs. Thunder" types as `game_total`
+    because th·UNDER·r holds the word the Over/Under arm looks for, so every
+    leg that carries a number became a full-game rung — including the
+    container's copy of "1H O/U 122.5". Basketball's band admits 122.5, the
+    rung sorts below the whole ladder, and step 7b capped all 36 full-game rungs
+    on `/events/15195971` to that answered first-half line's 0.0005 and its
+    clock. The donor then left the payload, so no served row showed where the
+    number came from.
+
+    The projection pool already asks the leg this question for the same reason
+    (`_PM_SCOPES_DEFERRING_TO_OUTCOMES`); this is the same shipped classifier
+    asked of the leg with no ticker, since the ticker describes the market. A
+    leg naming no period ("Over 204.5 points", "Under", "O/U 221.5") is
+    untouched.
+    """
+    return _classify_game_market(outcome_name or "", None) in _PM_PERIOD_SCOPES
+
+
 # ---- Queue #190 Item 3: settled player-prop grading ------------------------
 # For completed/closed events we compute each player prop's ACTUAL stat value
 # and hit/miss from event.box_score_data, mirroring the authoritative resolver
@@ -27251,6 +27381,13 @@ async def _build_game_markets(
 
     for t in totals_thresholds:
         if t["market_type"] == "game_total":
+            # #11488: a leg that prices a period is not a rung of the game's
+            # ladder. Left out HERE, before the one-row-per-threshold pick, so
+            # it can neither evict a real rung at its line nor cap the rungs
+            # above it in 7b and then leave the payload with its price still
+            # on them.
+            if _game_total_leg_prices_a_period(t.get("outcome_name")):
+                continue
             key = t["threshold"]
             incumbent = seen_thresholds.get(key)
             if incumbent is None:
@@ -38324,7 +38461,7 @@ async def _search_withheld_price_ids(
         outcomes = getattr(market, "outcomes", None) or []
         withheld |= unobserved_board_keys(
             ((o.id, o.last_updated) for o in outcomes),
-            board_touched_at=getattr(market, "updated_at", None),
+            board_touched_at=board_touched_at(market),
             fleet_newest_observation=await _fleet_newest_observation(db, market),
             board_has_a_verdict=_board_has_a_verdict(outcomes),
         )

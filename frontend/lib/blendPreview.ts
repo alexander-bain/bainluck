@@ -30,6 +30,8 @@
  */
 
 import { parseFoldRevision } from "./foldRevision";
+import { advanceMultiOrigin, openMultiOrigin, parseMultiOriginPreview, resetMultiOrigin,
+  type MultiOriginPreview, type MultiOriginReader } from './multiOriginPreview';
 
 const PREVIEW_STATUSES = new Set(["live", "scheduled", "suspended"]);
 
@@ -56,6 +58,9 @@ export interface BlendPreviewFrame {
     folded_version?: number;
     origin_event_id?: number;
     base_fold_revision?: Record<string, number>;
+    fold_session?: string;
+    fold_seq?: number;
+    origin_authority?: MultiOriginPreview["origin_authority"];
   };
 }
 
@@ -92,6 +97,20 @@ export function parseBlendPreview(raw: unknown): BlendPreviewFrame | null {
   const preview = f.preview as Record<string, unknown> | undefined;
   // A committed revision on a "preview" is a contradiction: refuse it.
   if (typeof f.event_id !== "number" || "rev" in f || !preview || typeof preview !== "object") return null;
+  if (preview.folded_version === 2) {
+    const multi = parseMultiOriginPreview(preview);
+    if (!multi || !safeInt(f.event_id) || f.event_id <= 0
+        || !Object.prototype.hasOwnProperty.call(multi.base_fold_revision, String(f.event_id))
+        || (multi.kind === 'blend' && (typeof f.p !== 'number' || !Number.isFinite(f.p) || f.p < 0 || f.p > 1
+          || !(f.p_away === null || (typeof f.p_away === 'number' && Number.isFinite(f.p_away) && f.p_away >= 0 && f.p_away <= 1))
+          || !(f.sport === null || typeof f.sport === 'string')
+          || typeof f.status !== 'string' || !PREVIEW_STATUSES.has(f.status)
+          || !(f.display_observed_at === null || (typeof f.display_observed_at === 'string' && Number.isFinite(Date.parse(f.display_observed_at))))))
+        || (multi.kind === 'revoke' && f.p !== null)) return null;
+    // Internal shape only: v2 never orders by these legacy scalar fields.
+    return { ...f, preview: { ...multi, epoch: 0, seq: multi.fold_seq,
+      base_rev: multi.base_fold_revision[String(f.event_id)] } } as BlendPreviewFrame;
+  }
   if (!safeInt(preview.epoch) || !safeInt(preview.seq)) return null;
   if (preview.kind === "revoke") {
     return safeInt(preview.through_seq) ? (frame as BlendPreviewFrame) : null;
@@ -119,6 +138,7 @@ export interface BlendPreviewReader {
   epoch: number;
   floors?: Record<string, number>;
   foldedSequence?: { epoch: number; seq: number };
+  multiOrigin?: MultiOriginReader;
 }
 
 export const EMPTY_BLEND_PREVIEW_READER: BlendPreviewReader = { held: null, epoch: -1 };
@@ -131,6 +151,17 @@ export function readerAfter(
   reader: BlendPreviewReader, frame: BlendPreviewFrame, eventId: number, now: number,
 ): BlendPreviewReader {
   if (frame.event_id !== eventId) return reader;
+  if (frame.preview.folded_version === 2) {
+    const packet = parseMultiOriginPreview(frame.preview);
+    if (!packet) return reader;
+    const advance = advanceMultiOrigin(reader.multiOrigin, packet, now);
+    if (!advance) return reader;
+    const blocked = reader.floors && !coversPreviewFloors(packet.base_fold_revision, reader.floors);
+    const held = packet.kind === 'blend' && !blocked ? previewAfter(null, frame, eventId, now) : null;
+    return { ...reader, multiOrigin: advance.reader,
+      held: held ? { ...held, expiresAt: advance.expiresAt } : null };
+  }
+  if (reader.multiOrigin?.entered) return reader;
   const epoch = frame.preview.epoch;
   if (epoch < reader.epoch) return reader;
   const held = epoch > reader.epoch ? null : reader.held;
@@ -142,11 +173,54 @@ export function readerAfter(
   }
   if (frame.preview.kind === "revoke" && held?.originEventId !== undefined
       && frame.preview.origin_event_id !== held.originEventId) return reader;
-  return { ...reader, held: previewAfter(held, frame, eventId, now), epoch,
+  const nextHeld = previewAfter(held, frame, eventId, now);
+  const origin = String(frame.preview.origin_event_id ?? eventId);
+  const multiOrigin = reader.multiOrigin ?? { session: null, sequence: -1, entered: false, seen: [], authorities: {} };
+  const priorAuthority = multiOrigin.authorities[origin];
+  const authority = { epoch, seq: frame.preview.seq,
+    state: frame.preview.kind === 'blend' ? 'pending' as const : 'revoked' as const,
+    ...(nextHeld ? { expiresAt: nextHeld.expiresAt } : {}) };
+  // Keep the independent origin fence even while legacy display rules apply.
+  // Duplicate packets and resets must not erase its original deadline/retirement.
+  const remembered = priorAuthority && (priorAuthority.epoch > epoch
+    || (priorAuthority.epoch === epoch && priorAuthority.seq > authority.seq)
+    || (priorAuthority.epoch === epoch && priorAuthority.seq === authority.seq && authority.state === 'pending'))
+    ? priorAuthority : authority;
+  return { ...reader, held: nextHeld, epoch,
+    multiOrigin: { ...multiOrigin, authorities: { ...multiOrigin.authorities, [origin]: remembered } },
     ...((frame.preview.base_fold_revision || reader.foldedSequence) ? {
       foldedSequence: { epoch, seq: frame.preview.seq },
     } : {}),
   };
+}
+
+/** Only authoritative detail membership may retire removed origin fences. */
+export function readerAfterPreviewMembership(reader: BlendPreviewReader, value: unknown, eventId: number): BlendPreviewReader {
+  const vector = parseFoldRevision(value);
+  if (!vector || !Object.prototype.hasOwnProperty.call(vector, String(eventId))
+      || !Object.keys(vector).every(key => /^[1-9]\d*$/.test(key) && Number.isSafeInteger(Number(key)))) return reader;
+  const members = Object.keys(vector).sort();
+  if (JSON.stringify(reader.multiOrigin?.members) === JSON.stringify(members)) return reader;
+  const keep = (key: string) => Object.prototype.hasOwnProperty.call(vector, key);
+  const authorities = Object.fromEntries(Object.entries(reader.multiOrigin?.authorities ?? {}).filter(([key]) => keep(key)));
+  const floors = { ...vector };
+  for (const [key, revision] of Object.entries(reader.floors ?? {})) if (keep(key)) floors[key] = Math.max(floors[key], revision);
+  const singleton = members.length === 1 ? authorities[String(eventId)] : undefined;
+  return { ...reader, held: null, floors,
+    ...(members.length === 1 ? { epoch: singleton?.epoch ?? -1,
+      foldedSequence: singleton ? { epoch: singleton.epoch, seq: singleton.seq } : undefined } : {}),
+    multiOrigin: { session: null, sequence: -1, seen: [], authorities, members,
+      entered: members.length > 1 && (reader.multiOrigin?.entered ?? false) } };
+}
+
+export function readerAfterPreviewOpen(reader: BlendPreviewReader, raw: unknown, eventId: number): BlendPreviewReader {
+  const multiOrigin = openMultiOrigin(reader.multiOrigin, raw, eventId);
+  return multiOrigin === reader.multiOrigin ? reader : { ...reader, held: null, multiOrigin };
+}
+
+export function readerAfterPreviewReset(reader: BlendPreviewReader): BlendPreviewReader {
+  return { ...reader, held: null,
+    ...(reader.multiOrigin ? { multiOrigin: resetMultiOrigin(reader.multiOrigin) } : {}) };
 }
 
 function coversPreviewFloors(base: Record<string, number>, floors: Record<string, number>): boolean {
@@ -296,6 +370,13 @@ export function overlayBlendPreviewLine(
   const servedEdge = served?.aggregate_line?.[served.aggregate_line.length - 1];
   const edgeRevision = parseFoldRevision(served?.blend_edge_fold_revision);
   const base = state?.baseFoldRevision ?? (state ? { [String(state.eventId)]: state.baseRev } : null);
+  // History can advance ahead of detail while retaining an earlier observation
+  // time. Its revision wins before either extending or replacing the edge. An
+  // older membership (events.py serves one beside newly folded detail) may be
+  // extended when the base covers every member; replacement needs exact membership.
+  if (served && (served.event_id !== state?.eventId
+      || ((served.blend_edge_pinned === true || served.blend_edge_fold_revision != null)
+        && (!edgeRevision || !base || !coversPreviewFloors(base, edgeRevision))))) return line;
   const edgeObserved = Date.parse(served?.blend_edge_observed_at ?? "");
   const replaceSyntheticEdge = edge !== undefined && servedEdge !== undefined
     && served?.event_id === state?.eventId && served.blend_edge_pinned === true

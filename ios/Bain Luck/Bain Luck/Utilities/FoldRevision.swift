@@ -81,7 +81,7 @@ extension FoldRevision {
     /// #10090 — whether this revision is at or past `floor` on EVERY row the
     /// floor names. A row this revision does not carry is not covered: a
     /// missing row is never read as "past it".
-    func covers(_ floor: FoldRevision) -> Bool {
+    nonisolated func covers(_ floor: FoldRevision) -> Bool {
         floor.rows.allSatisfy { row, revision in rows[row].map { $0 >= revision } ?? false }
     }
 

@@ -1,11 +1,11 @@
 """#10090 — a provisional blend published BEFORE its event stamp commits.
 
-OFF BY DEFAULT, AND THEN ONLY FOR NAMED EVENTS FROM ONE NAMED SOURCE. Nothing
-here runs unless the process sets BOTH ``LIVE_BLEND_PREVIEW_SOURCE`` (``kalshi``
-or ``polymarket``) and ``LIVE_BLEND_PREVIEW_EVENT_IDS`` (comma-separated event
-ids). Unset, malformed or empty, the worker publishes exactly the committed
-frames it always did and the stream route forwards nothing new. Turning the
-switch on is a production activation decision; landing this code is not one.
+DNPL is the ordinary delivery path for both supported streaming sources.
+Every positive event identity may enter the existing eligibility checks; no
+operator event list or source activation flag is required. New events are
+covered without restarting a worker. The ledger's source/status/revision,
+freshness, capacity and owner fences still decide whether a frame may publish.
+An ineligible observation retains the committed delivery path.
 
 Why it exists. A held event page only moves when the WS lane's
 ``UPDATE events SET win_probability_sources = …`` commits. When another
@@ -73,8 +73,7 @@ reach the reader as newer committed revisions, which retire any preview
 composed on an older base, and the preview arm's next attempt recomposes on
 the freshly read row. No pending state is shared between processes.
 
-Two previewing sources (TSP-1, ``LIVE_BLEND_PREVIEW_SOURCES``; OFF unless set,
-and then the single-source switch above is ignored). Both venue processes
+Two previewing sources (TSP-1, the default shared-ledger path). Both venue processes
 write their pending value into ONE per-event ledger inside one Redis hash
 (`LEDGER_SCRIPT`), and a frame is composed from the whole ledger and published
 only while that exact read-set still stands. The contract, in the order the
@@ -90,21 +89,39 @@ script enforces it:
   may have raised a held reader's floor that high) takes a new generation
   above it, keeping every pending entry and the sequence;
 * propose — fenced on the source's owner; ``continue`` needs this owner's
-  chain and a newer local sequence and keeps its fixed Redis-clock deadline;
+  chain and a newer local sequence and keeps its Redis-clock deadline;
   ``open`` never renews an existing chain; a terminal tombstone refuses any
   proposal read at or below its revision;
 * settle — deletes only an entry this owner wrote, through the local sequence
-  the stamp carried; a newer committed base is adopted as the event's floor,
+  the stamp carried; a strictly advancing landed commit may renew that owner's
+  still-live newer chain. Reproposals, repeated receipts and expired chains
+  cannot renew. Progress lives inside the pending payload and retires with it;
+  a newer committed base is adopted as the event's floor,
   so a sibling never composes on an older committed bag;
-* terminal — a revision-checked tombstone plus one ordered revoke, never DEL;
+* terminal — a revision-checked tombstone plus one ordered revoke;
+* bounded lifecycle — every new-chain admission carries the retirement barrier
+  captured BEFORE its authoritative DB graph read. Retirement first commits a
+  terminal-only increment of that event's database revision, then atomically
+  increments the Redis barrier before deleting event fields. Any fresh future
+  context is above the discarded floor; an older prepared context has an old
+  barrier and cannot open or recreate a tombstone. The database increment is
+  lifecycle ordering only: source values and observation timestamps do not
+  change. Active continuations retain their original deadlines. Mixed-version
+  owners cannot retire. At 512 events the caller may reread bounded ids and
+  retire authoritatively finished rows or idle future-scheduled residents.
+  A fresh SHARE/SKIP LOCKED read preserves live, suspended and started or
+  undated scheduled rows. Distant starts go first; valid proposals survive.
+  The status lock covers an acknowledged reclaim, not an uncertain Redis
+  command completing after cancellation. A missing barrier fails closed;
 * publish — generation, sequence, tombstone and EVERY contributor's owner and
   original deadline are rechecked at the send; the reader's ``ttl_ms`` is
   computed there, last. Revokes keep the generation and ``through_seq`` they
   were allocated with.
 
 Limits kept explicit: the readers' expiry is still receipt-relative
-(``now + ttl_ms``), so delivery delay shifts it; folded pages refuse ledger
-frames (``pending_entries`` is withheld), so two sources never fold.
+(``now + ttl_ms``), so delivery delay shifts it. Folded pages accept ledger
+frames only when every contributor is elected from the same origin event.
+Split-origin folded composition remains unsupported.
 """
 
 from __future__ import annotations
@@ -115,6 +132,7 @@ import logging
 import math
 import os
 import time
+import uuid
 from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -174,7 +192,10 @@ LEDGER_MAX_BASE_BYTES = 262144
 #: not supersession (`stale`, `terminal`) or expiry. Each is logged in the
 #: fixed `LEDGER_ALARM_FORMAT` so the operator can stop on the first one
 #: (#11388 admission review, item 4); the counters alone are never logged.
-LEDGER_ALARM_STATUSES = frozenset({"fenced", "lost", "malformed", "exhausted", "full", "no_base"})
+LEDGER_ALARM_STATUSES = frozenset({
+    "fenced", "lost", "malformed", "exhausted", "full", "no_base", "bucket_full",
+    "migration_pending", "migration_debt", "policy_mismatch", "policy_required", "legacy_owner",
+})
 #: The operator's matcher keys on this shape; change it only with that matcher.
 #: phase = claim, propose, settle, terminal or publish. One line per (status,
 #: phase, source) per batch; `count` includes refusals held back since that
@@ -189,6 +210,7 @@ LEDGER_ALARM_INTERVAL_S = 10.0
 # writes, so a fault after it still fails every older read-set at PUBLISH.
 LEDGER_SCRIPT = r"""
 local L, MARK, SHARED = KEYS[1], KEYS[2], KEYS[3]
+local fingerprint = table.remove(ARGV, 1)
 local op = ARGV[1]
 if op == 'revoke' then
   redis.call('PUBLISH', ARGV[2], ARGV[3])
@@ -223,6 +245,21 @@ local function meta(f)
   if not (o and c and l and x) then return BAD end
   return {owner = o, chain = c, lseq = l, expires = x}
 end
+-- Progress belongs to the existing pending payload, so every old/new delete
+-- or replacement also discards it. Never cjson-encode observation numbers:
+-- preserve their exact JSON bytes and append one privately-owned final field.
+local function progress(raw)
+  if not raw then return nil end
+  local prefix, o, c, q, r = string.match(raw,
+    '^(.*),"_commit_progress":"(%d+) (%d+) (%d+) (%d+)"}$')
+  o, c, q, r = uint(o), uint(c), uint(q), uint(r)
+  if not (prefix and o and c and q and r) then return nil end
+  return {prefix = prefix, owner = o, chain = c, through = q, rev = r}
+end
+local function progressed(prefix, owner, chain, through, rev)
+  return prefix .. ',"_commit_progress":"' .. decimal(owner) .. ' ' .. decimal(chain)
+    .. ' ' .. decimal(through) .. ' ' .. decimal(rev) .. '"}'
+end
 local function shared_floor()
   local v = redis.call('GET', SHARED)
   if not v then return 0 end
@@ -234,11 +271,52 @@ local function now_ms()
   local t = redis.call('TIME')
   return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 end
+-- Reservation protocol: old scripts do not understand it. Deployment MUST
+-- stop/drain every old writer before cutover; capability fields detect overlap,
+-- but cannot make an old script honor a new policy. Authority stays numeric.
+local limits, total = {}, 0
+local spec = string.match(fingerprint or '', '^v1%-six%-hour%-%x+:(.*)$')
+if not spec then return {'policy_mismatch'} end
+for token in string.gmatch(spec .. ',', '(.-),') do
+  local n = uint(token)
+  if n == nil then return {'policy_mismatch'} end
+  limits[#limits + 1] = n; total = total + n
+end
+if #limits ~= 6 or total < 1 or total > 512 then return {'policy_mismatch'} end
+local configured = redis.call('HGET', L, 'reservation_policy')
+if configured and configured ~= fingerprint then return {'policy_mismatch'} end
+local counts, unclassified = {}, field('r:unclassified')
+if configured then
+  if unclassified == nil or unclassified == BAD then return {'malformed'} end
+  local accounted = unclassified
+  for i = 0, 6 do
+    counts[i] = field('r:count:' .. i)
+    if counts[i] == nil or counts[i] == BAD then return {'malformed'} end
+    accounted = accounted + counts[i]
+  end
+  if accounted ~= (field('nevents') or 0) then return {'malformed'} end
+elseif op ~= 'claim' then return {'policy_required'} end
+local function debt()
+  local n = counts[6] or 0
+  for i = 0, 5 do n = n + math.max(0, (counts[i] or 0) - limits[i + 1]) end
+  for _, f in ipairs(redis.call('HKEYS', L)) do
+    local prefix = string.match(f, '^(e:%d+:)r_target$')
+    if prefix then
+      local target, bucket = field(f), field(prefix .. 'r_bucket')
+      if target ~= BAD and bucket ~= BAD and target and bucket and bucket < 6
+          and target > bucket then n = n + 1 end
+    end
+  end
+  return n
+end
 local src = ARGV[2]
 local epoch = field('epoch')
 if op == 'claim' then
   local shared = shared_floor()
-  if epoch == BAD or shared == BAD then return {'malformed'} end
+  local retired = field('retired')
+  if epoch == BAD or shared == BAD or retired == BAD then return {'malformed'} end
+  if retired == nil and (redis.call('HEXISTS', L, 'read_owner:kalshi') == 1
+      or redis.call('HEXISTS', L, 'read_owner:polymarket') == 1) then return {'lost_admission'} end
   if epoch == nil then
     if redis.call('EXISTS', MARK) == 1 then return {'lost'} end
     if redis.call('EXISTS', SHARED) == 0 then
@@ -250,8 +328,29 @@ if op == 'claim' then
   end
   local n = math.max(epoch, shared)
   if n >= MAX then return {'exhausted'} end
+  local residents = field('nevents')
+  if residents == BAD or (residents or 0) > 512 then return {'malformed'} end
   n = n + 1
-  redis.call('HSET', L, 'epoch', decimal(n), 'owner:' .. src, decimal(n))
+  if not configured then
+    -- One bounded cutover validation before writing ANY policy metadata.
+    local actual = 0
+    for _, f in ipairs(redis.call('HKEYS', L)) do
+      local id = string.match(f, '^e:(%d+):gen$')
+      if id then
+        actual = actual + 1
+        if actual > 512 or field(f) == BAD or field('e:' .. id .. ':seq') == nil
+            or field('e:' .. id .. ':seq') == BAD then return {'malformed'} end
+      end
+    end
+    if actual ~= (residents or 0) then return {'malformed'} end
+    redis.call('HSET', L, 'reservation_policy', fingerprint,
+      'r:unclassified', decimal(residents or 0))
+    for i = 0, 6 do redis.call('HSET', L, 'r:count:' .. i, '0') end
+  end
+  redis.call('HSET', L, 'policy_owner:' .. src, decimal(n))
+  redis.call('HSET', L, 'epoch', decimal(n), 'owner:' .. src, decimal(n),
+    'read_owner:' .. src, decimal(n))
+  if field('retired') == nil then redis.call('HSET', L, 'retired', '0') end
   redis.call('SET', MARK, '1')
   redis.call('SET', SHARED, decimal(n))
   return {'ok', decimal(n)}
@@ -267,6 +366,56 @@ for s in string.gmatch(ARGV[5], '%S+') do
   owners[s] = o
 end
 if owners[src] ~= claim then return {'fenced'} end
+if field('policy_owner:' .. src) ~= claim then return {'legacy_owner'} end
+-- This barrier is bounded, monotonic authority, not an event tombstone cache.
+-- Only sources that implement read-before-admit may participate in retirement.
+local barrier = field('retired')
+if barrier == nil or barrier == BAD then return {'lost_admission'} end
+local compatible, policy_compatible = true, true
+for _, s in ipairs(sources) do
+  if owners[s] ~= nil and field('policy_owner:' .. s) ~= owners[s] then policy_compatible = false end
+  if owners[s] == nil or field('read_owner:' .. s) ~= owners[s]
+      or field('policy_owner:' .. s) ~= owners[s] then compatible = false end
+end
+local now = now_ms()
+local function stale(s, m) return m.owner ~= owners[s] or m.expires <= now end
+if op == 'read_ticket' or op == 'capacity_ticket' then
+  local out = {'ok', decimal(barrier)}
+  local count = field('nevents')
+  if count == BAD then return {'malformed'} end
+  local candidates, idle = {}, {}
+  if (ARGV[6] == '1' or op == 'capacity_ticket') and compatible then
+    -- At capacity only: at most 512 event ids, never base/payload values.
+    -- The caller rereads their authoritative DB status before retiring any.
+    for _, f in ipairs(redis.call('HKEYS', L)) do
+      local id = string.match(f, '^e:(%d+):gen$')
+      if id then
+        if op == 'read_ticket' then out[#out + 1] = id end
+        candidates[#candidates + 1] = id
+        local empty = redis.call('HEXISTS', L, 'e:' .. id .. ':term') == 0
+        for _, s in ipairs(sources) do
+          local m = meta('e:' .. id .. ':m:' .. s)
+          if m == BAD or (m ~= nil and not stale(s, m)) then empty = false end
+        end
+        if empty then idle[#idle + 1] = id end
+      end
+    end
+  end
+  if op == 'capacity_ticket' then
+    -- Unclassified first, then oldest context: progress survives process restart.
+    table.sort(candidates, function(a, b)
+      local ac = field('e:' .. a .. ':r_clock') or 0
+      local bc = field('e:' .. b .. ':r_clock') or 0
+      if ac == BAD or bc == BAD then return a < b end
+      if ac == bc then return tonumber(a) < tonumber(b) end
+      return ac < bc
+    end)
+    return {'ok', decimal(barrier), cjson.encode(candidates), cjson.encode(idle),
+      cjson.encode({unclassified=unclassified, debt=debt(), compatible=compatible,
+        ready=compatible and unclassified == 0 and debt() == 0, counts=counts}), decimal(now)}
+  end
+  return out
+end
 local P = 'e:' .. ARGV[4] .. ':'
 local st = {gen = field(P .. 'gen'), seq = field(P .. 'seq'), term = field(P .. 'term'),
   live = field(P .. 'live'), base_rev = field(P .. 'base_rev'), metas = {}}
@@ -279,8 +428,6 @@ for _, s in ipairs(sources) do
   if m == BAD then return {'malformed'} end
   st.metas[s] = m
 end
-local now = now_ms()
-local function stale(s, m) return m.owner ~= owners[s] or m.expires <= now end
 local function readset(status, gen, seq, extra)
   local out = {status, decimal(gen), decimal(seq), decimal(now),
     redis.call('HGET', L, P .. 'base_rev') or '', redis.call('HGET', L, P .. 'base') or '', extra}
@@ -295,6 +442,62 @@ local function readset(status, gen, seq, extra)
   end
   return out
 end
+local charged = field(P .. 'r_bucket')
+local context_clock, context_rev = field(P .. 'r_clock'), field(P .. 'r_rev')
+if charged == BAD or context_clock == BAD or context_rev == BAD
+    or (charged ~= nil and charged > 6) then return {'malformed'} end
+local function over_budget()
+  local target = field(P .. 'r_target')
+  return charged ~= nil and (charged == 6 or counts[charged] > limits[charged + 1]
+    or (target ~= nil and target ~= BAD and target > charged))
+end
+local function classify(bucket, clock, rev)
+  if bucket == nil or bucket > 6 or clock == nil or rev == nil then return 'context_required' end
+  if (st.live and rev < st.live) or (st.base_rev and rev < st.base_rev)
+      or (context_rev and rev < context_rev) or (context_clock and clock < context_clock)
+      or (context_clock and clock == context_clock and charged ~= bucket
+          and field(P .. 'r_target') ~= bucket) then return 'stale_context' end
+  return nil
+end
+local function charge(bucket, clock, rev)
+  if charged == nil then
+    if st.gen ~= nil then
+      unclassified = unclassified - 1
+      redis.call('HSET', L, 'r:unclassified', decimal(unclassified), P .. 'r_legacy', '1')
+    end
+    charged = bucket
+    counts[charged] = counts[charged] + 1
+    redis.call('HSET', L, 'r:count:' .. charged, decimal(counts[charged]))
+  elseif charged ~= bucket and bucket < 6 and counts[bucket] < limits[bucket + 1] then
+    counts[charged] = counts[charged] - 1; counts[bucket] = counts[bucket] + 1
+    redis.call('HSET', L, 'r:count:' .. charged, decimal(counts[charged]),
+      'r:count:' .. bucket, decimal(counts[bucket]))
+    charged = bucket
+  end
+  -- A full destination retains the already charged slot, never evicts its
+  -- active incumbent. The explicit target identifies this grandfathering.
+  redis.call('HSET', L, P .. 'r_bucket', decimal(charged), P .. 'r_target', decimal(bucket),
+    P .. 'r_clock', decimal(clock), P .. 'r_rev', decimal(rev))
+end
+local function discharge()
+  if charged == nil then
+    redis.call('HINCRBY', L, 'r:unclassified', -1)
+  else
+    redis.call('HINCRBY', L, 'r:count:' .. charged, -1)
+  end
+  redis.call('HDEL', L, P .. 'r_bucket', P .. 'r_target', P .. 'r_clock',
+    P .. 'r_rev', P .. 'r_legacy')
+end
+if op == 'classify' then
+  if not compatible then return {'legacy_owner'} end
+  if uint(ARGV[9]) ~= barrier then return {'read_required'} end
+  if st.gen == nil then return {'none'} end
+  local bucket, clock, rev = uint(ARGV[6]), uint(ARGV[7]), uint(ARGV[8])
+  local refused = classify(bucket, clock, rev)
+  if refused then return {refused} end
+  charge(bucket, clock, rev)
+  return {'classified'}
+end
 local function admit(max_ev)
   -- The event's generation for this write. A shared counter above it means a
   -- claim has been allocated since (a ledger owner, or the single-source fence
@@ -306,7 +509,7 @@ local function admit(max_ev)
   if st.gen == nil then
     local count = field('nevents')
     if count == BAD then return nil, 'malformed' end
-    if (count or 0) >= max_ev then return nil, 'full' end
+    if (count or 0) >= math.min(max_ev, total) then return nil, 'full' end
   end
   local n = math.max(epoch, shared)
   if n >= MAX then return nil, 'exhausted' end
@@ -329,6 +532,7 @@ if op == 'propose' then
   if ARGV[13] ~= '' then brev = uint(ARGV[13]); if brev == nil then return {'malformed'} end end
   if not (chain and lseq and ctx and max_ms and max_ev) or ARGV[12] == ''
       or (mode ~= 'open' and mode ~= 'continue') then return {'malformed'} end
+  if mode == 'open' and uint(ARGV[15]) ~= barrier then return {'read_required'} end
   if st.gen == nil and mode == 'continue' then return {'missing_chain'} end
   if st.term ~= nil and ctx <= st.term then return {'terminal'} end
   local mine = st.metas[src]
@@ -346,13 +550,50 @@ if op == 'propose' then
     expires = now + max_ms
     if expires > MAX then return {'malformed'} end
   end
+  local payload = ARGV[12]
+  if string.sub(payload, -1) ~= '}' then return {'malformed'} end
+  local prior_progress = progress(redis.call('HGET', L, P .. 'p:' .. src))
+  if mode == 'open' then
+    if chain == 0 then return {'malformed'} end
+    payload = progressed(string.sub(payload, 1, -2), claim, chain, chain - 1, ctx)
+  elseif prior_progress ~= nil and prior_progress.owner == claim
+      and prior_progress.chain == chain then
+    payload = progressed(string.sub(payload, 1, -2), claim, chain,
+      prior_progress.through, prior_progress.rev)
+  end
   local adopt = brev ~= nil and ARGV[14] ~= '' and (st.base_rev == nil or brev > st.base_rev)
   if not adopt and st.base_rev == nil and not expired then return {'no_base'} end
+  if not policy_compatible then return {'legacy_owner'} end
+  local bucket, clock = uint(ARGV[16]), uint(ARGV[17])
+  local refused = classify(bucket, clock, ctx)
+  -- An older source bag may still compose against a newer committed floor.
+  -- It cannot change classification, but a same-class continuation/open need
+  -- not lose its valid value merely because the other source committed first.
+  local keep_class = refused == 'stale_context' and charged ~= nil
+    and bucket == field(P .. 'r_target')
+  if refused and not keep_class then return {refused} end
+  if mode == 'open' and not keep_class and charged ~= nil and bucket > charged
+      and (bucket == 6 or counts[bucket] >= limits[bucket + 1]) then
+    charge(bucket, clock, ctx)
+    return {'migration_debt'}
+  end
+  if mode == 'open' and unclassified > 0 then return {'migration_pending'} end
+  if mode == 'open' and bucket == 6 then return {'outside_window'} end
+  if mode == 'open' and charged == nil and st.gen ~= nil
+      and (bucket == 6 or counts[bucket] >= limits[bucket + 1]) then return {'migration_debt'} end
+  if st.gen == nil then
+    if unclassified > 0 then return {'migration_pending'} end
+    if bucket == 6 then return {'outside_window'} end
+    if counts[bucket] >= limits[bucket + 1] then return {'bucket_full'} end
+  elseif mode == 'open' and over_budget() then
+    return {'migration_debt'}
+  end
   local gen, seq = admit(max_ev)
   if gen == nil then return {seq} end
   if seq >= MAX then return {'exhausted'} end
   seq = seq + 1
   advance(gen, seq)
+  if not keep_class then charge(bucket, clock, ctx) end
   -- @@FAULT:propose
   if adopt then redis.call('HSET', L, P .. 'base_rev', decimal(brev), P .. 'base', ARGV[14]) end
   if expired then
@@ -362,7 +603,7 @@ if op == 'propose' then
     if st.live == nil or ctx > st.live then redis.call('HSET', L, P .. 'live', decimal(ctx)) end
     redis.call('HSET', L, P .. 'm:' .. src,
       decimal(claim) .. ' ' .. decimal(chain) .. ' ' .. decimal(lseq) .. ' ' .. decimal(expires),
-      P .. 'p:' .. src, ARGV[12])
+      P .. 'p:' .. src, payload)
   end
   for _, s in ipairs(sources) do
     local m = st.metas[s]
@@ -380,6 +621,32 @@ if op == 'settle' then
   local mine = st.metas[src]
   local remove = ARGV[6] == 'settle' and mine ~= nil and mine.owner == claim
     and (through == nil or mine.lseq <= through)
+  local mode, chain, max_ms = ARGV[6], nil, nil
+  if mode == 'commit' or mode == 'expire' then
+    chain = uint(ARGV[10])
+    if chain == nil then return {'malformed'} end
+  end
+  if mode == 'expire' then
+    -- An expiry prepared before an accepted renewal cannot withdraw it.
+    remove = mine ~= nil and mine.owner == claim and mine.chain == chain
+      and through ~= nil and mine.lseq <= through and mine.expires <= now
+  end
+  local renew, record_progress, progress_value, renewed_expires = false, false, nil, nil
+  if mode == 'commit' then
+    max_ms = uint(ARGV[11])
+    if max_ms == nil or max_ms == 0 or now + max_ms > MAX then return {'malformed'} end
+    progress_value = progress(redis.call('HGET', L, P .. 'p:' .. src))
+    local own_commit = mine ~= nil and mine.owner == claim and mine.chain == chain
+      and not stale(src, mine) and through ~= nil and through >= chain and through < mine.lseq
+      and brev ~= nil and ARGV[9] ~= '' and progress_value ~= nil
+      and progress_value.owner == claim and progress_value.chain == chain
+    -- Honor every issued deadline. Over-budget legacy residency may not
+    -- extend it forever and starve the protected reservations during migration.
+    renew = own_commit and not over_budget()
+      and through > progress_value.through and brev > progress_value.rev
+    record_progress = own_commit and (through > progress_value.through or brev > progress_value.rev)
+    if renew then renewed_expires = math.max(mine.expires, now + max_ms) end
+  end
   local adopt = brev ~= nil and ARGV[9] ~= '' and (st.base_rev == nil or brev > st.base_rev)
   local gone, remaining = {}, 0
   for _, s in ipairs(sources) do
@@ -388,8 +655,9 @@ if op == 'settle' then
       if stale(s, m) then gone[#gone + 1] = s else remaining = remaining + 1 end
     end
   end
-  if not remove and #gone == 0 and not (adopt and remaining > 0) then
+  if not remove and not record_progress and #gone == 0 and not (adopt and remaining > 0) then
     if adopt then redis.call('HSET', L, P .. 'base_rev', decimal(brev), P .. 'base', ARGV[9]) end
+    if mode == 'expire' then return readset('current', st.gen, st.seq, '') end
     return {'unchanged'}
   end
   local gen, seq = admit(MAX)
@@ -399,13 +667,32 @@ if op == 'settle' then
   advance(gen, seq)
   -- @@FAULT:settle
   if adopt then redis.call('HSET', L, P .. 'base_rev', decimal(brev), P .. 'base', ARGV[9]) end
+  if renew then
+    redis.call('HSET', L, P .. 'm:' .. src,
+      decimal(claim) .. ' ' .. decimal(chain) .. ' ' .. decimal(mine.lseq) .. ' ' .. decimal(renewed_expires),
+      P .. 'p:' .. src, progressed(progress_value.prefix, claim, chain, through, brev))
+  elseif record_progress then
+    -- Consume each dimension even when only the other was replayed. A later
+    -- crossed pair cannot reuse either receipt to buy another lifetime.
+    redis.call('HSET', L, P .. 'p:' .. src, progressed(progress_value.prefix, claim, chain,
+      math.max(through, progress_value.through), math.max(brev, progress_value.rev)))
+  end
   if remove then redis.call('HDEL', L, P .. 'm:' .. src, P .. 'p:' .. src) end
   for _, s in ipairs(gone) do redis.call('HDEL', L, P .. 'm:' .. s, P .. 'p:' .. s) end
   return readset('ok', gen, seq, remove and '1' or '0')
 end
 if op == 'terminal' then
+  if compatible and uint(ARGV[8]) ~= barrier then return {'read_required'} end
   local ctx, max_ev = uint(ARGV[6]), uint(ARGV[7])
   if not (ctx and max_ev) then return {'malformed'} end
+  if st.gen == nil then
+    -- An absent terminal event needs no slot, but must invalidate a prepared
+    -- older open. Keep the existing global read-before-admit barrier.
+    if not compatible then return {'legacy_owner'} end
+    if barrier >= MAX then return {'exhausted'} end
+    redis.call('HSET', L, 'retired', decimal(barrier + 1))
+    return {'none'}
+  end
   if st.term ~= nil and st.term >= ctx then return {'unchanged'} end
   if st.live ~= nil and ctx < st.live then return {'stale_terminal'} end
   local gen, seq = admit(max_ev)
@@ -416,6 +703,100 @@ if op == 'terminal' then
   -- @@FAULT:terminal
   redis.call('HSET', L, P .. 'term', decimal(ctx))
   for _, s in ipairs(sources) do redis.call('HDEL', L, P .. 'm:' .. s, P .. 'p:' .. s) end
+  return {'ok', decimal(gen), decimal(seq)}
+end
+-- Eligible rows may release idle residency without becoming terminal.
+if op == 'retire_idle' or op == 'retire_policy' then
+  local deadline = uint(ARGV[op == 'retire_policy' and 10 or 8])
+  if not deadline then return {'malformed'} end
+  if now >= deadline then return {'late'} end
+  local ctx, ticket = uint(ARGV[6]), uint(ARGV[7])
+  if not ctx or not ticket then return {'malformed'} end
+  if not compatible then return {'legacy_owner'} end
+  if ticket ~= barrier then return {'read_required'} end
+  if st.gen == nil then return {'none'} end
+  if op == 'retire_policy' then
+    local bucket, clock = uint(ARGV[8]), uint(ARGV[9])
+    local refused = classify(bucket, clock, ctx)
+    if refused then return {refused} end
+    -- This is capacity debt/full-bucket reclamation, not a lifecycle claim.
+    -- Do not remove spare residency merely because maintenance observed it.
+    if charged == nil or (not over_budget() and charged < 6 and counts[charged] < limits[charged + 1]) then
+      return {'spare'}
+    end
+  end
+  -- Terminal rows retain their durable revision-advance path.
+  if st.term ~= nil then return {'terminal'} end
+  if st.live ~= nil and ctx < st.live then return {'stale_terminal'} end
+  if st.base_rev ~= nil and ctx < st.base_rev then return {'stale_terminal'} end
+  -- Dead metadata follows the existing owner/deadline pruning rule.
+  -- A live renewal/proposal wins atomically and refuses this reclamation.
+  for _, s in ipairs(sources) do
+    if st.metas[s] ~= nil and not stale(s, st.metas[s]) then return {'pending'} end
+  end
+  if barrier >= MAX then return {'exhausted'} end
+  local count = field('nevents')
+  if count == BAD or count == nil or count < 1 then return {'malformed'} end
+  local gen, seq = admit(MAX)
+  if gen == nil then return {seq} end
+  if seq >= MAX then return {'exhausted'} end
+  seq = seq + 1
+  redis.call('HSET', L, 'retired', decimal(barrier + 1))
+  advance(gen, seq)
+  -- If a subsequent write faults, sequence already invalidates old readsets.
+  redis.call('HDEL', L, P .. 'gen', P .. 'seq', P .. 'live',
+    P .. 'base_rev', P .. 'base')
+  for _, s in ipairs(sources) do
+    redis.call('HDEL', L, P .. 'm:' .. s, P .. 'p:' .. s)
+  end
+  discharge()
+  redis.call('HINCRBY', L, 'nevents', -1)
+  return {'ok', decimal(gen), decimal(seq)}
+end
+if op == 'retire' or op == 'retire_missing' then
+  local ctx, ticket, durable
+  if op == 'retire_missing' then
+    -- The caller proved absence in a fresh DB statement AFTER this ticket.
+    -- No durable row remains to increment. The global barrier invalidates
+    -- every prepared open from before deletion, including other producers.
+    ticket = uint(ARGV[6])
+    ctx = math.max(st.live or 0, st.term or 0, st.base_rev or 0)
+    if not ticket then return {'malformed'} end
+  else
+    ctx, ticket, durable = uint(ARGV[6]), uint(ARGV[7]), uint(ARGV[8])
+    if not ctx or not ticket or not durable or durable ~= ctx + 1 then return {'malformed'} end
+  end
+  if not compatible then return {'legacy_owner'} end
+  if ticket ~= barrier then return {'read_required'} end
+  if st.live ~= nil and ctx < st.live then return {'stale_terminal'} end
+  if st.term ~= nil and ctx < st.term then return {'stale_terminal'} end
+  if st.base_rev ~= nil and ctx < st.base_rev then return {'stale_terminal'} end
+  if barrier >= MAX then return {'exhausted'} end
+  local count = field('nevents')
+  if count == BAD or (st.gen ~= nil and (count == nil or count < 1)) then
+    return {'malformed'}
+  end
+  local gen, seq = nil, nil
+  if st.gen ~= nil then
+    gen, seq = admit(MAX)
+    if gen == nil then return {seq} end
+    if seq >= MAX then return {'exhausted'} end
+    seq = seq + 1
+  end
+  -- Invalidate every old open BEFORE removing its last event-local guard.
+  -- Active continuations are unchanged; absent chains cannot continue.
+  redis.call('HSET', L, 'retired', decimal(barrier + 1))
+  if gen == nil then return {'none'} end
+  advance(gen, seq)
+  redis.call('HSET', L, P .. 'term', decimal(ctx))
+  -- @@FAULT:retire
+  redis.call('HDEL', L, P .. 'gen', P .. 'seq', P .. 'term', P .. 'live',
+    P .. 'base_rev', P .. 'base')
+  for _, s in ipairs(sources) do
+    redis.call('HDEL', L, P .. 'm:' .. s, P .. 'p:' .. s)
+  end
+  discharge()
+  redis.call('HINCRBY', L, 'nevents', -1)
   return {'ok', decimal(gen), decimal(seq)}
 end
 if op == 'publish' then
@@ -451,57 +832,42 @@ def ledger_keys() -> tuple:
             *(fence_owner_key(name) for name in sorted(PREVIEW_SOURCES)))
 
 
-def _ledger_env() -> Optional[str]:
-    raw = (os.environ.get(LEDGER_SOURCES_ENV) or "").strip()
-    return raw or None
+class PreviewEventScope:
+    """Stateless admission to preview validation, not a set of enrolled events.
+
+    Membership only establishes a valid event identity. The existing graph,
+    source, freshness and ledger checks still establish publication eligibility.
+    Deliberately not iterable: callers must supply a finite batch to select.
+    """
+
+    def __contains__(self, event_id: object) -> bool:
+        return type(event_id) is int and 0 < event_id <= 9007199254740991
+
+    def isdisjoint(self, event_ids) -> bool:
+        return not any(event_id in self for event_id in event_ids)
+
+
+_ALL_PREVIEW_EVENTS = PreviewEventScope()
 
 
 def ledger_sources() -> frozenset:
-    """TSP-1's previewing sources. Any malformed entry turns previews off."""
-    raw = _ledger_env()
-    if raw is None:
-        return frozenset()
-    names = {token.strip() for token in raw.split(",")}
-    return frozenset(names) if names and names <= PREVIEW_SOURCES else frozenset()
+    """Both streaming sources share one fenced ledger in ordinary operation."""
+    return PREVIEW_SOURCES
 
 
 def preview_source() -> Optional[str]:
-    """The one source allowed to preview, or None (the default: off).
-
-    Ignored (None) whenever ``LIVE_BLEND_PREVIEW_SOURCES`` is set, valid or not.
-    """
-    if _ledger_env() is not None:
-        return None
-    value = (os.environ.get(SOURCE_ENV) or "").strip()
-    return value if value in PREVIEW_SOURCES else None
+    """There is no single-source activation mode in ordinary delivery."""
+    return None
 
 
-def preview_event_ids() -> frozenset:
-    """The canary's events. Any malformed entry turns the whole list off."""
-    raw = (os.environ.get(EVENT_IDS_ENV) or "").strip()
-    if not raw:
-        return frozenset()
-    ids = set()
-    for token in raw.split(","):
-        token = token.strip()
-        if not token.isdigit() or int(token) <= 0:
-            return frozenset()
-        ids.add(int(token))
-    return frozenset(ids)
+def preview_events_for(source: str) -> PreviewEventScope | frozenset:
+    """Admit supported sources to validation for every arriving event."""
+    return _ALL_PREVIEW_EVENTS if source in PREVIEW_SOURCES else frozenset()
 
 
-def preview_events_for(source: str) -> frozenset:
-    """Events ``source``'s arm previews: empty unless it is THE preview source."""
-    if _ledger_env() is not None:
-        return preview_event_ids() if source in ledger_sources() else frozenset()
-    return preview_event_ids() if preview_source() == source else frozenset()
-
-
-def preview_route_events() -> frozenset:
-    """Events whose stream forwards previews: the canary's, once a source is named."""
-    if _ledger_env() is not None:
-        return preview_event_ids() if ledger_sources() else frozenset()
-    return preview_event_ids() if preview_source() is not None else frozenset()
+def preview_route_events() -> PreviewEventScope:
+    """All event streams may forward eligible, client-compatible previews."""
+    return _ALL_PREVIEW_EVENTS
 
 
 def _max_uncommitted_s() -> float:
@@ -543,6 +909,9 @@ class _Pending:
     #: Monotonic start of this source's uncommitted chain (kept across
     #: re-proposals until a commit, refusal or expiry ends the chain).
     since: float
+    # Local hint only: unknown, refused, or accepted for this ledger chain.
+    ledger_admission: str = "unknown"
+    ledger_open_attempt: int = 0  # newest recovery dispatch; older refusals cannot rearm it
 
 
 @dataclass
@@ -556,8 +925,17 @@ class _EventState:
     #: source -> the value whose uncommitted chain expired. Not proposed again
     #: until a commit, a refusal or a different value ends the chain.
     expired: dict = field(default_factory=dict)
+    #: Ledger-only sequence of an expired reading. A delayed older commit
+    #: cannot clear that newer reading's same-value tombstone. Event-bounded.
+    expired_through: dict = field(default_factory=dict)
     #: Highest seq this process published for the event (blend or revoke).
     last_seq: int = 0
+    #: Highest ``through_seq`` of a revoke this process has sent for the event.
+    revoked_through: int = 0
+    reservation_bucket: Optional[int] = None
+    reservation_target: Optional[int] = None
+    reservation_clock: int = -1
+    reservation_rev: int = -1
 
 
 class PreviewRegistry:
@@ -661,6 +1039,26 @@ class PreviewRegistry:
 
     def claim_of(self, source: str) -> Optional[int]:
         return self.epoch
+
+    def withdrawn(self, frame: dict) -> bool:
+        """A queued blend that a revoke this process already sent withdrew.
+
+        Frames are composed before the publication lock and sent in lock
+        order, so a batch that waited can hold a blend older than a revoke
+        another batch sent meanwhile. A reader holding nothing keeps no
+        memory of the withdrawn sequence, so that blend would show again.
+        """
+        state = self._events.get(frame["event_id"])
+        preview = frame["preview"]
+        return (state is not None and preview["kind"] == "blend"
+                and preview["seq"] <= state.revoked_through)
+
+    def sending(self, frame: dict) -> None:
+        """Record a revoke before its send; an unknown outcome still withdrew."""
+        state = self._events.get(frame["event_id"])
+        preview = frame["preview"]
+        if state is not None and preview["kind"] == "revoke":
+            state.revoked_through = max(state.revoked_through, preview["through_seq"])
 
     def _revoke_frame(self, event_id: int, state: _EventState, reason: str) -> Optional[dict]:
         if state.last_seq == 0:
@@ -970,8 +1368,13 @@ class LedgerRegistry(PreviewRegistry):
 
     ledger = True
 
-    def __init__(self, *, sources: frozenset, **kwargs: Any) -> None:
+    def __init__(self, *, sources: frozenset, policy=None, **kwargs: Any) -> None:
+        from app.utils.preview_reservations import ReservationPolicy
+
+        self.policy = policy if policy is not None else ReservationPolicy.configured()
         super().__init__(**kwargs)
+        self.max_events = min(self.max_events, self.policy.total)
+        self.capacity_status: dict = {}
         self.sources = tuple(sorted(PREVIEW_SOURCES))
         self.ledger_sources = frozenset(sources)
         self.claims: dict[str, int] = {}
@@ -981,12 +1384,263 @@ class LedgerRegistry(PreviewRegistry):
         self._alarm_owed: dict[tuple[str, str, str], tuple[int, Optional[int]]] = {}
         self._alarm_last: dict[tuple[str, str, str], float] = {}
         self._alarm_batch_open = False
+        self._capacity_registry_id = uuid.uuid4().hex
+        self._capacity_pid = os.getpid()
+        self._capacity_sample_seq = 0
+        self._capacity_receipt_after: dict[str, float] = {}
 
     def unclaimed(self, source: str) -> bool:
         return source not in self.claims
 
     def claim_of(self, source: str) -> Optional[int]:
         return self.claims.get(source)
+
+    async def read_ticket(self, call, source: str, *, include_candidates: bool = False) -> tuple[Optional[int], list[int]]:
+        """Capture before the caller's fresh READ COMMITTED statement.
+
+        Never call this around an already prepared/cached graph. A refused
+        ticket does not prevent committed delivery or active continuations.
+        """
+        claim = self.claims.get(source)
+        if claim is None:
+            return None, []
+        reply = await self._eval(call, "read_ticket", source, claim, "", " ".join(self.sources),
+                                 int(include_candidates))
+        if reply[0] != "ok":
+            return None, []
+        return int(reply[1]), [int(eid) for eid in reply[2:]]
+
+    async def capacity_ticket(self, call, source: str, *, maintenance_receipt: bool = False) -> tuple[Optional[int], list[int], set[int], Optional[int]]:
+        """One bounded resident/idle hint, before the maintenance DB statement.
+
+        The idle hint never authorizes deletion: retire_idle checks it again.
+        Ordinary admission keeps read_ticket's unchanged lightweight response.
+        """
+        started = time.monotonic()
+        sampled_at = datetime.now(timezone.utc).isoformat()
+        self._capacity_sample_seq += 1
+        sample_seq = self._capacity_sample_seq
+        claim = self.claims.get(source)
+        if claim is None:
+            if maintenance_receipt:
+                self._capacity_receipt(source, started, sampled_at, sample_seq)
+            return None, [], set(), None
+        try:
+            return await self._capacity_ticket_sample(call, source, claim, maintenance_receipt,
+                                                     started, sampled_at, sample_seq)
+        except Exception:
+            if maintenance_receipt:
+                self._capacity_receipt(source, started, sampled_at, sample_seq)
+            raise  # Diagnostic failure never changes the existing caller's error path.
+
+    async def _capacity_ticket_sample(self, call, source, claim, receipt, started, sampled_at, sample_seq):
+        reply = await self._eval(call, "capacity_ticket", source, claim, "", " ".join(self.sources))
+        if reply[0] != "ok":
+            if receipt:
+                self._capacity_receipt(source, started, sampled_at, sample_seq)
+            return None, [], set(), None
+        self.capacity_status = json.loads(reply[4])
+        self.capacity_status["shared_ready"] = self.capacity_status["ready"]
+        self.capacity_status["local"] = self.local_capacity_status
+        self.capacity_status["ready"] = (self.capacity_status["ready"]
+                                         and self.capacity_status["local"]["ready"])
+        if not self.capacity_status["ready"]:
+            logger.warning("blend_preview reservation migration pending source=%s status=%s",
+                           source, self.capacity_status)
+        result = int(reply[1]), [int(eid) for eid in json.loads(reply[2])], {
+            int(eid) for eid in json.loads(reply[3])}, int(reply[5])
+        if receipt:
+            self._capacity_receipt(source, started, sampled_at, sample_seq,
+                                   self.capacity_status, result[3])
+        return result
+
+    def _capacity_receipt(self, source, started, sampled_at, sample_seq, status=None, redis_ms=None):
+        # Optional diagnostics cannot turn a valid ticket into a failure or
+        # replace its original parsing/transport error. Cancellation still wins.
+        try:
+            self._emit_capacity_receipt(source, started, sampled_at, sample_seq, status, redis_ms)
+        except Exception:
+            pass
+
+    def _emit_capacity_receipt(self, source, started, sampled_at, sample_seq, status=None, redis_ms=None):
+        """One fresh maintenance sample/source/30s; never publish cached status as proof.
+
+        The operator must correlate PID/source/registry with the active runner.
+        A one-off's own empty registry is not evidence about a running venue.
+        """
+        now = time.monotonic()
+        if now < self._capacity_receipt_after.get(source, float("-inf")):
+            return
+        self._capacity_receipt_after[source] = now + 30.0
+
+        def uint(value):
+            return type(value) is int and 0 <= value <= 9007199254740991
+
+        local = status.get("local") if isinstance(status, dict) else None
+        counts = status.get("counts") if isinstance(status, dict) else None
+        valid = (source in self.sources and os.getpid() == self._capacity_pid
+                 and uint(self.claims.get(source)) and uint(redis_ms)
+                 and 0 <= now - started <= 1.0
+                 and isinstance(counts, dict) and set(counts) == {str(i) for i in range(7)}
+                 and all(uint(value) for value in counts.values())
+                 and uint(status.get("unclassified")) and uint(status.get("debt"))
+                 and sum(counts.values()) + status["unclassified"] <= LEDGER_MAX_EVENTS
+                 and type(status.get("compatible")) is bool
+                 and type(status.get("shared_ready")) is bool
+                 and status["shared_ready"] == (status["compatible"] and status["unclassified"] == 0
+                                                 and status["debt"] == 0)
+                 and status["debt"] >= counts["6"] + sum(
+                     max(0, counts[str(i)] - limit) for i, limit in enumerate(self.policy.limits))
+                 and isinstance(local, dict) and isinstance(local.get("counts"), list)
+                 and len(local["counts"]) == 7 and all(uint(value) for value in local["counts"])
+                 and uint(local.get("debt")) and uint(local.get("proofs"))
+                 and local["proofs"] <= sum(local["counts"])
+                 and type(local.get("ready")) is bool
+                 and local["ready"] == (local["debt"] == 0 and sum(local["counts"]) <= self.max_events)
+                 and type(status.get("ready")) is bool
+                 and status["ready"] == (status["shared_ready"] and local["ready"]))
+        payload = {"version": 1, "origin": "capacity_maintenance", "source": source,
+                   "pid": os.getpid(), "registry_id": self._capacity_registry_id,
+                   "sample_seq": sample_seq, "sample_started_at": sampled_at,
+                   "sample_finished_at": datetime.now(timezone.utc).isoformat(),
+                   "sample_duration_ms": round((now - started) * 1000),
+                   "policy_fingerprint": self.policy.fingerprint,
+                   "claim": self.claims.get(source), "redis_time_ms": redis_ms,
+                   "status": ("ready" if status["ready"] else "not_ready") if valid else "invalid_sample",
+                   "shared": {key: status[key] for key in
+                              ("counts", "unclassified", "debt", "compatible", "shared_ready")} if valid else None,
+                   "local": local if valid else None, "ready": bool(valid and status["ready"])}
+        logger.info("blend_preview reservation receipt %s", json.dumps(payload, sort_keys=True))
+
+    def retire_idle(self, event_id: int, source: str, rev: int, ticket: int, deadline_ms: int) -> dict:
+        """Locked fresh future-scheduled DB proof for a resident with no valid pending metadata."""
+        return {"ledger_op": "retire_idle", "event_id": int(event_id), "source": source,
+                "ctx_rev": rev, "read_ticket": ticket, "deadline_ms": deadline_ms}
+
+    def classify(self, event_id: int, source: str, event: Any, rev: int, ticket: int) -> dict | None:
+        from app.utils.preview_reservations import reservation_context
+
+        context = reservation_context(event, rev)
+        if context is None:
+            return None
+        return {"ledger_op": "classify", "event_id": event_id, "source": source,
+                "bucket": context.bucket, "context_clock": context.clock_us,
+                "ctx_rev": rev, "read_ticket": ticket}
+
+    def retire_policy(self, event_id: int, source: str, event: Any, rev: int, ticket: int, deadline_ms: int) -> dict | None:
+        op = self.classify(event_id, source, event, rev, ticket)
+        return None if op is None else {**op, "ledger_op": "retire_policy", "deadline_ms": deadline_ms}
+
+    @property
+    def local_capacity_status(self) -> dict:
+        counts = [sum(st.reservation_bucket == bucket for st in self._events.values())
+                  for bucket in range(7)]
+        debt = counts[6] + sum(max(0, n - limit) for n, limit in zip(counts, self.policy.limits))
+        deferred = sum(st.reservation_target is not None and st.reservation_bucket is not None
+                       and st.reservation_target > st.reservation_bucket
+                       for st in self._events.values())
+        return {"counts": counts, "debt": debt + deferred,
+                "proofs": sum(bool(st.expired or st.expired_through) for st in self._events.values()),
+                "ready": not debt and not deferred and len(self._events) <= self.max_events}
+
+    @staticmethod
+    def _reclassify_local_proof(state: _EventState) -> None:
+        # A drained incumbent no longer borrows a high class for retained
+        # expiry evidence. Evidence moves to its current class even when that
+        # creates explicit local proof debt. Total storage remains bounded;
+        # saturation can still refuse a newcomer rather than erase evidence.
+        if not state.pending and state.reservation_target is not None:
+            state.reservation_bucket = state.reservation_target
+
+    @staticmethod
+    def _clean_context(state: _EventState) -> bool:
+        # Expiry evidence consumes its same-class slot. Forgetting it merely
+        # to make room would grant an unchanged expired value a fresh lease.
+        return not state.pending and not state.expired and not state.expired_through
+
+    def _reserve_local(self, event_id: int, context) -> bool:
+        state = self._events.get(event_id)
+        bucket = context.bucket
+        if state is not None:
+            if (context.clock_us < state.reservation_clock
+                    or context.revision < state.reservation_rev
+                    or (context.clock_us == state.reservation_clock
+                        and bucket != state.reservation_target)):
+                # Preserve same-class use of an older committed bag, while
+                # refusing stale reclassification and keeping its newer proof.
+                return bucket == state.reservation_target
+        if state is None:
+            if bucket == 6 or self.policy.limits[bucket] == 0:
+                return False
+            resident = [(eid, st) for eid, st in self._events.items()
+                        if st.reservation_bucket == bucket]
+            if len(resident) >= self.policy.limits[bucket]:
+                candidates = resident
+            elif len(self._events) >= self.max_events:
+                counts = self.local_capacity_status["counts"]
+                candidates = [(eid, st) for eid, st in self._events.items()
+                              if st.reservation_bucket is not None
+                              and (st.reservation_bucket >= bucket
+                                   or (st.reservation_bucket < 6 and counts[st.reservation_bucket]
+                                       > self.policy.limits[st.reservation_bucket]))]
+            else:
+                candidates = None
+            if candidates is not None:
+                clean = next((eid for eid, st in candidates if self._clean_context(st)), None)
+                if clean is None:
+                    return False
+                del self._events[clean]
+            state = self._state(event_id)
+            state.reservation_bucket = bucket
+        elif state.reservation_bucket != bucket and bucket < 6:
+            used = sum(st.reservation_bucket == bucket for st in self._events.values())
+            if used < self.policy.limits[bucket]:
+                state.reservation_bucket = bucket
+        state.reservation_target = bucket
+        state.reservation_clock = context.clock_us
+        state.reservation_rev = context.revision
+        return True
+
+    def propose(self, event_id: int, source: str, **kwargs: Any) -> list[dict]:
+        from app.utils.preview_reservations import reservation_context
+
+        event = kwargs["event"]
+        ticket = getattr(event, "preview_read_ticket", None)
+        state = self._events.get(event_id)
+        if ticket is None and (state is None or source not in state.pending):
+            return []
+        context = reservation_context(event, kwargs["row_rev"])
+        if context is None:
+            return []
+        if getattr(event, "status", None) not in PREVIEW_STATUSES:
+            if state is not None and context.clock_us < state.reservation_clock:
+                return []
+            # Ordered absence invalidation needs no local/tier slot.
+            return [{"ledger_op": "terminal", "event_id": event_id, "source": source,
+                     "ctx_rev": kwargs["row_rev"], "read_ticket": ticket}]
+        if not self._reserve_local(event_id, context):
+            return []
+        ops = super().propose(event_id, source, **kwargs)
+        for op in ops:
+            if op.get("ledger_op") in ("propose", "terminal"):
+                op.update(read_ticket=ticket, bucket=context.bucket, context_clock=context.clock_us)
+        return ops
+
+    def retire_read(self, event_id: int, source: str, rev: int, ticket: int, *,
+                    committed_rev: int) -> dict:
+        """After terminal-only DB revision advance COMMITTED (rev -> rev+1).
+
+        The next authoritative reader must therefore read above the deleted
+        floor even if status later reopens without changing the source bag.
+        Ticket precedes the proof transaction, never wraps old cached state.
+        """
+        return {"ledger_op": "retire", "event_id": int(event_id), "source": source,
+                "ctx_rev": rev, "read_ticket": ticket, "committed_rev": committed_rev}
+
+    def retire_missing(self, event_id: int, source: str, ticket: int) -> dict:
+        """Only after a fresh authoritative DB statement proved row absence."""
+        return {"ledger_op": "retire_missing", "event_id": int(event_id),
+                "source": source, "read_ticket": ticket}
 
     # ── local bookkeeping → operations ──────────────────────────────────
     @staticmethod
@@ -1045,6 +1699,7 @@ class LedgerRegistry(PreviewRegistry):
         for name in list(state.pending):
             self._forget(event_id, name)
         state.expired.clear()
+        state.expired_through.clear()
         rev = _revision(row_rev)
         if rev is None:
             return []
@@ -1082,11 +1737,14 @@ class LedgerRegistry(PreviewRegistry):
         if chain is None:
             chain = local_seq
         self._chains[(event_id, source)] = chain
+        state.expired_through.pop(source, None)
         state.pending[source] = _Pending(
             value=value, eligibility=eligibility,
             observed_basis=dict(observed_basis) if observed_basis else None,
             stamped_at=stamped_at, seq=local_seq,
             since=prior.since if prior is not None else self._clock(),
+            ledger_admission=prior.ledger_admission if prior is not None else "unknown",
+            ledger_open_attempt=prior.ledger_open_attempt if prior is not None else 0,
         )
         return [{"ledger_op": "propose", "event_id": int(event_id), "source": source,
                  "mode": mode, "chain": chain, "local_seq": local_seq, "ctx_rev": ctx_rev,
@@ -1102,22 +1760,35 @@ class LedgerRegistry(PreviewRegistry):
         Sent even with nothing pending here: the commit is the event's newer
         committed base, which a sibling's pending value must compose on.
         """
-        state = self._state(event_id)
+        # Commit-only events need a base for sibling composition, not retained
+        # local state. In particular, Redis admission failure must not turn
+        # successful database writes into an unbounded event catalog.
+        state = (self._state(event_id) if event_id in self._events else _EventState())
         if event is not None:
             self._context(state, event)
         self._adopt_base(state, sources, rev)
-        state.expired.pop(source, None)
+        expired_through = state.expired_through.get(source)
+        if (expired_through is None or seq is None
+                or (_revision(seq) is not None and seq >= expired_through)):
+            state.expired.pop(source, None)
+            state.expired_through.pop(source, None)
         entry = state.pending.get(source)
         if entry is not None and (seq is None or entry.seq <= seq):
             self._forget(event_id, source)
-        return [self._settle_op(event_id, source, seq, "unorderable",
-                                self._base(sources, rev, state))]
+        op = self._settle_op(event_id, source, seq, "unorderable",
+                             self._base(sources, rev, state))
+        chain = self._chains.get((event_id, source))
+        if (entry is not None and chain is not None and _revision(seq) is not None
+                and chain <= seq < entry.seq):
+            op.update(mode="commit", chain=chain, owner=self.claims.get(source))
+        return [op]
 
     def refused(self, event_id: int, source: str, reason: str) -> list[dict]:
         state = self._events.get(event_id)
         if state is None:
             return []
         state.expired.pop(source, None)
+        state.expired_through.pop(source, None)
         entry = state.pending.get(source)
         if entry is None:
             return []
@@ -1130,19 +1801,18 @@ class LedgerRegistry(PreviewRegistry):
         for event_id, state in list(self._events.items()):
             for name, entry in list(state.pending.items()):
                 if now - entry.since >= self.max_uncommitted_s:
-                    state.expired[name] = entry.value
-                    self._forget(event_id, name)
-                    ops.append(self._settle_op(event_id, name, entry.seq, "expired"))
+                    # Redis is authoritative: a landed-commit renewal may
+                    # have succeeded even if its reply was lost/cancelled.
+                    op = self._settle_op(event_id, name, entry.seq, "expired")
+                    op.update(mode="expire", chain=self._chains[(event_id, name)],
+                              owner=self.claims.get(name), value=entry.value)
+                    ops.append(op)
         return ops
 
     def _evict(self) -> list[dict]:
-        ops: list[dict] = []
-        while len(self._events) > self.max_events:
-            event_id, state = self._events.popitem(last=False)
-            for name, entry in state.pending.items():
-                self._chains.pop((event_id, name), None)
-                ops.append(self._settle_op(event_id, name, entry.seq, "evicted"))
-        return ops
+        # Every retained allocation is reserved BEFORE _state. A newcomer
+        # never withdraws active work or discards expired-value evidence.
+        return []
 
     def _local_expired(self, op: dict) -> None:
         """Redis judged this chain over: never re-open the same value (R4)."""
@@ -1151,12 +1821,14 @@ class LedgerRegistry(PreviewRegistry):
         if entry is not None and entry.seq == op["local_seq"]:
             self._forget(op["event_id"], op["source"])
             state.expired[op["source"]] = op["value"]
+            state.expired_through[op["source"]] = op["local_seq"]
+            self._reclassify_local_proof(state)
 
     # ── Redis execution ─────────────────────────────────────────────────
     async def _eval(self, call, *argv: Any) -> list:
         keys = ledger_keys()
         reply = await call("EVAL", LEDGER_SCRIPT, len(keys), *keys,
-                           *("" if a is None else str(a) for a in argv))
+                           self.policy.fingerprint, *("" if a is None else str(a) for a in argv))
         return [_ledger_text(item) for item in reply]
 
     async def claim(self, call, source: str) -> int:
@@ -1214,9 +1886,11 @@ class LedgerRegistry(PreviewRegistry):
                                     ttl_ms=lambda: LEDGER_TTL_TOKEN.strip('"'),
                                     next_seq=lambda: seq)
         if frame is not None:
-            # Folded readers compose one owner's entry under one process
-            # identity; a per-event generation is neither. Withheld = refused.
-            frame["preview"]["pending_entries"] = None
+            # All entries share this event's generation/sequence and the
+            # final-send contributor checks below. Folded readers may project
+            # them only when every source is elected from this same event.
+            frame["preview"]["pending_entries_version"] = 2
+            frame["preview"]["pending_entries_authority"] = "event-ledger-v1"
             frame["_ledger"] = {"gen": gen, "seq": seq, "contributors": [
                 (name, *owners[name]) for name in sorted(state.pending)]}
             return frame, excluded
@@ -1237,32 +1911,133 @@ class LedgerRegistry(PreviewRegistry):
         if claim is None:
             self._refusal(stats, "fenced", kind, source, event_id)
             return []
-        common = (source, claim, event_id, " ".join(self.sources))
+        common = (source, op.get("owner", claim), event_id, " ".join(self.sources))
+        started = self._clock()
+        retiring_state = self._events.get(event_id)
+        retiring = ({name: (entry, entry.seq, self._chains.get((event_id, name)))
+                     for name, entry in retiring_state.pending.items()}
+                    if retiring_state is not None and kind in (
+                        "terminal", "retire", "retire_missing", "retire_idle", "retire_policy")
+                    else {})
         if kind == "propose":
+            entry = None if retiring_state is None else retiring_state.pending.get(source)
+            if (op["mode"] == "continue" and entry is not None
+                    and entry.seq == op["local_seq"]
+                    and self._chains.get((event_id, source)) == op["chain"]
+                    and entry.ledger_admission == "refused"):
+                # A newer input was prepared before this chain's refused open
+                # returned. Only confirmed non-admission permits a fresh open;
+                # preserve the original ticket, chain and Redis guards.
+                op = {**op, "mode": "open"}
+                # Spend this proof before I/O. A lost reply is ambiguous, not
+                # permission to reopen after expiry/pruning. Older no_base
+                # replies may not restore the consumed permission either.
+                entry.ledger_admission = "unknown"
+                entry.ledger_open_attempt = op["local_seq"]
             reply = await self._eval(
                 call, "propose", *common, op["mode"], op["chain"], op["local_seq"],
                 op["ctx_rev"], int(self.max_uncommitted_s * 1000), LEDGER_MAX_EVENTS,
-                op["payload"], op["base_rev"], op["base"],
+                op["payload"], op["base_rev"], op["base"], op.get("read_ticket"),
+                op.get("bucket"), op.get("context_clock"),
             )
         elif kind == "settle":
             reply = await self._eval(call, "settle", *common, op["mode"], op["through"],
-                                     op["base_rev"], op["base"])
+                                     op["base_rev"], op["base"], op.get("chain"),
+                                     int(self.max_uncommitted_s * 1000))
+        elif kind == "classify":
+            reply = await self._eval(call, "classify", *common, op["bucket"],
+                                     op["context_clock"], op["ctx_rev"], op["read_ticket"])
+        elif kind == "retire_policy":
+            reply = await self._eval(call, "retire_policy", *common, op["ctx_rev"],
+                                     op["read_ticket"], op["bucket"], op["context_clock"], op["deadline_ms"])
+        elif kind == "retire_idle":
+            reply = await self._eval(call, "retire_idle", *common, op["ctx_rev"], op["read_ticket"],
+                                     op["deadline_ms"])
+        elif kind == "retire_missing":
+            reply = await self._eval(call, "retire_missing", *common, op["read_ticket"])
+        elif kind == "retire":
+            reply = await self._eval(call, "retire", *common, op["ctx_rev"], op["read_ticket"],
+                                     op["committed_rev"])
         else:
             reply = await self._eval(call, "terminal", *common, op["ctx_rev"],
-                                     LEDGER_MAX_EVENTS)
+                                     LEDGER_MAX_EVENTS, op.get("read_ticket"))
         status = reply[0]
-        if kind == "terminal":
+        if kind == "propose" and op["mode"] == "open" and status == "chain_exists":
+            state = self._events.get(event_id)
+            entry = None if state is None else state.pending.get(source)
+            if entry is not None and self._chains.get((event_id, source)) == op["chain"]:
+                # A recovery open may have landed while its reply was lost.
+                # Redis confirms this same owner's chain; future continuations
+                # retain that chain's existing deadline, even if already expired.
+                entry.ledger_admission = "accepted"
+        if (status in ("ok", "current") and op.get("chain") is not None
+                and self._chains.get((event_id, source)) == op["chain"]):
+            state = self._events.get(event_id)
+            entry = None if state is None else state.pending.get(source)
+            own = next((reply[i:i + 4] for i in range(7, len(reply) - 3, 4)
+                        if reply[i] == source and int(reply[i + 1]) == claim), None)
+            if entry is not None and own is not None:
+                entry.ledger_admission = "accepted"
+                # The pre-EVAL monotonic time is conservative under slow/lost
+                # replies; only Redis acknowledgement can advance this hint.
+                entry.since = max(entry.since, started +
+                    (int(own[2]) - int(reply[3])) / 1000 - self.max_uncommitted_s)
+            elif (entry is not None and op.get("mode") == "expire"
+                  and entry.seq <= op["through"]):
+                state.expired[source] = entry.value
+                state.expired_through[source] = entry.seq
+                self._forget(event_id, source)
+                self._reclassify_local_proof(state)
+        if status == "current":
+            return []
+        if kind in ("terminal", "retire", "retire_missing", "retire_idle", "retire_policy"):
             if status != "ok":
                 self._refusal(stats, status, kind, source, event_id)
                 return []
+            state = self._events.get(event_id)
+            if state is not None:
+                # An ACK covers only the local work captured before EVAL.
+                # Capacity retirement proves no valid Redis lease remains;
+                # preserve expired-value proof even if local expire never ran.
+                for name, (entry, seq_before, chain) in retiring.items():
+                    if (state.pending.get(name) is not entry or entry.seq != seq_before
+                            or self._chains.get((event_id, name)) != chain):
+                        continue
+                    if kind in ("retire_idle", "retire_policy"):
+                        state.expired[name] = entry.value
+                        state.expired_through[name] = entry.seq
+                    self._forget(event_id, name)
+                self._reclassify_local_proof(state)
             gen, seq = int(reply[1]), int(reply[2])
             if seq <= 1:
                 return []
             return [{"event_id": int(event_id), "p": None, "status": None,
                      "provisional": True,
                      "preview": {"kind": "revoke", "epoch": gen, "seq": seq,
-                                 "through_seq": seq - 1, "reason": "terminal"},
+                                 "through_seq": seq - 1, "reason": "idle" if kind in ("retire_idle", "retire_policy") else "terminal"},
                      "_ledger": {"gen": gen, "seq": seq}}]
+        if kind == "classify" and status == "classified":
+            return []
+        if kind == "propose" and status in (
+            "no_base", "read_required", "full", "bucket_full", "migration_pending", "migration_debt",
+            "outside_window", "context_required", "stale_context", "policy_mismatch", "legacy_owner",
+        ):
+            state = self._events.get(event_id)
+            entry = None if state is None else state.pending.get(source)
+            if (op["mode"] == "open" and entry is not None
+                    and entry.seq == op["local_seq"]
+                    and not (status == "no_base" and entry.ledger_admission == "accepted")):
+                # This open never entered Redis. Keeping its local chain would
+                # turn a later valid input into missing_chain/false expiry.
+                self._forget(event_id, source)
+            elif (status == "no_base" and op["mode"] == "open" and entry is not None
+                  and self._chains.get((event_id, source)) == op["chain"]
+                  and entry.ledger_admission != "accepted"
+                  and op["local_seq"] >= entry.ledger_open_attempt):
+                # Preserve the newer value/sequence while recording that its
+                # inherited chain never opened. A delayed refusal cannot undo
+                # an accepted acknowledgement or affect a replacement chain.
+                entry.ledger_admission = "refused"
         if kind == "propose" and status in ("expired", "missing_chain"):
             self._local_expired(op)
         if kind == "propose" and status == "terminal":
@@ -1384,8 +2159,7 @@ def registry() -> PreviewRegistry:
     """The process's one registry: both source arms must share it."""
     global _REGISTRY
     if _REGISTRY is None:
-        sources = ledger_sources()
-        _REGISTRY = LedgerRegistry(sources=sources) if sources else PreviewRegistry()
+        _REGISTRY = LedgerRegistry(sources=ledger_sources())
     return _REGISTRY
 
 

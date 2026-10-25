@@ -28,12 +28,16 @@ import ast
 import asyncio
 import inspect
 import time
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 
 import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.live_blend_refresh as lbr
 import app.tasks.polymarket_ws as poly_task
+from tests.test_pm_same_flush_fresh_admission_10090 import cadence_redis  # noqa: F401
+from tests.test_event_frame_batching_10659 import private_redis_socket  # noqa: F401
 from tests.test_ws_admission_mapped_legs_9462 import (
     _arm,
     _install_quiet_socket,
@@ -279,6 +283,50 @@ OBSERVE_BOUND_S = 5.0
 NO_RECYCLE_S = 60.0
 
 
+def _install_cadence_session(monkeypatch, slate):
+    """Extend the existing empty-debt DB seam with its owner transaction.
+
+    Ownership queries are not slate reads and must not consume positional
+    slate answers or fail/retry during the cadence measurement.
+    """
+    from app.tasks import base
+    from sqlalchemy.sql.dml import Insert
+
+    state = _install_session(monkeypatch, slate, lambda n: [])
+    factory = base.get_task_session
+    state["owner_claims"] = 0
+
+    @asynccontextmanager
+    async def session(*args, **kwargs):
+        async with factory(*args, **kwargs) as db:
+            original = db.execute
+
+            async def execute(statement, parameters=None):
+                sql = str(statement)
+                owner = poly_task.PM_WITHDRAWAL_DEBT_SOURCE + "_owner"
+                if sql == "SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))":
+                    assert parameters == {"key": owner}
+                    return SimpleNamespace(scalar_one=lambda: True)
+                assert parameters is None
+                values = statement.compile().params
+                if values.get("source_1") == owner and sql.startswith("SELECT owed_chart_points.id"):
+                    return SimpleNamespace(scalar_one_or_none=lambda: None)
+                if isinstance(statement, Insert) and values.get("source") == owner:
+                    state["owner_claims"] += 1
+                    return SimpleNamespace(scalar_one=lambda: 1)
+                return await original(statement)
+
+            async def commit():
+                pass  # the empty-debt fixture acknowledges only its owner row
+
+            db.execute, db.commit = execute, commit
+            yield db
+
+    monkeypatch.setattr(base, "get_task_session", session)
+    return state
+
+
+@pytest.mark.usefixtures("cadence_redis")
 class TestTheRealConsumersFlushStartToStart:
     @ARMS
     async def test_the_next_flush_does_not_sleep_after_a_slow_one(
@@ -291,7 +339,7 @@ class TestTheRealConsumersFlushStartToStart:
         monkeypatch.setattr(module, "PRICE_FLUSH_SECONDS", PERIOD)
         _install_quiet_socket(monkeypatch)
         _timing(monkeypatch, module, refresh=NO_RECYCLE_S)
-        _install_session(monkeypatch, slate, lambda n: [])
+        db_state = _install_cadence_session(monkeypatch, slate)
 
         run = asyncio.create_task(consumer())
         seen = asyncio.create_task(_SlowFlush.observed.wait())
@@ -312,6 +360,9 @@ class TestTheRealConsumersFlushStartToStart:
             raise ended
 
         (refresher,) = _SlowFlush.instances
+        assert refresher.preview is True
+        if arm == "polymarket":
+            assert db_state["owner_claims"] == 1
         # The final drain passes no start; the periodic flushes all do.
         periodic = [c for c in refresher.calls if c[2] is not None]
         assert len(periodic) >= 3, refresher.calls

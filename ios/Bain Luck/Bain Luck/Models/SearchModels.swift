@@ -539,8 +539,12 @@ nonisolated struct ChampionshipPathEntry: Decodable, Identifiable, Sendable {
     let probability: Double?
     let rank: Int?
     let movement: Double?
+    /// #11493 — the grid's verdict for this step. See ``TeamGridVerdict``.
+    var state: String? = nil
 
     var id: Int { tier }
+
+    var gridVerdict: TeamGridVerdict? { state.flatMap(TeamGridVerdict.init(rawValue:)) }
 }
 
 // AnyCodable moved to CommonTypes.swift
