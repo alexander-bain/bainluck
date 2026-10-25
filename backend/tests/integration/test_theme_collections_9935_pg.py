@@ -104,8 +104,15 @@ async def world(monkeypatch):
         # Both reference `containers`, so they go first or `drop_all` wedges.
         await conn.execute(text("DROP TABLE IF EXISTS container_member_decisions"))
         await conn.execute(text("DROP TABLE IF EXISTS container_corrections"))
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
+        def _recreate_schema(sync_conn):
+            if (sync_conn.dialect.server_version_info or (0,)) < (15,):
+                for table in Base.metadata.tables.values():
+                    for idx in table.indexes:
+                        idx.dialect_options["postgresql"]["nulls_not_distinct"] = None
+            Base.metadata.drop_all(sync_conn)
+            Base.metadata.create_all(sync_conn)
+
+        await conn.run_sync(_recreate_schema)
         for statement in (*CORRECTIONS_DDL, *DECISIONS_DDL):
             await conn.execute(text(statement))
 
@@ -720,3 +727,144 @@ async def test_9925_the_card_links_to_the_page_it_counts_and_only_while_it_can(w
         await db.commit()
     ref, reason, published = await _card(world, preview)
     assert ref is None and published == tcr.PublishedThemes()
+
+
+@pytest.mark.asyncio
+async def test_9936_multi_page_withdrawal_return_pagination_and_reassembly_persistence(world):
+    """#9936 — Full 7-step multi-page correction-and-return journey on real Postgres:
+    1. Assemble & publish a multi-page AI collection (4 members, 2 pages at limit=2).
+    2. Load page 1 and page 2 through the real reader route; select a page-2 member.
+    3. Withdraw that page-2 member via `withdraw_member` (proving `StaleRevision` guard
+       and idempotency on repeat call).
+    4. Verify fail-closed `503 building` before rebuild (both fresh and with stale cursor,
+       never falling back to the pre-withdrawal snapshot), then run `_run_rebuild_theme_snapshot`.
+    5. Return to `/api/containers/ai` (both with stale page-1 cursor -> `revision_moved=True`
+       page 1 of the new revision, and fresh -> page 1 of the new revision).
+    6. Continue pagination across all pages of the new revision: counts are coherent
+       (`shown_count=3`), the withdrawn member is absent, and healthy page-2 members remain.
+    7. Run `_run_assemble_theme_collections(only='ai')` again: `bumped=False`,
+       `revision_reason='identical'`, decision remains `container_member_withdrawn`,
+       and the withdrawn member never reappears.
+    """
+    from app.tasks.theme_assembly import (
+        _run_assemble_theme_collections,
+        _run_rebuild_theme_snapshot,
+    )
+    from app.utils import container_corrections as cc
+
+    # Step 1: Establish published 2-page AI collection.
+    async with world["Session"]() as db:
+        await _seed_ai_markets(db)
+    cid = await _assemble_and_publish(world)
+    rev_before = await _live_revision(world, cid)
+
+    # Step 2: Load page 1 and page 2 at limit=2 and open a member on page 2.
+    p1_before = await _get(world, AI_SLUG, limit="2")
+    assert p1_before["revision"] == rev_before
+    assert p1_before["counts"]["shown_count"] == 4
+    assert p1_before["counts"]["inventory_complete"] is True
+    cursor_p1 = p1_before["page"]["next_cursor"]
+    assert cursor_p1
+
+    p2_before = await _get(
+        world, AI_SLUG, revision=str(rev_before), cursor=cursor_p1, limit="2"
+    )
+    assert p2_before["revision"] == rev_before and p2_before["revision_moved"] is False
+    assert p2_before["counts"] == p1_before["counts"]
+    p2_ids = _page_ids(p2_before)
+    assert len(p2_ids) == 2
+    withdrawn_id, healthy_p2_id = p2_ids[0], p2_ids[1]
+    all_healthy = [mid for mid in (*_page_ids(p1_before), *p2_ids) if mid != withdrawn_id]
+
+    # Step 3: Withdraw the page-2 member via the real correction transaction (plus guards).
+    async with world["Session"]() as db:
+        with pytest.raises(cc.StaleRevision):
+            await cc.withdraw_member(
+                db, container_id=cid, child_type="market", child_id=withdrawn_id,
+                reason="not this subject", actor="ops", expected_revision=rev_before - 1,
+            )
+        first_call = await cc.withdraw_member(
+            db, container_id=cid, child_type="market", child_id=withdrawn_id,
+            reason="not this subject", actor="ops", expected_revision=rev_before,
+        )
+        second_call = await cc.withdraw_member(
+            db, container_id=cid, child_type="market", child_id=withdrawn_id,
+            reason="not this subject", actor="ops",
+        )
+        await db.commit()
+
+    assert first_call.applied is True
+    assert first_call.revision == rev_before + 1
+    assert first_call.edges_removed == 1
+    assert second_call.applied is False
+    assert second_call.revision == first_call.revision
+    assert second_call.edges_removed == 0
+    assert world["sent"] == [(REBUILD, [cid], "background")]
+    world["sent"].clear()
+
+    async with world["Session"]() as db:
+        ledger_rows = int((await db.execute(
+            text(
+                "SELECT count(*) FROM container_corrections "
+                "WHERE container_id = :c AND scope = 'member' AND action = 'withdraw' AND child_id = :m"
+            ),
+            {"c": cid, "m": withdrawn_id},
+        )).scalar())
+    assert ledger_rows == 1
+
+    # Step 4: Before rebuild finishes, both fresh and paged reads fail closed with 503 building
+    # and never fall back to the pre-withdrawal snapshot. Then rebuild processes the correction.
+    assert _is_building(await _get(world, AI_SLUG, limit="2"))
+    assert _is_building(
+        await _get(world, AI_SLUG, revision=str(rev_before), cursor=cursor_p1, limit="2")
+    )
+    rebuilt = await _run_rebuild_theme_snapshot(cid)
+    assert rebuilt["terminal"] == "complete", rebuilt
+    assert rebuilt["containers"][0]["inventory_complete"] is True
+    rev_after = await _live_revision(world, cid)
+    assert rev_after >= first_call.revision > rev_before
+
+    # Step 5: Return to collection (stale cursor returns revision_moved=True page 1; fresh returns page 1).
+    stale_cursor_read = await _get(
+        world, AI_SLUG, revision=str(rev_before), cursor=cursor_p1, limit="2"
+    )
+    assert stale_cursor_read["revision_moved"] is True
+    assert stale_cursor_read["revision"] == rev_after
+    assert stale_cursor_read["counts"]["shown_count"] == 3
+
+    p1_after = await _get(world, AI_SLUG, limit="2")
+    assert p1_after["revision"] == rev_after and p1_after["revision_moved"] is False
+    assert p1_after["counts"]["shown_count"] == 3
+    assert p1_after["counts"]["inventory_complete"] is True
+    assert _page_ids(stale_cursor_read) == _page_ids(p1_after)
+
+    # Step 6: Continue pagination on the new revision; counts match and withdrawn member is gone.
+    p2_after = await _get(
+        world, AI_SLUG, revision=str(rev_after), cursor=p1_after["page"]["next_cursor"], limit="2"
+    )
+    assert p2_after["revision"] == rev_after and p2_after["revision_moved"] is False
+    assert p2_after["counts"] == p1_after["counts"]
+    assert p2_after["page"]["next_cursor"] is None
+    paged_after_ids = [*_page_ids(p1_after), *_page_ids(p2_after)]
+    assert withdrawn_id not in paged_after_ids
+    assert healthy_p2_id in paged_after_ids
+    assert paged_after_ids == all_healthy
+
+    # Step 7: Re-run the full theme assembly pass and verify the withdrawal persists.
+    reassembled = await _run_assemble_theme_collections(only=AI_SLUG)
+    assert reassembled["terminal"] == "complete", reassembled
+    ai_report = reassembled["containers"][0]
+    assert ai_report["bumped"] is False
+    assert ai_report["revision_reason"] == "identical"
+    assert ai_report["snapshot"] == "refreshed"
+    assert not await _has_edge(world, cid, withdrawn_id)
+    assert await _decision_reason(world, cid, withdrawn_id) == "container_member_withdrawn"
+
+    post_pass_p1 = await _get(world, AI_SLUG, limit="2")
+    post_pass_p2 = await _get(
+        world, AI_SLUG, revision=str(post_pass_p1["revision"]),
+        cursor=post_pass_p1["page"]["next_cursor"], limit="2",
+    )
+    assert post_pass_p1["revision"] == rev_after
+    assert [*_page_ids(post_pass_p1), *_page_ids(post_pass_p2)] == all_healthy
+
