@@ -41,6 +41,11 @@ from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 
 from app.utils.cross_source_matching import normalize_question
+from app.utils.venue_identity import (
+    kalshi_supersedes,
+    same_venue_market,
+    venue_identity,
+)
 
 __all__ = [
     "family_key",
@@ -95,9 +100,20 @@ _LEAGUE_PHRASE_PREFIXES: tuple[tuple[str, ...], ...] = (
     ("pro", "hockey"),
 )
 
+# Explicit conference-final awards are different from the league-finals award
+# and from each other (#9858/#11619). Preserve the named competition in the
+# display family; this does not establish edition or settlement equivalence.
+_CONFERENCE_FINALS_AWARDS = [
+    (f"{scope}conference finals {award}", f"{scope}conference finals mvp")
+    for scope in ("eastern ", "western ", "")
+    for award in ("most valuable player", "mvp")
+]
+_FINALS_AWARD_FAMILIES = {key for _, key in _CONFERENCE_FINALS_AWARDS} | {"finals mvp"}
+
 # Standalone award keywords → canonical family key.  Longest / most specific
 # first so "cy young" is not shadowed by a broader match.
 _STANDALONE_AWARDS: list[tuple[str, str]] = [
+    *_CONFERENCE_FINALS_AWARDS,
     ("defensive player of the year", "defensive player of the year"),
     ("comeback player of the year", "comeback player of the year"),
     ("most improved player", "most improved player"),
@@ -147,6 +163,42 @@ _STANDALONE_AWARDS: list[tuple[str, str]] = [
     ("dpoy", "defensive player of the year"),
     ("roy", "rookie of the year"),
 ]
+
+# A title explicitly joining different award families is not either single
+# award. Longest-first, non-overlapping spans keep "Finals MVP" and "Defensive
+# Player of the Year" from counting their own shorter aliases twice (#9858).
+_AWARD_CANONICAL = dict(_STANDALONE_AWARDS)
+_AWARD_SPAN_RE = re.compile(
+    r"\b(?:"
+    + "|".join(re.escape(kw) for kw in sorted(_AWARD_CANONICAL, key=len, reverse=True))
+    + r")\b"
+)
+_AWARD_JOIN_RE = re.compile(
+    r"\s*(?:(?:award|trophy|winner)\s+)?(?:\b(?:and|or)\b|[&+/])\s*"
+    r"(?:(?:the|win|wins|winning)\s+)*"
+    r"(?:(?:al|nl|nba|wnba|nfl|nhl|mlb|mls)\s+)?"
+)
+
+
+def _has_explicit_joint_awards(name: str) -> bool:
+    """Refuse explicit compounds, without inferring rule equivalence.
+
+    Reuse the recognized award vocabulary; an incidental mention elsewhere
+    in the title is not enough. Unknown predicates, editions and distinctions
+    within one existing family still require their own semantic contract.
+    """
+    low = " ".join(name.lower().split())
+    previous = None
+    for match in _AWARD_SPAN_RE.finditer(low):
+        if (
+            previous is not None
+            and _AWARD_CANONICAL[previous.group()] != _AWARD_CANONICAL[match.group()]
+            and _AWARD_JOIN_RE.fullmatch(low[previous.end():match.start()])
+        ):
+            return True
+        previous = match
+    return False
+
 
 # Quantity verbs that introduce a threshold / total prop.
 _QUANTITY_VERBS = (
@@ -389,6 +441,8 @@ def _parse(market_name: str | None) -> tuple[str | None, str | None]:
     low = cleaned.lower()
     if not low:
         return None, None
+    if _has_explicit_joint_awards(low):
+        return None, None
 
     # 1. "<entity> Next Team"
     m = _NEXT_TEAM_RE.match(low)
@@ -616,6 +670,10 @@ def _make_row(
         "top_outcome": top_outcome,
         # Internal, popped before the payload is emitted (like entity_key).
         "_resolves_at": _parse_resolution(market.get("resolution_date")),
+        "_award_season": _named_nba_mvp_season(market),
+        # Internal event identity supplies a negative same-venue boundary.
+        # It is not proof that two contracts have equivalent settlement rules.
+        "_vid": venue_identity(source, group_id),
     }
 
 
@@ -724,7 +782,11 @@ def _one_rung_per_entity(rows: list[dict]) -> list[dict]:
         ladders[key].setdefault(r["_line"], []).append(r)
     reduced: dict[str, dict] = {}
     for key, by_line in ladders.items():
-        picked = dict(_pick_rung([_merge_rows(grp) for grp in by_line.values()]))
+        # venue-identity@1: one line from two markets of one venue (last
+        # season's ladder and this season's) is two rows, not one.
+        picked = dict(
+            _pick_rung([_merge_rows(_speaking_rows(grp)) for grp in by_line.values()])
+        )
         picked.pop("_line", None)
         reduced[key] = picked
     return [reduced[r] if isinstance(r, str) else r for r in out]
@@ -818,11 +880,97 @@ def _drop_earlier_results(rows: list[dict], now: datetime | None = None) -> list
     ]
 
 
+def _drop_superseded_editions(rows: list[dict]) -> list[dict]:
+    """Reuse the recovered settled-edition filter within a display bucket.
+
+    Explicitly conflicting NBA MVP seasons have already been separated. For
+    other rows still sharing a family, padded resolution dates cannot exclude
+    a prior result (#2644). The recovered predicate compares edition tokens
+    only within one Kalshi series and identical suffix. It is a negative
+    representative filter, not a general rules-equivalence decision.
+
+    Two limits keep this narrow. Only a settled row goes: an earlier edition
+    still being traded is a live race, not a past result. And "the same market"
+    means the same ticker apart from the token (`kalshi_supersedes`), so the
+    per-player series ``KXNEXTTEAMNFL-26JCHASE`` and ``KXNEXTTEAMNFL-27JBURROW``
+    never supersede each other. Rows without a readable Kalshi edition stay.
+    """
+    # Index the latest comparable identity once. Comparing every entity row
+    # against every other row makes a large roster pay quadratically for a
+    # series-level decision. The recovered predicate still decides both steps.
+    latest = {}
+    for row in rows:
+        identity = row.get("_vid")
+        if identity is None or identity.venue != "kalshi" or identity.edition is None:
+            continue
+        key = (identity.series, identity.rest)
+        if key not in latest or kalshi_supersedes(identity, latest[key]):
+            latest[key] = identity
+    return [
+        row
+        for row in rows
+        if not (
+            row.get("settled")
+            and (identity := row.get("_vid")) is not None
+            and kalshi_supersedes(
+                latest.get((identity.series, identity.rest)), identity
+            )
+        )
+    ]
+
+
+def _speak_key(r: dict) -> tuple:
+    """A total order over one entity's rows; the best row sorts first (reverse).
+
+    A market still being traded comes first, so an open race is never answered
+    by a finished market's result. Then `_merge_rows`' own preference
+    (settled-won, settled, price). Then fixed tie-breaks, so the choice never
+    depends on the order the rows arrived in.
+    """
+    p = r.get("probability")
+    return (
+        not r.get("settled"),
+        bool(r.get("settled") and r.get("result") == "won"),
+        bool(r.get("settled")),
+        p if p is not None else -1.0,
+        str(r.get("group_id") or ""),
+        str(r.get("market_id") or ""),
+        str(r.get("outcome_id") or ""),
+    )
+
+
+def _speaking_rows(group: list[dict]) -> list[dict]:
+    """The rows that speak for one entity on this card (venue-identity@1).
+
+    Distinct event identities within a venue cannot contribute to one merged
+    representative. Reuse the recovered candidate's preference for an open row
+    before a settled row, followed by the existing price preference and stable
+    tie-breaks. Known season conflicts have already been split into cards.
+
+    Equal event IDs do not establish settlement equivalence. Cross-venue and
+    missing-identity rows retain the old merge behavior, still subject to the
+    separate #11619 rules contract. This boundary grants no new blend permission.
+    """
+    if len(group) < 2:
+        return group
+    chosen: dict = {}
+    out: list[dict] = []
+    for r in sorted(group, key=_speak_key, reverse=True):
+        vid = r.get("_vid")
+        if vid is None:
+            out.append(r)
+            continue
+        first = chosen.setdefault(vid.venue, vid)
+        if same_venue_market(first, vid):
+            out.append(r)
+    return out
+
+
 def _collapse_cross_source(rows: list[dict]) -> list[dict]:
     groups: "OrderedDict[str, list[dict]]" = OrderedDict()
     for r in _one_rung_per_entity(rows):
         groups.setdefault(r["entity_key"], []).append(r)
-    return [_merge_rows(grp) for grp in groups.values()]
+    return [_merge_rows(_speaking_rows(grp)) for grp in groups.values()]
 
 
 # Words the label prints in capitals.  The family key is lower-cased, so a
@@ -960,9 +1108,26 @@ def _competition_key(market: dict, fk: str) -> str:
 
 
 def resolve_family_key(market: dict) -> str | None:
-    """Family key for a market dict — cached LLM hint first, then pattern."""
+    """Keep explicit award predicates/scopes even when a cached hint is broad."""
     name = market.get("name") or market.get("market_name") or ""
-    fk = cached_family_key(market) or family_key(name)
+    if _has_explicit_joint_awards(name):
+        return None
+    # The parser already excludes award shortlists. A cached winner-family
+    # hint must not bypass that refusal and turn finalists into winners.
+    low = name.lower()
+    if _SHORTLIST_RE.search(low) and (
+        _AWARD_SPAN_RE.search(low) or _OF_THE_YEAR_RE.search(low)
+    ):
+        return None
+    parsed = family_key(name)
+    # A model hint cannot erase or replace a competition the title explicitly
+    # names. Unknown titles retain their existing hint path; no rule or season
+    # identity is inferred from that fallback.
+    fk = (
+        parsed
+        if parsed in _FINALS_AWARD_FAMILIES
+        else cached_family_key(market) or parsed
+    )
     return _competition_key(market, fk) if fk else None
 
 
@@ -1020,6 +1185,72 @@ def _scoped_buckets(
     ]
 
 
+def _named_nba_mvp_season(market: dict) -> tuple[int, int] | None:
+    """Read an explicit NBA MVP season for a negative grouping boundary.
+
+    KXNBAMVP-27's provider event subtitle names '2026-27 season' (2026-10-25).
+    Reuse the recovered venue parser only for that series' bare event identity;
+    a generic ticker year, resolution date or canonical key is not a season.
+    Polymarket's explicit 'NBA: 2026-27 MVP' title names both endpoints.
+    Equal seasons do NOT establish rules/settlement equivalence. Other awards
+    and unknown forms still require the shared #11619 contract.
+    """
+    source = (market.get("source") or "").strip().lower()
+    if source == "kalshi":
+        identity = venue_identity(source, market.get("group_id"))
+        if (
+            identity is not None
+            and identity.series == "KXNBAMVP"
+            and identity.rest == ""
+            and identity.edition is not None
+        ):
+            end = 2000 + identity.edition
+            return end - 1, end
+        return None
+    if source != "polymarket":
+        return None
+    title = market.get("name") or market.get("market_name") or ""
+    named = re.fullmatch(
+        r"NBA\s*:\s*(20\d{2})\s*[-–]\s*(20\d{2}|\d{2})\s+"
+        r"(?:MVP|Most Valuable Player)",
+        title.strip(),
+        re.IGNORECASE,
+    )
+    if not named:
+        return None
+    start, end = int(named[1]), int(named[2])
+    if end < 100:
+        end += (start // 100) * 100
+    return (start, end) if end == start + 1 else None
+
+
+def _award_season_buckets(emitted_key: str, fk: str, rows: list[dict]):
+    """Separate a proved season conflict before a result can cross editions.
+
+    With no known conflict, preserve the existing grouping rule. Once two
+    explicit seasons disagree, unknown rows cannot bridge them. Each bucket
+    still needs two entities and keeps its real source market/outcome IDs.
+    """
+    seasons = {r.get("_award_season") for r in rows} - {None}
+    if fk != "mvp" or len(seasons) < 2:
+        return [(emitted_key, None, rows)]
+    buckets = OrderedDict()
+    for row in rows:
+        buckets.setdefault(row.get("_award_season"), []).append(row)
+    return [
+        (
+            (
+                f"{emitted_key}:season:{season[0]}-{season[1]}"
+                if season
+                else f"{emitted_key}:season:unknown"
+            ),
+            f"{season[0]}–{str(season[1])[-2:]}" if season else "Season unspecified",
+            grouped,
+        )
+        for season, grouped in buckets.items()
+    ]
+
+
 def group_prop_families(markets: list[dict]) -> list[dict]:
     """Group markets into prop families with per-entity rows.
 
@@ -1056,13 +1287,18 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
             families.setdefault(fk, []).append((scope, row))
 
     result: list[dict] = []
+    # An aged-out result cannot create an edition boundary for visible rows.
+    # Remove it before season partitioning, not after the cards have split.
     buckets = [
-        (emitted_key, fk, scope, rows)
+        (season_key, fk, scope, season_label, season_rows)
         for fk, scoped_rows in families.items()
         for emitted_key, scope, rows in _scoped_buckets(fk, scoped_rows)
+        for season_key, season_label, season_rows in _award_season_buckets(
+            emitted_key, fk, _drop_earlier_results(rows)
+        )
     ]
-    for emitted_key, fk, scope, rows in buckets:
-        merged = _collapse_cross_source(_drop_earlier_results(rows))
+    for emitted_key, fk, scope, season_label, rows in buckets:
+        merged = _collapse_cross_source(_drop_superseded_editions(rows))
         distinct = {r["entity_key"] for r in merged if r.get("entity_key")}
         if len(distinct) < 2:
             continue
@@ -1078,6 +1314,8 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
         for r in merged:
             r.pop("entity_key", None)
             r.pop("_resolves_at", None)
+            r.pop("_award_season", None)
+            r.pop("_vid", None)
 
         result.append(
             {
@@ -1087,7 +1325,8 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
                 # "Defensive Player Of The Year", never "football:defensive…"
                 # — plus the sport, for a title only one sport uses (#9855).
                 "family_key": emitted_key,
-                "label": _family_label(fk, scope),
+                "label": _family_label(fk, scope)
+                + (f" · {season_label}" if season_label else ""),
                 "sport": scope,
                 "entity_count": len(distinct),
                 "sources": sorted({s for r in merged for s in r.get("sources", [])}),
