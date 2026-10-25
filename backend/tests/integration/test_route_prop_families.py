@@ -224,3 +224,61 @@ async def test_dodgers_joint_award_stays_out_of_single_award_http_payload(client
             assert row["market_id"] == market.id
             assert row["group_id"] == market.group_id
             assert row["settled"] is False
+
+
+@pytest.mark.parametrize("hint", [None, "mvp", "finals mvp"])
+async def test_conference_and_league_awards_stay_distinct_in_http_payload(
+    client, mock_db, hint
+):
+    """Same named people, different awards; a cached winner hint cannot mix them."""
+    team = _mock_team(team_id=9859, slug="thunder", name="Oklahoma City Thunder")
+    west = _market(
+        401, "Western Conference Finals MVP Winner", group_id="kalshi:synthetic-west"
+    )
+    east = _market(
+        402, "Eastern Conference Finals MVP Winner", group_id="kalshi:synthetic-east"
+    )
+    league = _market(403, "NBA Finals MVP Winner", group_id="kalshi:synthetic-finals")
+    shortlist = _market(404, "NBA MVP Finalists", group_id="kalshi:synthetic-shortlist")
+    markets = (west, east, league, shortlist)
+    if hint:
+        for market in markets:
+            market.market_metadata = {"prop_family": {"family_key": hint}}
+    rows = [
+        (_outcome(4011, "Shai Gilgeous-Alexander", 0.6), west),
+        (_outcome(4012, "Chet Holmgren", 0.1), west),
+        (_outcome(4021, "Jayson Tatum", 0.4), east),
+        (_outcome(4022, "Jaylen Brown", 0.2), east),
+        (_outcome(4031, "Shai Gilgeous-Alexander", 0.25), league),
+        (_outcome(4032, "Jayson Tatum", 0.2), league),
+        (_outcome(4041, "Shai Gilgeous-Alexander", 0.8), shortlist),
+        (_outcome(4042, "Jayson Tatum", 0.7), shortlist),
+    ]
+    mock_db.execute.side_effect = _routed(
+        team,
+        [rows, [], []],
+        markets=[
+            _screened(m, [o for o, parent in rows if parent is m]) for m in markets
+        ],
+    )
+    response = await client.get("/api/teams/thunder/prop-families")
+    assert response.status_code == 200
+    families = {f["family_key"]: f for f in response.json()["families"]}
+    expected = {
+        "western conference finals mvp": (
+            west,
+            {"Shai Gilgeous-Alexander": 0.6, "Chet Holmgren": 0.1},
+        ),
+        "eastern conference finals mvp": (
+            east,
+            {"Jayson Tatum": 0.4, "Jaylen Brown": 0.2},
+        ),
+        "finals mvp": (league, {"Shai Gilgeous-Alexander": 0.25, "Jayson Tatum": 0.2}),
+    }
+    assert set(families) == set(expected)
+    for key, (market, prices) in expected.items():
+        family = families[key]
+        assert {r["entity"]: r["probability"] for r in family["rows"]} == prices
+        assert {r["market_id"] for r in family["rows"]} == {market.id}
+        assert {r["group_id"] for r in family["rows"]} == {market.group_id}
+        assert all(row["settled"] is False for row in family["rows"])

@@ -95,9 +95,20 @@ _LEAGUE_PHRASE_PREFIXES: tuple[tuple[str, ...], ...] = (
     ("pro", "hockey"),
 )
 
+# Explicit conference-final awards are different from the league-finals award
+# and from each other (#9858/#11619). Preserve the named competition in the
+# display family; this does not establish edition or settlement equivalence.
+_CONFERENCE_FINALS_AWARDS = [
+    (f"{scope}conference finals {award}", f"{scope}conference finals mvp")
+    for scope in ("eastern ", "western ", "")
+    for award in ("most valuable player", "mvp")
+]
+_FINALS_AWARD_FAMILIES = {key for _, key in _CONFERENCE_FINALS_AWARDS} | {"finals mvp"}
+
 # Standalone award keywords → canonical family key.  Longest / most specific
 # first so "cy young" is not shadowed by a broader match.
 _STANDALONE_AWARDS: list[tuple[str, str]] = [
+    *_CONFERENCE_FINALS_AWARDS,
     ("defensive player of the year", "defensive player of the year"),
     ("comeback player of the year", "comeback player of the year"),
     ("most improved player", "most improved player"),
@@ -997,11 +1008,26 @@ def _competition_key(market: dict, fk: str) -> str:
 
 
 def resolve_family_key(market: dict) -> str | None:
-    """Family key: refuse explicit compounds before accepting cached hints."""
+    """Keep explicit award predicates/scopes even when a cached hint is broad."""
     name = market.get("name") or market.get("market_name") or ""
     if _has_explicit_joint_awards(name):
         return None
-    fk = cached_family_key(market) or family_key(name)
+    # The parser already excludes award shortlists. A cached winner-family
+    # hint must not bypass that refusal and turn finalists into winners.
+    low = name.lower()
+    if _SHORTLIST_RE.search(low) and (
+        _AWARD_SPAN_RE.search(low) or _OF_THE_YEAR_RE.search(low)
+    ):
+        return None
+    parsed = family_key(name)
+    # A model hint cannot erase or replace a competition the title explicitly
+    # names. Unknown titles retain their existing hint path; no rule or season
+    # identity is inferred from that fallback.
+    fk = (
+        parsed
+        if parsed in _FINALS_AWARD_FAMILIES
+        else cached_family_key(market) or parsed
+    )
     return _competition_key(market, fk) if fk else None
 
 
