@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
 import type {
@@ -83,6 +83,8 @@ export function ThemeBundleCard({
   timeZone,
 }: ThemeBundleCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [clockNowIso, setClockNowIso] = useState<string | undefined>(nowIso);
+  const [clockTimeZone, setClockTimeZone] = useState<string | undefined>(timeZone);
   const collection = admitCollectionRef(collectionRef);
 
   // #9925: a reader who opened the collection from this card and came Back
@@ -93,24 +95,51 @@ export function ThemeBundleCard({
     if (bundleId && consumeThemeCollectionReturn(bundleId)) setExpanded(true);
   }, [bundleId]);
 
+  // B4: Keep reader-local clock and timezone fresh after hydration and as time advances.
+  useEffect(() => {
+    const syncClock = () => {
+      setClockNowIso(nowIso ?? new Date(Date.now()).toISOString());
+      setClockTimeZone(
+        timeZone ??
+          (typeof Intl !== "undefined"
+            ? Intl.DateTimeFormat().resolvedOptions().timeZone
+            : undefined),
+      );
+    };
+    syncClock();
+    if (nowIso !== undefined) return;
+    const timer = setInterval(syncClock, 60_000);
+    return () => clearInterval(timer);
+  }, [nowIso, timeZone]);
+
   if (isDeadlineFamilyStoryKey(storyKey) || deadlineFamily != null) {
+    const effectiveNowIso =
+      clockNowIso ?? nowIso ?? new Date(Date.now()).toISOString();
+    const effectiveTimeZone =
+      clockTimeZone ??
+      timeZone ??
+      (typeof Intl !== "undefined"
+        ? Intl.DateTimeFormat().resolvedOptions().timeZone
+        : undefined);
     const deadlineModel = buildDeadlineFamilyCardModel(
       { items, title, sharedQuestion, storyKey, deadlineFamily },
-      { nowIso, timeZone },
+      { nowIso: effectiveNowIso, timeZone: effectiveTimeZone },
     );
-    if (!deadlineModel) {
-      return null;
+    // B1: If the specialized deadline-family consumer accepts the model, render
+    // `DeadlineFamilyCard`; otherwise fall through to the generic `ThemeBundleCard`
+    // presentation so a backend-folded family never disappears.
+    if (deadlineModel) {
+      return (
+        <DeadlineFamilyCard
+          model={deadlineModel}
+          items={items}
+          title={title}
+          sharedQuestion={sharedQuestion}
+          storyKey={storyKey}
+          positionIndex={positionIndex}
+        />
+      );
     }
-    return (
-      <DeadlineFamilyCard
-        model={deadlineModel}
-        items={items}
-        title={title}
-        sharedQuestion={sharedQuestion}
-        storyKey={storyKey}
-        positionIndex={positionIndex}
-      />
-    );
   }
   const primary = items[0];
   const cat = primary?.type === "futures" ? (primary.data as FeedFuturesData).llm_sport_category : null;

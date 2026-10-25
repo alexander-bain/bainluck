@@ -89,6 +89,10 @@ DEADLINE_MODERATE_MIN_MOVEMENT_FRACTION = 0.02
 #: Near-certainty threshold for Q8 local exception checks.
 NEAR_CERTAIN_THRESHOLD = 0.97
 
+#: Minimum probability (> 5%) required to surface a movement claim on a Yes leg
+#: (`MovementBadge` and `MOVER_MIN_PROBABILITY` suppress placeholder-floor moves at `<= 5%`).
+DEADLINE_MOVER_MIN_PROBABILITY = 0.05
+
 #: Deterministic tie-break rule identifier documented in payload and contract.
 DETERMINISTIC_TIE_BREAK_RULE = (
     "abs_supported_move_desc -> distance_from_50pct_asc -> deadline_instant_asc -> market_id_asc"
@@ -1907,11 +1911,16 @@ def build_deadline_member_contract(
         )
 
     # For a movement comparison to be valid, `yes_observed_dt` MUST be present,
-    # non-stale, at or after `basis_observed_at`, and observed within the 24h window.
+    # non-stale, separated from `basis_observed_at` by the 12-24h dated window,
+    # and observed within the 24h window relative to `reference_dt`.
     endpoint_valid_for_basis = bool(
         yes_observed_dt is not None
         and basis_observed_at is not None
-        and yes_observed_dt >= basis_observed_at
+        and (
+            DATED_BASIS_MIN_AGE_HOURS
+            <= (yes_observed_dt - basis_observed_at).total_seconds() / 3600.0
+            <= DATED_BASIS_WINDOW_HOURS
+        )
         and (
             reference_dt is None
             or 0.0
@@ -1933,6 +1942,8 @@ def build_deadline_member_contract(
         movement_status = "settled_suppressed"
     elif yes_probability is None:
         movement_status = "unpriced"
+    elif yes_probability <= DEADLINE_MOVER_MIN_PROBABILITY:
+        movement_status = "placeholder_floor_suppressed"
     elif stored_change is None:
         movement_status = "no_stored_claim"
     elif stored_change == 0.0 and not admits_zero:
@@ -1971,20 +1982,12 @@ def build_deadline_member_contract(
         else None
     )
 
-    # Q8 check (Section 3D): a genuinely open question at 97%+ remains eligible
+    # Q8 check (Section 3D): a genuinely open question at 97%+ on `Yes` remains eligible
     # locally ONLY when it has a verified rule contract, a non-stale `yes_observed_dt`,
     # and a qualifying recent dated move (`moderate` or `hero`, >= 2 pts) on `Yes`.
-    probs_for_extreme = [p for p in (yes_probability, no_probability) if p is not None]
-    max_side_prob = max(probs_for_extreme) if probs_for_extreme else None
+    # Near-zero (`<= 3%` `Yes`) questions remain suppressed (`Q8d`).
     is_near_certain = bool(
-        max_side_prob is not None
-        and (
-            max_side_prob >= NEAR_CERTAIN_THRESHOLD
-            or (
-                yes_probability is not None
-                and yes_probability <= (1.0 - NEAR_CERTAIN_THRESHOLD)
-            )
-        )
+        yes_probability is not None and yes_probability >= NEAR_CERTAIN_THRESHOLD
     )
     deadline_dt = parse_timezone_aware_instant(parsed_q["deadline_instant"])
     deadline_in_future = bool(

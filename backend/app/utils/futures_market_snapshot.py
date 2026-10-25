@@ -491,6 +491,11 @@ class SportSnapshot(_Snapshot):
             self.__dict__[name] = value
 
 
+_SNAPSHOT_OUTCOME_SETTLEMENT_KEY = "_snapshot_outcome_settlement"
+_SNAPSHOT_METADATA_WAS_NONE_KEY = "_snapshot_metadata_was_none"
+_MARKET_METADATA_COLUMN_INDEX = MARKET_COLUMNS.index("market_metadata")
+
+
 class FuturesOutcomeSnapshot(_Snapshot):
     """Inert stand-in for a `load_only`-restricted `FuturesOutcome` row.
 
@@ -504,6 +509,8 @@ class FuturesOutcomeSnapshot(_Snapshot):
     def __init__(self, values: Sequence[Any]) -> None:
         for name, value in zip(OUTCOME_ROW_COLUMNS, values):
             self.__dict__[name] = value
+        self.__dict__["is_winner"] = None
+        self.__dict__["resolution_source"] = None
 
 
 class FuturesMarketSnapshot(_Snapshot):
@@ -522,6 +529,19 @@ class FuturesMarketSnapshot(_Snapshot):
         # impossible.
         for name, value in zip(MARKET_ROW_COLUMNS, values):
             self.__dict__[name] = value
+        raw_meta = self.__dict__.get("market_metadata")
+        if isinstance(raw_meta, dict) and _SNAPSHOT_OUTCOME_SETTLEMENT_KEY in raw_meta:
+            meta = dict(raw_meta)
+            settlement_map = meta.pop(_SNAPSHOT_OUTCOME_SETTLEMENT_KEY, None)
+            was_none = bool(meta.pop(_SNAPSHOT_METADATA_WAS_NONE_KEY, False))
+            self.__dict__["market_metadata"] = None if (was_none and not meta) else meta
+            if isinstance(settlement_map, dict):
+                for outcome in outcomes:
+                    oid = outcome.__dict__.get("id")
+                    entry = settlement_map.get(str(oid)) if oid is not None else None
+                    if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                        outcome.__dict__["is_winner"] = entry[0]
+                        outcome.__dict__["resolution_source"] = entry[1]
         self.__dict__["outcomes"] = outcomes
         self.__dict__["sport"] = sport
 
@@ -1635,9 +1655,31 @@ def to_plain(
         state = market.__dict__
         outcomes = state.get("outcomes") or []
         sport = state.get("sport")
+        market_row = _row(market, MARKET_COLUMNS)
+        settlement_by_outcome: dict[str, list[Any]] = {}
+        for o in outcomes:
+            o_state = _instance_dict(o) or _NO_INSTANCE_DICT
+            oid = o_state.get("id")
+            if oid is None:
+                continue
+            is_winner_val = o_state.get("is_winner")
+            res_source_val = o_state.get("resolution_source")
+            if is_winner_val is not None or res_source_val is not None:
+                settlement_by_outcome[str(oid)] = [
+                    bool(is_winner_val) if is_winner_val is not None else None,
+                    str(res_source_val) if res_source_val is not None else None,
+                ]
+        if settlement_by_outcome:
+            raw_meta = market_row[_MARKET_METADATA_COLUMN_INDEX]
+            if isinstance(raw_meta, dict):
+                folded_meta = dict(raw_meta)
+            else:
+                folded_meta = {_SNAPSHOT_METADATA_WAS_NONE_KEY: True}
+            folded_meta[_SNAPSHOT_OUTCOME_SETTLEMENT_KEY] = settlement_by_outcome
+            market_row[_MARKET_METADATA_COLUMN_INDEX] = folded_meta
         rows.append(
             [
-                _row(market, MARKET_COLUMNS)
+                market_row
                 + [
                     producers[name](market, outcomes)
                     for name in DERIVED_MARKET_COLUMNS

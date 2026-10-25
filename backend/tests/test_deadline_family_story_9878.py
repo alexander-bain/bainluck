@@ -2241,3 +2241,304 @@ def test_case18_v3_gap4_reader_local_now_and_verified_family_count() -> None:
         for it in capped_st[0]["data"]["items"]
     )
 
+
+def test_case19_v4_b1_b2_b3_b6_fixes() -> None:
+    """v4 fixes for Fable review blockers B1, B2, B3, and B6:
+    - B1 (D4b / Q8e): Producer and consumer require 12h <= (observed - basis) <= 24h in addition
+      to 12h <= (now - basis) <= 24h.
+    - B2 (C3 / C4): FuturesMarketSnapshot preserves `is_winner` and `resolution_source` across
+      `to_plain` -> `from_plain`, keeping lagging `status='open'` authoritative settlements and
+      conflicting-winner refusals identical on direct and cached paths, and attaching
+      `deadline_member` on terminal `/api/feed/price-cards` projections.
+    - B3 (Q8c / Q8d): Q8 is strictly scoped to open >=97% members of a verified >=2-member
+      family that actually forms; lone 98% children are evicted when no family forms, <=3% is
+      never exempted, and <=5% legs suppress movement claims (`placeholder_floor_suppressed`).
+    """
+    import asyncio
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    from app.routes import feed as feed_route
+    from app.utils.personalization import PersonalizationContext
+    from app.utils import futures_market_snapshot as fms
+    from app.utils.settled_feed_price_card import settled_feed_price_card
+
+    # --- B1 (Q8e): 11.5h separation between basis (T-12.5h) and fresh observation (T-1h) is rejected ---
+    basis_12_5h_ago = "2026-10-14T11:17:16+00:00"
+    obs_1h_ago_epoch = int(
+        datetime(2026, 10, 14, 22, 47, 16, tzinfo=timezone.utc).timestamp()
+    )
+    meta_1h_sep = _zacharia_rule_meta(
+        question="Zacharia issues public apology by December 31?",
+        description=DEC31_RULE_DESCRIPTION,
+        group_item_title="December 31",
+        end_date_iso=DEC31_RESOLUTION_ISO,
+        extra={"dated_movement_basis": {"246879007": [0.850, basis_12_5h_ago]}},
+    )
+    outcomes_1h_sep = _make_dec31_outcomes(
+        stored_yes_change=0.130,
+        yes_prob=0.980,
+        yes_obs_epoch=obs_1h_ago_epoch,
+        no_obs_epoch=obs_1h_ago_epoch,
+    )
+    member_1h_sep = build_deadline_member_contract(
+        market_id=65678074,
+        name="Zacharia issues public apology by December 31?",
+        source="polymarket",
+        external_id="0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
+        group_id="polymarket:256241",
+        status="open",
+        resolution_date=DEC31_RESOLUTION_ISO,
+        market_metadata=meta_1h_sep,
+        outcomes=outcomes_1h_sep,
+        now=RETAINED_NOW,
+    )
+    assert member_1h_sep is not None
+    assert member_1h_sep["movement_status"] == "stale_price_observation"
+    assert member_1h_sep["near_certain_open_eligible"] is False
+    assert (
+        qualifies_for_deadline_near_certain_exception(
+            name="Zacharia issues public apology by December 31?",
+            source="polymarket",
+            external_id="0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
+            group_id="polymarket:256241",
+            status="open",
+            resolution_date=DEC31_RESOLUTION_ISO,
+            market_metadata=meta_1h_sep,
+            outcomes=outcomes_1h_sep,
+            prices_stopped=False,
+            now=RETAINED_NOW,
+        )
+        is False
+    )
+
+    # --- B3: <=5% placeholder floor suppression & <=3% non-exemption ---
+    meta_low_prob = _zacharia_rule_meta(
+        question="Zacharia issues public apology by October 31?",
+        description=OCT31_RULE_DESCRIPTION,
+        group_item_title="October 31",
+        end_date_iso=OCT31_RESOLUTION_ISO,
+        extra={"dated_movement_basis": {"246879005": [0.120, RETAINED_BASIS_AT]}},
+    )
+    outcomes_2pct = _make_oct31_outcomes(stored_yes_change=-0.100, yes_prob=0.020)
+    member_2pct = build_deadline_member_contract(
+        market_id=65678073,
+        name="Zacharia issues public apology by October 31?",
+        source="polymarket",
+        external_id="0x42cb81f5eb2fe892f7b1851a8ca9c54f513328b8bc55ff07825a1df5ebdf5f6d",
+        group_id="polymarket:256241",
+        status="open",
+        resolution_date=OCT31_RESOLUTION_ISO,
+        market_metadata=meta_low_prob,
+        outcomes=outcomes_2pct,
+        now=RETAINED_NOW,
+    )
+    assert member_2pct is not None
+    assert member_2pct["movement_status"] == "placeholder_floor_suppressed"
+    assert member_2pct["supported_move_points"] is None
+    assert member_2pct["is_near_certain"] is False
+    assert member_2pct["near_certain_open_eligible"] is False
+    assert (
+        qualifies_for_deadline_near_certain_exception(
+            name="Zacharia issues public apology by October 31?",
+            source="polymarket",
+            external_id="0x42cb81f5eb2fe892f7b1851a8ca9c54f513328b8bc55ff07825a1df5ebdf5f6d",
+            group_id="polymarket:256241",
+            status="open",
+            resolution_date=OCT31_RESOLUTION_ISO,
+            market_metadata=meta_low_prob,
+            outcomes=outcomes_2pct,
+            prices_stopped=False,
+            now=RETAINED_NOW,
+        )
+        is False
+    )
+
+    # --- B2 & B6: Snapshot `to_plain -> from_plain` preserves `is_winner` / `resolution_source` ---
+    def _orm_market(
+        mid: int,
+        name: str,
+        ext_id: str,
+        res_iso: str,
+        meta: dict,
+        outcomes_spec: list[dict],
+        status: str = "open",
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=mid,
+            name=name,
+            source="polymarket",
+            external_id=ext_id,
+            sport_id=None,
+            category="politics",
+            llm_sport_category="politics",
+            market_tier=2,
+            market_type="binary",
+            canonical_market_key=None,
+            group_id="polymarket:256241",
+            group_type="polymarket_sub_market",
+            image_url=None,
+            image_width=None,
+            image_height=None,
+            hook_description=None,
+            hook_generated_at=None,
+            hook_leader_at_generation=None,
+            market_metadata=dict(meta),
+            curation_score_adj=0,
+            volume_24h=Decimal("2500.00"),
+            updated_at=RETAINED_NOW,
+            commence_time=None,
+            resolution_date=datetime.fromisoformat(res_iso),
+            status=status,
+            created_at=RETAINED_NOW,
+            llm_league=None,
+            llm_gender=None,
+            llm_level=None,
+            mutually_exclusive=True,
+            sport=None,
+            outcomes=[
+                SimpleNamespace(
+                    id=o["id"],
+                    name=o["name"],
+                    team_id=None,
+                    current_probability=Decimal(str(o["current_probability"])),
+                    probability_change_24h=(
+                        Decimal(str(o["probability_change_24h"]))
+                        if o.get("probability_change_24h") is not None
+                        else None
+                    ),
+                    rank=idx + 1,
+                    rank_change_24h=0,
+                    opening_probability=Decimal("0.500"),
+                    calibration_probability=None,
+                    current_yes_bid=None,
+                    current_yes_ask=None,
+                    external_id=o.get("external_id", f"{ext_id}_{idx}"),
+                    last_updated=RETAINED_OBS_DT,
+                    opening_captured_at=None,
+                    resolution_source=o.get("resolution_source"),
+                    volume_24h=None,
+                    volume_24h_at=None,
+                    is_winner=o.get("is_winner"),
+                )
+                for idx, o in enumerate(outcomes_spec)
+            ],
+        )
+
+    oct31_meta = _zacharia_rule_meta(
+        question="Zacharia issues public apology by October 31?",
+        description=OCT31_RULE_DESCRIPTION,
+        group_item_title="October 31",
+        end_date_iso=OCT31_RESOLUTION_ISO,
+        extra={"market_count": 2},
+    )
+    dec31_meta = _zacharia_rule_meta(
+        question="Zacharia issues public apology by December 31?",
+        description=DEC31_RULE_DESCRIPTION,
+        group_item_title="December 31",
+        end_date_iso=DEC31_RESOLUTION_ISO,
+        extra={
+            "market_count": 2,
+            "dated_movement_basis": {"246879007": [0.310, RETAINED_BASIS_AT]},
+        },
+    )
+    oct31_settled_lagging_open = _orm_market(
+        65678073,
+        "Zacharia issues public apology by October 31?",
+        "0x42cb81f5eb2fe892f7b1851a8ca9c54f513328b8bc55ff07825a1df5ebdf5f6d",
+        OCT31_RESOLUTION_ISO,
+        oct31_meta,
+        [
+            {
+                "id": 246879005,
+                "name": "Yes",
+                "current_probability": 0.48,
+                "probability_change_24h": -0.12,
+                "is_winner": False,
+                "resolution_source": "api_settlement",
+            },
+            {
+                "id": 246879006,
+                "name": "No",
+                "current_probability": 0.52,
+                "probability_change_24h": 0.12,
+                "is_winner": True,
+                "resolution_source": "api_settlement",
+            },
+        ],
+        status="open",
+    )
+    dec31_open_mover = _orm_market(
+        65678074,
+        "Zacharia issues public apology by December 31?",
+        "0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
+        DEC31_RESOLUTION_ISO,
+        dec31_meta,
+        _make_dec31_outcomes(stored_yes_change=-0.065),
+        status="open",
+    )
+    rehydrated_c3 = fms.from_plain(
+        fms.to_plain([oct31_settled_lagging_open, dec31_open_mover])
+    )
+    assert rehydrated_c3[0].outcomes[0].is_winner is False
+    assert rehydrated_c3[0].outcomes[1].is_winner is True
+    assert rehydrated_c3[0].outcomes[1].resolution_source == "api_settlement"
+
+    # Price-cards terminal carrier also includes `deadline_member` with `Resolved · No`
+    settled_card = settled_feed_price_card(rehydrated_c3[0], {})
+    assert settled_card is not None
+    assert settled_card["data"]["deadline_member"]["settlement"]["state"] == "resolved"
+    assert settled_card["data"]["deadline_member"]["settlement"]["result"] == "No"
+    assert (
+        settled_card["data"]["deadline_member"]["settlement"]["lagging_local_status"]
+        is True
+    )
+
+    # --- B3 (Q8c): Lone 98% mover without a forming >=2-member family is evicted ---
+    dec31_98_meta = _zacharia_rule_meta(
+        question="Zacharia issues public apology by December 31?",
+        description=DEC31_RULE_DESCRIPTION,
+        group_item_title="December 31",
+        end_date_iso=DEC31_RESOLUTION_ISO,
+        extra={
+            "market_count": 2,
+            "dated_movement_basis": {"246879007": [0.850, RETAINED_BASIS_AT]},
+        },
+    )
+    lone_dec31_98 = _orm_market(
+        65678074,
+        "Zacharia issues public apology by December 31?",
+        "0x28561992978d9dc04ab0b039d7b6390cd6116ef60d1ce3ed2da5328d73bc8ef9",
+        DEC31_RESOLUTION_ISO,
+        dec31_98_meta,
+        _make_dec31_outcomes(stored_yes_change=0.130, yes_prob=0.980),
+        status="open",
+    )
+
+    async def _score_and_dedupe(rows: list[SimpleNamespace]) -> list[dict]:
+        snaps = fms.from_plain(fms.to_plain(rows))
+        scored = await feed_route._score_futures(
+            db=None,  # type: ignore[arg-type]
+            now=RETAINED_NOW,
+            sport_filter=None,
+            ctx=PersonalizationContext(),
+            preloaded_base={"markets": snaps, "curator_ids": set()},
+        )
+        deduped = feed_route._dedupe_futures_by_canonical(scored)
+        deduped = feed_route._dedupe_futures_by_group_id(deduped)
+        deduped, _ = feed_route._suppress_zero_probability_cards(deduped)
+        displayed, _ = feed_route.apply_discover_display_chain(
+            deduped,
+            limit=20,
+            ctx=PersonalizationContext(),
+            event_pct=0.15,
+            include_events=True,
+            my_teams_only=False,
+            sports_mode=False,
+            now=RETAINED_NOW,
+        )
+        return displayed
+
+    assert asyncio.run(_score_and_dedupe([lone_dec31_98])) == []
+
+

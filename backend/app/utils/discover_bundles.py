@@ -2394,6 +2394,44 @@ def assemble_deadline_family_bundles(
         for m in members:
             represented_ids.add(_item_id(m))
 
+    cleaned_items: list[dict[str, Any]] = []
+    for item in items:
+        if item.get("type") != "futures":
+            cleaned_items.append(item)
+            continue
+        data = _futures_data(item)
+        key = (
+            str(data.get("source") or "").strip().lower(),
+            str(data.get("group_id") or "").strip(),
+        )
+        if key in bundle_by_group:
+            cleaned_items.append(item)
+            continue
+        siblings = [
+            sib
+            for sib in _grouped_members(item)
+            if not sib.get("_q8_family_only_admission")
+        ]
+        if item.get("_q8_family_only_admission"):
+            if siblings:
+                promoted = dict(siblings[0])
+                if len(siblings) > 1:
+                    promoted["_grouped_members"] = list(siblings[1:])
+                else:
+                    promoted.pop("_grouped_members", None)
+                cleaned_items.append(promoted)
+            continue
+        if "_grouped_members" in item:
+            updated_item = dict(item)
+            if siblings:
+                updated_item["_grouped_members"] = siblings
+            else:
+                updated_item.pop("_grouped_members", None)
+            cleaned_items.append(updated_item)
+        else:
+            cleaned_items.append(item)
+    items = cleaned_items
+
     if not bundle_by_group:
         return items
 

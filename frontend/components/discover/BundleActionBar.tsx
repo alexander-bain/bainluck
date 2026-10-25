@@ -20,6 +20,9 @@ interface BundleActionBarProps {
   /** Stable id for the fold, when the backend served one. Theme bundles have it; client-side groups do not. */
   storyKey?: string | null;
   positionIndex?: number;
+  /** B7: Representative observation timestamp for stale price-age disclosure (`PriceAgeMark`). */
+  priceObservedAt?: string | null;
+  priceStatus?: string;
 }
 
 /**
@@ -51,7 +54,7 @@ interface BundleActionBarProps {
  * quote a number the reader is unable to find on the row above it, and an
  * inverted binary is not shared as its No side (UX-P238).
  */
-export function BundleActionBar({ items, title, sharedQuestion, storyKey, positionIndex }: BundleActionBarProps) {
+export function BundleActionBar({ items, title, sharedQuestion, storyKey, positionIndex, priceObservedAt, priceStatus }: BundleActionBarProps) {
   const [liked, setLiked] = useState(false);
   // #9643 — a bundle like is preference feedback, same as a card's: a refused
   // attempt leaves the button unliked and the page opens the sign-in invitation.
@@ -104,6 +107,8 @@ export function BundleActionBar({ items, title, sharedQuestion, storyKey, positi
         contentType="futures"
         itemId={shareId}
         onShare={() => track("share")}
+        priceObservedAt={priceObservedAt}
+        priceStatus={priceStatus}
       />
     </div>
   );

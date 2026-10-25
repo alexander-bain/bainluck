@@ -3,6 +3,7 @@
 This does not select or rank feed candidates. It replaces forecasts with the
 assigned result only; neither a high probability nor an expired date is a grade.
 """
+from app.utils.deadline_family_story import build_deadline_member_contract
 from app.utils.settledness import market_assigned_settled
 from app.utils.futures_unsupported_price import row_carries_a_verdict
 
@@ -51,5 +52,25 @@ def settled_feed_price_card(market, revision_clocks):
         "outcome_observed_at": revision_clocks,  # Legacy ORDERING alias only.
         "outcome_clock_kind": "row_revision",
     }
+    try:
+        dm_contract = build_deadline_member_contract(
+            market_id=market.id,
+            name=market.name,
+            source=getattr(market, "source", None),
+            external_id=getattr(market, "external_id", None),
+            group_id=getattr(market, "group_id", None),
+            group_type=getattr(market, "group_type", None),
+            market_type=getattr(market, "market_type", None),
+            status=getattr(market, "status", None),
+            resolution_date=resolution_date,
+            description=getattr(market, "__dict__", {}).get("description"),
+            market_metadata=getattr(market, "market_metadata", None),
+            outcomes=outcomes,
+            top_outcomes_data=[],
+        )
+        if dm_contract is not None:
+            data["deadline_member"] = dm_contract
+    except Exception:
+        pass
     # In-place clients retain the held card's ranking/editorial fields.
     return {"type": "futures", "score": 0, "data": data}

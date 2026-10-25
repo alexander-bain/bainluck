@@ -77,6 +77,7 @@ jest.mock("@/components/Analytics", () => ({
 
 import DiscoverCard from "../../components/DiscoverCard";
 import { DeadlineFamilyCard } from "../../components/discover/DeadlineFamilyCard";
+import { ThemeBundleCard } from "../../components/discover/ThemeBundleCard";
 import {
   DETERMINISTIC_TIE_BREAK_RULE,
   buildDeadlineFamilyCardModel,
@@ -1037,5 +1038,167 @@ describe("Slice 1 v2 movement-led deadline-family card (#9878 / #11040)", () => 
       root.unmount();
     });
     document.body.removeChild(container as unknown as Node);
+  });
+
+  test("Case 16: v4 B1 fallback, B3 5% placeholder floor, B4 default reader clock, B6 live price refresh, B7 PriceAgeMark, and N1 row timeframe label", () => {
+    // 1. B1: When a near-certain family expires after time advances, ThemeBundleCard falls back
+    //    to the generic bundle body rather than rendering null
+    const oct31NearCertain = makeOct31Contract({
+      yes_probability: 0.975,
+      yes_rendered_percent: 98,
+      no_probability: 0.025,
+      stored_movement_claim: 0.3,
+      movement_basis: {
+        outcome_id: 246879005,
+        basis_price: 0.675,
+        observed_at: RETAINED_BASIS_AT,
+        age_hours: 19.3,
+        in_window: true,
+        admits_zero: true,
+      },
+      is_near_certain: true,
+      near_certain_open_eligible: true,
+    });
+    const dec31NearCertain = makeDec31Contract({
+      yes_probability: 0.985,
+      yes_rendered_percent: 99,
+      no_probability: 0.015,
+      stored_movement_claim: 0.4,
+      movement_basis: {
+        outcome_id: 246879007,
+        basis_price: 0.585,
+        observed_at: RETAINED_BASIS_AT,
+        age_hours: 19.3,
+        in_window: true,
+        admits_zero: true,
+      },
+      is_near_certain: true,
+      near_certain_open_eligible: true,
+    });
+    const octItem = makeFeedItemFromContract(oct31NearCertain);
+    const decItem = makeFeedItemFromContract(dec31NearCertain);
+    const fallbackHtml = renderToStaticMarkup(
+      <ThemeBundleCard
+        title="Zacharia issues public apology by…?"
+        storyKey="story:deadline_family:polymarket:256241"
+        items={[octItem, decItem]}
+        deadlineFamily={{
+          story_key: "story:deadline_family:polymarket:256241",
+          source: "polymarket",
+          group_id: "polymarket:256241",
+          title: "Zacharia issues public apology",
+          shared_question: "Zacharia issues public apology by…?",
+          family_state: "open",
+          rule_template_hash: ZACHARIA_RULE_HASH,
+          cutoff_timezone: "America/New_York",
+          cutoff_local_time: "23:59",
+          representative_market_id: 65678074,
+          representative_outcome_id: 246879007,
+          representative_deadline_label: "By Dec 31",
+          selection_reason: "largest_supported_dated_move",
+          tie_break_rule:
+            "abs_supported_move_desc -> distance_from_50pct_asc -> deadline_epoch_asc -> market_id_asc",
+          hero_min_movement_points: 5,
+          moderate_min_movement_points: 2,
+          represented_count: 2,
+          verified_family_count: 2,
+          provider_market_count: 2,
+          inventory_complete: true,
+          members: [oct31NearCertain, dec31NearCertain],
+        }}
+        nowIso="2026-10-16T12:00:00Z"
+        timeZone="America/New_York"
+      />,
+    );
+    expect(fallbackHtml.length).toBeGreaterThan(0);
+    expect(fallbackHtml).toContain("/futures/65678073");
+    expect(fallbackHtml).toContain("/futures/65678074");
+
+    // 2. B3: <= 5% placeholder floor suppresses movement and <= 3% is never near-certain
+    const oct31At2Pct = makeOct31Contract({
+      yes_probability: 0.02,
+      yes_rendered_percent: 2,
+      no_probability: 0.98,
+      stored_movement_claim: -0.05,
+      movement_basis: {
+        outcome_id: 246879005,
+        basis_price: 0.07,
+        observed_at: RETAINED_BASIS_AT,
+        age_hours: 19.3,
+        in_window: true,
+        admits_zero: true,
+      },
+    });
+    const modelB3 = buildDeadlineFamilyCardModel(
+      {
+        items: [
+          makeFeedItemFromContract(oct31At2Pct),
+          makeFeedItemFromContract(makeDec31Contract()),
+        ],
+      },
+      { nowIso: RETAINED_NOW_ISO, timeZone: "America/New_York" },
+    );
+    expect(modelB3).not.toBeNull();
+    expect(modelB3!.representative.marketId).toBe(65678074);
+    expect(modelB3!.selectionReason).toBe("nearest_50_pct_fallback");
+    const octMemberB3 = modelB3!.members.find((m) => m.marketId === 65678073)!;
+    expect(octMemberB3.movementStatus).toBe("none");
+    expect(octMemberB3.supportedMovePoints).toBeNull();
+    expect(octMemberB3.isNearCertain).toBe(false);
+
+    // 3. B6 & B7 & N1: Live price refresh updates 24%/7% -> 32%/15%, PriceAgeMark renders at 8h,
+    //    and member view model carries `movementTimeframeLabel`
+    const frozenOct = makeOct31Contract();
+    const frozenDec = makeDec31Contract({ stored_movement_claim: -0.065 });
+    const liveOct = makeOct31Contract({
+      yes_probability: 0.15,
+      yes_rendered_percent: 15,
+      no_probability: 0.85,
+      stored_movement_claim: 0.066,
+    });
+    const liveDec = makeDec31Contract({
+      yes_probability: 0.32,
+      yes_rendered_percent: 32,
+      no_probability: 0.68,
+      stored_movement_claim: 0.01,
+    });
+    const modelB6 = buildDeadlineFamilyCardModel(
+      {
+        deadlineFamily: {
+          story_key: "story:deadline_family:polymarket:256241",
+          source: "polymarket",
+          group_id: "polymarket:256241",
+          title: "Zacharia issues public apology",
+          shared_question: "Zacharia issues public apology by…?",
+          family_state: "open",
+          rule_template_hash: ZACHARIA_RULE_HASH,
+          cutoff_timezone: "America/New_York",
+          cutoff_local_time: "23:59",
+          representative_market_id: 65678074,
+          representative_outcome_id: 246879007,
+          representative_deadline_label: "By Dec 31",
+          selection_reason: "largest_supported_dated_move",
+          tie_break_rule:
+            "abs_supported_move_desc -> distance_from_50pct_asc -> deadline_epoch_asc -> market_id_asc",
+          hero_min_movement_points: 5,
+          moderate_min_movement_points: 2,
+          represented_count: 2,
+          verified_family_count: 2,
+          provider_market_count: 2,
+          inventory_complete: true,
+          members: [frozenOct, frozenDec],
+        },
+        items: [
+          makeFeedItemFromContract(liveOct),
+          makeFeedItemFromContract(liveDec),
+        ],
+      },
+      { nowIso: RETAINED_NOW_ISO, timeZone: "America/New_York" },
+    );
+    expect(modelB6).not.toBeNull();
+    expect(modelB6!.members.find((m) => m.marketId === 65678074)!.yesRenderedPercent).toBe(32);
+    expect(modelB6!.members.find((m) => m.marketId === 65678073)!.yesRenderedPercent).toBe(15);
+    expect(modelB6!.representative.marketId).toBe(65678073);
+    expect(modelB6!.representative.movementTimeframeLabel).toBe("since yesterday");
   });
 });

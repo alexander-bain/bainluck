@@ -59,11 +59,13 @@ interface DiscoverCardProps {
    * Absent ⇒ every attempt proceeds, exactly as before.
    */
   onFeedbackAttempt?: () => boolean;
+  nowIso?: string;
+  timeZone?: string;
 }
 
 // ── Main Export ──
 
-export default function DiscoverCard({ groupedItem, onDismiss, positionIndex, showProbabilityHint, pinFor, onFeedbackAttempt }: DiscoverCardProps) {
+export default function DiscoverCard({ groupedItem, onDismiss, positionIndex, showProbabilityHint, pinFor, onFeedbackAttempt, nowIso, timeZone }: DiscoverCardProps) {
   if (groupedItem.type === "group" && groupedItem.items) {
     return (
       <GroupCard
@@ -76,12 +78,12 @@ export default function DiscoverCard({ groupedItem, onDismiss, positionIndex, sh
     );
   }
   const item = groupedItem.item!;
-  return <SingleCard item={item} onDismiss={onDismiss} positionIndex={positionIndex} showProbabilityHint={showProbabilityHint} pinFor={pinFor} onFeedbackAttempt={onFeedbackAttempt} />;
+  return <SingleCard item={item} onDismiss={onDismiss} positionIndex={positionIndex} showProbabilityHint={showProbabilityHint} pinFor={pinFor} onFeedbackAttempt={onFeedbackAttempt} nowIso={nowIso} timeZone={timeZone} />;
 }
 
 // ── Single Card Wrapper (handles swipe + analytics delegation) ──
 
-function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFor, onFeedbackAttempt }: { item: FeedItem; onDismiss?: () => void; positionIndex?: number; showProbabilityHint?: boolean; pinFor?: DiscoverCardProps["pinFor"]; onFeedbackAttempt?: () => boolean }) {
+function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFor, onFeedbackAttempt, nowIso, timeZone }: { item: FeedItem; onDismiss?: () => void; positionIndex?: number; showProbabilityHint?: boolean; pinFor?: DiscoverCardProps["pinFor"]; onFeedbackAttempt?: () => boolean; nowIso?: string; timeZone?: string }) {
   const router = useRouter();
   const [liked, setLiked] = useState(false);
   const trending = isTrending(item);
@@ -216,6 +218,8 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
             bundleId={(item.data as FeedBundleData).id}
             collectionRef={(item.data as FeedBundleData).collection_ref}
             deadlineFamily={(item.data as FeedBundleData).deadline_family}
+            nowIso={nowIso}
+            timeZone={timeZone}
           />
         ) : item.type === "bundle" ? (
           // Every non-theme bundle — today that is `kind:"comparison"` — draws

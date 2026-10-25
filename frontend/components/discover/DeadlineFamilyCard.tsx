@@ -291,6 +291,7 @@ export function DeadlineFamilyCard({
                       <MovementBadge
                         m={member.rowMovementFraction}
                         prob={member.yesProbability}
+                        timeframeLabel={member.movementTimeframeLabel}
                       />
                     )}
                     <span
@@ -324,6 +325,11 @@ export function DeadlineFamilyCard({
         sharedQuestion={model.sharedQuestion}
         storyKey={model.storyKey}
         positionIndex={positionIndex}
+        priceObservedAt={
+          model.familyState === "settled" || rep.isSettled
+            ? null
+            : rep.priceObservedAt
+        }
       />
     </article>
   );

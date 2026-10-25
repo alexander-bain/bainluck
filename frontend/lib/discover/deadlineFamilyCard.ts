@@ -25,6 +25,7 @@ export const DEADLINE_MODERATE_MIN_MOVEMENT_FRACTION = 0.02;
 export const DATED_BASIS_MIN_AGE_HOURS = 12;
 export const DATED_BASIS_WINDOW_HOURS = 24;
 export const NEAR_CERTAIN_THRESHOLD = 0.97;
+export const DEADLINE_MOVER_MIN_PROBABILITY = 0.05;
 
 export const DETERMINISTIC_TIE_BREAK_RULE =
   "abs_supported_move_desc -> distance_from_50pct_asc -> deadline_instant_asc -> market_id_asc";
@@ -169,7 +170,9 @@ export function formatDeadlineMovementTimeframe(
 
   const basisMs = parseTimezoneAwareEpochMs(basisObservedAt);
   const refMs = parseTimezoneAwareEpochMs(referenceAt);
-  const nowMs = parseTimezoneAwareEpochMs(nowIso);
+  const resolvedNowIso =
+    nowIso === undefined ? new Date(Date.now()).toISOString() : nowIso;
+  const nowMs = parseTimezoneAwareEpochMs(resolvedNowIso);
   if (basisMs == null || refMs == null) {
     return {
       valid: false,
@@ -314,6 +317,7 @@ export interface DeadlineFamilyMemberViewModel {
   heroMovementAriaLabel: string | null;
   showRowMovementBadge: boolean;
   rowMovementFraction: number | null;
+  movementTimeframeLabel: string | null;
   narrativeCaption: string;
   settlementState: FeedDeadlineSettlementState;
   isSettled: boolean;
@@ -519,6 +523,11 @@ function verifySingleMember(
   let settlementState: FeedDeadlineSettlementState;
   if (rawSettlement.state) {
     if (
+      rawSettlement.state === "open" &&
+      (itemData?.resolved === true || normalizedWinner != null)
+    ) {
+      settlementState = "resolved";
+    } else if (
       rawSettlement.state === "trading_closed" &&
       rawSettlement.venue_closure_evidence === false &&
       itemStatus === "open"
@@ -697,6 +706,7 @@ function verifySingleMember(
   if (
     settlementState === "open" &&
     yesProbability != null &&
+    yesProbability > DEADLINE_MOVER_MIN_PROBABILITY &&
     observationFresh &&
     priceObservedAt != null &&
     hasStoredClaim &&
@@ -782,15 +792,9 @@ function verifySingleMember(
     narrativeCaption = `${yesPercentText} chance by ${shortDeadline}`;
   }
 
-  const noProb =
-    typeof contract.no_probability === "number" &&
-    Number.isFinite(contract.no_probability)
-      ? contract.no_probability
-      : null;
-  const maxSideProb = Math.max(yesProbability ?? -1, noProb ?? -1);
+  // Q8 exception applies strictly to the >= 97% band on Yes (never <= 3%).
   const isNearCertain =
-    maxSideProb >= NEAR_CERTAIN_THRESHOLD ||
-    (yesProbability != null && yesProbability <= 1 - NEAR_CERTAIN_THRESHOLD);
+    yesProbability != null && yesProbability >= NEAR_CERTAIN_THRESHOLD;
 
   const referenceForFutureMs = nowMs ?? observedMs;
   const deadlineInFuture =
@@ -870,6 +874,7 @@ function verifySingleMember(
       heroMovementAriaLabel,
       showRowMovementBadge,
       rowMovementFraction,
+      movementTimeframeLabel: timeframe?.sentenceTimeframe ?? null,
       narrativeCaption,
       settlementState,
       isSettled,
@@ -895,6 +900,20 @@ export function validateAndBuildDeadlineFamilyCardModel(
   const items = input.items ?? [];
   const familyContract = input.deadlineFamily ?? null;
 
+  const effectiveNowIso =
+    options.nowIso ?? new Date(Date.now()).toISOString();
+  const effectiveTimeZone =
+    options.timeZone ||
+    (typeof Intl !== "undefined"
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : "UTC") ||
+    "UTC";
+  const effectiveOptions: BuildDeadlineFamilyOptions = {
+    ...options,
+    nowIso: effectiveNowIso,
+    timeZone: effectiveTimeZone,
+  };
+
   const futuresById = new Map<number, FeedFuturesData>();
   const contractsFromItems: FeedDeadlineMemberContract[] = [];
 
@@ -909,10 +928,36 @@ export function validateAndBuildDeadlineFamilyCardModel(
     }
   }
 
-  const rawContracts =
-    familyContract?.members?.length
-      ? familyContract.members
-      : contractsFromItems;
+  // B6: When live price updates (`/api/feed/price-cards` via `projectPriceGroups`)
+  // replace member `item.data` inside `items`, prefer each member's updated
+  // `fData.deadline_member` contract over the initial `familyContract.members`
+  // snapshot while preserving family-level count metadata if omitted on the leaf.
+  const rawContracts = familyContract?.members?.length
+    ? familyContract.members.map((baseMember) => {
+        const fData =
+          typeof baseMember?.market_id === "number"
+            ? futuresById.get(baseMember.market_id)
+            : undefined;
+        const liveMember = fData?.deadline_member;
+        if (
+          liveMember &&
+          typeof liveMember === "object" &&
+          liveMember.market_id === baseMember.market_id
+        ) {
+          return {
+            ...baseMember,
+            ...liveMember,
+            verified_family_count:
+              liveMember.verified_family_count ??
+              baseMember.verified_family_count,
+            provider_market_count:
+              liveMember.provider_market_count ??
+              baseMember.provider_market_count,
+          };
+        }
+        return baseMember;
+      })
+    : contractsFromItems;
 
   if (items.length < 2 && rawContracts.length < 2) {
     return { model: null, rejectionReason: "fewer_than_two_members" };
@@ -927,7 +972,11 @@ export function validateAndBuildDeadlineFamilyCardModel(
       rawContract && typeof rawContract.market_id === "number"
         ? futuresById.get(rawContract.market_id)
         : undefined;
-    const { member, reason } = verifySingleMember(rawContract, fData, options);
+    const { member, reason } = verifySingleMember(
+      rawContract,
+      fData,
+      effectiveOptions,
+    );
     if (!member) {
       return { model: null, rejectionReason: reason ?? "invalid_member" };
     }
@@ -1104,6 +1153,7 @@ export function validateAndBuildDeadlineFamilyCardModel(
       heroMovementAriaLabel: m.heroMovementAriaLabel,
       showRowMovementBadge: m.showRowMovementBadge,
       rowMovementFraction: m.rowMovementFraction,
+      movementTimeframeLabel: m.movementTimeframeLabel,
       narrativeCaption: m.narrativeCaption,
       settlementState: m.settlementState,
       isSettled: m.isSettled,
