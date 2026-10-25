@@ -395,3 +395,114 @@ async def test_real_wire_content_siblings_uncertain_writes_and_cleanup(
         await pubsub.aclose()
         await client.aclose()
         await subscriber.aclose()
+
+
+def ledger_transport_command():
+    from app.utils.blend_preview import LEDGER_SCRIPT, LedgerRegistry, ledger_keys
+
+    keys = ledger_keys()
+    return ("EVAL", LEDGER_SCRIPT, len(keys), *keys,
+            LedgerRegistry(sources=frozenset({"kalshi", "polymarket"})).policy.fingerprint,
+            "claim", "kalshi")
+
+
+async def test_preview_transport_cached_program_avoids_repeated_source_transfer():
+    import hashlib
+
+    command = ledger_transport_command()
+    connection = SimpleNamespace(send_command=AsyncMock(), read_response=AsyncMock(return_value=[b"ok", 1]))
+    call = LiveBlendRefresher._preview_call(connection)
+    for _ in range(32):
+        assert await call(*command) == [b"ok", 1]
+    expected = ("EVALSHA", hashlib.sha1(command[1].encode()).hexdigest(), *command[2:])
+    assert [c.args for c in connection.send_command.await_args_list] == [expected] * 32
+    assert connection.read_response.await_count == 32
+
+
+async def test_preview_transport_noscript_falls_back_once_with_identical_arguments():
+    from redis.exceptions import NoScriptError
+
+    command = ledger_transport_command()
+    connection = SimpleNamespace(send_command=AsyncMock(), read_response=AsyncMock(
+        side_effect=[NoScriptError("No matching script"), [b"ok", 1]]))
+    assert await LiveBlendRefresher._preview_call(connection)(*command) == [b"ok", 1]
+    assert [c.args[0] for c in connection.send_command.await_args_list] == ["EVALSHA", "EVAL"]
+    assert connection.send_command.await_args_list[1].args == command
+
+
+@pytest.mark.parametrize("failure", [ConnectionError("lost reply"), ResponseError("WRONGTYPE"),
+                                    TimeoutError(), asyncio.CancelledError()])
+async def test_preview_transport_never_replays_uncertain_or_rejected_operation(failure):
+    connection = SimpleNamespace(send_command=AsyncMock(), read_response=AsyncMock(side_effect=failure))
+    with pytest.raises(type(failure)):
+        await LiveBlendRefresher._preview_call(connection)(*ledger_transport_command())
+    assert connection.send_command.await_count == connection.read_response.await_count == 1
+
+
+async def test_preview_transport_rechecks_deadline_before_noscript_fallback(monkeypatch):
+    from redis.exceptions import NoScriptError
+
+    clock = SimpleNamespace(time=lambda: 10)
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: clock)
+
+    async def miss():
+        clock.time = lambda: 12
+        raise NoScriptError("No matching script")
+
+    connection = SimpleNamespace(send_command=AsyncMock(), read_response=AsyncMock(side_effect=miss))
+    with pytest.raises(TimeoutError, match="before transmission"):
+        await LiveBlendRefresher._preview_call(connection, send_before=11)(*ledger_transport_command())
+    assert connection.send_command.await_count == 1
+
+
+async def test_preview_transport_other_commands_are_unchanged():
+    connection = SimpleNamespace(send_command=AsyncMock(), read_response=AsyncMock(return_value=1))
+    command = ("EVAL", "return 1", 0)
+    assert await LiveBlendRefresher._preview_call(connection)(*command) == 1
+    connection.send_command.assert_awaited_once_with(*command)
+
+
+@pytest.mark.parametrize("failure", [ConnectionError("fallback reply lost"), TimeoutError()])
+async def test_preview_transport_fallback_failure_never_replays(failure):
+    from redis.exceptions import NoScriptError
+
+    connection = SimpleNamespace(send_command=AsyncMock(), read_response=AsyncMock(
+        side_effect=[NoScriptError("No matching script"), failure]))
+    with pytest.raises(type(failure)):
+        await LiveBlendRefresher._preview_call(connection)(*ledger_transport_command())
+    assert connection.send_command.await_count == connection.read_response.await_count == 2
+
+
+async def test_preview_transport_send_failure_never_replays():
+    connection = SimpleNamespace(send_command=AsyncMock(side_effect=ConnectionError("lost send")),
+                                 read_response=AsyncMock())
+    with pytest.raises(ConnectionError):
+        await LiveBlendRefresher._preview_call(connection)(*ledger_transport_command())
+    assert connection.send_command.await_count == 1
+    connection.read_response.assert_not_awaited()
+
+
+async def test_preview_transport_real_redis_cold_warm_and_cache_loss(private_redis_socket):
+    client = Redis(unix_socket_path=str(private_redis_socket))
+    connection = await client.connection_pool.get_connection()
+    commands = []
+
+    async def send(*args):
+        commands.append(args)
+        await connection.send_command(*args)
+
+    call = LiveBlendRefresher._preview_call(SimpleNamespace(
+        send_command=send, read_response=connection.read_response))
+    command = ledger_transport_command()
+    try:
+        first = await call(*command)
+        second = await call(*command)
+        await client.script_flush()
+        third = await call(*command)
+        assert first[0] == second[0] == third[0] == b"ok"
+        assert int(first[1]) < int(second[1]) < int(third[1])
+        assert [c[0] for c in commands] == ["EVALSHA", "EVAL", "EVALSHA", "EVALSHA", "EVAL"]
+        assert commands[1] == commands[4] == command
+    finally:
+        await client.connection_pool.release(connection)
+        await client.aclose()
