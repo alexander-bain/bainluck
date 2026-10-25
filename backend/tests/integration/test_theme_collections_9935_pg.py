@@ -860,3 +860,218 @@ async def test_9936_multi_page_withdrawal_return_pagination_and_reassembly_persi
     )
     assert post_pass_p1["revision"] == rev_after
     assert [*_page_ids(post_pass_p1), *_page_ids(post_pass_p2)] == all_healthy
+
+
+# ---------------------------------------------------------------------------
+# #9936 D1b — a correction finishes while theme assembly is stopped. The real
+# chain lock, the real after-commit send and the real route; Redis is the
+# shared dict. The send is flag-independent, so "stopped after dispatch" and
+# "stopped before the correction" are the same run.
+# ---------------------------------------------------------------------------
+
+
+async def _edge_ids(world, cid) -> list:
+    async with world["Session"]() as db:
+        return [int(r[0]) for r in (await db.execute(text(
+            "SELECT child_id FROM event_edges WHERE parent_type = 'container' "
+            "AND parent_id = :c AND kind = 'contains' ORDER BY child_id"), {"c": cid})).fetchall()]
+
+
+async def _decision_rows(world, cid) -> list:
+    async with world["Session"]() as db:
+        return [tuple(r) for r in (await db.execute(text(
+            "SELECT child_id, outcome, reason, revision FROM container_member_decisions "
+            "WHERE container_id = :c ORDER BY child_id"), {"c": cid})).fetchall()]
+
+
+async def _publication(world, cid) -> str:
+    async with world["Session"]() as db:
+        return (await db.execute(text(
+            "SELECT publication_state FROM containers WHERE id = :c"), {"c": cid})).scalar()
+
+
+@pytest.mark.asyncio
+async def test_9936_d1b_a_withdrawal_while_stopped_is_served_corrected(world, monkeypatch):
+    from app.tasks.theme_assembly import (
+        _run_assemble_theme_collections,
+        _run_rebuild_theme_snapshot,
+    )
+    from app.utils import container_corrections as cc
+
+    async with world["Session"]() as db:
+        ids = await _seed_ai_markets(db)
+    cid = await _assemble_and_publish(world)
+    before = await _get(world, AI_SLUG)
+    held = before["revision"]
+    gone = ids["PM-GROK5"]
+    assert gone in _page_ids(before) and before["counts"]["inventory_complete"] is True
+
+    monkeypatch.setenv("THEME_ASSEMBLY_ENABLED", "false")  # assembly stopped
+    async with world["Session"]() as db:
+        await cc.withdraw_member(db, container_id=cid, child_type="market", child_id=gone,
+                                 reason="not this subject", actor="test")
+        await db.commit()
+    assert world["sent"] == [(REBUILD, [cid], "background")]
+    world["sent"].clear()
+    assert _is_building(await _get(world, AI_SLUG))  # until the rebuild lands
+    decisions = await _decision_rows(world, cid)
+    keys = set(world["store"])
+
+    rebuilt = await _run_rebuild_theme_snapshot(cid)
+    assert rebuilt["terminal"] == "complete", rebuilt
+    assert rebuilt["containers"][0]["assembly"] == "stopped"
+
+    after = await _get(world, AI_SLUG)
+    assert gone not in _page_ids(after)
+    assert after["counts"]["shown_count"] == before["counts"]["shown_count"] - 1
+    assert after["counts"]["inventory_complete"] is True  # carried through the lineage
+    moved = await _get(world, AI_SLUG, revision=str(held))
+    assert moved["revision_moved"] is True and gone not in _page_ids(moved)
+
+    # Exactly one new page; no edge, decision row or publication change.
+    assert set(world["store"]) - keys == {f"theme_snapshot:{cid}:{after['revision']}"}
+    assert gone not in await _edge_ids(world, cid)
+    assert await _decision_rows(world, cid) == decisions
+    assert await _publication(world, cid) == "published"
+
+    # The automatic pass stays stopped.
+    stopped = await _run_assemble_theme_collections(only=AI_SLUG)
+    assert (stopped["terminal"], stopped["reason"]) == ("skipped", "theme_assembly_disabled")
+    assert await _live_revision(world, cid) == after["revision"]
+
+
+@pytest.mark.asyncio
+async def test_9936_d1b_the_last_member_while_stopped_is_empty_not_building(world, monkeypatch):
+    from app.tasks.theme_assembly import _run_rebuild_theme_snapshot
+    from app.utils import container_corrections as cc
+
+    async with world["Session"]() as db:
+        await _seed_ai_markets(db)
+    cid = await _assemble_and_publish(world)
+    monkeypatch.setenv("THEME_ASSEMBLY_ENABLED", "false")
+    async with world["Session"]() as db:
+        for mid in await _edge_ids(world, cid):
+            await cc.withdraw_member(db, container_id=cid, child_type="market",
+                                     child_id=mid, reason="cleanup", actor="test")
+        await db.commit()
+    assert world["sent"] == [(REBUILD, [cid], "background")]
+    assert _is_building(await _get(world, AI_SLUG))
+
+    assert (await _run_rebuild_theme_snapshot(cid))["terminal"] == "complete"
+    empty = await _get(world, AI_SLUG)
+    assert empty["state"] == "empty" and empty["sections"] == []
+    assert empty["counts"]["shown_count"] == 0 and empty["page"]["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_9936_d1b_a_withdrawn_collection_while_stopped_gets_no_page(world, monkeypatch):
+    from app.tasks.theme_assembly import _run_rebuild_theme_snapshot
+    from app.utils import container_corrections as cc
+
+    async with world["Session"]() as db:
+        await _seed_ai_markets(db)
+    cid = await _assemble_and_publish(world)
+    monkeypatch.setenv("THEME_ASSEMBLY_ENABLED", "false")
+    async with world["Session"]() as db:
+        await cc.withdraw_publication(db, container_id=cid, reason="wrong theme", actor="test")
+        await db.commit()
+    assert world["sent"] == [(REBUILD, [cid], "background")]
+    revision, keys = await _live_revision(world, cid), set(world["store"])
+
+    report = await _run_rebuild_theme_snapshot(cid)
+    assert set(world["store"]) == keys and await _live_revision(world, cid) == revision
+    assert (report["terminal"], report["reason"]) == ("skipped", "assembly_stopped_not_published")
+    assert await _publication(world, cid) == "withdrawn"
+    withdrawn = await _get(world, AI_SLUG)
+    assert withdrawn["state"] == "withdrawn" and withdrawn["sections"] == []
+
+
+@pytest.mark.asyncio
+async def test_9936_d1b_a_repeated_rebuild_while_stopped_writes_nothing(world, monkeypatch):
+    from app.tasks.theme_assembly import _run_rebuild_theme_snapshot
+    from app.utils import container_corrections as cc
+
+    async with world["Session"]() as db:
+        ids = await _seed_ai_markets(db)
+    cid = await _assemble_and_publish(world)
+    monkeypatch.setenv("THEME_ASSEMBLY_ENABLED", "false")
+    async with world["Session"]() as db:
+        await cc.withdraw_member(db, container_id=cid, child_type="market",
+                                 child_id=ids["PM-GEM3"], reason="r", actor="test")
+        await db.commit()
+    assert (await _run_rebuild_theme_snapshot(cid))["terminal"] == "complete"
+    revision, store = await _live_revision(world, cid), dict(world["store"])
+
+    again = await _run_rebuild_theme_snapshot(cid)  # a duplicate delivery
+    assert world["store"] == store and await _live_revision(world, cid) == revision
+    assert (again["terminal"], again["reason"]) == ("skipped", "assembly_stopped_page_present")
+
+
+@pytest.mark.asyncio
+async def test_9936_d1b_a_lost_dispatch_while_stopped_is_building_until_a_resend(
+    world, monkeypatch
+):
+    """The broker refuses the send. The correction stands, the page answers
+    "building" (never the withdrawn page) and nothing retries on its own; a
+    person re-sending the rebuild finishes it."""
+    import app.tasks as tasks_pkg
+    from app.tasks.theme_assembly import _run_rebuild_theme_snapshot
+    from app.utils import container_corrections as cc
+
+    async with world["Session"]() as db:
+        ids = await _seed_ai_markets(db)
+    cid = await _assemble_and_publish(world)
+    gone = ids["PM-GROK5"]
+    monkeypatch.setenv("THEME_ASSEMBLY_ENABLED", "false")
+
+    def _broker_down(*args, **kwargs):
+        raise ConnectionError("broker unavailable")
+
+    monkeypatch.setattr(tasks_pkg.celery_app, "send_task", _broker_down)
+    async with world["Session"]() as db:
+        await cc.withdraw_member(db, container_id=cid, child_type="market", child_id=gone,
+                                 reason="not this subject", actor="test")
+        await db.commit()  # the swallowed dispatch failure never undoes the correction
+    assert gone not in await _edge_ids(world, cid)
+    assert _is_building(await _get(world, AI_SLUG))
+
+    report = await _run_rebuild_theme_snapshot(cid)  # the re-send
+    assert report["terminal"] == "complete", report
+    after = await _get(world, AI_SLUG)
+    assert gone not in _page_ids(after) and after["counts"]["inventory_complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_9936_d1b_two_rebuilds_racing_while_stopped_serve_one_corrected_page(
+    world, monkeypatch
+):
+    """A duplicated delivery, both copies at once. The chain lock serializes
+    them; at worst the second allocates one more revision. Every page written
+    excludes the withdrawn member and readers get the live one."""
+    import asyncio
+
+    from app.tasks.theme_assembly import _run_rebuild_theme_snapshot
+    from app.utils import container_corrections as cc
+
+    async with world["Session"]() as db:
+        ids = await _seed_ai_markets(db)
+    cid = await _assemble_and_publish(world)
+    gone = ids["PM-GROK5"]
+    monkeypatch.setenv("THEME_ASSEMBLY_ENABLED", "false")
+    async with world["Session"]() as db:
+        result = await cc.withdraw_member(db, container_id=cid, child_type="market",
+                                          child_id=gone, reason="r", actor="test")
+        await db.commit()
+
+    reports = await asyncio.gather(_run_rebuild_theme_snapshot(cid),
+                                   _run_rebuild_theme_snapshot(cid))
+    assert sorted(r["terminal"] for r in reports) in (
+        ["complete", "skipped"], ["complete", "complete"]), reports
+    live = await _live_revision(world, cid)
+    assert result.revision < live <= result.revision + 2
+    written = {int(k.rsplit(":", 1)[1]): json.loads(v) for k, v in world["store"].items()
+               if k.startswith(f"theme_snapshot:{cid}:")
+               and int(k.rsplit(":", 1)[1]) > result.revision}
+    assert written and all(gone not in page["shown_ids"] for page in written.values())
+    after = await _get(world, AI_SLUG)
+    assert after["revision"] == live and gone not in _page_ids(after)
