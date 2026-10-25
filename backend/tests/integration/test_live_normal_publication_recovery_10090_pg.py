@@ -1259,7 +1259,7 @@ RETENTION_REFUSED = "normal price replay retention failed after PUBLISH"
 
 
 async def test_sustained_retention_refusal_cost_is_bounded_per_event_per_flush(
-    rig, consumer, monkeypatch, real_redis, caplog,
+    rig, consumer, monkeypatch, real_redis, caplog, default_preview_redis,
 ):
     """#10090 attempt163: Redis refuses EVERY replay-cache SET for six flushes
     of three busy games. Each price still reaches its readers; each refused
@@ -1274,6 +1274,7 @@ async def test_sustained_retention_refusal_cost_is_bounded_per_event_per_flush(
     import logging
 
     from app.utils import live_push
+    from app.utils.dnpl_authority_transport import decode_preview, is_authority_payload
     from tests.test_blend_preview_ledger_tsp1_10090 import _VirtualTimeoutClock
 
     # This case counts retention-refusal work under a healthy database, not
@@ -1325,7 +1326,11 @@ async def test_sustained_retention_refusal_cost_is_bounded_per_event_per_flush(
         while (item := await pubsub.get_message(
             ignore_subscribe_messages=True, timeout=.2,
         )) is not None:
-            received.append(json.loads(item["data"]))
+            payload = item["data"]
+            if is_authority_payload(payload):
+                receipt = decode_preview(item["channel"].decode(), payload, time.monotonic())
+                payload = receipt.payload
+            received.append(json.loads(payload))
         remaining = await owed(rig)
     finally:
         await close(t.r)
