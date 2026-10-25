@@ -337,6 +337,31 @@ test("a reader who starts scrolling on frame 1 is not yanked when revision 7 arr
   expect(scrollY).toBe(310);
 });
 
+test("with no member restored on this mount, a revision change never moves the page", async () => {
+  // The stored member was never drawn on this mount, so nothing was restored: the
+  // reader's place (here the browser's own scroll, 500) is theirs on both frames.
+  settleCollectionRead(SLUG, { hub: parseCollection(REV5_P1(), SLUG) });
+  sessionStorage.setItem(
+    `collection-reading:${SLUG}`,
+    JSON.stringify({ slug: SLUG, memberKey: "market:999", offset: LEFT_AT, expanded: [] }),
+  );
+  scrollY = 500;
+  let resolveRev7!: (value: unknown) => void;
+  global.fetch = jest.fn(() => new Promise((resolve) => { resolveRev7 = resolve; })) as unknown as typeof fetch;
+
+  await act(async () => root.render(<CollectionHub slug={SLUG} />));
+  expect(renderedMembers()).toEqual(["market:101", "market:102"]);
+  expect(scrollY).toBe(500);
+
+  await act(async () => {
+    resolveRev7({ ok: true, status: 200, json: async () => REV7_P1() });
+  });
+  expect(element.querySelector('[data-collection-pager="7"]')).not.toBeNull();
+  expect(scrollY).toBe(500);
+  expect(window.scrollTo).not.toHaveBeenCalled();
+  expect(sessionStorage.getItem("collection-reading:ai")).toBeNull();
+});
+
 const loadMoreButton = () =>
   Array.from(element.querySelectorAll("button")).find(
     (b) => b.textContent === "Load more" || b.textContent === "Loading…",
