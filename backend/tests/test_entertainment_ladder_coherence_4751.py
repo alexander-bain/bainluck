@@ -122,20 +122,22 @@ def test_unattributable_reversal_preserves_field_without_a_ladder_headline(legs)
     "legs,is_ladder",
     [
         ([("Above 10", 0.2), ("Above 20", 0.9), ("Above 30", 0.95)], True),
-        (COHERENT + [("Special exception", None)], False),
+        (COHERENT + [("Special exception", None)], True),
     ],
 )
-def test_music_preserves_full_board_identity_without_a_false_headline(legs, is_ladder):
+def test_music_marks_nested_served_slice_without_a_false_full_board_headline(legs, is_ladder):
     m = market(legs)
     m.external_id = "kxspotify-test"
     m.name = "Spotify streams in October"
     section = entertainment._build_music({"music": [m]})
     row = section["spotify_race"][0]
+    # Presentation may order the nested slice; the full mixed grammar still
+    # prevents a median/headline. False here previously regressed #9468.
     assert row["ladder"] is is_ladder
     assert row["headline"] is None
     assert set(names(row)) == {name for name, prob in legs if prob is not None}
     if is_ladder:
-        assert names(row) == [name for name, _ in legs]
+        assert names(row) == [name for name, prob in legs if prob is not None]
 
 
 @pytest.mark.parametrize(

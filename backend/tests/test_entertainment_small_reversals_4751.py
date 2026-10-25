@@ -49,7 +49,9 @@ def test_residual_numeric_conflict_refuses_before_selection(monkeypatch, legs, l
     assert row["headline"] is None
     assert row["hook"] is None
     assert row["market_id"] == subject.id
-    assert row["ladder"] is True
+    presentation = entertainment._market_row(subject, max_outcomes=8)
+    entertainment._mark_ladder(presentation)
+    assert presentation["ladder"] is True
     assert subject == before
 
 

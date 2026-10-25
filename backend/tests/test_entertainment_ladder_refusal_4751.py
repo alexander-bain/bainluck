@@ -18,7 +18,9 @@ def test_collapsed_field_is_explicit_and_keeps_legacy_shape_without_a_hook(monke
     assert row["ladder_treatment_refused"] is True
     assert row["headline"] is None
     assert row["hook"] is None
-    assert row["ladder"] is True
+    presentation = entertainment._market_row(m, max_outcomes=8)
+    entertainment._mark_ladder(presentation)
+    assert presentation["ladder"] is True
     assert row["market_id"] == m.id
     assert row["q"] == m.name
     assert row["top_outcomes"]  # older decoders keep their required numeric shape

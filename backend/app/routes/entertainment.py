@@ -9,6 +9,7 @@ Single endpoint returns the full response consumed by the frontend.
 
 import json
 import logging
+from math import isclose
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -22,7 +23,7 @@ from app.services import get_db
 from app.utils.futures_liveness import market_reads_settled
 from app.utils.hook_staleness import is_hook_stale
 from app.utils.ladder_headline import ladder_median_row
-from app.utils.ladder_monotonicity import cumulative_outcome_ladder, ladder_is_incoherent
+from app.utils.ladder_monotonicity import cumulative_outcome_ladder, monotonicity_violations
 from app.utils.outcome_display import (
     LADDER_MIN_DRAWN_RUNGS,
     incoherent_ladder_verdict,
@@ -284,43 +285,46 @@ def _market_row(
     ]
     if not priced:
         return None
-    # #4751: evaluate the full grammar, with refused prices absent, BEFORE
-    # choosing a leader or top-N slice. Dropping an unpriced mixed leg first
-    # could invent a cumulative ladder; counting a withheld price could instead
-    # condemn supported siblings. Never mutate the stored outcomes.
-    incoherent, priced_rungs = incoherent_ladder_verdict(
-        outcomes,
-        lambda o: o.name,
-        lambda o: o.current_probability if o.id not in withheld_ids else None,
-        market.name,
-    )
-    collapsed = bool(incoherent) and (
-        priced_rungs - len(incoherent) < LADDER_MIN_DRAWN_RUNGS
-    )
-    if incoherent and not collapsed:
-        rejected_ids = {outcomes[i].id for i in incoherent}
-        priced = [o for o in priced if o.id not in rejected_ids]
-    # #4751: the shared trim tolerates 2pp, but 88/90 and 35/36 are visible
-    # contradictions. Keep its attribution policy; refuse this card's numbers
-    # if the surviving numeric field still conflicts. This does not choose a
-    # new "wrong" rung or manufacture a replacement probability. Parse the
-    # FULL grammar so an unpriced exception cannot invent a cumulative field.
-    # Dates retain their existing policy pending rule-backed #11620 adoption.
+    # #4751 admits numeric cumulative fields only. Parse the FULL grammar
+    # before filtering absent prices, so an unpriced exception cannot invent
+    # a ladder. Date trimming/refusal awaits rule-backed #11620 adoption.
     numeric_ladder = cumulative_outcome_ladder(
         [{"name": o.name, "outcome": o} for o in outcomes],
         question=market.name,
     )
-    refused = collapsed
+    refused = False
     if numeric_ladder is not None:
+        # Evaluate before selecting a leader or top-N slice, with withheld
+        # prices absent. Keep the shared attribution policy unchanged.
+        incoherent, priced_rungs = incoherent_ladder_verdict(
+            outcomes,
+            lambda o: o.name,
+            lambda o: o.current_probability if o.id not in withheld_ids else None,
+            market.name,
+        )
+        refused = bool(incoherent) and (
+            priced_rungs - len(incoherent) < LADDER_MIN_DRAWN_RUNGS
+        )
+        if incoherent and not refused:
+            rejected_ids = {outcomes[i].id for i in incoherent}
+            priced = [o for o in priced if o.id not in rejected_ids]
+        # The shared trim tolerates 2pp; 88/90 and 35/36 still contradict.
+        # Refuse surviving reversals without choosing another "wrong" rung.
+        # Ignore only arithmetic noise (e.g. .03 vs (.01 + .05) / 2),
+        # locally: shared diagnostics retain their strict raw comparisons.
         legs, direction = numeric_ladder
         eligible_ids = {o.id for o in priced}
-        refused = refused or ladder_is_incoherent(
+        violations = monotonicity_violations(
             {
                 value: row["outcome"].current_probability
                 for value, row in legs
                 if row["outcome"].id in eligible_ids
             },
             direction,
+        )
+        refused = refused or any(
+            not isclose(low_prob, high_prob, rel_tol=0, abs_tol=1e-12)
+            for _low, low_prob, _high, high_prob in violations
         )
     # #6255 — A RUNG WE HOLD NO PRICE FOR IS NOT A RUNG AT 0%.
     #
@@ -348,10 +352,6 @@ def _market_row(
             {"headline": None}
             if refused else _ladder_headline(market, priced, outcomes)
         ),
-        # This flag is cumulative IDENTITY, not price coherence: Spotify uses
-        # it to avoid ranking nested dates as competing artists. Preserve that
-        # identity on collapse, but never infer it from a truncated mixed board.
-        "ladder": priced_rungs > 0,
         # Explicit reader refusal: headline=None also means an ordinary
         # non-ladder, so it cannot prohibit the client's numeric fallback.
         # Legacy numbers retain decoder/ranking compatibility; updated readers
@@ -766,11 +766,11 @@ def _mark_ladder(row: dict) -> None:
     as a calendar. A race of named contenders fails the check on its first leg
     and is served exactly as before, price order and all.
 
+    This flag describes the served slice for presentation, not the full-board
+    grammar used to admit a headline or refuse numeric treatment.
     Only the ORDER of the served slice changes. `prob` stays the priced leader
     `_market_row` chose, and the slice is the same legs.
     """
-    if row.get("ladder") is False:
-        return
     ladder = cumulative_outcome_ladder(
         row["top_outcomes"], dates=True, question=row.get("q")
     )
