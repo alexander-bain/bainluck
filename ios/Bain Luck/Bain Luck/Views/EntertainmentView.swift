@@ -76,8 +76,12 @@ enum EntertainmentSectionRows {
 // MARK: - View
 
 struct EntertainmentView: View {
-    @StateObject private var viewModel = EntertainmentViewModel()
+    @StateObject private var viewModel: EntertainmentViewModel
     @Environment(\.horizontalSizeClass) private var sizeClass
+
+    init(viewModel: @autoclosure @escaping () -> EntertainmentViewModel = EntertainmentViewModel()) {
+        _viewModel = StateObject(wrappedValue: viewModel())
+    }
 
     private var isCompact: Bool {
         #if os(macOS)
@@ -301,8 +305,8 @@ struct EntertainmentView: View {
 
     private var unavailableLadderPrices: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Prices unavailable").font(.subheadline.weight(.medium))
-            Text("The threshold prices conflict.").font(.subheadline)
+            Text("Probabilities unavailable").font(.subheadline.weight(.medium))
+            Text("The threshold probabilities conflict.").font(.subheadline)
         }
         .foregroundStyle(DS.textSecondary)
         .fixedSize(horizontal: false, vertical: true)

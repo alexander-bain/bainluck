@@ -29,8 +29,8 @@ type EntMarketRow = ApiEntMarketRow & { ladder_treatment_refused?: boolean };
 
 function UnavailableLadderPrices() {
   return <div className="text-text-secondary text-sm">
-    <p className="font-medium">Prices unavailable</p>
-    <p>The threshold prices conflict.</p>
+    <p className="font-medium">Probabilities unavailable</p>
+    <p>The threshold probabilities conflict.</p>
   </div>;
 }
 

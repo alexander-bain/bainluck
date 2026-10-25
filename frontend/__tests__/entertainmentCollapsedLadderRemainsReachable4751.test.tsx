@@ -37,7 +37,7 @@ function assertRefused() {
   expect(subjectLinks().length).toBeGreaterThanOrEqual(3);
   for(const link of subjectLinks()) {
     expect(link.textContent).toContain("A threshold market");
-    expect(link.textContent).toContain("Prices unavailable");
+    expect(link.textContent).toContain("Probabilities unavailable");
     expect(link.textContent).not.toContain("%");
     expect(link.textContent).not.toContain("Above 30");
   }
@@ -55,5 +55,5 @@ test.each([false,undefined])("explicit false and legacy missing flag retain thei
   const subject=row(false);if(refused===undefined)delete subject.ladder_treatment_refused;
   seed(subject);renderPage();
   expect(subjectLinks().some(a=>a.textContent?.includes("95%"))).toBe(true);
-  expect(subjectLinks().some(a=>a.textContent?.includes("Prices unavailable"))).toBe(false);
+  expect(subjectLinks().some(a=>a.textContent?.includes("Probabilities unavailable"))).toBe(false);
 });
