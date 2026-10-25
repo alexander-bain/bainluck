@@ -23,6 +23,10 @@ from app.utils.futures_liveness import market_reads_settled
 from app.utils.hook_staleness import is_hook_stale
 from app.utils.ladder_headline import ladder_median_row
 from app.utils.ladder_monotonicity import cumulative_outcome_ladder
+from app.utils.outcome_display import (
+    LADDER_MIN_DRAWN_RUNGS,
+    incoherent_ladder_verdict,
+)
 from app.utils.cross_source_matching import (
     # #2427 — the deduping pair, not bare `clean_outcomes`: every row this file
     # builds must also lose a Polymarket `_yes`/`_no` leg that duplicates a rung
@@ -280,6 +284,22 @@ def _market_row(
     ]
     if not priced:
         return None
+    # #4751: evaluate the full grammar, with refused prices absent, BEFORE
+    # choosing a leader or top-N slice. Dropping an unpriced mixed leg first
+    # could invent a cumulative ladder; counting a withheld price could instead
+    # condemn supported siblings. Never mutate the stored outcomes.
+    incoherent, priced_rungs = incoherent_ladder_verdict(
+        outcomes,
+        lambda o: o.name,
+        lambda o: o.current_probability if o.id not in withheld_ids else None,
+        market.name,
+    )
+    collapsed = bool(incoherent) and (
+        priced_rungs - len(incoherent) < LADDER_MIN_DRAWN_RUNGS
+    )
+    if incoherent and not collapsed:
+        rejected_ids = {outcomes[i].id for i in incoherent}
+        priced = [o for o in priced if o.id not in rejected_ids]
     # #6255 — A RUNG WE HOLD NO PRICE FOR IS NOT A RUNG AT 0%.
     #
     # The refusal above is the same rule ONE LEVEL UP. It never reached inside
@@ -302,7 +322,14 @@ def _market_row(
     top = priced[:max_outcomes]
     outcome_count = len(outcomes)
     return {
-        **_ladder_headline(market, priced),
+        **(
+            {"headline": None}
+            if collapsed else _ladder_headline(market, priced, outcomes)
+        ),
+        # This flag is cumulative IDENTITY, not price coherence: Spotify uses
+        # it to avoid ranking nested dates as competing artists. Preserve that
+        # identity on collapse, but never infer it from a truncated mixed board.
+        "ladder": priced_rungs > 0,
         "q": market.name,
         # #6255 — `priced[0]`, not `outcomes[0]`. Both name the leader on every
         # ladder that has one priced rung above zero, but they part when every
@@ -392,7 +419,7 @@ def _market_row(
     }
 
 
-def _ladder_headline(market: FuturesMarket, priced: list) -> dict:
+def _ladder_headline(market: FuturesMarket, priced: list, outcomes: list) -> dict:
     """#9803 — the rung a ladder card quotes, when it is not the priced leader.
 
     `priced` is sorted by price, so on a cumulative ladder `priced[0]` is the
@@ -411,11 +438,20 @@ def _ladder_headline(market: FuturesMarket, priced: list) -> dict:
     Every other row carries `headline: None` and renders exactly as before.
     `prob` stays the priced leader because `_is_interesting`, `_by_uncertainty`
     and the hook gate all read it, and a display fix must not reorder the page.
+
+    #4751: establish grammar from all cleaned outcomes, but use only prices
+    that survived admission and coherence. Neither an unpriced exception nor
+    a rejected rung can silently change the claim this headline makes.
     """
+    eligible_ids = {o.id for o in priced}
     median = ladder_median_row(
-        [{"name": o.name, "outcome": o} for o in priced],
+        [{"name": o.name, "outcome": o} for o in outcomes],
         question=market.name,
-        probability=lambda r: r["outcome"].current_probability,
+        probability=lambda r: (
+            r["outcome"].current_probability
+            if r["outcome"].id in eligible_ids
+            else None
+        ),
     )
     if median is None or median["outcome"] is priced[0]:
         return {"headline": None}
@@ -701,6 +737,8 @@ def _mark_ladder(row: dict) -> None:
     Only the ORDER of the served slice changes. `prob` stays the priced leader
     `_market_row` chose, and the slice is the same legs.
     """
+    if row.get("ladder") is False:
+        return
     ladder = cumulative_outcome_ladder(
         row["top_outcomes"], dates=True, question=row.get("q")
     )
