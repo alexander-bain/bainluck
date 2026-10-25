@@ -6,6 +6,9 @@ inventory proves SQL semantics, not production-scale latency or phone acceptance
 
 from dataclasses import replace
 from datetime import timedelta
+import json
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -300,3 +303,103 @@ async def test_katie_and_branch_remain_distinct_search_destinations(
         "Offensive Rookie of the Year Winner?" == r.get("name", r.get("text", ""))
         for r in rows
     )
+
+
+@pytest.mark.parametrize("endpoint", ["search", "typeahead"])
+async def test_july_queries_and_registry_keep_same_inventory_answers(
+    inventory, endpoint, monkeypatch
+):
+    """Regression material, not an unseen or production-accuracy benchmark.
+
+    Keep all July queries, including those without a stable expected entity,
+    and the current registry's later additions. The small SQL fixture does not
+    contain every historical destination: count empty answers explicitly.
+    """
+    from scripts.evals.build_search_gold_registry import GOLD_ROWS, MC_CANDIDATES
+
+    registry = json.loads(
+        (
+            Path(__file__).parents[2] / "scripts/evals/search_gold_probes.json"
+        ).read_text()
+    )
+    queries = list(
+        dict.fromkeys(
+            [
+                *(row[0] for row in GOLD_ROWS),
+                *(q for group, _ in MC_CANDIDATES for q in group),
+                *(row["presentation"]["query"] for row in registry["probes"]),
+            ]
+        )
+    )
+    request, _, _, _, _, _ = inventory
+    aliases = person_aliases.REVIEWED_PERSON_ALIASES
+    # Freeze only route-local clocks. This is response equivalence, not a
+    # timing gate; asyncio and the real SQL engine keep their actual clocks.
+    monkeypatch.setattr(
+        events,
+        "time",
+        SimpleNamespace(
+            monotonic=lambda: 1000.0,
+            perf_counter=lambda: 1000.0,
+        ),
+    )
+    force = (
+        events._force_search_cache_rebuild
+        if endpoint == "search"
+        else events._force_cache_rebuild
+    )
+    token = force.set(True)
+    comparisons = []
+    try:
+        for query in queries:
+            bodies = []
+            for enabled in (False, True):
+                monkeypatch.setattr(
+                    person_aliases,
+                    "REVIEWED_PERSON_ALIASES",
+                    aliases if enabled else (),
+                )
+                monkeypatch.setattr(events, "_roster_index", {})
+                monkeypatch.setattr(events, "_roster_index_expires_at", 0.0)
+                bodies.append(await request(endpoint, query))
+            sections = (
+                ("suggestions",)
+                if endpoint == "typeahead"
+                else (
+                    "results",
+                    "teams",
+                    "futures",
+                    "futures_families",
+                    "event_concepts",
+                )
+            )
+            counts = [
+                {key: len(body.get(key) or []) for key in sections} for body in bodies
+            ]
+            comparisons.append(
+                {
+                    "query": query,
+                    "identical": bodies[0] == bodies[1],
+                    "before_counts": counts[0],
+                    "after_counts": counts[1],
+                    "degraded": bodies[1].get("degraded", []),
+                    "no_results": not any(counts[1].values())
+                    and not bodies[1].get("degraded"),
+                }
+            )
+    finally:
+        force.reset(token)
+    print(
+        "ALIAS_QUERY_COMPARISON "
+        + json.dumps(
+            {
+                "endpoint": endpoint,
+                "scope": "same seeded inventory; no accuracy claim",
+                "queries": comparisons,
+            },
+            sort_keys=True,
+        )
+    )
+    assert all(row["identical"] for row in comparisons), [
+        row for row in comparisons if not row["identical"]
+    ]
