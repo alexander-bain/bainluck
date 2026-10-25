@@ -42,9 +42,8 @@ does not read the new index may still pass when ALL of these hold:
       reviewer as an interpretation, not as adopted text.
   That pass is labelled PASS_EXCEPTION and carries "no claim that the new index
   helped this term". A RETAINED SHAPE failure whose plan read the forbidden index
-  stays OWED: a later read that happens to choose another plan does not show the
-  plan cannot flip back. Term 2 defines no clearing and the original graded each
-  run fresh, so this too is this file's reading, flagged. Bystanders keep the
+  (election, 01:15Z) stays OWED in the historical record; it can be CLEARED only
+  prospectively, by the rule under PROSPECTIVE CLEARING below. Bystanders keep the
   original pass. D1 (failing a bystander
   that reads the whole-table index) was NOT adopted and is not applied.
   Because `no_trgm` disables every trigram path on `name` by construction, (a)
@@ -68,12 +67,36 @@ hash to `G0_SQL_SHA16`, the values compiled at the baseline's own commit
 (`3908c039e5`), at the 10/12 RED run (`89031000dc`) and at `2f18107550`. A
 mismatch exits 2: changed SQL is never compared with the old baseline. The
 original SEQUENCE is kept too: all 8 terms' timed rounds run back to back, in
-TERMS order, before any SHAPE, faithful or semantics read (`run_se` pass 1). One fix in
-the fail-closed direction: a term with no before ratio is NOT_EVALUABLE (the
-original passed it). Every retained failure is listed and stays OWED: no harness
-observation clears it, because the amendment defines no clearing observation and
-this file does not invent one. So `--track se` cannot exit 0 while any retained
-failure is OWED. That is the decision's term 4, not a harness defect.
+TERMS order, before any SHAPE, faithful or semantics read (`run_se` pass 1). The
+baseline itself is proven by hash (`BASELINE_SHA256`); a mismatch exits 2. One fix
+in the fail-closed direction: a term with no before ratio is NOT_EVALUABLE (the
+original passed it). Every retained failure is listed with its historical verdict,
+which is never rewritten. `--track se` cannot exit 0 unless the same read clears
+every OWED one (next paragraph).
+
+PROSPECTIVE CLEARING (Root 2026-10-25T04:30Z: the reviewer's option B, the ORIGINAL
+outcome-controlled rule, no causal substitute). A read CLEARS a retained OWED failure
+only when ALL of these hold, and then it writes a `cleared_by` receipt into
+`record["prospective"]`, beside (never into) `record["retained_failures"]`:
+  * the read binds the exact source (a git commit with no uncommitted change under
+    `backend/`, plus the sha256 of this file and the original gate) and the exact
+    subject (the live catalog definition of the new index, valid and ready), the
+    unchanged G0 SQL (`G0_SQL_SHA16`), the hashed 10/08 baseline, 5 rounds and the
+    original all-term timing sequence;
+  * in EVERY timed round, the term's ordinary G0 plan reads
+    `ix_futures_name_trgm_open` and does not read `ix_futures_name_trgm`;
+  * the term passes its original clause in that read: NO-REGRESSION, the
+    outcome-controlled ratio <= 1.5 x its 10/08 before ratio; SHAPE (election),
+    the term-2 rule on G0 AND on the faithful arm.
+A plan without the index, timing outside the original controlled sequence, changed
+SQL, a missing input, or a favorable plan with a failed ratio clears nothing. Each
+read grades every retained failure afresh: a receipt is never an input to a later
+read, so a later failure is a failure and no earlier pass hides it. Three readings
+are this file's, flagged: "every timed round" (the decision says "the timed plan"),
+"no uncommitted change under backend/" as the meaning of "exact source", and
+"never an input to a later read". A clearing is bounded evidence (`CLEARING_BOUND`):
+one passing controlled sample, not proof that the planner will keep that plan and
+not an index-caused speedup. No threshold, repeat count or DDL is added.
 
 SEMANTICS (term 1, unchanged-answer protection). Old: the full /search arm's
 ordered ids, usable vs `no_partial` vs `no_trgm`, same instant. Kept exactly (the
@@ -104,8 +127,9 @@ path is unchanged since 10/08, or which plan the reader's prepared statement
 used. The reviewer accepts or rejects this rule; no other is adopted.
 
 VERDICTS. PASS / PASS_EXCEPTION / FAIL / NOT_EVALUABLE (input missing or
-unclassifiable, never a pass) / OWED / WITHDRAWN. Exit 0 = every graded clause
-on the track passed and nothing is OWED. Exit 1 = a result that is not that.
+unclassifiable, never a pass) / OWED / WITHDRAWN, and CLEARED (prospective status
+of a retained failure, this read only). Exit 0 = every graded clause on the track
+passed and nothing is still OWED after this read. Exit 1 = a result that is not that.
 Anything else is the harness failing to run, not a verdict (gotcha #54).
 
 USAGE
@@ -128,6 +152,7 @@ import json
 import os
 import re
 import statistics
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -212,6 +237,15 @@ G0_SQL_SHA16 = {
 
 AUDIT_DIR = G.AUDIT_DIR
 
+#: sha256 of the 10/08 baseline `G.BASELINE`, unchanged since 3908c039e5.
+BASELINE_SHA256 = "2fd245d0edb7de88f498eec90215a395928c4fd58fe5ac72753e4aee2fea7ff7"
+
+CLEARED = "CLEARED"
+CLEARING_BOUND = (
+    "bounded evidence: one passing original outcome-controlled read of the chosen plan; not proof that the "
+    "planner will keep choosing it and not an index-caused speedup"
+)
+
 #: Byte-identical copies of the two 10/12 RED records (originals untracked under
 #: ~/bainluck/artifacts/release-1.0.4-pickup-20261011/latency-10769/).
 RETAINED_READS = {
@@ -240,8 +274,9 @@ CRITERIA = {
         "new": "old rule, OR for a subject: no_trgm control reads no trigram index AND FORBIDDEN not in plan AND "
                "plan is open-only [open-only = this file's reading, flagged]; labelled PASS_EXCEPTION, "
                f"{NO_CREDIT_NOTE}; /search graded on G0 AND the faithful arm; typeahead terms all graded as subjects; "
-               "a retained SHAPE failure whose plan read FORBIDDEN stays OWED and no later read clears it "
-               "[this file's reading, flagged: term 2 defines no clearing and the original graded each run fresh]",
+               "a retained SHAPE failure whose plan read FORBIDDEN keeps its historical OWED verdict and is CLEARED "
+               "only prospectively, by the C3.NO-REGRESSION clearing rule with term 2 passing on G0 AND the "
+               "faithful arm in that read",
         "source": "DECISION.md term 2",
     },
     "C3.BUDGET(/search)": {
@@ -251,10 +286,19 @@ CRITERIA = {
     },
     "C3.NO-REGRESSION(/search)": {
         "old": "per term ratio_after <= 1.5 x ratio_before, original SQL, 10/08 baseline",
-        "new": "unchanged; original SQL proven by hash; original sequence (all 8 terms' timed rounds back to back, "
-               "in TERMS order, before any other read); no before ratio = NOT_EVALUABLE; every retained failure OWED "
-               "(no clearing observation is defined)",
-        "source": "DECISION.md term 4",
+        "new": "unchanged; original SQL and 10/08 baseline proven by hash; original sequence (all 8 terms' timed "
+               "rounds back to back, in TERMS order, before any other read); no before ratio = NOT_EVALUABLE; "
+               "retained records and their OWED verdicts are never rewritten. PROSPECTIVE CLEARING: a read clears a "
+               "retained OWED failure, with a cleared_by receipt kept beside the historical verdict, only if it binds "
+               "the exact source [clean commit under backend/: this file's reading, flagged] and subject, the "
+               "unchanged G0 SQL, the hashed baseline, 5 rounds and the original timing sequence, AND in every "
+               "timed round [this file's reading, flagged] the term's ordinary G0 plan reads EXPECTED and not "
+               "FORBIDDEN, AND the term passes its original clause in that read (NO-REGRESSION: ratio <= 1.5 x "
+               "before; SHAPE: term 2 on G0 and the faithful arm). A plan without the index, other timing, changed "
+               "SQL, a missing input or a failed ratio clears nothing. Each read grades every retained failure "
+               "afresh; a receipt is never an input to a later read [this file's reading, flagged], so a later "
+               f"failure stays a failure. {CLEARING_BOUND}",
+        "source": "DECISION.md term 4; release-root 20261025T043033Z (option B, original rule only)",
     },
     "C3.SEMANTICS": {
         "old": "/search full arm ordered ids: usable == no_partial == no_trgm, same instant",
@@ -628,6 +672,127 @@ def owed(failures: list[dict]) -> list[dict]:
     return [f for f in failures if f["status"] == OWED]
 
 
+#: What a clearing receipt binds as "the exact source".
+SOURCE_FILES = (os.path.abspath(__file__), os.path.abspath(G.__file__), os.path.abspath(ESA.__file__))
+
+
+def _sha256(path: str) -> str:
+    with open(path, "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+
+def expected_timed_order(rounds: int = ROUNDS) -> list[str]:
+    """The original `main()` sequence: TERMS order, rounds per term, name then outcome."""
+    return [f"{term}|{arm}" for term in TERMS for _ in range(rounds) for arm in ("name", "outcome")]
+
+
+def source_binding(rounds: int) -> dict:
+    """The source half of a clearing receipt. Any part it cannot read is recorded
+    as absent, and an absent part refuses every clearing (`binding_problems`)."""
+    try:
+        head = subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"],
+                              capture_output=True, text=True, timeout=10)
+        dirty = subprocess.run(["git", "-C", REPO, "status", "--porcelain", "--untracked-files=no", "--", "backend"],
+                               capture_output=True, text=True, timeout=10)
+        git_head = head.stdout.strip() if head.returncode == 0 else None
+        tree_clean = dirty.returncode == 0 and not dirty.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        git_head, tree_clean = None, False
+    baseline = _sha256(G.BASELINE)
+    return {
+        "git_head": git_head, "tree_clean": tree_clean,
+        "files": {os.path.relpath(p, REPO): _sha256(p) for p in SOURCE_FILES},
+        "baseline_sha256": baseline, "baseline_ok": baseline == BASELINE_SHA256,
+        "g0_sql_identity_ok": not g0_identity(), "rounds": rounds,
+    }
+
+
+def binding_problems(binding: dict, record: dict) -> list[str]:
+    """Why this read cannot clear anything; [] when its source and subject bind."""
+    problems = []
+    if not binding.get("git_head"):
+        problems.append("no git commit")
+    if not binding.get("tree_clean"):
+        problems.append("uncommitted change under backend/ (not an exact source)")
+    if not binding.get("baseline_ok"):
+        problems.append("10/08 baseline hash mismatch")
+    if not binding.get("g0_sql_identity_ok"):
+        problems.append("original G0 SQL changed")
+    if binding.get("rounds") != ROUNDS:
+        problems.append(f"rounds {binding.get('rounds')} != {ROUNDS}")
+    if record.get("timed_order") != expected_timed_order():
+        problems.append("timed sequence is not the original all-term sequence")
+    subject = record.get("subject") or {}
+    if not (subject.get("indexdef") and subject.get("valid") and subject.get("ready")):
+        problems.append(f"subject {EXPECTED_INDEX} not bound (definition, valid, ready): {subject}")
+    return problems
+
+
+def clearing_receipt(failure: dict, record: dict, binding: dict) -> tuple[dict | None, str]:
+    """(receipt, reason) for one retained failure against THIS read only.
+    Receipt None = not cleared; `reason` says which condition failed."""
+    if failure["status"] != OWED:
+        return None, f"historical status {failure['status']}: not an OWED failure"
+    problems = binding_problems(binding, record)
+    if problems:
+        return None, "read does not bind: " + "; ".join(problems)
+    t = (record.get("terms") or {}).get(failure["term"])
+    if not t:
+        return None, "term not read"
+    timed = (t.get("g0_reads") or {}).get("a") or []
+    if len(timed) != ROUNDS or any(isinstance(r, str) for r in timed):
+        return None, f"timed ordinary plans: {len(timed)} read of {ROUNDS}"
+    per_round = [sorted(_indexes(graded_access(r["access"]))) for r in timed]
+    off = [i for i, idx in enumerate(per_round) if EXPECTED_INDEX not in idx or FORBIDDEN_INDEX in idx]
+    if off:
+        return None, (f"timed ordinary plan, round(s) {off}, does not read {EXPECTED_INDEX} "
+                      f"without {FORBIDDEN_INDEX}: {per_round}")
+    evidence: dict = {"timed_plan_indexes": per_round}
+    if failure["clause"] == "NO-REGRESSION":
+        name_ms, ctrl_ms = t.get("name_ms") or [], t.get("ctrl_ms") or []
+        if len(name_ms) != ROUNDS or len(ctrl_ms) != ROUNDS:
+            return None, f"timings: {len(name_ms)} name / {len(ctrl_ms)} control of {ROUNDS}"
+        c_med = statistics.median(ctrl_ms)
+        ratio = statistics.median(name_ms) / c_med if c_med else float("inf")
+        verdict = no_regression_verdict(ratio, t.get("before_ratio"))
+        if verdict != PASS:
+            return None, f"original rule {verdict}: ratio {ratio:.4f} vs before {t.get('before_ratio')}"
+        evidence.update({"ratio": ratio, "before_ratio": t["before_ratio"],
+                         "factor": PER_TERM_REGRESSION_FACTOR, "name_ms": name_ms, "ctrl_ms": ctrl_ms})
+    elif failure["clause"] == "SHAPE":
+        g0, faithful = (t.get("shape_g0") or [None])[0], (t.get("shape_faithful") or [None])[0]
+        if g0 not in _PASSING or faithful not in _PASSING:
+            return None, f"term 2 SHAPE not met: G0 {g0}, faithful {faithful}"
+        evidence.update({"shape_g0": t["shape_g0"], "shape_faithful": t["shape_faithful"]})
+    else:
+        return None, f"no clearing is defined for {failure['clause']}"
+    receipt = {
+        "read_started_at": record.get("started_at"), "record": record.get("out"),
+        "retained_read": failure["read"], "term": failure["term"], "clause": failure["clause"],
+        "source": binding, "subject": record.get("subject"), "sequence": record.get("sequence"),
+        "evidence": evidence, "bound": CLEARING_BOUND,
+    }
+    return receipt, f"cleared by this read's original-rule {failure['clause']} pass on the chosen plan"
+
+
+def prospective(failures: list[dict], record: dict, binding: dict | None) -> list[dict]:
+    """Each retained OWED failure's status after THIS read, kept apart from the
+    historical list (which this never mutates)."""
+    out = []
+    for f in owed(failures):
+        receipt, why = (clearing_receipt(f, record, binding) if binding is not None
+                        else (None, "no read was made"))
+        out.append({
+            "read": f["read"], "term": f["term"], "clause": f["clause"], "historical_status": f["status"],
+            "status": CLEARED if receipt else OWED, "cleared_by": receipt, "why": why,
+        })
+    return out
+
+
+def outstanding(prospect: list[dict]) -> list[dict]:
+    return [p for p in prospect if p["status"] != CLEARED]
+
+
 def c4_word_verdict(rec: dict) -> tuple[str, str]:
     """One reader read. `rec` must come from `c4_read`: an arm timing from
     db-query has no `source == 'reader'` and is refused."""
@@ -793,7 +958,7 @@ def _catalog() -> tuple[dict, list]:
         f"JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = '{EXPECTED_INDEX}'",
         analyze=False,
     ).get("rows") or []
-    return classify_catalog(rows), validity
+    return classify_catalog(rows), validity, dict(rows).get(EXPECTED_INDEX)
 
 
 def c4_read(word: str) -> dict:
@@ -833,6 +998,7 @@ def run_se(rounds: int, classes: dict, record: dict) -> dict[str, str]:
         name_sql, ctrl_sql = G._sql_for(term, "name"), G._sql_for(term, "outcome")
         name_ms, ctrl_ms, g0_a = [], [], []
         for _ in range(rounds):
+            record.setdefault("timed_order", []).extend((f"{term}|name", f"{term}|outcome"))
             p_name = G._post(name_sql, analyze=True)
             name_ms.append(G._exec_ms(p_name))
             g0_a.append(_plan_summary(p_name))
@@ -929,6 +1095,10 @@ def dry_run(track: str) -> int:
         print(f"  original SQL identity: {'OK 24/24' if not bad else bad}")
         if bad:
             return 2
+        if _sha256(G.BASELINE) != BASELINE_SHA256:
+            print("  ERROR: the 10/08 baseline is not byte-identical")
+            return 2
+        print("  10/08 baseline: byte-identical")
     load_retained()
     print("  retained RED records: byte-identical (2/2)")
     now = datetime.now(timezone.utc)
@@ -949,7 +1119,8 @@ def dry_run(track: str) -> int:
     if members:
         print(f"  both rewrites build on all {len(members)} statements")
     print(f"  statements compiled; a read would make {n} requests")
-    print(f"  owed retained failures: {len(owed(retained_failures(load_retained())))}")
+    print(f"  owed retained failures: {len(owed(retained_failures(load_retained())))} "
+          "(a dry run clears nothing; only a read can, see PROSPECTIVE CLEARING)")
     return 0
 
 
@@ -981,6 +1152,7 @@ def main() -> int:
     record: dict = {
         "track": args.track, "rounds": args.rounds, "criteria": CRITERIA,
         "started_at": datetime.now(timezone.utc).isoformat(), "terms": {},
+        "out": os.path.realpath(os.path.expanduser(args.out)),
         "retained_failures": failures,
         "arm_plan_mode": "custom plan of literal SQL via db-query; NOT the reader's prepared statement",
     }
@@ -998,24 +1170,41 @@ def main() -> int:
             print(f"ERROR: original SQL changed, refusing to compare it with the baseline: {bad}",
                   file=sys.stderr)
             return 2
-        classes, validity = _catalog()
+        if args.track == "se" and _sha256(G.BASELINE) != BASELINE_SHA256:
+            print("ERROR: the 10/08 baseline is not byte-identical, refusing to compare with it", file=sys.stderr)
+            return 2
+        classes, validity, subject_def = _catalog()
         record["catalog"], record["c1_precondition"] = classes, validity
+        record["subject"] = {
+            "index": EXPECTED_INDEX, "indexdef": subject_def,
+            "valid": bool(validity and validity[0][1]), "ready": bool(validity and validity[0][2]),
+        }
         if not (validity and validity[0][1] and validity[0][2]):
             record["verdict"] = "RED"
             record["note"] = f"C1 precondition failed: {EXPECTED_INDEX} not valid+ready ({validity})"
+            if args.track == "se":
+                record["prospective"] = prospective(failures, record, None)
         else:
+            binding = source_binding(args.rounds)
             run = run_se if args.track == "se" else run_ta
             clauses = run(args.rounds, classes, record)
-            owed_list = owed(failures) if args.track == "se" else []
-            record["clauses"], record["owed"] = clauses, owed_list
+            record["clauses"] = clauses
+            owed_list = []
+            if args.track == "se":
+                record["source_binding"] = binding
+                record["prospective"] = prospective(failures, record, binding)
+                owed_list = outstanding(record["prospective"])
+                for p in record["prospective"]:
+                    print(f"  retained {p['read']} {p['term']} {p['clause']}: {p['status']} -- {p['why']}")
+            record["owed"] = owed_list
             record["verdict"] = track_verdict(clauses, owed_list)
             if owed_list:
-                print(f"  OWED retained failures: {len(owed_list)} (term 4) -- this track cannot be GREEN")
+                print(f"  OWED retained failures after this read: {len(owed_list)} -- this track cannot be GREEN")
     out = os.path.realpath(os.path.expanduser(args.out))
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "x") as fh:
         json.dump(record, fh, indent=2, default=str)
-    print(f"VERDICT: {record['verdict']}   (written to {out})")
+    print(f"VERDICT: {record['verdict']}   (written to {out}, sha256 {_sha256(out)})")
     return 0 if record["verdict"] == "GREEN" else 1
 
 

@@ -267,7 +267,7 @@ def test_retained_failures_and_their_status():
 
 
 def test_owed_failures_keep_the_search_track_red():
-    """Kills: a clean new read clearing a retained failure (term 4)."""
+    """Kills: the historical OWED list stopping a track from going RED."""
     all_pass = {f"NO-REGRESSION:{t}": S.PASS for t in S.TERMS}
     assert S.track_verdict(all_pass, S.owed(S.retained_failures(S.load_retained()))) == "RED"
     assert S.track_verdict(all_pass, []) == "GREEN"
@@ -547,10 +547,11 @@ def test_search_track_times_every_term_before_any_other_read(monkeypatch):
 
 # --- R-b: the retained-SHAPE OWED reading is in the record -----------------------
 
-def test_the_retained_shape_owed_reading_is_flagged_in_criteria():
+def test_the_retained_shape_reading_points_at_prospective_clearing():
     new = S.CRITERIA["C3.SHAPE"]["new"]
-    assert "retained SHAPE failure" in new and "stays OWED" in new
-    assert new.count("this file's reading, flagged") == 2
+    assert "retained SHAPE failure" in new and "historical OWED verdict" in new
+    assert "CLEARED only prospectively" in new and "faithful arm" in new
+    assert new.count("this file's reading, flagged") == 1  # open-only; Root withdrew the no-clearing reading
 
 
 # --- N3: the pre-read gate refuses an unbuildable control ------------------------
@@ -562,3 +563,213 @@ def test_dry_run_refuses_when_a_control_cannot_be_built(capsys):
     assert "cannot be built" in capsys.readouterr().out
     assert S.rewrite_problems({"ok": "x WHERE futures_markets.status = 'open' "
                                      "AND futures_markets.name ILIKE '%a%'"}) == {}
+
+
+# --- PROSPECTIVE CLEARING (release-root 20261025T043033Z, option B) -------------
+
+import copy  # noqa: E402
+
+EXP, FORB = S.EXPECTED_INDEX, S.FORBIDDEN_INDEX
+SIX = {
+    ("20261012T0005Z", "world series", "NO-REGRESSION"),
+    ("20261012T0005Z", "world cup", "NO-REGRESSION"),
+    ("20261012T0115Z", "world series", "NO-REGRESSION"),
+    ("20261012T0115Z", "world cup", "NO-REGRESSION"),
+    ("20261012T0115Z", "super bowl", "NO-REGRESSION"),
+    ("20261012T0115Z", "election", "SHAPE"),
+}
+
+
+def _timed(*indexes):
+    return {"access": [{"node": BH, "index": i, "alias": "futures_markets"} for i in indexes]}
+
+
+def _binding(**kw):
+    b = {"git_head": "a" * 40, "tree_clean": True, "files": {}, "baseline_sha256": S.BASELINE_SHA256,
+         "baseline_ok": True, "g0_sql_identity_ok": True, "rounds": S.ROUNDS}
+    b.update(kw)
+    return b
+
+
+def _good_read():
+    """A read that meets every clearing condition for every term (ratio 0.01)."""
+    terms = {
+        term: {
+            "name_ms": [1.0] * S.ROUNDS, "ctrl_ms": [100.0] * S.ROUNDS, "before_ratio": 0.5,
+            "g0_reads": {"a": [_timed(EXP, "ix_futures_name_fts_open")] * S.ROUNDS},
+            "shape_g0": (S.PASS, "original"), "shape_faithful": (S.PASS_EXCEPTION, "amended"),
+        }
+        for term in S.TERMS
+    }
+    return {
+        "started_at": "2026-10-25T05:00:00+00:00", "out": "/tmp/lat-10769-successor-se-x.json",
+        "terms": terms, "timed_order": S.expected_timed_order(), "sequence": "pass 1: timed rounds",
+        "subject": {"index": EXP, "indexdef": "CREATE INDEX ix_futures_name_trgm_open ...",
+                    "valid": True, "ready": True},
+    }
+
+
+def _failures():
+    return S.retained_failures(S.load_retained())
+
+
+def _status(prospect):
+    return {(p["read"], p["term"], p["clause"]): p["status"] for p in prospect}
+
+
+def test_a_valid_original_rule_read_clears_the_six_beside_an_unchanged_history():
+    """Kills: clearing by rewriting the historical verdict or the RED records."""
+    failures = _failures()
+    before = copy.deepcopy(failures)
+    prospect = S.prospective(failures, _good_read(), _binding())
+    assert _status(prospect) == {k: S.CLEARED for k in SIX}
+    assert failures == before and len(S.owed(failures)) == 6  # history untouched
+    test_retained_records_are_byte_identical()
+    for p in prospect:
+        r = p["cleared_by"]
+        assert p["historical_status"] == S.OWED
+        assert r["bound"] == S.CLEARING_BOUND and "not an index-caused speedup" in r["bound"]
+        assert r["record"] and r["read_started_at"] and r["retained_read"] == p["read"]
+        assert r["source"]["baseline_ok"] and r["subject"]["indexdef"]
+        assert r["evidence"]["timed_plan_indexes"] == [sorted([EXP, "ix_futures_name_fts_open"])] * S.ROUNDS
+
+
+def _ws(read, **term_kw):
+    """Clearing outcome of world series 00:05Z NO-REGRESSION against `read`."""
+    read["terms"]["world series"].update(term_kw)
+    f = next(f for f in _failures() if f["read"] == "20261012T0005Z" and f["term"] == "world series")
+    return S.clearing_receipt(f, read, _binding())
+
+
+@pytest.mark.parametrize(
+    "term_kw, why",
+    [
+        ({"g0_reads": {"a": [_timed("ix_futures_name_fts_open")] * 5}}, "index absent from the plan"),
+        ({"g0_reads": {"a": [_timed(EXP, FORB)] * 5}}, "plan also reads the whole-table index"),
+        ({"g0_reads": {"a": [_timed(EXP)] * 4 + [_timed(FORB)]}}, "one timed round flips"),
+        ({"g0_reads": {"a": [_timed(EXP)] * 4}}, "a timed plan is missing"),
+        ({"g0_reads": {"a": [_timed(EXP)] * 4 + ["UNREAD:timeout"]}}, "a timed plan is unread"),
+        ({"name_ms": [76.0] * 5}, "favorable plan, failed ratio (0.76 > 1.5 x 0.5)"),
+        ({"before_ratio": None}, "no before ratio"),
+        ({"ctrl_ms": [100.0] * 4}, "a control timing is missing"),
+    ],
+)
+def test_a_term_side_defect_clears_nothing(term_kw, why):
+    receipt, reason = _ws(_good_read(), **term_kw)
+    assert receipt is None, why
+    assert reason
+
+
+def test_the_original_ratio_boundary_is_inclusive():
+    assert _ws(_good_read(), name_ms=[75.0] * 5)[0] is not None  # 0.75 == 1.5 x 0.5
+
+
+@pytest.mark.parametrize(
+    "binding_kw, read_kw",
+    [
+        ({"tree_clean": False}, {}),
+        ({"git_head": None}, {}),
+        ({"baseline_ok": False}, {}),
+        ({"g0_sql_identity_ok": False}, {}),
+        ({"rounds": 3}, {}),
+        ({}, {"timed_order": list(reversed(S.expected_timed_order()))}),
+        ({}, {"timed_order": None}),
+        ({}, {"subject": {"index": EXP, "indexdef": None, "valid": True, "ready": True}}),
+        ({}, {"subject": {"index": EXP, "indexdef": "x", "valid": False, "ready": True}}),
+    ],
+)
+def test_a_read_that_does_not_bind_clears_nothing(binding_kw, read_kw):
+    """Kills: clearing from changed SQL, another baseline, other rounds, another
+    sequence, an unbound subject or an inexact source."""
+    read = {**_good_read(), **read_kw}
+    prospect = S.prospective(_failures(), read, _binding(**binding_kw))
+    assert set(_status(prospect).values()) == {S.OWED}
+    assert all(p["cleared_by"] is None and "does not bind" in p["why"] for p in prospect)
+
+
+@pytest.mark.parametrize(
+    "g0, faithful, plans, cleared",
+    [
+        ((S.PASS, ""), (S.PASS_EXCEPTION, ""), None, True),
+        ((S.PASS, ""), (S.FAIL, ""), None, False),
+        ((S.PASS, ""), (S.NOT_EVALUABLE, ""), None, False),
+        ((S.NOT_EVALUABLE, ""), (S.PASS, ""), None, False),
+        ((S.PASS_EXCEPTION, ""), (S.PASS_EXCEPTION, ""), [_timed("ix_futures_name_fts_open")] * 5, False),
+    ],
+)
+def test_election_shape_clears_only_on_term_2_both_arms_and_the_chosen_plan(g0, faithful, plans, cleared):
+    read = _good_read()
+    read["terms"]["election"].update({"shape_g0": g0, "shape_faithful": faithful})
+    if plans:
+        read["terms"]["election"]["g0_reads"] = {"a": plans}
+    f = next(f for f in _failures() if f["term"] == "election" and f["clause"] == "SHAPE")
+    assert (S.clearing_receipt(f, read, _binding())[0] is not None) is cleared
+
+
+def test_superseded_rule_failures_are_never_given_a_receipt():
+    failures = _failures()
+    for f in failures:
+        if f["status"] != S.OWED:
+            assert S.clearing_receipt(f, _good_read(), _binding())[0] is None
+    assert len(S.prospective(failures, _good_read(), _binding())) == 6
+
+
+def test_a_receipt_never_carries_into_a_later_read():
+    """Kills: a clearing persisted into the failure list, so a later failing read
+    is hidden by an earlier passing one."""
+    failures = _failures()
+    assert set(_status(S.prospective(failures, _good_read(), _binding())).values()) == {S.CLEARED}
+    later = _good_read()
+    for term in S.TERMS:
+        later["terms"][term]["g0_reads"] = {"a": [_timed(FORB)] * 5}
+    assert set(_status(S.prospective(failures, later, _binding())).values()) == {S.OWED}
+    assert set(_status(S.prospective(failures, {}, None)).values()) == {S.OWED}
+    assert "cleared_by" not in inspect.signature(S.prospective).parameters
+
+
+def test_a_new_failure_is_not_hidden_by_clearing_the_retained_ones():
+    prospect = S.prospective(_failures(), _good_read(), _binding())
+    all_pass = {f"NO-REGRESSION:{t}": S.PASS for t in S.TERMS}
+    assert S.outstanding(prospect) == []
+    assert S.track_verdict(all_pass, S.outstanding(prospect)) == "GREEN"
+    assert S.track_verdict({**all_pass, "SHAPE:champion": S.FAIL}, S.outstanding(prospect)) == "RED"
+    assert S.track_verdict({**all_pass, "NO-REGRESSION:winner": S.FAIL}, S.outstanding(prospect)) == "RED"
+    one_owed = S.prospective(_failures(), {**_good_read(), "timed_order": []}, _binding())
+    assert S.track_verdict(all_pass, S.outstanding(one_owed)) == "RED"
+
+
+def test_run_se_records_what_clearing_reads(monkeypatch):
+    """Through the real `run_se`: every plan reads the new index and the ratio is
+    1.0, so election SHAPE clears and no NO-REGRESSION does (befores 0.011-0.311)."""
+    monkeypatch.setenv("ADMIN_TOKEN", "test")
+    payload = {**plan("anti_join"), "rows": [[1, "x"]]}
+    record = {"terms": {}, "started_at": "t", "out": "o",
+              "subject": {"index": EXP, "indexdef": "x", "valid": True, "ready": True}}
+    with patch.object(G, "_post", side_effect=lambda *a, **k: payload):
+        S.run_se(S.ROUNDS, CLASSES, record)
+    assert record["timed_order"] == S.expected_timed_order()
+    got = _status(S.prospective(_failures(), record, _binding()))
+    assert got == {k: (S.CLEARED if k[2] == "SHAPE" else S.OWED) for k in SIX}
+
+
+def test_the_baseline_and_source_are_bound_by_hash(capsys):
+    with open(G.BASELINE, "rb") as fh:
+        assert hashlib.sha256(fh.read()).hexdigest() == S.BASELINE_SHA256
+    b = S.source_binding(S.ROUNDS)
+    assert b["baseline_ok"] and b["g0_sql_identity_ok"] and b["rounds"] == S.ROUNDS
+    assert set(b["files"]) == {
+        "backend/scripts/gate_10769_successor.py", "backend/scripts/gate_futures_open_trgm_index.py",
+        "backend/scripts/explain_search_arm.py",
+    }
+    with patch.object(S, "BASELINE_SHA256", "0" * 64):
+        assert S.dry_run("se") == 2
+    assert "baseline is not byte-identical" in capsys.readouterr().out
+
+
+def test_criteria_state_the_clearing_rule_its_flags_and_its_bound():
+    new = S.CRITERIA["C3.NO-REGRESSION(/search)"]["new"]
+    assert "PROSPECTIVE CLEARING" in new and "never rewritten" in new
+    assert "ratio <= 1.5 x before" in new and "reads EXPECTED and not FORBIDDEN" in new
+    assert new.count("this file's reading, flagged") == 3
+    assert S.CLEARING_BOUND in new
+    assert "release-root 20261025T043033Z" in S.CRITERIA["C3.NO-REGRESSION(/search)"]["source"]
