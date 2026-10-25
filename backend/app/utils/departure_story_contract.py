@@ -14,11 +14,11 @@ Two distinct relationship decisions live here:
 1. **Same-story membership** (:func:`decide_departure_subject`):
    - Evaluates supported subject, role, departure/in-role/after-role relation,
      category gate, tenure boundary, and settlement predicate from stored
-     market fields and ``#5318`` registrations.
+     market fields and evidence-bound ``#5318`` registrations.
    - Admits related markets across different settlement predicates into
      rule-based collection sections (``departure_announced``,
-     ``departure_vacated``, ``departure_left_administration``,
-     ``departure_rules_unread``, ``side_question``, ``after_role``).
+     ``departure_vacated``, ``departure_rules_unread``,
+     ``departure_left_administration``, ``after_role``, ``side_question``).
    - Refuses lexical false friends (e.g. ``"Zachariah Branch"``) with
      ``lexical_false_friend``, mention/field markets (e.g.
      ``"What will Trump say this week?"``, ``"Who will leave their role in the
@@ -27,8 +27,10 @@ Two distinct relationship decisions live here:
      subjects with ``not_this_subject`` / ``not_this_story``.
 
 2. **Probability equivalence** (:func:`evaluate_departure_equivalence`):
-   - Requires the same subject, role, edition, verified settlement predicate,
-     and normalized cutoff horizon.
+   - Requires the same subject, role, edition, verified settlement predicate
+     (from an evidence-bound ``#5318`` registration or explicit title literal,
+     never from unregistered rules-text heuristics), and normalized cutoff
+     horizon.
    - Never infers equivalence from title similarity or aligned timestamps alone.
    - Keeps announcement-based Polymarket contracts and actual-vacancy Kalshi
      contracts ``different`` even when their cutoffs align to the minute.
@@ -38,17 +40,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+import hashlib
 import re
 from typing import Any, Mapping, Optional
 
 # ---------------------------------------------------------------------------
-# Rule versions & decision reasons (all fit container_member_decisions widths).
+# Rule versions, policies & decision reasons (fit container_member_decisions).
 # ---------------------------------------------------------------------------
 
 RULE_VERSION = "departure-story@1"
 DEPARTURE_STORY_RULE_VERSION = RULE_VERSION
 DEPARTURE_MEANING_RULE_VERSION = "departure-meaning@1"
-DEPARTURE_RETENTION_DAYS = 14
+
+#: Explicit policy when a row belongs to a verified provider + registered event
+#: + subject/edition, but the stored row omits rules text (e.g. Bain Luck's
+#: `/api/futures/65678073` where `description` is `null` while the retained
+#: Polymarket event `1183118` rules were verified in `#5318`).
+#: An unstored-rules row on the registered event is admitted with
+#: `basis="registration_only"` and `missing_text_policy=MISSING_RULES_TEXT_POLICY`.
+#: Unregistered events in the same provider series (e.g. `KXZACHARIAOUT-28JAN`)
+#: NEVER inherit this policy and stay in `departure_rules_unread`.
+MISSING_RULES_TEXT_POLICY = "allow_registered_event_when_unstored"
 
 ADMITTED_SUBJECT_RELATION = "admitted_subject_relation"
 ADMITTED_DEPARTURE_ANNOUNCEMENT = "admitted_departure_announcement"
@@ -59,6 +71,7 @@ NAME_ONLY_MENTION = "name_only_mention"
 OTHER_OFFICE = "other_office"
 NOT_THIS_STORY = "not_this_story"
 UNRELATED_SUBJECT_MENTION = "unrelated_subject_mention"
+NOT_THIS_SUBJECT_REASON = "not_this_subject"
 
 DEPARTURE_ADMITTED_REASONS = frozenset(
     {
@@ -77,32 +90,35 @@ DEPARTURE_EXCLUDED_REASONS = frozenset(
     }
 )
 
+#: Reader section order (`READER-FLOW.md` §2):
+#: 1. An announced exit counts (`departure_announced`)
+#: 2. Only an actual departure counts (`departure_vacated`)
+#: 3. Leaving the job · rules not checked yet (`departure_rules_unread`)
+#: 4. Leaving the administration (`departure_left_administration`)
+#: 5. What comes next (`after_role`)
+#: 6. About the job (`side_question`)
 DEPARTURE_ORDER: tuple[str, ...] = (
     "departure_announced",
     "departure_vacated",
     "departure_rules_unread",
     "departure_left_administration",
-    "side_question",
     "after_role",
+    "side_question",
 )
 
 # Canonical predicate classes.
 PREDICATE_ANNOUNCEMENT = "announcement_or_withdrawal"
 PREDICATE_ACTUAL_DEPARTURE = "actual_departure_vacated_role"
 PREDICATE_LEFT_ADMINISTRATION = "left_administration"
-PREDICATE_CABINET_NO_OSTP_2027 = "cabinet_departure_no_ostp_2027"
-PREDICATE_CABINET_WITH_OSTP = "cabinet_departure_with_ostp"
 PREDICATE_UNKNOWN = "unknown_predicate"
 
 SCOPE_SINGLE_OFFICEHOLDER = "single_officeholder"
-SCOPE_CABINET_NO_OSTP = "confirmed_cabinet_no_ostp"
-SCOPE_CABINET_WITH_OSTP = "official_cabinet_with_ostp"
 SCOPE_UNKNOWN = "unknown_scope"
 
 EDITION_TRUMP_47 = "trump_47_admin"
 
 CATEGORY_GATE = frozenset({"politics", "geopolitics"})
-DEPARTURE_ALLOWED_CATEGORIES = frozenset({"politics", "culture", "geopolitics", "economics"})
+DEPARTURE_ALLOWED_CATEGORIES = CATEGORY_GATE
 DEPARTURE_STRICT_CONFLICT_CATEGORIES = frozenset(
     {
         "sports",
@@ -126,7 +142,7 @@ DEPARTURE_STRICT_CONFLICT_CATEGORIES = frozenset(
 
 
 # ---------------------------------------------------------------------------
-# #11040 DepartureSubject + #5318 rule registrations (departure-story@1).
+# #11040 DepartureSubject + evidence-bound #5318 rule registrations.
 # ---------------------------------------------------------------------------
 
 
@@ -178,28 +194,81 @@ DEPARTURE_SUBJECTS: dict[str, DepartureSubject] = {
 }
 
 
-#: #5318 rule registrations keyed by (provider_kind, provider_key).
+#: Evidence-bound #5318 rule registrations keyed by (provider_kind, provider_key).
+#: Each entry binds provider, subject, edition, specific event identifier,
+#: primary rules field, verbatim decisive quote, retained rules SHA-256, and
+#: the allowed sentence patterns from the retained rules text so that modified
+#: or contradictory rules (even when preserving the original quote) are
+#: rejected and routed to `departure_rules_unread`.
 REGISTRATIONS: dict[tuple[str, str], dict[str, Any]] = {
     ("kalshi_series", "KXZACHARIAOUT"): {
+        "provider": "kalshi",
+        "subject": "katie-zacharia-press-secretary",
+        "person": "Katie Zacharia",
+        "edition": 2026,
+        "series_ticker": "KXZACHARIAOUT",
+        "event_ticker": "KXZACHARIAOUT-26OCT",
         "predicate": "vacated",
         "basis": "rules",
+        "rules_field": "rules_secondary",
         "quote": (
             "Katie Zacharia must have an actual departure date and vacate the role "
             "within the time period."
         ),
         "rules_sha256": "2d191cebfb1cadff2e4aa8cc736e035dcc26c5ff76a3fedd6603893dfa2a71a1",
+        "rules_primary_template": (
+            "If Katie Zacharia leaves as White House Press Secretary before <DATE>, "
+            "then the market resolves to Yes."
+        ),
+        "fetched_at": "2026-10-14T23:51:09Z",
+        "source": "https://api.elections.kalshi.com/trade-api/v2/events/KXZACHARIAOUT-26OCT",
     },
     ("polymarket_event", "1183118"): {
+        "provider": "polymarket",
+        "subject": "katie-zacharia-press-secretary",
+        "person": "Katie Zacharia",
+        "edition": 2026,
+        "event_id": "1183118",
         "predicate": "announced",
         "basis": "rules",
+        "rules_field": "description",
         "quote": (
             'An announcement of Katie Zacharia\'s resignation/removal by this market\'s '
             'end date will immediately resolve this market to "Yes", regardless of when '
             "the announced resignation/removal goes into effect."
         ),
         "rules_sha256": "cc46e9a2b8bf04167ca6c9374555c00aa0e6ee4d87cd98d59a19053ee4a11269",
+        "fetched_at": "2026-10-14T23:51:09Z",
+        "source": "https://polymarket.com/event/katie-zacharia-out-as-press-secretary-by",
     },
 }
+
+_KALSHI_ZACHARIA_PRIMARY_RE = re.compile(
+    r"^If Katie Zacharia leaves as White House Press Secretary before "
+    r"[A-Z][a-z]{2,8} \d{1,2}, 202\d, then the market resolves to Yes\.$"
+)
+
+# Explicit contradiction patterns for settlement rules.
+_ANNOUNCED_CONTRADICTION_RE = re.compile(
+    r"\b(?:"
+    r"announcement\s+(?:alone\s+|of\s+a\s+future\s+departure\s+|of\s+resignation\s+)?"
+    r"(?:does\s+not|will\s+not|shall\s+not|is\s+not\s+sufficient)|"
+    r"merely\s+announcing\s+[^.]*does\s+not|"
+    r"must\s+have\s+an\s+actual\s+departure\s+date\s+and\s+vacate|"
+    r"resolves?\s+to\s+[\"'\u201c]?yes[\"'\u201d]?\s+only\s+(?:if|when|after)\s+[^.]*\bvacat"
+    r")\b",
+    re.I,
+)
+_VACATED_CONTRADICTION_RE = re.compile(
+    r"\b(?:"
+    r"an?\s+announcement\s+of\s+[^.]*?\bwill\s+(?:immediately\s+)?resolve\s+this\s+market\s+to\s+[\"'\u201c]?yes|"
+    r"regardless\s+of\s+when\s+the\s+announced\s+[^.]*?\bgoes\s+into\s+effect|"
+    r"announcement\s+alone\s+(?:is\s+sufficient|resolves|will\s+resolve|counts)|"
+    r"(?:if|when)\s+a\s+successor\s+is\s+(?:formally\s+)?nominated|"
+    r"(?:does\s+not|need\s+not)\s+need\s+to\s+vacate"
+    r")\b",
+    re.I,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -211,9 +280,13 @@ _DEPARTURE_RE = re.compile(
     r"removed|fired|dismissed|replaced|vacate\w*|cease\w* to be|no longer)\b",
     re.I,
 )
-_ROLE_FRAME_RE = re.compile(r"\b(out as|resign\w* as|step\w* down as|leave\w* as)\s+([^?.,;]+)", re.I)
-_IN_ROLE_RE = re.compile(r"\bgive another press briefing\b", re.I)
-_AFTER_ROLE_RE = re.compile(r"\bgiven a new role in the [a-z ]+ administration\b", re.I)
+_ROLE_FRAME_RE = re.compile(
+    r"\b(out as|resign\w* as|step\w* down as|leave\w* as)\s+([^?.,;]+)", re.I
+)
+_IN_ROLE_RE = re.compile(r"\bas\b", re.I)
+_AFTER_ROLE_RE = re.compile(
+    r"\b(new (?:role|job|position)|next (?:role|job)|appointed|nominated)\b", re.I
+)
 _ANNOUNCED_TITLE_RE = re.compile(
     r"\b(departure announced|announces? (?:her|his|their)? ?(?:resignation|departure))\b",
     re.I,
@@ -238,6 +311,11 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
 def _metadata(obj: Any) -> Mapping[str, Any]:
     meta = _get(obj, "market_metadata")
     return meta if isinstance(meta, Mapping) else {}
+
+
+def _provider_identity(obj: Any) -> Mapping[str, Any]:
+    pi = _get(obj, "provider_identity")
+    return pi if isinstance(pi, Mapping) else {}
 
 
 def _full_name_re(person: str) -> re.Pattern[str]:
@@ -288,26 +366,63 @@ def _ends_utc(row: Any) -> tuple[Optional[date], Optional[str]]:
     return None, None
 
 
+def _norm_ws(text: str) -> str:
+    return " ".join(text.replace("\u201c", '"').replace("\u201d", '"').split())
+
+
+def _split_sentences(text: str) -> list[str]:
+    normalized = text.replace("\u201c", '"').replace("\u201d", '"')
+    chunks: list[str] = []
+    for para in re.split(r"\n+", normalized):
+        para = para.strip()
+        if not para:
+            continue
+        for sent in re.split(r"(?<=\.)\s+", para):
+            s = " ".join(sent.split())
+            if s:
+                chunks.append(s)
+    return chunks
+
+
+def _extract_rules_fields(row: Any) -> dict[str, str]:
+    meta = _metadata(row)
+    fields: dict[str, str] = {}
+    desc = _get(row, "description")
+    if not isinstance(desc, str) or not desc.strip():
+        desc = meta.get("description")
+    if isinstance(desc, str) and desc.strip():
+        fields["description"] = desc.strip()
+    for key in ("rules_primary", "rules_secondary", "resolution_rules"):
+        val = _get(row, key)
+        if not isinstance(val, str) or not val.strip():
+            val = meta.get(key)
+        if isinstance(val, str) and val.strip():
+            fields[key] = val.strip()
+    return fields
+
+
 def _registration_key(row: Any) -> Optional[tuple[str, str]]:
     rk = _get(row, "registration_key")
     if isinstance(rk, (list, tuple)) and len(rk) == 2:
         return (str(rk[0]), str(rk[1]))
     meta = _metadata(row)
-    source = str(_get(row, "source") or "").lower()
-    ext = str(_get(row, "external_id") or "").upper()
+    pi = _provider_identity(row)
+    source = str(_get(row, "source") or pi.get("venue") or "").lower()
+    ext = str(_get(row, "external_id") or pi.get("market_ticker") or "").upper()
     series = str(
         meta.get("series_ticker")
         or meta.get("kalshi_series_ticker")
         or meta.get("series")
+        or pi.get("series")
         or ""
     ).upper()
     if not series and (source == "kalshi" or ext.startswith("KX")) and ext:
         series = ext.split("-", 1)[0]
     if series and ("kalshi_series", series) in REGISTRATIONS:
         return ("kalshi_series", series)
-    pm_ev = str(meta.get("polymarket_event_id") or "").strip()
+    pm_ev = str(meta.get("polymarket_event_id") or pi.get("event_id") or "").strip()
     if not pm_ev:
-        gid = str(_get(row, "group_id") or meta.get("group_id") or "").strip()
+        gid = str(_get(row, "group_id") or meta.get("group_id") or pi.get("group_id") or "").strip()
         if gid.startswith("polymarket:"):
             pm_ev = gid.split(":", 1)[1].strip()
     if pm_ev and ("polymarket_event", pm_ev) in REGISTRATIONS:
@@ -315,19 +430,224 @@ def _registration_key(row: Any) -> Optional[tuple[str, str]]:
     return None
 
 
-def departure_predicate(row: Any) -> dict[str, Any]:
-    """Classify a departure market's settlement predicate from #5318 registration,
-    explicit title literal, or stored rules text (never from venue name alone)."""
-    key = _registration_key(row)
-    if key and key in REGISTRATIONS:
-        reg = REGISTRATIONS[key]
+def _validate_registration(
+    key: tuple[str, str],
+    reg: Mapping[str, Any],
+    row: Any,
+    subject: Optional[DepartureSubject],
+) -> dict[str, Any]:
+    """Validate provider, subject/edition, registered event identity, and stored
+    rules text before assigning a known predicate section (#11040 B2)."""
+    meta = _metadata(row)
+    pi = _provider_identity(row)
+
+    # 1. Subject & edition check.
+    expected_subject = str(reg["subject"])
+    expected_edition = int(reg["edition"])
+    if subject is not None and (
+        subject.subject != expected_subject or subject.edition != expected_edition
+    ):
+        return {
+            "predicate": "unknown",
+            "basis": "registration_mismatch",
+            "reason": "edition_or_subject_mismatch",
+            "registration": list(key),
+        }
+
+    row_subject = _get(row, "subject") or meta.get("subject")
+    if row_subject is not None and str(row_subject) != expected_subject:
+        return {
+            "predicate": "unknown",
+            "basis": "registration_mismatch",
+            "reason": "edition_or_subject_mismatch",
+            "registration": list(key),
+        }
+
+    row_edition = _get(row, "edition") or meta.get("edition")
+    if row_edition is not None:
+        try:
+            if int(row_edition) != expected_edition:
+                return {
+                    "predicate": "unknown",
+                    "basis": "registration_mismatch",
+                    "reason": "edition_or_subject_mismatch",
+                    "registration": list(key),
+                }
+        except (TypeError, ValueError):
+            return {
+                "predicate": "unknown",
+                "basis": "registration_mismatch",
+                "reason": "edition_or_subject_mismatch",
+                "registration": list(key),
+            }
+
+    name = str(_get(row, "name") or "")
+    person_name = str(reg.get("person") or "")
+    if name and person_name and not _full_name_re(person_name).search(name):
+        return {
+            "predicate": "unknown",
+            "basis": "registration_mismatch",
+            "reason": "edition_or_subject_mismatch",
+            "registration": list(key),
+        }
+
+    reg_subj_obj = DEPARTURE_SUBJECTS.get(expected_subject)
+    ends_date, _ = _ends_utc(row)
+    if reg_subj_obj is not None and ends_date is not None and ends_date < reg_subj_obj.tenure_start:
+        return {
+            "predicate": "unknown",
+            "basis": "registration_mismatch",
+            "reason": "edition_or_subject_mismatch",
+            "registration": list(key),
+        }
+
+    # 2. Provider check.
+    source = str(_get(row, "source") or pi.get("venue") or "").strip().lower()
+    if source and source != str(reg["provider"]).lower():
+        return {
+            "predicate": "unknown",
+            "basis": "registration_mismatch",
+            "reason": "provider_mismatch",
+            "registration": list(key),
+        }
+
+    # 3. Specific event check (never extend one Kalshi event's evidence to every
+    # future event in a series).
+    if key[0] == "kalshi_series":
+        expected_event = str(reg["event_ticker"]).upper()
+        event_ticker = str(
+            meta.get("event_ticker")
+            or meta.get("kalshi_event_ticker")
+            or pi.get("event")
+            or ""
+        ).strip().upper()
+        ext = str(_get(row, "external_id") or pi.get("market_ticker") or "").strip().upper()
+        has_explicit_reg_key = isinstance(_get(row, "registration_key"), (list, tuple))
+
+        if event_ticker and event_ticker != expected_event:
+            return {
+                "predicate": "unknown",
+                "basis": "registration_mismatch",
+                "reason": "unregistered_series_event",
+                "registration": list(key),
+                "observed_event": event_ticker,
+                "expected_event": expected_event,
+            }
+        if ext and not (ext == expected_event or ext.startswith(expected_event + "-")):
+            return {
+                "predicate": "unknown",
+                "basis": "registration_mismatch",
+                "reason": "unregistered_series_event",
+                "registration": list(key),
+                "observed_ticker": ext,
+                "expected_event": expected_event,
+            }
+        if not event_ticker and not ext and not has_explicit_reg_key:
+            return {
+                "predicate": "unknown",
+                "basis": "registration_mismatch",
+                "reason": "unregistered_series_event",
+                "registration": list(key),
+                "expected_event": expected_event,
+            }
+
+    elif key[0] == "polymarket_event":
+        expected_event_id = str(reg["event_id"]).strip()
+        pm_ev = str(meta.get("polymarket_event_id") or pi.get("event_id") or "").strip()
+        gid = str(_get(row, "group_id") or meta.get("group_id") or pi.get("group_id") or "").strip()
+        if gid.startswith("polymarket:") and not pm_ev:
+            pm_ev = gid.split(":", 1)[1].strip()
+        if pm_ev and pm_ev != expected_event_id:
+            return {
+                "predicate": "unknown",
+                "basis": "registration_mismatch",
+                "reason": "unregistered_provider_event",
+                "registration": list(key),
+                "observed_event": pm_ev,
+                "expected_event": expected_event_id,
+            }
+
+    # 4. Stored rules text verification.
+    rules_fields = _extract_rules_fields(row)
+    if not rules_fields:
         return {
             "predicate": reg["predicate"],
-            "basis": reg["basis"],
+            "basis": "registration_only",
+            "missing_text_policy": MISSING_RULES_TEXT_POLICY,
             "registration": list(key),
             "quote": reg["quote"],
             "rules_sha256": reg["rules_sha256"],
         }
+
+    all_rules_text = "\n".join(rules_fields.values())
+    expected_pred = str(reg["predicate"])
+    contradiction_re = (
+        _ANNOUNCED_CONTRADICTION_RE
+        if expected_pred == "announced"
+        else _VACATED_CONTRADICTION_RE
+    )
+    if contradiction_re.search(all_rules_text):
+        return {
+            "predicate": "unknown",
+            "basis": "registration_mismatch",
+            "reason": "contradictory_settlement_clause",
+            "registration": list(key),
+        }
+
+    primary_field = str(reg.get("rules_field") or "description")
+    primary_text = rules_fields.get(primary_field) or rules_fields.get("description") or ""
+    if not primary_text or _norm_ws(str(reg["quote"])) not in _norm_ws(primary_text):
+        return {
+            "predicate": "unknown",
+            "basis": "registration_mismatch",
+            "reason": "registered_quote_missing",
+            "registration": list(key),
+        }
+
+    observed_sha = hashlib.sha256(primary_text.encode("utf-8")).hexdigest()
+    if observed_sha != str(reg["rules_sha256"]):
+        return {
+            "predicate": "unknown",
+            "basis": "registration_mismatch",
+            "reason": "rules_sha256_mismatch",
+            "registration": list(key),
+            "observed_rules_sha256": observed_sha,
+            "expected_rules_sha256": reg["rules_sha256"],
+        }
+
+    if key == ("kalshi_series", "KXZACHARIAOUT") and "rules_primary" in rules_fields:
+        rp = " ".join(rules_fields["rules_primary"].split())
+        if not _KALSHI_ZACHARIA_PRIMARY_RE.match(rp):
+            return {
+                "predicate": "unknown",
+                "basis": "registration_mismatch",
+                "reason": "contradictory_settlement_clause",
+                "registration": list(key),
+            }
+
+    return {
+        "predicate": expected_pred,
+        "basis": reg["basis"],
+        "registration": list(key),
+        "quote": reg["quote"],
+        "rules_sha256": reg["rules_sha256"],
+        "observed_rules_sha256": observed_sha,
+    }
+
+
+def departure_predicate(
+    row: Any, *, subject: Optional[DepartureSubject] = None
+) -> dict[str, Any]:
+    """Classify a departure market's settlement predicate strictly from an
+    evidence-bound ``#5318`` registration or an explicit title literal.
+
+    Never infers a predicate from venue name or from unregistered rules-text
+    regex heuristics (#11040 B2, B3).
+    """
+    key = _registration_key(row)
+    if key and key in REGISTRATIONS:
+        return _validate_registration(key, REGISTRATIONS[key], row, subject)
+
     name = str(_get(row, "name") or "")
     if _ANNOUNCED_TITLE_RE.search(name) and not _WINDOW_TITLE_RE.search(name):
         return {
@@ -341,16 +661,10 @@ def departure_predicate(row: Any) -> dict[str, Any]:
             "basis": "title_literal",
             "title": name,
         }
-    rules_text = _extract_rules_text(row)
-    if rules_text:
-        pred_cls, _scope, _edge = _classify_katie_zacharia_predicate(rules_text)
-        if pred_cls == PREDICATE_ANNOUNCEMENT:
-            return {"predicate": "announced", "basis": "rules_text"}
-        if pred_cls == PREDICATE_ACTUAL_DEPARTURE:
-            return {"predicate": "vacated", "basis": "rules_text"}
     return {
         "predicate": "unknown",
         "basis": "rules_not_read",
+        "reason": "unregistered_market",
     }
 
 
@@ -421,10 +735,10 @@ def decide_departure_subject(subject: DepartureSubject, row: Any) -> SubjectDeci
 
     if _DEPARTURE_RE.search(name):
         relation = "departure"
-    elif _IN_ROLE_RE.search(name) and office_named:
-        relation = "in_role"
     elif _AFTER_ROLE_RE.search(name):
         relation = "after_role"
+    elif office_named and _IN_ROLE_RE.search(name):
+        relation = "in_role"
     else:
         evidence.append({"clause": "relation", "result": "fail", "input": name})
         return SubjectDecisionResult("excluded", NOT_THIS_STORY, None, evidence)
@@ -466,7 +780,7 @@ def decide_departure_subject(subject: DepartureSubject, row: Any) -> SubjectDeci
     if relation == "after_role":
         return SubjectDecisionResult("admitted", ADMITTED_SUBJECT_RELATION, "after_role", evidence)
 
-    pred = departure_predicate(row)
+    pred = departure_predicate(row, subject=subject)
     evidence.append({"clause": "predicate", "result": pred["predicate"], **pred})
     section = {
         "announced": "departure_announced",
@@ -477,11 +791,8 @@ def decide_departure_subject(subject: DepartureSubject, row: Any) -> SubjectDeci
     return SubjectDecisionResult("admitted", ADMITTED_SUBJECT_RELATION, section, evidence)
 
 
-NOT_THIS_SUBJECT_REASON = "not_this_subject"
-
-
 # ---------------------------------------------------------------------------
-# DepartureStorySpec + evidence extraction + equivalence (with F1 fix).
+# DepartureStorySpec + horizon normalization + Decision 2 equivalence.
 # ---------------------------------------------------------------------------
 
 
@@ -497,12 +808,11 @@ class DepartureStorySpec:
     rule_version: str
     kalshi_ticker_prefixes: tuple[str, ...]
     name_entity_pg: str
-    departure_subject: Optional[DepartureSubject] = None
+    departure_subject: DepartureSubject
 
 
 KATIE_ZACHARIA_ENTITY_PG = KATIE_ZACHARIA_PRESS_SECRETARY.person_pg
 PETE_HEGSETH_ENTITY_PG = PETE_HEGSETH_DEFENSE_SECRETARY.person_pg
-TRUMP_CABINET_ENTITY_PG = r"\y(trump(?:'s)?\s+cabinet|cabinet\s+of\s+donald\s+trump)\y"
 
 KATIE_ZACHARIA_DEPARTURE_SPEC = DepartureStorySpec(
     subject="katie-zacharia-press-secretary",
@@ -532,148 +842,17 @@ PETE_HEGSETH_DEPARTURE_SPEC = DepartureStorySpec(
     departure_subject=PETE_HEGSETH_DEFENSE_SECRETARY,
 )
 
-TRUMP_CABINET_DEPARTURE_SPEC = DepartureStorySpec(
-    subject="trump-cabinet-departure",
-    story_key="story:trump_cabinet_departure",
-    display_name="Trump Cabinet Departures",
-    shared_question="Who will leave the Trump Cabinet next?",
-    subject_key="trump_cabinet",
-    role_key="us_cabinet_member",
-    edition_key=EDITION_TRUMP_47,
-    rule_version=DEPARTURE_STORY_RULE_VERSION,
-    kalshi_ticker_prefixes=("KXCABOUT", "KXCABINETOUT"),
-    name_entity_pg=TRUMP_CABINET_ENTITY_PG,
-    departure_subject=None,
-)
-
 DEPARTURE_SPECS_BY_SUBJECT: dict[str, DepartureStorySpec] = {
     KATIE_ZACHARIA_DEPARTURE_SPEC.subject: KATIE_ZACHARIA_DEPARTURE_SPEC,
     "katie-zacharia-departure": KATIE_ZACHARIA_DEPARTURE_SPEC,
     PETE_HEGSETH_DEPARTURE_SPEC.subject: PETE_HEGSETH_DEPARTURE_SPEC,
-    TRUMP_CABINET_DEPARTURE_SPEC.subject: TRUMP_CABINET_DEPARTURE_SPEC,
 }
 
 DEPARTURE_SPECS_BY_STORY_KEY: dict[str, DepartureStorySpec] = {
     KATIE_ZACHARIA_DEPARTURE_SPEC.story_key: KATIE_ZACHARIA_DEPARTURE_SPEC,
     PETE_HEGSETH_DEPARTURE_SPEC.story_key: PETE_HEGSETH_DEPARTURE_SPEC,
-    TRUMP_CABINET_DEPARTURE_SPEC.story_key: TRUMP_CABINET_DEPARTURE_SPEC,
 }
 
-
-# ---------------------------------------------------------------------------
-# Lexical & semantic patterns for rules text and horizon parsing.
-# ---------------------------------------------------------------------------
-
-_ZACHARIA_FALSE_FRIEND_RE = re.compile(
-    r"\b(?:zachariah?\s+branch|zacharia\s+stadium|zachariah\s+prophet)\b",
-    re.IGNORECASE,
-)
-_ZACHARIA_BARE_LAST_NAME_RE = re.compile(r"\bzachariah?\b", re.IGNORECASE)
-_KATIE_ZACHARIA_SUBJECT_RE = re.compile(r"\bkatie\s+zacharia\b", re.IGNORECASE)
-_PRESS_SECRETARY_ROLE_RE = re.compile(
-    r"\b(?:white\s+house\s+)?press\s+secretary\b", re.IGNORECASE
-)
-_PETE_HEGSETH_SUBJECT_RE = re.compile(r"\bpete\s+hegseth\b", re.IGNORECASE)
-_DEFENSE_SECRETARY_ROLE_RE = re.compile(
-    r"\b(?:secretary\s+of\s+defense|defense\s+secretary|secretary\s+of\s+war)\b",
-    re.IGNORECASE,
-)
-
-_CABINET_FALSE_FRIEND_RE = re.compile(
-    r"\b(?:uk\s+(?:shadow\s+)?cabinet|shadow\s+cabinet|british\s+cabinet|"
-    r"canadian\s+cabinet|australian\s+cabinet|israeli\s+cabinet|war\s+cabinet|"
-    r"kitchen\s+cabinet|file\s+cabinet|medicine\s+cabinet|cabinet\s+maker|"
-    r"liquor\s+cabinet|display\s+cabinet|arcade\s+cabinet)\b",
-    re.IGNORECASE,
-)
-_TRUMP_CABINET_SUBJECT_RE = re.compile(
-    r"\b(?:trump(?:'s)?\s+cabinet|cabinet\s+of\s+(?:president\s+)?(?:donald\s+)?trump)\b",
-    re.IGNORECASE,
-)
-_OTHER_ADMIN_CABINET_RE = re.compile(
-    r"\b(?:biden(?:'s)?\s+cabinet|obama(?:'s)?\s+cabinet|bush(?:'s)?\s+cabinet|"
-    r"first\s+trump\s+(?:administration|cabinet|term)|"
-    r"trump(?:'s)?\s+first\s+(?:administration|cabinet|term)|"
-    r"in\s+(?:2017|2018|2019|2020))\b",
-    re.IGNORECASE,
-)
-_OTHER_EDITION_YEAR_RE = re.compile(r"\b(201[6-9]|202[0-4])\b")
-
-_SPEECH_OR_MENTION_RE = re.compile(
-    r"\b(?:what\s+will\s+[^?]*\b(?:say|mention|tweet|post|wear)\b|"
-    r"will\s+[^?]*\b(?:say|mention|utter)\b|"
-    r"how\s+many\s+times\s+will\s+[^?]*\bsay\b|"
-    r"words?\s+(?:said|spoken|mentioned)|"
-    r"hold\s+a\s+(?:cabinet\s+meeting|press\s+briefing)|"
-    r"attend\s+the\s+cabinet\s+meeting)\b",
-    re.IGNORECASE,
-)
-_CONFIRMATION_OR_APPOINTMENT_ONLY_RE = re.compile(
-    r"\b(?:who\s+will\s+be\s+(?:confirmed|appointed|nominated)\b|"
-    r"will\s+[^?]*\bbe\s+(?:confirmed|appointed|nominated)\s+(?:to|as)\b)",
-    re.IGNORECASE,
-)
-_SPEECH_TICKER_PREFIXES = ("KXTRUMPSAY", "KXMENTION", "KXSPEECH", "KXBRIEFING")
-
-_DEPARTURE_ACTION_RE = re.compile(
-    r"\b(?:leave|leaves|leaving|left|out\s+as|out\s+of|depart|departs|departing|"
-    r"departure|step\s+down|steps\s+down|stepping\s+down|resign|resigns|resigning|"
-    r"resignation|removed|fired|dismissed|replaced|vacate|vacates|cease\s+to\s+be|"
-    r"no\s+longer\s+(?:serve|serving|hold|holding)|first\s+to\s+leave|next\s+to\s+leave|"
-    r"exit|exits|exiting)\b",
-    re.IGNORECASE,
-)
-
-# Predicate classification patterns on stored rules text.
-# F1 fix: Polymarket's verbatim rules say:
-# 'An announcement of Katie Zacharia\'s resignation/removal by this market\'s end
-# date will immediately resolve this market to "Yes", regardless of when the
-# announced resignation/removal goes into effect.'
-# and also mention "ceases to be White House Press Secretary" in the lead-in.
-# Announcement-included must match "an announcement of <person>'s resignation/removal"
-# and win whenever announcement is not negated.
-_ANNOUNCEMENT_NEGATED_RE = re.compile(
-    r"\b(?:announcement\s+(?:alone\s+|of\s+a\s+future\s+departure\s+)?(?:does\s+not|will\s+not|is\s+not\s+sufficient)|"
-    r"merely\s+announcing\s+[^.]*does\s+not|"
-    r"must\s+have\s+an\s+actual\s+departure\s+date\s+and\s+vacate\s+the\s+role)\b",
-    re.IGNORECASE,
-)
-_ANNOUNCEMENT_INCLUDED_RE = re.compile(
-    r"\b(?:an?\s+announcement\s+of\s+[^.]{0,120}?\b(?:resignation|removal|departure|retirement|exit)\b|"
-    r"announces?\s+(?:she|he|they|an?\s+intention\s+to)?\s*(?:will\s+)?"
-    r"(?:leave|depart|resign|step\s+down|vacate|retire)|"
-    r"announces?\s+(?:a|an|her|his|their)?\s*(?:departure|resignation|retirement|exit)|"
-    r"receives?\s+a\s+departure\s+notice|"
-    r"submits?\s+(?:a|her|his|their)\s+resignation|"
-    r"leaves?,?\s+is\s+removed\s+from,?\s+or\s+announces?|"
-    r"official\s+announcement\s+of\s+(?:her|his|their|a)?\s*(?:departure|resignation))\b",
-    re.IGNORECASE,
-)
-_ACTUAL_DEPARTURE_RE = re.compile(
-    r"\b(?:must\s+have\s+an\s+actual\s+departure\s+date\s+and\s+vacate|"
-    r"ceases?\s+to\s+(?:be|hold|serve)|"
-    r"no\s+longer\s+(?:holds?|serves?\s+in|occupies)\s+(?:the\s+)?(?:office|position|role)|"
-    r"vacates?\s+(?:the\s+|her\s+|his\s+|their\s+)?(?:office|position|role)|"
-    r"leaves?\s+office\s+before|"
-    r"actually\s+(?:leaves?|departs?|vacates?)\s+(?:office|the\s+position))\b",
-    re.IGNORECASE,
-)
-_CABINET_NO_OSTP_RE = re.compile(
-    r"\b(?:does\s+not\s+include\s+(?:the\s+)?(?:director\s+of\s+(?:the\s+)?)?"
-    r"(?:office\s+of\s+science\s+and\s+technology\s+policy|ostp)|"
-    r"exclud(?:es?|ing)\s+(?:the\s+)?(?:director\s+of\s+)?ostp|"
-    r"senate[- ]confirmed\s+heads?\s+of\s+the\s+15\s+executive\s+departments)\b",
-    re.IGNORECASE,
-)
-_CABINET_WITH_OSTP_RE = re.compile(
-    r"\b(?:includ(?:es?|ing)\s+(?:the\s+)?(?:director\s+of\s+(?:the\s+)?)?"
-    r"(?:office\s+of\s+science\s+and\s+technology\s+policy|ostp)|"
-    r"cabinet[- ]rank\s+officials?\s+including\s+ostp|"
-    r"official\s+white\s+house\s+cabinet\s+roster\s+including\s+ostp)\b",
-    re.IGNORECASE,
-)
-
-# Horizon parsing patterns.
 _UNSUPPORTED_VAGUE_HORIZON_RE = re.compile(
     r"\b(?:someday|eventually|at\s+some\s+point|without\s+deadline|open[- ]ended)\b",
     re.IGNORECASE,
@@ -713,7 +892,7 @@ _PREP_DATE_RE = re.compile(
 _BEFORE_YEAR_RE = re.compile(r"\bbefore\s+(20\d{2})\b", re.IGNORECASE)
 _IN_YEAR_RE = re.compile(r"\b(?:in|during)\s+(20\d{2})\b", re.IGNORECASE)
 _KALSHI_TICKER_DATE_RE = re.compile(
-    r"-(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{2})(?:-|$)",
+    r"-T?(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{2})(?:-|$)",
     re.IGNORECASE,
 )
 
@@ -734,43 +913,8 @@ def _aware(value: Any) -> Optional[datetime]:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
-def _extract_rules_text(market: Any) -> str:
-    meta = _metadata(market)
-    parts: list[str] = []
-    for raw in (
-        _get(market, "description"),
-        meta.get("rules_primary"),
-        meta.get("rules_secondary"),
-        meta.get("resolution_rules"),
-        meta.get("description"),
-    ):
-        if isinstance(raw, str) and raw.strip():
-            text = raw.strip()
-            if text not in parts:
-                parts.append(text)
-    return "\n".join(parts)
-
-
-def _extract_custom_strike(market: Any) -> str:
-    meta = _metadata(market)
-    strike = meta.get("custom_strike")
-    parts: list[str] = []
-    if isinstance(strike, Mapping):
-        for v in strike.values():
-            if isinstance(v, str) and v.strip():
-                parts.append(v.strip())
-    elif isinstance(strike, str) and strike.strip():
-        parts.append(strike.strip())
-    for key in ("subtitle", "yes_sub_title", "group_item_title"):
-        val = meta.get(key)
-        if isinstance(val, str) and val.strip():
-            parts.append(val.strip())
-    return " ".join(parts)
-
-
 def _normalize_horizon(
     name: str,
-    rules_text: str,
     external_id: str,
     resolution_date: Optional[datetime],
 ) -> tuple[Optional[str], str]:
@@ -778,10 +922,8 @@ def _normalize_horizon(
     if _UNSUPPORTED_VAGUE_HORIZON_RE.search(name):
         return None, "unsupported_vague_horizon"
 
-    for source_label, text_blob in (("name", name), ("rules", rules_text)):
-        if not text_blob:
-            continue
-        m = _PREP_DATE_RE.search(text_blob)
+    if name:
+        m = _PREP_DATE_RE.search(name)
         if m and m.group(4):
             prep = re.sub(r"\s+", " ", m.group(1).strip().lower())
             month = _MONTHS[m.group(2).lower().rstrip(".")]
@@ -789,21 +931,21 @@ def _normalize_horizon(
             year = int(m.group(4))
             try:
                 parsed = date(year, month, day)
+                if prep in ("before", "prior to") and day == 1:
+                    parsed = parsed - timedelta(days=1)
+                return parsed.isoformat(), "name_date"
             except ValueError:
-                continue
-            if prep in ("before", "prior to") and day == 1:
-                parsed = parsed - timedelta(days=1)
-            return parsed.isoformat(), f"{source_label}_date"
+                pass
 
-        m_before_yr = _BEFORE_YEAR_RE.search(text_blob)
+        m_before_yr = _BEFORE_YEAR_RE.search(name)
         if m_before_yr:
             year = int(m_before_yr.group(1)) - 1
-            return date(year, 12, 31).isoformat(), f"{source_label}_before_year"
+            return date(year, 12, 31).isoformat(), "name_before_year"
 
-        m_in_yr = _IN_YEAR_RE.search(text_blob)
+        m_in_yr = _IN_YEAR_RE.search(name)
         if m_in_yr:
             year = int(m_in_yr.group(1))
-            return date(year, 12, 31).isoformat(), f"{source_label}_in_year"
+            return date(year, 12, 31).isoformat(), "name_in_year"
 
     m_ticker = _KALSHI_TICKER_DATE_RE.search(external_id or "")
     if m_ticker:
@@ -827,231 +969,6 @@ def _normalize_horizon(
     return None, "missing_horizon"
 
 
-@dataclass(frozen=True)
-class DepartureEvidence:
-    spec_subject: Optional[str]
-    subject_key: Optional[str]
-    role_key: Optional[str]
-    edition_key: Optional[str]
-    has_departure_framing: bool
-    predicate_class: str
-    population_scope: str
-    horizon_key: Optional[str]
-    horizon_source: str
-    edge_class: str
-    rules_present: bool
-    false_friend: Optional[str]
-    unrelated_mention: Optional[str]
-    other_edition_token: Optional[str]
-
-
-def _classify_katie_zacharia_predicate(
-    rules_text: str, market: Any = None
-) -> tuple[str, str, str]:
-    """Return ``(predicate_class, population_scope, edge_class)``."""
-    if market is not None:
-        reg_key = _registration_key(market)
-        if reg_key and reg_key in REGISTRATIONS:
-            reg_pred = REGISTRATIONS[reg_key]["predicate"]
-            if reg_pred == "announced":
-                return PREDICATE_ANNOUNCEMENT, SCOPE_SINGLE_OFFICEHOLDER, "title"
-            if reg_pred == "vacated":
-                return PREDICATE_ACTUAL_DEPARTURE, SCOPE_SINGLE_OFFICEHOLDER, "advancement"
-        name = str(_get(market, "name") or "")
-        if _LEFT_ADMIN_TITLE_RE.search(name):
-            return (
-                PREDICATE_LEFT_ADMINISTRATION,
-                SCOPE_SINGLE_OFFICEHOLDER,
-                "side_question",
-            )
-        if _ANNOUNCED_TITLE_RE.search(name) and not _WINDOW_TITLE_RE.search(name):
-            return PREDICATE_ANNOUNCEMENT, SCOPE_SINGLE_OFFICEHOLDER, "title"
-
-    if not rules_text.strip():
-        return PREDICATE_UNKNOWN, SCOPE_UNKNOWN, "side_question"
-    announcement_negated = bool(_ANNOUNCEMENT_NEGATED_RE.search(rules_text))
-    has_announcement = bool(_ANNOUNCEMENT_INCLUDED_RE.search(rules_text)) and not announcement_negated
-    has_actual = bool(_ACTUAL_DEPARTURE_RE.search(rules_text)) or announcement_negated
-    if has_announcement:
-        return PREDICATE_ANNOUNCEMENT, SCOPE_SINGLE_OFFICEHOLDER, "title"
-    if has_actual:
-        return PREDICATE_ACTUAL_DEPARTURE, SCOPE_SINGLE_OFFICEHOLDER, "advancement"
-    return PREDICATE_UNKNOWN, SCOPE_UNKNOWN, "side_question"
-
-
-def _classify_trump_cabinet_predicate(rules_text: str) -> tuple[str, str, str]:
-    """Return ``(predicate_class, population_scope, edge_class)``."""
-    if not rules_text.strip():
-        return PREDICATE_UNKNOWN, SCOPE_UNKNOWN, "side_question"
-    if _CABINET_NO_OSTP_RE.search(rules_text):
-        return PREDICATE_CABINET_NO_OSTP_2027, SCOPE_CABINET_NO_OSTP, "title"
-    if _CABINET_WITH_OSTP_RE.search(rules_text):
-        return PREDICATE_CABINET_WITH_OSTP, SCOPE_CABINET_WITH_OSTP, "advancement"
-    announcement_negated = bool(_ANNOUNCEMENT_NEGATED_RE.search(rules_text))
-    if _ANNOUNCEMENT_INCLUDED_RE.search(rules_text) and not announcement_negated:
-        return PREDICATE_CABINET_NO_OSTP_2027, SCOPE_CABINET_NO_OSTP, "title"
-    if _ACTUAL_DEPARTURE_RE.search(rules_text) or announcement_negated:
-        return PREDICATE_CABINET_WITH_OSTP, SCOPE_CABINET_WITH_OSTP, "advancement"
-    return PREDICATE_UNKNOWN, SCOPE_UNKNOWN, "side_question"
-
-
-def extract_departure_evidence(
-    spec: DepartureStorySpec,
-    market: Any,
-) -> DepartureEvidence:
-    """Extract structured meaning & rule evidence for ``market`` against ``spec``."""
-    name = str(_get(market, "name") or "")
-    source = str(_get(market, "source") or "").lower()
-    external_id = str(_get(market, "external_id") or "")
-    upper_ext = external_id.upper()
-    meta = _metadata(market)
-    event_title = str(meta.get("event_title") or "")
-    custom_strike = _extract_custom_strike(market)
-    rules_text = _extract_rules_text(market)
-    resolution_date = _aware(_get(market, "resolution_date"))
-    if resolution_date is None:
-        ends_d, _ = _ends_utc(market)
-        if ends_d is not None:
-            resolution_date = datetime(ends_d.year, ends_d.month, ends_d.day, tzinfo=timezone.utc)
-    combined_title = " ".join(p for p in (name, event_title, custom_strike) if p)
-
-    false_friend: Optional[str] = None
-    unrelated_mention: Optional[str] = None
-    other_edition_token: Optional[str] = None
-    subject_key: Optional[str] = None
-    role_key: Optional[str] = None
-    edition_key: Optional[str] = EDITION_TRUMP_47
-
-    has_departure = (
-        bool(_DEPARTURE_ACTION_RE.search(combined_title))
-        or bool(_IN_ROLE_RE.search(name))
-        or bool(_AFTER_ROLE_RE.search(name))
-        or (
-            source == "kalshi"
-            and any(upper_ext.startswith(prefix) for prefix in spec.kalshi_ticker_prefixes)
-        )
-    )
-
-    if any(upper_ext.startswith(p) for p in _SPEECH_TICKER_PREFIXES) or (
-        _SPEECH_OR_MENTION_RE.search(name) and not _DEPARTURE_ACTION_RE.search(name)
-    ):
-        unrelated_mention = "speech_or_mention_market"
-    elif (
-        _CONFIRMATION_OR_APPOINTMENT_ONLY_RE.search(name)
-        and not _DEPARTURE_ACTION_RE.search(name)
-        and not _AFTER_ROLE_RE.search(name)
-    ):
-        unrelated_mention = "confirmation_or_appointment_market"
-
-    if spec.departure_subject is not None:
-        subj = spec.departure_subject
-        subj_decision = decide_departure_subject(subj, market)
-        if subj_decision.reason == "lexical_false_friend":
-            false_friend = "lexical_false_friend"
-        elif subj_decision.reason in (NAME_ONLY_MENTION, NOT_THIS_STORY, OTHER_OFFICE):
-            if unrelated_mention is None:
-                unrelated_mention = subj_decision.reason
-        elif subj_decision.reason == "other_edition":
-            other_edition_token = "ended_before_tenure"
-            edition_key = "other_edition:ended_before_tenure"
-
-        m_old = _OTHER_EDITION_YEAR_RE.search(name)
-        if m_old:
-            other_edition_token = m_old.group(1)
-            edition_key = f"other_edition:{other_edition_token}"
-
-        is_kalshi_ticker = source == "kalshi" and any(
-            upper_ext.startswith(prefix) for prefix in spec.kalshi_ticker_prefixes
-        )
-        full_re = _full_name_re(subj.person)
-        has_person = bool(full_re.search(combined_title)) or (
-            is_kalshi_ticker and subj.surname.lower() in (upper_ext.lower() + " " + rules_text.lower())
-        )
-        has_role = (
-            _office_in(combined_title, subj.office_terms)
-            or _office_in(rules_text, subj.office_terms)
-            or is_kalshi_ticker
-            or bool(_AFTER_ROLE_RE.search(name))
-            or bool(_LEFT_ADMIN_TITLE_RE.search(name))
-            or bool(_ANNOUNCED_TITLE_RE.search(name))
-        )
-        if false_friend is None and unrelated_mention is None and has_person and has_role:
-            subject_key = spec.subject_key
-            role_key = spec.role_key
-
-        predicate_class, population_scope, edge_class = _classify_katie_zacharia_predicate(
-            rules_text, market
-        )
-        if subj_decision.admitted and subj_decision.section in ("side_question", "after_role"):
-            edge_class = "side_question"
-            predicate_class = subj_decision.section
-
-    else:
-        ff_match = _CABINET_FALSE_FRIEND_RE.search(combined_title)
-        if ff_match:
-            false_friend = ff_match.group(0)
-        else:
-            m_other_admin = _OTHER_ADMIN_CABINET_RE.search(combined_title)
-            if m_other_admin:
-                other_edition_token = m_other_admin.group(0)
-                edition_key = f"other_edition:{other_edition_token}"
-            is_cab_ticker = source == "kalshi" and upper_ext.startswith("KXCABOUT")
-            has_trump_cabinet = bool(_TRUMP_CABINET_SUBJECT_RE.search(combined_title)) or is_cab_ticker
-            if has_trump_cabinet:
-                subject_key = spec.subject_key
-                role_key = spec.role_key
-            elif "trump" in combined_title.lower() and unrelated_mention is None and not has_departure:
-                unrelated_mention = "trump_mention_without_cabinet_departure"
-
-        predicate_class, population_scope, edge_class = _classify_trump_cabinet_predicate(
-            rules_text
-        )
-
-    horizon_key, horizon_source = _normalize_horizon(
-        name=name,
-        rules_text=rules_text,
-        external_id=external_id,
-        resolution_date=resolution_date,
-    )
-
-    return DepartureEvidence(
-        spec_subject=spec.subject if subject_key == spec.subject_key else None,
-        subject_key=subject_key,
-        role_key=role_key,
-        edition_key=edition_key,
-        has_departure_framing=has_departure,
-        predicate_class=predicate_class,
-        population_scope=population_scope,
-        horizon_key=horizon_key,
-        horizon_source=horizon_source,
-        edge_class=edge_class,
-        rules_present=bool(rules_text.strip()) or (_registration_key(market) in REGISTRATIONS),
-        false_friend=false_friend,
-        unrelated_mention=unrelated_mention,
-        other_edition_token=other_edition_token,
-    )
-
-
-def extract_any_departure_evidence(market: Any) -> Optional[DepartureEvidence]:
-    """Return the matching ``DepartureEvidence`` if ``market`` matches any registered
-    departure story spec, or ``None`` if it belongs to none."""
-    seen: set[str] = set()
-    for spec in DEPARTURE_SPECS_BY_SUBJECT.values():
-        if spec.subject_key in seen:
-            continue
-        seen.add(spec.subject_key)
-        ev = extract_departure_evidence(spec, market)
-        if (
-            ev.subject_key == spec.subject_key
-            and ev.role_key == spec.role_key
-            and ev.has_departure_framing
-            and ev.false_friend is None
-            and ev.unrelated_mention is None
-        ):
-            return ev
-    return None
-
-
 def departure_story_key_for_market(
     name: Optional[str],
     sport_category: Optional[str] = None,
@@ -1061,37 +978,26 @@ def departure_story_key_for_market(
 ) -> Optional[str]:
     """Return the story key when a market genuinely belongs to one of the
     supported departure stories. Refuses lexical false friends and speech/mention rows."""
-    if not name and not external_id:
+    if not name:
         return None
     cat = (sport_category or "").strip().lower()
     if cat in DEPARTURE_STRICT_CONFLICT_CATEGORIES:
         return None
     probe = {
-        "name": name or "",
-        "llm_sport_category": cat or "politics",
+        "name": name,
+        "llm_sport_category": cat if cat in CATEGORY_GATE else "politics",
         "external_id": external_id or "",
         "source": source or ("kalshi" if (external_id or "").upper().startswith("KX") else "polymarket"),
     }
-    for spec in (
-        KATIE_ZACHARIA_DEPARTURE_SPEC,
-        PETE_HEGSETH_DEPARTURE_SPEC,
-        TRUMP_CABINET_DEPARTURE_SPEC,
-    ):
-        ev = extract_departure_evidence(spec, probe)
-        if (
-            ev.false_friend is None
-            and ev.unrelated_mention is None
-            and ev.other_edition_token is None
-            and ev.subject_key == spec.subject_key
-            and ev.role_key == spec.role_key
-            and ev.has_departure_framing
-        ):
+    for spec in (KATIE_ZACHARIA_DEPARTURE_SPEC, PETE_HEGSETH_DEPARTURE_SPEC):
+        res = decide_departure_subject(spec.departure_subject, probe)
+        if res.admitted:
             return spec.story_key
     return None
 
 
 # ---------------------------------------------------------------------------
-# Decision 2: Probability equivalence across venues.
+# Decision 2: Probability equivalence across venues (evidence-bound).
 # ---------------------------------------------------------------------------
 
 
@@ -1107,97 +1013,121 @@ class DepartureEquivalenceVerdict:
         return self.verdict == "same"
 
 
+def _match_admitted_subject(market: Any) -> Optional[tuple[DepartureStorySpec, SubjectDecisionResult]]:
+    for spec in (KATIE_ZACHARIA_DEPARTURE_SPEC, PETE_HEGSETH_DEPARTURE_SPEC):
+        res = decide_departure_subject(spec.departure_subject, market)
+        if res.admitted:
+            return spec, res
+    return None
+
+
 def evaluate_departure_equivalence(
     market_a: Any,
     market_b: Any,
 ) -> DepartureEquivalenceVerdict:
     """Evaluate whether two markets state the SAME probability-equivalent
     departure proposition (same subject, role, edition, verified settlement
-    predicate, population scope and normalized cutoff horizon)."""
-    ev_a = extract_any_departure_evidence(market_a)
-    ev_b = extract_any_departure_evidence(market_b)
-    if ev_a is None or ev_b is None:
+    predicate from `#5318` registration or title literal, and normalized cutoff
+    horizon).
+
+    Note: In the collection hub snapshot, non-folding is enforced directly by
+    ``theme_assembly.build_snapshot`` (``resolved_defn.family == "departure"``).
+    This function is the pure Decision 2 equivalence evaluator.
+    """
+    matched_a = _match_admitted_subject(market_a)
+    matched_b = _match_admitted_subject(market_b)
+    if matched_a is None or matched_b is None:
         return DepartureEquivalenceVerdict(
             verdict="different",
             reason="not_both_departure_story_markets",
             canonical_proposition_key=None,
         )
-    if ev_a.subject_key != ev_b.subject_key or ev_a.role_key != ev_b.role_key:
+    spec_a, res_a = matched_a
+    spec_b, res_b = matched_b
+    if spec_a.subject_key != spec_b.subject_key or spec_a.role_key != spec_b.role_key:
         return DepartureEquivalenceVerdict(
             verdict="different",
-            reason=f"subject_or_role_mismatch:{ev_a.subject_key}:{ev_a.role_key}_vs_{ev_b.subject_key}:{ev_b.role_key}",
+            reason=(
+                f"subject_or_role_mismatch:{spec_a.subject_key}:{spec_a.role_key}"
+                f"_vs_{spec_b.subject_key}:{spec_b.role_key}"
+            ),
             canonical_proposition_key=None,
         )
-    if ev_a.edition_key != ev_b.edition_key:
+    if spec_a.edition_key != spec_b.edition_key:
         return DepartureEquivalenceVerdict(
             verdict="different",
-            reason=f"edition_mismatch:{ev_a.edition_key}_vs_{ev_b.edition_key}",
+            reason=f"edition_mismatch:{spec_a.edition_key}_vs_{spec_b.edition_key}",
             canonical_proposition_key=None,
         )
-    if ev_a.predicate_class in ("side_question", "after_role") or ev_b.predicate_class in (
-        "side_question",
-        "after_role",
-    ):
+
+    sec_a = res_a.section or "departure_rules_unread"
+    sec_b = res_b.section or "departure_rules_unread"
+
+    if sec_a in ("side_question", "after_role") or sec_b in ("side_question", "after_role"):
         return DepartureEquivalenceVerdict(
             verdict="different",
-            reason=f"predicate_mismatch:{ev_a.predicate_class}_vs_{ev_b.predicate_class}",
+            reason=f"predicate_mismatch:{sec_a}_vs_{sec_b}",
             canonical_proposition_key=None,
         )
-    # If one is left_administration and the other is not, they are different predicates
-    # even when the other's rules are unread.
-    if (ev_a.predicate_class == PREDICATE_LEFT_ADMINISTRATION) != (
-        ev_b.predicate_class == PREDICATE_LEFT_ADMINISTRATION
-    ):
+    if (sec_a == "departure_left_administration") != (sec_b == "departure_left_administration"):
         return DepartureEquivalenceVerdict(
             verdict="different",
-            reason=f"predicate_mismatch:{ev_a.predicate_class}_vs_{ev_b.predicate_class}",
+            reason=f"predicate_mismatch:{sec_a}_vs_{sec_b}",
             canonical_proposition_key=None,
         )
-    if ev_a.predicate_class == PREDICATE_UNKNOWN or ev_b.predicate_class == PREDICATE_UNKNOWN:
+    if sec_a == "departure_rules_unread" or sec_b == "departure_rules_unread":
         return DepartureEquivalenceVerdict(
             verdict="unknown",
             reason="missing_settlement_rules",
             canonical_proposition_key=None,
         )
-    if ev_a.predicate_class != ev_b.predicate_class or ev_a.population_scope != ev_b.population_scope:
+    if sec_a != sec_b:
         return DepartureEquivalenceVerdict(
             verdict="different",
-            reason=(
-                f"predicate_mismatch:{ev_a.predicate_class}:{ev_a.population_scope}"
-                f"_vs_{ev_b.predicate_class}:{ev_b.population_scope}"
-            ),
+            reason=f"predicate_mismatch:{sec_a}_vs_{sec_b}",
             canonical_proposition_key=None,
         )
-    if ev_a.horizon_key is None or ev_b.horizon_key is None:
+
+    res_dt_a = _aware(_get(market_a, "resolution_date"))
+    if res_dt_a is None:
+        ends_a, _ = _ends_utc(market_a)
+        if ends_a is not None:
+            res_dt_a = datetime(ends_a.year, ends_a.month, ends_a.day, tzinfo=timezone.utc)
+    res_dt_b = _aware(_get(market_b, "resolution_date"))
+    if res_dt_b is None:
+        ends_b, _ = _ends_utc(market_b)
+        if ends_b is not None:
+            res_dt_b = datetime(ends_b.year, ends_b.month, ends_b.day, tzinfo=timezone.utc)
+
+    horizon_a, _ = _normalize_horizon(
+        str(_get(market_a, "name") or ""),
+        str(_get(market_a, "external_id") or ""),
+        res_dt_a,
+    )
+    horizon_b, _ = _normalize_horizon(
+        str(_get(market_b, "name") or ""),
+        str(_get(market_b, "external_id") or ""),
+        res_dt_b,
+    )
+    if horizon_a is None or horizon_b is None:
         return DepartureEquivalenceVerdict(
             verdict="unknown",
             reason="unsupported_or_missing_horizon",
             canonical_proposition_key=None,
         )
-    if ev_a.horizon_key != ev_b.horizon_key:
+    if horizon_a != horizon_b:
         return DepartureEquivalenceVerdict(
             verdict="different",
-            reason=f"horizon_mismatch:{ev_a.horizon_key}_vs_{ev_b.horizon_key}",
+            reason=f"horizon_mismatch:{horizon_a}_vs_{horizon_b}",
             canonical_proposition_key=None,
         )
+
     canonical_key = (
-        f"{ev_a.subject_key}:{ev_a.role_key}:{ev_a.predicate_class}"
-        f":{ev_a.population_scope}:{ev_a.horizon_key}"
+        f"{spec_a.subject_key}:{spec_a.role_key}:{sec_a}"
+        f":{SCOPE_SINGLE_OFFICEHOLDER}:{horizon_a}"
     )
     return DepartureEquivalenceVerdict(
         verdict="same",
         reason="equivalent_departure_proposition",
         canonical_proposition_key=canonical_key,
     )
-
-
-def departure_equivalence_for_fold(
-    left_data: Mapping[str, Any],
-    right_data: Mapping[str, Any],
-) -> Optional[DepartureEquivalenceVerdict]:
-    """Hook for Discover / collection snapshot folding."""
-    ev_left = extract_any_departure_evidence(left_data)
-    ev_right = extract_any_departure_evidence(right_data)
-    if ev_left is None and ev_right is None:
-        return None
-    return evaluate_departure_equivalence(left_data, right_data)

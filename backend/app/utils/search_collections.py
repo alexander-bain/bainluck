@@ -81,10 +81,13 @@ def _page_event_ids(payload: dict) -> list[int]:
 
 
 async def _attach_theme_family_refs(payload: dict) -> dict:
-    """Attach ``collection_ref`` onto Search ``futures_families`` when theme
-    collections are enabled (#11040). Uses ``theme_collection_ref``'s own
-    bounded side session and never touches the caller's ``db`` session."""
+    """Attach ``collection_ref`` onto Search ``futures_families`` when Search
+    collections and theme collections are enabled (#11040). Uses
+    ``theme_collection_ref``'s own bounded side session and never touches the
+    caller's ``db`` session."""
     try:
+        if not search_collections_enabled():
+            return payload
         families = payload.get("futures_families")
         if not isinstance(families, list) or not families:
             return payload
@@ -126,10 +129,13 @@ async def attach_search_collections(
     returned card list is a new dict, so a caller that has already written
     ``payload`` to the cache cannot have the cached body altered after the fact.
     """
-    payload = await _attach_theme_family_refs(payload)
     try:
         if not search_collections_enabled():
             return payload
+    except Exception:  # noqa: BLE001
+        return payload
+    payload = await _attach_theme_family_refs(payload)
+    try:
         event_ids = _page_event_ids(payload)
         if not event_ids:
             return payload

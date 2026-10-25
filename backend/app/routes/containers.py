@@ -135,6 +135,11 @@ CLASS_ORDER = (
     "title",
     "prop",
     "side_question",
+    "departure_announced",
+    "departure_vacated",
+    "departure_rules_unread",
+    "departure_left_administration",
+    "after_role",
 )
 
 

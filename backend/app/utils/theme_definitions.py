@@ -53,27 +53,17 @@ from app.utils.departure_story_contract import (
     ADMITTED_DEPARTURE_VACATED,
     ADMITTED_SUBJECT_RELATION,
     DEPARTURE_ADMITTED_REASONS,
-    DEPARTURE_ALLOWED_CATEGORIES,
     DEPARTURE_EXCLUDED_REASONS,
     DEPARTURE_ORDER,
-    DEPARTURE_RETENTION_DAYS,
-    DEPARTURE_SPECS_BY_SUBJECT,
     DEPARTURE_STORY_RULE_VERSION,
-    DEPARTURE_STRICT_CONFLICT_CATEGORIES,
     DEPARTURE_SUBJECTS,
-    KATIE_ZACHARIA_DEPARTURE_SPEC,
-    KATIE_ZACHARIA_ENTITY_PG,
     KATIE_ZACHARIA_PRESS_SECRETARY,
     NAME_ONLY_MENTION,
     NOT_THIS_STORY,
     OTHER_OFFICE,
     PETE_HEGSETH_DEFENSE_SECRETARY,
-    PETE_HEGSETH_DEPARTURE_SPEC,
-    TRUMP_CABINET_DEPARTURE_SPEC,
-    TRUMP_CABINET_ENTITY_PG,
     UNRELATED_SUBJECT_MENTION,
     decide_departure_subject,
-    extract_departure_evidence,
 )
 from app.utils.event_awards import CEREMONIES, classify_market, edition_year
 from app.utils.futures_liveness import market_reads_settled
@@ -583,114 +573,15 @@ def _decide_ai(defn: "ThemeDefinition", market: Any, *, now: datetime) -> Decisi
 def _decide_departure_story(
     defn: "ThemeDefinition", market: Any, *, now: datetime
 ) -> Decision:
-    if defn.subject in DEPARTURE_SUBJECTS:
-        del now  # finite scope: tenure end is checked against tenure_start, never wall clock
-        subj = DEPARTURE_SUBJECTS[defn.subject]
-        res = decide_departure_subject(subj, market)
-        ev = _Evidence(market)
-        for clause in res.evidence:
-            ev.clauses.append(dict(clause))
-        if res.section:
-            ev.fields["edge_class"] = res.section
-        return _decision(defn, res.outcome, res.reason, ev, res.section)
-
-    spec = DEPARTURE_SPECS_BY_SUBJECT[defn.subject]
+    del now  # finite scope: tenure end is checked against tenure_start, never wall clock
+    subj = DEPARTURE_SUBJECTS[defn.subject]
+    res = decide_departure_subject(subj, market)
     ev = _Evidence(market)
-    dep = extract_departure_evidence(spec, market)
-
-    if dep.false_friend is not None:
-        ev.clause(
-            "entity",
-            {"name": _attr(market, "name"), "false_friend": dep.false_friend},
-            "lexical_false_friend",
-        )
-        return _decision(defn, OUTCOME_EXCLUDED, LEXICAL_FALSE_FRIEND, ev)
-
-    if dep.unrelated_mention is not None:
-        ev.clause(
-            "entity",
-            {"name": _attr(market, "name"), "unrelated_mention": dep.unrelated_mention},
-            "unrelated_subject_mention",
-        )
-        return _decision(defn, OUTCOME_EXCLUDED, UNRELATED_SUBJECT_MENTION, ev)
-
-    if dep.other_edition_token is not None:
-        ev.clause(
-            "edition",
-            {"token": dep.other_edition_token, "edition_key": dep.edition_key},
-            "other_edition",
-        )
-        return _decision(defn, OUTCOME_EXCLUDED, OTHER_EDITION, ev)
-
-    if (
-        dep.subject_key != spec.subject_key
-        or dep.role_key != spec.role_key
-        or not dep.has_departure_framing
-    ):
-        ev.clause(
-            "entity",
-            {
-                "subject_key": dep.subject_key,
-                "role_key": dep.role_key,
-                "has_departure_framing": dep.has_departure_framing,
-            },
-            "fail",
-        )
-        return _decision(defn, OUTCOME_EXCLUDED, NOT_THIS_SUBJECT, ev)
-
-    ev.clause(
-        "entity",
-        {
-            "subject_key": dep.subject_key,
-            "role_key": dep.role_key,
-            "has_departure_framing": dep.has_departure_framing,
-        },
-        "pass",
-    )
-
-    category = (_attr(market, "llm_sport_category") or "").strip().lower()
-    external_id = (_attr(market, "external_id") or "").upper()
-    stem = next(
-        (
-            prefix
-            for prefix in spec.kalshi_ticker_prefixes
-            if _attr(market, "source") == "kalshi" and external_id.startswith(prefix)
-        ),
-        None,
-    )
-    if category in DEPARTURE_ALLOWED_CATEGORIES:
-        ev.clause("second_signal", {"llm_sport_category": category}, "pass")
-    elif stem is not None and category not in DEPARTURE_STRICT_CONFLICT_CATEGORIES:
-        ev.clause("second_signal", {"kalshi_entity_stem": stem}, "pass")
-    else:
-        ev.clause("second_signal", {"llm_sport_category": _attr(market, "llm_sport_category")}, "fail")
-        return _decision(defn, OUTCOME_EXCLUDED, WRONG_CATEGORY, ev)
-
-    ev.fields["predicate_class"] = dep.predicate_class
-    ev.fields["population_scope"] = dep.population_scope
-    ev.fields["horizon_key"] = dep.horizon_key or "unknown"
-    ev.fields["horizon_source"] = dep.horizon_source
-    ev.fields["edge_class"] = dep.edge_class
-    ev.clause(
-        "settlement_predicate",
-        {
-            "predicate_class": dep.predicate_class,
-            "population_scope": dep.population_scope,
-            "horizon_key": dep.horizon_key,
-            "rules_present": dep.rules_present,
-        },
-        dep.edge_class,
-    )
-    if not dep.rules_present:
-        ev.flag("missing_settlement_rules")
-    if dep.horizon_key is None:
-        ev.flag("missing_or_unsupported_horizon")
-
-    admitted_reason = {
-        "title": ADMITTED_DEPARTURE_ANNOUNCEMENT,
-        "advancement": ADMITTED_DEPARTURE_VACATED,
-    }.get(dep.edge_class, ADMITTED_DEPARTURE_SEPARATE_RULE)
-    return _decision(defn, OUTCOME_ADMITTED, admitted_reason, ev, dep.edge_class)
+    for clause in res.evidence:
+        ev.clauses.append(dict(clause))
+    if res.section:
+        ev.fields["edge_class"] = res.section
+    return _decision(defn, res.outcome, res.reason, ev, res.section)
 
 
 # ---------------------------------------------------------------------------
@@ -822,15 +713,10 @@ def _departure_population(defn: "ThemeDefinition", *, container_id: int, now: da
 
     from app.models.models import FuturesMarket as FM
 
-    subj = DEPARTURE_SUBJECTS.get(defn.subject)
-    pattern = (
-        subj.person_pg
-        if subj is not None
-        else DEPARTURE_SPECS_BY_SUBJECT[defn.subject].name_entity_pg
-    )
+    subj = DEPARTURE_SUBJECTS[defn.subject]
     return {
         "person_title": select(FM.id).where(
-            FM.name.regexp_match(pattern, flags="i")
+            FM.name.regexp_match(subj.person_pg, flags="i")
         ),
         "prior_decision": _prior_decision_arm(container_id),
     }
@@ -948,18 +834,6 @@ PETE_HEGSETH_DEFENSE_SECRETARY_2025 = ThemeDefinition(
 KATIE_ZACHARIA_DEPARTURE = KATIE_ZACHARIA_PRESS_SECRETARY_2026
 PETE_HEGSETH_DEPARTURE = PETE_HEGSETH_DEFENSE_SECRETARY_2025
 
-TRUMP_CABINET_DEPARTURE = ThemeDefinition(
-    subject=TRUMP_CABINET_DEPARTURE_SPEC.subject,
-    scope=SCOPE_CONTINUING,
-    retention_days=DEPARTURE_RETENTION_DAYS,
-    rule_version=DEPARTURE_STORY_RULE_VERSION,
-    container_kind="theme",
-    category="politics",
-    display_name=TRUMP_CABINET_DEPARTURE_SPEC.display_name,
-    decider=_decide_departure_story,
-    population=_departure_population,
-)
-
 
 def build_registry(definitions: Iterable[ThemeDefinition]) -> dict[str, ThemeDefinition]:
     """slug -> definition. Refuses duplicate slugs and a scope disagreement
@@ -1005,14 +879,9 @@ _FINITE_SLUG_RE = re.compile(r"^([a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)*)-(\d{4})$")
 DEFAULT_CLASS_RANK: Mapping[str, int] = {
     "title": 0,
     "advancement": 1,
-    "departure_announced": 0,
-    "departure_vacated": 1,
-    "departure_rules_unread": 2,
-    "departure_left_administration": 3,
-    "side_question": 4,
-    "after_role": 5,
+    "side_question": 2,
 }
-DEFAULT_OTHER_CLASS_RANK = 6
+DEFAULT_OTHER_CLASS_RANK = 3
 
 
 def parse_theme_slug(
@@ -1076,6 +945,8 @@ def theme_class_rank(
             return defn.class_order.index(member_class)  # type: ignore[arg-type]
         except ValueError:
             return len(defn.class_order)
+    if defn is None and member_class in DEPARTURE_ORDER:
+        return DEPARTURE_ORDER.index(member_class)
     return DEFAULT_CLASS_RANK.get(member_class or "", DEFAULT_OTHER_CLASS_RANK)
 
 

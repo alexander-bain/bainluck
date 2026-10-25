@@ -1,9 +1,8 @@
 """Self-contained regression tests for #11040 cross-venue departure story.
 
 PILLARS: DISCOVER · MATCHING · FORMATTING · TRUTH.
-SHIP (#11040): A reader opens one departure story from Discover or Search, sees
-related Polymarket and Kalshi markets organized by their actual settlement rules
-and deadlines, opens a market, and returns with the collection context preserved.
+SHIP (#11040): One departure story preserves related markets while accurately
+explaining their different settlement rules.
 
 All fixtures in this file are self-contained in-memory records (zero external
 file dependencies).
@@ -11,47 +10,43 @@ file dependencies).
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+import copy
+import dataclasses
 from datetime import datetime, timezone
-from types import SimpleNamespace
+import hashlib
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy.dialects import postgresql
 
-from app.routes.containers import _theme_order_classes, theme_page_window
+from app.routes.containers import CLASS_ORDER, _theme_order_classes, theme_page_window
 from app.tasks import theme_assembly as ta
 from app.utils.container_graph import CLASS_UNCLASSIFIED, EDGE_CLASSES
 from app.utils.departure_story_contract import (
     DEPARTURE_ORDER,
     DEPARTURE_SUBJECTS,
-    KATIE_ZACHARIA_DEPARTURE_SPEC,
     KATIE_ZACHARIA_PRESS_SECRETARY,
+    MISSING_RULES_TEXT_POLICY,
     PETE_HEGSETH_DEFENSE_SECRETARY,
-    PREDICATE_ACTUAL_DEPARTURE,
-    PREDICATE_ANNOUNCEMENT,
-    PREDICATE_UNKNOWN,
-    TRUMP_CABINET_DEPARTURE_SPEC,
+    REGISTRATIONS,
     decide_departure_subject,
-    departure_equivalence_for_fold,
     departure_predicate,
     departure_story_key_for_market,
     evaluate_departure_equivalence,
-    extract_departure_evidence,
 )
 from app.utils.search_collections import attach_search_collections
 from app.utils.theme_collection_ref import (
     PublishedTheme,
     PublishedThemes,
-    attach_search_family_collection_refs,
-    attach_theme_collection_refs,
 )
 from app.utils.theme_definitions import (
-    AI,
     DECISION_REASONS,
+    DEFAULT_CLASS_RANK,
+    DEFAULT_OTHER_CLASS_RANK,
     KATIE_ZACHARIA_PRESS_SECRETARY_2026,
-    OSCARS_2027,
     PETE_HEGSETH_DEFENSE_SECRETARY_2025,
-    REGISTRY,
     candidate_population,
     parse_theme_slug,
     theme_class_rank,
@@ -59,21 +54,37 @@ from app.utils.theme_definitions import (
 
 NOW = datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc)
 
-# Full verbatim Polymarket rules for event 1183118 (including both the "ceases to be"
-# lead-in and the decisive "An announcement of Katie Zacharia's resignation/removal
-# ... will immediately resolve" sentence — F1 regression guard).
+# Exact retained Polymarket event 1183118 rules (SHA-256 cc46e9a2b8bf04167ca6c9374555c00aa0e6ee4d87cd98d59a19053ee4a11269).
 PM_1183118_FULL_RULES = (
-    "This market will resolve to \"Yes\" if Katie Zacharia ceases to be White House "
-    "Press Secretary between market creation and the specified date, 11:59 PM ET. "
-    "An announcement of Katie Zacharia's resignation/removal by this market's end date "
-    "will immediately resolve this market to \"Yes\", regardless of when the announced "
-    "resignation/removal goes into effect."
+    "This market will resolve to \u201cYes\u201d if Katie Zacharia ceases to be White House "
+    "Press Secretary for any period of time between market creation and the specified date, "
+    "11:59 PM ET. Otherwise, this market will resolve to \u201cNo\u201d.\n\n"
+    "An announcement of Katie Zacharia's resignation/removal by this market's end date will "
+    'immediately resolve this market to "Yes", regardless of when the announced '
+    "resignation/removal goes into effect.\n\n"
+    "If Katie Zacharia has not yet taken office as White House Press Secretary at market "
+    'creation, this market will also resolve to "Yes" if, by the specified date, 11:59 PM ET, '
+    "her appointment is withdrawn or it is announced that she will not take the position.\n\n"
+    "The resolution source for this market will be official information from Katie Zacharia "
+    "and the U.S. government; however, a consensus of credible reporting may also be used."
 )
 
-KALSHI_KXZACHARIAOUT_FULL_RULES = (
-    "If Katie Zacharia leaves as White House Press Secretary before Nov 1, 2026, then "
-    "the market resolves to Yes. Katie Zacharia must have an actual departure date and "
-    "vacate the role within the time period."
+# Exact retained Kalshi KXZACHARIAOUT-26OCT rules_secondary (SHA-256 2d191cebfb1cadff2e4aa8cc736e035dcc26c5ff76a3fedd6603893dfa2a71a1).
+KALSHI_KXZACHARIAOUT_SECONDARY_RULES = (
+    "Katie Zacharia must have an actual departure date and vacate the role within the time period.\n\n"
+    "Temporary leaves of absence, suspensions, or recusals do not constitute leaving, resigning "
+    "from, or retiring from the role unless the individual formally and permanently ceases to "
+    "hold the position. If the person vacates the role and then re-occupies the role, the "
+    "contract shall settle on the initial vacation of the role.\n\n"
+    'For "leave," cessation of holding the role qualifies, including resignation, retirement, '
+    "removal, expulsion, expiration of term without renewal, recall, or other means by which "
+    "the individual no longer occupies the role. This includes both voluntary and involuntary "
+    "early departure AND the natural expiration of a term."
+)
+
+KALSHI_KXZACHARIAOUT_PRIMARY_RULES = (
+    "If Katie Zacharia leaves as White House Press Secretary before Nov 1, 2026, "
+    "then the market resolves to Yes."
 )
 
 
@@ -586,8 +597,8 @@ class TestDepartureStoryMembershipCases:
         assert res.reason in DECISION_REASONS
         if res.section is not None:
             assert res.section in EDGE_CLASSES
+            assert res.section in CLASS_ORDER
 
-        # Also verify via ThemeDefinition.decide()
         defn = (
             KATIE_ZACHARIA_PRESS_SECRETARY_2026
             if story_key == "katie-zacharia-press-secretary"
@@ -600,10 +611,298 @@ class TestDepartureStoryMembershipCases:
         assert d.rule_version == "departure-story@1"
 
 
-class TestDepartureMeaningEquivalenceAndF1Guard:
-    """Decision 2: Probability equivalence + F1 regression guard on verbatim Polymarket rules."""
+class TestEvidenceBoundRegistrationsB2:
+    """B2: Predicate registrations validate provider, event, edition, and stored rules."""
 
-    def test_f1_verbatim_polymarket_rules_never_misclassify_announcement_as_vacated(self):
+    def test_retained_rules_hashes_match_registrations(self):
+        assert (
+            hashlib.sha256(PM_1183118_FULL_RULES.encode("utf-8")).hexdigest()
+            == REGISTRATIONS[("polymarket_event", "1183118")]["rules_sha256"]
+        )
+        assert (
+            hashlib.sha256(KALSHI_KXZACHARIAOUT_SECONDARY_RULES.encode("utf-8")).hexdigest()
+            == REGISTRATIONS[("kalshi_series", "KXZACHARIAOUT")]["rules_sha256"]
+        )
+
+    def test_true_retained_rules_assign_registered_sections(self):
+        pm_row = {
+            "source": "polymarket",
+            "name": "Katie Zacharia out as Press Secretary by October 31?",
+            "llm_sport_category": "politics",
+            "group_id": "polymarket:1183118",
+            "description": PM_1183118_FULL_RULES,
+            "deadline": {"instant": {"utc": "2026-11-01T03:59Z"}},
+        }
+        k_row = {
+            "source": "kalshi",
+            "external_id": "KXZACHARIAOUT-26OCT-26NOV01",
+            "name": "Will Katie Zacharia be out as White House Press Secretary before Nov 1, 2026?",
+            "llm_sport_category": "politics",
+            "market_metadata": {
+                "series_ticker": "KXZACHARIAOUT",
+                "event_ticker": "KXZACHARIAOUT-26OCT",
+                "rules_primary": KALSHI_KXZACHARIAOUT_PRIMARY_RULES,
+                "rules_secondary": KALSHI_KXZACHARIAOUT_SECONDARY_RULES,
+            },
+            "deadline": {"instant": {"utc": "2026-11-01T03:59Z"}},
+        }
+
+        pm_res = decide_departure_subject(KATIE_ZACHARIA_PRESS_SECRETARY, pm_row)
+        assert pm_res.outcome == "admitted"
+        assert pm_res.section == "departure_announced"
+        pred_ev = pm_res.evidence[-1]
+        assert pred_ev["basis"] == "rules"
+        assert pred_ev["observed_rules_sha256"] == pred_ev["rules_sha256"]
+
+        k_res = decide_departure_subject(KATIE_ZACHARIA_PRESS_SECRETARY, k_row)
+        assert k_res.outcome == "admitted"
+        assert k_res.section == "departure_vacated"
+        k_pred_ev = k_res.evidence[-1]
+        assert k_pred_ev["basis"] == "rules"
+        assert k_pred_ev["observed_rules_sha256"] == k_pred_ev["rules_sha256"]
+
+    def test_missing_stored_rules_uses_explicit_registration_only_policy(self):
+        pm_no_desc = {
+            "source": "polymarket",
+            "name": "Katie Zacharia out as Press Secretary by October 31?",
+            "llm_sport_category": "politics",
+            "group_id": "polymarket:1183118",
+            "description": None,
+            "deadline": {"instant": {"utc": "2026-11-01T03:59Z"}},
+        }
+        res = decide_departure_subject(KATIE_ZACHARIA_PRESS_SECRETARY, pm_no_desc)
+        assert res.outcome == "admitted"
+        assert res.section == "departure_announced"
+        pred_ev = res.evidence[-1]
+        assert pred_ev["basis"] == "registration_only"
+        assert pred_ev["missing_text_policy"] == MISSING_RULES_TEXT_POLICY
+
+    def test_changed_or_contradictory_rules_route_to_rules_unread_while_preserving_membership(self):
+        pm_changed = {
+            "source": "polymarket",
+            "name": "Katie Zacharia out as Press Secretary by October 31?",
+            "llm_sport_category": "politics",
+            "group_id": "polymarket:1183118",
+            "description": (
+                "This market resolves to Yes only if Katie Zacharia actually vacates "
+                "the office of White House Press Secretary before the deadline. "
+                "An announcement alone does not resolve this market."
+            ),
+            "deadline": {"instant": {"utc": "2026-11-01T03:59Z"}},
+        }
+        k_changed = {
+            "source": "kalshi",
+            "external_id": "KXZACHARIAOUT-26OCT-26NOV01",
+            "name": "Will Katie Zacharia be out as White House Press Secretary before Nov 1, 2026?",
+            "llm_sport_category": "politics",
+            "market_metadata": {
+                "series_ticker": "KXZACHARIAOUT",
+                "event_ticker": "KXZACHARIAOUT-26OCT",
+                "rules_secondary": (
+                    'An announcement of Katie Zacharia\'s resignation by the deadline '
+                    'will immediately resolve this market to "Yes", regardless of when '
+                    "the announced resignation goes into effect."
+                ),
+            },
+            "deadline": {"instant": {"utc": "2026-11-01T03:59Z"}},
+        }
+
+        for row in (pm_changed, k_changed):
+            res = decide_departure_subject(KATIE_ZACHARIA_PRESS_SECRETARY, row)
+            assert res.outcome == "admitted"
+            assert res.section == "departure_rules_unread"
+            pred_ev = res.evidence[-1]
+            assert pred_ev["result"] == "unknown"
+            assert pred_ev["basis"] == "registration_mismatch"
+            assert pred_ev["reason"] == "contradictory_settlement_clause"
+
+    def test_matching_quote_inside_contradictory_text_is_rejected_to_rules_unread(self):
+        """B2 requirement: A matching quote inside otherwise contradictory text is
+        not sufficient; preserving the original quote while adding a conflicting
+        settlement clause must produce `departure_rules_unread` with an inspectable reason."""
+        pm_quote_plus_conflict = {
+            "source": "polymarket",
+            "name": "Katie Zacharia out as Press Secretary by October 31?",
+            "llm_sport_category": "politics",
+            "group_id": "polymarket:1183118",
+            "description": (
+                PM_1183118_FULL_RULES
+                + "\n\nHowever, an announcement alone does not resolve this market; "
+                "Katie Zacharia must have an actual departure date and vacate the role "
+                "within the time period."
+            ),
+            "deadline": {"instant": {"utc": "2026-11-01T03:59Z"}},
+        }
+        k_quote_plus_conflict = {
+            "source": "kalshi",
+            "external_id": "KXZACHARIAOUT-26OCT-26NOV01",
+            "name": "Will Katie Zacharia be out as White House Press Secretary before Nov 1, 2026?",
+            "llm_sport_category": "politics",
+            "market_metadata": {
+                "series_ticker": "KXZACHARIAOUT",
+                "event_ticker": "KXZACHARIAOUT-26OCT",
+                "rules_primary": KALSHI_KXZACHARIAOUT_PRIMARY_RULES,
+                "rules_secondary": (
+                    KALSHI_KXZACHARIAOUT_SECONDARY_RULES
+                    + "\n\nAn announcement of Katie Zacharia's resignation/removal by this "
+                    'market\'s end date will immediately resolve this market to "Yes", '
+                    "regardless of when the announced resignation/removal goes into effect."
+                ),
+            },
+            "deadline": {"instant": {"utc": "2026-11-01T03:59Z"}},
+        }
+        pm_quote_plus_unverified_amendment = {
+            "source": "polymarket",
+            "name": "Katie Zacharia out as Press Secretary by October 31?",
+            "llm_sport_category": "politics",
+            "group_id": "polymarket:1183118",
+            "description": (
+                PM_1183118_FULL_RULES
+                + "\n\nAmendment: settlement also requires a formal FEC filing."
+            ),
+            "deadline": {"instant": {"utc": "2026-11-01T03:59Z"}},
+        }
+
+        for row in (pm_quote_plus_conflict, k_quote_plus_conflict):
+            res = decide_departure_subject(KATIE_ZACHARIA_PRESS_SECRETARY, row)
+            assert res.outcome == "admitted"
+            assert res.section == "departure_rules_unread"
+            pred_ev = res.evidence[-1]
+            assert pred_ev["result"] == "unknown"
+            assert pred_ev["basis"] == "registration_mismatch"
+            assert pred_ev["reason"] == "contradictory_settlement_clause"
+
+        res_amend = decide_departure_subject(
+            KATIE_ZACHARIA_PRESS_SECRETARY, pm_quote_plus_unverified_amendment
+        )
+        assert res_amend.outcome == "admitted"
+        assert res_amend.section == "departure_rules_unread"
+        assert res_amend.evidence[-1]["basis"] == "registration_mismatch"
+        assert res_amend.evidence[-1]["reason"] == "rules_sha256_mismatch"
+
+    def test_later_event_in_same_kalshi_series_does_not_inherit_registration(self):
+        """B2 requirement: Do not silently extend retained evidence for one event or
+        edition to every future event in a provider series."""
+        k_later_event = {
+            "source": "kalshi",
+            "external_id": "KXZACHARIAOUT-28JAN-T280101",
+            "name": "Will Katie Zacharia be out as White House Press Secretary before Jan 1, 2028?",
+            "llm_sport_category": "politics",
+            "market_metadata": {
+                "series_ticker": "KXZACHARIAOUT",
+                "event_ticker": "KXZACHARIAOUT-28JAN",
+                "rules_secondary": KALSHI_KXZACHARIAOUT_SECONDARY_RULES,
+            },
+            "deadline": {"instant": {"utc": "2028-01-01T04:59Z"}},
+        }
+        res = decide_departure_subject(KATIE_ZACHARIA_PRESS_SECRETARY, k_later_event)
+        assert res.outcome == "admitted"
+        assert res.section == "departure_rules_unread"
+        pred_ev = res.evidence[-1]
+        assert pred_ev["result"] == "unknown"
+        assert pred_ev["basis"] == "registration_mismatch"
+        assert pred_ev["reason"] == "unregistered_series_event"
+
+    def test_provider_and_edition_mismatches_are_refused(self):
+        wrong_provider = {
+            "source": "kalshi",
+            "name": "Katie Zacharia out as Press Secretary by October 31?",
+            "llm_sport_category": "politics",
+            "group_id": "polymarket:1183118",
+        }
+        wrong_edition = {
+            "source": "polymarket",
+            "name": "Katie Zacharia out as Press Secretary by October 31?",
+            "llm_sport_category": "politics",
+            "group_id": "polymarket:1183118",
+            "edition": 2025,
+        }
+        wrong_person = {
+            "source": "polymarket",
+            "name": "Susie Wiles out as White House Chief of Staff by December 31?",
+            "llm_sport_category": "politics",
+            "group_id": "polymarket:1183118",
+        }
+
+        res_prov = decide_departure_subject(KATIE_ZACHARIA_PRESS_SECRETARY, wrong_provider)
+        assert res_prov.outcome == "admitted"
+        assert res_prov.section == "departure_rules_unread"
+        assert res_prov.evidence[-1]["reason"] == "provider_mismatch"
+
+        res_ed = decide_departure_subject(KATIE_ZACHARIA_PRESS_SECRETARY, wrong_edition)
+        assert res_ed.outcome == "admitted"
+        assert res_ed.section == "departure_rules_unread"
+        assert res_ed.evidence[-1]["reason"] == "edition_or_subject_mismatch"
+
+        pred_wrong_person = departure_predicate(wrong_person)
+        assert pred_wrong_person["predicate"] == "unknown"
+        assert pred_wrong_person["reason"] == "edition_or_subject_mismatch"
+
+
+class TestUnregisteredRulesRemainUnreadB3:
+    """B3: Unregistered markets never infer a predicate from rules-text regexes."""
+
+    @pytest.mark.parametrize(
+        "label,rules_text",
+        [
+            (
+                "announce_verb",
+                "Resolves Yes if Pete Hegseth resigns, is removed, or announces he will step down as Secretary of Defense before the deadline.",
+            ),
+            (
+                "it_is_announced_that",
+                "This market resolves to Yes if it is announced that Pete Hegseth will leave the Department of Defense.",
+            ),
+            (
+                "announcement_excluded",
+                "Resolves Yes if Pete Hegseth ceases to hold office. An announcement of resignation before he leaves office does not resolve this market.",
+            ),
+            (
+                "plain_vacancy",
+                "Resolves Yes if Pete Hegseth ceases to be Secretary of Defense before Dec 31, 2026.",
+            ),
+            (
+                "successor_nomination_counts",
+                "Resolves Yes if Pete Hegseth ceases to be Secretary of Defense or if a successor is formally nominated before the deadline.",
+            ),
+        ],
+    )
+    def test_unregistered_hegseth_rules_stay_in_rules_unread(self, label, rules_text):
+        row = {
+            "source": "polymarket",
+            "external_id": f"pm-hegseth-{label}",
+            "name": "Pete Hegseth out as Secretary of Defense by December 31?",
+            "llm_sport_category": "politics",
+            "description": rules_text,
+        }
+        pred = departure_predicate(row, subject=PETE_HEGSETH_DEFENSE_SECRETARY)
+        assert pred == {
+            "predicate": "unknown",
+            "basis": "rules_not_read",
+            "reason": "unregistered_market",
+        }
+        res = decide_departure_subject(PETE_HEGSETH_DEFENSE_SECRETARY, row)
+        assert res.outcome == "admitted"
+        assert res.section == "departure_rules_unread"
+
+    def test_unregistered_zacharia_market_with_rules_text_stays_in_rules_unread(self):
+        unregistered_pm = {
+            "source": "polymarket",
+            "external_id": "0xunregistered",
+            "name": "Katie Zacharia out as Press Secretary by November 30?",
+            "llm_sport_category": "politics",
+            "description": PM_1183118_FULL_RULES,
+        }
+        res = decide_departure_subject(KATIE_ZACHARIA_PRESS_SECRETARY, unregistered_pm)
+        assert res.outcome == "admitted"
+        assert res.section == "departure_rules_unread"
+        assert res.evidence[-1]["reason"] == "unregistered_market"
+
+
+class TestDepartureMeaningEquivalenceDecision2:
+    """Decision 2: Probability equivalence across venues (evidence-bound)."""
+
+    def test_registered_polymarket_vs_kalshi_aligned_cutoffs_are_never_equivalent(self):
         pm_oct31 = {
             "id": 65678073,
             "name": "Katie Zacharia out as Press Secretary by October 31?",
@@ -630,36 +929,26 @@ class TestDepartureMeaningEquivalenceAndF1Guard:
             "source": "kalshi",
             "external_id": "KXZACHARIAOUT-26OCT-26NOV01",
             "llm_sport_category": "politics",
-            "description": KALSHI_KXZACHARIAOUT_FULL_RULES,
+            "market_metadata": {
+                "series_ticker": "KXZACHARIAOUT",
+                "event_ticker": "KXZACHARIAOUT-26OCT",
+                "rules_primary": KALSHI_KXZACHARIAOUT_PRIMARY_RULES,
+                "rules_secondary": KALSHI_KXZACHARIAOUT_SECONDARY_RULES,
+            },
             "resolution_date": "2026-11-01T03:59:00+00:00",
         }
 
-        # Even if registration_key is stripped and only rules text is inspected,
-        # PM's announcement sentence wins over "ceases to be".
-        pm_no_reg = {k: v for k, v in pm_oct31.items() if k != "group_id"}
-        ev_pm = extract_departure_evidence(KATIE_ZACHARIA_DEPARTURE_SPEC, pm_no_reg)
-        ev_k = extract_departure_evidence(KATIE_ZACHARIA_DEPARTURE_SPEC, kalshi_nov1)
-        assert ev_pm.predicate_class == PREDICATE_ANNOUNCEMENT
-        assert ev_pm.edge_class == "title"
-        assert ev_pm.horizon_key == "2026-10-31"
-        assert ev_k.predicate_class == PREDICATE_ACTUAL_DEPARTURE
-        assert ev_k.edge_class == "advancement"
-        assert ev_k.horizon_key == "2026-10-31"
-
-        # Aligned cutoffs (2026-11-01T03:59Z) across announcement vs vacated NEVER return "same".
         verdict = evaluate_departure_equivalence(pm_oct31, kalshi_nov1)
         assert verdict.verdict == "different"
         assert not verdict.is_equivalent
         assert "predicate_mismatch" in verdict.reason
-        assert departure_equivalence_for_fold(pm_oct31, kalshi_nov1).verdict == "different"
 
-        # Same venue ladder legs with different deadlines NEVER return "same".
         ladder_verdict = evaluate_departure_equivalence(pm_oct31, pm_dec31)
         assert ladder_verdict.verdict == "different"
         assert "horizon_mismatch" in ladder_verdict.reason
 
-    def test_missing_rules_returns_unknown_never_same(self):
-        pm_no_rules = {
+    def test_unregistered_market_returns_unknown_never_same(self):
+        pm_unregistered = {
             "id": 65678073,
             "name": "Katie Zacharia out as Press Secretary by October 31?",
             "source": "polymarket",
@@ -674,70 +963,16 @@ class TestDepartureMeaningEquivalenceAndF1Guard:
             "source": "kalshi",
             "external_id": "KXZACHARIAOUT-26OCT-26NOV01",
             "llm_sport_category": "politics",
-            "description": KALSHI_KXZACHARIAOUT_FULL_RULES,
+            "market_metadata": {
+                "series_ticker": "KXZACHARIAOUT",
+                "event_ticker": "KXZACHARIAOUT-26OCT",
+                "rules_secondary": KALSHI_KXZACHARIAOUT_SECONDARY_RULES,
+            },
             "resolution_date": "2026-11-01T03:59:00+00:00",
         }
-        ev = extract_departure_evidence(KATIE_ZACHARIA_DEPARTURE_SPEC, pm_no_rules)
-        assert ev.predicate_class == PREDICATE_UNKNOWN
-        verdict = evaluate_departure_equivalence(pm_no_rules, kalshi_nov1)
+        verdict = evaluate_departure_equivalence(pm_unregistered, kalshi_nov1)
         assert verdict.verdict == "unknown"
         assert verdict.reason == "missing_settlement_rules"
-
-    def test_hegseth_kalshi_series_and_unread_polymarket_equivalence(self):
-        heg_vac = {
-            "id": 9428542,
-            "name": "Pete Hegseth out as Secretary of Defense?",
-            "source": "kalshi",
-            "external_id": "KXHEGSETHOUT-26APR",
-            "llm_sport_category": "politics",
-        }
-        heg_ann = {
-            "id": 9428543,
-            "name": "Pete Hegseth departure announced?",
-            "source": "kalshi",
-            "external_id": "KXHEGSETHANNOUNCEOUT-26APR",
-            "llm_sport_category": "politics",
-        }
-        heg_pm = {
-            "id": 8422080,
-            "name": "Pete Hegseth out as Secretary of Defense by December 31?",
-            "source": "polymarket",
-            "external_id": "pm-8422080",
-            "llm_sport_category": "geopolitics",
-        }
-        assert departure_predicate(heg_vac)["predicate"] == "unknown"
-        assert departure_predicate(heg_ann)["predicate"] == "announced"
-        assert departure_predicate(heg_pm)["predicate"] == "unknown"
-        assert evaluate_departure_equivalence(heg_pm, heg_ann).verdict == "unknown"
-        assert evaluate_departure_equivalence(heg_pm, heg_vac).verdict == "unknown"
-
-    def test_cabinet_ostp_scope_difference_is_different(self):
-        pm_cab = {
-            "id": 7001,
-            "name": "Who will be the first to leave the Trump Cabinet before 2027?",
-            "source": "polymarket",
-            "external_id": "pm-cab-1",
-            "llm_sport_category": "politics",
-            "description": (
-                "Resolves to the first Senate-confirmed head of the 15 executive "
-                "departments to leave. Does not include the Director of the Office "
-                "of Science and Technology Policy (OSTP)."
-            ),
-        }
-        kalshi_cab = {
-            "id": 7002,
-            "name": "Who will be the first to leave the Trump Cabinet before 2027?",
-            "source": "kalshi",
-            "external_id": "KXCABOUT-27JAN01",
-            "llm_sport_category": "politics",
-            "description": (
-                "Resolves to the first member of the official White House Cabinet "
-                "roster including OSTP to vacate office."
-            ),
-        }
-        verdict = evaluate_departure_equivalence(pm_cab, kalshi_cab)
-        assert verdict.verdict == "different"
-        assert "predicate_mismatch" in verdict.reason
 
     def test_story_key_minting_admits_true_subjects_and_refuses_false_friends(self):
         assert (
@@ -766,10 +1001,19 @@ class TestDepartureMeaningEquivalenceAndF1Guard:
         )
 
 
-class TestThemeSlugOrderingAndSnapshotNonFold:
-    """WU-1 & WU-2: theme definitions, slug parsing, section ordering, and non-fold."""
+class TestActualAssemblyFoldProtection:
+    """Item 4 (N9): Protect the actual assembly path against folding cross-venue
+    same-title and different-month departure markets."""
 
-    def test_parse_theme_slug_emits_departure_family_and_role_while_keeping_ai_and_oscars_unchanged(self):
+    def test_default_class_rank_for_non_departure_themes_is_preserved(self):
+        assert dict(DEFAULT_CLASS_RANK) == {
+            "title": 0,
+            "advancement": 1,
+            "side_question": 2,
+        }
+        assert DEFAULT_OTHER_CLASS_RANK == 3
+
+    def test_parse_theme_slug_and_candidate_population(self):
         assert parse_theme_slug("katie-zacharia-press-secretary-2026") == {
             "kind": "theme_edition",
             "family": "departure",
@@ -791,7 +1035,6 @@ class TestThemeSlugOrderingAndSnapshotNonFold:
             "edition": 2027,
         }
 
-    def test_candidate_population_uses_postgres_word_boundaries(self):
         dialect = postgresql.dialect()
         for defn in (
             KATIE_ZACHARIA_PRESS_SECRETARY_2026,
@@ -807,55 +1050,100 @@ class TestThemeSlugOrderingAndSnapshotNonFold:
             assert r"\y" in compiled
             assert r"\b" not in compiled
 
-    def test_build_snapshot_orders_departure_sections_and_never_folds_same_venue_deadline_legs(self):
+    def test_build_snapshot_fold_trap_regression_fails_if_departure_guard_is_removed(self):
+        """Regression guard for N9: includes cross-venue identical-title departure
+        markets (`65265180` Polymarket vs `99000010` Kalshi on `"Katie Zacharia out
+        as Press Secretary by October 31?"`, plus `"by December 31?"` pair).
+        Proves that:
+        1. `ta.build_snapshot` keeps `folded_ids == ()` and all members in `shown_ids`.
+        2. Removing the `resolved_defn.family == "departure"` guard causes
+           `ta.build_snapshot` to fold `99000010` and `99000011` into `folded_ids`.
+        """
         pm_oct = ta.MemberRow(
-            id=65678073,
+            id=65265180,
             name="Katie Zacharia out as Press Secretary by October 31?",
             source="polymarket",
-            external_id="0x57e9",
-            status="open",
+            external_id="0x57e97ab7f68a11013e7e4096ce6b0601b40b9e5a8609c4cb4196ef1b753e6953",
+            status="resolved",
             llm_sport_category="politics",
             resolution_date=datetime(2026, 11, 1, 3, 59, tzinfo=timezone.utc),
+            settled_at=datetime(2026, 10, 16, 22, 57, tzinfo=timezone.utc),
+            description=PM_1183118_FULL_RULES,
+            market_metadata={"polymarket_event_id": "1183118", "group_id": "polymarket:1183118"},
             outcomes=(
-                ta.OutcomeRow("Yes", None, None, 0.073, 1),
-                ta.OutcomeRow("No", None, None, 0.927, 2),
+                ta.OutcomeRow("Yes", True, "api_settlement", 1.0, 1),
+                ta.OutcomeRow("No", False, "api_settlement", 0.0, 2),
             ),
         )
         pm_dec = ta.MemberRow(
             id=65678074,
             name="Katie Zacharia out as Press Secretary by December 31?",
             source="polymarket",
-            external_id="0xc587",
+            external_id="0xc587f97b3eaac5948ed7e148bb5248f51f98795ea0e1c3bc9acf635b0a2f95b0",
             status="open",
             llm_sport_category="politics",
             resolution_date=datetime(2027, 1, 1, 4, 59, tzinfo=timezone.utc),
+            description=PM_1183118_FULL_RULES,
+            market_metadata={"polymarket_event_id": "1183118", "group_id": "polymarket:1183118"},
             outcomes=(
                 ta.OutcomeRow("Yes", None, None, 0.245, 3),
                 ta.OutcomeRow("No", None, None, 0.755, 4),
             ),
         )
-        kalshi = ta.MemberRow(
-            id=900000001,
-            name="Katie Zacharia out as White House Press Secretary?",
+        k_same_title_oct = ta.MemberRow(
+            id=99000010,
+            name="Katie Zacharia out as Press Secretary by October 31?",
+            source="kalshi",
+            external_id="KXZACHARIAOUT-26OCT-T261101",
+            status="open",
+            llm_sport_category="politics",
+            resolution_date=datetime(2026, 11, 1, 3, 59, tzinfo=timezone.utc),
+            market_metadata={
+                "series_ticker": "KXZACHARIAOUT",
+                "event_ticker": "KXZACHARIAOUT-26OCT",
+                "rules_primary": KALSHI_KXZACHARIAOUT_PRIMARY_RULES,
+                "rules_secondary": KALSHI_KXZACHARIAOUT_SECONDARY_RULES,
+            },
+            outcomes=(
+                ta.OutcomeRow("Yes", None, None, 0.42, 5),
+                ta.OutcomeRow("No", None, None, 0.58, 6),
+            ),
+        )
+        k_same_title_dec = ta.MemberRow(
+            id=99000011,
+            name="Katie Zacharia out as Press Secretary by December 31?",
+            source="kalshi",
+            external_id="KXZACHARIAOUT-26OCT-T270101",
+            status="open",
+            llm_sport_category="politics",
+            resolution_date=datetime(2027, 1, 1, 4, 59, tzinfo=timezone.utc),
+            market_metadata={
+                "series_ticker": "KXZACHARIAOUT",
+                "event_ticker": "KXZACHARIAOUT-26OCT",
+                "rules_secondary": KALSHI_KXZACHARIAOUT_SECONDARY_RULES,
+            },
+            outcomes=(
+                ta.OutcomeRow("Yes", None, None, 0.36, 7),
+                ta.OutcomeRow("No", None, None, 0.64, 8),
+            ),
+        )
+        k_ladder = ta.MemberRow(
+            id=62603363,
+            name="Will Katie Zacharia leave her role as White House Press Secretary?",
             source="kalshi",
             external_id="KXZACHARIAOUT-26OCT",
             status="open",
             llm_sport_category="politics",
+            resolution_date=datetime(2029, 1, 1, 4, 59, tzinfo=timezone.utc),
+            market_metadata={
+                "series_ticker": "KXZACHARIAOUT",
+                "event_ticker": "KXZACHARIAOUT-26OCT",
+                "rules_primary": KALSHI_KXZACHARIAOUT_PRIMARY_RULES,
+                "rules_secondary": KALSHI_KXZACHARIAOUT_SECONDARY_RULES,
+            },
             outcomes=(
                 ta.OutcomeRow("Before Jan 1, 2029", None, None, 0.85, 11),
                 ta.OutcomeRow("Before Nov 1, 2026", None, None, 0.10, 12),
-            ),
-        )
-        briefing = ta.MemberRow(
-            id=65809353,
-            name="Will Katie Zacharia give another press briefing as Press Secretary?",
-            source="polymarket",
-            external_id="pm-briefing",
-            status="open",
-            llm_sport_category="politics",
-            outcomes=(
-                ta.OutcomeRow("Yes", None, None, 0.99, 21),
-                ta.OutcomeRow("No", None, None, 0.037, 22),
             ),
         )
         new_role = ta.MemberRow(
@@ -865,61 +1153,254 @@ class TestThemeSlugOrderingAndSnapshotNonFold:
             external_id="pm-new-role",
             status="open",
             llm_sport_category="politics",
+            resolution_date=datetime(2027, 1, 1, 4, 59, tzinfo=timezone.utc),
             outcomes=(
                 ta.OutcomeRow("Yes", None, None, 0.28, 31),
                 ta.OutcomeRow("No", None, None, 0.72, 32),
             ),
         )
+        briefing = ta.MemberRow(
+            id=65809353,
+            name="Will Katie Zacharia give another press briefing as Press Secretary?",
+            source="polymarket",
+            external_id="pm-briefing",
+            status="open",
+            llm_sport_category="politics",
+            resolution_date=datetime(2027, 1, 1, 4, 59, tzinfo=timezone.utc),
+            outcomes=(
+                ta.OutcomeRow("Yes", None, None, 0.035, 21),
+                ta.OutcomeRow("No", None, None, 0.965, 22),
+            ),
+        )
 
+        rows = {
+            r.id: r
+            for r in (
+                pm_oct,
+                pm_dec,
+                k_same_title_oct,
+                k_same_title_dec,
+                k_ladder,
+                new_role,
+                briefing,
+            )
+        }
         members = {
+            rid: KATIE_ZACHARIA_PRESS_SECRETARY_2026.decide(row, now=NOW).edge_class
+            for rid, row in rows.items()
+        }
+        assert members == {
+            65265180: "departure_announced",
+            65678074: "departure_announced",
+            99000010: "departure_vacated",
+            99000011: "departure_vacated",
+            62603363: "departure_vacated",
             66944824: "after_role",
             65809353: "side_question",
-            900000001: "departure_vacated",
-            65678074: "departure_announced",
-            65678073: "departure_announced",
         }
-        rows = {r.id: r for r in (pm_oct, pm_dec, kalshi, briefing, new_role)}
+
+        container = {
+            "id": 911040,
+            "slug": "katie-zacharia-press-secretary-2026",
+            "name": "Katie Zacharia",
+        }
         snap = ta.build_snapshot(
-            {
-                "id": 911040,
-                "slug": "katie-zacharia-press-secretary-2026",
-                "name": "Katie Zacharia",
-            },
+            container,
             revision=7,
             members=members,
             rows=rows,
             inventory_complete=True,
+            defn=KATIE_ZACHARIA_PRESS_SECRETARY_2026,
         )
         assert snap.folded_ids == ()
-        assert snap.shown_ids == (65678073, 65678074, 900000001, 65809353, 66944824)
-        assert snap.shown_count == 5 and snap.eligible_count == 5
+        # Note: after_role (66944824) ranks before side_question (65809353) per DEPARTURE_ORDER.
+        assert snap.shown_ids == (
+            65265180,
+            65678074,
+            62603363,
+            99000010,
+            99000011,
+            66944824,
+            65809353,
+        )
+        assert snap.shown_count == 7 and snap.eligible_count == 7
+
+        # Prove this test fails if the `family == "departure"` fold skip in
+        # `theme_assembly.build_snapshot` is removed.
+        unguarded_defn = dataclasses.replace(
+            KATIE_ZACHARIA_PRESS_SECRETARY_2026, family=None
+        )
+        unguarded_snap = ta.build_snapshot(
+            container,
+            revision=7,
+            members=members,
+            rows=rows,
+            inventory_complete=True,
+            defn=unguarded_defn,
+        )
+        assert 99000010 in unguarded_snap.folded_ids
+        assert 99000011 in unguarded_snap.folded_ids
+        assert 99000010 not in unguarded_snap.shown_ids
+
+    @pytest.mark.asyncio
+    async def test_run_assemble_theme_collections_end_to_end_preserves_cross_venue_same_title_members(
+        self, monkeypatch
+    ):
+        """Exercises `_run_assemble_theme_collections` through edge upserts,
+        decision rows, and Redis snapshot publication on `katie-zacharia-press-secretary-2026`."""
+        from tests.test_theme_assembly_9935 import _FakeDB, _FakeRedis
+
+        database = _FakeDB()
+        redis_client = _FakeRedis()
+
+        @asynccontextmanager
+        async def _session():
+            yield database.session()
+
+        async def _page_ids(session, defn, container_id, now, cursor, limit):
+            prior = {
+                child for (cid, child) in session.work["decisions"] if cid == container_id
+            }
+            ids = sorted((database.population.get(defn.slug(), set()) | prior))
+            return [i for i in ids if i > cursor][:limit]
+
+        async def _load_markets(session, ids):
+            return {i: database.markets[i] for i in ids if i in database.markets}
+
+        import app.tasks.base
+
+        monkeypatch.setattr(app.tasks.base, "get_task_session", _session)
+        monkeypatch.setattr(ta, "_page_ids", _page_ids)
+        monkeypatch.setattr(ta, "_load_markets", _load_markets)
+        monkeypatch.setattr(ta, "_redis_client", lambda: redis_client)
+        monkeypatch.setenv(ta.THEME_ASSEMBLY_ENABLED_ENV, "1")
+
+        slug = "katie-zacharia-press-secretary-2026"
+        pm_oct = ta.MemberRow(
+            id=65265180,
+            name="Katie Zacharia out as Press Secretary by October 31?",
+            source="polymarket",
+            external_id="0x57e9",
+            status="resolved",
+            llm_sport_category="politics",
+            resolution_date=datetime(2026, 11, 1, 3, 59, tzinfo=timezone.utc),
+            settled_at=datetime(2026, 10, 16, 22, 57, tzinfo=timezone.utc),
+            description=PM_1183118_FULL_RULES,
+            market_metadata={"polymarket_event_id": "1183118", "group_id": "polymarket:1183118"},
+            outcomes=(
+                ta.OutcomeRow("Yes", True, "api_settlement", 1.0, 1),
+                ta.OutcomeRow("No", False, "api_settlement", 0.0, 2),
+            ),
+        )
+        k_same_title_oct = ta.MemberRow(
+            id=99000010,
+            name="Katie Zacharia out as Press Secretary by October 31?",
+            source="kalshi",
+            external_id="KXZACHARIAOUT-26OCT-T261101",
+            status="open",
+            llm_sport_category="politics",
+            resolution_date=datetime(2026, 11, 1, 3, 59, tzinfo=timezone.utc),
+            market_metadata={
+                "series_ticker": "KXZACHARIAOUT",
+                "event_ticker": "KXZACHARIAOUT-26OCT",
+                "rules_primary": KALSHI_KXZACHARIAOUT_PRIMARY_RULES,
+                "rules_secondary": KALSHI_KXZACHARIAOUT_SECONDARY_RULES,
+            },
+            outcomes=(
+                ta.OutcomeRow("Yes", None, None, 0.42, 5),
+                ta.OutcomeRow("No", None, None, 0.58, 6),
+            ),
+        )
+        k_later_series_event = ta.MemberRow(
+            id=99000028,
+            name="Will Katie Zacharia be out as White House Press Secretary before Jan 1, 2028?",
+            source="kalshi",
+            external_id="KXZACHARIAOUT-28JAN-T280101",
+            status="open",
+            llm_sport_category="politics",
+            resolution_date=datetime(2028, 1, 1, 4, 59, tzinfo=timezone.utc),
+            market_metadata={
+                "series_ticker": "KXZACHARIAOUT",
+                "event_ticker": "KXZACHARIAOUT-28JAN",
+                "rules_secondary": KALSHI_KXZACHARIAOUT_SECONDARY_RULES,
+            },
+            outcomes=(
+                ta.OutcomeRow("Yes", None, None, 0.81, 9),
+                ta.OutcomeRow("No", None, None, 0.19, 10),
+            ),
+        )
+        false_friend = ta.MemberRow(
+            id=8122710,
+            name="Offensive Rookie of the Year Winner?",
+            source="kalshi",
+            external_id="KXOROY-26",
+            status="open",
+            llm_sport_category="football",
+            outcomes=(ta.OutcomeRow("Zachariah Branch", None, None, 0.15, 20),),
+        )
+
+        database.add_markets(
+            pm_oct, k_same_title_oct, k_later_series_event, false_friend, slug=slug
+        )
+        report = await ta._run_assemble_theme_collections(only=slug, now=NOW)
+        assert report["terminal"] == "complete"
+        assert database.theme_edges(slug) == {
+            65265180: "departure_announced",
+            99000010: "departure_vacated",
+            99000028: "departure_rules_unread",
+        }
+        assert database.decision(slug, 8122710)["outcome"] == "excluded"
+        assert database.decision(slug, 8122710)["reason"] == "lexical_false_friend"
+
+        cid = database.container_id(slug)
+        rev = database.revision(slug)
+        snap = json.loads(redis_client.store[ta.snapshot_key(cid, rev)])
+        assert snap["folded_ids"] == []
+        assert snap["shown_ids"] == [65265180, 99000010, 99000028]
 
     def test_theme_page_window_and_section_order_keep_departure_order_and_unclassified_last(self):
-        shown_ids = [65678073, 65678074, 900000001, 8422080, 8422081, 65809353, 66944824, 999999999]
+        shown_ids = [
+            65678073,
+            65678074,
+            900000001,
+            8422080,
+            8422081,
+            66944824,
+            65809353,
+            999999999,
+        ]
         classes = {
             65678073: "departure_announced",
             65678074: "departure_announced",
             900000001: "departure_vacated",
             8422080: "departure_rules_unread",
             8422081: "departure_left_administration",
-            65809353: "side_question",
             66944824: "after_role",
+            65809353: "side_question",
             999999999: CLASS_UNCLASSIFIED,
         }
-        for defn in (KATIE_ZACHARIA_PRESS_SECRETARY_2026, None):
-            window = theme_page_window(
-                shown_ids, classes, cursor_key=None, limit=50, defn=defn
-            )
-            assert window == (shown_ids, None)
-            ordered_sections = _theme_order_classes(set(classes.values()), defn=defn)
-            assert ordered_sections == list(DEPARTURE_ORDER) + [CLASS_UNCLASSIFIED]
+        defn = KATIE_ZACHARIA_PRESS_SECRETARY_2026
+        window = theme_page_window(
+            shown_ids, classes, cursor_key=None, limit=50, defn=defn
+        )
+        assert window == (shown_ids, None)
+        ordered_sections = _theme_order_classes(set(classes.values()), defn=defn)
+        assert ordered_sections == list(DEPARTURE_ORDER) + [CLASS_UNCLASSIFIED]
+        assert _theme_order_classes(
+            {"title", "advancement", "side_question", CLASS_UNCLASSIFIED}, defn=None
+        ) == ["title", "advancement", "side_question", CLASS_UNCLASSIFIED]
 
 
 class TestSearchFuturesFamilyCollectionRef:
-    """WU-2: Search futures_families carry collection_ref even when event_ids is empty."""
+    """WU-2 + N2: Search futures_families carry collection_ref when both Search
+    collection switches (`CONTAINER_DISCOVERY_ENABLED` and `CONTAINERS_READ_ENABLED`)
+    are enabled, and never bypass `CONTAINER_DISCOVERY_ENABLED`."""
 
     @pytest.mark.asyncio
-    async def test_attach_search_collections_attaches_ref_to_futures_family(self, monkeypatch):
+    async def test_attach_search_collections_attaches_ref_when_both_switches_enabled(
+        self, monkeypatch
+    ):
+        monkeypatch.setenv("CONTAINER_DISCOVERY_ENABLED", "true")
         monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
         payload = {
             "query": "katie zacharia",
@@ -927,9 +1408,15 @@ class TestSearchFuturesFamilyCollectionRef:
             "futures_families": [
                 {
                     "family_key": "polymarket:1183118",
-                    "headline": {"id": 65678073, "name": "Katie Zacharia out as Press Secretary by October 31?"},
+                    "headline": {
+                        "id": 65678073,
+                        "name": "Katie Zacharia out as Press Secretary by October 31?",
+                    },
                     "members": [
-                        {"id": 65678074, "name": "Katie Zacharia out as Press Secretary by December 31?"},
+                        {
+                            "id": 65678074,
+                            "name": "Katie Zacharia out as Press Secretary by December 31?",
+                        },
                     ],
                 }
             ],
@@ -941,14 +1428,32 @@ class TestSearchFuturesFamilyCollectionRef:
             "collection_count": 5,
         }
         published = PublishedThemes(
-            themes=(PublishedTheme(container_id=911040, slug="katie-zacharia-press-secretary-2026", revision=7),)
+            themes=(
+                PublishedTheme(
+                    container_id=911040,
+                    slug="katie-zacharia-press-secretary-2026",
+                    revision=7,
+                ),
+            )
         )
 
-        async def _fake_attach(items, *, published, budget_seconds=0.25, read_snapshot=None, session_factory=None):
+        async def _fake_attach(
+            items,
+            *,
+            published,
+            budget_seconds=0.25,
+            read_snapshot=None,
+            session_factory=None,
+        ):
             assert len(items) == 1
             assert items[0]["data"]["story_key"] == "polymarket:1183118"
             assert items[0]["data"]["member_ids"] == [65678073, 65678074]
-            return [{**items[0], "data": {**items[0]["data"], "collection_ref": expected_ref}}]
+            return [
+                {
+                    **items[0],
+                    "data": {**items[0]["data"], "collection_ref": expected_ref},
+                }
+            ]
 
         with (
             patch(
@@ -966,7 +1471,35 @@ class TestSearchFuturesFamilyCollectionRef:
         assert "collection_ref" not in payload["futures_families"][0]
 
     @pytest.mark.asyncio
+    async def test_attach_search_collections_respects_container_discovery_switch(
+        self, monkeypatch
+    ):
+        """N2 guard: when `CONTAINERS_READ_ENABLED=true` but `CONTAINER_DISCOVERY_ENABLED`
+        is unset/false, `attach_search_collections` does not bypass `search_collections_enabled()`."""
+        monkeypatch.delenv("CONTAINER_DISCOVERY_ENABLED", raising=False)
+        monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+        payload = {
+            "query": "katie zacharia",
+            "results": [],
+            "futures_families": [
+                {
+                    "family_key": "polymarket:1183118",
+                    "headline": {"id": 65678073},
+                    "members": [{"id": 65678074}],
+                }
+            ],
+        }
+        with patch(
+            "app.utils.theme_collection_ref.read_published_themes",
+            new=AsyncMock(side_effect=AssertionError("should not be called when switch is off")),
+        ):
+            out = await attach_search_collections(AsyncMock(), payload)
+        assert out is payload
+        assert "collection_ref" not in payload["futures_families"][0]
+
+    @pytest.mark.asyncio
     async def test_attach_search_collections_family_ref_fails_open(self, monkeypatch):
+        monkeypatch.setenv("CONTAINER_DISCOVERY_ENABLED", "true")
         monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
         payload = {
             "query": "katie zacharia",
@@ -984,4 +1517,4 @@ class TestSearchFuturesFamilyCollectionRef:
         ):
             out = await attach_search_collections(AsyncMock(), payload)
         assert out is payload
-        assert "collection_ref" not in out["futures_families"][0]
+        assert "collection_ref" not in payload["futures_families"][0]
