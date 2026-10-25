@@ -409,7 +409,141 @@ class TestOverlappingWriters:
         out = await _warm(racing, arm, shed=True)
 
         assert racing.get(KEY) is None
-        assert out["reason"] == "superseded"
+        # F1: nothing usable is stored, so this is the master grading — not an
+        # ok `superseded` over an empty slot.
+        assert out["reason"] == "no_write" and out["ok"] is False
+
+    async def test_a_complete_answer_landing_over_a_full_ttl_is_still_superseded(
+        self, racing, arm
+    ):
+        """The ceiling case (LAT-P270): the slot was at a full TTL when read and
+        the other writer's entry lands at a full TTL too — `65 > 65` is false."""
+        racing.setex(KEY, RESPONSE_CACHE_TTL_S, OTHER_THIN)
+        racing.between = lambda: racing.setex(KEY, RESPONSE_CACHE_TTL_S, COMPLETE_BYTES)
+
+        out = await _warm(racing, arm, shed=True)
+
+        assert out["ttl_before"] == RESPONSE_CACHE_TTL_S
+        assert out["reason"] == "superseded" and out["ok"] is True
+
+
+class _RefusingRedis(FakeRedis):
+    """A Redis that REFUSES writes, as an OOM'd or read-only one does. The
+    compare-and-set swallows the error and reports False — the same answer it
+    gives when another writer landed. #10225 F1."""
+
+    def __init__(self, *, refuse_setex: bool = False):
+        super().__init__()
+        self.refuse_setex = refuse_setex
+        self.refusing = False
+
+    def eval(self, script, numkeys, *args):
+        if self.refusing:
+            raise RuntimeError("OOM command not allowed when used memory > 'maxmemory'")
+        return super().eval(script, numkeys, *args)
+
+    def setex(self, k, ttl, v):
+        if self.refusing and self.refuse_setex:
+            raise RuntimeError("OOM command not allowed when used memory > 'maxmemory'")
+        return super().setex(k, ttl, v)
+
+
+def _install(monkeypatch, client):
+    monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda *a, **k: client)
+    monkeypatch.setattr(events_mod, "get_redis_client", lambda *a, **k: client, raising=False)
+    monkeypatch.setattr(warmer, "get_redis_client", lambda *a, **k: client, raising=False)
+    monkeypatch.setenv("BYPASS_RATE_LIMITS", "1")
+    return client
+
+
+def _pass_harness(monkeypatch):
+    """Run `_warm_typeahead` for real with its locks and ring bookkeeping stubbed."""
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _sess():
+        yield _session()
+
+    monkeypatch.setattr("app.tasks.base.get_task_session", _sess)
+    monkeypatch.setattr(warmer, "_acquire_run_lock", lambda: "tok")
+    monkeypatch.setattr(warmer, "_release_run_lock", lambda *a: None)
+    monkeypatch.setattr(warmer, "_renew_run_lock", lambda *a: True)
+    monkeypatch.setattr(warmer, "_seconds_since_last_pass", lambda now: None)
+    monkeypatch.setattr(warmer, "_record_pass_start", lambda now: None)
+    monkeypatch.setattr(warmer, "_record_outcome", lambda *a, **k: None)
+    monkeypatch.setattr(warmer, "REFRESH_AHEAD_SECONDS", 10_000)
+
+
+class TestARefusedWriteIsNotSuperseded:
+    """#10225 F1 (lane1's review of ae8115331a). RED on that head: a shed term
+    over an empty slot with Redis refusing writes read `superseded`, ok,
+    `terminal=complete`, with nothing stored. Master graded it `no_write`."""
+
+    @pytest.mark.parametrize("refuse_setex", [False, True], ids=["eval", "eval+setex"])
+    async def test_a_shed_term_over_an_empty_slot_is_a_no_write(
+        self, monkeypatch, arm, refuse_setex
+    ):
+        client = _install(monkeypatch, _RefusingRedis(refuse_setex=refuse_setex))
+        client.refusing = True
+
+        out = await _warm(client, arm, shed=True)
+
+        assert client.get(KEY) is None
+        assert out["reason"] == "no_write" and out["ok"] is False
+
+    @pytest.mark.parametrize("refuse_setex", [False, True], ids=["eval", "eval+setex"])
+    async def test_the_pass_reports_the_defect_as_master_does(
+        self, monkeypatch, arm, refuse_setex
+    ):
+        client = _install(monkeypatch, _RefusingRedis(refuse_setex=refuse_setex))
+        client.refusing = True
+        arm.shed = True
+        _pass_harness(monkeypatch)
+
+        summary = await warmer._warm_typeahead(queries=[Q], concurrency=1)
+
+        assert summary["no_writes"] == [Q]
+        assert summary["superseded"] == []
+        assert summary["warmed"] == 0
+        assert summary["terminal"] == "partial"
+
+    async def test_a_live_thin_entry_plus_a_refused_write_is_a_no_write(
+        self, monkeypatch, arm
+    ):
+        """Its TTL has decayed and nobody rewrote it, so the re-read cannot
+        mistake it for another writer's entry."""
+        client = _install(monkeypatch, _RefusingRedis())
+        await _warm(client, arm, shed=True)
+        client.now += 30
+        client.refusing = True
+
+        out = await _warm(client, arm, shed=True)
+
+        assert _is_thin(_stored(client))
+        assert out["ttl_after"] == RESPONSE_CACHE_TTL_S - 30
+        assert out["reason"] == "no_write" and out["ok"] is False
+
+    async def test_an_unreadable_re_read_is_unverified_not_graded(
+        self, racing, arm, monkeypatch
+    ):
+        """Redis silent on the TTL re-read: the instrument is out, so neither an
+        ok `superseded` nor a `no_write` defect — the `warmed_unverified` rule."""
+        reads = {"n": 0}
+        real_ttl = racing.ttl
+
+        def _ttl(k):
+            reads["n"] += 1
+            if reads["n"] > 1:
+                raise ConnectionError("redis went away")
+            return real_ttl(k)
+
+        racing.ttl = _ttl
+        racing.between = lambda: racing.setex(KEY, RESPONSE_CACHE_TTL_S, COMPLETE_BYTES)
+
+        out = await _warm(racing, arm, shed=True)
+
+        assert out["reason"] == "superseded_unverified"
+        assert out["ok"] is True and out["ttl_after"] is None
 
 
 class TestReaderSemanticsAreUnchanged:
@@ -448,27 +582,26 @@ class TestThePassSummary:
         await _warm(rc, arm, shed=False)
         rc.now += 40
         arm.shed = True
-
-        from contextlib import asynccontextmanager
-
-        @asynccontextmanager
-        async def _sess():
-            yield _session()
-
-        monkeypatch.setattr("app.tasks.base.get_task_session", _sess)
-        monkeypatch.setattr(warmer, "_acquire_run_lock", lambda: "tok")
-        monkeypatch.setattr(warmer, "_release_run_lock", lambda *a: None)
-        monkeypatch.setattr(warmer, "_renew_run_lock", lambda *a: True)
-        monkeypatch.setattr(warmer, "_seconds_since_last_pass", lambda now: None)
-        monkeypatch.setattr(warmer, "_record_pass_start", lambda now: None)
-        monkeypatch.setattr(warmer, "_record_outcome", lambda *a, **k: None)
-        monkeypatch.setattr(warmer, "REFRESH_AHEAD_SECONDS", 10_000)
+        _pass_harness(monkeypatch)
 
         summary = await warmer._warm_typeahead(queries=[Q], concurrency=1)
 
         assert summary["retained"] == [Q]
         assert summary["no_writes"] == []
         assert summary["rebuilt"] == 0
+        assert summary["terminal"] == "complete"
+
+    async def test_a_verified_superseded_term_is_ok_and_listed(
+        self, racing, arm, monkeypatch
+    ):
+        racing.between = lambda: racing.setex(KEY, RESPONSE_CACHE_TTL_S, COMPLETE_BYTES)
+        arm.shed = True
+        _pass_harness(monkeypatch)
+
+        summary = await warmer._warm_typeahead(queries=[Q], concurrency=1)
+
+        assert summary["superseded"] == [Q]
+        assert summary["no_writes"] == [] and summary["unverified"] == 0
         assert summary["terminal"] == "complete"
 
 

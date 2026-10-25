@@ -733,6 +733,19 @@ def _cache_ttl_seconds(q: str) -> int | None:
     return None if ttl is None else int(ttl)
 
 
+def _ttl_shows_a_write(ttl_before: int | None, ttl_after: int) -> bool:
+    """Does a READABLE post-write TTL prove an entry was written since `ttl_before`?
+
+    Yes when it moved up, or when it sits at a full TTL. The ceiling clause is
+    LAT-P270/#3398: an entry already at a full TTL is rewritten to exactly
+    `RESPONSE_CACHE_TTL_S`, `65 > 65` is false, and "it moved up" alone would
+    call a good write `no_write`. A full TTL IS a write landing: nothing but a
+    write can produce it, and an entry nobody rewrote would be strictly younger.
+    """
+    floor = ttl_before if ttl_before is not None and ttl_before >= 0 else -1
+    return ttl_after > floor or ttl_after >= RESPONSE_CACHE_TTL_S
+
+
 async def _warm_one(session, q: str, refresh_ahead: int = REFRESH_AHEAD_SECONDS) -> dict:
     """Run ONE query through the route's own code path. Never raises."""
     from app.routes.events import (
@@ -848,10 +861,37 @@ async def _warm_one(session, q: str, refresh_ahead: int = REFRESH_AHEAD_SECONDS)
     # invent a refresh that never happened. It is its own outcome, and so is
     # losing the compare-and-set to another writer. Neither is `rebuilt`.
     write = receipt.get("write")
-    if write in (_TA_CACHE_RETAINED, _TA_CACHE_SUPERSEDED):
+    if write == _TA_CACHE_RETAINED:
         return {"q": q, "ok": True, "reason": write,
                 "ttl_before": ttl_before, "rebuilt": False,
                 "ttl_after": _cache_ttl_seconds(q),
+                "seconds": round(time.monotonic() - started, 3)}
+
+    ttl_after = _cache_ttl_seconds(q)
+
+    # 🔴 #10225 F1: `superseded` IS A CLAIM ABOUT ANOTHER WRITER, SO IT IS CHECKED.
+    #
+    # The compare-and-set fails CLOSED and swallows its error, so a Redis that
+    # REFUSED the write (OOM, read-only replica) reports exactly what "another
+    # writer landed" reports. Trusted as-is, a shed term over an empty slot read
+    # `superseded`, ok, `terminal=complete` with NOTHING stored — while the same
+    # failure on a complete term read `no_write`. That is the #3399 defect signal
+    # LAT-P241 relies on, silenced for exactly the terms that shed. So the
+    # receipt only says WHY ours was not stored; the TTL re-read says whether
+    # anything usable is there. Another writer's entry is fresh (it moved up, or
+    # sits at a full TTL); an empty slot, an expired one, or a live thin entry
+    # still running down on its old clock is `no_write` — the master grading.
+    if write == _TA_CACHE_SUPERSEDED:
+        if ttl_after is None:
+            # Unreadable instrument, as for `warmed_unverified` below: not a
+            # defect, and counted as unverified rather than graded either way.
+            reason, rebuilt = "superseded_unverified", False
+        elif _ttl_shows_a_write(ttl_before, ttl_after):
+            reason, rebuilt = "superseded", False
+        else:
+            reason, rebuilt = "no_write", True
+        return {"q": q, "ok": reason != "no_write", "reason": reason,
+                "ttl_before": ttl_before, "rebuilt": rebuilt, "ttl_after": ttl_after,
                 "seconds": round(time.monotonic() - started, 3)}
 
     # 🔴 "IT RETURNED" IS NOT "IT WROTE" (`app/utils/task_verdict.py`, gotcha #53).
@@ -880,14 +920,10 @@ async def _warm_one(session, q: str, refresh_ahead: int = REFRESH_AHEAD_SECONDS)
     # Reachable whenever a user's organic miss writes the same key in the second
     # before this pass read its TTL. Rare, and a false defect is still a lying
     # instrument, which is the one thing this file does not do.
-    ttl_after = _cache_ttl_seconds(q)
     if ttl_after is None:
         reason = "warmed_unverified"
-    elif ttl_after > (ttl_before if ttl_before is not None and ttl_before >= 0 else -1):
-        reason = "warmed"
-    elif ttl_after >= RESPONSE_CACHE_TTL_S:
-        # A full TTL IS the write landing: nothing but a write can produce it,
-        # and an entry the route declined to rebuild would be strictly younger.
+    elif _ttl_shows_a_write(ttl_before, ttl_after):
+        # Moved up, or a full TTL — the ceiling case is in the helper.
         reason = "warmed"
     else:
         reason = "no_write"
@@ -1285,7 +1321,9 @@ async def _warm_typeahead(
     # Folding it into `warmed` alone and leaving it out here would make a Redis
     # blink read as "the threshold did not fire", which is the opposite diagnosis.
     rebuilt = [r for r in results if r["reason"] in ("warmed", "warmed_unverified")]
-    unverified = [r for r in results if r["reason"] == "warmed_unverified"]
+    unverified = [
+        r for r in results if r["reason"] in ("warmed_unverified", "superseded_unverified")
+    ]
     # 🔴 THE ROUTE RAN AND NOTHING WAS WRITTEN. Its own category, and it counts
     # against `terminal` below: a pass that warmed nothing must never report
     # `complete`. This is the state `_force_cache_rebuild` failing to reach the
@@ -1295,7 +1333,11 @@ async def _warm_typeahead(
     # #10225: the route declined to store a shed rebuild — a complete entry was
     # live (`retained`), or the entry changed under the write (`superseded`).
     retained = [r for r in results if r["reason"] == "retained"]
-    superseded = [r for r in results if r["reason"] == "superseded"]
+    # #10225 F1: only a superseded write whose TTL re-read showed another
+    # writer's entry; an unverifiable one is listed here AND counted unverified.
+    superseded = [
+        r for r in results if r["reason"] in ("superseded", "superseded_unverified")
+    ]
     # `_TTL_NO_KEY` exactly, never "falsy" and never "<= 0": `None` means Redis
     # did not answer and `_TTL_NO_EXPIRY` (-1) means a key with no expiry. All
     # three are non-positive and all three mean different things.
