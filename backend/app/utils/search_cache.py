@@ -66,6 +66,7 @@ from typing import Any, Optional
 from app.utils.resolution_authority import (
     AUTHORITATIVE_SOURCES,
     DETERMINISTIC_SOURCES,
+    KNOWN_SOURCES,
     TERMINAL_SOURCES,
     is_authoritative,
 )
@@ -322,6 +323,14 @@ _CLOB_PRICE_INFERRED_SOURCES: frozenset[str] = frozenset(
         "clob_ordinal",
     }
 )
+_NON_POLY_SETTLEMENT_VENUES: frozenset[str] = frozenset(
+    {
+        "kalshi",
+        "odds_api",
+        "statpal",
+        "datagolf",
+    }
+)
 _LEGACY_ROW_PREDICTION_CLAIMS: tuple[str, ...] = (
     "hook_description",
     "leader",
@@ -393,18 +402,25 @@ def is_current_represented_futures_row(row: Any) -> bool:
     if not isinstance(top_outcomes, list):
         return False
     market_status = row.get("status")
+    market_source = row.get("source")
+    requires_poly_contract = (
+        market_source == "polymarket" and market_status == "resolved"
+    )
     for outcome in top_outcomes:
         if not isinstance(outcome, dict):
             return False
         if (
-            "rendered_percent" not in outcome
+            "name" not in outcome
+            or "probability" not in outcome
+            or "rendered_percent" not in outcome
             or "is_winner" not in outcome
             or "resolution_source" not in outcome
         ):
             return False
         prob = outcome.get("probability")
+        rendered_pct = outcome.get("rendered_percent")
         if prob is None:
-            if outcome.get("rendered_percent") is not None:
+            if rendered_pct is not None:
                 return False
             if outcome.get("movement") is not None:
                 return False
@@ -414,15 +430,47 @@ def is_current_represented_futures_row(row: Any) -> bool:
                 return False
             if outcome.get("matched_rank") is not None:
                 return False
+        else:
+            if not isinstance(prob, (int, float)) or isinstance(prob, bool):
+                return False
+            if not isinstance(rendered_pct, int) or isinstance(rendered_pct, bool):
+                return False
+
         is_winner = outcome.get("is_winner")
         res_source = outcome.get("resolution_source")
-        if is_winner is not None:
-            if not isinstance(is_winner, bool):
+        if is_winner is not None and not isinstance(is_winner, bool):
+            return False
+        if res_source is not None and not isinstance(res_source, str):
+            return False
+
+        sd = outcome.get("settlement_display")
+        if requires_poly_contract and not isinstance(sd, dict):
+            return False
+        if sd is not None:
+            if not isinstance(sd, dict):
                 return False
-            if not isinstance(res_source, str) or res_source not in _VALID_RESULT_SOURCES:
+            verdict = sd.get("verdict")
+            basis = sd.get("basis")
+            if verdict not in ("won", "lost", "unknown") or not isinstance(basis, str):
                 return False
-            if market_status == "open" and not (
-                is_winner is True and is_authoritative(res_source)
+            if verdict == "won":
+                if is_winner is not True or res_source not in _VALID_RESULT_SOURCES:
+                    return False
+            elif verdict == "lost":
+                if is_winner is not False or res_source not in _VALID_RESULT_SOURCES:
+                    return False
+            continue
+
+        # No settlement_display contract attached:
+        if res_source is None:
+            # Database default on ungraded rows is is_winner=False, resolution_source=None.
+            # An ungraded is_winner=True without a resolution_source or contract is invalid.
+            if is_winner is True:
+                return False
+        else:
+            if (
+                res_source != "ungradeable_result"
+                and res_source not in _VALID_RESULT_SOURCES
             ):
                 return False
     return True
@@ -435,6 +483,22 @@ def _clone_json(value: Any) -> Any:
     if isinstance(value, list):
         return [_clone_json(item) for item in value]
     return value
+
+
+def _nonterminal_or_missing_prob(raw_prob: Any) -> Optional[ float]:
+    """Pass through strictly non-terminal (0 < p < 1) numbers; treat 0/1/None as missing.
+
+    A cached served ``probability`` on a legacy row without an explicit
+    ``settlement_display`` contract is not a verified ``stored_probability``
+    because display normalization could have produced ``0`` or ``1``.
+    """
+    if (
+        isinstance(raw_prob, (int, float))
+        and not isinstance(raw_prob, bool)
+        and 0 < float(raw_prob) < 1
+    ):
+        return float(raw_prob)
+    return None
 
 
 def _adapt_legacy_outcome(
@@ -463,7 +527,7 @@ def _adapt_legacy_outcome(
         out["is_winner"] = None
         out["resolution_source"] = "ungradeable_result"
         if isinstance(contract, dict) or (
-            market_source == "polymarket" and market_status == "resolved"
+            market_source in ("polymarket", None) and market_status == "resolved"
         ):
             out["settlement_display"] = {
                 "verdict": "unknown",
@@ -487,6 +551,17 @@ def _adapt_legacy_outcome(
             out["settlement_display"] = {
                 "verdict": "unknown",
                 "basis": str(contract.get("basis") or "nonterminal_stored_price"),
+            }
+            return out
+        nonterminal_prob = _nonterminal_or_missing_prob(raw_prob)
+        if nonterminal_prob is not None:
+            out["is_winner"] = None
+            out["resolution_source"] = (
+                res_source if isinstance(res_source, str) else None
+            )
+            out["settlement_display"] = {
+                "verdict": "unknown",
+                "basis": "nonterminal_stored_price",
             }
             return out
         if (
@@ -523,28 +598,49 @@ def _adapt_legacy_outcome(
             out["resolution_source"] = None
             out.pop("settlement_display", None)
             return out
-        if res_source in _CLOB_PRICE_INFERRED_SOURCES or (
-            market_source == "polymarket"
-            and market_status == "resolved"
-            and raw_prob is not None
-        ):
+
+        # R2: Legacy resolved Polymarket rows without an explicit settlement_display
+        # contract must never emerge with a bare Won/Lost verdict, because a missing
+        # or cached-served probability cannot prove stored_terminal_agreement.
+        if market_source == "polymarket" and market_status == "resolved":
             sd = settlement_display(
                 is_winner=is_winner,
                 resolution_source=res_source,
-                stored_probability=raw_prob,
+                stored_probability=_nonterminal_or_missing_prob(raw_prob),
             )
-            if sd["verdict"] in ("won", "lost"):
-                out["is_winner"] = is_winner
-                out["resolution_source"] = res_source
-                if market_source == "polymarket" and market_status == "resolved":
-                    out["settlement_display"] = sd
-                else:
-                    out.pop("settlement_display", None)
-            else:
-                out["is_winner"] = None
-                out["resolution_source"] = res_source
-                out["settlement_display"] = sd
+            out["is_winner"] = None
+            out["resolution_source"] = res_source
+            out["settlement_display"] = sd
             return out
+
+        # C1: Source-less legacy rows (e.g. legacy typeahead suggestions) without
+        # an explicit settlement_display contract cannot prove non-Polymarket venue
+        # authority, so they must abstain from promoting Won/Lost.
+        if market_source not in _NON_POLY_SETTLEMENT_VENUES:
+            out["is_winner"] = None
+            out["resolution_source"] = None
+            if market_status == "resolved":
+                out["settlement_display"] = settlement_display(
+                    is_winner=is_winner,
+                    resolution_source=res_source,
+                    stored_probability=_nonterminal_or_missing_prob(raw_prob),
+                )
+            else:
+                out.pop("settlement_display", None)
+            return out
+
+        # CLOB price-inferred sources require a terminal settlement_display contract:
+        if res_source in _CLOB_PRICE_INFERRED_SOURCES:
+            sd = settlement_display(
+                is_winner=is_winner,
+                resolution_source=res_source,
+                stored_probability=_nonterminal_or_missing_prob(raw_prob),
+            )
+            out["is_winner"] = None
+            out["resolution_source"] = res_source
+            out["settlement_display"] = sd
+            return out
+
         out["is_winner"] = is_winner
         out["resolution_source"] = res_source
         out.pop("settlement_display", None)

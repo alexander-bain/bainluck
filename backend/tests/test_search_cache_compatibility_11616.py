@@ -67,7 +67,7 @@ def _make_outcome(
     name: str,
     probability: float | None,
     *,
-    is_winner: bool | None = None,
+    is_winner: bool | None = False,
     resolution_source: str | None = None,
     last_updated: datetime | None = None,
     price_changed_at: datetime | None = None,
@@ -77,10 +77,18 @@ def _make_outcome(
     rank: int | None = None,
     external_id: str | None = None,
 ) -> SimpleNamespace:
+    # Expand bare 1-2 uppercase shorthand test names ("A", "B") so
+    # outcome_display.is_placeholder_outcome_name (Ballon d'Or bare-code filter)
+    # does not mistake synthetic 2-leg test boards for anonymized placeholders.
+    safe_name = (
+        f"Contender {name}"
+        if len(name.strip()) <= 2 and name.strip().isalpha() and name.strip().isupper()
+        else name
+    )
     return SimpleNamespace(
         id=oid,
-        name=name,
-        outcome_name=name,
+        name=safe_name,
+        outcome_name=safe_name,
         current_probability=probability,
         opening_probability=opening_probability,
         probability_change_24h=probability_change_24h,
@@ -235,7 +243,7 @@ class TestProducerAttestationAndEligibility:
         assert adapted["top_outcomes"][0]["probability"] is None
         assert adapted["top_outcomes"][0]["rendered_percent"] is None
 
-        spoofed_default_false_winner = {
+        spoofed_ungraded_true_winner = {
             "id": 66031970,
             "name": "NBA MVP",
             "status": "open",
@@ -246,15 +254,42 @@ class TestProducerAttestationAndEligibility:
                     "probability": 0.275,
                     "rendered_percent": 28,
                     "movement": 0.04,
-                    "is_winner": False,
+                    "is_winner": True,
                     "resolution_source": None,
                 }
             ],
         }
-        assert not is_current_represented_futures_row(spoofed_default_false_winner)
-        adapted_false = adapt_cached_futures_row(spoofed_default_false_winner)
-        assert adapted_false["top_outcomes"][0]["probability"] is None
-        assert adapted_false["top_outcomes"][0]["is_winner"] is None
+        assert not is_current_represented_futures_row(spoofed_ungraded_true_winner)
+        adapted_true = adapt_cached_futures_row(spoofed_ungraded_true_winner)
+        assert adapted_true["top_outcomes"][0]["probability"] is None
+        assert adapted_true["top_outcomes"][0]["is_winner"] is None
+
+        spoofed_resolved_poly_without_contract = {
+            "id": 68149297,
+            "name": "US Club Golf Championship",
+            "status": "resolved",
+            "source": "polymarket",
+            "representation_policy": SEARCH_FUTURES_REPRESENTATION_POLICY,
+            "top_outcomes": [
+                {
+                    "name": "Jon Rahm",
+                    "probability": None,
+                    "rendered_percent": None,
+                    "movement": None,
+                    "is_winner": True,
+                    "resolution_source": "api_settlement",
+                }
+            ],
+        }
+        assert not is_current_represented_futures_row(
+            spoofed_resolved_poly_without_contract
+        )
+        adapted_poly = adapt_cached_futures_row(spoofed_resolved_poly_without_contract)
+        assert adapted_poly["top_outcomes"][0]["is_winner"] is None
+        assert adapted_poly["top_outcomes"][0]["settlement_display"] == {
+            "verdict": "unknown",
+            "basis": "missing_stored_price",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -637,7 +672,7 @@ class TestOutcomeStateMatrix:
             "status": "resolved",
             "source": "polymarket",
             "top_outcomes": [
-                # 0: Confirmed authoritative winner without a prediction price
+                # 0: Resolved Polymarket without stored price or contract -> unknown (R2)
                 {
                     "id": 10,
                     "name": "Jon Rahm",
@@ -645,13 +680,17 @@ class TestOutcomeStateMatrix:
                     "is_winner": True,
                     "resolution_source": "api_settlement",
                 },
-                # 1: Confirmed terminal CLOB loser (0.0)
+                # 1: Resolved Polymarket terminal CLOB loser with explicit contract -> preserved
                 {
                     "id": 11,
                     "name": "Scottie Scheffler",
                     "probability": 0.0,
                     "is_winner": False,
                     "resolution_source": "clob_authoritative",
+                    "settlement_display": {
+                        "verdict": "lost",
+                        "basis": "stored_terminal_agreement",
+                    },
                 },
                 # 2: Non-terminal Polymarket CLOB loser at 0.50 -> unknown
                 {
@@ -711,12 +750,16 @@ class TestOutcomeStateMatrix:
             assert o["probability"] is None
             assert o["rendered_percent"] is None
 
-        # 0: Priceless authoritative winner preserved
+        # 0: Resolved Polymarket missing price without contract -> unknown / missing_stored_price
         assert outcomes[0]["name"] == "Jon Rahm"
-        assert outcomes[0]["is_winner"] is True
+        assert outcomes[0]["is_winner"] is None
         assert outcomes[0]["resolution_source"] == "api_settlement"
+        assert outcomes[0]["settlement_display"] == {
+            "verdict": "unknown",
+            "basis": "missing_stored_price",
+        }
 
-        # 1: Terminal CLOB loser preserved
+        # 1: Terminal CLOB loser with explicit contract preserved
         assert outcomes[1]["name"] == "Scottie Scheffler"
         assert outcomes[1]["is_winner"] is False
         assert outcomes[1]["resolution_source"] == "clob_authoritative"
@@ -766,6 +809,28 @@ class TestOutcomeStateMatrix:
         assert outcomes[7]["is_winner"] is None
         assert outcomes[7]["resolution_source"] is None
         assert "settlement_display" not in outcomes[7]
+
+        # Known non-Polymarket venue (Kalshi) priceless authoritative winner preserved:
+        legacy_resolved_kalshi = {
+            "id": 68149298,
+            "name": "Kalshi Championship",
+            "status": "resolved",
+            "source": "kalshi",
+            "top_outcomes": [
+                {
+                    "id": 10,
+                    "name": "Jon Rahm",
+                    "probability": None,
+                    "is_winner": True,
+                    "resolution_source": "api_settlement",
+                }
+            ],
+        }
+        adapted_kalshi = adapt_cached_futures_row(legacy_resolved_kalshi)
+        assert adapted_kalshi["top_outcomes"][0]["probability"] is None
+        assert adapted_kalshi["top_outcomes"][0]["is_winner"] is True
+        assert adapted_kalshi["top_outcomes"][0]["resolution_source"] == "api_settlement"
+        assert "settlement_display" not in adapted_kalshi["top_outcomes"][0]
 
     def test_open_market_legacy_entry_keeps_authoritative_winner_and_clears_open_loser(
         self,
@@ -1411,3 +1476,316 @@ class TestSameInputParityVsNewerObservation:
         assert sga_detail_t1["probability"] == 0.62
         assert sga_cached["last_updated"] < sga_detail_t1["last_updated"]
         assert search_card_t0["prices_updated_at"] < detail_t1["updated_at"]
+
+
+# ---------------------------------------------------------------------------
+# 8. Coordinator residual corrections (R1, R2, C1)
+# ---------------------------------------------------------------------------
+
+
+class TestCoordinatorResidualCorrectionsR1R2C1:
+    @pytest.mark.parametrize("lean", [False, True])
+    def test_r1_open_market_with_db_default_false_and_no_grader_preserves_prices(
+        self, lean: bool
+    ):
+        now = datetime(2026, 10, 24, 18, 0, tzinfo=timezone.utc)
+        market = _make_market(
+            outcomes=[
+                _make_outcome(
+                    1,
+                    "A",
+                    0.55,
+                    is_winner=False,
+                    resolution_source=None,
+                    last_updated=now,
+                ),
+                _make_outcome(
+                    2,
+                    "B",
+                    0.45,
+                    is_winner=False,
+                    resolution_source=None,
+                    last_updated=now,
+                ),
+            ],
+            updated_at=now,
+        )
+        if lean:
+            top = _build_search_top_outcomes(market, limit=3, lean=True)
+            row = stamp_futures_representation_policy(
+                {
+                    "type": "futures",
+                    "text": market.name,
+                    "market_id": market.id,
+                    "market_tier": market.market_tier,
+                    "status": market.status,
+                    "market_type_label": "Award",
+                    "sport_key": "basketball",
+                    "top_outcomes": top,
+                }
+            )
+            adapted = adapt_cached_typeahead_response(
+                {"query": "mvp", "suggestions": [row]}
+            )["suggestions"][0]
+        else:
+            row = _format_futures_for_search(market)
+            adapted = adapt_cached_search_response(
+                {"query": "mvp", "futures": [row], "futures_families": []}
+            )["futures"][0]
+
+        assert is_current_represented_futures_row(row)
+        assert [o["probability"] for o in row["top_outcomes"]] == [0.55, 0.45]
+        assert [o["rendered_percent"] for o in row["top_outcomes"]] == [55, 45]
+        assert [o["probability"] for o in adapted["top_outcomes"]] == [0.55, 0.45]
+        assert [o["rendered_percent"] for o in adapted["top_outcomes"]] == [55, 45]
+
+    @pytest.mark.parametrize("lean", [False, True])
+    def test_r1_open_board_with_partial_settlement_preserves_live_and_graded_rungs(
+        self, lean: bool
+    ):
+        now = datetime(2026, 10, 24, 18, 0, tzinfo=timezone.utc)
+        market = _make_market(
+            market_id=113427,
+            name="What will Fed Rate hit before 2027",
+            status="open",
+            source="kalshi",
+            mutually_exclusive=False,
+            outcomes=[
+                _make_outcome(
+                    1,
+                    "3.75%",
+                    0.68,
+                    is_winner=False,
+                    resolution_source=None,
+                    last_updated=now,
+                ),
+                _make_outcome(
+                    2,
+                    "4.25%",
+                    None,
+                    is_winner=True,
+                    resolution_source="api_settlement",
+                    last_updated=now,
+                ),
+                _make_outcome(
+                    3,
+                    "6.00%",
+                    None,
+                    is_winner=False,
+                    resolution_source="api_settlement",
+                    last_updated=now,
+                ),
+            ],
+            updated_at=now,
+        )
+        if lean:
+            top = _build_search_top_outcomes(market, limit=5, lean=True)
+            row = stamp_futures_representation_policy(
+                {
+                    "type": "futures",
+                    "text": market.name,
+                    "market_id": market.id,
+                    "status": market.status,
+                    "top_outcomes": top,
+                }
+            )
+            adapted = adapt_cached_typeahead_response(
+                {"query": "fed", "suggestions": [row]}
+            )["suggestions"][0]
+        else:
+            row = _format_futures_for_search(market)
+            adapted = adapt_cached_search_response(
+                {"query": "fed", "futures": [row], "futures_families": []}
+            )["futures"][0]
+
+        assert is_current_represented_futures_row(row)
+        assert adapted == row
+        by_name = {o["name"]: o for o in adapted["top_outcomes"]}
+        assert by_name["3.75%"]["probability"] == 0.68
+        assert by_name["3.75%"]["rendered_percent"] == 68
+        assert by_name["4.25%"]["is_winner"] is True
+        assert by_name["4.25%"]["resolution_source"] == "api_settlement"
+        assert by_name["6.00%"]["is_winner"] is False
+        assert by_name["6.00%"]["resolution_source"] == "api_settlement"
+
+    @pytest.mark.parametrize("lean", [False, True])
+    def test_r1_resolved_market_with_explicit_unknown_results_preserves_unknown_contract(
+        self, lean: bool
+    ):
+        now = datetime(2026, 10, 24, 18, 0, tzinfo=timezone.utc)
+        market = _make_market(
+            market_id=62134744,
+            name="Marchi vs. Lokoli: Match O/U 21.5",
+            status="resolved",
+            source="polymarket",
+            mutually_exclusive=False,
+            outcomes=[
+                _make_outcome(
+                    1,
+                    "Over 21.5",
+                    None,
+                    is_winner=True,
+                    resolution_source="api_settlement",
+                    last_updated=now,
+                ),
+                _make_outcome(
+                    2,
+                    "Under 21.5",
+                    0.50,
+                    is_winner=False,
+                    resolution_source="clob_authoritative",
+                    last_updated=now,
+                ),
+                _make_outcome(
+                    3,
+                    "Void Line",
+                    1.0,
+                    is_winner=True,
+                    resolution_source="ungradeable_result",
+                    last_updated=now,
+                ),
+                _make_outcome(
+                    4,
+                    "Confirmed Terminal Loser",
+                    0.0,
+                    is_winner=False,
+                    resolution_source="api_settlement",
+                    last_updated=now,
+                ),
+            ],
+            updated_at=now,
+        )
+        if lean:
+            top = _build_search_top_outcomes(market, limit=5, lean=True)
+            row = stamp_futures_representation_policy(
+                {
+                    "type": "futures",
+                    "text": market.name,
+                    "market_id": market.id,
+                    "status": market.status,
+                    "top_outcomes": top,
+                }
+            )
+            adapted = adapt_cached_typeahead_response(
+                {"query": "marchi", "suggestions": [row]}
+            )["suggestions"][0]
+        else:
+            row = _format_futures_for_search(market)
+            adapted = adapt_cached_search_response(
+                {"query": "marchi", "futures": [row], "futures_families": []}
+            )["futures"][0]
+
+        assert is_current_represented_futures_row(row)
+        assert len(row["top_outcomes"]) == 4
+        assert adapted == row
+        by_name = {o["name"]: o for o in adapted["top_outcomes"]}
+        assert by_name["Over 21.5"]["settlement_display"] == {
+            "verdict": "unknown",
+            "basis": "missing_stored_price",
+        }
+        assert by_name["Under 21.5"]["settlement_display"] == {
+            "verdict": "unknown",
+            "basis": "nonterminal_stored_price",
+        }
+        assert by_name["Void Line"]["settlement_display"] == {
+            "verdict": "unknown",
+            "basis": "retracted_grade",
+        }
+        assert by_name["Confirmed Terminal Loser"]["settlement_display"] == {
+            "verdict": "lost",
+            "basis": "stored_terminal_agreement",
+        }
+
+    def test_r2_resolved_polymarket_missing_price_or_unverified_terminal_retains_unknown(
+        self,
+    ):
+        now = datetime(2026, 10, 24, 18, 0, tzinfo=timezone.utc)
+        market = _make_market(
+            market_id=68149297,
+            name="US Club Golf Championship",
+            status="resolved",
+            source="polymarket",
+            outcomes=[
+                _make_outcome(
+                    10,
+                    "Jon Rahm",
+                    None,
+                    is_winner=True,
+                    resolution_source="api_settlement",
+                    last_updated=now,
+                ),
+            ],
+            updated_at=now,
+        )
+        fresh_search = _format_futures_for_search(market)["top_outcomes"]
+        fresh_detail = _format_market_detail(market)["outcomes"][0]
+
+        legacy_missing_price = {
+            "id": 68149297,
+            "name": "US Club Golf Championship",
+            "status": "resolved",
+            "source": "polymarket",
+            "top_outcomes": [
+                {
+                    "id": 10,
+                    "name": "Jon Rahm",
+                    "probability": None,
+                    "is_winner": True,
+                    "resolution_source": "api_settlement",
+                },
+                {
+                    "id": 11,
+                    "name": "Normalized Cached Winner",
+                    "probability": 1.0,
+                    "is_winner": True,
+                    "resolution_source": "api_settlement",
+                },
+            ],
+        }
+        adapted_outcomes = adapt_cached_futures_row(legacy_missing_price)["top_outcomes"]
+
+        assert fresh_search == []
+        assert fresh_detail["settlement_display"] == {
+            "verdict": "unknown",
+            "basis": "missing_stored_price",
+        }
+        for adapted in adapted_outcomes:
+            assert adapted["is_winner"] is None
+            assert adapted["settlement_display"] == {
+                "verdict": "unknown",
+                "basis": "missing_stored_price",
+            }
+
+    @pytest.mark.parametrize("price", [None, 0.50])
+    def test_c1_source_less_legacy_typeahead_cannot_promote_unknown_poly_result(
+        self, price: float | None
+    ):
+        legacy_ta_row = {
+            "type": "futures",
+            "text": "Resolved Polymarket Board",
+            "market_id": 62134744,
+            "market_tier": 2,
+            "status": "resolved",
+            "market_type_label": "Match",
+            "sport_key": "tennis",
+            "top_outcomes": [
+                {
+                    "name": "Player A",
+                    "probability": price,
+                    "movement": None,
+                    "is_winner": True,
+                    "resolution_source": "api_settlement",
+                }
+            ],
+        }
+        adapted = adapt_cached_typeahead_response(
+            {"query": "marchi", "suggestions": [legacy_ta_row]}
+        )["suggestions"][0]["top_outcomes"][0]
+
+        assert adapted["probability"] is None
+        assert adapted.get("rendered_percent") is None
+        assert adapted["is_winner"] is None
+        assert adapted["settlement_display"]["verdict"] == "unknown"
+        assert adapted["settlement_display"]["basis"] == (
+            "nonterminal_stored_price" if price == 0.50 else "missing_stored_price"
+        )
