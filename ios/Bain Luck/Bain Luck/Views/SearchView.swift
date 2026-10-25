@@ -1375,23 +1375,13 @@ struct SearchView: View {
             if let listing = market.relatedGameListing {
                 relatedGameListingText(listing, font: .caption)
                     .layoutPriority(1)
-            } else if let leader = market.dateLadderAnswer ?? SearchGrouping.leaderOutcome(market),
-               let probability = leader.probability {
+            } else if let leader = market.dateLadderAnswer ?? SearchGrouping.leaderOutcome(market) {
                 HStack(spacing: 4) {
                     Text(leader.name)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    // #8640: a leader the venue has already called is a result,
-                    // not a price — "Kevin Warsh Won", never "Kevin Warsh >99%".
-                    if let verdict = leader.verdict(in: market) {
-                        searchVerdictText(verdict, font: .subheadline)
-                    } else {
-                        Text(formatProbability(probability))
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .monospacedDigit()
-                    }
+                    searchFuturesValue(leader.rowValue(in: market), font: .subheadline, priceWeight: .semibold)
                 }
                 .layoutPriority(1)
             } else if let count = market.outcomeCount {
@@ -1453,18 +1443,30 @@ struct SearchView: View {
                     Text(top.name)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if let verdict = top.verdict(in: market) {
-                        searchVerdictText(verdict, font: .caption)
-                    } else if let prob = top.probability {
-                        Text(formatProbability(prob))
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .monospacedDigit()
-                    }
+                    searchFuturesValue(top.rowValue(in: market), font: .caption, priceWeight: .medium)
                 }
             }
         }
         .padding(.vertical, 2)
+    }
+
+    /// #11616: both search doors consume Market Details' result decision. A
+    /// supported result needs no price, and unknown never falls through to Lost.
+    @ViewBuilder
+    private func searchFuturesValue(_ value: FuturesDetailRowValue, font: Font, priceWeight: Font.Weight) -> some View {
+        switch value {
+        case .verdict(let verdict):
+            searchVerdictText(verdict, font: font)
+        case .resultUnknown:
+            Text("Result unknown").font(font).foregroundStyle(.secondary)
+        case .price(let probability):
+            Text(formatProbability(probability))
+                .font(font)
+                .fontWeight(priceWeight)
+                .monospacedDigit()
+        case .none:
+            EmptyView()
+        }
     }
 
     /// #10298 — a game's own venue listing, beside that game's card: a link

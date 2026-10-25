@@ -284,14 +284,18 @@ nonisolated struct SearchFuturesOutcome: Decodable, Identifiable, Sendable {
     /// reads both keys.
     var isWinner: Bool? = nil
     var resolutionSource: String? = nil
+    /// #11616: the same optional settlement evidence as the destination page.
+    /// A malformed optional object must not erase the market or its siblings.
+    @LenientDecode var settlementDisplay: SettlementDisplay698? = nil
+
+    func rowValue(in market: SearchFuturesMarket) -> FuturesDetailRowValue {
+        FuturesDetailRowValue.of(self, marketStatus: market.status, marketSource: market.source)
+    }
 
     /// Has the venue already called this leg, as the row may say it?
     func verdict(in market: SearchFuturesMarket) -> OutcomeVerdict? {
-        OutcomeVerdict.verdict(
-            isWinner: isWinner,
-            resolutionSource: resolutionSource,
-            marketResolved: market.status == "resolved"
-        )
+        if case .verdict(let verdict) = rowValue(in: market) { return verdict }
+        return nil
     }
 }
 
