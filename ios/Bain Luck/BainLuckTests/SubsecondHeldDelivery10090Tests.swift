@@ -678,6 +678,64 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         }
     }
 
+    // MARK: - SCRATCH axis diagnostic (native 011-SELF, never on the candidate)
+
+    /// K=6 fresh pages of the changed-last-frame burst. Capture A at the model's
+    /// adoption of the last frame (the case's own moment), capture B after a
+    /// yield plus 400 ms. Prints both verdicts; asserts nothing.
+    func testAxisDiag10090ChangedLastFrameAThenB() async throws {
+        for k in 1...6 {
+            marks = []
+            PacedStream.reset(quarter: false, base: Self.recentBase(), burst: true, burstFinal: "0.6")
+            let config = URLSessionConfiguration.ephemeral
+            config.protocolClasses = [PacedStream.self]
+            let session = URLSession(configuration: config)
+            let base = PacedStream.base
+            let client = Client(try heldBeforeBurst(), history: try heldHistory(eventId: Self.burstEvent, end: 0.991))
+            let vm = EventDetailViewModel(
+                eventId: Self.burstEvent, client: client,
+                makeStreamHandle: { id in
+                    let t = try LiveEventStreamTransport(eventId: id, baseURL: "https://stub.invalid", session: session)
+                    t.connect()
+                    return t
+                },
+                now: { base - 595 },
+                sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) }
+            )
+            let page = try await MountedPage(vm, eventId: Self.burstEvent)
+            await waitUntil(10) { vm.event != nil }
+            let last = Self.burstBasis(Self.burstFrames.count - 1)
+            await waitUntil(Self.burstAfter + 1) {
+                PacedStream.done && marks.contains { $0.mark.name == .modelHeadlineAdopted && $0.mark.basis == last }
+            }
+            let chunkAt = PacedStream.emittedAt[last] ?? 0
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-10090-axisdiag")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            var verdicts: [String] = []
+            for phase in ["A", "B"] {
+                if phase == "B" {
+                    await Task.yield()
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                }
+                let image = try page.capture(to: dir.appendingPathComponent("k\(k)-\(phase).png"))
+                let attachment = XCTAttachment(image: image)
+                attachment.name = "AXISDIAG-10090 k\(k)-\(phase)"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+                let ms = Double(page.drawnAt &- chunkAt) / 1e6
+                let drawn = try Self.readDrawn(image, expected: Self.burstWindow)
+                let axis = drawn.plot.failure.map { String($0.prefix { $0 != ":" }) } ?? "PASS"
+                verdicts.append("\(phase)=\(axis)")
+                print(String(format: "AXISDIAG-10090 k=%d phase=%@ chunk_to_capture_ms=%.2f reads=%d axis=%@ %@ hero=%@ %@",
+                             k, phase, ms, client.reads, axis, drawn.ends, drawn.hero.joined(separator: "|"), drawn.detail))
+            }
+            print("AXISDIAG-10090 k=\(k) summary \(verdicts.joined(separator: " "))")
+            page.close()
+            vm.stopRefresh()
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+        }
+    }
+
     // MARK: - Drawn-page reader (#10090 line 665; lane1b review R1–R8)
 
     /// The plot window the burst's chart shows. Pinned from the fixture, never
