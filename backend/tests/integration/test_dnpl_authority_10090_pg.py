@@ -58,10 +58,14 @@ async def rig():
     migration = runpy.run_path(
         str(Path(__file__).parents[2] / "alembic/versions/dnpl_authority_10090.py")
     )
+    retirement_migration = runpy.run_path(
+        str(Path(__file__).parents[2] / "alembic/versions/dnpl_retirement_10090.py")
+    )
 
     def upgrade(conn):
         with Operations.context(MigrationContext.configure(conn)):
             migration["upgrade"]()
+            retirement_migration["upgrade"]()
 
     try:
         async with engine.begin() as conn:
@@ -307,3 +311,147 @@ async def test_producer_sample_does_not_bootstrap_missing_control(rig):
         await rig.store.read_for_producer()
     async with rig.maker() as session:
         assert await session.scalar(text("SELECT count(*) FROM dnpl_authority")) == 0
+
+
+async def test_one_retirement_blocks_third_allocation_until_exact_ack(rig):
+    seed = await rig.store.read()
+    first = await rig.store.prepare(seed, next_candidate(seed))
+    assert await rig.store.read_retirement() is None
+    first = await rig.store.ready(first)
+    second = await rig.store.prepare(first, next_candidate(first))
+    assert await rig.store.read_retirement() == first
+    candidate = next_candidate(second)
+    with pytest.raises(AuthorityConflict, match="cleanup outstanding"):
+        await rig.store.prepare(second, candidate)
+    assert await rig.store.read() == second  # whole CAS rolled back
+    assert await rig.store.read_retirement() == first
+    # This PG control supplies the controller's cleanup acknowledgement.
+    # Actual Redis absence/initialization fencing is a separate controller gate.
+    await rig.store.complete_retirement(second, first)
+    assert await rig.store.read_retirement() is None
+    third = await rig.store.prepare(second, candidate)
+    assert third.incarnation == 3
+    assert await rig.store.read_retirement() == second
+
+
+@pytest.mark.parametrize("after_commit", [False, True])
+async def test_lost_prepare_ack_never_forgets_predecessor(rig, after_commit):
+    seed = await rig.store.read()
+    first = await rig.store.prepare(seed, next_candidate(seed))
+    second = next_candidate(first)
+    uncertain = AuthorityStore(uncertain_sessions(rig.maker, after_commit=after_commit))
+    with pytest.raises(AuthorityWriteUncertain):
+        await uncertain.prepare(first, second)
+    assert await rig.store.read() == (second if after_commit else first)
+    assert await rig.store.read_retirement() == (first if after_commit else None)
+
+
+@pytest.mark.parametrize("after_commit", [False, True])
+async def test_cleanup_ack_ambiguity_is_resolved_by_read_not_replayed(
+    rig, after_commit
+):
+    seed = await rig.store.read()
+    first = await rig.store.prepare(seed, next_candidate(seed))
+    second = await rig.store.prepare(first, next_candidate(first))
+    uncertain = AuthorityStore(uncertain_sessions(rig.maker, after_commit=after_commit))
+    with pytest.raises(AuthorityWriteUncertain):
+        await uncertain.complete_retirement(second, first)
+    assert await rig.store.read() == second
+    assert await rig.store.read_retirement() == (None if after_commit else first)
+
+
+async def test_cleanup_cannot_clear_wrong_record_or_changed_current(rig):
+    seed = await rig.store.read()
+    first = await rig.store.prepare(seed, next_candidate(seed))
+    second = await rig.store.prepare(first, next_candidate(first))
+    with pytest.raises(AuthorityConflict):
+        await rig.store.complete_retirement(
+            second, replace(first, operation_id=uuid4())
+        )
+    ready = await rig.store.ready(second)
+    with pytest.raises(AuthorityConflict):
+        await rig.store.complete_retirement(second, first)
+    assert await rig.store.read_retirement() == first
+    await rig.store.complete_retirement(ready, first)
+    assert await rig.store.read_retirement() is None
+    with pytest.raises(AuthorityConflict):
+        await rig.store.complete_retirement(ready, first)
+
+
+async def test_activation_steps_are_ordered_and_cannot_repeat(rig):
+    seed = await rig.store.read()
+    current = await rig.store.prepare(seed, next_candidate(seed))
+    assert await rig.store.activation_step(current) == 0
+    with pytest.raises(AuthorityConflict):
+        await rig.store.take_activation_step(current, 2)
+    assert await rig.store.activation_step(current) == 0
+    await rig.store.take_activation_step(current, 1)
+    with pytest.raises(AuthorityConflict):
+        await rig.store.take_activation_step(current, 1)
+    await rig.store.take_activation_step(current, 2)
+    with pytest.raises(AuthorityConflict):
+        await rig.store.take_activation_step(current, 2)
+    assert await rig.store.activation_step(current) == 2
+    ready = await rig.store.ready(current)
+    assert await rig.store.activation_step(ready) == 2
+    with pytest.raises(AuthorityConflict):
+        await rig.store.activation_step(current)
+    with pytest.raises(ValueError):
+        await rig.store.take_activation_step(ready, 1)
+    # A new allocation resets only current bookkeeping. Recording the old
+    # authority uses the real retirement schema (no inherited required step).
+    successor = await rig.store.prepare(ready, next_candidate(ready))
+    assert await rig.store.activation_step(successor) == 0
+    assert await rig.store.read_retirement() == ready
+    with pytest.raises(AuthorityConflict):
+        await rig.store.take_activation_step(current, 1)
+
+
+async def test_concurrent_activation_sends_have_one_permission(rig):
+    seed = await rig.store.read()
+    current = await rig.store.prepare(seed, next_candidate(seed))
+    results = await asyncio.gather(
+        rig.store.take_activation_step(current, 1),
+        rig.store.take_activation_step(current, 1),
+        return_exceptions=True,
+    )
+    assert sum(r is None for r in results) == 1
+    assert sum(isinstance(r, AuthorityConflict) for r in results) == 1
+    assert await rig.store.activation_step(current) == 1
+
+
+@pytest.mark.parametrize("step", [1, 2])
+@pytest.mark.parametrize("after_commit", [False, True])
+@pytest.mark.parametrize("cancellation", [False, True])
+async def test_lost_activation_step_ack_never_grants_send(
+    rig, step, after_commit, cancellation
+):
+    seed = await rig.store.read()
+    current = await rig.store.prepare(seed, next_candidate(seed))
+    if step == 2:
+        await rig.store.take_activation_step(current, 1)
+    uncertain = AuthorityStore(
+        uncertain_sessions(
+            rig.maker, after_commit=after_commit, cancellation=cancellation
+        )
+    )
+    error = asyncio.CancelledError if cancellation else AuthorityWriteUncertain
+    with pytest.raises(error):
+        await uncertain.take_activation_step(current, step)
+    assert await rig.store.activation_step(current) == (
+        step if after_commit else step - 1
+    )
+    if after_commit:
+        with pytest.raises(AuthorityConflict):
+            await rig.store.take_activation_step(current, step)
+
+
+async def test_activation_step_lock_timeout_does_not_grant_late_send(rig):
+    seed = await rig.store.read()
+    current = await rig.store.prepare(seed, next_candidate(seed))
+    async with rig.maker() as holder:
+        async with holder.begin():
+            await holder.execute(text("SELECT id FROM dnpl_authority FOR UPDATE"))
+            with pytest.raises(AuthorityWriteUncertain):
+                await rig.store.take_activation_step(current, 1)
+    assert await rig.store.activation_step(current) == 0

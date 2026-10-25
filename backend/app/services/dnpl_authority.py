@@ -44,9 +44,19 @@ _READ = text(f"SELECT {_COLUMNS} FROM dnpl_authority WHERE id = 1")
 _READ_PRODUCER = text(
     f"SELECT {_COLUMNS}, clock_timestamp() AS sampled_at FROM dnpl_authority WHERE id = 1"
 )
+_RETIREMENT = text(f"SELECT {_COLUMNS} FROM dnpl_namespace_retirement WHERE id = 1")
+_RECORD_RETIREMENT = text(
+    f"INSERT INTO dnpl_namespace_retirement (id, {_COLUMNS}) VALUES (1, "
+    + ", ".join(f":old_{key}" for key in _FIELDS)
+    + ")"
+)
+_CLEAR_RETIREMENT = text(
+    f"DELETE FROM dnpl_namespace_retirement WHERE id = 1 AND {_MATCH} RETURNING id"
+)
 _CAS = text(
     "UPDATE dnpl_authority SET "
     + ", ".join(f"{key} = :new_{key}" for key in _FIELDS)
+    + ", activation_step = CASE WHEN :new_incarnation <> :old_incarnation THEN 0 ELSE activation_step END"
     + f" WHERE id = 1 AND {_MATCH} RETURNING {_COLUMNS}"
 )
 
@@ -176,6 +186,108 @@ class AuthorityStore:
                 sampled_at = values.pop("sampled_at")
                 return Authority(**values), sampled_at
 
+    async def read_retirement(self) -> Authority | None:
+        """Exact predecessor identity survives operator/process failure."""
+        async with asyncio.timeout(self.budget_s):
+            async with self.sessions() as session:
+                row = (await session.execute(_RETIREMENT)).mappings().one_or_none()
+                return None if row is None else Authority(**row)
+
+    async def activation_step(self, expected: Authority) -> int:
+        params = {f"old_{key}": value for key, value in asdict(expected).items()}
+        async with asyncio.timeout(self.budget_s):
+            async with self.sessions() as session:
+                value = await session.scalar(
+                    text(
+                        f"SELECT activation_step FROM dnpl_authority WHERE id = 1 AND {_MATCH}"
+                    ),
+                    params,
+                )
+                if value is None:
+                    raise AuthorityConflict("activation authority changed or missing")
+                return value
+
+    async def take_activation_step(self, expected: Authority, step: int) -> None:
+        """Burn the one permitted Redis send BEFORE doing it, including on crash.
+
+        1=arm admission fence; 2=initialize namespace. An uncertain database
+        acknowledgement permits only readback, never sending on an assumption.
+        A burned send cannot be replayed after a lost Redis reply or key loss.
+        """
+        if expected.state != "preparing" or type(step) is not int or step not in (1, 2):
+            raise ValueError("preparing activation step 1 or 2 required")
+        params = {f"old_{key}": value for key, value in asdict(expected).items()}
+        params.update(step=step, prior_step=step - 1)
+        try:
+            async with asyncio.timeout(self.budget_s):
+                async with self.sessions() as session:
+                    async with session.begin():
+                        await session.execute(text("SET LOCAL lock_timeout = '100ms'"))
+                        await session.execute(
+                            text("SET LOCAL statement_timeout = '100ms'")
+                        )
+                        changed = await session.scalar(
+                            text(
+                                f"UPDATE dnpl_authority SET activation_step = :step WHERE id = 1 AND {_MATCH} "
+                                "AND activation_step = :prior_step RETURNING id"
+                            ),
+                            params,
+                        )
+                        if changed is None:
+                            raise AuthorityConflict(
+                                "activation send already consumed or authority changed"
+                            )
+        except AuthorityConflict:
+            raise
+        except Exception as exc:
+            raise AuthorityWriteUncertain(
+                "activation send not authorized without successful commit acknowledgement"
+            ) from exc
+
+    async def complete_retirement(self, current: Authority, retired: Authority) -> None:
+        """Acknowledge verified Redis cleanup, never perform or infer it.
+
+        The explicit activation controller must first fence old initialization
+        and verify all six retired keys absent. This helper only consumes its
+        durable exact-record receipt. Missing/mismatched evidence is refusal;
+        uncertain commit needs read_retirement(), not a repeated write.
+        """
+        if retired.incarnation == 0 or retired.incarnation >= current.incarnation:
+            raise ValueError("retirement must precede current authority")
+        current_params = {f"old_{k}": v for k, v in asdict(current).items()}
+        retired_params = {f"old_{k}": v for k, v in asdict(retired).items()}
+        try:
+            async with asyncio.timeout(self.budget_s):
+                async with self.sessions() as session:
+                    async with session.begin():
+                        await session.execute(text("SET LOCAL lock_timeout = '100ms'"))
+                        await session.execute(
+                            text("SET LOCAL statement_timeout = '100ms'")
+                        )
+                        found = await session.scalar(
+                            text(
+                                f"SELECT id FROM dnpl_authority WHERE id = 1 AND {_MATCH} FOR UPDATE"
+                            ),
+                            current_params,
+                        )
+                        if found is None:
+                            raise AuthorityConflict(
+                                "cleanup current authority changed or missing"
+                            )
+                        removed = await session.scalar(
+                            _CLEAR_RETIREMENT, retired_params
+                        )
+                        if removed is None:
+                            raise AuthorityConflict(
+                                "cleanup predecessor changed or missing"
+                            )
+        except AuthorityConflict:
+            raise
+        except Exception as exc:
+            raise AuthorityWriteUncertain(
+                "resolve cleanup by exact primary readback; do not retry"
+            ) from exc
+
     async def prepare(self, expected: Authority, candidate: Authority) -> Authority:
         # Prevent callers using this as a generic arbitrary-authority setter.
         proposed = preparing_candidate(
@@ -226,6 +338,14 @@ class AuthorityStore:
                         if row is None:
                             raise AuthorityConflict("authority changed or missing")
                         result = Authority(**row)
+                        if candidate.incarnation != expected.incarnation:
+                            # The CAS owns the control-row lock. Allocation and
+                            # predecessor retention commit together; another
+                            # allocation cannot overtake unacknowledged cleanup.
+                            if (await session.execute(_RETIREMENT)).first() is not None:
+                                raise AuthorityConflict("namespace cleanup outstanding")
+                            if expected.incarnation:
+                                await session.execute(_RECORD_RETIREMENT, params)
             return result
         except AuthorityConflict:
             raise
