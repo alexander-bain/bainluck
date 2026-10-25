@@ -1,5 +1,6 @@
 """Real existing PG + Unix-socket Redis lab; explicit recovery, no production."""
 
+from contextlib import contextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 from uuid import uuid4
@@ -252,4 +253,115 @@ async def test_retirement_readback_refuses_surviving_keys_or_missing_fence(recov
     await r.client.delete(*namespace_keys(first), activation.ADMISSION_KEY)
     with pytest.raises(activation.ActivationRefused, match="admission_lost"):
         await r.controller.acknowledge_retirement(current)
+    assert await r.store.read_retirement() == first
+
+
+@pytest.mark.parametrize(
+    "evict_fence,lose_reply", [(False, False), (True, False), (False, True)]
+)
+async def test_replacement_primary_frees_pending_predecessor_then_recovers(
+    recovery, monkeypatch, evict_fence, lose_reply
+):
+    r = recovery
+    first = await r.prepare()
+    await r.controller.arm(first)
+    await r.controller.initialize(first)
+    await r.controller.ready(first)
+    second = await r.prepare()
+    await r.controller.arm(second)
+    if evict_fence:
+        await r.client.delete(activation.ADMISSION_KEY)
+    # Existing fixture starts a second real private server. Simulate persisted
+    # old key bytes carried to the new identity, not an always-empty shortcut.
+    with contextmanager(redis_kwargs.__wrapped__)() as new_kwargs:
+        fresh = Redis(**new_kwargs, decode_responses=True)
+        try:
+            for key in (
+                *namespace_keys(first),
+                *namespace_keys(second),
+                activation.ADMISSION_KEY,
+            ):
+                data = await r.client.dump(key)
+                if data is not None:
+                    await fresh.restore(key, 0, data)
+            server = await fresh.info("server")
+            repl = await fresh.info("replication")
+            identity = dict(
+                redis_run_id=server["run_id"], redis_master_replid=repl["master_replid"]
+            )
+            assert identity["redis_run_id"] != second.redis_run_id
+            controller = activation.ActivationController(r.store, fresh)
+            with pytest.raises(activation.ActivationRefused, match="identity_changed"):
+                await controller.retire(second)
+            original = activation.eval_once
+            deletions = []
+
+            async def maybe_lose(*args):
+                result = await original(*args)
+                if args[1] == activation.CLEAN_REPLACED_PREDECESSOR_SCRIPT:
+                    deletions.append(args)
+                    if lose_reply:
+                        raise ConnectionError("replacement cleanup reply lost")
+                return result
+
+            monkeypatch.setattr(activation, "eval_once", maybe_lose)
+            if lose_reply:
+                with pytest.raises(ConnectionError):
+                    await controller.retire_after_primary_change(second, **identity)
+                assert await r.store.read_retirement() == replace(first, state="ready")
+                await controller.retire_after_primary_change(
+                    second, **identity, readback_only=True
+                )
+            else:
+                await controller.retire_after_primary_change(second, **identity)
+            assert len(deletions) == 1
+            assert await fresh.exists(*namespace_keys(first)) == 0
+            assert await r.store.read_retirement() is None
+            assert await r.store.read() == second
+            third = await r.store.prepare(
+                second,
+                preparing_candidate(
+                    second,
+                    namespace=uuid4(),
+                    operation_id=uuid4(),
+                    policy_fingerprint=second.policy_fingerprint,
+                    **identity,
+                ),
+            )
+            await controller.arm(third)
+            await controller.initialize(third)
+            await controller.retire(third)
+            assert (await controller.ready(third)).incarnation == 3
+            assert await fresh.dbsize() == 5
+            # Old authority cannot recreate its cleaned namespace on replacement.
+            assert await activation.eval_once(
+                fresh,
+                activation.INITIALIZE_ONCE_SCRIPT,
+                (*namespace_keys(first), activation.ADMISSION_KEY),
+                activation.arguments(first),
+            ) == ["identity_changed"]
+        finally:
+            await fresh.aclose()
+
+
+async def test_replacement_cleanup_requires_distinct_actual_identity(recovery):
+    r = recovery
+    first = await r.prepare()
+    await r.controller.arm(first)
+    await r.controller.initialize(first)
+    second = await r.prepare()
+    await r.controller.arm(second)
+    with pytest.raises(activation.ActivationRefused, match="fence both"):
+        await r.controller.retire_after_primary_change(
+            second,
+            redis_run_id=second.redis_run_id,
+            redis_master_replid=second.redis_master_replid,
+        )
+    with pytest.raises(activation.ActivationRefused, match="identity_changed"):
+        await r.controller.retire_after_primary_change(
+            second,
+            redis_run_id="0" * 40,
+            redis_master_replid="1" * 40,
+        )
+    assert await r.client.exists(*namespace_keys(first)) == 4
     assert await r.store.read_retirement() == first

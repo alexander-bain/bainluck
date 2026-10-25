@@ -2469,7 +2469,48 @@ class DnplAuthority(Base):
     redis_master_replid: Mapped[str] = mapped_column(String(40), nullable=False)
     policy_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
 
+    activation_step: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
+    activation_bootstrap: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+
     __table_args__ = (
+        CheckConstraint("activation_step BETWEEN 0 AND 2", name="dnpl_activation_step"),
+        CheckConstraint("id = 1 AND protocol = 3", name="dnpl_authority_singleton"),
+        CheckConstraint(
+            "incarnation BETWEEN 0 AND 9007199254740991", name="dnpl_authority_range"
+        ),
+        CheckConstraint(
+            "state IN ('preparing', 'ready', 'disabled')", name="dnpl_authority_state"
+        ),
+        CheckConstraint(
+            "(incarnation = 0 AND state = 'disabled' AND "
+            "namespace = '00000000-0000-0000-0000-000000000000'::uuid AND "
+            "operation_id = '00000000-0000-0000-0000-000000000000'::uuid AND "
+            "redis_run_id = '' AND redis_master_replid = '' AND policy_fingerprint = '') OR "
+            "(incarnation > 0 AND namespace <> '00000000-0000-0000-0000-000000000000'::uuid AND "
+            "operation_id <> '00000000-0000-0000-0000-000000000000'::uuid AND "
+            "redis_run_id ~ '^[0-9a-f]{40}$' AND redis_master_replid ~ '^[0-9a-f]{40}$' AND "
+            "length(policy_fingerprint) BETWEEN 1 AND 128)",
+            name="dnpl_authority_identity",
+        ),
+    )
+
+
+class DnplNamespaceRetirement(Base):
+    """One exact predecessor retained until guarded cleanup is acknowledged."""
+
+    __tablename__ = "dnpl_namespace_retirement"
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=False)
+    protocol: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    incarnation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    namespace: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    operation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    state: Mapped[str] = mapped_column(String(9), nullable=False)
+    redis_run_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    redis_master_replid: Mapped[str] = mapped_column(String(40), nullable=False)
+    policy_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("incarnation > 0", name="dnpl_retirement_allocated"),
         CheckConstraint("id = 1 AND protocol = 3", name="dnpl_authority_singleton"),
         CheckConstraint(
             "incarnation BETWEEN 0 AND 9007199254740991", name="dnpl_authority_range"

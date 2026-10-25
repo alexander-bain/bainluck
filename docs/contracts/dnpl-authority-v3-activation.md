@@ -58,6 +58,14 @@ already have executed; its one send cannot arrive again after cleanup.
 bootstrap before it executes, can stop recovery on that unchanged primary.
 Committed-only delivery remains. Recovery then needs a separately reviewed,
 explicit primary-identity change; this code does not perform or authorize one.
+If a predecessor is still pending when the primary changes, the explicit
+`retire_after_primary_change` step breaks the allocation/cleanup dependency:
+atomic INFO must prove that the replacement differs from **both** retained
+identities. It deletes/verifies only the recorded predecessor, then acknowledges
+that exact receipt under the unchanged PostgreSQL current row. Ordinary prepare
+can then record that current namespace as the next predecessor and allocate the
+replacement. A readback-only form resolves a lost cleanup reply. No third slot,
+receipt bypass, identity rewrite or same-primary cleanup exception is introduced.
 Do not advertise automatic recovery from arbitrary eviction. Source review and
 Integrator must account for this limit in the final procedure/storage policy.
 

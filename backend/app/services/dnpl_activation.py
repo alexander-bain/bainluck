@@ -101,6 +101,28 @@ return {'retired'}
 """
 
 
+# Replacement-primary cleanup cannot require the lost primary's admission
+# fence. Atomic INFO must instead prove a different identity from BOTH records:
+# neither current nor retired in-flight command may execute on this primary.
+_REPLACEMENT_IDENTITY = _IDENTITY + r"""
+if #KEYS ~= 6 or #ARGV ~= 7 then return {'malformed'} end
+if (ARGV[2] == ARGV[4] and ARGV[3] == ARGV[5])
+    or (ARGV[2] == ARGV[6] and ARGV[3] == ARGV[7]) then
+  return {'identity_not_replaced'}
+end
+"""
+_VERIFY_ABSENCE = r"""
+if redis.call('EXISTS', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]) ~= 0 then
+  return {'cleanup_unverified'}
+end
+return {'retired'}
+"""
+CLEAN_REPLACED_PREDECESSOR_SCRIPT = _REPLACEMENT_IDENTITY + r"""
+redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6])
+""" + _VERIFY_ABSENCE
+VERIFY_REPLACED_PREDECESSOR_SCRIPT = _REPLACEMENT_IDENTITY + _VERIFY_ABSENCE
+
+
 def activation_token(authority: Authority) -> str:
     return f"{authority.incarnation}|{authority.operation_id}|{guard_token(authority)}"
 
@@ -240,6 +262,62 @@ class ActivationController:
                 VERIFY_RETIRED_SCRIPT,
                 (*namespace_keys(old), ADMISSION_KEY),
                 arguments(current),
+            ),
+            "retired",
+        )
+        await self.store.complete_retirement(current, old)
+
+    async def retire_after_primary_change(
+        self,
+        current: Authority,
+        *,
+        redis_run_id: str,
+        redis_master_replid: str,
+        readback_only: bool = False,
+    ) -> None:
+        """Free the exact predecessor before allocating on a replacement primary.
+
+        This does not rewrite current authority or erase its namespace. Atomic
+        INFO must prove the supplied identity differs from current AND retired;
+        their delayed commands then cannot execute here. Delete/verify only the
+        recorded predecessor, retain exact PG CAS, then ordinary prepare can
+        record the current namespace as the next predecessor. No extra slot.
+        Same-identity rollback remains excluded by provider qualification.
+        """
+        if await self.store.read() != current:
+            raise AuthorityConflict("cleanup current authority changed")
+        old = await self.store.read_retirement()
+        if old is None or not 0 < old.incarnation < current.incarnation:
+            raise AuthorityConflict("no exact older namespace to retire")
+        replacement = replace(
+            current,
+            redis_run_id=redis_run_id,
+            redis_master_replid=redis_master_replid,
+        )
+        identity = (replacement.redis_run_id, replacement.redis_master_replid)
+        if identity in (
+            (current.redis_run_id, current.redis_master_replid),
+            (old.redis_run_id, old.redis_master_replid),
+        ):
+            raise ActivationRefused("replacement must fence both retained identities")
+        script = (
+            VERIFY_REPLACED_PREDECESSOR_SCRIPT
+            if readback_only
+            else CLEAN_REPLACED_PREDECESSOR_SCRIPT
+        )
+        require_result(
+            await eval_once(
+                self.redis,
+                script,
+                namespace_keys(old),
+                (
+                    guard_token(replacement),
+                    *identity,
+                    current.redis_run_id,
+                    current.redis_master_replid,
+                    old.redis_run_id,
+                    old.redis_master_replid,
+                ),
             ),
             "retired",
         )

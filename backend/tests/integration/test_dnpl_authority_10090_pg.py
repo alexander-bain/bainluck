@@ -473,3 +473,20 @@ async def test_only_first_allocation_or_changed_primary_can_bootstrap_fence(rig)
         third, replace(next_candidate(third), redis_master_replid="d" * 40)
     )
     assert await rig.store.take_activation_step(fourth, 1) is True
+
+
+async def test_actual_migrations_and_model_metadata_retain_both_control_shapes(rig):
+    from sqlalchemy import inspect
+    from app.models.models import DnplAuthority, DnplNamespaceRetirement
+
+    async with rig.engine.connect() as conn:
+        for model in (DnplAuthority, DnplNamespaceRetirement):
+            columns = await conn.run_sync(
+                lambda c: inspect(c).get_columns(model.__tablename__)
+            )
+            assert {col["name"] for col in columns} == set(
+                model.__table__.columns.keys()
+            )
+            assert all(not col["nullable"] for col in columns)
+    assert "activation_step" in DnplAuthority.__table__.columns
+    assert "activation_step" not in DnplNamespaceRetirement.__table__.columns
