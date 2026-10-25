@@ -104,15 +104,8 @@ async def world(monkeypatch):
         # Both reference `containers`, so they go first or `drop_all` wedges.
         await conn.execute(text("DROP TABLE IF EXISTS container_member_decisions"))
         await conn.execute(text("DROP TABLE IF EXISTS container_corrections"))
-        def _recreate_schema(sync_conn):
-            if (sync_conn.dialect.server_version_info or (0,)) < (15,):
-                for table in Base.metadata.tables.values():
-                    for idx in table.indexes:
-                        idx.dialect_options["postgresql"]["nulls_not_distinct"] = None
-            Base.metadata.drop_all(sync_conn)
-            Base.metadata.create_all(sync_conn)
-
-        await conn.run_sync(_recreate_schema)
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
         for statement in (*CORRECTIONS_DDL, *DECISIONS_DDL):
             await conn.execute(text(statement))
 
@@ -867,4 +860,3 @@ async def test_9936_multi_page_withdrawal_return_pagination_and_reassembly_persi
     )
     assert post_pass_p1["revision"] == rev_after
     assert [*_page_ids(post_pass_p1), *_page_ids(post_pass_p2)] == all_healthy
-

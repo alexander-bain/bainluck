@@ -337,53 +337,68 @@ test("a reader who starts scrolling on frame 1 is not yanked when revision 7 arr
   expect(scrollY).toBe(310);
 });
 
-test("settling revision 7 clears a revision-5 pagination error and aborts an in-flight revision-5 page read", async () => {
-  let pageCall = 0;
-  let resolveSlowPage!: (value: unknown) => void;
+const loadMoreButton = () =>
+  Array.from(element.querySelectorAll("button")).find(
+    (b) => b.textContent === "Load more" || b.textContent === "Loading…",
+  )!;
+const refreshButton = () =>
+  Array.from(element.querySelectorAll("button")).find((b) => b.textContent === "Refresh")!;
+
+test("settling revision 7 clears a revision-5 pagination error", async () => {
+  let refreshed = false;
   global.fetch = jest.fn((url: string) => {
-    if (String(url).includes("cursor=")) {
-      pageCall += 1;
-      if (pageCall === 1) return Promise.reject(new Error("page 2 failed"));
-      return new Promise((resolve) => {
-        resolveSlowPage = resolve;
-      });
-    }
-    return Promise.resolve({
-      ok: true,
-      status: 200,
-      json: async () => (pageCall === 0 ? REV5_P1() : REV7_P1()),
-    });
+    if (String(url).includes("cursor=")) return Promise.reject(new Error("page 2 failed"));
+    const body = refreshed ? REV7_P1() : REV5_P1();
+    return Promise.resolve({ ok: true, status: 200, json: async () => body });
   }) as unknown as typeof fetch;
 
   await act(async () => root.render(<CollectionHub slug={SLUG} />));
-  const loadMoreBtn = () =>
-    Array.from(element.querySelectorAll("button")).find(
-      (b) => b.textContent === "Load more" || b.textContent === "Loading…",
-    )!;
-
-  // First Load more at revision 5 fails and shows pageError.
+  // Load more at revision 5 fails and shows the page error.
   await act(async () => {
-    loadMoreBtn().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    loadMoreButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
   expect(element.textContent).toContain("Couldn't load more markets. Please try again.");
 
-  // Second Load more at revision 5 stays in flight while Refresh settles revision 7.
-  act(() => {
-    loadMoreBtn().dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
-  expect(loadMoreBtn().textContent).toBe("Loading…");
-
-  const refreshBtn = Array.from(element.querySelectorAll("button")).find(
-    (b) => b.textContent === "Refresh",
-  )!;
+  // Refresh settles revision 7 with no Load more in between: the revision-5 error goes with it.
+  refreshed = true;
   await act(async () => {
-    refreshBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    refreshButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
-
-  // Revision 7 is settled, pageError is cleared, paging is reset, and late revision-5 page response is ignored.
   expect(element.querySelector('[data-collection-pager="7"]')).not.toBeNull();
   expect(element.textContent).not.toContain("Couldn't load more markets. Please try again.");
-  expect(loadMoreBtn().textContent).toBe("Load more");
+  expect(element.textContent).toContain("2 of 5 markets");
+});
+
+test("settling revision 7 aborts an in-flight revision-5 page read", async () => {
+  let refreshed = false;
+  let pageSignal: AbortSignal | undefined;
+  let resolveSlowPage!: (value: unknown) => void;
+  global.fetch = jest.fn((url: string, init?: RequestInit) => {
+    if (String(url).includes("cursor=")) {
+      pageSignal = init?.signal ?? undefined;
+      return new Promise((resolve) => { resolveSlowPage = resolve; });
+    }
+    const body = refreshed ? REV7_P1() : REV5_P1();
+    return Promise.resolve({ ok: true, status: 200, json: async () => body });
+  }) as unknown as typeof fetch;
+
+  await act(async () => root.render(<CollectionHub slug={SLUG} />));
+  // Load more at revision 5 stays in flight while Refresh settles revision 7.
+  act(() => {
+    loadMoreButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  expect(loadMoreButton().textContent).toBe("Loading…");
+  expect(pageSignal?.aborted).toBe(false);
+
+  refreshed = true;
+  await act(async () => {
+    refreshButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  expect(element.querySelector('[data-collection-pager="7"]')).not.toBeNull();
+  expect(pageSignal?.aborted).toBe(true);
+  expect(loadMoreButton().textContent).toBe("Load more");
+
+  // The late revision-5 page answer changes nothing.
   await act(async () => {
     resolveSlowPage({ ok: true, status: 200, json: async () => REV5_P2() });
   });
@@ -391,3 +406,30 @@ test("settling revision 7 clears a revision-5 pagination error and aborts an in-
   expect(element.textContent).toContain("2 of 5 markets");
 });
 
+test("a refresh at the same revision leaves an in-flight page read running", async () => {
+  let pageSignal: AbortSignal | undefined;
+  let resolveSlowPage!: (value: unknown) => void;
+  global.fetch = jest.fn((url: string, init?: RequestInit) => {
+    if (String(url).includes("cursor=")) {
+      pageSignal = init?.signal ?? undefined;
+      return new Promise((resolve) => { resolveSlowPage = resolve; });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: async () => REV5_P1() });
+  }) as unknown as typeof fetch;
+
+  await act(async () => root.render(<CollectionHub slug={SLUG} />));
+  act(() => {
+    loadMoreButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await act(async () => {
+    refreshButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  expect(pageSignal?.aborted).toBe(false);
+  expect(loadMoreButton().textContent).toBe("Loading…");
+
+  await act(async () => {
+    resolveSlowPage({ ok: true, status: 200, json: async () => REV5_P2() });
+  });
+  expect(renderedMembers()).toEqual(["market:101", "market:102", "market:103", "market:104"]);
+  expect(element.textContent).toContain("4 of 6 markets");
+});
