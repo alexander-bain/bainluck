@@ -163,4 +163,9 @@ def test_other_awards_do_not_borrow_nba_mvp_ticker_convention():
     b = board(105, "Defensive Player of the Year", "kalshi", "kalshi:KXNBADPOY-27")
     [family] = group_prop_families([a, b])
     assert family["label"] == "Defensive Player Of The Year"
-    assert members(family) == {104, 105}
+    # Same-venue representatives now use the recovered identity boundary, but
+    # that does not borrow the NBA MVP season grammar for this other series.
+    # Equal open prices use the stable event-ID tie-break; no false blend.
+    assert members(family) == {105}
+    assert family["family_key"] == "defensive player of the year"
+    assert all(not row["settled"] for row in family["rows"])

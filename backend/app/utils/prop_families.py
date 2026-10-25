@@ -41,7 +41,11 @@ from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 
 from app.utils.cross_source_matching import normalize_question
-from app.utils.venue_identity import venue_identity
+from app.utils.venue_identity import (
+    kalshi_supersedes,
+    same_venue_market,
+    venue_identity,
+)
 
 __all__ = [
     "family_key",
@@ -666,6 +670,9 @@ def _make_row(
         # Internal, popped before the payload is emitted (like entity_key).
         "_resolves_at": _parse_resolution(market.get("resolution_date")),
         "_award_season": _named_nba_mvp_season(market),
+        # Internal event identity supplies a negative same-venue boundary.
+        # It is not proof that two contracts have equivalent settlement rules.
+        "_vid": venue_identity(source, group_id),
     }
 
 
@@ -774,7 +781,11 @@ def _one_rung_per_entity(rows: list[dict]) -> list[dict]:
         ladders[key].setdefault(r["_line"], []).append(r)
     reduced: dict[str, dict] = {}
     for key, by_line in ladders.items():
-        picked = dict(_pick_rung([_merge_rows(grp) for grp in by_line.values()]))
+        # venue-identity@1: one line from two markets of one venue (last
+        # season's ladder and this season's) is two rows, not one.
+        picked = dict(
+            _pick_rung([_merge_rows(_speaking_rows(grp)) for grp in by_line.values()])
+        )
         picked.pop("_line", None)
         reduced[key] = picked
     return [reduced[r] if isinstance(r, str) else r for r in out]
@@ -868,11 +879,97 @@ def _drop_earlier_results(rows: list[dict], now: datetime | None = None) -> list
     ]
 
 
+def _drop_superseded_editions(rows: list[dict]) -> list[dict]:
+    """Reuse the recovered settled-edition filter within a display bucket.
+
+    Explicitly conflicting NBA MVP seasons have already been separated. For
+    other rows still sharing a family, padded resolution dates cannot exclude
+    a prior result (#2644). The recovered predicate compares edition tokens
+    only within one Kalshi series and identical suffix. It is a negative
+    representative filter, not a general rules-equivalence decision.
+
+    Two limits keep this narrow. Only a settled row goes: an earlier edition
+    still being traded is a live race, not a past result. And "the same market"
+    means the same ticker apart from the token (`kalshi_supersedes`), so the
+    per-player series ``KXNEXTTEAMNFL-26JCHASE`` and ``KXNEXTTEAMNFL-27JBURROW``
+    never supersede each other. Rows without a readable Kalshi edition stay.
+    """
+    # Index the latest comparable identity once. Comparing every entity row
+    # against every other row makes a large roster pay quadratically for a
+    # series-level decision. The recovered predicate still decides both steps.
+    latest = {}
+    for row in rows:
+        identity = row.get("_vid")
+        if identity is None or identity.venue != "kalshi" or identity.edition is None:
+            continue
+        key = (identity.series, identity.rest)
+        if key not in latest or kalshi_supersedes(identity, latest[key]):
+            latest[key] = identity
+    return [
+        row
+        for row in rows
+        if not (
+            row.get("settled")
+            and (identity := row.get("_vid")) is not None
+            and kalshi_supersedes(
+                latest.get((identity.series, identity.rest)), identity
+            )
+        )
+    ]
+
+
+def _speak_key(r: dict) -> tuple:
+    """A total order over one entity's rows; the best row sorts first (reverse).
+
+    A market still being traded comes first, so an open race is never answered
+    by a finished market's result. Then `_merge_rows`' own preference
+    (settled-won, settled, price). Then fixed tie-breaks, so the choice never
+    depends on the order the rows arrived in.
+    """
+    p = r.get("probability")
+    return (
+        not r.get("settled"),
+        bool(r.get("settled") and r.get("result") == "won"),
+        bool(r.get("settled")),
+        p if p is not None else -1.0,
+        str(r.get("group_id") or ""),
+        str(r.get("market_id") or ""),
+        str(r.get("outcome_id") or ""),
+    )
+
+
+def _speaking_rows(group: list[dict]) -> list[dict]:
+    """The rows that speak for one entity on this card (venue-identity@1).
+
+    Distinct event identities within a venue cannot contribute to one merged
+    representative. Reuse the recovered candidate's preference for an open row
+    before a settled row, followed by the existing price preference and stable
+    tie-breaks. Known season conflicts have already been split into cards.
+
+    Equal event IDs do not establish settlement equivalence. Cross-venue and
+    missing-identity rows retain the old merge behavior, still subject to the
+    separate #11619 rules contract. This boundary grants no new blend permission.
+    """
+    if len(group) < 2:
+        return group
+    chosen: dict = {}
+    out: list[dict] = []
+    for r in sorted(group, key=_speak_key, reverse=True):
+        vid = r.get("_vid")
+        if vid is None:
+            out.append(r)
+            continue
+        first = chosen.setdefault(vid.venue, vid)
+        if same_venue_market(first, vid):
+            out.append(r)
+    return out
+
+
 def _collapse_cross_source(rows: list[dict]) -> list[dict]:
     groups: "OrderedDict[str, list[dict]]" = OrderedDict()
     for r in _one_rung_per_entity(rows):
         groups.setdefault(r["entity_key"], []).append(r)
-    return [_merge_rows(grp) for grp in groups.values()]
+    return [_merge_rows(_speaking_rows(grp)) for grp in groups.values()]
 
 
 # Words the label prints in capitals.  The family key is lower-cased, so a
@@ -1198,7 +1295,9 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
         )
     ]
     for emitted_key, fk, scope, season_label, rows in buckets:
-        merged = _collapse_cross_source(_drop_earlier_results(rows))
+        merged = _collapse_cross_source(
+            _drop_superseded_editions(_drop_earlier_results(rows))
+        )
         distinct = {r["entity_key"] for r in merged if r.get("entity_key")}
         if len(distinct) < 2:
             continue
@@ -1215,6 +1314,7 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
             r.pop("entity_key", None)
             r.pop("_resolves_at", None)
             r.pop("_award_season", None)
+            r.pop("_vid", None)
 
         result.append(
             {
