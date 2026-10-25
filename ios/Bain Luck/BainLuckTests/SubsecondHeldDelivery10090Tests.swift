@@ -51,6 +51,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         LiveTimingSeam.observer = { [weak self] in
             guard Self.events.contains($0.eventId) else { return }
             self?.marks.append(($0, DispatchTime.now().uptimeNanoseconds))
+            self?.onMark?($0)
         }
     }
 
@@ -352,9 +353,57 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             return image
         }
 
+        /// The final page, taken after the measured burst: the frame one display
+        /// tick after the forced commit. `layoutIfNeeded` forces the pending
+        /// update; then, value-blind (no condition on the image, no loop, no
+        /// retry), the commit's completion and ONE display-link tick; then the
+        /// window is drawn as it stands. Drawing inside the forced update
+        /// (`afterScreenUpdates: true`) could, under load, snapshot Charts'
+        /// image-queue layers an update behind the tip layer — a picture the
+        /// screen never showed (#740: `0.3253970462539013`). One tick can still
+        /// be too few under load; that red is a result, not a reason to wait more.
+        /// `atDraw` runs straight after the draw, so what the test reads beside
+        /// the image is from the same moment.
+        func capture<T>(to url: URL, atDraw: () -> T) async throws -> (image: UIImage, atDraw: T) {
+            window.layoutIfNeeded()
+            await withCheckedContinuation { (committed: CheckedContinuation<Void, Never>) in
+                CATransaction.begin()
+                CATransaction.setCompletionBlock { committed.resume() }
+                CATransaction.commit()
+            }
+            await DisplayTick.next()
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
+            }
+            let observed = atDraw()
+            drawnAt = DispatchTime.now().uptimeNanoseconds
+            try XCTUnwrap(image.pngData()).write(to: url)
+            return (image, observed)
+        }
+
         func close() {
             window.isHidden = true
             previousKeyWindow?.makeKey()
+        }
+    }
+
+    /// One display-link tick, once: `next()` returns at the first callback.
+    @MainActor
+    private final class DisplayTick: NSObject {
+        private var ticked: CheckedContinuation<Void, Never>?
+
+        static func next() async {
+            let tick = DisplayTick()
+            await withCheckedContinuation { (ticked: CheckedContinuation<Void, Never>) in
+                tick.ticked = ticked
+                CADisplayLink(target: tick, selector: #selector(fire(_:))).add(to: .main, forMode: .common)
+            }
+        }
+
+        @objc private func fire(_ link: CADisplayLink) {
+            link.invalidate()
+            ticked?.resume()
+            ticked = nil
         }
     }
 
@@ -676,6 +725,189 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
                                "the chart line is drawn to the last frame's 60%, not held at the one before it")
             }
         }
+    }
+
+    // MARK: - SCRATCH six-case control C (native; lane1b 1841Z control C, lane1 2230Z A1–A6). Never on the candidate.
+
+    /// Six-case control only: called synchronously inside the mark observer, after the mark is recorded.
+    private var onMark: ((LiveTimingSeam.Mark) -> Void)?
+
+    /// One page's capture record, filled at the trigger.
+    @MainActor
+    private final class SixCaseRecord {
+        var entryAt: UInt64 = 0
+        var captureStart: UInt64 = 0
+        var drawnAt: UInt64 = 0
+        var writtenAt: UInt64 = 0
+        var rootNeedsLayout: Bool?
+        var windowNeedsLayout: Bool?
+        var marksAtEntry = 0
+        var readsAtDraw = -1
+        var heroAtDraw: Double?
+        var image: UIImage?
+        var error: String?
+        var done = false
+    }
+
+    /// Lane1b control C, pre-registered: six fresh hosted pages of the
+    /// changed-last-frame (0.6) burst in the fixed order O,N,O,N,O,N. Each page is
+    /// captured from inside the observer of the model's adoption of the last frame.
+    /// ENTRY (A1), identical for both arms: the observer calls `Task.immediate`,
+    /// whose body runs synchronously on the main actor up to the arm's first
+    /// suspension; the body stamps `captureStart` and calls the arm's capture.
+    /// Hops between the adopted-last-frame mark and capture start: 0 (no await,
+    /// sleep, Task hop or run-loop turn). O = today's `capture(to:)`; N = 741's
+    /// `capture(to:atDraw:)` + `DisplayTick`, byte-for-byte from 905518ef32.
+    /// Asserts nothing; prints the witnesses (A2) and the reader line. A page
+    /// that fails is recorded as it came out and never replaced.
+    func testSixCaseC10090ChangedLastFrameInterleavedONONON() async throws {
+        let order = ["O", "N", "O", "N", "O", "N"]
+        for (index, arm) in order.enumerated() {
+            await sixCasePage(index + 1, arm: arm)
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+        }
+    }
+
+    private func sixCasePage(_ k: Int, arm: String) async {
+        marks = []
+        var load = [Double](repeating: -1, count: 3)
+        _ = getloadavg(&load, 3)
+        PacedStream.reset(quarter: false, base: Self.recentBase(), burst: true, burstFinal: "0.6")
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [PacedStream.self]
+        let session = URLSession(configuration: config)
+        let base = PacedStream.base
+        let client: Client
+        do {
+            client = Client(try heldBeforeBurst(), history: try heldHistory(eventId: Self.burstEvent, end: 0.991))
+        } catch {
+            print("SIXCASE-C10090 p=\(k) arm=\(arm) NO_RESULT fixture: \(error)")
+            return
+        }
+        let vm = EventDetailViewModel(
+            eventId: Self.burstEvent, client: client,
+            makeStreamHandle: { id in
+                let t = try LiveEventStreamTransport(eventId: id, baseURL: "https://stub.invalid", session: session)
+                t.connect()
+                return t
+            },
+            now: { base - 595 },
+            sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) }
+        )
+        let page: MountedPage
+        do {
+            page = try await MountedPage(vm, eventId: Self.burstEvent)
+        } catch {
+            print("SIXCASE-C10090 p=\(k) arm=\(arm) NO_RESULT mount: \(error)")
+            vm.stopRefresh()
+            return
+        }
+        await waitUntil(10) { vm.event != nil }
+        let loadReads = client.reads
+        let poll = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_100_000_000)
+            await vm.load()
+        }
+        let last = Self.burstBasis(Self.burstFrames.count - 1)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-10090-sixcase")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("sixcase-p\(k)-\(arm).png")
+        let record = SixCaseRecord()
+        var fired = false
+        onMark = { [self] mark in
+            guard !fired, mark.eventId == Self.burstEvent, mark.name == .modelHeadlineAdopted, mark.basis == last
+            else { return }
+            fired = true
+            record.entryAt = DispatchTime.now().uptimeNanoseconds
+            guard #available(iOS 26.0, *) else {
+                record.error = "Task.immediate unavailable"
+                record.done = true
+                return
+            }
+            Task.immediate { @MainActor in
+                record.rootNeedsLayout = page.window.rootViewController?.view.layer.needsLayout()
+                record.windowNeedsLayout = page.window.layer.needsLayout()
+                record.marksAtEntry = self.marks.count
+                record.captureStart = DispatchTime.now().uptimeNanoseconds
+                do {
+                    if arm == "O" {
+                        let image = try page.capture(to: url)
+                        record.drawnAt = page.drawnAt
+                        record.readsAtDraw = client.reads
+                        record.heroAtDraw = vm.event?.currentOdds?.homeProbability
+                        record.image = image
+                    } else {
+                        let (image, observed) = try await page.capture(to: url) {
+                            (client.reads, vm.event?.currentOdds?.homeProbability)
+                        }
+                        record.drawnAt = page.drawnAt
+                        (record.readsAtDraw, record.heroAtDraw) = observed
+                        record.image = image
+                    }
+                } catch {
+                    record.error = "\(error)"
+                }
+                record.writtenAt = DispatchTime.now().uptimeNanoseconds
+                record.done = true
+            }
+        }
+        await waitUntil(Self.burstAfter + 4) { record.done }
+        await poll.value
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        onMark = nil
+
+        let chunkAt = PacedStream.emittedAt[last]
+        func rel(_ at: UInt64?, to origin: UInt64?) -> String {
+            guard let at, let origin, at > 0, origin > 0 else { return "nil" }
+            return String(format: "%.2f", (Double(at) - Double(origin)) / 1e6)
+        }
+        let adoptedAt = marks.first { $0.mark.name == .modelHeadlineAdopted && $0.mark.basis == last }?.at
+        let chartMark = marks.first { $0.mark.name == .modelChartAppended && $0.mark.basis == last }
+        let lastAdopted = marks.last { $0.mark.name == .modelHeadlineAdopted && $0.at <= record.captureStart }
+        let lastCharted = marks.last { $0.mark.name == .modelChartAppended && $0.at <= record.captureStart }
+        let viewChartAt = chartMark.flatMap { c in
+            marks.first { $0.mark.name == .viewChartUpdated && $0.mark.stamp == c.mark.stamp }?.at
+        }
+        let viewHeadlineAt = marks.first { $0.mark.name == .viewHeadlineUpdated && $0.mark.basis == last }?.at
+        func position(_ at: UInt64?) -> String {
+            guard fired, record.captureStart > 0 else { return "no-trigger" }
+            guard let at else { return "never" }
+            if at < record.captureStart { return "before" }
+            if record.drawnAt > 0 && at <= record.drawnAt { return "at-or-after(inside-capture)" }
+            return "at-or-after(after-draw)"
+        }
+        print(String(format: "SIXCASE-C10090 p=%d arm=%@ fired=%@ done=%@ error=%@ loadavg=%.2f/%.2f/%.2f",
+                     k, arm, fired ? "yes" : "no", record.done ? "yes" : "no", record.error ?? "none",
+                     load[0], load[1], load[2]))
+        print("SIXCASE-C10090 p=\(k) arm=\(arm) witness chunk_to_entry_ms=\(rel(record.entryAt, to: chunkAt)) "
+              + "chunk_to_capture_start_ms=\(rel(record.captureStart, to: chunkAt)) "
+              + "chunk_to_drawn_ms=\(rel(record.drawnAt, to: chunkAt)) chunk_to_written_ms=\(rel(record.writtenAt, to: chunkAt)) "
+              + "adopted_last_to_capture_start_ms=\(rel(record.captureStart, to: adoptedAt)) "
+              + "chart_last_to_capture_start_ms=\(rel(record.captureStart, to: chartMark?.at)) "
+              + "latest_adopted_before_start=\(lastAdopted?.mark.basis ?? "nil") latest_charted_before_start=\(lastCharted?.mark.basis ?? "nil") "
+              + "view_chart_last=\(position(viewChartAt)) view_chart_last_from_start_ms=\(rel(viewChartAt, to: record.captureStart)) "
+              + "view_headline_last=\(position(viewHeadlineAt)) view_headline_last_from_start_ms=\(rel(viewHeadlineAt, to: record.captureStart)) "
+              + "root_needs_layout_at_entry=\(record.rootNeedsLayout.map(String.init) ?? "nil") "
+              + "window_needs_layout_at_entry=\(record.windowNeedsLayout.map(String.init) ?? "nil") "
+              + "marks_at_entry=\(record.marksAtEntry) reads_load=\(loadReads) reads_at_draw=\(record.readsAtDraw) "
+              + "hero_at_draw=\(record.heroAtDraw.map { String($0) } ?? "nil") png=\(url.lastPathComponent)")
+        if let image = record.image {
+            let attachment = XCTAttachment(image: image)
+            attachment.name = "SIXCASE-C10090 p\(k)-\(arm)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            do {
+                let drawn = try Self.readDrawn(image, expected: Self.burstWindow)
+                let axis = drawn.plot.failure.map { String($0.prefix { $0 != ":" }) } ?? "PASS"
+                print("SIXCASE-C10090 p=\(k) arm=\(arm) reader axis=\(axis) \(drawn.ends) hero=\(drawn.hero.joined(separator: "|")) \(drawn.detail)")
+            } catch {
+                print("SIXCASE-C10090 p=\(k) arm=\(arm) reader error: \(error)")
+            }
+        } else {
+            print("SIXCASE-C10090 p=\(k) arm=\(arm) NO_IMAGE")
+        }
+        page.close()
+        vm.stopRefresh()
     }
 
     // MARK: - Drawn-page reader (#10090 line 665; lane1b review R1–R8)
