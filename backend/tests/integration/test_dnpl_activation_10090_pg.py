@@ -213,10 +213,12 @@ async def test_lost_cleanup_reply_keeps_durable_predecessor_until_verified(
     current = await r.prepare()
     await r.controller.arm(current)
     original = activation.eval_once
+    deletions = []
 
     async def lose_reply(*args):
         result = await original(*args)
         if args[1] == activation.CLEAN_PREDECESSOR_SCRIPT:
+            deletions.append(args)
             raise ConnectionError("cleanup reply lost")
         return result
 
@@ -228,3 +230,26 @@ async def test_lost_cleanup_reply_keeps_durable_predecessor_until_verified(
     with pytest.raises(AuthorityConflict, match="cleanup outstanding"):
         await r.prepare()
     assert await wire(r, activation.INITIALIZE_ONCE_SCRIPT, first) == ["admission_lost"]
+
+    await r.controller.acknowledge_retirement(current)
+    assert len(deletions) == 1
+    assert await r.store.read_retirement() is None
+    # Reading and acknowledging absence unblocks a new allocation, without
+    # replaying a lost Redis mutation or treating timeout as non-execution.
+    assert (await r.prepare()).incarnation == 3
+
+
+async def test_retirement_readback_refuses_surviving_keys_or_missing_fence(recovery):
+    r = recovery
+    first = await r.prepare()
+    await r.controller.arm(first)
+    await r.controller.initialize(first)
+    current = await r.prepare()
+    await r.controller.arm(current)
+    with pytest.raises(activation.ActivationRefused, match="cleanup_unverified"):
+        await r.controller.acknowledge_retirement(current)
+    assert await r.store.read_retirement() == first
+    await r.client.delete(*namespace_keys(first), activation.ADMISSION_KEY)
+    with pytest.raises(activation.ActivationRefused, match="admission_lost"):
+        await r.controller.acknowledge_retirement(current)
+    assert await r.store.read_retirement() == first

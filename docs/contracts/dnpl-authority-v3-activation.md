@@ -35,6 +35,9 @@ allocation. Cleanup deletes only its six derived namespace keys, verifies absenc
 in the same guarded Lua, then clears the exact retirement record while locking
 the current PostgreSQL authority. An uncertain cleanup/ack keeps or reveals that
 receipt; it cannot justify forgetting it or guessing a fresh namespace.
+`acknowledge_retirement` resolves a lost Redis cleanup reply using read-only
+fence/absence verification and the exact PostgreSQL acknowledgement. It sends
+no deletion again. Surviving old keys or a lost/newer fence refuse acknowledgement.
 
 ## Why a delayed initializer cannot undo cleanup
 

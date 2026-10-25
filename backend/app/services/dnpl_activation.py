@@ -92,6 +92,15 @@ return {'retired'}
 """
 
 
+VERIFY_RETIRED_SCRIPT = _IDENTITY + _FENCE + r"""
+if stage ~= 'armed' and stage ~= 'used' then return {'admission_corrupt'} end
+if redis.call('EXISTS', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]) ~= 0 then
+  return {'cleanup_unverified'}
+end
+return {'retired'}
+"""
+
+
 def activation_token(authority: Authority) -> str:
     return f"{authority.incarnation}|{authority.operation_id}|{guard_token(authority)}"
 
@@ -206,6 +215,29 @@ class ActivationController:
             await eval_once(
                 self.redis,
                 CLEAN_PREDECESSOR_SCRIPT,
+                (*namespace_keys(old), ADMISSION_KEY),
+                arguments(current),
+            ),
+            "retired",
+        )
+        await self.store.complete_retirement(current, old)
+
+    async def acknowledge_retirement(self, current: Authority) -> None:
+        """Resolve a lost cleanup reply with reads, never another Redis deletion.
+
+        An exact newer admission fence prevents an old delayed initializer from
+        changing the observed absence. Lost PG acknowledgement is resolved by
+        read_retirement(); this method never infers success from an absent receipt.
+        """
+        if await self.store.read() != current:
+            raise AuthorityConflict("cleanup current authority changed")
+        old = await self.store.read_retirement()
+        if old is None or not 0 < old.incarnation < current.incarnation:
+            raise AuthorityConflict("no exact older namespace to acknowledge")
+        require_result(
+            await eval_once(
+                self.redis,
+                VERIFY_RETIRED_SCRIPT,
                 (*namespace_keys(old), ADMISSION_KEY),
                 arguments(current),
             ),
