@@ -313,6 +313,10 @@ final class EventDetailViewModel: ObservableObject {
     /// the real `URLSession` transport.
     private let makeStreamHandle: (@MainActor (Int) throws -> LiveStreamHandle)?
     private let now: () -> TimeInterval
+    /// #11564 — the clock a held preview's lifetime runs on. Monotonic
+    /// (`systemUptime`) on a real page, so a wall-clock change can neither
+    /// renew nor cut short a first-seen deadline; a test's injected `now`.
+    private let previewNow: () -> TimeInterval
 
     /// Whether a periodic auto-refresh request is currently installed, and at
     /// what cadence. A FINISHED page installs nothing; every other state polls,
@@ -336,13 +340,14 @@ final class EventDetailViewModel: ObservableObject {
         eventId: Int,
         client: EventDetailProviding = APIClient.shared,
         makeStreamHandle: (@MainActor (Int) throws -> LiveStreamHandle)? = nil,
-        now: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 },
+        now: (() -> TimeInterval)? = nil,
         sleep: (@Sendable (TimeInterval) async -> Void)? = nil
     ) {
         self.eventId = eventId
         self.client = client
         self.makeStreamHandle = makeStreamHandle
-        self.now = now
+        self.now = now ?? { Date().timeIntervalSince1970 }
+        self.previewNow = now ?? { ProcessInfo.processInfo.systemUptime }
         self.sleep = sleep ?? { seconds in
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
         }
@@ -672,7 +677,7 @@ final class EventDetailViewModel: ObservableObject {
             let changed = BlendPreview.membershipChanges(blendPreviewReader, members: members)
             blendPreviewReader = BlendPreview.readerAfterMembership(blendPreviewReader, members: members)
             if changed {
-                publishPreview(nil, at: now())
+                publishPreview(nil, at: previewNow())
                 if stream != nil { stopStream() }
             }
         }
@@ -871,7 +876,7 @@ final class EventDetailViewModel: ObservableObject {
         guard control.eventId == eventId, let held = event, held.id == eventId,
               EventPriceStreaming.isEligible(held.status) else { return }
         blendPreviewReader = BlendPreview.readerAfterCommitFloor(blendPreviewReader, control.removalRev)
-        publishPreview(blendPreviewReader.held, at: now())
+        publishPreview(blendPreviewReader.held, at: previewNow())
         // A paid custody delivered again (a reconnect's re-send) asks nothing,
         // unless it now names rows past the floor that paid it.
         if reconcileSettled.contains(where: { $0.custody == control.custodyId && $0.floor.covers(control.removalRev) }) {
@@ -1244,7 +1249,7 @@ final class EventDetailViewModel: ObservableObject {
         let controller = LiveStreamController(
             open: {
                 if let make { return try make(id) }
-                let transport = try LiveEventStreamTransport(eventId: id, foldedPreviews: true)
+                let transport = try LiveEventStreamTransport(eventId: id, authorityPreviews: true)
                 transport.connect()
                 return transport
             },
@@ -1289,17 +1294,16 @@ final class EventDetailViewModel: ObservableObject {
                 self.requestRevisionRefetch(resyncGeneration: self.deliveryGeneration)
             },
             onReconcile: { [weak self] control in self?.receiveReconcile(control) },
-            onPreview: { [weak self] raw in self?.receivePreview(raw) },
+            // #11564: v3 only. A legacy `preview` is never read, so a server that
+            // does not speak v3 leaves this page committed-only.
             onPreviewFloor: { [weak self] raw in self?.receivePreviewFloor(raw) },
-            onPreviewOpen: { [weak self] raw in
-                guard let self else { return }
-                self.blendPreviewReader = BlendPreview.readerOpened(self.blendPreviewReader, raw: raw, eventId: self.eventId)
-            },
             onPreviewInvalidate: { [weak self] in
                 guard let self else { return }
                 self.blendPreviewReader.held = nil
-                self.publishPreview(nil, at: self.now())
+                self.publishPreview(nil, at: self.previewNow())
             },
+            onPreviewOpenV3: { [weak self] raw in self?.receivePreviewOpenV3(raw) },
+            onPreviewV3: { [weak self] raw, receivedAt in self?.receivePreviewV3(raw, receivedAt: receivedAt) },
             onPreviewReset: { [weak self] in self?.clearPreview() },
             deliversFoldedQuotes: true
         )
@@ -1363,7 +1367,7 @@ final class EventDetailViewModel: ObservableObject {
     /// incompatible fold or non-blend hero, a changed status or an expired preview.
     @MainActor
     func headline(_ event: EventDetail) -> EventDetail {
-        BlendPreview.overlay(event, blendPreview, now: now())
+        BlendPreview.overlay(event, blendPreview, now: previewNow())
     }
 
     /// The clock of the probability `headline(event)` prints: the preview's
@@ -1371,7 +1375,7 @@ final class EventDetailViewModel: ObservableObject {
     /// one. Source-age warnings keep reading the committed clocks.
     @MainActor
     func displayedProbabilityObservedAt(_ event: EventDetail) -> Date? {
-        BlendPreview.displayedObservedAt(blendPreview, held: event, now: now(),
+        BlendPreview.displayedObservedAt(blendPreview, held: event, now: previewNow(),
                                          committed: event.heroProbabilityObservedAt?.asDate)
     }
 
@@ -1379,17 +1383,33 @@ final class EventDetailViewModel: ObservableObject {
     /// chart to draw (`BlendPreview.chartFrames`). Never stored.
     @MainActor
     func chartFrames(_ event: EventDetail) -> [LiveBlendPoint] {
-        BlendPreview.chartFrames(liveBlend, history: history, state: blendPreview, held: event, now: now())
+        BlendPreview.chartFrames(liveBlend, history: history, state: blendPreview, held: event, now: previewNow())
     }
 
+    /// #11564 — a `preview_open_v3`: the domain and session this stream's
+    /// previews belong to (`BlendPreview.readerOpenedV3`). Shows nothing itself.
     @MainActor
-    private func receivePreview(_ raw: String) {
-        guard let frame = BlendPreviewFrame.decode(raw) else { return }
-        let at = now()
-        let next = BlendPreview.readerAfter(blendPreviewReader, frame, eventId: eventId, now: at)
+    private func receivePreviewOpenV3(_ raw: String) {
+        guard let open = PreviewEnvelopeV3.decode(raw, kind: .open, eventId: eventId) else { return }
+        let next = BlendPreview.readerOpenedV3(blendPreviewReader, open)
+        guard next != blendPreviewReader else { return }
+        let withdrawn = next.held == nil && blendPreviewReader.held != nil
+        blendPreviewReader = next
+        if withdrawn { publishPreview(nil, at: previewNow()) }
+    }
+
+    /// #11564 — a `preview_v3`, dated at its receipt: the wait between the
+    /// transport assembling it and this handler running comes out of its
+    /// lifetime, never added to it.
+    @MainActor
+    private func receivePreviewV3(_ raw: String, receivedAt: TimeInterval?) {
+        guard let envelope = PreviewEnvelopeV3.decode(raw, kind: .preview, eventId: eventId) else { return }
+        let current = previewNow()
+        let waited = receivedAt.map { max(0, ProcessInfo.processInfo.systemUptime - $0) } ?? 0
+        let next = BlendPreview.readerAfterV3(blendPreviewReader, envelope, eventId: eventId, now: current - waited)
         guard next != blendPreviewReader else { return }
         blendPreviewReader = next
-        publishPreview(next.held, at: at)
+        publishPreview(next.held, at: current)
     }
 
     @MainActor
@@ -1397,14 +1417,15 @@ final class EventDetailViewModel: ObservableObject {
         let next = BlendPreview.readerAfterCommitFloor(blendPreviewReader, raw: raw, eventId: eventId)
         guard next != blendPreviewReader else { return }
         blendPreviewReader = next
-        publishPreview(next.held, at: now())
+        publishPreview(next.held, at: previewNow())
     }
 
-    /// Clears only the held preview; keeps epoch, sequence and commit floors.
+    /// Clears only the held preview and ends the v3 session; keeps the domain,
+    /// epoch, sequence and commit floors.
     @MainActor
     private func clearPreview() {
         blendPreviewReader = BlendPreview.readerReset(blendPreviewReader)
-        publishPreview(nil, at: now())
+        publishPreview(nil, at: previewNow())
     }
 
     /// Publishes `held` and re-renders once when its lifetime ends, so an

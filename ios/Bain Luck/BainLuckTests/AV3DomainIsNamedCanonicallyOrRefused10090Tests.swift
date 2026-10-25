@@ -4,7 +4,7 @@ import XCTest
 /// #10090 / #11564 — the v3 reader's durable domain primitives
 /// (`PreviewAuthorityV3`, `JSONDuplicateKeys`), before any envelope is decoded.
 /// The invalid incarnations and the maximum are the shared contract fixture's
-/// (`docs/contracts/dnpl-authority-v3.examples.json`, draft R1 d19c2f89).
+/// (`docs/contracts/dnpl-authority-v3.examples.json`, R2 92135a21).
 final class AV3DomainIsNamedCanonicallyOrRefused10090Tests: XCTestCase {
     private let one = "11111111-1111-4111-8111-111111111111"
     private let two = "22222222-2222-4222-8222-222222222222"
@@ -30,7 +30,10 @@ final class AV3DomainIsNamedCanonicallyOrRefused10090Tests: XCTestCase {
         XCTAssertTrue(PreviewAuthorityV3.isCanonicalUUID(one))
         for bad in ["11111111-1111-4111-8111-11111111111A", "111111111111-4111-8111-1111111111111",
                     "11111111-1111-4111-8111-11111111111", " 1111111-1111-4111-8111-111111111111",
-                    "g1111111-1111-4111-8111-111111111111"] {
+                    "g1111111-1111-4111-8111-111111111111",
+                    // R2's invalid_uuids, verbatim.
+                    "00000000-0000-0000-0000-000000000000", "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+                    "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"] {
             XCTAssertFalse(PreviewAuthorityV3.isCanonicalUUID(bad), bad)
         }
         XCTAssertNil(PreviewAuthorityV3(incarnation: "1", namespace: one.uppercased()))

@@ -1,7 +1,7 @@
 import Foundation
 
 /// #10090 / #11564 — the durable ordering domain of the v3 preview reader
-/// (`docs/contracts/dnpl-authority-v3.md`). Redis lost the history that ordered
+/// (`docs/contracts/dnpl-authority-v3.md`, R2). Redis lost the history that ordered
 /// v1/v2 epochs, so a v3 stream names the domain its previews belong to: a
 /// durable `incarnation` and the `namespace` UUID it was committed with.
 ///
@@ -36,11 +36,11 @@ nonisolated struct PreviewAuthorityV3: Sendable, Equatable {
         return value
     }
 
-    /// Lowercase hexadecimal 8-4-4-4-12. `UUID(uuidString:)` also accepts
-    /// uppercase, which the contract refuses.
+    /// Lowercase hexadecimal 8-4-4-4-12, any version or variant, never the nil
+    /// UUID. `UUID(uuidString:)` also accepts uppercase, which the contract refuses.
     static func isCanonicalUUID(_ raw: String) -> Bool {
         let bytes = Array(raw.utf8)
-        guard bytes.count == 36 else { return false }
+        guard bytes.count == 36, raw != "00000000-0000-0000-0000-000000000000" else { return false }
         for (i, byte) in bytes.enumerated() {
             if [8, 13, 18, 23].contains(i) {
                 guard byte == UInt8(ascii: "-") else { return false }
@@ -194,5 +194,165 @@ private extension UInt8 {
         (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(self)
             || (UInt8(ascii: "a")...UInt8(ascii: "f")).contains(self)
             || (UInt8(ascii: "A")...UInt8(ascii: "F")).contains(self)
+    }
+}
+
+/// One v3 message's outer envelope (`preview_open_v3` or `preview_v3`),
+/// validated before anything inside `frame` is read. The keys are exact: an
+/// unknown outer or `authority` key refuses the message, while the inner frame
+/// keeps its own additive rules. The whole message is at most 16 KiB and names
+/// no key twice at any depth.
+nonisolated struct PreviewEnvelopeV3: Sendable, Equatable {
+    enum Kind: Sendable { case open, preview }
+
+    let authority: PreviewAuthorityV3
+    let session: String
+    /// The open's membership (1–32 rows, the page row among them); nil on a
+    /// preview.
+    let members: Set<String>?
+    /// The message itself, for the second pass that reads `frame`.
+    private let data: Data
+
+    static func decode(_ raw: String, kind: Kind, eventId: Int) -> PreviewEnvelopeV3? {
+        guard raw.utf8.count <= BlendPreviewFrame.maxFrameBytes else { return nil }
+        let data = Data(raw.utf8)
+        guard JSONDuplicateKeys.isFree(data), let outer = try? JSONDecoder().decode(Outer.self, from: data),
+              outer.keys == (kind == .open ? Outer.openKeys : Outer.previewKeys),
+              outer.version == 3, outer.eventId == eventId, eventId > 0, eventId <= FoldRevision.maxSafeInteger,
+              let authority = PreviewAuthorityV3(incarnation: outer.incarnation, namespace: outer.namespace),
+              PreviewAuthorityV3.isCanonicalUUID(outer.session) else { return nil }
+        var members: Set<String>? = nil
+        if kind == .open {
+            // Increasing order makes the rows distinct.
+            guard let rows = outer.members, (1...BlendPreviewReader.maxRowsV3).contains(rows.count),
+                  rows.contains(eventId), zip(rows, rows.dropFirst()).allSatisfy({ $0 < $1 }),
+                  rows.allSatisfy({ $0 > 0 && $0 <= FoldRevision.maxSafeInteger }) else { return nil }
+            members = Set(rows.map(String.init))
+        }
+        return PreviewEnvelopeV3(authority: authority, session: outer.session, members: members, data: data)
+    }
+
+    /// The inner preview frame, under the existing frame rules. Read only after
+    /// the reader has matched this envelope to its active domain and session.
+    func frame() -> BlendPreviewFrame? {
+        struct Wrapped: Decodable { let frame: BlendPreviewFrame }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return (try? decoder.decode(Wrapped.self, from: data))?.frame
+    }
+
+    private struct Key: CodingKey {
+        let stringValue: String
+        init(_ value: String) { stringValue = value }
+        init?(stringValue: String) { self.init(stringValue) }
+        var intValue: Int? { nil }
+        init?(intValue: Int) { nil }
+    }
+
+    private struct Outer: Decodable {
+        static let openKeys: Set<String> = ["protocol", "event_id", "authority", "stream_session", "members"]
+        static let previewKeys: Set<String> = ["protocol", "event_id", "authority", "stream_session", "frame"]
+        let keys: Set<String>
+        let version: Int
+        let eventId: Int
+        let incarnation: String
+        let namespace: String
+        let session: String
+        let members: [Int]?
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Key.self)
+            keys = Set(c.allKeys.map(\.stringValue))
+            version = try c.decode(Int.self, forKey: Key("protocol"))
+            eventId = try c.decode(Int.self, forKey: Key("event_id"))
+            let authority = try c.nestedContainer(keyedBy: Key.self, forKey: Key("authority"))
+            guard Set(authority.allKeys.map(\.stringValue)) == ["incarnation", "namespace"] else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                       debugDescription: "unknown authority key"))
+            }
+            incarnation = try authority.decode(String.self, forKey: Key("incarnation"))
+            namespace = try authority.decode(String.self, forKey: Key("namespace"))
+            session = try c.decode(String.self, forKey: Key("stream_session"))
+            members = try c.decodeIfPresent([Int].self, forKey: Key("members"))
+        }
+    }
+}
+
+extension BlendPreview {
+    /// The reader after a validated `preview_open_v3`. The open must name the
+    /// page's adopted membership exactly; a mismatch activates no session and
+    /// moves no fence (the page's membership change reopens the stream).
+    ///
+    /// - First entry, or a NEWER incarnation: every preview identity of the old
+    ///   domain is retired (`clearingPreviewIdentity`); committed floors —
+    ///   retired members' included — membership, the visit's row count and
+    ///   saturation stay. Old-domain tuples never order the new one.
+    /// - The same domain under a new session: the display is withdrawn and the
+    ///   fences, orders and first-seen deadlines stay, so a new session cannot
+    ///   revive or renew a tuple.
+    /// - The exact active session again: nothing changes.
+    /// - An older incarnation, or the same one under another namespace: refused.
+    static func readerOpenedV3(_ reader: BlendPreviewReader, _ open: PreviewEnvelopeV3) -> BlendPreviewReader {
+        guard let members = open.members, reader.authorityMembers == members,
+              !reader.evidenceSaturated else { return reader }
+        var next: BlendPreviewReader
+        switch reader.v3Authority.map({ $0.order(open.authority) }) ?? .newer {
+        case .refused:
+            return reader
+        case .same:
+            guard reader.v3Session != open.session else { return reader }
+            next = readerReset(reader)
+        case .newer:
+            next = clearingPreviewIdentity(reader)
+        }
+        next.v3Authority = open.authority
+        next.v3Session = open.session
+        next.v3Members = members
+        // The folded composition's `fold_session` is this stream's session.
+        next.foldSession = open.session
+        next.foldMembers = members
+        next.v3Rows.formUnion(members)
+        if next.v3Rows.count > BlendPreviewReader.maxRowsV3 {
+            // COVERAGE LIMIT, as `evidenceSaturated`: committed truth shows.
+            next.held = nil
+            next.evidenceSaturated = true
+        }
+        return next
+    }
+
+    /// `reader` with every preview identity retired and every committed floor kept.
+    private static func clearingPreviewIdentity(_ reader: BlendPreviewReader) -> BlendPreviewReader {
+        var next = readerReset(reader)
+        next.epoch = -1
+        next.originFences = [:]
+        next.legacyOrders = [:]
+        next.foldedSequence = nil
+        next.enteredV2 = false
+        next.retiredMembers = reader.retiredMembers.map { .init(row: $0.row, fence: nil, floor: $0.floor) }
+        return next
+    }
+
+    /// The reader after a `preview_v3` arrives at `now`. The envelope must carry
+    /// the active domain and session before its frame is read; then the shape
+    /// must match the open's membership — the singleton shape for one row,
+    /// folded v2 for two or more, on this session and this exact membership —
+    /// and the existing singleton/folded rules decide (`readerAfter`).
+    static func readerAfterV3(_ reader: BlendPreviewReader, _ envelope: PreviewEnvelopeV3,
+                              eventId: Int, now: TimeInterval) -> BlendPreviewReader {
+        guard envelope.members == nil, !reader.evidenceSaturated,
+              let authority = reader.v3Authority, authority == envelope.authority,
+              let session = reader.v3Session, session == envelope.session,
+              let members = reader.v3Members, let frame = envelope.frame(), frame.eventId == eventId else {
+            return reader
+        }
+        if members.count == 1 {
+            guard frame.foldedVersion == nil, frame.baseFoldRevision == nil, frame.originEventId == nil else {
+                return reader
+            }
+        } else {
+            guard frame.foldedVersion == 2, frame.foldSession == session,
+                  frame.baseFoldRevision.map({ Set($0.rows.keys) == members }) ?? false else { return reader }
+        }
+        return readerAfter(reader, frame, eventId: eventId, now: now)
     }
 }

@@ -214,9 +214,19 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
         @MainActor func fire(_ event: String, _ data: String = "") {
             for h in handlers[event] ?? [] { h(data) }
         }
+        /// #11564: a transport open, then the v3 domain on a fresh session.
+        var session = ""
+        @MainActor func openV3(members: [Int] = [4242]) {
+            fire("open")
+            session = V3PageWire.nextSession()
+            fire("preview_open_v3", V3PageWire.open(4242, members: members, session: session))
+        }
+        @MainActor func previewV3(_ frame: String) {
+            fire("preview_v3", V3PageWire.preview(frame, eventId: 4242, session: session))
+        }
     }
 
-    func testAPreviewReachesOnPreviewNeverOnFrameAndRenewsNoClockOpenAndClosedResetIt() {
+    func testAPreviewReachesOnPreviewV3NeverOnFrameAndRenewsNoClockOpenAndClosedResetIt() {
         var clock: TimeInterval = 1_000
         let handle = FakeHandle()
         var frames = 0
@@ -227,7 +237,7 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
             open: { handle }, now: { clock },
             onFrame: { _ in frames += 1 },
             onDeliveringChange: { delivering.append($0) },
-            onPreview: { previews.append($0) },
+            onPreviewV3: { raw, _ in previews.append(raw) },
             onPreviewReset: { resets += 1 },
             schedule: { _, _ in {} }
         )
@@ -238,17 +248,19 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
         // Previews every 10 s past the 90 s data-silence budget: none renews it.
         for step in 1...10 {
             clock = 1_000 + Double(step) * 10
-            handle.fire("preview", Self.blendJSON(step, 0.7))
+            handle.fire("preview_v3", Self.blendJSON(step, 0.7))
             handle.fire("heartbeat")
         }
         XCTAssertEqual(previews.count, 10)
+        handle.fire("preview", Self.blendJSON(11, 0.7))
+        XCTAssertEqual(previews.count, 10, "a legacy preview event never reaches the v3 reader")
         XCTAssertEqual(frames, 0, "a preview is never a committed frame")
         XCTAssertEqual(delivering, [true], "a preview turns nothing on")
         controller.tick()
         XCTAssertEqual(delivering, [true, false], "the data-silence fallback still fires behind previews")
         handle.fire("closed")
         XCTAssertEqual(resets, 2)
-        handle.fire("preview", Self.blendJSON(11, 0.7))
+        handle.fire("preview_v3", Self.blendJSON(12, 0.7))
         XCTAssertEqual(previews.count, 10, "nothing after the stream ends")
     }
 
@@ -297,10 +309,10 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
     func testAnAcceptedPreviewAppearsInTheHeldHeadlineBeforeTheDelayedCommit() async throws {
         let (vm, handle, _) = try await heldPage()
         defer { vm.stopRefresh() }
-        handle.fire("open")
+        handle.openV3()
         XCTAssertEqual(try headline(vm), 0.6)
 
-        handle.fire("preview", Self.blendJSON(1, 0.88))
+        handle.previewV3(Self.blendJSON(1, 0.88))
         XCTAssertEqual(try headline(vm), 0.88, "the held headline shows the provisional blend")
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.6, "the committed event is untouched")
         XCTAssertEqual(vm.event?.blendFoldRevision?.revision, FoldRevision(["4242": 10]))
@@ -315,25 +327,25 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
         XCTAssertTrue(vm.streamHasPushedPrice)
 
         // A delayed preview still on the old base never takes the headline back.
-        handle.fire("preview", Self.blendJSON(2, 0.9, base: 10))
+        handle.previewV3(Self.blendJSON(2, 0.9, base: 10))
         XCTAssertEqual(try headline(vm), 0.87)
         // One recomposed on the new base does.
-        handle.fire("preview", Self.blendJSON(3, 0.89, base: 11))
+        handle.previewV3(Self.blendJSON(3, 0.89, base: 11))
         XCTAssertEqual(try headline(vm), 0.89)
     }
 
     func testOldOutOfOrderAndRevokedPreviewsOnTheHeldPage() async throws {
         let (vm, handle, _) = try await heldPage()
         defer { vm.stopRefresh() }
-        handle.fire("open")
-        handle.fire("preview", Self.blendJSON(5, 0.8))
-        handle.fire("preview", Self.blendJSON(4, 0.7))
+        handle.openV3()
+        handle.previewV3(Self.blendJSON(5, 0.8))
+        handle.previewV3(Self.blendJSON(4, 0.7))
         XCTAssertEqual(try headline(vm), 0.8, "out of order")
-        handle.fire("preview", Self.revokeJSON(6, through: 5))
+        handle.previewV3(Self.revokeJSON(6, through: 5))
         XCTAssertEqual(try headline(vm), 0.6, "revoked")
         XCTAssertNil(vm.blendPreview)
-        handle.fire("preview", "{not json")
-        handle.fire("preview", Self.blendJSON(7, 0.8).replacingOccurrences(of: #""provisional":true"#,
+        handle.previewV3("{not json")
+        handle.previewV3(Self.blendJSON(7, 0.8).replacingOccurrences(of: #""provisional":true"#,
                                                                            with: #""provisional":true,"rev":{"4242":12}"#))
         XCTAssertEqual(try headline(vm), 0.6, "malformed and rev-carrying previews are dropped")
     }
@@ -341,9 +353,9 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
     func testAnExpiredPreviewGivesWayToCommittedTruth() async throws {
         let (vm, handle, clock) = try await heldPage()
         defer { vm.stopRefresh() }
-        handle.fire("open")
+        handle.openV3()
         let arrival = clock.t
-        handle.fire("preview", Self.blendJSON(1, 0.8, ttl: 2_000))
+        handle.previewV3(Self.blendJSON(1, 0.8, ttl: 2_000))
         clock.t = arrival + 1.5
         XCTAssertEqual(try headline(vm), 0.8)
         clock.t = arrival + 2
@@ -353,40 +365,40 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
     func testAnEpochTakeoverAndAReconnectOnTheHeldPage() async throws {
         let (vm, handle, _) = try await heldPage()
         defer { vm.stopRefresh() }
-        handle.fire("open")
-        handle.fire("preview", Self.blendJSON(90, 0.8, epoch: 4))
-        handle.fire("preview", Self.blendJSON(1, 0.75, epoch: 5))
+        handle.openV3()
+        handle.previewV3(Self.blendJSON(90, 0.8, epoch: 4))
+        handle.previewV3(Self.blendJSON(1, 0.75, epoch: 5))
         XCTAssertEqual(try headline(vm), 0.75, "the replacement takes the display")
-        handle.fire("preview", Self.blendJSON(91, 0.81, epoch: 4))
+        handle.previewV3(Self.blendJSON(91, 0.81, epoch: 4))
         XCTAssertEqual(try headline(vm), 0.75, "the superseded worker never regains it")
 
         // A reconnect: previews are never replayed, so the held one is cleared;
         // the epoch floor is kept.
-        handle.fire("open")
+        handle.openV3()
         XCTAssertNil(vm.blendPreview)
         XCTAssertEqual(try headline(vm), 0.6)
-        handle.fire("preview", Self.blendJSON(92, 0.82, epoch: 4))
+        handle.previewV3(Self.blendJSON(92, 0.82, epoch: 4))
         XCTAssertEqual(try headline(vm), 0.6, "an older epoch stays fenced across the reconnect")
-        // The cleared preview orders nothing: the reader no longer holds it, so
-        // even a seq it had used shows (web's reset is `held: null`, floor kept).
-        handle.fire("preview", Self.blendJSON(1, 0.76, epoch: 5))
-        XCTAssertEqual(try headline(vm), 0.76, "the reconnect cleared the reader, not only the page")
-        handle.fire("preview", Self.blendJSON(2, 0.77, epoch: 5))
+        // #11564 (contract R2 rule 4): the new session withdrew the display but
+        // kept the row's order, so the tuple it held cannot come back on it.
+        handle.previewV3(Self.blendJSON(1, 0.76, epoch: 5))
+        XCTAssertEqual(try headline(vm), 0.6, "a new session cannot revive the tuple the old one held")
+        handle.previewV3(Self.blendJSON(2, 0.77, epoch: 5))
         XCTAssertEqual(try headline(vm), 0.77)
     }
 
     func testTheEndOfTheMatchAndLeavingThePageClearThePreview() async throws {
         let (vm, handle, _) = try await heldPage()
-        handle.fire("open")
-        handle.fire("preview", Self.blendJSON(1, 0.8))
+        handle.openV3()
+        handle.previewV3(Self.blendJSON(1, 0.8))
         XCTAssertEqual(try headline(vm), 0.8)
         handle.fire("closed")
         XCTAssertNil(vm.blendPreview)
         XCTAssertEqual(try headline(vm), 0.6)
 
         let (left, leftHandle, _) = try await heldPage()
-        leftHandle.fire("open")
-        leftHandle.fire("preview", Self.blendJSON(1, 0.8))
+        leftHandle.openV3()
+        leftHandle.previewV3(Self.blendJSON(1, 0.8))
         left.stopRefresh()
         XCTAssertNil(left.blendPreview)
         XCTAssertEqual(try headline(left), 0.6)
@@ -395,8 +407,9 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
     func testAFoldedHeldPageNeverShowsAPreview() async throws {
         let (vm, handle, _) = try await heldPage(Self.detail(rev: #"{"4242":10,"4243":5}"#))
         defer { vm.stopRefresh() }
-        handle.fire("open")
-        handle.fire("preview", Self.blendJSON(1, 0.8))
+        // The open names the page's fold; a singleton payload on it is refused.
+        handle.openV3(members: [4242, 4243])
+        handle.previewV3(Self.blendJSON(1, 0.8))
         XCTAssertEqual(try headline(vm), 0.6)
     }
 
@@ -404,8 +417,8 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
     func testTheLargestAdmittedTtlShowsWithoutTrapping() async throws {
         let (vm, handle, _) = try await heldPage()
         defer { vm.stopRefresh() }
-        handle.fire("open")
-        handle.fire("preview", Self.blendJSON(1, 0.8, ttl: FoldRevision.maxSafeInteger))
+        handle.openV3()
+        handle.previewV3(Self.blendJSON(1, 0.8, ttl: FoldRevision.maxSafeInteger))
         XCTAssertEqual(try headline(vm), 0.8)
     }
 

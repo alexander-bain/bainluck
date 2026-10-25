@@ -53,8 +53,18 @@ final class AMembershipChangeReopensTheFoldedPreview10090Tests: XCTestCase {
         """.utf8))
     }
 
-    private static func open(_ session: String) -> String {
-        #"{"event_id":4242,"fold_session":"\#(session)"}"#
+    /// #11564: the v3 stream sessions, each a lowercase UUID the inner
+    /// `fold_session` repeats.
+    private static let s1 = "00000001-0000-4000-8000-000000000001"
+    private static let s2 = "00000002-0000-4000-8000-000000000002"
+
+    @MainActor private static func open(_ handle: Handle, _ session: String, members: [Int]) {
+        handle.fire("open")
+        handle.fire("preview_open_v3", V3PageWire.open(id, members: members, session: session))
+    }
+
+    @MainActor private static func preview(_ handle: Handle, _ session: String, _ snapshot: String) {
+        handle.fire("preview_v3", V3PageWire.preview(snapshot, eventId: id, session: session))
     }
 
     private static func pending(_ epoch: Int, _ seq: Int) -> String {
@@ -103,8 +113,8 @@ final class AMembershipChangeReopensTheFoldedPreview10090Tests: XCTestCase {
         await vm.load()
         XCTAssertEqual(handles.all.count, 1, "the held page opened one stream")
         let first = try XCTUnwrap(handles.all.first)
-        first.fire("open", Self.open("s1"))
-        first.fire("preview", Self.snapshot(session: "s1", seq: 1, base: Self.oldBase, authority: Self.oldAuthority))
+        Self.open(first, Self.s1, members: [4242, 4243])
+        Self.preview(first, Self.s1, Self.snapshot(session: Self.s1, seq: 1, base: Self.oldBase, authority: Self.oldAuthority))
         XCTAssertEqual(try headline(vm), 0.65, "the 4242/4243 fold shows its pending blend")
 
         // The authoritative detail now folds 4242 with 4244 instead of 4243.
@@ -118,15 +128,15 @@ final class AMembershipChangeReopensTheFoldedPreview10090Tests: XCTestCase {
         let second = try XCTUnwrap(handles.all.last)
 
         // On the new connection: the old session and the old membership are refused.
-        second.fire("open", Self.open("s2"))
-        second.fire("preview", Self.snapshot(session: "s1", seq: 2, base: Self.newBase, authority: Self.newAuthority))
+        Self.open(second, Self.s2, members: [4242, 4244])
+        Self.preview(second, Self.s1, Self.snapshot(session: Self.s1, seq: 2, base: Self.newBase, authority: Self.newAuthority))
         XCTAssertNil(vm.blendPreview, "a packet of the old session is refused")
-        second.fire("preview", Self.snapshot(session: "s2", seq: 1, base: Self.oldBase, authority: Self.oldAuthority))
+        Self.preview(second, Self.s2, Self.snapshot(session: Self.s2, seq: 1, base: Self.oldBase, authority: Self.oldAuthority))
         XCTAssertNil(vm.blendPreview, "a packet naming the removed member is refused")
         XCTAssertEqual(try headline(vm), 0.5)
 
         // The new fold is admitted on the same connection.
-        second.fire("preview", Self.snapshot(session: "s2", seq: 2, base: Self.newBase, authority: Self.newAuthority, p: 0.7))
+        Self.preview(second, Self.s2, Self.snapshot(session: Self.s2, seq: 2, base: Self.newBase, authority: Self.newAuthority, p: 0.7))
         XCTAssertEqual(try headline(vm), 0.7, "the already-open page shows the new fold's pending blend")
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.5, "the committed event is untouched")
 
