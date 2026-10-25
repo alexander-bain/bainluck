@@ -28,8 +28,8 @@ const preview = { event_id: 1, p: .48, p_away: null, status: 'live', sport: 'soc
   preview: { kind: 'blend', folded_version: 2, fold_session: first, fold_seq: 1, ttl_ms: 5000,
     origin_authority: {'1': {epoch: 900, seq: 1, state: 'pending', ttl_ms: 5000},
       '2': {epoch: 12, seq: 80, state: 'pending', ttl_ms: 5000}}, base_fold_revision: vector } };
-function Page({ membership }: { membership?: Record<string, number> }) {
-  const { blendPreview, blendPreviewNow } = useLiveEventStream(1, true, undefined, undefined, membership ?? vector);
+function Page({ membership }: { membership?: Record<string, number> | null }) {
+  const { blendPreview, blendPreviewNow } = useLiveEventStream(1, true, undefined, undefined, membership === null ? undefined : membership ?? vector);
   const current = membership ? {...committed, blend_fold_revision: membership} : committed;
   return <output>{JSON.stringify({
     headline: displayedPreview(blendPreview, current, blendPreviewNow),
@@ -155,6 +155,35 @@ test('new authority restores low-epoch updates on headline and chart, retains co
     await act(async()=>{Source.current.emit('probability',{event_id:1,rev:{'1':12,'2':22},p:.45,status:'live'});});
     expect(JSON.parse(host.textContent!)).toEqual({headline:null,observed:'stored',chart:[]});
     await act(async()=>{Source.current.emit('preview_v3',{...wrap({...fresh,preview:{...fresh.preview,fold_seq:2}}),authority:nextAuthority});});
+    expect(JSON.parse(host.textContent!).headline).toBeNull();
+  } finally {
+    await act(async()=>{root.unmount();});globalThis.EventSource=original;jest.useRealTimers();
+  }
+});
+
+
+test('first adopted membership after an early refused open reconnects; transport error immediately withdraws display', async () => {
+  const original=globalThis.EventSource;
+  globalThis.EventSource=Source as unknown as typeof EventSource;
+  jest.useFakeTimers();
+  const host=document.createElement('div'), root=createRoot(host);
+  try {
+    await act(async()=>{root.render(<Page membership={null} />);});
+    const early=Source.current;
+    await act(async()=>{early.emit('open',{});early.emit('preview_open_v3',opening());early.emit('preview_v3',wrap(preview));});
+    expect(JSON.parse(host.textContent!).headline).toBeNull();
+    await act(async()=>{root.render(<Page membership={vector} />);});
+    expect(early.readyState).toBe(2);expect(Source.current).not.toBe(early);
+    await act(async()=>{Source.current.emit('preview_v3',wrap(preview));early.emit('preview_open_v3',opening());});
+    expect(JSON.parse(host.textContent!).headline).toBeNull();
+    await act(async()=>{Source.current.emit('open',{});Source.current.emit('preview_open_v3',opening([1,2],second));
+      Source.current.emit('preview_v3',wrap({...preview,preview:{...preview.preview,fold_session:second}},second));});
+    expect(JSON.parse(host.textContent!).headline).toBe(.48);
+    const active=Source.current;
+    await act(async()=>{active.readyState=0;active.emit('error',{});});
+    expect(JSON.parse(host.textContent!)).toEqual({headline:null,observed:'stored',chart:[]});
+    expect(Source.current).toBe(active); // automatic retry policy remains unchanged
+    await act(async()=>{active.emit('preview_v3',wrap(preview));});
     expect(JSON.parse(host.textContent!).headline).toBeNull();
   } finally {
     await act(async()=>{root.unmount();});globalThis.EventSource=original;jest.useRealTimers();

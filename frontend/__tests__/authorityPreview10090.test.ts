@@ -107,3 +107,10 @@ test('capacity saturates rather than evicting evidence; new incarnation cannot r
   full=membership(full,{'42':0},42);expect(full.saturated).toBe(true);
   expect(Object.keys(full.retired)).toHaveLength(31);expect(full.visited).toHaveLength(32);
 });
+
+
+test.each(['3', '3.0', '3e0'])('D1 protocol uses the decoded integer value: %s', spelling => {
+  const raw=wire(m.singleton_open).replace('"protocol":3', '"protocol":'+spelling);
+  const r=membership(EMPTY_AUTHORITY_PREVIEW,{'42':10},42);
+  expect(open(r,raw,42).domain).toEqual(a);
+});

@@ -1,5 +1,10 @@
 {
   "contract": "dnpl-authority-v3-r2",
+  "clarifications": {
+    "D1": {"accepted_number_spellings": ["3", "3.0", "3e0"], "rejected_incarnation_strings": ["3.0", "3e0"]},
+    "D2": {"case": "transport_error_retrying_same_handle", "expected": "retire_held_end_session_preserve_evidence_require_fresh_open"},
+    "D3": {"case": "early_open_refused_then_first_detail_membership", "expected": "close_prior_handle_reopen_require_new_open_never_replay_refused_open"}
+  },
   "messages": {
     "singleton_open": {
       "protocol": 3, "event_id": 42,

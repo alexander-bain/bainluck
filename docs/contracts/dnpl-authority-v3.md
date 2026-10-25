@@ -1,4 +1,4 @@
-# DNPL authority v3 — wire contract R2 (frozen author contract)
+# DNPL authority v3 — wire contract R2 (with D1–D3 clarification)
 
 PILLAR: TRUTH / FORMATTING.
 SHIP: held web and Native pages resume correctly ordered fast probabilities
@@ -27,6 +27,13 @@ Every v3 message has:
 * `stream_session`: non-nil lowercase UUID with that same exact syntax, generated for this stream opening.
   It is not a provider owner and is not allowed to reset authority by itself.
 
+D1: Integer-valued JSON **number** fields use decoded numeric value, not lexical
+spelling. Thus `3`, `3.0` and `3e0` all represent protocol 3; the same rule applies
+to event/member IDs and existing inner integer fields. Their respective finite,
+safe-integer, sign and range checks still apply. Strings are not numbers. This
+does not relax `authority.incarnation`: that field remains a canonical decimal
+**string**, so `"3.0"` and `"3e0"` remain invalid.
+
 `preview_open_v3` additionally has `members`: 1–32 distinct positive safe-integer
 event IDs in increasing numeric order, including `event_id`. It has no `frame`.
 The server emits it only after verifying the ready PostgreSQL identity, current
@@ -35,6 +42,14 @@ it but does not enable v3 previews. A source code/HTTP version is not authority.
 The open membership must equal the page's adopted detail membership, not just
 include the page row. A mismatch activates no incoming session and changes no
 fence; the existing detail-membership change path reopens the stream.
+
+D3: An open received before any detail membership is adopted is refused, never
+saved for later replay. The first valid membership adoption (unknown → known)
+must reopen an already-running stream, just as a change to known membership
+does. Close the prior handle, retire its held display/session, and require a new
+current-connection `preview_open_v3`. A revision-only update with unchanged
+membership advances committed floors without reopening. Obsolete callbacks from
+the prior handle cannot enable the new stream.
 
 `preview_v3` additionally has `frame`, the existing validated preview frame:
 `frame.event_id` equals outer `event_id`, and `frame` has no committed `rev`.
@@ -102,6 +117,13 @@ failure or overflow MUST issue `reconnect`, not merely `resync`. It may keep the
 ordinary committed path available while the transport obtains a fresh session.
 Retired tuples never revive on a same-domain resync/reopen.
 
+D2: A transport `error` also immediately retires the held preview and ends its
+active v3 session, including an error for which the same transport handle will
+retry automatically. Preserve ordering, first-seen deadlines, committed floors,
+chart history and saturation. Do not keep a preview visible until TTL after a
+known transport loss. The transport's existing retry policy is unchanged; the
+next successful open still requires a fresh `preview_open_v3` before previews.
+
 Disconnect/recovery clears display authority, not the retained fences. Returning
 committed truth is truthful fallback; neither an unknown domain nor a new open
 may clear chart history or fabricate a committed revision.
@@ -132,6 +154,7 @@ checks may still refuse an envelope that passes the outer checks.
 
 Speed owns backend/web; Native owns Swift decoder, transport, view model and
 actual SwiftUI gates. R2 resolves Native's eight author-alignment questions.
-The independent contract review is still unpaid and tool-blocked; freezing these
-author bytes does not claim reviewer acceptance. The Redis rollback premise and
-latency remain implementation gates.
+The original R2 bytes earned independent contract acceptance. D1–D3 above are a
+narrow author clarification prompted by the Native implementation review; their
+delta review is separate. Contract acceptance is not runtime implementation
+acceptance. The Redis rollback premise and latency remain implementation gates.
