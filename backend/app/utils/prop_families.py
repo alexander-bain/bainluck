@@ -148,6 +148,41 @@ _STANDALONE_AWARDS: list[tuple[str, str]] = [
     ("roy", "rookie of the year"),
 ]
 
+# A title explicitly joining different award families is not either single
+# award. Longest-first, non-overlapping spans keep "Finals MVP" and "Defensive
+# Player of the Year" from counting their own shorter aliases twice (#9858).
+_AWARD_CANONICAL = dict(_STANDALONE_AWARDS)
+_AWARD_SPAN_RE = re.compile(
+    r"\b(?:"
+    + "|".join(re.escape(kw) for kw in sorted(_AWARD_CANONICAL, key=len, reverse=True))
+    + r")\b"
+)
+_AWARD_JOIN_RE = re.compile(
+    r"\s*(?:(?:award|trophy|winner)\s+)?(?:\b(?:and|or)\b|[&+])\s*"
+    r"(?:(?:the|win|wins|winning)\s+)*"
+)
+
+
+def _has_explicit_joint_awards(name: str) -> bool:
+    """Refuse explicit compounds, without inferring rule equivalence.
+
+    Reuse the recognized award vocabulary; an incidental mention elsewhere
+    in the title is not enough. Unknown predicates, editions and distinctions
+    within one existing family still require their own semantic contract.
+    """
+    low = " ".join(name.lower().split())
+    previous = None
+    for match in _AWARD_SPAN_RE.finditer(low):
+        if (
+            previous is not None
+            and _AWARD_CANONICAL[previous.group()] != _AWARD_CANONICAL[match.group()]
+            and _AWARD_JOIN_RE.fullmatch(low[previous.end():match.start()])
+        ):
+            return True
+        previous = match
+    return False
+
+
 # Quantity verbs that introduce a threshold / total prop.
 _QUANTITY_VERBS = (
     "score", "scores", "reach", "reaches", "hit", "hits", "record", "records",
@@ -388,6 +423,8 @@ def _parse(market_name: str | None) -> tuple[str | None, str | None]:
     cleaned = re.sub(r"\s+", " ", market_name).strip().rstrip("?").strip()
     low = cleaned.lower()
     if not low:
+        return None, None
+    if _has_explicit_joint_awards(low):
         return None, None
 
     # 1. "<entity> Next Team"
@@ -960,8 +997,10 @@ def _competition_key(market: dict, fk: str) -> str:
 
 
 def resolve_family_key(market: dict) -> str | None:
-    """Family key for a market dict — cached LLM hint first, then pattern."""
+    """Family key: refuse explicit compounds before accepting cached hints."""
     name = market.get("name") or market.get("market_name") or ""
+    if _has_explicit_joint_awards(name):
+        return None
     fk = cached_family_key(market) or family_key(name)
     return _competition_key(market, fk) if fk else None
 
