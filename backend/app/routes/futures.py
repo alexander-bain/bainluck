@@ -7779,9 +7779,64 @@ def _leg_absent_beside_dense_sibling(
         return False
 
 
+#: What `venue_history.fill_trigger` adds when #10955's moved-price rule asked.
+_HEADLINE_MOVED_BASIS = "stored_price_moved_after_history"
+
+
+def _headline_moved_past_history(
+    venue: "_GenericVenueHistory", market, capture_rows: list
+) -> bool:
+    """#10955 — did a charted line's stored price move after its chart's last word?
+
+    The ROUTE half of `generic_market_history.headline_moved_past_history`, asked
+    by both chart readers so `/history` and `/probability-timeline` reach the
+    same answer. Only for a market that already HAS a bank attempt: with none,
+    the thin/coarse gates already decide, and this must not widen who gets a
+    first fill. Never for a settled market or a graded line, because a
+    settlement's stamp records a result, not a trade.
+
+    Never raises: a chart is never failed by deciding whether to refill it.
+    """
+    try:
+        from app.tasks.generic_market_history_fill import (
+            _SETTLED_STATUSES,
+            fillable_outcomes,
+        )
+        from app.utils.generic_market_history import (
+            headline_moved_past_history,
+            payload_attempted_at,
+        )
+
+        if not venue.applicable or venue.state == "unavailable" or venue.payload is None:
+            return False
+        if (getattr(market, "status", None) or "").lower() in _SETTLED_STATUSES:
+            return False
+        lines = {
+            o.id: (o.current_probability, getattr(o, "price_changed_at", None))
+            for o in fillable_outcomes(market)
+            if getattr(o, "is_winner", None) is None
+        }
+        if not lines:
+            return False
+        captures: dict[int, list] = defaultdict(list)
+        for row in capture_rows:
+            # Captures only: a settlement marker is not an observation of trading.
+            if row.outcome_id in lines and getattr(row, "bookmaker", None) != "settlement":
+                captures[row.outcome_id].append(
+                    (getattr(row, "captured_at", None), getattr(row, "probability", None))
+                )
+        return headline_moved_past_history(
+            captures, lines, bank_attempted_at=payload_attempted_at(venue.payload)
+        )
+    except Exception as exc:  # noqa: BLE001 — eligibility never fails a chart
+        logger.warning("generic venue history: moved-price check failed for %s: %s",
+                       getattr(market, "id", None), str(exc)[:200])
+        return False
+
+
 def _plan_and_dispatch_generic_history_fill(
     market, charted_outcomes: list, payload: Optional[dict], chart_is_thin: bool,
-    chart_is_coarse: bool = False,
+    chart_is_coarse: bool = False, headline_moved: bool = False,
 ) -> str:
     """Win the claim, spend it, hand it back if the broker refuses. Sync; run off-loop.
 
@@ -7794,7 +7849,7 @@ def _plan_and_dispatch_generic_history_fill(
     plan = plan_on_demand_fill(
         market, charted_outcomes, payload,
         chart_is_thin=chart_is_thin, chart_is_coarse=chart_is_coarse,
-        rc=_request_path_redis(),
+        headline_moved=headline_moved, rc=_request_path_redis(),
     )
     if not plan.get("enqueue"):
         return str(plan.get("reason"))
@@ -7814,7 +7869,7 @@ def _plan_and_dispatch_generic_history_fill(
 
 async def _consider_generic_history_fill(
     venue: _GenericVenueHistory, market: FuturesMarket, charted_outcomes: list,
-    *, chart_is_thin: bool, chart_is_coarse: bool = False,
+    *, chart_is_thin: bool, chart_is_coarse: bool = False, headline_moved: bool = False,
 ) -> None:
     """Ask the background lane for this market's venue history, at most once."""
     if not venue.applicable or venue.state == "unavailable":
@@ -7840,7 +7895,7 @@ async def _consider_generic_history_fill(
         venue.fill = await asyncio.to_thread(
             _plan_and_dispatch_generic_history_fill,
             market_ref, outcome_refs, venue.payload, chart_is_thin,
-            chart_is_coarse,
+            chart_is_coarse, headline_moved,
         )
     # (Load bearing for `scan_mutation_residue.py` Pass B — without a line here
     # the closing paren above plus the bare `noqa` below reproduce
@@ -8107,14 +8162,18 @@ async def get_probability_timeline(
     # #11162 — OR one fillable line is absent where a dense sibling was observed:
     # both questions above read the chart through its densest part.
     _leg_absent = _leg_absent_beside_dense_sibling(venue, market, snapshots)
+    # #10955 — OR a stored price moved after everything this chart can draw.
+    _moved = _headline_moved_past_history(venue, market, snapshots)
     venue.thin_basis = (
         f"captures_in_requested_window<{_VENUE_FILL_THIN_CAPTURES}"
         + (" or captures_coarser_than_fine_tier" if _coarse else "")
         + (f" or {_LEG_ABSENT_BASIS}" if _leg_absent else "")
+        + (f" or {_HEADLINE_MOVED_BASIS}" if _moved else "")
     )
     await _consider_generic_history_fill(
         venue, market, charted_outcomes,
-        chart_is_thin=_thin, chart_is_coarse=_coarse or _leg_absent,
+        chart_is_thin=_thin, chart_is_coarse=_coarse or _leg_absent or _moved,
+        headline_moved=_moved,
     )
 
     # Auto-extend for sparse markets (same logic as /history endpoint). Skipped
@@ -9327,12 +9386,24 @@ async def get_futures_history(
     _leg_absent = _leg_absent_beside_dense_sibling(venue, market, snapshots)
     if _leg_absent:
         venue.thin_basis = _LEG_ABSENT_BASIS
+    # #10955 — and the same fourth question as the timeline route, asked of the
+    # WHOLE field's captures, not the drawn `snapshots`: the rule judges every
+    # fillable line, so a team page's `outcome_id=` or a golf board's `top_n`
+    # would hand it no capture for an undrawn leg and turn every poll move into
+    # an ask. The timeline route's `snapshots` already span the field.
+    _moved = _headline_moved_past_history(venue, market, _supported_field)
+    if _moved:
+        venue.thin_basis = (
+            f"{venue.thin_basis} or {_HEADLINE_MOVED_BASIS}"
+            if venue.thin_basis else _HEADLINE_MOVED_BASIS
+        )
     await _consider_generic_history_fill(
         venue, market, charted_outcomes,
         chart_is_thin=len(snapshots) < _EXTEND_TIERS[0][0],
         chart_is_coarse=captures_are_coarse(
             _capture_lines(snapshots), window_hours=actual_hours
-        ) or _leg_absent,
+        ) or _leg_absent or _moved,
+        headline_moved=_moved,
     )
 
     # Auto-extend if sparse
