@@ -1575,6 +1575,9 @@ export interface FuturesFamily {
   members: FuturesMarket[];
   more_count: number;
   member_count: number;
+  // PROTOTYPE (#11040): the published collection that admits every row this
+  // family shows (the Discover theme-card resolver, run on the family's ids).
+  collection_ref?: FeedThemeCollectionRef | null;
 }
 
 // #999 L2-65: an event concept (tournament page) surfaced in search.

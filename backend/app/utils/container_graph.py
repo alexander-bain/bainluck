@@ -107,6 +107,11 @@ EDGE_CLASSES: Final[FrozenSet[str]] = frozenset(
         "prop",  # player/match props
         "side_question",  # "will Sinner actually play?"
         "doubles",  # doubles fixtures — authority-sourced only
+        "departure_announced",  # #11040: announcement-based departure ladder
+        "departure_vacated",  # #11040: actual-departure / vacated-role ladder
+        "departure_rules_unread",  # #11040: departure market whose rules text is not registered
+        "departure_left_administration",  # #11040: leaving the administration altogether
+        "after_role",  # #11040: next role / appointment after the current role
         "unclassified",  # assembled but unnamed. NEVER dropped. See below.
     }
 )

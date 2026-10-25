@@ -929,21 +929,29 @@ async def _read_theme_snapshot(container_id: int, revision: int) -> Optional[dic
     return snap
 
 
-def _theme_rank(member_class: Optional[str]) -> int:
+def _theme_rank(member_class: Optional[str], defn=None) -> int:
     from app.tasks.theme_assembly import CLASS_RANK
+    from app.utils.theme_definitions import theme_class_rank
 
+    if defn is not None:
+        return theme_class_rank(defn, member_class)
     return CLASS_RANK.get(member_class, max(CLASS_RANK.values()) + 1)
 
 
-def _theme_order_classes(present: set) -> list:
+def _theme_order_classes(present: set, defn=None) -> list:
     """Sections in the snapshot's page order, so a page reads top to bottom in
     cursor order; ``unclassified`` last, as everywhere else."""
-    named = sorted(present - {CLASS_UNCLASSIFIED}, key=lambda c: (_theme_rank(c), c))
+    named = sorted(present - {CLASS_UNCLASSIFIED}, key=lambda c: (_theme_rank(c, defn), c))
     return named + ([CLASS_UNCLASSIFIED] if CLASS_UNCLASSIFIED in present else [])
 
 
 def theme_page_window(
-    shown_ids: list, classes: dict, *, cursor_key: Optional[tuple[int, int]], limit: int
+    shown_ids: list,
+    classes: dict,
+    *,
+    cursor_key: Optional[tuple[int, int]],
+    limit: int,
+    defn=None,
 ) -> Optional[tuple[list, Optional[tuple[int, int]]]]:
     """``(page ids, next cursor key)``, or None when the snapshot disagrees with
     the membership it was built from (an id with no edge, or out of order).
@@ -953,7 +961,7 @@ def theme_page_window(
     """
     if any(i not in classes for i in shown_ids):
         return None
-    keys = [(_theme_rank(classes[i]), i) for i in shown_ids]
+    keys = [(_theme_rank(classes[i], defn), i) for i in shown_ids]
     if any(a >= b for a, b in zip(keys, keys[1:])):
         return None
     start = bisect.bisect_right(keys, cursor_key) if cursor_key is not None else 0
@@ -971,6 +979,8 @@ async def _serve_theme_page(
     cursor: Optional[str],
     limit: Optional[str],
 ):
+    from app.utils.theme_definitions import get_theme_definition
+
     requested, cursor_key, size = _parse_theme_params(revision, cursor, limit)
     live = int(published.revision)
     revision_moved = requested is not None and requested != live
@@ -981,6 +991,7 @@ async def _serve_theme_page(
     if snap is None:
         return _not_ready_response("building")
 
+    defn = get_theme_definition(getattr(published, "slug", None))
     own = [
         m for m in published.members
         if m.get("container_id") == published.container_id and m.get("type") == MEMBER_MARKET
@@ -991,6 +1002,7 @@ async def _serve_theme_page(
         {i: m.get("class") for i, m in by_id.items()},
         cursor_key=cursor_key,
         limit=size,
+        defn=defn,
     )
     if window is None:
         logger.warning(
@@ -1017,7 +1029,7 @@ async def _serve_theme_page(
         market_cards=market_cards,
         market_event_ids=market_event_ids,
         failed=market_failed,
-        order_classes=_theme_order_classes,
+        order_classes=lambda present: _theme_order_classes(present, defn),
         unclassified=CLASS_UNCLASSIFIED,
     )
     return {

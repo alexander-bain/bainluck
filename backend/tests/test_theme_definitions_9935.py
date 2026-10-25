@@ -95,8 +95,21 @@ def clause(decision, name):
 
 class TestRegistryAndSlugs:
     def test_registry_holds_exactly_the_two_first_ship_subjects(self):
-        assert set(REGISTRY) == {"oscars-2027", "ai"}
+        assert set(REGISTRY) == {
+            "oscars-2027",
+            "ai",
+            "katie-zacharia-press-secretary-2026",
+            "pete-hegseth-defense-secretary-2025",
+        }
         assert REGISTRY["oscars-2027"] is OSCARS_2027 and REGISTRY["ai"] is AI
+        assert (
+            REGISTRY["katie-zacharia-press-secretary-2026"]
+            is td.KATIE_ZACHARIA_PRESS_SECRETARY_2026
+        )
+        assert (
+            REGISTRY["pete-hegseth-defense-secretary-2025"]
+            is td.PETE_HEGSETH_DEFENSE_SECRETARY_2025
+        )
         assert (OSCARS_2027.scope, OSCARS_2027.edition) == ("finite", 2027)
         assert (AI.scope, AI.edition) == ("continuing", None)
         assert OSCARS_2027.container_kind == "award_show" and OSCARS_2027.category == "awards"

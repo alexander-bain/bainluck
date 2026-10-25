@@ -276,6 +276,14 @@ class TestTheNamedClasses:
         A class in the vocabulary that nothing can ever return is a section the
         hub will always draw empty — and nobody would notice.
         """
+        from datetime import datetime, timezone
+
+        from app.utils.departure_story_contract import (
+            KATIE_ZACHARIA_PRESS_SECRETARY,
+            PETE_HEGSETH_DEFENSE_SECRETARY,
+            decide_departure_subject,
+        )
+
         produced = {
             classify_member(ev(node_type="event", max_side_size=2)),
             classify_member(ev(register_kind="matchup")),
@@ -284,6 +292,61 @@ class TestTheNamedClasses:
             classify_member(ev(name="Total Games: Swiatek vs Zheng")),
             classify_member(ev(name="Winner of the US Open 2026")),
             classify_member(ev(name="Honey Deuce Sales")),
+            decide_departure_subject(
+                KATIE_ZACHARIA_PRESS_SECRETARY,
+                {
+                    "id": 1,
+                    "name": "Katie Zacharia out as Press Secretary by October 31?",
+                    "llm_sport_category": "politics",
+                    "external_id": "pm_1",
+                    "market_metadata": {"polymarket_event_id": "1183118"},
+                    "event_date": datetime(2026, 10, 31, 23, 59, tzinfo=timezone.utc),
+                },
+            ).section,
+            decide_departure_subject(
+                KATIE_ZACHARIA_PRESS_SECRETARY,
+                {
+                    "id": 2,
+                    "name": "Will Katie Zacharia leave her role as White House Press Secretary before Nov 1, 2026?",
+                    "llm_sport_category": "politics",
+                    "external_id": "KXZACHARIAOUT-26NOV01",
+                    "market_metadata": {"kalshi_series_ticker": "KXZACHARIAOUT"},
+                    "event_date": datetime(2026, 11, 1, 14, 0, tzinfo=timezone.utc),
+                },
+            ).section,
+            decide_departure_subject(
+                PETE_HEGSETH_DEFENSE_SECRETARY,
+                {
+                    "id": 3,
+                    "name": "Pete Hegseth out as Secretary of Defense before 2027?",
+                    "llm_sport_category": "politics",
+                    "external_id": "pm_3",
+                    "market_metadata": {"polymarket_event_id": "106172"},
+                    "event_date": datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc),
+                },
+            ).section,
+            decide_departure_subject(
+                PETE_HEGSETH_DEFENSE_SECRETARY,
+                {
+                    "id": 4,
+                    "name": "Will Pete Hegseth leave the Trump Administration before May 1, 2025?",
+                    "llm_sport_category": "politics",
+                    "external_id": "KXHEGSETH-25MAY01",
+                    "market_metadata": {"kalshi_series_ticker": "KXHEGSETH"},
+                    "event_date": datetime(2025, 5, 1, 14, 0, tzinfo=timezone.utc),
+                },
+            ).section,
+            decide_departure_subject(
+                KATIE_ZACHARIA_PRESS_SECRETARY,
+                {
+                    "id": 5,
+                    "name": "Will Katie Zacharia be officially given a new role in the Trump administration by December 31?",
+                    "llm_sport_category": "politics",
+                    "external_id": "pm_5",
+                    "market_metadata": {},
+                    "event_date": datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc),
+                },
+            ).section,
         }
         # The curated midterms sections (#11853) are named by their manifest,
         # never by the classifier.
