@@ -209,6 +209,7 @@ from app.utils.name_normalization import (
     diacritic_fold_query,
     expand_search_terms,
 )
+from app.config.person_aliases import resolve_reviewed_person_alias
 from app.config.team_aliases import (
     curated_team_aliases,
     expand_club_short_forms,
@@ -10192,6 +10193,13 @@ async def search_events(
     # same call sits at `/typeahead`'s `_q_identity` so the two cannot disagree.
     _q_identity = expand_club_short_forms(_q_identity)
 
+    # #11617: reviewed whole-query person aliases use the same recall/ranking
+    # identity as the full name. Resolve raw q so a compound intent is not
+    # silently broadened; q still owns the response, logs and cache key.
+    _person_alias = resolve_reviewed_person_alias(q, sport_key=sport)
+    if _person_alias is not None:
+        _q_identity = _person_alias.canonical_name
+
     # `search_pattern = f"%{q}%"` STOOD HERE AND WAS DEAD — assigned on this line
     # and read nowhere in the backend (one occurrence in the tree). It is deleted
     # rather than migrated, and the deletion is a finding of #5688's own mutation
@@ -14380,6 +14388,11 @@ async def typeahead_search(
     # #9834: club short forms (`man utd`, `bvb`) name the club — the same
     # rewrite, at the same identity site, as `/search`.
     _q_identity = expand_club_short_forms(_q_identity)
+    # #11617: same whole-query admission as /search, before every recall rail.
+    # Parsed intent subjects alone are not permission to expand an alias.
+    _person_alias = resolve_reviewed_person_alias(q)
+    if _person_alias is not None:
+        _q_identity = _person_alias.canonical_name
     # #9527: the same subject with a matchup connector dropped, for the sites
     # that ask whether the reader named the teams and for the ranker. Read
     # `_matchup_subject` for why those, and only those.
