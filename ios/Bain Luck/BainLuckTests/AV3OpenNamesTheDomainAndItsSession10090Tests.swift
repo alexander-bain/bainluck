@@ -301,6 +301,89 @@ final class AV3OpenNamesTheDomainAndItsSession10090Tests: XCTestCase {
         controller.stop()
     }
 
+    /// Contract D2: a transport `error` ends the v3 session at once — on the
+    /// blip the same handle retries by itself as well as on the refusal that
+    /// closes it — and so does a stream retired for silence. One reset each;
+    /// the retry policy itself is unchanged.
+    func testATransportErrorEndsTheSessionAtOnceWhetherOrNotTheHandleRetries() {
+        var handles: [TimedHandle] = []
+        var calls: [String] = []
+        var clock: TimeInterval = 100
+        var delivering: [Bool] = []
+        let controller = LiveStreamController(
+            open: { let h = TimedHandle(); handles.append(h); return h }, now: { clock },
+            onFrame: { _ in XCTFail("a preview is not a price") },
+            onDeliveringChange: { delivering.append($0) },
+            onPreviewOpenV3: { _ in calls.append("open3") },
+            onPreviewV3: { _, _ in calls.append("preview3") },
+            onPreviewReset: { calls.append("reset") },
+            schedule: { _, _ in {} })
+        controller.start()
+        let handle = handles[0]
+        handle.fire("open")
+        handle.fire("preview_open_v3", Self.singletonOpen)
+        handle.fire("preview_v3", Self.singletonBlend)
+        XCTAssertEqual(calls, ["reset", "open3", "preview3"])
+        calls.removeAll()
+
+        handle.fire("error")
+        XCTAssertEqual(calls, ["reset"], "a blip the handle will retry ends the session now, not at the TTL")
+        XCTAssertFalse(handle.isClosed, "the handle keeps retrying by itself")
+        XCTAssertEqual(delivering, [true, false])
+        XCTAssertEqual(handles.count, 1, "no new handle: the retry policy is unchanged")
+        calls.removeAll()
+
+        // The retry's own open on the SAME handle: still delivering, and
+        // previews wait for its fresh `preview_open_v3`.
+        handle.fire("open")
+        handle.fire("preview_open_v3", Self.singletonOpen)
+        XCTAssertEqual(calls, ["reset", "open3"])
+        calls.removeAll()
+
+        handle.isClosed = true
+        handle.fire("error")
+        XCTAssertEqual(calls, ["reset"], "a refusal ends it once, through stop()")
+        calls.removeAll()
+        handle.fire("preview_v3", Self.singletonBlend)
+        handle.fire("error")
+        XCTAssertEqual(calls, [], "the stopped stream's callbacks stay inert")
+
+        // A second stream retired for transport silence ends its session too.
+        var silentCalls: [String] = []
+        let silent = TimedHandle()
+        let quiet = LiveStreamController(
+            open: { silent }, now: { clock }, onFrame: { _ in },
+            onDeliveringChange: { _ in },
+            onPreviewReset: { silentCalls.append("reset") },
+            schedule: { _, _ in {} })
+        quiet.start()
+        silent.fire("open")
+        silentCalls.removeAll()
+        clock += LiveStreamTiming.silenceTimeout + 1
+        quiet.tick()
+        XCTAssertEqual(silentCalls, ["reset"], "silence retires the stream and its session")
+        XCTAssertTrue(silent.isClosed)
+    }
+
+    /// Contract D2's reset withdraws the held preview and the session only:
+    /// ordering, first-seen deadlines, committed floors and saturation stay.
+    func testTheResetATransportErrorAppliesKeepsEveryPieceOfEvidence() throws {
+        var reader = frame(try open(page(), Self.singletonOpen), Self.singletonBlend, now: 0)
+        reader = BlendPreview.readerAfterCommitFloor(reader, FoldRevision(["42": 10]))
+        reader.evidenceSaturated = true
+        XCTAssertNotNil(reader.held)
+        let reset = BlendPreview.readerReset(reader)
+        XCTAssertNil(reset.held)
+        XCTAssertNil(reset.v3Session, "a fresh open is required")
+        XCTAssertEqual(reset.v3Authority, reader.v3Authority, "the domain stays")
+        XCTAssertEqual(reset.floors, reader.floors)
+        XCTAssertEqual(reset.originFences, reader.originFences, "fences and their first-seen deadlines stay")
+        XCTAssertEqual(reset.legacyOrders, reader.legacyOrders)
+        XCTAssertEqual(reset.retiredMembers, reader.retiredMembers)
+        XCTAssertEqual(reset.epoch, reader.epoch)
+        XCTAssertTrue(reset.evidenceSaturated)
+    }
+
     private struct Client: EventDetailProviding {
         struct Declined: Error {}
         let event: EventDetail
@@ -354,5 +437,48 @@ final class AV3OpenNamesTheDomainAndItsSession10090Tests: XCTestCase {
                        "expired on the receipt's clock")
         handle.fire("closed")
         XCTAssertNil(vm.blendPreview)
+    }
+
+    /// Contract D2 at the page: a transport error on a handle that will retry
+    /// withdraws a minute-long preview at once. The retried connection shows
+    /// nothing until a fresh `preview_open_v3`, never revives the retired
+    /// tuple, and keeps the chart it already had.
+    func testATransportErrorWithdrawsTheHeldPreviewAtOnceAndOnlyAFreshOpenResumes() async throws {
+        let handle = TimedHandle()
+        let clock = Clock()
+        let vm = EventDetailViewModel(
+            eventId: 42, client: Client(event: try Self.detail()),
+            makeStreamHandle: { _ in handle }, now: { clock.t },
+            sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) })
+        defer { vm.stopRefresh() }
+        await vm.load()
+        handle.fire("open")
+        handle.fire("preview_open_v3", Self.singletonOpen)
+        let minute = with(Self.singletonBlend, [#""ttl_ms":800"#: #""ttl_ms":60000"#])
+        handle.fire("preview_v3", minute)
+        let event = try XCTUnwrap(vm.event)
+        XCTAssertEqual(vm.blendPreview?.p, 0.6)
+        XCTAssertEqual(vm.headline(event).currentOdds?.homeProbability, 0.6)
+        let chart = vm.liveBlend
+
+        handle.fire("error")
+        XCTAssertFalse(handle.isClosed, "the transport retries on this handle")
+        XCTAssertNil(vm.blendPreview, "withdrawn at the error, a minute before its TTL")
+        XCTAssertEqual(vm.headline(event).currentOdds?.homeProbability, 0.5, "committed truth shows")
+        XCTAssertEqual(vm.liveBlend, chart, "the chart's history stays")
+
+        let newer = with(minute, [#""seq":1"#: #""seq":2"#])
+        handle.fire("preview_v3", newer)
+        XCTAssertNil(vm.blendPreview, "the ended session admits nothing on the same handle")
+        handle.fire("open")
+        handle.fire("preview_v3", newer)
+        XCTAssertNil(vm.blendPreview, "the retry's own open enables no preview")
+
+        let session = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+        handle.fire("preview_open_v3", with(Self.singletonOpen, [Self.sessionA: session]))
+        handle.fire("preview_v3", with(minute, [Self.sessionA: session]))
+        XCTAssertNil(vm.blendPreview, "the retired tuple never revives: its fence survived the error")
+        handle.fire("preview_v3", with(newer, [Self.sessionA: session]))
+        XCTAssertEqual(vm.blendPreview?.p, 0.6, "a fresh open and a newer tuple resume")
     }
 }
