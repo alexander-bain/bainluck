@@ -51,8 +51,8 @@ def _session_calls():
 
 def test_every_session_site_carries_both_budgets_by_name():
     calls = _session_calls()
-    # plan, backup/apply, restore — a fourth site must be added here deliberately.
-    assert len(calls) == 3
+    # plan, backup/apply, restore, status — a fifth site must be added here deliberately.
+    assert len(calls) == 4
     for call in calls:
         assert call.args == []
         kw = {k.arg: getattr(k.value, "id", None) for k in call.keywords}
@@ -239,3 +239,82 @@ def _fail_on_last_exit(rig, err):
             raise err
 
     return fake
+
+
+# ── a COMMIT that does not return (directive 024, CERT-4198's preserved caveat) ─
+
+
+class _LostAck(Exception):
+    """A commit whose acknowledgement never came back (not a DBAPIError)."""
+
+
+def _lost_ack(kind):
+    return _db_error("08006") if kind == "dbapi" else _LostAck("connection reset")
+
+
+@pytest.mark.parametrize("kind", ["dbapi", "other"])
+@pytest.mark.parametrize(
+    "mode,commit_no,phase,certain",
+    [
+        # commit 1 is the plan session's clean close; 2 is the backup; 3 the apply
+        ("apply", 2, "backup-commit", "futures_markets was not written"),
+        ("apply", 3, "apply-commit", "the backup is committed"),
+        ("restore", 1, "restore-commit", "restore's durability is UNKNOWN"),
+    ],
+)
+def test_a_commit_that_does_not_return_is_unknown_never_a_no_write_claim(
+    repair, rig, capsys, kind, mode, commit_no, phase, certain
+):
+    session = rig["session"]
+    real_commit = session.commit
+
+    async def commit():
+        await real_commit()
+        if session.commits == commit_no:
+            raise _lost_ack(kind)
+
+    session.commit = commit
+    assert repair.main(_argv(rig, mode)) == 3
+    out = json.loads(capsys.readouterr().out)
+    assert out["outcome"] == "UNKNOWN" and out["phase"] == phase
+    assert out["readback"].endswith("scripts/repair_2722_archived_nine.py --status")
+    msg = out["unknown"]
+    assert certain in msg and "Not retried, not restored" in msg
+    for claim in ("rolled back", "nothing was backed up", "no row was restored",
+                  "nothing to restore", "no row of futures_markets was written"):
+        assert claim not in msg
+    if mode == "apply":
+        assert out["plan_digest"] == rig["digest"]
+        assert rig["calls"]["apply"] == (0 if phase == "backup-commit" else 1)
+        assert rig["calls"]["restore_report"] == 0  # never an automatic undo
+        assert len(rig["seen"]) == 2  # no reconnect-write, no retry session
+    else:
+        assert rig["calls"]["restore_report"] == 1 and len(rig["seen"]) == 1
+    assert session.commits == commit_no  # nothing committed after the lost ack
+
+
+@pytest.mark.parametrize("mode", ["plan", "apply", "restore"])
+def test_known_success_still_exits_zero_with_no_outcome_unknown(repair, rig, capsys, mode):
+    assert repair.main(_argv(rig, mode)) == 0
+    assert "UNKNOWN" not in capsys.readouterr().out
+
+
+def test_status_is_a_mode_that_refuses_with_writes(repair, rig, capsys):
+    """--status is the readback only: never combined with a write flag."""
+    for extra in (["--backup"], ["--apply"], ["--restore"]):
+        assert repair.main(["--status", *extra]) == 2
+        assert "refused" in json.loads(capsys.readouterr().out)
+    assert rig["seen"] == []
+
+
+def test_the_status_sql_reads_only_the_nine_channel():
+    """The readback names only this channel's table and the exact nine, and
+    carries no write or DDL verb."""
+    spec = importlib.util.spec_from_file_location("r2722", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    sql = mod.STATUS_SQL
+    assert "backup_2722_archived_nine" in sql and "backup_2644" not in sql
+    assert "unnest(CAST(:ids AS bigint[]))" in sql
+    assert not re.search(r"\b(INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|TRUNCATE)\b", sql, re.I)
+    assert mod.STATUS_IDS == [i for i, _ in mod.NINE]

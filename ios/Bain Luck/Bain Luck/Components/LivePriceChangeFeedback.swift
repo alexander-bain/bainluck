@@ -185,6 +185,9 @@ struct FreshnessRevealView: View {
     let status: LiveUpdateStatus
     let lastReceivedAt: Date?
     var confidenceTier: String? = nil
+    /// #11296 — the live headline's forecast, when it prints one: where it came
+    /// from, below its own divider so its clocks never read as delivery's.
+    var forecast: LivePregameComparison11296.Headline? = nil
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -226,6 +229,10 @@ struct FreshnessRevealView: View {
                 Text(tier.label)
                 Text(Confidence.heroBasis)
                     .foregroundStyle(.secondary)
+            }
+            if let forecast {
+                Divider()
+                LiveForecastDetails11296(forecast: forecast)
             }
         }
         .font(.callout)

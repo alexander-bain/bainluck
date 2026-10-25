@@ -707,7 +707,10 @@ WNBA_CONFIG = LeagueConfig(
     conference_split=True,
     conference_field="conference",
     trend_hours=168,
-    max_teams=13,
+    # #11452: 15 clubs since the 2026 expansion (Toronto Tempo, Portland Fire).
+    # A cap of 13 — the 2025 size — cut the two alphabetically-last eliminated
+    # rows, Toronto and Washington, so Make Playoffs ticked 7 of the 8 teams in.
+    max_teams=15,
     season_pattern="2026",
 )
 
@@ -757,7 +760,7 @@ MLS_CONFIG = LeagueConfig(
     conference_split=True,
     conference_field="conference",
     trend_hours=168,
-    max_teams=29,
+    max_teams=30,  # #11452: 30 clubs since San Diego FC joined in 2025
     season_pattern="2026",
 )
 

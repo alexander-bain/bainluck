@@ -25,7 +25,7 @@ from app.services.datagolf_api import redact_api_key
 from app.tasks.base import get_task_session
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 from app.utils.golf_event_format import is_team_match_play_name  # #7985
-from app.utils.market_settlement import settled_values
+from app.utils.market_settlement import SETTLED_STATUS, settled_values
 from app.utils.price_change_stamp import price_changed_at_value  # #2024, #4958
 
 logger = logging.getLogger(__name__)
@@ -230,6 +230,10 @@ async def _poll_datagolf_markets() -> dict:
         # owns them (see the deferral block below). A non-zero value during a
         # tournament is the fix working, not a failure.
         "inplay_price_writes_deferred": 0,
+        # #11315: markets skipped because they are already resolved (see the
+        # guard in the per-market loop). Non-zero after a tournament ends while
+        # the schedule still names it current — the guard working.
+        "resolved_market_price_writes_refused": 0,
         "debug": {},
     }
 
@@ -498,6 +502,36 @@ async def _poll_datagolf_markets() -> dict:
                             "course": current_event.course,
                             "tour": _event_metadata_tour(tour, current_event),
                         }
+
+                        # ── #11315: A RESOLVED MARKET TAKES NO PRE-TOURNAMENT PRICE ──
+                        # `current_event` is the first schedule row that is not
+                        # "completed" OR whose end date is today or later, and
+                        # DataGolf's status string lags — so on the final day,
+                        # and for as long as the status trails the result, this
+                        # poll still selects a tournament that is over. #7935's
+                        # deferral cannot stand it down: `inplay_owns_prices`
+                        # reads the beat's owner key, which expires with the
+                        # live phase. Without this, a settled board took the
+                        # hourly pre-tournament field again — a new current
+                        # price, a snapshot drawn onto the finished chart, fresh
+                        # `last_updated`/`price_changed_at`/24h stamps, and the
+                        # withdrawal null-out taking graded legs off the board.
+                        #
+                        # Per market, on the row's own stored status, and BEFORE
+                        # the player loop, because every price write below hangs
+                        # off it: the update, the snapshot, the null-out, AND
+                        # leg creation — a player first seen now would be born
+                        # on a finished board carrying a pre-tournament
+                        # `current_probability` (and, with no `is_winner`, an
+                        # ungraded member of a graded roster). The re-rank is
+                        # skipped with them: #6325 refuses to renumber a settled
+                        # board. Name and metadata above are not prices and are
+                        # unchanged. A future-dated market resolved by mistake
+                        # was already flipped back to open by the #1076 restore
+                        # at the top of this poll, so it is written as before.
+                        if market.status == SETTLED_STATUS:
+                            stats["resolved_market_price_writes_refused"] += 1
+                            continue
 
                         # Upsert outcomes + snapshots
                         now = datetime.now(timezone.utc)
@@ -923,6 +957,40 @@ async def _poll_datagolf_live() -> dict:
                                         )
                                     )
                                     market = existing.scalar_one_or_none()
+
+                                    # #11315: a RESOLVED market is not reopened.
+                                    # DataGolf's status string lags the result,
+                                    # so `current_event` can be a tournament
+                                    # that is already over while the in-play
+                                    # endpoint still answers with its board.
+                                    # Reopening here put the finished board back
+                                    # in the open set the re-query below reads:
+                                    # the live writer then priced it again, and
+                                    # once the live phase ended the hourly poll
+                                    # (whose own guard reads `resolved`) saw an
+                                    # OPEN board and wrote the pre-tournament
+                                    # field over the final journey. The row is
+                                    # left exactly as stored — status, name and
+                                    # metadata — so nothing below can reach it.
+                                    #
+                                    # A future-dated resolved row is the #1076
+                                    # class (resolved by mistake before its end
+                                    # date) and keeps the reopen it always had;
+                                    # the predicate is the complement of the
+                                    # #1076 restore's. A `closed` row reopens as
+                                    # before.
+                                    if (
+                                        market is not None
+                                        and market.status == SETTLED_STATUS
+                                        and (
+                                            market.resolution_date is None
+                                            or market.resolution_date <= datetime.now(timezone.utc)
+                                        )
+                                    ):
+                                        stats["resolved_market_reopen_refused"] = (
+                                            stats.get("resolved_market_reopen_refused", 0) + 1
+                                        )
+                                        continue
 
                                     if market:
                                         market.status = "open"

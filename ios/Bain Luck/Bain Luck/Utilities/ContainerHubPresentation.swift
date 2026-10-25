@@ -29,29 +29,44 @@ nonisolated struct ContainerHubPresentation: Sendable {
             return DisplaySection(id: index, sectionClass: section.sectionClass, members: standalone)
         }
     }
+    var loadedCount: Int { members.count }
+    var totalCount: Int { response.counts?.shownCount ?? response.memberCount }
+    var countLabel: String? {
+        guard response.state == .published, response.edition?.isTheme == true else { return nil }
+        return "\(loadedCount) of \(totalCount) markets loaded"
+    }
+    func sectionTitle(_ sectionClass: String) -> String {
+        if response.edition?.isTheme == true {
+            if response.edition?.subject == "oscars" && sectionClass == "title" { return "Award winners" }
+            if response.edition?.subject == "oscars" && sectionClass == "advancement" { return "Nominations" }
+            return "Markets"
+        }
+        return Self.sectionTitle(sectionClass)
+    }
     var isPartial: Bool {
-        response.state == .published && (response.withheldCount > 0 || !response.withheld.isEmpty || sections.contains { $0.unavailableCount > 0 || $0.count != $0.members.count } || members.count != response.memberCount)
+        response.state == .published && (response.counts?.inventoryComplete == false || (response.counts?.withheldCount.values.reduce(0, +) ?? 0) > 0 || response.withheldCount > 0 || !response.withheld.isEmpty || sections.contains { $0.unavailableCount > 0 || $0.count != $0.members.count } || members.count != response.memberCount)
     }
 
     var note: String? {
+        let noun = response.edition?.isTheme == true ? "markets" : "games or markets"
         switch response.state {
-        case .unpublished: return "This collection isn't available yet."
+        case .unpublished: return response.reason == "building" ? "This collection is being updated. Try again shortly." : "This collection isn't available yet."
         case .withdrawn: return "This collection is no longer available."
-        case .empty: return "There are no games or questions in this collection right now."
+        case .empty: return "There are no \(noun) in this collection right now."
         case .unavailable: return "This collection isn't available right now."
         case .published:
-            if isPartial { return "Some games or questions aren't available right now." }
-            return members.isEmpty && children.isEmpty ? "No games or questions are available right now." : nil
+            if isPartial { return "Some \(noun) aren't available right now." }
+            return members.isEmpty && children.isEmpty ? "No \(noun) are available right now." : nil
         }
     }
 
     static func sectionTitle(_ sectionClass: String) -> String {
         switch sectionClass {
         case "match_winner": return "Games and winners"
-        case "prop": return "Player and game questions"
+        case "prop": return "Player and game props"
         case "title": return "Championship"
         case "advancement": return "Advancement"
-        case "side_question": return "More questions"
+        case "side_question": return "More markets"
         case "doubles": return "Doubles"
         default: return "More"
         }

@@ -48,6 +48,10 @@ from tests.pm_bulk_test_support import (
     fail_price_trigger,
     price_writes,
 )
+from tests.test_ws_flush_retry_q491 import (
+    is_stored_live_slate_read,
+    stored_live_batches,
+)
 import websockets
 from sqlalchemy import (
     Column, DateTime, Integer, MetaData, String, Table, create_engine, insert, text,
@@ -63,6 +67,8 @@ import app.tasks.polymarket_open_contracts as open_mod
 import app.tasks.polymarket_ws as poly_task
 from app.models.models import FuturesOutcome
 from app.utils.market_quote_push import market_channel, parse_market_frame
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, SET_STATEMENT_TIMEOUT_SQL
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 pytestmark = pytest.mark.asyncio
 
@@ -90,12 +96,17 @@ class TestTheSelector:
         assert "futures_markets.settled_at IS NULL" in sql
         # #10091: the market's own event_id / name / external_id are read as
         # columns (the bridge's inputs) — still no join and no event window.
+        # #10663: name and external_id ride only on rows WITH an event, the
+        # only rows the bridge reads them from; the other ~34,000 come back NULL.
         assert "JOIN" not in sql and "FROM events" not in sql
         assert "events." not in sql
         assert (
-            "futures_markets.event_id, futures_markets.name, "
-            "futures_markets.external_id" in sql
-        )
+            "futures_markets.event_id, "
+            "CASE WHEN (futures_markets.event_id IS NOT NULL) "
+            "THEN futures_markets.name END AS name, "
+            "CASE WHEN (futures_markets.event_id IS NOT NULL) "
+            "THEN futures_markets.external_id END AS external_id" in sql
+        ), sql
         assert "commence_time" not in sql
         # Only the three token keys, never the whole blob.
         for key in ("clob_token_ids", "clobTokenIds", "clob_yes_token_by_outcome"):
@@ -724,6 +735,14 @@ class _Session:
         return self.sync_session.info
 
     async def execute(self, stmt, *_a, **_kw):
+        # Keep DNPL's arm/restore on the same real price transaction; routing
+        # these through the slate replay loses both the timeout and a batch.
+        if any(stmt is control for control in (
+            poly_task.ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
+            SET_STATEMENT_TIMEOUT_SQL,
+            SET_LOCK_TIMEOUT_SQL,
+        )):
+            return self.sync_session.execute(stmt, *_a, **_kw)
         sql = str(stmt)
         if sql == str(open_mod.open_contract_markets_stmt()):
             return self._rig.open_read(0)
@@ -752,7 +771,12 @@ class _Session:
             return _Replayed(
                 [e for e in self._rig.bridge_reads[-1] if e in self._rig.undecided]
             )
-        return _Replayed(self._rig.slate.pop(0) if self._rig.slate else [])
+        if is_stored_live_slate_read(stmt):
+            # #10090 attempt156: the stored-live load reads its own three
+            # batches; the full slate stays queued for the full read.
+            self._rig.slate[:0] = self._rig.stored_live()
+        rows = self._rig.slate.pop(0) if self._rig.slate else []
+        return _Replayed(answer_slate_market_read(stmt, rows))  # #10663
 
 
 class _PipelinedPublish:
@@ -800,6 +824,13 @@ class _Rig:
     def __init__(self, engine, slate, open_rows, frames_for, open_read_fails=False):
         self.engine = engine
         self.slate = [list(b) for b in slate]
+        # #10090 attempt156: what a stored live/suspended slate read returns.
+        # GAME_SLATE's event is `scheduled`, so that read maps nothing and the
+        # consumer takes the original full read, the row sequence master saw.
+        # A slate with no market read (`[[]]`) maps nothing either way.
+        self.stored_live = lambda: (
+            stored_live_batches(*slate[:3]) if len(slate) >= 3 else [[], [], []]
+        )
         self._open_rows = open_rows
         self.open_read_fails = open_read_fails
         self.frames_for = frames_for
@@ -1596,6 +1627,30 @@ class TestACommittedChunkRefreshesItsEvent:
             if FAR_EVENT in ids:
                 seen.append((held(71), held(81)))
 
+        from types import SimpleNamespace
+        from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
+
+        # #10090: the withdrawal runs under the persistent owner fence; grant
+        # it the way a committed claim ends and answer its two new statements.
+        async def claimed(debt, _sessions):
+            debt._owner_id = 1
+            return True
+
+        async def owner_holds(debt, _session):
+            return None
+
+        monkeypatch.setattr(poly_task.PMWithdrawalDebt, "_claim_owner", claimed)
+        monkeypatch.setattr(poly_task.PMWithdrawalDebt, "guard_owner", owner_holds)
+        withdrawing_execute = _Withdrawing.execute
+
+        async def _execute(self, stmt, *a, **kw):
+            if stmt is SET_LOCK_TIMEOUT_SQL:
+                return _Replayed([])
+            if "pg_current_xact_id()" in str(stmt):
+                return SimpleNamespace(scalar_one=lambda: "1")
+            return await withdrawing_execute(self, stmt, *a, **kw)
+
+        monkeypatch.setattr(_Withdrawing, "execute", _execute)
         stats = await _drive(
             monkeypatch, rig, flush=0.2, session=_Withdrawing,
             on_refresh=on_refresh,

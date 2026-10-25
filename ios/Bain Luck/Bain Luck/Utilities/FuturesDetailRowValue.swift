@@ -24,8 +24,25 @@ enum FuturesDetailRowValue: Equatable, Sendable {
     case price(Double)
     /// No grade and no price: the name and nothing else (notice 34).
     case none
+    /// #698: the market is settled but this row's result is not known
+    /// (`SettledResultDisplay698`). "Result unknown", plus "Last recorded N%"
+    /// for a finite price — never a live bar, a move, or a Won/Lost.
+    case resultUnknown(lastRecorded: Double?)
 
-    static func of(_ outcome: FuturesOutcome, marketStatus: String?) -> Self {
+    /// `marketSource` lets the #698 fallback run for a resolved Polymarket
+    /// market whose server predates `settlement_display`; a served contract
+    /// applies without it.
+    static func of(_ outcome: FuturesOutcome, marketStatus: String?, marketSource: String? = nil) -> Self {
+        switch SettledResultDisplay698.certainty(outcome, marketSource: marketSource, marketStatus: marketStatus) {
+        case .won: return .verdict(.won)
+        case .lost: return .verdict(.lost)
+        case .unknown:
+            // An explicit unknown never falls through to the sourced-false Lost.
+            let last = outcome.probability.flatMap { $0.isFinite ? $0 : nil }
+            return .resultUnknown(lastRecorded: last)
+        case nil:
+            break
+        }
         if let verdict = OutcomeVerdict.verdict(
             isWinner: outcome.isWinner,
             resolutionSource: outcome.resolutionSource,
@@ -40,7 +57,9 @@ enum FuturesDetailRowValue: Equatable, Sendable {
     /// A settled row prints its result, never a 24h move or a "from" opening —
     /// web's `outcomeRowPrintsMove`, verdict arm.
     var printsMovement: Bool {
-        if case .verdict = self { return false }
-        return true
+        switch self {
+        case .verdict, .resultUnknown: return false
+        case .price, .none: return true
+        }
     }
 }

@@ -33,7 +33,9 @@ A history-shape row on a `_no` leg is in scope only when BOTH hold:
 * **era** — its id is at or below :data:`PRE_FIX_MAX_SNAPSHOT_ID`, the id
   frontier before the first fixed run (pinned from one production read; see
   its comment). Rows above it were written by the fixed writer and are never
-  touched. With the constant unpinned the dry run still classifies, and every
+  touched; a leg whose only rows are above it yet still read as the Over price
+  is reported ``AMBIGUOUS`` (``post_fix_only_reads_as_over``), never skipped
+  in silence. With the constant unpinned the dry run still classifies, and every
   apply is refused.
 * **witness** — the leg's rows, compared with its Over sibling's own
   observations, read as the Over price and never as its complement. An exact
@@ -634,14 +636,19 @@ async def _plan_page(session, cursor: int, scan: int, pinned: Optional[set[int]]
         rows = rows_by_leg.get(oid, [])
         pre = [r for r in rows if boundary is None or r["id"] <= boundary]
         post = [r for r in rows if boundary is not None and r["id"] > boundary]
-        if not pre:
+        # A leg with rows only above the bound is the fixed writer's own Under
+        # history and is left alone, unless those rows read as the Over price:
+        # then it is reported, never planned (the era bound does not clear it).
+        if not pre and not testify(post)["equal"]:
             continue
         out["legs_with_history_rows"] += 1
         sibs = sib_of[oid]
-        tally = testify(pre)
+        tally = testify(pre or post)
         if len(sibs) != 1:
             verdict, reason = AMBIGUOUS, ("no_over_sibling" if not sibs
                                           else "multiple_over_siblings")
+        elif not pre:
+            verdict, reason = AMBIGUOUS, "post_fix_only_reads_as_over"
         else:
             verdict, reason = classify_testimony(tally)
             if verdict == INVERTED and post and testify(post)["equal"]:
@@ -673,7 +680,7 @@ async def _plan_page(session, cursor: int, scan: int, pinned: Optional[set[int]]
             "market_status": lg.get("market_status"), "over_sibling": sibs,
             "testimony": tally, "reason": reason, "rows": len(pre),
             "post_fix_rows": len(post),
-            "sample": [_row_view(r) for r in pre[:_ROW_SAMPLE]],
+            "sample": [_row_view(r) for r in (pre or post)[:_ROW_SAMPLE]],
             "fields": _planned_fields(lg),
             "withdraw_opening": opening, "withdraw_cp": cp,
         }

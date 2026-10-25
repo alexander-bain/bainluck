@@ -69,6 +69,24 @@ struct CardContextMenu: View {
             Label("Share", systemImage: "square.and.arrow.up")
         }
 
+        #if os(iOS)
+        // #10880 — a quiet utility item below Share, only on a game whose start
+        // came from a schedule. Absent otherwise: no disabled item, no hint.
+        if case .offer = CalendarEntry10880.decide(for: event.calendarSubject10880, now: Date()) {
+            Button {
+                // Asked again at the tap: a menu built before kick-off can be
+                // opened after it.
+                if case .offer(let draft) = CalendarEntry10880.decide(
+                    for: event.calendarSubject10880, now: Date()
+                ) {
+                    CalendarEditorPresenter10880.shared.present(draft)
+                }
+            } label: {
+                Label("Add to Calendar", systemImage: "calendar.badge.plus")
+            }
+        }
+        #endif
+
         #if os(macOS)
         if let onOpenEventInNewWindow {
             Button {

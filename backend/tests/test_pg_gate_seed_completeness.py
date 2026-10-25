@@ -48,6 +48,11 @@ from app.models.models import Base
 #: the discovery arm below fails if such a gate grows an INSERT and is not
 #: listed, so this list cannot silently fall behind.
 COVERED = (
+    # #10090: raw event/sport seeds exercise tier reservation maintenance.
+    "test_dnpl_reservations_10090_pg.py",
+    # #683. The constraint case seeds an import, an evidence row and intervals by
+    # raw INSERT to prove the database refuses impossible rows.
+    "test_kalshi_archive_store_683_pg.py",
     "test_serie_a_femminile_seed_10319_pg.py",
     "test_bookmaker_count_real_postgres.py",
     "test_calibration_mode_price_source_scope_pg.py",
@@ -120,6 +125,10 @@ COVERED = (
     # #2722. Seeds the nine futures_markets rows by raw INSERT, as production
     # held them: status / resolution_date / updated_at ARE the subject.
     "test_kalshi_archived_nine_repair_2722_pg.py",
+    # #2644. Seeds the Oscars futures_markets row with two legs and their
+    # snapshots, plus the nine, by raw INSERT: status / dates / updated_at ARE
+    # the subject, and every snapshot names `reading_count`.
+    "test_kalshi_oscar_song_repair_2644_pg.py",
     # #1527. Seeds eleven `futures_markets` and their legs by raw INSERT on a
     # hand-built schema to prove the guarded three-winner repair. Its first CI
     # run died here: the throwaway table had no `category` / `external_id`, so
@@ -289,6 +298,9 @@ COVERED = (
     # by raw INSERT into a narrow table in a private schema; every NOT NULL
     # column is supplied so the ghost row is real-shaped.
     "test_ghost_label_refuses_a_row_that_changed_9187_pg.py",
+    # #11152 (CERT-4179 11152-PERSIST-REAL-PG-CAS-UNDO-GUARDS). Same narrow
+    # private-schema `events` seed as #9187, every NOT NULL column supplied.
+    "test_unplayed_series_game_sweep_11152_pg.py",
     # #7345. Seeds narrow `events` + `futures_markets` tables by raw INSERT in a
     # private schema; kick-offs are dated from the server's `now()` because the
     # verdict carries `commence_time < :now`.
@@ -514,6 +526,10 @@ COVERED = (
     # NOT NULL column added to any of those four tables fails this parse rather
     # than a red deploy.
     "test_grid_miami_identity_7829_pg.py",
+    # #11148. The unbound `Miami (OH)` row on the same grid route. Seeds
+    # `sports`, `teams` (abbreviation + alternate_names are the identity under
+    # test), `futures_markets` and `futures_outcomes` by raw INSERT.
+    "test_grid_miami_oh_row_identity_11148_pg.py",
     # #6975: seeds `sports` with an explicit reserved id (the #6221 sibling's
     # reason — the shared CI database's sequence is behind its explicit-id
     # rows); every other row goes through the ORM so Python-side defaults
@@ -686,6 +702,11 @@ COVERED = (
     # (whole second or not) and odds/book columns (the history shape), and each
     # leg's opening/calibration fields — all named on every seed.
     "test_repair_pm_under_inverted_history_2027_pg.py",
+    # #11315 (CERT-4252's repair). Seeds by ORM; its one raw INSERT is the
+    # concurrent writer adding a crowned outcome mid-repair, which the market's
+    # FOR UPDATE must hold out through the foreign key. It names every NOT NULL
+    # column, so it dies on the lock, never on the schema.
+    "test_repair_11315_roster_lock_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

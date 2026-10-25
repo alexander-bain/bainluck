@@ -18,9 +18,10 @@ import { useLiveEventStream, type LiveFrame } from "../../hooks/useLiveEventStre
 import { createFoldedRefetchScheduler } from "../../lib/foldedRefetchScheduler";
 import { canSubscribeEventQuotes, quotePairCoversTrigger } from "../../lib/eventQuoteStream";
 import { frameInvalidatesFoldedBlend } from "../../lib/eventLivePush";
-import { keepNewerHeldHeadline } from "../../lib/reconcileEventPoll";
+import { carryNewerHeldState, keepNewerHeldHeadline } from "../../lib/reconcileEventPoll";
 import { historyRangeParam } from "../../lib/event/historyRange";
 import { EVENT_BOOT_HISTORY_HOURS } from "../../lib/event/detailBoot";
+import { createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer } from "../../lib/reconcileControl";
 
 const PAGE = fs.readFileSync(path.join(__dirname, "../../app/events/[id]/page.tsx"), "utf8");
 const FOLDED_FRAME_REFETCH_MS = Number(PAGE.match(/const FOLDED_FRAME_REFETCH_MS = (\d+)/)![1]);
@@ -52,6 +53,10 @@ function effectScript(contains: string) {
       ? callback.getText(tree) : undefined;
   });
 }
+// #10090 G2: the event read's `onSuccess`, as the page writes it.
+const ON_SUCCESS = pageScript((n, tree) => (ts.isPropertyAssignment(n) && n.name.getText(tree) === "onSuccess" &&
+  ts.isArrowFunction(n.initializer) && n.initializer.getText(tree).includes("storedEventRef"))
+  ? n.initializer.getText(tree) : undefined);
 const RECOVERY_EFFECT = effectScript('createReconnectCatchup');
 const NOTIFY_EFFECT = effectScript('recoveryRef.current?.recover');
 
@@ -92,6 +97,16 @@ const frame = (id: number, rev: number): LiveFrame => ({
 });
 
 // ── the harness: the page's held quote wiring ───────────────────────────────
+// #10090 G2: the test's hand on the ordinary poll (swr's own revalidation of
+// the event key, which is how a result reaches the page), a spy on the page's
+// terminal check, and the status each render held.
+const harness: {
+  revalidate?: () => unknown;
+  terminalCheck?: (e: Detail | undefined) => boolean;
+  held?: () => Detail | undefined;
+  stored?: () => Detail | undefined;
+  rendered: Array<string | undefined>;
+} = { rendered: [] };
 function HeldPage({ net, eventId, candidate, enabled }: { net: Net; eventId: number; candidate: boolean; enabled: boolean }) {
   const fetchEvent = (id: number, fresh = false) => {
     const d = new Deferred<Detail>(); net.details.push({ eventId: id, fresh, d }); return d.promise;
@@ -99,36 +114,51 @@ function HeldPage({ net, eventId, candidate, enabled }: { net: Net; eventId: num
   const fetchEventHistory = (id: number, _hours: number, _range: unknown, fresh = false) => {
     const d = new Deferred<History>(); net.histories.push({ eventId: id, fresh, d }); return d.promise;
   };
-  const { data: event, mutate: refreshEvent } = useSWR(["event", eventId], () => fetchEvent(eventId));
+  const storedEventRef = useRef<Detail | undefined>(undefined);
+  const [, setLastRefresh] = useState(0);
+  const { data: event, mutate: refreshEvent } = useSWR(["event", eventId], () => fetchEvent(eventId), {
+    onSuccess: ON_SUCCESS.runInNewContext({ storedEventRef, setLastRefresh, Date }),
+  });
+  harness.revalidate = () => refreshEvent();
+  harness.stored = () => storedEventRef.current;
+  harness.rendered.push(event?.status);
   const fullHistoryRequested = false;
   const { data: historyData, mutate: refreshHistory } = useSWR(
     ["history", eventId], () => fetchEventHistory(eventId, EVENT_BOOT_HISTORY_HOURS, historyRangeParam(false)),
   );
-  const [, setLastRefresh] = useState(0);
   const {frame: liveFrame, recoveryGeneration} = useLiveEventStream(eventId, candidate && enabled);
   const quoteEligible = canSubscribeEventQuotes(event) && enabled;
   const freshNextEventReadRef = useRef(false);
   const heldEventRef = useRef<Detail | undefined>(undefined);
   heldEventRef.current = event;
+  harness.held = () => heldEventRef.current;
   // ── app/events/[id]/page.tsx — these lines as the page writes them ────────
   const pairedQuoteReadRef = useRef<(() => Promise<unknown>) | null>(null);
   const quoteTriggerRef = useRef<LiveFrame | null>(null);
+  const sourceAddedHistoryRef = useRef<{ trigger: LiveFrame; attempts: number } | null>(null);
   const recoveryIntentRef = useRef(0);
   const quoteReadLifetimeRef = useRef(0);
+  const reconcileIntentRef = useRef(false);
   const quoteEventIdRef = useRef(eventId);
   if (quoteEventIdRef.current !== eventId) { quoteTriggerRef.current = null; recoveryIntentRef.current = 0; }
+  if (quoteEventIdRef.current !== eventId) sourceAddedHistoryRef.current = null;
   quoteEventIdRef.current = eventId;
   const refreshEventRef = useRef(refreshEvent);
   refreshEventRef.current = refreshEvent;
+  // #10090 G1: the page's reconcile ledger and in-flight write journal.
+  const [reconcileLedger] = useState(createReconcileLedger);
+  const pairJournalRef = useRef(null);
   const [foldedRefetch] = useState(() => FACTORY.runInNewContext({
-    createFoldedRefetchScheduler, canSubscribeEventQuotes, FOLDED_FRAME_REFETCH_MS, Date,
+    createFoldedRefetchScheduler, canSubscribeEventQuotes, reconcileIntentRef, FOLDED_FRAME_REFETCH_MS, Date, reconcileLedger, reconcileRetryDelayMs: () => 1000,
     quoteTriggerRef, recoveryIntentRef, quoteReadLifetimeRef, pairedQuoteReadRef, freshNextEventReadRef, refreshEventRef, heldEventRef,
   }) as ReturnType<typeof createFoldedRefetchScheduler>);
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
   const recoveryRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
+  const reconcileCatchupRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
   useEffect(RECOVERY_EFFECT.runInNewContext({
-    quoteEligible, createReconnectCatchup, canSubscribeEventQuotes, heldEventRef,
-    recoveryIntentRef, quoteReadLifetimeRef, recoveryRef, foldedRefetch,
+    sourceAddedHistoryRef, quoteTriggerRef,
+    quoteEligible, createReconnectCatchup, canSubscribeEventQuotes, reconcileIntentRef, heldEventRef,
+    recoveryIntentRef, quoteReadLifetimeRef, recoveryRef, foldedRefetch, reconcileCatchupRef, reconcileLedger,
   }), [eventId, quoteEligible, foldedRefetch]);
   useEffect(NOTIFY_EFFECT.runInNewContext({quoteEligible, recoveryGeneration, recoveryRef}),
     [recoveryGeneration, quoteEligible, eventId]);
@@ -143,6 +173,7 @@ function HeldPage({ net, eventId, candidate, enabled }: { net: Net; eventId: num
       (held.status !== "live" && frameInvalidatesFoldedBlend(held, liveFrame))
     )) {
       quoteTriggerRef.current = liveFrame;
+      sourceAddedHistoryRef.current = null;
       foldedRefetch.request();
       return;
     }
@@ -153,8 +184,11 @@ function HeldPage({ net, eventId, candidate, enabled }: { net: Net; eventId: num
   const refreshHistoryRef = useRef(refreshHistory);
   refreshHistoryRef.current = refreshHistory;
   pairedQuoteReadRef.current = PAIR.runInNewContext({
+    sourceAddedHistoryRef,
+    createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef: { current: null }, pairJournalRef, reconcileLedger,
     eventId, fullHistoryRequested, fetchEvent, fetchEventHistory, EVENT_BOOT_HISTORY_HOURS, historyRangeParam,
-    quotePairCoversTrigger, keepNewerHeldHeadline, setLastRefresh, Date,
+    quotePairCoversTrigger, keepNewerHeldHeadline, carryNewerHeldState, setLastRefresh, Date, storedEventRef,
+    canSubscribeEventQuotes: harness.terminalCheck ?? canSubscribeEventQuotes,
     quoteTriggerRef, recoveryIntentRef, quoteReadLifetimeRef, quoteEventIdRef, quoteHistoryRangeRef, refreshHistoryRef, refreshEventRef, heldEventRef,
   });
 
@@ -368,9 +402,11 @@ it("independent: server generation reset on browser reconnect of SAME EventSourc
   // Native EventSource retries itself without constructing a new handle.
   stream.readyState=0; stream.emit('error');
   stream.readyState=1; stream.emit('open');
+  // Transport recovery now signals its own debt, separately from Redis loss.
+  expect(epochs).toEqual([1,2]);
   // The new request can land on a new worker with generation reset to 1.
   stream.emit('resync','{"generation":1}');
-  c.stop(); expect(epochs).toEqual([1,2]);
+  c.stop(); expect(epochs).toEqual([1,2,3]);
 });
 
 
@@ -430,3 +466,99 @@ it.each([[-1,100],[0,100],[100000,4999],[NaN,4999],[Infinity,4999]])(
     expect(called).toHaveBeenCalledWith(2); c.cancel();
   },
 );
+
+
+it("transport reopen without a replayed price catches up both held values", async () => {
+  const p=await mount(); const stream=sources.at(-1)!;
+  await act(async()=>{stream.emit('open');});
+  expect(p.freshPairs()).toBe(0);
+  await act(async()=>{stream.readyState=0;stream.emit('error');});
+  await p.advance(45000);
+  await act(async()=>{stream.readyState=1;stream.emit('open');stream.emit('open');});
+  await p.advance(250);expect(p.freshPairs()).toBe(1);
+  p.lastPair().detail.resolve(blend(A,12));p.lastPair().history.resolve(history(A,12,.52));
+  await settle();expect(p.read()).toBe(`${A}|52|blend|52`);
+  await p.advance(5000);expect(p.freshPairs()).toBe(1);await p.unmount();
+});
+
+it("transport reopen and immediate Redis resync coalesce into one paired read", async () => {
+  const p=await mount();const stream=sources.at(-1)!;
+  await act(async()=>{stream.emit('open');stream.readyState=0;stream.emit('error');});
+  await act(async()=>{stream.readyState=1;stream.emit('open');stream.emit('open');stream.emit('resync',JSON.stringify({generation:1}));});
+  await p.advance(250);expect(p.freshPairs()).toBe(1);
+  p.lastPair().detail.resolve(blend(A,12));p.lastPair().history.resolve(history(A,12,.52));
+  await settle();expect(p.read()).toBe(`${A}|52|blend|52`);
+  await p.advance(5000);expect(p.freshPairs()).toBe(1);await p.unmount();
+});
+
+describe("#10090 G2: a result that lands while a live pair is in flight", () => {
+  const FINAL: Detail = { ...blend(A, 12), status: "final", completed_at: "2026-10-06T23:00:00Z", hero_probability: 1 };
+  afterEach(() => { delete harness.terminalCheck; });
+
+  // The ordinary poll's final response and the pair's last await race inside
+  // one task, and which goes first depends on how many microtasks separate
+  // them — so walk both orders and every gap on real React + swr. A case where
+  // the pair wrote first makes swr DROP the older poll (its documented
+  // mutation race) and stores nothing; that is not this defect, so the claim
+  // is conditional on the result having been stored.
+  type Outcome = { stored: boolean; last: string | undefined; raced: boolean };
+  async function race(pollFirst: boolean, gap: number): Promise<Outcome> {
+    harness.rendered = [];
+    let raced = false;
+    harness.terminalCheck = (e) => {
+      const ok = canSubscribeEventQuotes(e);
+      // The window the fix is for: the stored read already says final while
+      // the held ref (and so the quote lifetime) still says live.
+      if (ok && harness.stored?.()?.status === "final" && harness.held?.()?.status === "scheduled") raced = true;
+      return ok;
+    };
+    const p = await mount(); await p.recover(1); await p.advance(250);
+    const pair = p.lastPair();
+    await act(async () => { harness.revalidate!(); });
+    const poll = p.net.details.filter((r) => !r.fresh).at(-1)!.d;
+    const landPair = () => { pair.detail.resolve(blend(A, 13)); pair.history.resolve(history(A, 13, .56)); };
+    // OUTSIDE act, on purpose: inside it React defers every render to the end
+    // of the scope, which would widen the window. Here React schedules the
+    // render the way a browser does — a microtask queued at swr's write, with
+    // the cleanup that retires the pair flushed in the same commit.
+    const env = globalThis as Record<string, unknown>;
+    env.IS_REACT_ACT_ENVIRONMENT = false;
+    try {
+      if (pollFirst) poll.resolve(FINAL); else landPair();
+      for (let i = 0; i < gap; i++) await Promise.resolve();
+      if (pollFirst) landPair(); else poll.resolve(FINAL);
+      for (let i = 0; i < 40; i++) await Promise.resolve();
+    } finally {
+      env.IS_REACT_ACT_ENVIRONMENT = true;
+    }
+    await settle();
+    const out = { stored: harness.stored?.()?.status === "final", last: harness.rendered.at(-1), raced };
+    await p.unmount();
+    return out;
+  }
+  const GAPS = Array.from({ length: 13 }, (_, gap) => gap);
+
+  it.each(GAPS.flatMap((gap) => [[true, gap], [false, gap]] as const))(
+    "a stored result is never replaced by an older live pair (poll first: %s, gap %s)",
+    async (pollFirst, gap) => {
+      const { stored, last } = await race(pollFirst, gap);
+      if (stored) expect(last).toBe("final");
+    },
+  );
+
+  it("the sweep reaches the window where only the stored read knows the game is over", async () => {
+    // Without this the cases above could all be ones the existing lifetime
+    // check already refuses, and pass whether or not the fix is there.
+    const outcomes = [];
+    for (const gap of GAPS) for (const pollFirst of [true, false]) outcomes.push(await race(pollFirst, gap));
+    expect(outcomes.some((o) => o.stored && o.raced && o.last === "final")).toBe(true);
+  });
+
+  it("a terminal pair landing on a live page is still adopted", async () => {
+    const p = await mount(); await p.recover(1); await p.advance(250);
+    p.lastPair().detail.resolve({ ...FINAL, blend_fold_revision: { 900: 13 } });
+    p.lastPair().history.resolve(history(A, 13, 1));
+    await settle(); expect(p.read()).toBe(`${A}|100|blend|100`);
+    await p.unmount();
+  });
+});

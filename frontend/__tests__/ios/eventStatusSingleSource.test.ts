@@ -194,7 +194,15 @@ d("iOS reads one event-status vocabulary", () => {
       // proving nothing — so the retirement is asserted, not assumed.
       const code = stripComments(detail());
       expect(code).not.toMatch(/projectionLabel/);
-      expect(code).not.toMatch(/Projected final/);
+      // #9483 v476 brings the words back, deliberately and in one place: the
+      // adopted NFL/NBA row's caption (and its spoken label) under the figure
+      // `projectionText` already admits — the same gate, never a second one.
+      // Three spellings in that row; a fourth anywhere is #3014's label back.
+      expect(code.match(/Projected final/g) ?? []).toHaveLength(3);
+      expect(code).toMatch(
+        /if let projection = projectionText\(event, hasScore: hasScore\) \{\s*let figure = Self\.projectionFigure9483\(projection\)[\s\S]{0,700}Text\("Projected final"\)/
+      );
+      expect(code).toMatch(/static func projectionAccessibilityLabel9483\(figure: String/);
       // ...and the abbreviation the hero still draws is still drawn. Without
       // this the two assertions above are satisfied by deleting the row.
       // #8320 gave it one spelling (`projectionText`) for its two homes, the

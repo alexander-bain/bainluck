@@ -22,6 +22,7 @@ import app.tasks.polymarket_ws as polymarket_ws
 import app.utils.kalshi_price_pipeline as kalshi_price_pipeline
 import app.utils.kalshi_price_statement as kalshi_price_statement
 from app.tasks.polymarket import sub_market_metadata
+from app.utils.kalshi_primary_quote import PrimaryQuoteCustody
 
 
 def _flush_function(module, consumer_name: str) -> ast.AsyncFunctionDef:
@@ -314,6 +315,53 @@ class TestFlushReachesTheBlend:
                 any(c is f for c in ast.walk(filler)) for f in fills
             ), f"{consumer}: queued_events is filled outside queue_committed"
             committed = _calls_named(flush, "queue_committed")
+            # #10090: the ONE other filler is Kalshi's #11138 overlay. It
+            # queues only quotes `held_quotes.hold` just recorded (a refused
+            # phase's, or the newest snapshot during that write's cooldown):
+            # its stamp reads the held quote, never an unwritten row.
+            # PR #11210: an unchanged quote whose event the refresher already
+            # owes also lifts its fence, but only a MOVED quote is queued
+            # fresh; the owed one re-asks the refresh it was already owed.
+            held_admits = [
+                fn for fn in ast.walk(flush)
+                if isinstance(fn, ast.AsyncFunctionDef) and fn.name == "admit_held_phase"
+            ]
+            for fn in held_admits:
+                inside = [c for c in committed if any(c is n for n in ast.walk(fn))]
+                # Changed held quotes are fresh; unchanged held quotes can
+                # only release already-pending ordinary debt. Both must come
+                # from the validated snapshot installed by hold first.
+                assert len(inside) == 1, consumer
+                call = inside[0]
+                assert ast.unparse(call) == "queue_committed(index, phase, newly_held)", consumer
+                assignments = {
+                    ast.unparse(n.targets[0]): n for n in ast.walk(fn)
+                    if isinstance(n, ast.Assign) and len(n.targets) == 1
+                }
+                expected = {
+                    "moved": "event_ids_for_outcomes(cohort_event_ids, held_quotes.hold(quotes))",
+                    "owed_held": "moved | set(blend_refresher.pending_event_ids())",
+                    "held_ready": "[oid for oid in quotes if cohort_event_ids.get(oid) in owed_held]",
+                    "newly_held": "[oid for oid in held_ready if cohort_event_ids.get(oid) in moved]",
+                }
+                previous = 0
+                for name, expression in expected.items():
+                    node = assignments.get(name)
+                    assert node is not None and ast.unparse(node.value) == expression, consumer
+                    assert previous < node.lineno < call.lineno, consumer
+                    previous = node.lineno
+                branches = [n for n in ast.walk(fn) if isinstance(n, ast.If)
+                            and ast.unparse(n.test) == "newly_held"]
+                assert len(branches) == 1, consumer
+                branch = branches[0]
+                assert len(branch.body) == 1 and isinstance(branch.body[0], ast.Expr), consumer
+                assert branch.body[0].value is call, consumer
+                assert [ast.unparse(n) for n in branch.orelse] == ["queued_refresh = True"], consumer
+                ready = [n for n in ast.walk(fn) if isinstance(n, ast.If)
+                         and ast.unparse(n.test) == "held_ready"]
+                assert len(ready) == 1 and branch in ready[0].body, consumer
+                assert ast.unparse(ready[0].body[0]) == "unfinished_price_ids.difference_update(held_ready)", consumer
+                committed = [c for c in committed if c not in inside]
             assert committed and min(c.lineno for c in committed) > write_line, (
                 f"{consumer}: blend refresh must follow the price write"
             )
@@ -505,8 +553,15 @@ def _exec_flush(module, consumer_name: str, namespace: dict):
     for real. Transaction-only names are absent: touching them is a NameError.
     """
     fn = _flush_function(module, consumer_name)
+    nodes = [fn]
+    if hasattr(module, "_KalshiPriceOwner"):
+        names = {"steady_book_signature", "observation_signature", "note_observation_continuity"}
+        helpers = [node for node in ast.walk(ast.parse(inspect.getsource(module)))
+                   if isinstance(node, ast.FunctionDef) and node.name in names]
+        assert {node.name for node in helpers} == names and len(helpers) == len(names)
+        nodes.extend(helpers)
     code = compile(
-        ast.fix_missing_locations(ast.Module(body=[fn], type_ignores=[])),
+        ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])),
         inspect.getsourcefile(module), "exec",
     )
     exec(code, namespace)
@@ -546,6 +601,9 @@ def _quiet_namespace(module, refresher):
         # #837: Polymarket's held-price withdrawals and receive marks; none.
         "withdraw_buffer": {},
         "input_marks": {},
+        # #10090: Kalshi's primary-quote custody (bundled Challenger pair).
+        "primary_quote_custody": PrimaryQuoteCustody(),
+        "ticker_to_ids": {},
         # Polymarket's run-scoped lock-retry isolation; nothing held.
         "lock_retry_events": set(),
         "lock_retry_until": {},
@@ -556,6 +614,8 @@ def _quiet_namespace(module, refresher):
     # run's price owner, which the consumer's lifetime wrapper creates.
     if hasattr(module, "_KalshiPriceOwner"):
         namespace["prices"] = module._KalshiPriceOwner()
+        namespace["observation_continuity"] = {}
+        namespace["game_clients"] = []
     # Polymarket's run-scoped catalog boundary owns its persistent stamp.
     if hasattr(module, "_PMCatalogFlushBoundary"):
         namespace["catalog_boundary"] = module._PMCatalogFlushBoundary()

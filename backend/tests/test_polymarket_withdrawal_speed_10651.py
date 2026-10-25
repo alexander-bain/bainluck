@@ -12,8 +12,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable, Mapping, Optional
 
+import pytest
+
 from app.tasks.polymarket_ws import (
-    PRICE_CHUNK_LOCK_TIMEOUT_MS, _PMCatalogFlushBoundary, is_price_row_lock_refusal,
+    PRICE_CHUNK_LOCK_TIMEOUT_MS, PRICE_STATEMENT_LOCK_TIMEOUT_MS, _PMCatalogFlushBoundary,
+    is_price_row_lock_refusal,
 )
 from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, is_lock_timeout, lock_timeout_value
 
@@ -70,6 +73,9 @@ def rig(
             trace.append(("pending", None))
 
     class Session:
+        def __init__(self):
+            self.info = {}  # detached committed-market frame interface
+
         async def execute(self, statement, params=None):
             if statement is SET_LOCK_TIMEOUT_SQL:
                 trace.append(("lock_budget", params))
@@ -104,13 +110,14 @@ def rig(
         if failed_price is not None and failed_price in chunk:
             return False
         if start_market_publish is not None:
-            start_market_publish(None)
+            start_market_publish(Session())
         for oid, value in chunk.items():
             if batch.get(oid) == value:
                 batch.pop(oid)
         return True
 
     ns = {
+        "asyncio": asyncio,
         "Optional": Optional,
         "Iterable": Iterable,
         "Mapping": Mapping,
@@ -118,6 +125,9 @@ def rig(
         "OPEN_FLUSH_CHUNKS_PER_FLUSH": 2,
         "buffer_lock": asyncio.Lock(),
         "catalog_boundary": _PMCatalogFlushBoundary(),
+        "game_period": 0.01,
+        "routing_generation": 0,
+        "observation_continuity": {},
         "price_buffer": batch,
         "withdraw_buffer": books,
         "withdrawal_retry_until": {},
@@ -125,6 +135,7 @@ def rig(
         "lock_retry_events": set(),
         "successful_price_write_at": {},
         "PRICE_CHUNK_LOCK_TIMEOUT_MS": PRICE_CHUNK_LOCK_TIMEOUT_MS,
+        "PRICE_STATEMENT_LOCK_TIMEOUT_MS": PRICE_STATEMENT_LOCK_TIMEOUT_MS,
         "SET_LOCK_TIMEOUT_SQL": SET_LOCK_TIMEOUT_SQL,
         "lock_timeout_value": lock_timeout_value,
         "is_lock_timeout": is_lock_timeout,
@@ -159,6 +170,7 @@ def rig(
             "_flush_standalone",
             "_flush_props",
             "flush_prices",
+            "flush_observations",
             "flush_standalone",
             "flush_props",
         ],
@@ -383,5 +395,53 @@ def test_final_withdrawal_ignores_cooldown_and_sets_no_periodic_budget(monkeypat
         assert ("withdraw", [1]) in r.trace and not r.books
         assert not any(kind == "lock_budget" for kind, _ in r.trace)
         assert not r.ns["withdrawal_retry_until"]
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "case", ["refuted", "supported", "newer_same", "newer_value", "newer_book", "failure"],
+)
+def test_withdrawal_retires_only_the_buffered_input_its_book_refutes(case, monkeypatch):
+    """#10090: a quote buffered BEFORE a wide book that prices it out must not
+    be written after that book's withdrawal — stored .82 withdrawn, then the
+    older .65 resurrected the page (attempt105, frozen 7c297ad16d). Only that
+    exact input leaves: a supported price, a newer input (even at the same
+    value), a newer book and a failed withdrawal all keep theirs."""
+    from unittest.mock import AsyncMock
+
+    from app.tasks import polymarket_ws as pm
+
+    async def run():
+        r = rig(
+            batch={1: 0.54 if case == "supported" else 0.65},
+            mapping={1: 1},
+            books={1: (0.01, 0.60)},
+            fail=case == "failure",
+        )
+        r.ns["input_marks"][1] = object()
+
+        async def between(books):
+            if case == "newer_same":
+                r.ns["input_marks"][1] = object()
+            elif case == "newer_value":
+                r.ns["price_buffer"][1] = 0.55
+                r.ns["input_marks"][1] = object()
+            elif case == "newer_book":
+                r.ns["withdraw_buffer"][1] = (0.05, 0.75)
+
+        monkeypatch.setattr(pm, "withdraw_attributed_event_sources", AsyncMock(return_value=[]))
+        monkeypatch.setattr(pm, "_publish_committed_withdrawals", AsyncMock(return_value=None))
+        result = await r.ns["flush_withdrawals"](before_write=between)
+        expected = {
+            "refuted": {}, "supported": {1: 0.54}, "newer_value": {1: 0.55},
+        }.get(case, {1: 0.65})
+        assert r.ns["price_buffer"] == expected
+        if case == "failure":
+            assert result is None and r.books == {1: (0.01, 0.60)}
+        elif case == "newer_book":
+            assert r.books == {1: (0.05, 0.75)}
+        else:
+            assert r.books == {}
 
     asyncio.run(run())

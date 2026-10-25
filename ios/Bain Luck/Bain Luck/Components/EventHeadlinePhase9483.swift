@@ -61,6 +61,20 @@ nonisolated enum EventHeadlinePhase9483: Equatable, Sendable {
         return EventState.hasStarted(commenceTime: commenceTime, now: now) ? .lastRecorded : .current
     }
 
+    /// Argon P1 — whether the chart may treat its newest price as live: the
+    /// dot and number on the end of the line and the arrival ring. The same
+    /// decision on the same clock as the phase label, so a pair the headline
+    /// calls "last recorded" (stale, undated, interrupted, started but not
+    /// live) never pulses as current on the line. The line itself is history
+    /// and is drawn either way.
+    static func isCurrent(
+        status: String?, commenceTime: Date?, isOpeningLine: Bool,
+        observedAt: Date?, deliveryInterrupted: Bool, now: Date
+    ) -> Bool {
+        resolve(status: status, commenceTime: commenceTime, isOpeningLine: isOpeningLine,
+                observedAt: observedAt, deliveryInterrupted: deliveryInterrupted, now: now) == .current
+    }
+
     /// The pre-game baseline a live hero carries under its current pair, in
     /// the finished hero's words ("Pre-match", or "Opened" on the
     /// `opening_odds` fallback). Same reading and pair rules as the finished

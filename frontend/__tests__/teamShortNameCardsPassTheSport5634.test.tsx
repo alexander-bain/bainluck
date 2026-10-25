@@ -146,7 +146,7 @@ describe("#5634 — every name-painting call site passes the sport, or is named 
   it.each([
     ["components/TeamGameCards.tsx", 1],
     ["components/EventCard.tsx", 2],
-    ["components/FeedCard.tsx", 1],
+    ["components/FeedCard.tsx", 2], // #2920: + the projected-final names
     ["components/discover/EventCard.tsx", 1],
     ["components/BookmakerTable.tsx", 1],
   ])("%s passes the sport at all %i of its call sites", (file, n) => {

@@ -16,6 +16,10 @@ import XCTest
 /// (stats `hits`, `total_bases`); each case edits only what it names.
 @MainActor
 final class EventPropsMatrixFocusReturn10236Tests: XCTestCase {
+    /// #10236 — the fixture's own capture minute. Its quotes were observed
+    /// 07:08:00–07:08:50Z, so at this clock every one of them is current.
+    private static let routeNow = "2026-10-03T07:09:00Z".asDate!
+
     private static let fixtureURL =
         URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent("Fixtures")
@@ -91,7 +95,7 @@ final class EventPropsMatrixFocusReturn10236Tests: XCTestCase {
         }
         XCTAssertFalse(hitsGone.rows.isEmpty, "the matrix itself is still drawn")
         XCTAssertEqual(selection.resolvedStat(in: hitsGone), "hits", "never switches to the remaining first stat")
-        XCTAssertNil(EventPropsMatrixLayout.grid(hitsGone, statKey: "hits"))
+        XCTAssertNil(EventPropsMatrixLayout.grid(hitsGone, statKey: "hits", now: Self.routeNow))
         XCTAssertEqual(focus(open, selection, hitsGone), .header)
     }
 
@@ -117,7 +121,7 @@ final class EventPropsMatrixFocusReturn10236Tests: XCTestCase {
             block["rows"] = all
         }
         XCTAssertNil(try row(unavailable, judge2).current.quotedProbability)
-        XCTAssertEqual(focus(open, selection, unavailable), .question(open), "its own cell reads 'no current price'")
+        XCTAssertEqual(focus(open, selection, unavailable), .question(open), "its own cell reads 'current probability unavailable'")
     }
 
     func testARemovedQuestionFocusesTheHeaderNotASibling() throws {
@@ -125,7 +129,7 @@ final class EventPropsMatrixFocusReturn10236Tests: XCTestCase {
         let removed = try props { block in
             block["rows"] = try rows(block).filter { $0["question_key"] as? String != judge2 }
         }
-        XCTAssertNotNil(EventPropsMatrixLayout.grid(removed, statKey: "hits"), "Judge 1+/3+ and Soto still drawn")
+        XCTAssertNotNil(EventPropsMatrixLayout.grid(removed, statKey: "hits", now: Self.routeNow), "Judge 1+/3+ and Soto still drawn")
         XCTAssertEqual(focus(open, selection, removed), .header)
     }
 
@@ -141,7 +145,7 @@ final class EventPropsMatrixFocusReturn10236Tests: XCTestCase {
             all.append(over)
             block["rows"] = all
         }
-        let grid = try XCTUnwrap(EventPropsMatrixLayout.grid(paired, statKey: "hits"))
+        let grid = try XCTUnwrap(EventPropsMatrixLayout.grid(paired, statKey: "hits", now: Self.routeNow))
         XCTAssertFalse(grid.unplaced.contains { $0.questionKey == tatisUnder }, "now behind the over cell")
         XCTAssertNotNil(EventPropsMatrixSelection.resolve(open, in: paired), "the question still exists")
         XCTAssertEqual(focus(open, selection, paired), .header)

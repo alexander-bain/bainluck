@@ -52,6 +52,9 @@ def _frame_revision(frame: dict) -> Optional[int]:
 # source publishers may finish out of order; only a newer revision replaces it.
 # PUBLISH's integer reply is retained for the packed sender's accounting.
 # A full replay cache must not suppress delivery to existing subscribers.
+# A normal price that could not be retained leaves its durable recovery intent
+# outstanding. Price-free recovery controls still acknowledge their PUBLISH;
+# otherwise a persistent cache failure would generate endless control retries.
 RETAIN_AND_PUBLISH = """
 local prior = redis.call('GET', KEYS[1])
 local keep = true
@@ -64,14 +67,20 @@ if prior then
         end
     end
 end
+local retention_failed = false
 if keep then
-    redis.pcall('SET', KEYS[1], ARGV[1], 'EX', ARGV[4])
+    local stored = redis.pcall('SET', KEYS[1], ARGV[1], 'EX', ARGV[4])
+    retention_failed = type(stored) == 'table' and stored.err ~= nil
 end
-return redis.call('PUBLISH', KEYS[2], ARGV[1])
+local listeners = redis.call('PUBLISH', KEYS[2], ARGV[1])
+if retention_failed and ARGV[5] == 'price' then
+    return redis.error_reply('normal price replay retention failed after PUBLISH')
+end
+return listeners
 """
 
 
-def frame_publish_command(frame: dict) -> tuple:
+def frame_publish_command(frame: dict, *, require_replay: bool = False) -> tuple:
     payload = json.dumps(frame)
     channel = event_channel(frame["event_id"])
     rev = _frame_revision(frame)
@@ -80,6 +89,7 @@ def frame_publish_command(frame: dict) -> tuple:
     return (
         "EVAL", RETAIN_AND_PUBLISH, 2, latest_frame_key(frame["event_id"]),
         channel, payload, str(frame["event_id"]), rev, int(MAX_FRAME_AGE_S),
+        "price" if require_replay and frame.get("p") is not None and not frame.get("invalidation") else "control",
     )
 
 
@@ -166,6 +176,50 @@ def build_frame(
             else {str(int(event_id)): rev}
         ),
     }
+
+
+def build_source_snapshot(
+    event_id: int, rev: Any, sources: Any,
+) -> Optional[dict[str, Any]]:
+    """#10090: the row's complete public sources for one frame, or ``None``.
+
+    ``sources`` is the bag the stamp's UPDATE RETURNED, which also computed the
+    frame's ``p``. ``rev`` is the frame's own ``rev``. Both come from one
+    committed write, so the map, the number and the revision match. The map
+    uses the shared public formatter, so it is the detail rail's shape.
+
+    Polymarket's ``price_evidence`` needs a read of stored books, and this
+    snapshot adds no query, so it carries ``NOT_EVALUATED``. A reader that needs
+    ``tradeable_book`` keeps treating it as not proven, as before.
+
+    ``None`` means no snapshot, the legacy frame: a ``rev`` that is not exactly
+    this one row's, a bag that is not a dict, or a map that is not strict JSON.
+    An empty map is real: a complete map with no source in it. This is a ROW
+    map and must never stand for a folded page's sources. Never raises, so the
+    optional field can never cost the frame.
+    """
+    try:
+        key = str(int(event_id))
+        if (not isinstance(rev, dict) or set(rev) != {key}
+                or type(rev[key]) is not int or rev[key] < 0
+                or not isinstance(sources, dict)):
+            return None
+        from app.utils.price_evidence import NOT_EVALUATED
+        from app.utils.probability_source_format import format_probability_sources
+
+        public = format_probability_sources(sources)
+        polymarket = public.get("polymarket")
+        if isinstance(polymarket, dict):
+            polymarket["price_evidence"] = NOT_EVALUATED
+        snapshot = {
+            "event_id": int(event_id),
+            "rev": {key: rev[key]},
+            "win_probability_sources": public,
+        }
+        json.dumps(snapshot, allow_nan=False)
+        return snapshot
+    except Exception:
+        return None
 
 
 async def publish_frame(redis_client, frame: dict[str, Any]) -> bool:

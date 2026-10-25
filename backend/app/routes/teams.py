@@ -606,6 +606,22 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
         logger.exception("team page: championship path failed for team %s", team.id)
     _mark("championship")
 
+    # --- The grid's out verdict (#11493): cache-only, fails to today's answer ---
+    if league_slug and (champ_path or futures_items):
+        try:
+            _stamp_grid_states(
+                champ_path,
+                futures_items,
+                _grid_decided_columns(
+                    await _read_cached_grid(league_slug),
+                    club_id_list,
+                    season_windows.season_string(league_slug, now),
+                ),
+            )
+        except Exception:
+            logger.exception("team page: grid state failed for team %s", team.id)
+    _mark("grid_state")
+
     resp = {
         # `now` is the route's own clock (one read, at the top), so the record
         # and the season descriptor beside it cannot disagree about the date.
@@ -1388,3 +1404,133 @@ async def _get_championship_path(
         })
 
     return path
+
+
+# ─── #11493: the grid's out verdict on the team page ─────────────────────────
+#
+# The Braves' page led with "CHAMPIONSHIP <1%" two weeks after the Dodgers put
+# them out, while `/api/playoffs/mlb` marked the same club `eliminated` in the
+# same column. The path above reads prices, and an eliminated club's leg keeps
+# trading at 0.001 until the venue grades the series winner — so a price can
+# never say "out". The verdict lives only in the grid build (venue grade,
+# register, the ESPN clinch overlay, `propagate_elimination`), so the page reads
+# it from the grid's own cached payload rather than re-deriving any of that.
+
+#: Which grid column answers a path step's question, by tier, when the step's
+#: own market is not one the column lists. MLB calls tier 2 the pennant; the
+#: other three leagues call it the conference. Tier 4 is the division.
+_GRID_COLUMN_FOR_TIER = {
+    1: ("championship",),
+    2: ("pennant", "conference"),
+    4: ("division",),
+}
+
+#: The cell states a team page republishes. "lost" is the tournament
+#: register's word for the same thing and is folded into "eliminated", so
+#: consumers only ever read two values.
+_GRID_STATE_ON_PAGE = {"won": "won", "eliminated": "eliminated", "lost": "eliminated"}
+
+
+async def _read_cached_grid(league_slug: str) -> dict | None:
+    """The league's grid payload from Redis, or ``None``. NEVER builds.
+
+    A cold grid build takes ~12 s, so a miss here is today's answer (no state),
+    not a reason to build. The fresh key is read first and the 24 h ``:stale``
+    mirror only on a clean miss; a timeout or error stops at once. Elimination
+    does not reverse inside a season, so a last-good payload's "eliminated" is
+    still true — the season check in :func:`_grid_decided_columns` is what keeps
+    a previous season's verdict off this one's page.
+    """
+    import json
+
+    from app.config.league_configs import resolve_league_slug
+    from app.routes.playoffs import _grid_payload_usable
+    from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+    cache_key = f"bainluck:category:playoffs:{resolve_league_slug(league_slug)}"
+    client = await get_shared_async_redis()
+    for key in (cache_key, f"{cache_key}:stale"):
+        result = await bounded_redis_call(lambda k=key: client.get(k))
+        if result.is_failure:
+            return None
+        if result.is_miss:
+            continue
+        payload = json.loads(result.value)
+        if _grid_payload_usable(payload):
+            return payload
+    return None
+
+
+def _grid_decided_columns(
+    payload: dict | None, club_ids, season: str | None
+) -> dict[str, tuple[str, frozenset[int]]]:
+    """``{column key: (state, column market ids)}`` for the club's decided cells.
+
+    Empty — the page keeps today's answer — when the payload is absent, names a
+    different season than the page's, holds no row for the club, or holds two
+    rows for it that disagree about a column.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    grid_season = payload.get("season")
+    if season and grid_season and str(grid_season) != str(season):
+        return {}
+    column_markets = {
+        c.get("key"): frozenset(int(m) for m in (c.get("market_ids") or []) if m is not None)
+        for c in payload.get("columns") or []
+        if isinstance(c, dict) and c.get("key")
+    }
+    ids = set(club_ids)
+    states: dict[str, set[str | None]] = {}
+    for row in payload.get("teams") or []:
+        if not isinstance(row, dict) or row.get("team_id") not in ids:
+            continue
+        for key, cell in (row.get("cells") or {}).items():
+            state = cell.get("state") if isinstance(cell, dict) else None
+            states.setdefault(key, set()).add(_GRID_STATE_ON_PAGE.get(state))
+    decided: dict[str, tuple[str, frozenset[int]]] = {}
+    for key, seen in states.items():
+        if len(seen) == 1:
+            (state,) = seen
+            if state:
+                decided[key] = (state, column_markets.get(key, frozenset()))
+    return decided
+
+
+def _stamp_grid_states(
+    champ_path: list[dict],
+    futures_items: list[dict],
+    decided: dict[str, tuple[str, frozenset[int]]],
+) -> None:
+    """Give each path step and futures row the grid's verdict as ``state``.
+
+    A path step reads the column that lists its market, else the column its tier
+    names. A futures row reads only a column that lists its market: the futures
+    list carries awards filed at tier 1 ("NL Hank Aaron Winner"), and a tier
+    alone would hand an award the title's verdict. The probability is left
+    exactly as it was — ``state`` is the new fact, and a client that has not
+    learned to read it renders what it always rendered.
+    """
+    if not decided:
+        return
+
+    def _by_market(market_id) -> str | None:
+        for state, markets in decided.values():
+            if market_id in markets:
+                return state
+        return None
+
+    for step in champ_path:
+        state = _by_market(step.get("market_id"))
+        if state is None:
+            for key in _GRID_COLUMN_FOR_TIER.get(step.get("tier"), ()):
+                if key in decided:
+                    state = decided[key][0]
+                    break
+        if state:
+            step["state"] = state
+
+    for item in futures_items:
+        state = _by_market(item.get("market_id"))
+        if state:
+            item["state"] = state

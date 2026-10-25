@@ -4,11 +4,14 @@ import SwiftUI
 /// `QuestionCatalog`, #10809). Collapsed by default so it costs one row; open,
 /// it is the existing family browser over `QuestionCatalog9483` groups.
 ///
-/// A group shows its first six outcomes and offers the rest; an outcome with
-/// no printable price says "No recent price" before the final (after it, the
-/// graded cards above own results and the row prints nothing). The venue,
-/// period, lines and when the price was seen sit behind "About this market".
-/// Expansion is keyed by the group's stable id, so it survives a refresh.
+/// A group shows its first six outcomes and offers the rest. An outcome with
+/// no printable price says why, before the final (#10877): "Period finished"
+/// for a period the server says closed, "No recent probability update" for a
+/// stale live observation, and "Probability unavailable" when the reason is
+/// unknown. After the final the graded cards above own results and the row
+/// prints nothing. The venue, period, lines and when the price was seen sit behind
+/// "About this market". Expansion is keyed by the group's stable id, so it
+/// survives a refresh.
 ///
 /// Equatable on its inputs, and mounted `.equatable()`: a live page re-renders
 /// on every stream frame, and the catalog regroups up to ~1,600 rows, so it
@@ -20,7 +23,9 @@ struct AllMarketsCatalogView9483: View, Equatable {
     /// Outcomes a group shows before the reader asks for the rest (Atlas v6).
     static let groupPreview = 6
     static let title = "All markets"
-    static let noRecentPrice = "No recent price"
+    static let noRecentPrice = "No recent probability update"
+    static let periodFinished = "Period finished"
+    static let unavailablePrice = "Probability unavailable"
 
     @State private var isOpen = LaunchRig.expandsCollapsedSections()
     @State private var expanded: Set<String> = []
@@ -87,7 +92,13 @@ struct AllMarketsCatalogView9483: View, Equatable {
     /// What an outcome prints in the price column.
     static func priceText(_ outcome: QuestionCatalog9483.Outcome, status: String?) -> String? {
         if let p = outcome.probability { return formatProbability(p) }
-        return SettledQuote.isSettled(status) ? nil : noRecentPrice
+        if SettledQuote.isSettled(status) { return nil }
+        switch outcome.absence {
+        case .settled: return nil
+        case .periodFinished: return periodFinished
+        case .stale: return noRecentPrice
+        case .unavailable, nil: return unavailablePrice
+        }
     }
 
     /// The newest observation among the outcomes that print a price.

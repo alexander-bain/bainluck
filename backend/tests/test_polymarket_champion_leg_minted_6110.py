@@ -91,14 +91,22 @@ def _leg(condition_id, title, yes_price, *, question=None, closed=True):
     a list here would test a payload the venue does not produce. ``closed`` is a
     native JSON boolean, which is how Gamma sends THAT: measured over all 71
     legs of event 815313 on 2026-09-15, every one ``true``.
+
+    #698: a closed leg also carries ``umaResolutionStatus: "resolved"``, as
+    every closed-and-settled leg of the retained Gamma bytes for event 106884
+    does; the grading arm now requires it before it reads a payout. An open leg
+    carries none, as the open legs of those bytes do not.
     """
-    return {
+    leg = {
         "conditionId": condition_id,
         "groupItemTitle": title,
         "question": question or f"Will {title} win the 2026 Vuelta a Espana?",
         "outcomePrices": json.dumps([f"{yes_price}", f"{1 - yes_price}"]),
         "closed": closed,
     }
+    if closed is True:
+        leg["umaResolutionStatus"] = "resolved"
+    return leg
 
 
 def _vuelta_event(

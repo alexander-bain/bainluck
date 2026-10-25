@@ -8,6 +8,8 @@ import {
   isRenderedMove,
   NO_READING,
 } from "@/lib/probabilityDisplay";
+import { decidedHeadlineText } from "@/lib/teamHeadline";
+import { decidedState } from "@/lib/teamSeasonJourney";
 
 // ---------------------------------------------------------------------------
 // One row of the team page's "Season Futures" column.
@@ -41,6 +43,10 @@ export function TeamFutureRow({ item }: { item: TeamFutureItem }) {
   // (gotcha #33). Frame it as a RESULT (the L2-147 "What hit" grammar), not a
   // live 100% probability: settled eyebrow, a Won badge, and no 24h movement.
   const settledWon = item.is_winner === true;
+  // #11493 — the championship grid's verdict on this row's column, when it has
+  // one and the venue has not graded the market yet. It prints "Out"/"Won" in
+  // place of the leg's lingering price, with no rank and no movement.
+  const decided = settledWon ? null : decidedState(item.state);
 
   return (
     <Link
@@ -83,12 +89,22 @@ export function TeamFutureRow({ item }: { item: TeamFutureItem }) {
 
             The settled path is untouched: all 15 settled-won rows measured
             carry exactly `1.0`, so `✓ Won` still prints `100%`. */}
-        <div className={`text-lg font-mono font-bold ${settledWon ? "text-accent-live" : "text-text-primary"}`}>
-          {item.probability !== null
-            ? formatProbabilityPercent(item.probability)
-            : NO_READING}
+        <div
+          className={`text-lg ${decided ? "" : "font-mono "}font-bold ${
+            settledWon
+              ? "text-accent-live"
+              : decided === "eliminated"
+                ? "text-text-muted"
+                : "text-text-primary"
+          }`}
+        >
+          {decided
+            ? decidedHeadlineText(decided)
+            : item.probability !== null
+              ? formatProbabilityPercent(item.probability)
+              : NO_READING}
         </div>
-        {!settledWon && item.rank && item.total_outcomes && (
+        {!settledWon && !decided && item.rank && item.total_outcomes && (
           <div className="text-xs text-text-muted">
             #{item.rank} of {item.total_outcomes}
           </div>
@@ -96,7 +112,7 @@ export function TeamFutureRow({ item }: { item: TeamFutureItem }) {
         {/* UX-P275, same class as the headline above: the specimen for #5652 was
             this row — Boston Red Sox / MLB World Series Winner at
             `probability_change_24h = 0.000034`, printed as a green "+0.0%". */}
-        {!settledWon && isRenderedMove(item.probability_change_24h) && (
+        {!settledWon && !decided && isRenderedMove(item.probability_change_24h) && (
           <div
             className={`text-xs ${
               item.probability_change_24h! > 0

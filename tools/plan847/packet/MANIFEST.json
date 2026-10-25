@@ -1,0 +1,252 @@
+{
+  "schema": "calibration-847-query3-local-admission/v1",
+  "issue": 847,
+  "pillar": "TRUTH",
+  "ship": "Operators see the full stored guess-family count in the correctness console without losing the existing winner-coverage cache to a costly new query.",
+  "preparation": "LOCAL_ONLY",
+  "decision": "NOT_ADMITTED_TRANSPORT_CONTROLLER_BLOCKER",
+  "production_attempted": false,
+  "production_result": null,
+  "source_ref": "0c544ac15d1eb9a0dbee8e81ff1e0062ea9576f4",
+  "source_repository": "/Users/bain/bainluck-dev/calibration/.wt-847",
+  "local_HEAD_at_pin": "32eef494708d9200063d575bba8f19ba0f68cddf",
+  "blobs": {
+    "backend/app/tasks/precompute_backfill_winners_status.py": {
+      "frozen_file": "source/precompute_backfill_winners_status.py",
+      "git_blob_sha1": "ed6a7a112258bce25910b36b7799b770f291f5d8",
+      "bytes": 21473,
+      "sha256": "5f89657110d59b144637e84c522ce9dce1ab11517052dd21cc2ad925a07f01d8"
+    },
+    "backend/app/utils/resolution_authority.py": {
+      "frozen_file": "source/resolution_authority.py",
+      "git_blob_sha1": "e0ce5f93e97a7000335744b8fc944ed19d875265",
+      "bytes": 27044,
+      "sha256": "10ed6fbf1b548486e4fb5f872eb2d343f3db0cf1d20ea10b2fae8ffec6fc1348"
+    }
+  },
+  "provenance": {
+    "artifacts/calibration-847-contract-assessment-20261019/ASSESSMENT.md": {
+      "snapshot": "provenance/ASSESSMENT.md",
+      "bytes": 19167,
+      "sha256": "634d36dc2744a4fc0e96a9671305b2e767d90c0f1aacabb835e24e2930de5877"
+    },
+    "artifacts/calibration-847-contract-assessment-20261019/ROOT-ASSESSMENT-REVIEW.md": {
+      "snapshot": "provenance/ROOT-ASSESSMENT-REVIEW.md",
+      "bytes": 4660,
+      "sha256": "149c26c648083c366e76e5758ea1d86299275bd21a5725fcc4660f98f5f4b5ed"
+    },
+    "artifacts/calibration-847-contract-assessment-20261019/ROOT-PROPOSAL-C-ALGEBRA.json": {
+      "snapshot": "provenance/ROOT-PROPOSAL-C-ALGEBRA.json",
+      "bytes": 701,
+      "sha256": "35f688eb189ccd5be64a091a6a3d9883667923331162f995cd552b761ceb92dc"
+    },
+    "artifacts/683-stored-identity-delta-20261016/binding-wall-repair/supervisor.py": {
+      "snapshot": "provenance/native683-supervisor.py.txt",
+      "bytes": 13321,
+      "sha256": "79fc02cbe580d0e6a67136d6f94c220b4b587efb174657a66d22e9e3be138929"
+    },
+    "artifacts/683-stored-identity-delta-20261016/binding-wall-repair/child.py": {
+      "snapshot": "provenance/native683-child.py.txt",
+      "bytes": 5032,
+      "sha256": "9d41f5ce73a7d14afc4f0b7616c871006c89540368820c47cd26f89f79113d1d"
+    },
+    "artifacts/683-stored-identity-delta-20261016/binding-wall-repair/contract.py": {
+      "snapshot": "provenance/native683-contract.py.txt",
+      "bytes": 4922,
+      "sha256": "a031ea16d951da53698b963cdd12a7406a61864d7c94c061a15d70ebb075be2a"
+    },
+    "artifacts/683-stored-identity-delta-20261016/binding-wall-repair/ROOT-ADMISSION.template.json": {
+      "snapshot": "provenance/native683-ROOT-ADMISSION.template.json",
+      "bytes": 568,
+      "sha256": "34cb8f23113261db24111e775b985b2b7d4f9dd28f09a44c902cbe2e68fc4b03"
+    },
+    "artifacts/683-stored-identity-delta-20261016/binding-wall-repair/ROOT-REVIEW/ROOT-FIXED-REFUSAL-WALL.json": {
+      "snapshot": "provenance/native683-ROOT-FIXED-REFUSAL-WALL.json",
+      "bytes": 610,
+      "sha256": "114bd98bc4fccf0f2be8ca3c70d344c61881bb89d17ca28008fa4938a6e9dd6a"
+    },
+    "artifacts/683-stored-identity-delta-20261016/binding-wall-repair/ROOT-REVIEW/ROOT-READINESS.json": {
+      "snapshot": "provenance/native683-ROOT-READINESS.json",
+      "bytes": 852,
+      "sha256": "748059d838a279f2c05fb34ef2444518429c797f2d7ebc3021466da4fc6084f3"
+    },
+    "artifacts/698-settlement-price-offline-20261016/bounded-prototype/root_native_plan_once.py": {
+      "bytes": 4186,
+      "sha256": "93dc2d68ec2e2e6ed0d58c07c46365b72f44340a9c6ce1db12358bbc65c33fc3"
+    },
+    "artifacts/698-settlement-price-offline-20261016/bounded-prototype/ROOT-REVIEW.json": {
+      "bytes": 1056,
+      "sha256": "e2e55aae3187c60a2f9a8369765cc79109a46d67174b545844e07f93005ec961"
+    },
+    "artifacts/698-settlement-price-offline-20261016/bounded-prototype/ROOT-PLAN-REVIEW.json": {
+      "bytes": 1523,
+      "sha256": "9ee3b75a6b9d90fc82461101d7c30c414178b1753517f057b8c8751c7fa7ffc3"
+    },
+    "artifacts/1912-exists-plan-only-20261016/plan_once.py": {
+      "bytes": 29756,
+      "sha256": "3c0e8d1e2827a952ad6d7d7f20aa8e234bc75a560f5080573c92839b4e31e9cc"
+    },
+    "tools/cal-dbq-1081.py": {
+      "bytes": 1205,
+      "sha256": "0ebe41283cd7ce122bd683804046296a0b108d09b52e11341f6e9dd568d846e5"
+    }
+  },
+  "created_utc": "2026-10-19T22:14:01.781257+00:00",
+  "derivation": {
+    "producer_assignment_line": 130,
+    "P_source_predicate": "fm.status = 'resolved'\n  AND fo.opening_probability IS NOT NULL\n  AND fo.opening_probability > 0 AND fo.opening_probability < 1",
+    "P_rendered_whitespace_only_normalization": "(fm.status = 'resolved' AND fo.opening_probability IS NOT NULL AND fo.opening_probability > 0 AND fo.opening_probability < 1)",
+    "G": "(fo.resolution_source IN ('binary_higher_wins', 'multi_max_prob', 'pass2_guess', 'pass3_threshold'))",
+    "canonical_family": [
+      "binary_higher_wins",
+      "multi_max_prob",
+      "pass2_guess",
+      "pass3_threshold"
+    ],
+    "GUESS_FAMILY_SOURCES_SQL": "('binary_higher_wins', 'multi_max_prob', 'pass2_guess', 'pass3_threshold')",
+    "family_derivation": "AST literal of GUESS_FAMILY_SOURCES, using only pinned pure _sql_in_list function AST; no application imports",
+    "parameters": {},
+    "old_aggregates": [
+      "total_resolved",
+      "has_cal_prob",
+      "needs_cal_with_commence",
+      "needs_cal_without_commence",
+      "avg_price_shift"
+    ],
+    "new_aggregates": [
+      "guess_family_outcomes",
+      "gf_binary_higher_wins",
+      "gf_multi_max_prob",
+      "gf_pass2_guess",
+      "gf_pass3_threshold"
+    ],
+    "join": "unchanged inner futures_outcomes fo JOIN futures_markets fm ON fo.market_id = fm.id",
+    "population": "P OR G; no status/price/venue/is_winner filter on G"
+  },
+  "proposed_limits": {
+    "transaction": "READ ONLY",
+    "statement_timeout": "2s",
+    "lock_timeout": "500ms",
+    "explain": "FORMAT JSON; NEVER ANALYZE",
+    "overall_one_shot_seconds": 15,
+    "combined_output_bytes": 524288,
+    "retry": false,
+    "alternate_planner_gucs": false
+  },
+  "selected_existing_convention": {
+    "path": "artifacts/683-stored-identity-delta-20261016/binding-wall-repair/",
+    "public_entry": "supervisor.run_attempt(credential=<held private credential>, admission=<external Root dict>, mode=\"plan_only\")",
+    "actual_wall_seconds": 35,
+    "actual_stream_bytes": 1048576,
+    "actual_cumulative_receipt_bytes": 1048576,
+    "actual_combined_bytes": 2097152,
+    "binding": "fixed Q683 query/params/source/seal; no SQL override or limit arguments",
+    "usable_for_847_as_is": false
+  },
+  "unknowns": [
+    "fresh main/Heavy carrier and exact source blob equality",
+    "fresh controller and operation owner, quiet window",
+    "production index catalog",
+    "actual P/G/P-intersection-G selectivity",
+    "PostgreSQL estimated plan",
+    "actual execution cost/runtime/cadence/cache impact",
+    "current connection/auth/network capability",
+    "driver internal/raw-wire cap"
+  ],
+  "algebra_evidence": {
+    "file": "provenance/ROOT-PROPOSAL-C-ALGEBRA.json",
+    "rows": 5376,
+    "credit": "synthetic SQLite population algebra only; not PostgreSQL plan/cost/runtime/admission"
+  },
+  "files": {
+    "ADMISSION.md": {
+      "bytes": 12955,
+      "sha256": "06bc34f15c26de7c71decf5391dd34f980ae4627c4f92cc3e8d77dd3ae2c3c3a"
+    },
+    "COMMAND-REVIEW.txt": {
+      "bytes": 1452,
+      "sha256": "bffc7296ea4171f588a9322e691e8b449a32dbbc71c61045adf32132439bbcfc"
+    },
+    "OFFLINE-VERIFICATION.json": {
+      "bytes": 3993,
+      "sha256": "9acd373b21f957b72ac69ef26b1767f1667756d9fc49ba5e53683a5d40f2ea58"
+    },
+    "candidateC.plan-only.sql": {
+      "bytes": 2236,
+      "sha256": "7d5f57e5c0685fc1e62505215dc3d98af674f5ad1bb2f69e4d71b98be4095a1a"
+    },
+    "candidateC.statement.txt": {
+      "bytes": 2031,
+      "sha256": "628a449c0ea16b368aabafec6ea436a1319879699e422de4dc4dab115a91e052"
+    },
+    "provenance/ASSESSMENT.md": {
+      "bytes": 19167,
+      "sha256": "634d36dc2744a4fc0e96a9671305b2e767d90c0f1aacabb835e24e2930de5877"
+    },
+    "provenance/ROOT-ASSESSMENT-REVIEW.md": {
+      "bytes": 4660,
+      "sha256": "149c26c648083c366e76e5758ea1d86299275bd21a5725fcc4660f98f5f4b5ed"
+    },
+    "provenance/ROOT-PROPOSAL-C-ALGEBRA.json": {
+      "bytes": 701,
+      "sha256": "35f688eb189ccd5be64a091a6a3d9883667923331162f995cd552b761ceb92dc"
+    },
+    "provenance/native683-ROOT-ADMISSION.template.json": {
+      "bytes": 568,
+      "sha256": "34cb8f23113261db24111e775b985b2b7d4f9dd28f09a44c902cbe2e68fc4b03"
+    },
+    "provenance/native683-ROOT-FIXED-REFUSAL-WALL.json": {
+      "bytes": 610,
+      "sha256": "114bd98bc4fccf0f2be8ca3c70d344c61881bb89d17ca28008fa4938a6e9dd6a"
+    },
+    "provenance/native683-ROOT-READINESS.json": {
+      "bytes": 852,
+      "sha256": "748059d838a279f2c05fb34ef2444518429c797f2d7ebc3021466da4fc6084f3"
+    },
+    "provenance/native683-child.py.txt": {
+      "bytes": 5032,
+      "sha256": "9d41f5ce73a7d14afc4f0b7616c871006c89540368820c47cd26f89f79113d1d"
+    },
+    "provenance/native683-contract.py.txt": {
+      "bytes": 4922,
+      "sha256": "a031ea16d951da53698b963cdd12a7406a61864d7c94c061a15d70ebb075be2a"
+    },
+    "provenance/native683-supervisor.py.txt": {
+      "bytes": 13321,
+      "sha256": "79fc02cbe580d0e6a67136d6f94c220b4b587efb174657a66d22e9e3be138929"
+    },
+    "provenance/producer-task-bounds.json": {
+      "bytes": 2021,
+      "sha256": "d63bdab1196d9a5dc910eda047fefedb9fcbc8352fe3e72f4a83afad7737040f"
+    },
+    "query3-vs-candidateC.diff": {
+      "bytes": 2555,
+      "sha256": "c818c776f7a57275843ff4244769b5af27529fc84802a6bcdbf544fa42fafae5"
+    },
+    "query3.plan-only.sql": {
+      "bytes": 943,
+      "sha256": "bd54471ec2279ae71bfb358efbf7fadd11586cd0dd1265619d0786393cb2fc72"
+    },
+    "query3.statement.txt": {
+      "bytes": 738,
+      "sha256": "050cf5664d5575f1034c6caf9d818e74c72975475305221c497d6deab389887c"
+    },
+    "source/precompute_backfill_winners_status.py": {
+      "bytes": 21473,
+      "sha256": "5f89657110d59b144637e84c522ce9dce1ab11517052dd21cc2ad925a07f01d8"
+    },
+    "source/query3.literal.txt": {
+      "bytes": 974,
+      "sha256": "509696140860f4b7d14671571a97e4958a3c5ef3aa37dadc00b3bfea8c7d6dc4"
+    },
+    "source/resolution_authority.py": {
+      "bytes": 27044,
+      "sha256": "10ed6fbf1b548486e4fb5f872eb2d343f3db0cf1d20ea10b2fae8ffec6fc1348"
+    }
+  },
+  "verification": {
+    "file": "OFFLINE-VERIFICATION.json",
+    "checks_passed": 48,
+    "scope": "offline derivation/provenance only"
+  }
+}

@@ -217,6 +217,7 @@ async def build(rig, consumer, monkeypatch, *, trace: bool, lock_ms: int):
     r._client = lambda: client
 
     p = pm_rig(batch={}, mapping=dict(event_of), books={})
+    # Local111 adapter: the extracted closure needs its actual new module global.
     p.release.set()
     from app.tasks.polymarket_open_contracts import (
         FLUSH_CHUNK_ROWS, OPEN_FLUSH_CHUNKS_PER_FLUSH,
@@ -805,6 +806,7 @@ def bridged_rig(t):
     Postgres for the whole hold instead of timing out (production: 500 ms)."""
     t.p.ns["open_outcome_ids"].add(PEER_OUTCOME)
     t.p.ns["PRICE_CHUNK_LOCK_TIMEOUT_MS"] = 5000
+    t.p.ns["PRICE_STATEMENT_LOCK_TIMEOUT_MS"] = 5000
     bridged: list[tuple[float, float, dict]] = []
     inner = t.p.ns["write_chunk"]
 
@@ -976,6 +978,7 @@ async def test_a_locked_bridged_event_never_rolls_back_a_retried_neighbour(
     t = await build(rig, consumer, monkeypatch, trace=False, lock_ms=2000)
     t.p.ns["open_outcome_ids"].update({PEER_OUTCOME, HELD_SIBLING_OUTCOME})
     t.p.ns["PRICE_CHUNK_LOCK_TIMEOUT_MS"] = 300  # times out inside the hold
+    t.p.ns["PRICE_STATEMENT_LOCK_TIMEOUT_MS"] = 300
     attempts: list[tuple] = []
     inner = t.p.ns["write_chunk"]
 

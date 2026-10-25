@@ -191,7 +191,7 @@ final class EventQuestionMatrixAdapter10238Tests: XCTestCase {
         XCTAssertEqual(shown.option.value, .quoted(0.52))
         XCTAssertEqual(shown.comparison?.latest, 0.6)
         XCTAssertEqual(shown.comparison?.points, 20)
-        XCTAssertEqual(shown.comparison?.caption, "since the saved pregame price")
+        XCTAssertEqual(shown.comparison?.caption, "since the saved pregame chance")
         // A rejected main quote cannot gain a comparison merely because its
         // value_state string still says quoted.
         for invalid in [nil, Double.nan, Double.infinity, -0.1, 1.1] as [Double?] {

@@ -76,18 +76,18 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         ROUTE,
         "revert the outcome branch to the 41-way OR — the 13,107 ms plan",
         "        branches.append((_BRANCH_OUTCOME_NAME, "
-        "_ilike_any(FuturesOutcome.name, _team_pats)))",
+        "[_ilike_any(FuturesOutcome.name, _team_pats)]))",
         "        branches.append((_BRANCH_OUTCOME_NAME, "
-        "or_(*[FuturesOutcome.name.ilike(p) for p in _team_pats])))",
+        "[or_(*[FuturesOutcome.name.ilike(p) for p in _team_pats])]))",
     ),
     (
         "M2",
         ROUTE,
         "revert the market branch to the 41-way OR — the 2,990 ms plan",
         "        branches.append((_BRANCH_MARKET_NAME, "
-        "_ilike_any(FuturesMarket.name, _team_pats)))",
+        "[_ilike_any(FuturesMarket.name, _team_pats)]))",
         "        branches.append((_BRANCH_MARKET_NAME, "
-        "or_(*[FuturesMarket.name.ilike(p) for p in _team_pats])))",
+        "[or_(*[FuturesMarket.name.ilike(p) for p in _team_pats])]))",
     ),
     # -- the predicate: go faster by answering less ---------------------------
     (
@@ -145,7 +145,7 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         # replacement here would sit in this file as a byte-for-byte copy of a
         # SIBLING harness's mutant and Pass B would report it as residue. That is
         # LAT-P136's finding, applied before the scan had to find it again.
-        'PROP_FAMILIES_CACHE_PREFIX = "bainluck:prop_families:"',
+        'PROP_FAMILIES_CACHE_PREFIX = "bainluck:prop_families:v3:"',
         'PROP_FAMILIES_CACHE_PREFIX = "bainluck:typeahead:"',
     ),
     # -- the ladder -----------------------------------------------------------

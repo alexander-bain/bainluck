@@ -55,6 +55,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
+from app.utils.async_binary_pair import paired_binary_leg_ids as _paired_binary_leg_ids
+from app.utils.futures_chart_series import MAX_HEARTBEAT_SECONDS
 from app.utils.generic_market_history import (
     BANK_MARKER_KEY,
     CACHE_VERSION,
@@ -131,6 +133,17 @@ COARSE_FILL_CAP = HOURLY_FILL_CAP * 2 // 3
 #: on every page view.
 REFRESH_AFTER_SECONDS = 3 * 3600
 
+#: #10955 — how old the last attempt must be before a STORED PRICE THAT MOVED
+#: AFTER IT may ask again inside `REFRESH_AFTER_SECONDS`
+#: (`generic_market_history.headline_moved_past_history`). The three-hour
+#: cache assumes our captures cover a move the bank has not seen, and for a
+#: market priced by the Kalshi socket nothing does: the ITF specimens' captures
+#: were 4 h and 8 h old under a price written a minute earlier. Half an hour
+#: caps one live market at two such asks an hour while someone is reading it,
+#: and every ask is still a coarse-class claim inside `COARSE_FILL_CAP`, so
+#: this adds no venue traffic the hour's ceiling did not already allow.
+HEADLINE_MOVED_REFRESH_SECONDS = 30 * 60
+
 CACHE_TTL_SECONDS = 36 * 3600
 SETTLED_CACHE_TTL_SECONDS = 7 * 24 * 3600
 
@@ -145,6 +158,29 @@ SETTLED_CACHE_TTL_SECONDS = 7 * 24 * 3600
 MAX_SETTLED_EMPTY_ATTEMPTS = 3
 
 _SETTLED_STATUSES = {"settled", "closed", "resolved"}
+
+#: #10955 — the widest two kept points of one outcome may sit apart after the
+#: bank is compacted, wherever the venue itself reported closer than that. The
+#: per-band budgets give way to it (`futures_chart_series._thin_by_smallest_move`).
+#:
+#: WHY A JOINT AND NOT A BIGGER BUDGET. Both readers draw any gap wider than six
+#: times the line's own median spacing as a dotted "no numbers here" bridge
+#: (web `seriesGapThresholdMs`, iPhone `EvolutionChartView`). On `/futures/109923`
+#: the bank's band older than 30 days was cut to its 80-point budget, which left
+#: July as seven points up to twelve days apart. The venue had a candle for every
+#: day of July and nearly every hour. So the chart said "no data" over a month
+#: the venue observed. A larger budget only moves the cut. A joint is what
+#: guarantees compaction never opens a gap the venue did not have.
+#:
+#: THE MODULE'S OWN FLAT-STRETCH CEILING, `MAX_HEARTBEAT_SECONDS` (12 h), not a
+#: new number: compaction already promised no flat joint wider than that and the
+#: budget thinning broke the promise. Replayed on that specimen's recorded venue
+#: answers (2026-10-22) through this build and the serve's capture layering:
+#: master's bank reproduces production exactly (371 venue points, 978 served, a
+#: 168 h largest gap, 90 bridged intervals, May–August 74 points); with this
+#: joint, 0 bridged intervals, a 15 h largest gap, May–August 338 points, the
+#: bank 372 → 836 points. A 6 h joint also bridged nothing there and cost 1,334.
+VENUE_BANK_MAX_JOINT_SECONDS = MAX_HEARTBEAT_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -550,6 +586,7 @@ def plan_on_demand_fill(
     *,
     chart_is_thin: bool,
     chart_is_coarse: bool = False,
+    headline_moved: bool = False,
     now: datetime | None = None,
     rc: Any = None,
 ) -> dict:
@@ -569,6 +606,14 @@ def plan_on_demand_fill(
     HOURLY captures of a market the venue publishes by the minute. It defaults
     False, so a caller that does not measure resolution behaves exactly as before.
     See `generic_market_history.captures_are_coarse` for what it may mean.
+
+    `headline_moved` (#10955) is the one thing that may ask again inside
+    `REFRESH_AFTER_SECONDS`, and only once the attempt is
+    `HEADLINE_MOVED_REFRESH_SECONDS` old: a stored price moved after the bank
+    was asked and no capture draws it
+    (`generic_market_history.headline_moved_past_history`). It never overrides
+    the settled short-circuit, and the caller passes it as coarse, so it spends
+    coarseness's share of the hour and never an empty chart's.
     """
     stamp = now or datetime.now(timezone.utc)
     if not market_is_fillable(market, outcomes):
@@ -597,7 +642,9 @@ def plan_on_demand_fill(
             # ANSWER TAKEN AFTER SETTLEMENT is the answer, and it is kept for the
             # 7-day settled TTL rather than re-fetched.
             return {"enqueue": False, "reason": "settled_and_already_answered"}
-        if age <= REFRESH_AFTER_SECONDS:
+        if age <= REFRESH_AFTER_SECONDS and not (
+            headline_moved and age >= HEADLINE_MOVED_REFRESH_SECONDS
+        ):
             return {"enqueue": False, "reason": "answered_recently"}
         if (
             not chart_is_thin
@@ -826,6 +873,90 @@ class _CandleBook:
         return VenuePoint(ts, probability, book[1], book[2], book[3], book[4])
 
 
+def _annotate_pairs(outcomes: Sequence[Any], entries: dict[int, dict]) -> tuple[int, int] | None:
+    """Pair an identity-admitted binary's RAW legs afresh and annotate both halves (#11157).
+
+    Runs after layering and the last-good merge, before compaction, so the rule
+    (`async_binary_pair.pair_observations`) sees every raw sample — ambiguity is
+    a property of the raw series. Any annotation carried in from the last-good
+    bank is dropped first and re-derived from the raw clocks, which pairing never
+    moves: a carried half cannot keep a peer this build does not hold.
+
+    ONE STATED LIMIT (lane1's N2). Carried last-good rows were compacted by the
+    build that banked them, so a carried sample's neighbours may be gone and its
+    local spacing reads wider than the venue's raw spacing was. Re-pairing over
+    them can therefore call a sample unambiguous that the raw series would not
+    have. It stays bounded: S never exceeds `PAIR_SKEW_MAX_SECONDS`, and only one
+    tier pairs with itself.
+    """
+    from dataclasses import replace
+
+    from app.utils.async_binary_pair import pair_observations
+
+    for entry in entries.values():
+        entry["points"] = [
+            replace(p, pair_at=None, peer_at=None) if p.pair_at or p.peer_at else p
+            for p in entry["points"]
+        ]
+    pair = _paired_binary_leg_ids(outcomes, entries)
+    if pair is None:
+        return None
+    oid_a, oid_b = pair
+    leg_a = sorted(entries[oid_a]["points"], key=lambda p: p.observed_at)
+    leg_b = sorted(entries[oid_b]["points"], key=lambda p: p.observed_at)
+    for i, j in pair_observations(
+        [(p.observed_at, p.tier) for p in leg_a], [(p.observed_at, p.tier) for p in leg_b]
+    ):
+        at_a, at_b = leg_a[i].observed_at, leg_b[j].observed_at
+        known = max(at_a, at_b)
+        leg_a[i] = replace(leg_a[i], pair_at=known, peer_at=at_b)
+        leg_b[j] = replace(leg_b[j], pair_at=known, peer_at=at_a)
+    entries[oid_a]["points"], entries[oid_b]["points"] = leg_a, leg_b
+    return pair
+
+
+def _compact_entries(
+    outcomes: Sequence[Any], entries: dict[int, dict], now: datetime
+) -> None:
+    """Compact each outcome by band; for an identity-admitted binary pair, keep both halves of every pair either leg kept.
+
+    The pairs are `_annotate_pairs`' (#11157): an exact shared instant (#11160)
+    or two raw samples of one tier a few seconds apart. The reader admits a half
+    only beside its peer, so a half compaction drops here is a half the chart
+    cannot draw. Pairs are one-to-one, so each leg gains at most what its partner
+    kept: the bound is still the two legs' combined budget.
+    """
+    from app.utils.futures_chart_series import compact_by_band
+
+    pair = _annotate_pairs(outcomes, entries)
+    by_oid_ts: dict[int, dict[datetime, VenuePoint]] = {}
+    kept_by_oid: dict[int, set[datetime]] = {}
+    for oid, entry in entries.items():
+        points: list[VenuePoint] = entry["points"]
+        by_oid_ts[oid] = {p.observed_at: p for p in points}
+        kept = compact_by_band(
+            [(p.observed_at, p.probability) for p in points], now,
+            max_joint_s=VENUE_BANK_MAX_JOINT_SECONDS,
+        )
+        kept_by_oid[oid] = {ts for ts, _p in kept}
+
+    if pair is not None:
+        oid_a, oid_b = pair
+        kept_a, kept_b = kept_by_oid[oid_a], kept_by_oid[oid_b]
+        retained = [
+            (p.observed_at, p.peer_at)
+            for p in by_oid_ts[oid_a].values()
+            if p.peer_at is not None and (p.observed_at in kept_a or p.peer_at in kept_b)
+        ]
+        kept_a.update(at_a for at_a, _at_b in retained)
+        kept_b.update(at_b for _at_a, at_b in retained)
+
+    for oid, entry in entries.items():
+        ts_map = by_oid_ts[oid]
+        kept_set = kept_by_oid[oid]
+        entry["points"] = [ts_map[ts] for ts in sorted(ts_map) if ts in kept_set]
+
+
 async def build_generic_history(
     session: Any,
     market: Any,
@@ -848,7 +979,7 @@ async def build_generic_history(
         fetch_clob_tier,
         kalshi_field_series,
     )
-    from app.utils.futures_chart_series import clob_calls, compact_by_band, layer_tiers
+    from app.utils.futures_chart_series import clob_calls, layer_tiers
 
     now = now or datetime.now(timezone.utc)
     stats: dict = {"source": market.source, "outcomes_built": 0, "outcomes_empty": 0}
@@ -871,6 +1002,7 @@ async def build_generic_history(
                 kalshi_service, [o for o in outcomes if o.id in contracts],
                 listed_at=getattr(market, "created_at", None),
                 now=now, lifetime_hours=lifetime, stats=stats, on_candle=book,
+                hourly_whole_life=True,
             )
             stats["candles_seen"] = book.seen
             if book.unpriced:
@@ -975,11 +1107,8 @@ async def build_generic_history(
         if len(entry["points"]) > before:
             stats["carried_points"] = stats.get("carried_points", 0) + (len(entry["points"]) - before)
 
+    _compact_entries(outcomes, entries, now)
     for entry in entries.values():
-        points: list[VenuePoint] = entry["points"]
-        by_ts = {p.observed_at: p for p in points}
-        kept = compact_by_band([(p.observed_at, p.probability) for p in points], now)
-        entry["points"] = [by_ts[ts] for ts, _p in kept]
         if entry["points"]:
             stats["outcomes_built"] += 1
         else:

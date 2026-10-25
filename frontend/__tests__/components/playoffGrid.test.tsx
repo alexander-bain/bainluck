@@ -37,6 +37,7 @@ import {
   gridCellExplanation,
   gridCellGlyph,
   gridEvalVerdict,
+  gridRowExit,
   GRID_CARD_CONTENT_PX,
   GRID_COLUMN_WIDTH_PX,
   GRID_GAP_PX,
@@ -1249,5 +1250,109 @@ describe("readPlayoffGrid", () => {
     expect(model.rows[0].onBoard).toBe(false);
     const html = renderToStaticMarkup(<PlayoffGrid grid={model} />);
     expect(html).toContain('data-on-board="false"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #4793: an eliminated player says where they went out
+// ---------------------------------------------------------------------------
+
+describe("an eliminated player's row says Out and the round (#4793)", () => {
+  const KEYS = ["R16", "QF", "SF", "F", "title"];
+  const settled = (note: string, round: string | null = null) =>
+    cell({ state: "settled", probability: null, probability_is_live: false, sources: [],
+      source_count: 0, note, settled_round: round });
+  const row = (key: string, cells: Record<string, GridCell>) => ({
+    entity_key: key, display_name: key, seed: null, rank: null, on_board: true, cells,
+  });
+  const allOut = (round: string | null) =>
+    Object.fromEntries(KEYS.map((k) => [k, settled("out", round)]));
+  const reachedThenOut = (reached: number, round: string) =>
+    Object.fromEntries(KEYS.map((k, i) => [k, settled(i < reached ? "reached" : "out", round)]));
+  const exitOf = (cells: Record<string, GridCell>) =>
+    gridRowExit(grid({ rows: [row("p", cells)] }).rows[0]);
+
+  it("names the served round, in the header's words and in spoken words", () => {
+    expect(exitOf(allOut("R64"))).toEqual({
+      text: "Out · R64", spoken: "Out in the second round.", round: "R64",
+    });
+    expect(exitOf(reachedThenOut(2, "SF"))?.text).toBe("Out · SF");
+    expect(exitOf(reachedThenOut(4, "F"))).toEqual({
+      text: "Out · Final", spoken: "Out in the final.", round: "F",
+    });
+    // Every round key the line can print has spoken words too — no `undefined`.
+    for (const round of ["qualifying", "R128", "R64", "R32", "R16", "QF", "SF", "F"]) {
+      const exit = exitOf(allOut(round));
+      expect(exit?.round).toBe(round);
+      expect(exit?.spoken).toMatch(/^Out in the .+\.$|^Out in qualifying\.$/);
+      expect(exit?.spoken).not.toContain("undefined");
+    }
+  });
+
+  it("never invents a round: missing, unknown or disagreeing rounds print Out alone", () => {
+    const plain = { text: "Out", spoken: "Out of the tournament.", round: null };
+    expect(exitOf(allOut(null))).toEqual(plain);
+    expect(exitOf(allOut("R9999"))).toEqual(plain);
+    expect(exitOf({ ...allOut("R64"), title: settled("out", "R32") })).toEqual(plain);
+  });
+
+  it("says nothing for a player who is not out — zero or missing numbers are not an exit", () => {
+    const live = Object.fromEntries(KEYS.map((k) => [k, cell({ probability: 0 })]));
+    const empty = Object.fromEntries(KEYS.map((k) => [k, cell({ state: "no_market",
+      probability: null, probability_is_live: false, note: "No market" })]));
+    const dark = Object.fromEntries(KEYS.map((k) => [k, cell({ state: "dark",
+      probability: null, probability_is_live: false })]));
+    const champion = { ...Object.fromEntries(KEYS.map((k) => [k, settled("reached")])),
+      title: settled("won") };
+    // The venue's own terminal word is the market's, not the draw's `out`.
+    const marketSettled = Object.fromEntries(KEYS.map((k) => [k, settled("eliminated", "R64")]));
+    for (const cells of [live, empty, dark, champion, marketSettled]) {
+      expect(exitOf(cells)).toBeNull();
+    }
+  });
+
+  it("renders the line on out rows only, keeps every cell and every row", () => {
+    const rows = [
+      row("champion", { ...Object.fromEntries(KEYS.map((k) => [k, settled("reached")])),
+        title: settled("won") }),
+      row("runner-up", reachedThenOut(4, "F")),
+      row("live-player", Object.fromEntries(KEYS.map((k) => [k, cell({ probability: 0.4 })]))),
+      row("no-market", Object.fromEntries(KEYS.map((k) => [k, cell({ state: "no_market",
+        probability: null, probability_is_live: false, note: "No market" })]))),
+      row("musetti", allOut("R64")),
+      row("unknown-round", allOut(null)),
+    ];
+    const model = grid({ rows });
+    const html = renderToStaticMarkup(<PlayoffGrid grid={model} initialExpanded />);
+    const items = html.split('data-testid="grid-row"').slice(1);
+    // Full inventory: every row, five cells each.
+    expect(items).toHaveLength(rows.length);
+    for (const item of items) {
+      expect((item.match(/data-testid="grid-cell"/g) ?? []).length).toBe(KEYS.length);
+    }
+    const byKey = Object.fromEntries(items.map((item) => [item.match(/data-entity="([^"]+)"/)![1], item]));
+    expect(byKey["musetti"]).toContain('data-testid="grid-row-exit" data-exit-round="R64"');
+    expect(byKey["musetti"]).toContain('<span aria-hidden="true">Out · R64</span>');
+    expect(byKey["musetti"]).toContain('<span class="sr-only">Out in the second round.</span>');
+    expect(byKey["runner-up"]).toContain('<span aria-hidden="true">Out · Final</span>');
+    expect(byKey["unknown-round"]).toContain('<span aria-hidden="true">Out</span>');
+    expect(byKey["unknown-round"]).not.toContain("data-exit-round");
+    for (const key of ["champion", "live-player", "no-market"]) {
+      expect(byKey[key]).not.toContain("grid-row-exit");
+    }
+    // Reached ticks and live numbers are what they were.
+    expect((byKey["runner-up"].match(/>✓</g) ?? []).length).toBe(4);
+    expect(byKey["live-player"]).toContain("40%");
+    // The line rides inside the NAME box, so the name track is what it measures.
+    const name = byKey["musetti"].slice(byKey["musetti"].indexOf('data-testid="grid-name"'));
+    expect(name.indexOf("grid-row-exit")).toBeLessThan(name.indexOf('data-testid="grid-value-cell"'));
+  });
+
+  it("a row that is not out renders exactly the markup it did before", () => {
+    const html = renderToStaticMarkup(<PlayoffGrid grid={grid()} />);
+    expect(html).not.toContain("grid-row-exit");
+    expect(html).toContain(
+      'lg:text-[15px]">Carlos Alcaraz</span>'
+    );
   });
 });

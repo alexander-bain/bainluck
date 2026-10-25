@@ -267,6 +267,25 @@ class TestOscarsEdition:
             d = oscars(m)
             assert d.outcome == "admitted" and d.edge_class == "advancement"
 
+    def test_a_nominated_question_is_advancement_not_its_best_category(self):
+        # #11336: the shared classifier read "Best Actress" and ignored "nominated".
+        q = "Will Julianne Moore be nominated for Best Actress at the 99th Academy Awards?"
+        d = oscars(mk(990011, q))
+        assert (d.outcome, d.reason, d.edge_class) == (
+            "admitted", td.ADMITTED_TITLE_EDITION, "advancement")
+        assert clause(d, "class")["input"] == "nominations"
+        # Control: the winner question for the same category stays a title member.
+        w = oscars(mk(990012, "Will Julianne Moore win Best Actress at the 99th Academy Awards?"))
+        assert (w.outcome, w.edge_class) == ("admitted", "title")
+        # Control: "nominated" inside a relative clause describes the film; still a title.
+        r = oscars(mk(990014, "Will a film that is nominated for 10+ Oscars win Best Picture "
+                              "at the 99th Academy Awards?"))
+        assert (r.outcome, r.edge_class) == ("admitted", "title")
+        assert clause(r, "class")["input"] == "category"
+        # Wrong edition is still decided before class.
+        prior = oscars(mk(990013, q.replace("99th", "98th")))
+        assert (prior.outcome, prior.reason) == ("excluded", td.OTHER_EDITION)
+
     # case 7
     @pytest.mark.parametrize("market", [
         mk(115607, "Which film will get the most Oscar nominations at the 99th Academy Awards?"),

@@ -29,6 +29,7 @@ import app.services.polymarket_ws as poly_svc
 import app.tasks.kalshi_ws as kalshi_task
 import app.tasks.polymarket_ws as poly_task
 import run_kalshi_ws
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 
 # ---------------------------------------------------------------- fakes ----
@@ -117,6 +118,13 @@ class _Session:
         self._batches = batches
 
     async def execute(self, stmt):
+        # The optional clock sample is not a catalog batch. Keep the
+        # production startup sample and route this separate query explicitly.
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+        from sqlalchemy import func, select
+        if str(stmt) == str(select(func.clock_timestamp())):
+            return SimpleNamespace(scalar_one=lambda: datetime.now(timezone.utc))
         if _is_poly_open_contract_read(stmt):
             return _Result([])
         # #9462 review: the #9418 admission watcher rereads the live arm as
@@ -131,7 +139,11 @@ class _Session:
         # query that filters on `is_winner`.
         if "futures_outcomes.is_winner IS NULL" in str(stmt):
             return _Result([])
-        return _Result(next(self._batches))
+        # #11181: a run's first read of its chart custody is not a slate
+        # batch either — answered as "nothing owed from an earlier run".
+        if "owed_chart_points" in str(stmt):
+            return _Result([])
+        return _Result(answer_slate_market_read(stmt, next(self._batches)))  # #10663
 
 
 def _install_slate(monkeypatch, batches):

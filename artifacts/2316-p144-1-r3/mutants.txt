@@ -1,0 +1,27 @@
+r1a-a-gen-no-serial-set: EXIT 1 (want 1) OK | =================== 3 failed, 45 passed, 1 warning in 1.34s ====================
+r1a-b-gen-workers-2: EXIT 1 (want 1) OK | =================== 4 failed, 44 passed, 1 warning in 1.39s ====================
+r1a-c-runbook-no-parallel-line: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.58s ====================
+r1a-d-gen-no-parallel-key: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.46s ====================
+r1a-e-runbook-no-workers-line: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.45s ====================
+r1b-a-runbook-maxq-20000: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.35s ====================
+r1b-b-runbook-no-unmeasured-line: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.66s ====================
+r1b-c-gen-no-owner: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.36s ====================
+r1b-d-all3-maxq-5000: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.35s ====================
+r6-a-s4-until-sentence: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.39s ====================
+r6-b-a2-reread-until: EXIT 1 (want 1) OK | =================== 2 failed, 46 passed, 1 warning in 1.39s ====================
+r6-c-a2-repeat-step2: EXIT 1 (want 1) OK | =================== 2 failed, 46 passed, 1 warning in 1.48s ====================
+r6-d-s4-no-attempt-2: EXIT 1 (want 1) OK | =================== 2 failed, 46 passed, 1 warning in 1.42s ====================
+r6-e-s4-third-attempt: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.37s ====================
+r6-f-s4-no-if-gate: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.38s ====================
+r6-g-s4-no-unset: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.37s ====================
+r6-h-runbook-bounds-3-attempts: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.46s ====================
+r6-i-gen-reread-60min: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.43s ====================
+r6-j-a2-prose-60min: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.38s ====================
+r6-k-hold-branch-drops: EXIT 1 (want 1) OK | =================== 2 failed, 46 passed, 1 warning in 1.40s ====================
+r6-l-final-read-inside-if: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.43s ====================
+r6-m-no-on-error-stop-off: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.37s ====================
+r6-n-incomplete-models-declare: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.60s ====================
+r6-o-no-operator: EXIT 1 (want 1) OK | =================== 1 failed, 47 passed, 1 warning in 1.45s ====================
+CONTROL-incomplete-models-silent: EXIT 0 (want 0) OK | ======================== 48 passed, 1 warning in 1.29s =========================
+restored: True
+wrong outcomes: 0

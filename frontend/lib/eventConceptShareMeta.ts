@@ -401,6 +401,20 @@ function flaggedWinner(source: EventConceptShareSource): string | null {
  *
  * Null when there is no such child or it has neither a grade nor a close, so an
  * open category and every non-awards event fall through untouched.
+ *
+ * ═══ WHEN SET, IT IS THE ONLY RESULT — `primary.competitors[].won` IS NOT ═══
+ *
+ * The primary IS this category: `evolution_market_id` is the marquee market
+ * the adapter builds `primary.competitors` from (`event_awards.py`). Those rows
+ * carry `won` from `is_winner` OR from the adapter's grading-lag crown, which
+ * sets `won = True` on a leader whose PRICE clears `_WON_PRICE_THRESHOLD`. The
+ * payload cannot tell the two apart, and the category rows never carry the
+ * crown. Production 2026-10-20 12:20Z, `/event/awards/emmys-2026`: parent
+ * `settled`, primary 59172874, all 55 categories `settled: true` with no `won`
+ * outcome — the page printed "Trading closed" on that category while the tab
+ * title said "The Emmys 2026: Ernest Harden, Jr. won", because the parent's
+ * flag outranked the closed arm. So once this is set, `winner` is null and the
+ * category's own grades are the whole answer (`eventConceptShareFacts`).
  */
 export interface AwardsCategoryResult {
   state: "announced" | "closed";
@@ -482,7 +496,12 @@ export interface EventConceptShareFacts {
   priced: PricedCompetitor[];
   /** `event.status === "settled"`. */
   settled: boolean;
-  /** The flagged winner's name, or null. Never inferred from a price. */
+  /**
+   * The flagged winner's name, or null. Never inferred from a price.
+   *
+   * Always null when `category` is set: that category is the primary's own
+   * market, and its `won` flag can be a price crown (see `awardsCategoryResult`).
+   */
   winner: string | null;
   /**
    * The primary awards category's own announced or closed result (#10987), or
@@ -509,7 +528,9 @@ export function eventConceptShareFacts(
     // announced or closed awards category.
     priced: !category && isForecast(priced) ? priced : [],
     settled: cleanText(source.event?.status)?.toLowerCase() === "settled",
-    winner: flaggedWinner(source),
+    // #10987 — an awards primary with its own category row is answered by that
+    // row's grades alone. Its `competitors[].won` may be a price crown.
+    winner: category ? null : flaggedWinner(source),
     category,
   };
 }
@@ -537,24 +558,27 @@ export function buildEventConceptShareCopy(source: EventConceptShareSource): {
     };
   }
 
+  // ── A CLOSED, UNGRADED AWARDS CATEGORY (#10987) ────────────────────────────
+  // No grade on the category's own rows, so nobody is named — not even a parent
+  // `won` flag, which `eventConceptShareFacts` already cleared because it can be
+  // a price crown. "Not yet confirmed", the settled arm's wording below: trading
+  // closed after the ceremony, and what is missing is our record of the result,
+  // not the announcement.
+  if (category?.state === "closed") {
+    return {
+      title: name,
+      description: truncateShareText(
+        `${label ?? name}. Trading closed, result not yet confirmed.`
+      ),
+    };
+  }
+
   // ── SETTLED, WITH AN AUTHORITATIVE WINNER ──────────────────────────────────
   if (winner) {
     return {
       title: `${name}${sep}${winner} won`,
       description: truncateShareText(
         label ? `Final: ${winner} won the ${label}.` : `Final: ${winner} won.`
-      ),
-    };
-  }
-
-  // ── A CLOSED, UNGRADED AWARDS CATEGORY (#10987) ────────────────────────────
-  // The page's own words. Below the parent's winner so an authoritative parent
-  // result is never hidden behind a category whose rows lack the grade.
-  if (category?.state === "closed") {
-    return {
-      title: name,
-      description: truncateShareText(
-        `${label ?? name}. Trading closed, result not announced yet.`
       ),
     };
   }

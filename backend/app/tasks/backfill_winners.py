@@ -14,18 +14,20 @@ Risk mitigations:
 
 import bisect
 import logging
+import math
 import re
 from datetime import datetime, timezone
 
 from sqlalchemy import select, update, text, func
 
 from app.models import FuturesMarket, FuturesOutcome
-from app.tasks.base import get_task_session
+from app.tasks.base import get_task_session, tag_task_session
 from app.utils import kalshi_market_status as kms
 from app.utils.calibration_closing_line import (
     closing_line_boundary_sql,
     closing_line_lateral_sql,
 )
+from app.utils.kalshi_archive_forecast import KALSHI_ARCHIVE_FORECAST_ENABLED  # #683
 from app.utils.kalshi_empty_book import lone_ask_on_empty_book_sql
 from app.utils.polymarket_empty_book import empty_polymarket_book_sql  # #9083
 from app.utils.prediction_market_matching import (
@@ -6471,7 +6473,32 @@ async def _resolve_kalshi_player_props_from_boxscore():
     return stats
 
 
-def _total_bases_verdict(hits: int, hr: int, threshold: int) -> bool | None:
+def _box_count(player_stats: dict, key: str) -> tuple[int | None, bool]:
+    """Read one box-score count as ``(count, invalid)``.
+
+    #802: the resolver read ``player_stats.get("hits") or 0``, so an ABSENT
+    count became an OBSERVED zero. The ESPN parser drops a dashed or non-finite
+    stat rather than storing it (``ESPNService._parse_stat_value``), so absence
+    is a real shape: ``{"hits": 1}`` graded "4+" a certain loser though the
+    missing home-run count could be 1.
+
+    ``(n, False)`` — an observed count: a finite, non-negative whole number
+    (the parser stores floats, so 1.0 reads as 1).
+    ``(None, False)`` — absent (missing key or ``None``): nothing observed.
+    ``(None, True)`` — present but not a count (negative, fractional, bool,
+    string, non-finite): the box is not trusted to bound anything.
+    """
+    value = player_stats.get(key)
+    if value is None:
+        return None, False
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None, True
+    if not math.isfinite(value) or value < 0 or value != int(value):
+        return None, True
+    return int(value), False
+
+
+def _total_bases_verdict(hits: int | None, hr: int | None, threshold: int) -> bool | None:
     """Resolve a 'total bases >= threshold' outcome from hits + HR alone.
 
     ESPN gives hits (H) and home runs (R, a subset of hits) but not
@@ -6480,9 +6507,24 @@ def _total_bases_verdict(hits: int, hr: int, threshold: int) -> bool | None:
         TB_max = 3*H + R   (non-HR hits all triples)
     Returns True (certain winner), False (certain loser), or None
     (indeterminate — leave unresolved).
+
+    #802: ``None`` is an ABSENT count, never a zero. The verdict is the one
+    every consistent completion agrees on (R is a subset of H):
+        R absent  -> R in [0, H], so TB in [H, 4*H]
+        H absent  -> H >= R and each HR is 4 bases, so TB >= 4*R, no ceiling
+        both absent, or R > H -> None (nothing to bound, or no such line)
     """
-    tb_min = hits + 3 * hr
-    tb_max = 3 * hits + hr
+    if hits is None and hr is None:
+        return None
+    if hits is None:
+        return True if 4 * hr >= threshold else None
+    if hr is None:
+        tb_min, tb_max = hits, 4 * hits
+    elif hr > hits:
+        return None
+    else:
+        tb_min = hits + 3 * hr
+        tb_max = 3 * hits + hr
     if tb_max < threshold:
         return False
     if tb_min >= threshold:
@@ -6510,7 +6552,16 @@ async def _resolve_kalshi_total_bases_from_boxscore():
     certain winners for low N) without doubles/triples. Marked
     resolution_source='box_score_bound' so it's auditable as a bound, not exact.
     """
-    stats = {"resolved": 0, "no_player": 0, "no_parse": 0, "indeterminate": 0, "live_box": 0, "errors": []}
+    stats = {
+        "resolved": 0,
+        "no_player": 0,
+        "no_parse": 0,
+        "indeterminate": 0,
+        "incomplete_stats": 0,
+        "invalid_stats": 0,
+        "live_box": 0,
+        "errors": [],
+    }
 
     try:
         async with get_task_session() as session:
@@ -6582,14 +6633,24 @@ async def _resolve_kalshi_total_bases_from_boxscore():
                     stats["no_player"] += 1
                     continue
 
-                hits = player_stats.get("hits") or 0
-                hr = player_stats.get("home runs") or 0
+                # #802: an absent count is not an observed zero, and a value
+                # that is not a count refuses the row. Refused rows stay
+                # `is_winner IS NULL` and are counted, never graded.
+                hits, hits_invalid = _box_count(player_stats, "hits")
+                hr, hr_invalid = _box_count(player_stats, "home runs")
+                if hits_invalid or hr_invalid or (
+                    hits is not None and hr is not None and hr > hits
+                ):
+                    stats["invalid_stats"] += 1
+                    continue
                 verdict = _total_bases_verdict(hits, hr, threshold)
 
                 if verdict is False:
                     loser_ids.append(row.outcome_id)
                 elif verdict is True:
                     winner_ids.append(row.outcome_id)
+                elif hits is None or hr is None:
+                    stats["incomplete_stats"] += 1
                 else:
                     stats["indeterminate"] += 1
 
@@ -6615,9 +6676,11 @@ async def _resolve_kalshi_total_bases_from_boxscore():
         logger.error("Total-bases bound resolution error: %s", e)
 
     logger.info(
-        "Total-bases bound resolution: %d resolved, %d indeterminate, %d no_player, %d no_parse, %d live_box, %d errors",
+        "Total-bases bound resolution: %d resolved, %d indeterminate, %d incomplete_stats, %d invalid_stats, %d no_player, %d no_parse, %d live_box, %d errors",
         stats["resolved"],
         stats["indeterminate"],
+        stats["incomplete_stats"],
+        stats["invalid_stats"],
         stats["no_player"],
         stats["no_parse"],
         stats["live_box"],
@@ -8868,6 +8931,43 @@ def _merge_head_into_page(head_rows, cursor_rows):
     return list(head_rows) + rest, {r.id for r in head_only}
 
 
+def gamma_leg_settle_stmt(won: bool):
+    """The negRisk-parent arm's settling UPDATE for one leg (#698).
+
+    The arm used to write a leg's result in TWO statements: the leg's
+    ``outcomePrices[0]`` into ``current_probability``, then ``is_winner`` and
+    ``api_settlement`` in a second ORM update. The price it wrote was whatever
+    the venue was quoting, so a leg could be stamped Lost over ``0.006`` or Won
+    over ``0.95`` — a grade and a price that disagree, and a reader contract
+    (``settlement_display``) that correctly prints such a row as Unknown.
+
+    One statement now carries all of it: the grade, ``api_settlement``, and the
+    terminal price through the shared :func:`settled_price_set_sql` (#5246), which
+    also nulls the american odds and moves ``price_changed_at`` only on a real
+    change (#2024). The caller reaches this only for a leg
+    :func:`venue_terminal_leg_result` verified, so the 1 or the 0 written is the
+    venue's payout, not a rounding of its quote.
+
+    The WHERE is the arm's existing one — this market, this condition id — with
+    no pending-settlement skip, so the rowcount still answers "do we hold this
+    leg", which is what the champion mint below keys on. It also carries the
+    shared duplicate-leg rule (Q487), as every winner write keyed on
+    ``external_id`` does; the arm binds a bare Gamma condition id or its
+    ``_side1`` companion, neither of which ends ``_yes``/``_no``, so the rule
+    cannot fire on what this arm writes today.
+    """
+    price = SETTLED_YES_PRICE if won else SETTLED_NO_PRICE
+    return text("""
+        UPDATE futures_outcomes fo
+           SET is_winner = """ + ("true" if won else "false") + """,
+               resolution_source = 'api_settlement',
+               last_updated = NOW(),
+               """ + settled_price_set_sql(price) + """
+         WHERE fo.market_id = :mid
+           AND fo.external_id = :cid
+           AND """ + DUPLICATE_CONDITION_LEG_SQL)
+
+
 async def _backfill_polymarket_winners_from_api(
     limit: int = 500,
     deadline: float | None = None,
@@ -8896,6 +8996,7 @@ async def _backfill_polymarket_winners_from_api(
     from app.services.polymarket_api import PolymarketAPIService
     from app.utils.polymarket_champion_mint import MINTED as _CHAMPION_MINTED
     from app.utils.polymarket_champion_mint import venue_has_closed_the_leg
+    from app.utils.polymarket_settlement_scan import venue_terminal_leg_result
 
     stats = {
         "markets_checked": 0,
@@ -8918,6 +9019,10 @@ async def _backfill_polymarket_winners_from_api(
         # bookkeeping, not the venue's result, so an open leg's quote is never
         # read as its outcome.
         "legs_open_at_venue": 0,
+        # #698. negRisk-parent legs the venue closed WITHOUT a verified payout
+        # (UMA not resolved, or a quote rather than exact 1/0). Left exactly as
+        # stored: no grade, no price, no mint.
+        "legs_closed_without_verified_result": 0,
         "errors": [],
     }
 
@@ -9509,61 +9614,38 @@ async def _backfill_polymarket_winners_from_api(
                                     stats["legs_open_at_venue"] += 1
                                     continue
 
-                                m_prices_raw = (
-                                    m.get("outcomePrices")
-                                    or m.get("outcome_prices")
-                                    or []
-                                )
-                                if isinstance(m_prices_raw, str):
-                                    try:
-                                        m_prices_raw = _json.loads(m_prices_raw)
-                                    except (ValueError, TypeError):
-                                        m_prices_raw = []
-                                try:
-                                    m_prices = [float(p) for p in m_prices_raw]
-                                except (ValueError, TypeError):
-                                    m_prices = []
-
-                                if not m_prices:
+                                # #698 — GRADE ONLY A PAYOUT THE VENUE HAS
+                                # VERIFIED. `closed` (above) says the leg stopped
+                                # trading; it does not say what it paid. This arm
+                                # used to read `outcomePrices[0] >= 0.90` as Won
+                                # and anything else as Lost, so a closed leg
+                                # still carrying its last quote was stamped Lost
+                                # at 0.006 or Won at 0.95, and the quote itself
+                                # was written as the price in a SEPARATE
+                                # statement from the grade. `api_settlement` is
+                                # authoritative, so no later pass took it back.
+                                #
+                                # Now a leg is graded only when
+                                # `venue_terminal_leg_result` reads the existing
+                                # verified-result contract (closed, UMA resolved,
+                                # exact 1/0 payout — the same one
+                                # `polymarket_ws.gamma_resolution_verdict` reads).
+                                # Anything else is left exactly as stored — no
+                                # grade, no price, no mint — and counted.
+                                leg_won = venue_terminal_leg_result(m)
+                                if leg_won is None:
+                                    stats["legs_closed_without_verified_result"] += 1
                                     continue
 
-                                settlement_price = m_prices[0]
-                                is_winner = settlement_price >= 0.90
-
-                                # Sync settlement price to current_probability
-                                price_r = await session.execute(
-                                    text("""
-                                        UPDATE futures_outcomes
-                                        SET current_probability = :price
-                                        WHERE market_id = :mid
-                                          AND external_id = :cid
-                                          AND (current_probability IS NULL
-                                               OR ABS(current_probability - :price) > 0.001)
-                                    """),
-                                    {
-                                        "price": settlement_price,
-                                        "mid": row.id,
-                                        "cid": m_cid,
-                                    },
-                                )
-                                stats["prices_synced"] += price_r.rowcount
-
-                                # Set is_winner
+                                # Grade, source and terminal price in ONE
+                                # statement, so the three cannot diverge.
                                 r = await session.execute(
-                                    update(FuturesOutcome)
-                                    .where(
-                                        FuturesOutcome.market_id == row.id,
-                                        FuturesOutcome.external_id == m_cid,
-                                    )
-                                    .values(
-                                        is_winner=is_winner,
-                                        resolution_source="api_settlement",
-                                        last_updated=func.now(),
-                                    )
+                                    gamma_leg_settle_stmt(leg_won),
+                                    {"mid": row.id, "cid": m_cid},
                                 )
                                 if r.rowcount > 0:
                                     market_resolved = True
-                                    if is_winner:
+                                    if leg_won:
                                         stats["winners_set"] += r.rowcount
                                     else:
                                         stats["losers_set"] += r.rowcount
@@ -9595,46 +9677,21 @@ async def _backfill_polymarket_winners_from_api(
                                     # written beside a BARE condition id on a
                                     # sole-moneyline row, so on a many-legged
                                     # negRisk field this key matches nothing and
-                                    # the statement is a no-op. Same complement
-                                    # reasoning as the bare branch — `is_winner`
-                                    # is `m_prices[0] >= 0.90` and the two legs
-                                    # were written off that same index-aligned
-                                    # array.
-                                    if len(m_prices) > 1:
-                                        await session.execute(
-                                            text("""
-                                                UPDATE futures_outcomes
-                                                SET current_probability = :price
-                                                WHERE market_id = :mid
-                                                  AND external_id = :cid
-                                                  AND (current_probability IS NULL
-                                                       OR ABS(current_probability - :price) > 0.001)
-                                            """),
-                                            {
-                                                "price": m_prices[1],
-                                                "mid": row.id,
-                                                "cid": f"{m_cid}_side1",
-                                            },
-                                        )
+                                    # the statement is a no-op. The companion is
+                                    # `outcomes[1]` of the same index-aligned
+                                    # payout the leg was verified on, so its
+                                    # result is the other side of that one
+                                    # verdict, written by the same statement.
                                     r_c = await session.execute(
-                                        update(FuturesOutcome)
-                                        .where(
-                                            FuturesOutcome.market_id == row.id,
-                                            FuturesOutcome.external_id
-                                            == f"{m_cid}_side1",
-                                        )
-                                        .values(
-                                            is_winner=(not is_winner),
-                                            resolution_source="api_settlement",
-                                            last_updated=func.now(),
-                                        )
+                                        gamma_leg_settle_stmt(not leg_won),
+                                        {"mid": row.id, "cid": f"{m_cid}_side1"},
                                     )
                                     if r_c.rowcount > 0:
-                                        if is_winner:
+                                        if leg_won:
                                             stats["losers_set"] += r_c.rowcount
                                         else:
                                             stats["winners_set"] += r_c.rowcount
-                                elif is_winner:
+                                elif leg_won:
                                     # #6110 — the update matched nothing and the
                                     # venue says this leg WON. That is the one
                                     # shape this rail could never repair: the
@@ -9650,15 +9707,15 @@ async def _backfill_polymarket_winners_from_api(
                                         condition_id=m_cid,
                                         # The venue's own per-leg flag, raw from
                                         # the Gamma payload and normalised by
-                                        # the decision module. `is_winner` above
-                                        # is a PRICE test (>= 0.90) and the
-                                        # selection above that is our own
-                                        # `status = 'resolved'` bookkeeping —
-                                        # neither is evidence the venue has
-                                        # settled this leg, and a mint needs
-                                        # that evidence (CERT-2893).
+                                        # the decision module. A mint needs that
+                                        # evidence (CERT-2893); #698 reaches
+                                        # here only for a verified payout, so the
+                                        # flag is already `True`, and the
+                                        # decision module still checks it.
                                         venue_closed=m.get("closed"),
-                                        price=settlement_price,
+                                        # Verified above: the Yes payout is
+                                        # exactly 1.
+                                        price=1.0,
                                         group_item_title=m.get("groupItemTitle"),
                                         question=m.get("question"),
                                     )
@@ -11853,6 +11910,10 @@ _CHUNK_MIN_SPAN_S = 3600.0
 #: aggregate-and-publish tail after the walk is a single ``setex``.
 _TRAVERSAL_BUDGET_S = 1620.0  # soft_time_limit=1800, keep a 180s margin
 
+#: #1479 — the name this sweep's backends carry in ``pg_stat_activity``. Inside
+#: ``db_session_identity``'s 29-character task field, so it is never cut short.
+_BOOKMAKER_SESSION_TASK = "bookmaker_calibration"
+
 def _add_month(dt: datetime) -> datetime:
     """The exclusive upper edge of ``dt``'s calendar month.
 
@@ -12104,7 +12165,46 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                                    "failed (%s) — this run still publishes on "
                                    "its own reads (#10697)", e)
 
+        from app.tasks.calibration_main_build import run_owner
+        from app.utils.durable_state import generation_for
+
+        identity = {
+            "task": _BOOKMAKER_SESSION_TASK,
+            "run_generation": generation_for(datetime.now(timezone.utc)),
+            "owner": run_owner(),
+        }
+
         async with get_task_session() as session:
+            # #1479 — EVERY READ ENDS ITS TRANSACTION ONCE ITS ROWS ARE IN HAND.
+            # Until this, nothing on the success path ended one: the grid, every
+            # landed slice and the soccer grid shared the transaction the first
+            # SELECT opened, and only `get_task_session`'s exit — after the walk,
+            # the bank writes and the publish — committed it. Only a timed-out
+            # slice rolled back. So a healthy walk held one snapshot for up to the
+            # whole traversal budget. Each read now commits as soon as `.all()`
+            # has materialized it, so no transaction outlives the statement it was
+            # opened for, and a commit that fails raises into the fail-closed
+            # terminal below like any other non-timeout error.
+            #
+            # The tag is `set_config(..., is_local)`, so it ends with each
+            # transaction as well and is re-armed at the start of every one.
+            #
+            # So does `SET LOCAL statement_timeout`, and that is the trap these
+            # commits open. In the one shared transaction the soccer grid ran
+            # under the 45 s bound the last landed chunk had armed; once that
+            # chunk commits, a read that does not arm its own runs under the
+            # connection's resting bound (30 minutes) instead — silently. So a
+            # bounded read names its bound here, and it is armed FIRST: the tag
+            # and the read both run under it.
+            async def _begin_read(statement_timeout_s: int | None = None) -> None:
+                if statement_timeout_s is not None:
+                    await session.execute(text(
+                        f"SET LOCAL statement_timeout = '{statement_timeout_s}s'"))
+                await tag_task_session(session, **identity)
+
+            async def _end_read() -> None:
+                await session.commit()
+
             # The grid comes from where the events ACTUALLY are, not from a
             # fixed span. Starting each category at one wide window and halving
             # into its dense region costs a full 45 s timeout PER LEVEL on the
@@ -12114,6 +12214,11 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
             # (category, month) cells that contain eligible events, so an empty
             # span is never queried at all and a dense cell starts one halving
             # away from its answer.
+            #
+            # No bound is armed: the grid was always the walk's first statement,
+            # so it has only ever run under the connection's resting bound, and
+            # this change neither widens nor tightens that.
+            await _begin_read()
             grid = (await session.execute(text("""
                 SELECT s.key AS category,
                        date_trunc('month', e.commence_time) AS bucket_start
@@ -12126,6 +12231,7 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                 GROUP BY 1, 2
                 ORDER BY 1, 2
             """))).all()
+            await _end_read()
 
             async def _slice(category, lo, hi, sink, unrun, failed, depth=0,
                              sql=_BOOKMAKER_CHUNK_SQL, params=None):
@@ -12149,8 +12255,7 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                         f"{depth}")
                     return False
                 try:
-                    await session.execute(
-                        text(f"SET LOCAL statement_timeout = '{_CHUNK_TIMEOUT_S}s'"))
+                    await _begin_read(_CHUNK_TIMEOUT_S)
                     rows = (await session.execute(
                         text(sql),
                         {**(params or {}),
@@ -12172,6 +12277,7 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                                      depth + 1, sql=sql, params=params)
                     return a and b
 
+                await _end_read()
                 chunks_done += 1
                 sink.extend(_bookmaker_row_tuple(r) for r in rows)
                 return True
@@ -12214,9 +12320,17 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
             # above. The two-way soccer rows the walk above still produces are
             # published by nobody: the reader keeps a soccer bucket only when it
             # carries the three-way stamp these rows are given below.
+            #
+            # #1479: under the 45 s chunk bound, armed here because nothing is
+            # left to inherit it from — every chunk before it has committed or
+            # rolled back. It is the bound this read had on every walk that
+            # landed a chunk last; an all-carried, empty or failed-last walk
+            # now gets it too instead of the 30-minute resting one.
+            await _begin_read(_CHUNK_TIMEOUT_S)
             soccer_grid = (await session.execute(
                 text(_BOOKMAKER_SOCCER_THREE_WAY_GRID_SQL),
                 SOCCER_THREE_WAY_PARAMS)).all()
+            await _end_read()
             soccer_cell_rows: dict[str, list] = {}
             soccer_missing: list = []
             soccer_open: list = []
@@ -12545,8 +12659,53 @@ _REPAIR_CURSOR_KEY = "bainluck:cal_closing_line_repair_cursor_q436"
 _REPAIR_DONE = "done"
 
 
-def _part_a_calibration_sql(would_churn: str, part_a_value: str) -> str:
-    """Part A: fill an event-linked outcome's first calibration price."""
+def _part_a_value_sql(archive_forecast: bool = False) -> str:
+    """Part A's price: the closing line, then (OFF by default) the archive, then the opening.
+
+    #683: with ``archive_forecast`` False this is byte-for-byte the expression
+    Part A has always written, so the calibration SQL and the staged bank are
+    unchanged. ``app.utils.kalshi_archive_forecast`` owns the switch and why it
+    is off.
+    """
+    if not archive_forecast:
+        return """COALESCE(
+                              closing.probability,
+                              CASE WHEN nc.is_threshold THEN NULL
+                                   ELSE nc.opening_probability END
+                          )"""
+    from app.utils.kalshi_archive_forecast import archive_closing_value_sql
+
+    return f"""COALESCE(
+                              closing.probability,
+                              {archive_closing_value_sql()},
+                              CASE WHEN nc.is_threshold THEN NULL
+                                   ELSE nc.opening_probability END
+                          )"""
+
+
+def _part_a_calibration_sql(
+    would_churn: str, part_a_value: str, *, archive_forecast: bool = False
+) -> str:
+    """Part A: fill an event-linked outcome's first calibration price.
+
+    #683: ``archive_forecast`` adds ONE lateral over the archive store's
+    forecast-admitted intervals (``app.utils.kalshi_archive_forecast``). False,
+    the default, emits exactly the parent SQL.
+    """
+    archive_lateral = ""
+    if archive_forecast:
+        from app.utils.kalshi_archive_forecast import archive_forecast_lateral_sql
+
+        archive_lateral = (
+            "\n                            LEFT JOIN LATERAL "
+            + archive_forecast_lateral_sql(
+                outcome_id="nc.outcome_id",
+                boundary=closing_line_boundary_sql(
+                    "nc.commence_time", "nc.resolution_date"
+                ),
+            )
+            + " archive ON true"
+        )
     return f"""
                         WITH needs_cal AS (
                             SELECT fo.id AS outcome_id, e.commence_time,
@@ -12574,7 +12733,7 @@ def _part_a_calibration_sql(would_churn: str, part_a_value: str) -> str:
                                     "nc.commence_time", "nc.resolution_date"
                                 ),
                                 extra_and="AND (NOT nc.is_threshold OR fos.yes_bid > 0)",
-                            )} closing ON true
+                            )} closing ON true{archive_lateral}
                             WHERE fo.id = nc.outcome_id
                               AND {part_a_value} IS NOT NULL
                               {would_churn.format(value=part_a_value)}
@@ -12904,14 +13063,16 @@ async def _compute_calibration_prices():
                 # the SQL mirror of precompute_calibration.KALSHI_PROP_THRESHOLD_NAME_RE
                 # (keep in sync); it is FALSE for every non-Kalshi/non-prop row so
                 # this branch is a provable no-op for all other sources.
-                _part_a_value = """COALESCE(
-                              closing.probability,
-                              CASE WHEN nc.is_threshold THEN NULL
-                                   ELSE nc.opening_probability END
-                          )"""
+                _part_a_value = _part_a_value_sql(KALSHI_ARCHIVE_FORECAST_ENABLED)
                 result_a = await _run_bounded(
                     session,
-                    text(_part_a_calibration_sql(_WOULD_CHURN, _part_a_value)),
+                    text(
+                        _part_a_calibration_sql(
+                            _WOULD_CHURN,
+                            _part_a_value,
+                            archive_forecast=KALSHI_ARCHIVE_FORECAST_ENABLED,
+                        )
+                    ),
                     {"cursor": part_a_cursor, "batch": _CAL_BATCH},
                     "part_a",
                 )

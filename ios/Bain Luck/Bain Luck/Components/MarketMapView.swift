@@ -39,9 +39,15 @@ struct MarketMapView: View {
     let homeColor: Color
     let awayColor: Color
     let sportKey: String?
-    var homeWinProb: Double?
-    var awayWinProb: Double?
     var homeSpread: Double?
+    /// #9483 / #11296 — the live full-game forecast, from the SAME admitted
+    /// in-play pair the headline prints (`EventDetailView.liveForecast11296`).
+    /// While the game is live this is the ONLY thing the full-game PROJECTION
+    /// tile may read: nil — refused, absent, or a surface that never passes
+    /// one — draws no tile. Never `homeSpread`, which this payload can leave
+    /// nil while carrying a different `spread`, and never the rung nearest a
+    /// coin flip, which is a market threshold and not a projected final.
+    var liveForecast: MarketMapRail.LiveMarginForecast? = nil
     var overUnder: Double?
     /// #6290 — `opening_odds.over_under`, the combined total the market closed
     /// pre-game on. The ONLY number on this payload a `PRE-GAME` tile may name
@@ -122,21 +128,70 @@ struct MarketMapView: View {
 
     // MARK: - The full-game margin map's own rungs and unit (#3552 / #3533)
 
-    /// The full-match spread legs, before anything is read out of them.
-    private var fullGameSpreadLegs: [SpreadRungs.Leg] {
-        (gameMarkets.spreads ?? [])
-            .filter { isFullGameSpread($0.marketName) }
-            .map(Self.leg)
+    /// #9483 — ONE PROBABILITY FAMILY PER DRAWN LADDER (Authority 0655Z, Root
+    /// 0704Z). A family is one venue's one original market: `source` +
+    /// `_market_id`, the question catalog's own grouping. On 15195971 the
+    /// full-game spreads were three families — kalshi/66190657 (28 rows),
+    /// polymarket/66873535 and polymarket/66832951 — merged into one rung set,
+    /// so the density and the ladder read Polymarket's DEN by 3.5+ at 33% above
+    /// Kalshi's DEN by 2.5+ at 29.5%: a distribution no venue quoted.
+    struct SpreadFamilyKey: Hashable, Comparable {
+        /// The served `source`, nil where none is served.
+        let source: String?
+        /// The served `_market_id`, nil where none is served.
+        let marketId: Int?
+
+        /// Source, then id; an unserved id sorts after every served one.
+        static func < (a: Self, b: Self) -> Bool {
+            if a.source != b.source {
+                switch (a.source, b.source) {
+                case let (x?, y?): return x < y
+                case (.some, nil): return true
+                default: return false
+                }
+            }
+            switch (a.marketId, b.marketId) {
+            case let (x?, y?): return x < y
+            case (.some, nil): return true
+            default: return false
+            }
+        }
     }
 
-    /// What the full margin map may draw, and the unit it is drawn in.
+    /// The families in draw order: the one with the most rungs first — the
+    /// one the card draws — ties to key order, then every other family in key
+    /// order. Deterministic whatever order the payload served the rows in.
+    static func familyDrawOrder(_ rungCounts: [SpreadFamilyKey: Int]) -> [SpreadFamilyKey] {
+        rungCounts.keys.sorted { a, b in
+            let (ca, cb) = (rungCounts[a] ?? 0, rungCounts[b] ?? 0)
+            return ca != cb ? ca > cb : a < b
+        }
+    }
+
+    /// Every full-game spread family, each read out on its own, in draw order.
+    /// Internal so tests can ask which family the card draws.
+    var fullMarginFamilies: [(key: SpreadFamilyKey, map: SpreadRungs.Map)] {
+        let rows = (gameMarkets.spreads ?? []).filter { isFullGameSpread($0.marketName) }
+        let maps = Dictionary(grouping: rows) {
+            SpreadFamilyKey(source: $0.source, marketId: $0._marketId)
+        }.mapValues {
+            SpreadRungs.map(from: $0.map(Self.leg), home: homeTeam, away: awayTeam, sportUnit: vocab.unit)
+        }
+        return Self.familyDrawOrder(maps.mapValues(\.rungs.count)).compactMap { key in
+            maps[key].map { (key: key, map: $0) }
+        }
+    }
+
+    /// What the full margin map may draw, and the unit it is drawn in: the
+    /// drawn family's rungs and nothing from any other family.
     ///
     /// Read once and passed down, because three things have to agree about it —
     /// the card, the empty-chrome gate that decides whether the card exists,
     /// and the footnote that explains what the card withheld. That is #3503's
     /// rule, and computing it three times is how it gets broken.
     private var fullMarginData: SpreadRungs.Map {
-        SpreadRungs.map(from: fullGameSpreadLegs, home: homeTeam, away: awayTeam, sportUnit: vocab.unit)
+        fullMarginFamilies.first?.map
+            ?? SpreadRungs.map(from: [], home: homeTeam, away: awayTeam, sportUnit: vocab.unit)
     }
 
     /// The unit the FULL totals map is drawn in, read from the markets on it
@@ -392,13 +447,16 @@ struct MarketMapView: View {
         // exactly when the sport declares a unit for it to be in.
         // #8721 — and only where the sportsbooks' spread is a margin at all;
         // baseball's is the ±1.5 run line, which projects nothing.
+        // While live, only the admitted forecast projects (`liveForecast`).
         let hasProjection = vocab.sportsbookSpreadIsAMargin
-            && sportUnitLineApplies(fullMarginData.unit) && homeSpread != nil
+            && sportUnitLineApplies(fullMarginData.unit)
+            && (isLive ? liveForecast != nil : homeSpread != nil)
         let hasScoreTile = scoredHomeScore != nil && scoredAwayScore != nil && (isLive || isDone)
         return !hasProjection && !hasScoreTile
     }
 
     private var marginMapCard: some View {
+        let families = fullMarginFamilies
         let data = fullMarginData
         let parsed = data.rungs
         let allMargins = parsed.map(\.margin)
@@ -421,12 +479,13 @@ struct MarketMapView: View {
         // margin is the `scoreboardCounts` class of error, so this asks the
         // question the totals card's `settledTotal` asks: does the scoreboard
         // count what THIS map's rungs are quoted in.
-        let settledMargin: Int? = {
-            guard isDone, scoreboardCounts(data.unit),
+        func gradingMargin(quotedIn unit: String) -> Int? {
+            guard isDone, scoreboardCounts(unit),
                   let homeScoreValue = scoredHomeScore,
                   let awayScoreValue = scoredAwayScore else { return nil }
             return homeScoreValue - awayScoreValue
-        }()
+        }
+        let settledMargin = gradingMargin(quotedIn: data.unit)
 
         // `Int(abs(margin))` truncated: a `-5.5` game line printed "+5", and on
         // the set maps this change introduces `-1.5` printed "+1" — a
@@ -443,22 +502,26 @@ struct MarketMapView: View {
         // `limit: nil` is every line, for the card's "All N lines".
         let ladder = marginLadders(parsed, settledMargin: settledMargin)
         let fullLadder = marginLadders(parsed, settledMargin: settledMargin, limit: nil)
+        // #9483 — the drawn family names its venue; every other family stays a
+        // separately identified market behind "All N lines", never merged into
+        // the ladder or the density above it.
+        let drawnSource = parsed.isEmpty ? nil : families.first.flatMap { SourceLabels.label(for: $0.key.source) }
+        let otherFamilies: [(title: String, rows: [LadderRow])] = families.dropFirst().compactMap {
+            family -> (title: String, rows: [LadderRow])? in
+            guard !family.map.rungs.isEmpty else { return nil }
+            let rows = marginLadders(family.map.rungs, settledMargin: gradingMargin(quotedIn: family.map.unit), limit: nil)
+            let venue = SourceLabels.label(for: family.key.source)
+            return (title: venue.map { "Also quoted on \($0)" } ?? "Also quoted", rows: rows)
+        }
 
-        // Headline: favored team + win %
-        //
-        // #5271 — which side may be named is `DrawPricedWinner`'s call. Alex
-        // found this header printing `Al-Ittihad 99%` above a match its own
-        // card on the same page priced at 93%: naming the favourite reaches
-        // for `1 − P(home)` every time the home team is the underdog, and on a
-        // three-way market that figure is the away side's chances PLUS the
-        // draw's. A draw-priced sport names home, favourite or not.
-        let headline = Self.marginHeadline(
-            isDone: isDone,
-            side: DrawPricedWinner.headlineSide(
-                away: awayWinProb, home: homeWinProb, sport: sportKey
-            ),
-            homeAbbr: hAbbr, awayAbbr: aAbbr
-        )
+        // #9483 — NO HEADER. It printed the blended winner (`OKC 56%`) over a
+        // ladder of individually sourced venue rungs (`OKC by 1.5+ 62%`): two
+        // inputs that are not one distribution, so the card read as if winning
+        // by more than 1.5 were likelier than winning. The hero carries the
+        // blend; this card cannot substantiate a shared family, so it states
+        // none (Design 2026-10-23). Removing it repairs no data — the rungs
+        // below are still the venues' own exact markets — and settled cards
+        // printed none already (#9336).
 
         // Markers
         var markers: [MapMarker] = []
@@ -467,9 +530,13 @@ struct MarketMapView: View {
         // has carried on the totals side since #3509. Without it a tennis SET
         // margin map would print the books' GAME line as its projection.
         let sportSpread = sportUnitLineApplies(data.unit) ? homeSpread : nil
-        let projValue = Self.marginProjection(
+        // #9483 — the admitted pair is in the sport's unit over the full game,
+        // so it passes the same rail gate as the spread.
+        let sportForecast = sportUnitLineApplies(data.unit) ? liveForecast : nil
+        let projValue = Self.fullGameMarginProjection(
+            isLive: isLive, liveForecast: sportForecast?.margin,
             homeSpread: sportSpread, rungs: parsed,
-            sportsbookSpreadIsAMargin: vocab.sportsbookSpreadIsAMargin, isLive: isLive
+            sportsbookSpreadIsAMargin: vocab.sportsbookSpreadIsAMargin
         )
         if isDone {
             if let homeScoreValue = scoredHomeScore,
@@ -499,13 +566,26 @@ struct MarketMapView: View {
         // (The totals card below is NOT the same shape — its LIVE branch says
         // `PRE-GAME` too — so it is gated separately rather than by a shared
         // helper that would have to know which card it was on.)
-        if MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded), let pv = projValue {
+        // Live, the tile states the headline's projected final margin
+        // ("OKC by about 2"); before the game it quotes a cover line.
+        let projLabel: String? = isLive
+            ? sportForecast.map {
+                MarketMapRail.liveForecastMarginLabel(
+                    homeAbbr: hAbbr, awayAbbr: aAbbr, printedMargin: $0.printedMargin)
+            }
+            : projValue.map {
+                MarketMapRail.projectedMarginLabel(homeAbbr: hAbbr, awayAbbr: aAbbr, margin: $0)
+            }
+        if MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded),
+           let pv = projValue, let projLabel {
             markers.append(MapMarker(
                 id: "proj",
                 value: pv,
                 type: .proj,
-                label: "PROJECTION",
-                displayValue: MarketMapRail.projectedMarginLabel(homeAbbr: hAbbr, awayAbbr: aAbbr, margin: pv)
+                // Live, the sportsbooks' projected final — not the ladder's
+                // median, and not from the ladder's venue.
+                label: isLive ? Self.liveProjectionTileLabel : "PROJECTION",
+                displayValue: projLabel
             ))
         }
 
@@ -551,7 +631,7 @@ struct MarketMapView: View {
                 // `mapCard` withholds the shape (`isDone`).
                 hasDistribution: !isDone && MarketMapRail.marginRailHasDistribution(density: density)
             ),
-            headline: headline,
+            headline: "",
             density: density,
             rangeMin: rangeMin,
             rangeMax: rangeMax,
@@ -563,9 +643,14 @@ struct MarketMapView: View {
             axisRight: MarketMapRail.marginThresholdLabel(teamAbbr: hAbbr, threshold: axisEnds.right),
             markers: markers,
             ladder: ladder,
-            fullLadder: fullLadder
+            fullLadder: fullLadder,
+            sourceNote: drawnSource.map { "Lines from \($0)" },
+            otherFamilies: otherFamilies
         )
     }
+
+    /// The live PROJECTION tile's label: whose projection it is.
+    static let liveProjectionTileLabel = "SPORTSBOOK PROJECTION"
 
     /// #3852 — each SIDE is its own one-sided cover ladder: positive lines
     /// ascending, graded against the margin that side won by. Both sides sort
@@ -1265,7 +1350,9 @@ struct MarketMapView: View {
         markers: [MapMarker],
         ladder: [LadderRow],
         fullLadder: [LadderRow] = [],
-        periodIsOver: Bool? = nil
+        periodIsOver: Bool? = nil,
+        sourceNote: String? = nil,
+        otherFamilies: [(title: String, rows: [LadderRow])] = []
     ) -> some View {
         // #10830 — after the final the rail compares the markers on a plain
         // number line: a resolved price is not a distribution (web's compact
@@ -1278,6 +1365,8 @@ struct MarketMapView: View {
             && (showsShape || !markers.isEmpty)
         let ladderOpen = expandedLadders.contains(title) || Self.rigOpensLadders
         let drawnLadder = ladderOpen && fullLadder.count > ladder.count ? fullLadder : ladder
+        let otherLineCount = otherFamilies.map(\.rows.count).reduce(0, +)
+        let hasMoreLines = fullLadder.count > ladder.count || otherLineCount > 0
         return VStack(alignment: .leading, spacing: 10) {
             // Header
             HStack(alignment: .top) {
@@ -1290,6 +1379,11 @@ struct MarketMapView: View {
                     Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if let sourceNote {
+                        Text(sourceNote)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
                 if !headline.isEmpty {
@@ -1301,30 +1395,9 @@ struct MarketMapView: View {
 
             // Summary tiles
             if !markers.isEmpty {
-                HStack(spacing: 8) {
-                    ForEach(markers) { m in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(m.label)
-                                .font(.caption2.weight(.heavy))
-                                .foregroundStyle(.secondary)
-                                .tracking(0.5)
-                            Text(m.displayValue)
-                                .font(.subheadline.weight(.black))
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.secondary.opacity(0.04))
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                        .overlay(alignment: .bottom) {
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(m.type.dotColor)
-                                .frame(height: 3)
-                                .padding(.horizontal, 4)
-                        }
-                    }
-                }
+                MarketMapSummaryTiles(tiles: markers.map {
+                    .init(id: $0.id, label: $0.label, value: $0.displayValue, accent: $0.type.dotColor)
+                })
             }
 
             // #4671 — the rail and its axis are ONE thing and are withheld
@@ -1367,15 +1440,26 @@ struct MarketMapView: View {
             if !drawnLadder.isEmpty {
                 ladderView(entries: drawnLadder)
             }
+            // #9483 — other venues' markets, each on its own, only when open.
+            if ladderOpen {
+                ForEach(Array(otherFamilies.enumerated()), id: \.offset) { _, family in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(family.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ladderView(entries: family.rows)
+                    }
+                }
+            }
             // #10830 — the full ladder is one tap away, never a second page.
-            if fullLadder.count > ladder.count {
+            if hasMoreLines {
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) {
                         if ladderOpen { expandedLadders.remove(title) }
                         else { expandedLadders.insert(title) }
                     }
                 } label: {
-                    Text(ladderOpen ? "Show fewer lines" : "All \(fullLadder.count) lines")
+                    Text(ladderOpen ? "Show fewer lines" : "All \(max(fullLadder.count, ladder.count) + otherLineCount) lines")
                         .font(.subheadline.weight(.semibold))
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
@@ -1635,28 +1719,6 @@ struct MarketMapView: View {
         return parsed.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) })!.margin
     }
 
-    /// The full-game margin card's header (#9336, the iPhone twin of web
-    /// #6359 + #6853).
-    ///
-    /// A settled card prints NO header. It used to print the last live quote:
-    /// Texans @ Colts (`/events/14782154`, FINAL 17–19) read `IND 93%`, which was
-    /// `current_odds` captured 50 s before the final whistle, over the card's
-    /// own `FINAL · IND by 2` tile and a graded `HIT` rung. On a draw it named
-    /// home at an in-play price. The result is already on the card twice, so a
-    /// header would only be a second voice.
-    ///
-    /// An open card goes through `formatProbability`, so a live 0.999 reads
-    /// `>99%` like the hero above it and not `100%`.
-    static func marginHeadline(
-        isDone: Bool,
-        side: (isHome: Bool, probability: Double)?,
-        homeAbbr: String,
-        awayAbbr: String
-    ) -> String {
-        guard !isDone, let side else { return "" }
-        return "\(side.isHome ? homeAbbr : awayAbbr) \(formatProbability(side.probability))"
-    }
-
     /// A margin card's projection value (#8721, the iPhone twin of web PR
     /// #8725). The full-game card passes its unit-gated spread; the half cards
     /// have none and pass nil.
@@ -1683,6 +1745,23 @@ struct MarketMapView: View {
               let closest = rungs.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) }),
               closest.probability >= 0.5 else { return nil }
         return closest.margin
+    }
+
+    /// #9483 — the full-game card's projection value. Live, it is the
+    /// headline's admitted in-play pair and nothing else: `homeSpread` is a raw
+    /// field the admission never qualified, and the rung nearest a coin flip
+    /// (`closestToEvenMargin`) is a market threshold — on 15195971 `OKC by 4.5+`
+    /// at 49% beside a headline projecting the Thunder by about 2. No admitted
+    /// pair, no tile. Not live, `marginProjection` decides exactly as before;
+    /// the half cards never come through here.
+    static func fullGameMarginProjection(
+        isLive: Bool, liveForecast: Double?, homeSpread: Double?,
+        rungs: [SpreadRungs.Rung], sportsbookSpreadIsAMargin: Bool
+    ) -> Double? {
+        if isLive { return sportsbookSpreadIsAMargin ? liveForecast : nil }
+        return marginProjection(
+            homeSpread: homeSpread, rungs: rungs,
+            sportsbookSpreadIsAMargin: sportsbookSpreadIsAMargin, isLive: isLive)
     }
 
     /// Derive the period label for a market outcome.
@@ -1837,5 +1916,60 @@ struct MarketMapAxisRow: Layout {
         place(subviews[0], frames.left)
         if let mid = frames.mid { place(subviews[1], mid) }
         place(subviews[subviews.count - 1], frames.right)
+    }
+}
+
+/// The map's summary tiles ("ACTUAL · DEN by 3", "SPORTSBOOK PROJECTION · OKC
+/// by about 2").
+///
+/// #9483 — side by side only when every tile's whole label and value fit on one
+/// line; otherwise stacked at full width, the words wrapping. The fixed row cut
+/// the projection to "OKC by abo…" at XXXL and both figures to "DEN…" / "OK…"
+/// at AX5: a forecast with its number cut off.
+struct MarketMapSummaryTiles: View {
+    struct Tile: Identifiable {
+        let id: String
+        let label: String
+        let value: String
+        let accent: Color
+    }
+
+    let tiles: [Tile]
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                ForEach(tiles) { tile($0, wraps: false) }
+            }
+            VStack(spacing: 8) {
+                ForEach(tiles) { tile($0, wraps: true) }
+            }
+        }
+    }
+
+    /// Unwrapped, each line is held at its full width, so the row is only
+    /// chosen when it really fits and can never take width out of a word.
+    private func tile(_ tile: Tile, wraps: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(tile.label)
+                .font(.caption2.weight(.heavy))
+                .foregroundStyle(.secondary)
+                .tracking(0.5)
+                .fixedSize(horizontal: !wraps, vertical: true)
+            Text(tile.value)
+                .font(.subheadline.weight(.black))
+                .fixedSize(horizontal: !wraps, vertical: true)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(alignment: .bottom) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(tile.accent)
+                .frame(height: 3)
+                .padding(.horizontal, 4)
+        }
     }
 }

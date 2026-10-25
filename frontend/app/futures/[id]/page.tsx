@@ -37,6 +37,7 @@ import FuturesTrendRangeControls from "@/components/futures/FuturesTrendRangeCon
 import FuturesTrendEmptyState from "@/components/futures/FuturesTrendEmptyState";
 import {
   defaultFuturesRange,
+  futuresRangeHeldNote,
   futuresRangeHours,
   isFuturesRangeKey,
   type FuturesRangeKey,
@@ -67,6 +68,7 @@ import {
   asOfLabel,
   gradedWinner,
   movementExplanation as movementExplanationHelper,
+  readableOpeningProbability,
   boardOutcomeLabel,
   chartHistoryForSelection,
   chartSeedsWithLead,
@@ -102,6 +104,12 @@ import { buildAmbientPoints } from "@/lib/futuresAmbient";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
 import { settlementBannerText } from "@/lib/settlementBanner";
 import { independentOutcomesNote } from "@/lib/outcomeExclusivity";
+import {
+  boardResultCertainty,
+  isResultUnknown,
+  settledChartCaption,
+  withSettledResultCertainty,
+} from "@/lib/settledResultDisplay";
 
 interface FuturesDetailPageProps {
   params: { id: string };
@@ -170,7 +178,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const marketIsPinned = isPinned(marketId);
 
   const {
-    data: market,
+    data: servedMarket,
     error: marketError,
     isLoading: marketLoading,
     mutate: refreshMarket,
@@ -183,6 +191,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     () => fetchFuturesMarket(marketId, { representation: VERIFIED_TITLE }),
     { refreshInterval: 0, keepPreviousData: true, revalidateOnFocus: false, revalidateOnReconnect: false }
   );
+  // #698 — every consumer below (rows, hero, sort, ladder, chart caption) reads
+  // ONE effective settled-result decision per row, made here once. A resolved
+  // Polymarket row whose result is unknown keeps its name and price but stops
+  // reading as graded, so no surface on this page can call it Lost, 0% or a
+  // champion while another says "Result unknown". See `lib/settledResultDisplay`.
+  const market = useMemo(() => withSettledResultCertainty(servedMarket), [servedMarket]);
 
   // #7545 — the history window is a RUNG THE READER CAN SEE AND MOVE, not a
   // number derived behind the chart.
@@ -254,6 +268,29 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     // already-loaded rung is served from cache with no flash at all.
     { keepPreviousData: true, revalidateOnFocus: false, revalidateOnReconnect: false }
   );
+
+  // #7547 — WHICH rung the history on screen was fetched for. The chip above
+  // lights at the tap, but `keepPreviousData` keeps drawing the last rung that
+  // arrived until the new one does — on /futures/199045 a week of prices sat
+  // under a lit "All" for the whole >6 s request, unlabelled. SWR reports
+  // `isLoading` only while the CURRENT key has no data of its own, and `error`
+  // for the current key; data that is neither is the current rung's, so that
+  // is the only moment this record moves. A late answer for a rung the reader
+  // has already left fills its own cache key and never reaches this line.
+  const shownHistory = useRef<{ marketId: number; range: FuturesRangeKey } | null>(null);
+  if (historyData && !historyLoading && !historyError) {
+    shownHistory.current = { marketId, range: effectiveRange };
+  }
+  // A body kept from another market is never drawn under this one's title.
+  const historyIsForeign = shownHistory.current != null && shownHistory.current.marketId !== marketId;
+  // Loading first: SWR keeps the last `error` while a retry is in flight, and
+  // a reader who just tapped "Try again" is waiting, not failed.
+  const heldRangeState: "loading" | "failed" | null = historyLoading
+    ? "loading"
+    : historyError ? "failed" : null;
+  const heldRangeNote = shownHistory.current && !historyIsForeign && heldRangeState
+    ? futuresRangeHeldNote(effectiveRange, shownHistory.current.range, heldRangeState, market?.created_at)
+    : null;
 
   // L2-175 Item 3a: a UFC/boxing fight belongs to its CARD. Fetch the card concept
   // (combat only) so the breadcrumb can name it ("← UFC Fight Night · Aug 2") and we
@@ -491,7 +528,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const renderedById = useMemo(() => {
     const outs = market?.outcomes ?? [];
     const current = renderedOutcomeRowPercents(outs.map((o) => o.probability));
-    const opening = renderedOutcomeRowPercents(outs.map((o) => o.opening_probability));
+    // #8313: a side-swapped opening is withheld from the pair, not paired with its sibling.
+    const opening = renderedOutcomeRowPercents(outs.map((o) => readableOpeningProbability(o)));
     return new Map(
       outs.map((o, i) => [o.id, { current: current[i] ?? null, opening: opening[i] ?? null }]),
     );
@@ -675,7 +713,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     () =>
       partitionOutcomesByPrice(
         sortedOutcomes,
-        (outcome) => outcomeRowVerdict(outcome, market?.status === "resolved") !== null,
+        // #698: a settled row whose result is unknown is listed too — it keeps
+        // its name and "Result unknown" in the table, never a closed fold.
+        (outcome) =>
+          outcomeRowVerdict(outcome, market?.status === "resolved") !== null ||
+          isResultUnknown(outcome, market?.status === "resolved"),
       ),
     [sortedOutcomes, market?.status],
   );
@@ -784,6 +826,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // the competition finished, so no "Final Results", no settled hero. It only
   // stands down the furniture that reads as a live market below.
   const isWithdrawn = market.status === "withdrawn";
+  // The Probability Trend card draws only a body it can name for THIS market.
+  const trendCardShown = !!historyData && historyOutcomes.length > 0 && !historyIsForeign;
+  // #7545's empty state, for the current rung's empty answer — or, #7547, for a
+  // held empty rung while the picked one loads, so tapping "Try a longer range"
+  // no longer removes the card (and its chips) for the length of the request.
+  const trendEmptyShown = historyOutcomes.length === 0 && !historyIsForeign
+    && (heldRangeNote != null || (!historyLoading && !historyError));
   // #8135 / #10074: the Probability Trend card's ONE cadence sentence. Printed by the
   // range controls on a sparse board; the chart's empty state is told it is already
   // on screen so "Final — prices no longer update" does not appear twice.
@@ -932,6 +981,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // `outcomeName &&`, so withholding it leaves the title and the grey chip and
   // no hole. The "Final Results" table below is honest and carries the page.
   const heroNamesNobody = isResolved && gradedChampion === null;
+  // #698 — how much of this settled board has no result to state. `all` puts
+  // "Result unknown" beside the RESOLVED chip and in the chart caption; `some`
+  // keeps every definite row and says so in the caption. A field whose rows all
+  // definitely LOST is not unknown (an independent field may have no winner).
+  const resultCertainty = boardResultCertainty(market.outcomes, isResolved);
   // L2-161 Hero C: the hero outcome's own 7-day curve, drawn as ambient texture
   // behind the numeral. Empty ⇒ the hero falls back to a plain numeral.
   // #10224 — the ambient curve is the requested source's history, so it draws
@@ -1080,6 +1134,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         sparklinePoints={ambientPoints}
         resolved={isResolved}
         resolvedWon={gradedChampion !== null}
+        resultUnknown={resultCertainty === "all"}
       />
 
       {/* L2-65 / B7 L2-91: breadcrumb UP into the richer event-concept surface
@@ -1178,7 +1233,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       {/* Blended probability trend line — directly under the hero (anatomy:
           title → blend line → why it moved → related markets). Single leader
           line by default, fixed 0–100 axis, no smoothing. */}
-      {historyError && !historyLoading && (
+      {/* #7547: only when there is no held chart. A failed rung over a chart
+          that did arrive says so inside that card, next to its chips. */}
+      {historyError && !historyLoading && !trendCardShown && !trendEmptyShown && (
         <div className="bg-surface-card rounded-card shadow-card p-6">
           <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2 mb-4">
             <span>📈</span>
@@ -1195,71 +1252,86 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           </div>
         </div>
       )}
-      {historyData && historyOutcomes.length > 0 && (
+      {historyData && trendCardShown && (
         <div
           className="bg-surface-card rounded-card shadow-card p-6"
           {...historyRangeDataAttributes(historyData)}
+          data-range-picked={effectiveRange}
+          data-range-shown={shownHistory.current?.range ?? effectiveRange}
+          aria-busy={heldRangeNote != null && heldRangeState === "loading"}
         >
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
-                <span>📈</span>
-                Probability Trend
-              </h2>
-              {/* #10224 — whose history the lines are. The current number above
-                  may blend venues; this history is one source's and says so. */}
-              {historyLabel && (
-                <p data-testid="futures-trend-history-basis" className="text-[12px] text-text-muted mt-1">
-                  {historyLabel}
-                </p>
-              )}
-              {/* #7545 — the rung the reader is on, and one line reconciling it
-                  with what came back. This replaces two captions that could only
-                  describe a window the reader never chose ("Extended to 30 days
-                  for more data"): the chip now says what was asked for, and
-                  `rangeCoverageNote` says what arrived when they differ. */}
-              <FuturesTrendRangeControls
-                className="mt-2"
-                range={effectiveRange}
-                onSelect={selectRange}
-                requestedHours={historyHours}
-                /* #683: when the drawn span began at an archive interval,
-                   `actual_hours` no longer says what is on screen, so the
-                   sparse-data note would understate it. A full read that began
-                   at `hours` keeps the note: that widening is still real. */
-                actualHours={archiveWidenedRange(historyData) ? undefined : historyData.actual_hours}
-                /* #8135: `sparse` asks how MUCH history there is; `dormant` asks
-                   whether any of it is recent. The specimen was sparse, open and
-                   four weeks cold, so the old gate returned the live promise over
-                   a chart captioned "Last number 29 days ago". */
-                cadenceNote={trendCadenceNote}
-              />
-            </div>
-            {/* Tab toggle: Over Time / By Stage */}
-            {hasProgression && (
-              <div className="flex bg-white/5 rounded-lg p-0.5 gap-0.5">
-                <button
-                  onClick={() => setTrendView("evolution")}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                    trendView === "evolution"
-                      ? "bg-white/10 text-text-primary"
-                      : "text-text-secondary hover:text-text-primary"
-                  }`}
-                >
-                  Over Time
-                </button>
-                <button
-                  onClick={() => setTrendView("progression")}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                    trendView === "progression"
-                      ? "bg-white/10 text-text-primary"
-                      : "text-text-secondary hover:text-text-primary"
-                  }`}
-                >
-                  By Stage
-                </button>
+          {/* The title row holds only what never changes while the reader is on
+              the page (title, history basis, the Over Time / By Stage toggle).
+              The chips and their notes sit full width beneath it: inside the
+              row, a note appearing or clearing re-ran the row's width split,
+              so the title and toggle rewrapped and the chart jumped ~30 px
+              each way on every range tap (#7547, shopper 390px readback). */}
+          <div className="mb-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
+                  <span>📈</span>
+                  Probability Trend
+                </h2>
+                {/* #10224 — whose history the lines are. The current number above
+                    may blend venues; this history is one source's and says so. */}
+                {historyLabel && (
+                  <p data-testid="futures-trend-history-basis" className="text-[12px] text-text-muted mt-1">
+                    {historyLabel}
+                  </p>
+                )}
               </div>
-            )}
+              {/* Tab toggle: Over Time / By Stage */}
+              {hasProgression && (
+                <div className="flex bg-white/5 rounded-lg p-0.5 gap-0.5">
+                  <button
+                    onClick={() => setTrendView("evolution")}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                      trendView === "evolution"
+                        ? "bg-white/10 text-text-primary"
+                        : "text-text-secondary hover:text-text-primary"
+                    }`}
+                  >
+                    Over Time
+                  </button>
+                  <button
+                    onClick={() => setTrendView("progression")}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                      trendView === "progression"
+                        ? "bg-white/10 text-text-primary"
+                        : "text-text-secondary hover:text-text-primary"
+                    }`}
+                  >
+                    By Stage
+                  </button>
+                </div>
+              )}
+            </div>
+            {/* #7545 — the rung the reader is on, and one line reconciling it
+                with what came back. This replaces two captions that could only
+                describe a window the reader never chose ("Extended to 30 days
+                for more data"): the chip now says what was asked for, and
+                `rangeCoverageNote` says what arrived when they differ. */}
+            <FuturesTrendRangeControls
+              className="mt-2"
+              range={effectiveRange}
+              onSelect={selectRange}
+              requestedHours={historyHours}
+              /* #683: when the drawn span began at an archive interval,
+                 `actual_hours` no longer says what is on screen, so the
+                 sparse-data note would understate it. A full read that began
+                 at `hours` keeps the note: that widening is still real. */
+              actualHours={archiveWidenedRange(historyData) ? undefined : historyData.actual_hours}
+              /* #7547: the held chart names its own rung until the picked one
+                 arrives; a failed request offers the retry, never an empty state. */
+              heldNote={heldRangeNote}
+              onRetry={heldRangeState === "failed" ? () => { void refreshHistory(); } : undefined}
+              /* #8135: `sparse` asks how MUCH history there is; `dormant` asks
+                 whether any of it is recent. The specimen was sparse, open and
+                 four weeks cold, so the old gate returned the live promise over
+                 a chart captioned "Last number 29 days ago". */
+              cadenceNote={trendCadenceNote}
+            />
           </div>
           {trendView === "progression" && hasProgression && progressionData ? (
             <TournamentProgressionTable data={progressionData} />
@@ -1294,19 +1366,22 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             // it wraps to two lines to say `Set 1 Winner`. The chart's other
             // seven call sites pass nothing and are byte-identical; the rule is
             // a property of THIS page, not of the names.
-            <FuturesChart
-              historyData={chartHistory}
-              selectedOutcomes={selectedOutcomes}
-              onToggleOutcome={toggleOutcomeSelection}
-              stepInterpolation={historyData.sparse}
-              fixedYAxis
-              fieldCeiling
-              settled={isResolved}
-              marketName={market?.name}
-              cadenceNoteShown={trendCadenceNote != null}
-              seriesOrder={chartSeriesOrder}
-              historyWithheld={servedPartialHistory(historyData)}
-            />
+            // #7547: a held rung stays drawn, dimmed, while the picked one loads.
+            <div className={heldRangeNote != null && heldRangeState === "loading" ? "opacity-60 transition-opacity" : "transition-opacity"}>
+              <FuturesChart
+                historyData={chartHistory}
+                selectedOutcomes={selectedOutcomes}
+                onToggleOutcome={toggleOutcomeSelection}
+                stepInterpolation={historyData.sparse}
+                fixedYAxis
+                fieldCeiling
+                settled={isResolved}
+                marketName={market?.name}
+                cadenceNoteShown={trendCadenceNote != null}
+                seriesOrder={chartSeriesOrder}
+                historyWithheld={servedPartialHistory(historyData)}
+              />
+            </div>
           )}
           {/* The clarification: WHY the blend line moved (#871-style). Suppressed
               on resolved markets — the present-tense mover reads wrong once final
@@ -1336,7 +1411,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                   Korea Open: A vs B Set 1 O/U 9.5 won." is the title again plus
                   four words. The helper refuses every shape it cannot shorten, so
                   a normal champion's name reaches this sentence untouched. */}
-              Settled{gradedChampion ? ` — ${boardOutcomeLabel(gradedChampion.name, market?.name)} won.` : "."}
+              {/* #698 — and from the same effective verdicts as the rows: a board
+                  with no stated result says so instead of a bare "Settled.". */}
+              <span data-testid="futures-settled-caption">
+                {settledChartCaption(
+                  resultCertainty,
+                  gradedChampion ? boardOutcomeLabel(gradedChampion.name, market?.name) : null,
+                )}
+              </span>
             </p>
           )}
         </div>
@@ -1347,7 +1429,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       {/* #7545 — WHICH emptiness this is, and a way out of it. See
           FuturesTrendEmptyState: once the reader picks the window, an empty
           payload no longer means "this market has no history". */}
-      {!historyLoading && !historyError && historyOutcomes.length === 0 && (
+      {trendEmptyShown && (
         <FuturesTrendEmptyState
           range={effectiveRange}
           onSelect={selectRange}
@@ -1355,6 +1437,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           actualHours={archiveWidenedRange(historyData) ? undefined : historyData?.actual_hours}
           createdAt={market?.created_at}
           historyWithheld={servedPartialHistory(historyData)}
+          shownRange={shownHistory.current?.range}
+          heldNote={heldRangeNote}
+          onRetry={heldRangeState === "failed" ? () => { void refreshHistory(); } : undefined}
         />
       )}
 

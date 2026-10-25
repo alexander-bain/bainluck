@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import String
+from sqlalchemy.sql.elements import Cast, Null
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -20,7 +21,8 @@ from tests.test_live_blend_read_footprint import ReadSession, event, market, out
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source", ["kalshi", "polymarket"])
-async def test_actual_select_narrows_only_source_json_and_preserves_joined_graph(source):
+@pytest.mark.parametrize("preview", [False, True])
+async def test_actual_select_narrows_only_source_json_and_preserves_joined_graph(source, preview):
     e = event()
     entry = {"value": 0.67, "updated_at": "2026-10-08T00:00:00+00:00"}
     e.win_probability_sources = {
@@ -32,7 +34,9 @@ async def test_actual_select_narrows_only_source_json_and_preserves_joined_graph
     empty = market(2, source=source, ticker=None)
     quotes = list(reversed(outcomes(winner)))
     session = ReadSession([e], [prop, winner, empty], quotes)
-    grouped = await LiveBlendRefresher(source)._read_groups(session, [1])
+    refresher = LiveBlendRefresher(source)
+    refresher.preview_events = frozenset({1}) if preview else frozenset()
+    grouped = await refresher._read_groups(session, [1])
     context, graph = grouped[1]
     assert context.win_probability_sources == {source: entry}
     assert [g.market.id for g in graph] == [9, 3, 2]
@@ -46,25 +50,49 @@ async def test_actual_select_narrows_only_source_json_and_preserves_joined_graph
     )
     projection = columns[position]
     assert projection.name == "win_probability_sources"
-    assert projection.element.left.shares_lineage(Event.win_probability_sources)
-    assert projection.element.right.value == source
-    assert isinstance(projection.element.right.type, String)
-    assert isinstance(projection.element.type, JSONB)
-    compiled = projection.compile(dialect=postgresql.dialect())
-    assert list(compiled.params.values()) == [source]
-    assert "events.win_probability_sources -> " in str(compiled)
-    assert "::JSONB" not in str(compiled)
+    if preview:
+        assert isinstance(projection.element, Cast)
+        assert isinstance(projection.element.clause, Null)
+        assert isinstance(projection.element.type, JSONB)
+        assert str(projection.compile(dialect=postgresql.dialect())) == "CAST(NULL AS JSONB)"
+    else:
+        assert projection.element.left.shares_lineage(Event.win_probability_sources)
+        assert projection.element.right.value == source
+        assert isinstance(projection.element.right.type, String)
+        assert isinstance(projection.element.type, JSONB)
+        compiled = projection.compile(dialect=postgresql.dialect())
+        assert list(compiled.params.values()) == [source]
+        assert "events.win_probability_sources -> " in str(compiled)
+        assert "::JSONB" not in str(compiled)
     expected = [
-        f"{table}.{key}"
+        "sports.key" if key == "sport_key" else f"{table}.{key}"
         for table, fields in (
             ("futures_markets", PREPARED_MARKET_FIELDS),
             ("events", PREPARED_EVENT_FIELDS),
             ("futures_outcomes", PREPARED_OUTCOME_FIELDS),
-        ) for key in fields if key != "win_probability_sources"
+        ) for key in fields if key not in ("win_probability_sources", "market_metadata")
     ]
-    assert [str(c) for i, c in enumerate(columns) if i != position] == expected
+    metadata_position = PREPARED_MARKET_FIELDS.index("market_metadata")
+    assert [str(c) for i, c in enumerate(columns) if i not in (position, metadata_position)] == expected + ([
+        "events.win_probability_sources", "events.win_probability_sources_rev", "statement_timestamp()",
+    ] if preview else [])
+    metadata_projection = columns[metadata_position]
+    assert metadata_projection.name == "market_metadata"
+    assert metadata_projection.element.name == "jsonb_build_object"
+    assert list(metadata_projection.element.clauses)[0].value == "content_understanding_v1"
+    if preview:
+        assert [c.name for c in columns[-3:]] == [
+            "preview_sources", "preview_rev", "preview_context_at",
+        ]
+        assert context.preview_sources == e.win_probability_sources
+        assert context.preview_rev == e.win_probability_sources_rev
+        assert context.preview_context_at == session.read_at
+    else:
+        assert not hasattr(context, "preview_sources")
     sql = str(statement.compile(dialect=postgresql.dialect()))
     assert "JOIN events" in sql and "LEFT OUTER JOIN futures_outcomes" in sql
+    assert "LEFT OUTER JOIN sports ON sports.id = events.sport_id" in sql
+    assert context.sport_key == "basketball_nba"
     assert not statement._order_by_clauses and not statement._group_by_clauses
     assert "OVER (" not in sql and not statement._distinct
 
@@ -116,3 +144,23 @@ async def test_restamp_decisions_match_full_bag_for_all_supported_and_abstaining
             assert restamp_records_no_observation(value, observed, projected, source) == (
                 restamp_records_no_observation(value, observed, full, source)
             )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["kalshi", "polymarket"])
+async def test_projected_source_retains_independent_nested_ownership(source):
+    e = event()
+    e.win_probability_sources = {source: {"value": .6, "nested": [{"x": [1, 2]}]}}
+    winner = market(1, source=source)
+    session = ReadSession([e], [winner], outcomes(winner))
+    r = LiveBlendRefresher(source)
+    r.preview_events = frozenset({1})
+    context, _ = (await r._read_groups(session, [1]))[1]
+    own = context.win_probability_sources[source]
+    full = context.preview_sources[source]
+    assert own == full and own is not full
+    own["nested"][0]["x"].append(3)
+    assert full["nested"][0]["x"] == [1, 2]
+    full["nested"][0]["x"].append(4)
+    assert own["nested"][0]["x"] == [1, 2, 3]
+    assert e.win_probability_sources[source]["nested"][0]["x"] == [1, 2]

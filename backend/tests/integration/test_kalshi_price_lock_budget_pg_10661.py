@@ -176,6 +176,7 @@ def _rig(engine, ids, batch):
     from app.tasks import kalshi_ws
     from app.tasks.base import get_task_session
     from app.tasks.live_blend_refresh import LiveBlendRefresher, event_ids_for_outcomes
+    from app.utils.kalshi_primary_quote import PrimaryQuoteCustody
     from app.utils.futures_rank import rerank_market_fields_stmt
     from app.utils.kalshi_price_statement import (  # #10689
         KALSHI_PRICE_STATEMENTS, kalshi_price_parameters,
@@ -219,6 +220,10 @@ def _rig(engine, ids, batch):
         price_buffer=batch, buffer_lock=asyncio.Lock(),
         market_id_by_outcome=market_of, event_id_by_outcome=event_of,
         input_marks={oid: oid for oid in batch}, tail_receipts=_Receipts(trace),
+        # #10090: the worker's primary-quote custody (bundled pair).
+        primary_quote_custody=PrimaryQuoteCustody(), ticker_to_ids={},
+        # The production closure owns these even with no subscribed book.
+        observation_continuity={}, game_clients=[],
         open_contract_outcome_ids=set(), blend_refresher=RecordingRefresher("kalshi"),
         non_blend_outcome_ids=set(),  # 78d4774b67: no known prop-only leg here
         get_task_session=partial(get_task_session, engine=engine),
@@ -229,9 +234,11 @@ def _rig(engine, ids, batch):
     )
     _OWNERS.append(ns["prices"])
     tree = ast.parse(SOURCE.read_text())
-    nodes = [n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)
-             and n.name in ("flush_prices", "drain_prices")]
-    assert sorted(n.name for n in nodes) == ["drain_prices", "flush_prices"]
+    names = {"flush_prices", "drain_prices", "steady_book_signature",
+             "observation_signature", "note_observation_continuity"}
+    nodes = [n for n in ast.walk(tree)
+             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in names]
+    assert {n.name for n in nodes} == names and len(nodes) == len(names)
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), "exec"), ns)
     return ns, trace, stats
 

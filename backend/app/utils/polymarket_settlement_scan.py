@@ -51,6 +51,7 @@ resolved-but-never-graded cohort #2637 warns about.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 
 #: Maps a ``futures_markets`` row to its Gamma **event** id. Not an alias and not
@@ -155,6 +156,63 @@ def _parse_outcome_prices(raw_prices: object) -> tuple[float, float | None] | No
         return yes_price, no_price
     except (json.JSONDecodeError, ValueError, IndexError, TypeError):
         return None
+
+
+#: #698 — the tolerance at which a Gamma payout reads as exactly 1 or exactly 0.
+#: The same 1e-9 `polymarket_ws.gamma_resolution_verdict` compares at; it is a
+#: float-equality tolerance, not a price threshold.
+_PAYOUT_EXACT = 1e-9
+
+
+def venue_terminal_leg_result(market: object) -> bool | None:
+    """Has the venue paid this one binary leg out, and on which side? Pure.
+
+    ``True`` — the leg's first outcome (Yes) won; ``False`` — it lost;
+    ``None`` — this payload is not a verified result and nothing may be graded
+    from it.
+
+    #698. The negRisk-parent arm of the Gamma winner rail graded a leg on
+    ``closed`` plus ``outcomePrices[0] >= 0.90``. Neither is a result: a closed
+    leg can carry a frozen pre-settlement quote (``0.006``, ``0.95``), and a
+    quote above or below any threshold is still a quote. This is the existing
+    verified-result contract of :func:`app.tasks.polymarket_ws.gamma_resolution_verdict`
+    (#9418), read for one leg instead of one token map, and a guard test feeds
+    both the same payloads so the two cannot drift:
+
+    * ``closed is True`` — not truthiness, and not the string form;
+    * ``umaResolutionStatus == "resolved"`` — closed but proposed, disputed or
+      unstated is not settled (#5343's reason: a disputed result can flip);
+    * ``outcomePrices`` parses to at least two numbers, exactly one of them is 1
+      and every other is 0 — the payout, not a quote near it.
+
+    A void (every payout 0.5) is ``None`` here: it names no side, and this
+    function only answers which side won.
+    """
+    if not isinstance(market, dict):
+        return None
+    if market.get("closed") is not True:
+        return None
+    if market.get("umaResolutionStatus") != "resolved":
+        return None
+    raw = market.get("outcomePrices")
+    try:
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        if not isinstance(raw, list) or len(raw) < 2:
+            return None
+        prices = [float(p) for p in raw]
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return None
+    # One clause stricter than the #9418 verdict: a non-finite payout is
+    # refused, because `abs(nan) >= tolerance` is False and would read as 0.
+    if not all(math.isfinite(p) for p in prices):
+        return None
+    winners = [i for i, p in enumerate(prices) if abs(p - 1.0) < _PAYOUT_EXACT]
+    if len(winners) != 1:
+        return None
+    if any(abs(p) >= _PAYOUT_EXACT for i, p in enumerate(prices) if i != winners[0]):
+        return None
+    return winners[0] == 0
 
 
 def settled_legs(raw_event: dict) -> SettledLegs | None:

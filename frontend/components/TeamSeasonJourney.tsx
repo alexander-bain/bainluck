@@ -8,6 +8,7 @@ import { pickJourneyFuture } from "@/lib/teamSeasonJourney";
 import { journeyRangeLabel } from "@/lib/teamSeason";
 import { teamTextColor } from "@/lib/teamColors";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import { decidedHeadlineText } from "@/lib/teamHeadline";
 import { FuturesChart } from "@/components/FuturesChart";
 
 // ---------------------------------------------------------------------------
@@ -88,8 +89,15 @@ export function TeamSeasonJourney({
   // bare round here would have printed `0%` a few hundred pixels under a
   // headline printing `<1%` for one probability. The chart's Y axis is a scale,
   // not a claim about an outcome, and is deliberately left alone.
-  const currentPct =
-    pick.probability !== null ? formatProbabilityPercent(pick.probability) : null;
+  //
+  // #11493 — and a decided line prints the hero's verdict ("Out"), not the
+  // 0.001 its eliminated leg still trades at. The history above it is real and
+  // stays drawn; only the "now" number was a claim.
+  const currentPct = pick.state
+    ? decidedHeadlineText(pick.state)
+    : pick.probability !== null
+      ? formatProbabilityPercent(pick.probability)
+      : null;
 
   return (
     <section className="mb-8">
@@ -106,8 +114,14 @@ export function TeamSeasonJourney({
           </span>
           {currentPct !== null && (
             <span
-              className="ml-auto font-mono font-bold text-lg tabular-nums"
-              style={{ color: teamTextColor(teamColor) || undefined }}
+              className={`ml-auto ${pick.state ? "" : "font-mono "}font-bold text-lg tabular-nums${
+                pick.state === "eliminated" ? " text-text-muted" : ""
+              }`}
+              style={
+                pick.state === "eliminated"
+                  ? undefined
+                  : { color: teamTextColor(teamColor) || undefined }
+              }
             >
               {currentPct}
             </span>

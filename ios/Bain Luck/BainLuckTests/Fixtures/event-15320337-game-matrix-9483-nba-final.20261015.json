@@ -1,0 +1,3407 @@
+{
+ "_provenance": "trimmed from v328 served/nba-game-markets.json (public GET /api/events/15320337/game-markets, Clippers 104-101 Warriors, final); full-game count_threshold + signed_handicap questions only, source_evidence/coverage fields dropped",
+ "event_id": 15320337,
+ "home_team": "Los Angeles Clippers",
+ "away_team": "Golden State Warriors",
+ "home_score": 104,
+ "away_score": 101,
+ "status": "completed",
+ "game_question_matrix": {
+  "contract": "10238.v1",
+  "display_scope": "game",
+  "questions": [
+   {
+    "question_key": "q:count|points|game|full_game|ge:197",
+    "kind": "count_threshold",
+    "label": "197+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 197,
+     "line": 196.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:241862402",
+      "label": "Over 196.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       241862402
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:199",
+    "kind": "count_threshold",
+    "label": "199+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 199,
+     "line": 198.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:241862403",
+      "label": "Over 198.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       241862403
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:201",
+    "kind": "count_threshold",
+    "label": "201+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 201,
+     "line": 200.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:241862404",
+      "label": "Over 200.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       241862404
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:203",
+    "kind": "count_threshold",
+    "label": "203+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 203,
+     "line": 202.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:241862405",
+      "label": "Over 202.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       241862405
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:205",
+    "kind": "count_threshold",
+    "label": "205+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 205,
+     "line": 204.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505186",
+      "label": "Over 204.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505186
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:207",
+    "kind": "count_threshold",
+    "label": "207+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 207,
+     "line": 206.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505185",
+      "label": "Over 206.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505185
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:209",
+    "kind": "count_threshold",
+    "label": "209+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 209,
+     "line": 208.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505184",
+      "label": "Over 208.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505184
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:211",
+    "kind": "count_threshold",
+    "label": "211+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 211,
+     "line": 210.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505183",
+      "label": "Over 210.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505183
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:213",
+    "kind": "count_threshold",
+    "label": "213+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 213,
+     "line": 212.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505182",
+      "label": "Over 212.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505182
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:215",
+    "kind": "count_threshold",
+    "label": "215+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 215,
+     "line": 214.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505181",
+      "label": "Over 214.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505181
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:217",
+    "kind": "count_threshold",
+    "label": "217+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 217,
+     "line": 216.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505180",
+      "label": "Over 216.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505180
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:219",
+    "kind": "count_threshold",
+    "label": "219+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 219,
+     "line": 218.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505179",
+      "label": "Over 218.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505179
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:221",
+    "kind": "count_threshold",
+    "label": "221+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 221,
+     "line": 220.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505178",
+      "label": "Over 220.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505178
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:223",
+    "kind": "count_threshold",
+    "label": "223+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 223,
+     "line": 222.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505177",
+      "label": "Over 222.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505177
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:225",
+    "kind": "count_threshold",
+    "label": "225+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 225,
+     "line": 224.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505176",
+      "label": "Over 224.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505176
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:227",
+    "kind": "count_threshold",
+    "label": "227+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 227,
+     "line": 226.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505175",
+      "label": "Over 226.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505175
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:229",
+    "kind": "count_threshold",
+    "label": "229+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 229,
+     "line": 228.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505174",
+      "label": "Over 228.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505174
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:231",
+    "kind": "count_threshold",
+    "label": "231+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 231,
+     "line": 230.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505173",
+      "label": "Over 230.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505173
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:233",
+    "kind": "count_threshold",
+    "label": "233+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 233,
+     "line": 232.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505172",
+      "label": "Over 232.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505172
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:235",
+    "kind": "count_threshold",
+    "label": "235+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 235,
+     "line": 234.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505171",
+      "label": "Over 234.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505171
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:237",
+    "kind": "count_threshold",
+    "label": "237+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 237,
+     "line": 236.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505170",
+      "label": "Over 236.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505170
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:239",
+    "kind": "count_threshold",
+    "label": "239+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 239,
+     "line": 238.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505169",
+      "label": "Over 238.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505169
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:241",
+    "kind": "count_threshold",
+    "label": "241+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 241,
+     "line": 240.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505168",
+      "label": "Over 240.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505168
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:243",
+    "kind": "count_threshold",
+    "label": "243+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 243,
+     "line": 242.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505167",
+      "label": "Over 242.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505167
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:245",
+    "kind": "count_threshold",
+    "label": "245+ points",
+    "market_name": "Golden State vs Los Angeles Clippers: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 245,
+     "line": 244.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505166",
+      "label": "Over 244.5 points",
+      "side": "over",
+      "market_ids": [
+       63856441
+      ],
+      "contributor_outcome_ids": [
+       240505166
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:224",
+    "kind": "count_threshold",
+    "label": "224+ points",
+    "market_name": "Warriors vs. Clippers: O/U 223.5",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 224,
+     "line": 223.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240903045",
+      "label": "Over",
+      "side": "over",
+      "market_ids": [
+       63976169
+      ],
+      "contributor_outcome_ids": [
+       240903045
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-04T22:31:52.234601+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:222",
+    "kind": "count_threshold",
+    "label": "222+ points",
+    "market_name": "Warriors vs. Clippers: O/U 221.5",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 222,
+     "line": 221.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:241294476",
+      "label": "Over",
+      "side": "over",
+      "market_ids": [
+       64098068
+      ],
+      "contributor_outcome_ids": [
+       241294476
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-04T22:31:52.234601+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:228",
+    "kind": "count_threshold",
+    "label": "228+ points",
+    "market_name": "Warriors vs. Clippers: O/U 227.5",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 228,
+     "line": 227.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:241294478",
+      "label": "Over",
+      "side": "over",
+      "market_ids": [
+       64098069
+      ],
+      "contributor_outcome_ids": [
+       241294478
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "polymarket",
+       "observed_at": "2026-10-04T22:31:52.234601+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-1.5",
+    "kind": "signed_handicap",
+    "label": "Golden State Warriors -1.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Golden State Warriors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -1.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505114",
+      "label": "Golden State wins by over 1.5 points",
+      "side": "away",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505114
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-10.5",
+    "kind": "signed_handicap",
+    "label": "Golden State Warriors -10.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Golden State Warriors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -10.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505119",
+      "label": "Golden State wins by over 10.5 points",
+      "side": "away",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505119
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-12.5",
+    "kind": "signed_handicap",
+    "label": "Golden State Warriors -12.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Golden State Warriors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -12.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505118",
+      "label": "Golden State wins by over 12.5 points",
+      "side": "away",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505118
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-14.5",
+    "kind": "signed_handicap",
+    "label": "Golden State Warriors -14.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Golden State Warriors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -14.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505117",
+      "label": "Golden State wins by over 14.5 points",
+      "side": "away",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505117
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-16.5",
+    "kind": "signed_handicap",
+    "label": "Golden State Warriors -16.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Golden State Warriors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -16.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505116",
+      "label": "Golden State wins by over 16.5 points",
+      "side": "away",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505116
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-18.5",
+    "kind": "signed_handicap",
+    "label": "Golden State Warriors -18.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Golden State Warriors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -18.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505115",
+      "label": "Golden State wins by over 18.5 points",
+      "side": "away",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505115
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-2.5",
+    "kind": "signed_handicap",
+    "label": "Golden State Warriors -2.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Golden State Warriors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -2.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505112",
+      "label": "Golden State wins by over 2.5 points",
+      "side": "away",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505112
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-20.5",
+    "kind": "signed_handicap",
+    "label": "Golden State Warriors -20.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Golden State Warriors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -20.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505113",
+      "label": "Golden State wins by over 20.5 points",
+      "side": "away",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505113
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-3.5",
+    "kind": "signed_handicap",
+    "label": "Golden State Warriors -3.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Golden State Warriors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -3.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505111",
+      "label": "Golden State wins by over 3.5 points",
+      "side": "away",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505111
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-4.5",
+    "kind": "signed_handicap",
+    "label": "Golden State Warriors -4.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Golden State Warriors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -4.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505110",
+      "label": "Golden State wins by over 4.5 points",
+      "side": "away",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505110
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-5.5",
+    "kind": "signed_handicap",
+    "label": "Golden State Warriors -5.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Golden State Warriors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -5.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505109",
+      "label": "Golden State wins by over 5.5 points",
+      "side": "away",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505109
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-6.5",
+    "kind": "signed_handicap",
+    "label": "Golden State Warriors -6.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Golden State Warriors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -6.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505108",
+      "label": "Golden State wins by over 6.5 points",
+      "side": "away",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505108
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-7.5",
+    "kind": "signed_handicap",
+    "label": "Golden State Warriors -7.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Golden State Warriors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -7.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505107",
+      "label": "Golden State wins by over 7.5 points",
+      "side": "away",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505107
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-8.5",
+    "kind": "signed_handicap",
+    "label": "Golden State Warriors -8.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Golden State Warriors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -8.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505106",
+      "label": "Golden State wins by over 8.5 points",
+      "side": "away",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505106
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-1.5",
+    "kind": "signed_handicap",
+    "label": "Los Angeles Clippers -1.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Los Angeles Clippers"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -1.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505100",
+      "label": "Los Angeles Clippers wins by over 1.5 points",
+      "side": "home",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505100
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-11.5",
+    "kind": "signed_handicap",
+    "label": "Los Angeles Clippers -11.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Los Angeles Clippers"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -11.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505104",
+      "label": "Los Angeles Clippers wins by over 11.5 points",
+      "side": "home",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505104
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-13.5",
+    "kind": "signed_handicap",
+    "label": "Los Angeles Clippers -13.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Los Angeles Clippers"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -13.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505103",
+      "label": "Los Angeles Clippers wins by over 13.5 points",
+      "side": "home",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505103
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-15.5",
+    "kind": "signed_handicap",
+    "label": "Los Angeles Clippers -15.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Los Angeles Clippers"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -15.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505102",
+      "label": "Los Angeles Clippers wins by over 15.5 points",
+      "side": "home",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505102
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-17.5",
+    "kind": "signed_handicap",
+    "label": "Los Angeles Clippers -17.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Los Angeles Clippers"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -17.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505101",
+      "label": "Los Angeles Clippers wins by over 17.5 points",
+      "side": "home",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505101
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-2.5",
+    "kind": "signed_handicap",
+    "label": "Los Angeles Clippers -2.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Los Angeles Clippers"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -2.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "settled",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505099",
+      "label": "Los Angeles Clippers wins by over 2.5 points",
+      "side": "home",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505099
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "won",
+       "evidence_kind": "settled_grade_fields"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-3.5",
+    "kind": "signed_handicap",
+    "label": "Los Angeles Clippers -3.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Los Angeles Clippers"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -3.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505098",
+      "label": "Los Angeles Clippers wins by over 3.5 points",
+      "side": "home",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505098
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-4.5",
+    "kind": "signed_handicap",
+    "label": "Los Angeles Clippers -4.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Los Angeles Clippers"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -4.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505097",
+      "label": "Los Angeles Clippers wins by over 4.5 points",
+      "side": "home",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505097
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-5.5",
+    "kind": "signed_handicap",
+    "label": "Los Angeles Clippers -5.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Los Angeles Clippers"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -5.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505096",
+      "label": "Los Angeles Clippers wins by over 5.5 points",
+      "side": "home",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505096
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-7.5",
+    "kind": "signed_handicap",
+    "label": "Los Angeles Clippers -7.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Los Angeles Clippers"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -7.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505095",
+      "label": "Los Angeles Clippers wins by over 7.5 points",
+      "side": "home",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505095
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-9.5",
+    "kind": "signed_handicap",
+    "label": "Los Angeles Clippers -9.5 points",
+    "market_name": "Golden State vs Los Angeles Clippers: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "Los Angeles Clippers"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -9.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "unknown",
+     "market_status": "resolved"
+    },
+    "options": [
+     {
+      "option_key": "o:240505105",
+      "label": "Los Angeles Clippers wins by over 9.5 points",
+      "side": "home",
+      "market_ids": [
+       63856438
+      ],
+      "contributor_outcome_ids": [
+       240505105
+      ],
+      "published": {
+       "value": null,
+       "value_state": "result",
+       "basis": "result",
+       "source": "kalshi",
+       "observed_at": "2026-10-05T02:49:04.369111+00:00"
+      },
+      "result": {
+       "state": "lost",
+       "evidence_kind": "verdict_is_provable"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "not_quoted",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

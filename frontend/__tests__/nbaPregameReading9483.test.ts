@@ -172,6 +172,50 @@ describe("#9483 pregame_reading — the settled ladder (15320337 body + a readin
   });
 });
 
+describe("#9483 pregame_reading — a final whose option is still quoted (the first hours, before venues settle)", () => {
+  // Lane1's review (19:11Z) found no finished-but-quoted specimen in the band; this is the
+  // normal shape for hours after a final. A fresh 99% must never become the pregame chance
+  // or a "now" on a settled card.
+  const stillQuoted = (o: RawOption) => {
+    const p = o.published as RawOption;
+    p.value_state = "quoted";
+    p.basis = "quoted";
+    p.value = 0.99;
+    p.observed_at = "2026-10-05T03:59:00+00:00";
+  };
+
+  it("CONTROL: the edited option decodes as a fresh 99% quote", () => {
+    const option = decodeQuestionMatrix(finalWith(stillQuoted)).flatMap((q) => q.options).find((x) => x.optionKey === OVER_2065)!;
+    expect(option.quoted).toBe(0.99);
+    expect(totalLadderCard(finalInputs(finalWith(stillQuoted)))!.phase).toBe("after");
+  });
+
+  it("without a reading: no chance and no now — the 99% is not drawn", () => {
+    const card = totalLadderCard(finalInputs(finalWith(stillQuoted)))!;
+    const line = card.points.find((p) => p.optionKey === OVER_2065)!;
+    expect(line.chance).toBeNull();
+    expect(line.now).toBeNull();
+    expect(line.observedAt).toBeNull();
+    expect(card.points.every((p) => p.chance === null && p.now === null)).toBe(true);
+    expect(ladderCaption(card)).toBe("Pregame chance unavailable for these lines");
+  });
+
+  it("with a reading: the reading is the chance, still no now", () => {
+    const card = totalLadderCard(
+      finalInputs(
+        finalWith((o) => {
+          stillQuoted(o);
+          o.pregame_reading = { ...READING };
+        }),
+      ),
+    )!;
+    const line = card.points.find((p) => p.optionKey === OVER_2065)!;
+    expect(line.chance).toBe(0.61);
+    expect(line.now).toBeNull();
+    expect(line.detail.baseline).toBe(0.61);
+  });
+});
+
 describe("#9483 pregame_reading — before and during play are unchanged", () => {
   const scheduled = (matrix: unknown, over: Partial<LadderInputs> = {}): LadderInputs => ({
     questions: decodeQuestionMatrix(matrix),

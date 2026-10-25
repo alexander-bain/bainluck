@@ -554,3 +554,58 @@ def prematch_prior_binds(
     if not ids:
         return None
     return {"ids": ids, "cutoffs": cutoffs, "sources": list(sources)}
+
+
+# ── #1480: ONE ANSWER FOR EVERY READER OF THE SAME SETTLED SLATE ──────────────
+#
+# The read above depends only on its binds, and `prematch_prior_binds` builds
+# them from the candidate events alone — no reader, no clock. So `/api/feed`
+# reuses one answer per bind set through `principal_independent_cache` instead
+# of each Sports/Discover miss re-reading it.
+
+#: The shared-artifact namespace the answer is reused under.
+PREMATCH_PRIOR_SHARED_NAMESPACE = "event_prematch_prior"
+
+
+def prematch_prior_share_key(binds: Mapping[str, Any]) -> tuple:
+    """The shared-cache key for one :data:`PREMATCH_PRIOR_SQL` bind set.
+
+    Built from the binds the statement receives, so the key and the read cannot
+    disagree. Each cutoff is in the key next to its id: a rescheduled kickoff
+    moves the cutoff, and a reading cut at the old kickoff must not be reused.
+    The statement's own digest rotates the key if the SQL changes; ``"v1"`` is
+    the answer's shape.
+    """
+    from app.utils.principal_independent_cache import digest_of
+
+    return (
+        "v1",
+        digest_of([PREMATCH_PRIOR_SQL]),
+        tuple(sorted(binds["sources"])),
+        digest_of(
+            f"{event_id}|{cutoff.isoformat()}"
+            for event_id, cutoff in zip(binds["ids"], binds["cutoffs"])
+        ),
+    )
+
+
+async def read_prematch_priors(
+    db: Any, binds: Mapping[str, Any]
+) -> dict[int, dict[str, tuple]]:
+    """``{event_id: {source: (home, away, draw)}}`` for one bind set.
+
+    The read `_score_events` ran inline, moved here unchanged so the direct
+    path and the shared builder are the same code. Nothing is caught.
+    """
+    from sqlalchemy import text
+
+    prematch_by_event: dict[int, dict[str, tuple]] = {}
+    pm_result = await db.execute(text(PREMATCH_PRIOR_SQL), dict(binds))
+    for row in pm_result.all():
+        # #6277 — the row's shape is defined once, beside the statement that
+        # produced it, so a member cannot be dropped here without a test
+        # noticing.
+        prematch_by_event.setdefault(row.event_id, {})[
+            row.source
+        ] = prematch_row_to_reading(row)
+    return prematch_by_event

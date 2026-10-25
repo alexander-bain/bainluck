@@ -17,6 +17,14 @@ from app.routes import event_stream as route
 from app.tasks import redis_state
 from app.utils import live_fanout as fanout
 from app.utils.live_push import event_channel
+from tests._event_stream_legacy_view import install_legacy_view
+
+
+@pytest.fixture(autouse=True)
+def _legacy_wire_view(monkeypatch):
+    """#10090: the event arms predate the stream's owned coverage read and its
+    reconcile controls; see tests/_event_stream_legacy_view.py."""
+    install_legacy_view(monkeypatch)
 
 
 @pytest.mark.asyncio
@@ -95,6 +103,9 @@ async def test_folded_stream_deduplicates_generation_and_preserves_quote(monkeyp
         def release(self, sub):
             self.subs.pop(sub.channel, None)
 
+    # #10090: this case asserts chunk position, so it alone also drops
+    # reconcile controls; the module's other arms keep them.
+    install_legacy_view(monkeypatch, drop_reconcile=True)
     hub = Hub()
     monkeypatch.setattr(fanout, "fanout", lambda: hub)
     stream = route._stream(1, Request(), contributor_ids=[1, 2])

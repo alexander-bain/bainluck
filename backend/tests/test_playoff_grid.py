@@ -158,7 +158,7 @@ class TestLeagueSpecificConfigs:
         assert keys == ["make_playoffs", "division", "pennant", "championship"]
 
     def test_wnba_max_teams(self):
-        assert WNBA_CONFIG.max_teams == 13
+        assert WNBA_CONFIG.max_teams == 15  # #11452: 2026 expansion to 15 clubs
 
     def test_mls_columns(self):
         keys = [c.key for c in MLS_CONFIG.columns]

@@ -9,7 +9,8 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 from app.tasks.polymarket_ws import (
-    PRICE_CHUNK_LOCK_TIMEOUT_MS, PRICE_ROW_LOCK_REFUSAL_MESSAGE, _PMPriceWriteResult,
+    PRICE_CHUNK_LOCK_TIMEOUT_MS, PRICE_ROW_LOCK_REFUSAL_MESSAGE, PRICE_STATEMENT_LOCK_TIMEOUT_MS,
+    _PMPriceWriteResult,
     _pm_lock_isolated_chunks, chunk_price_update_stmt, is_price_row_lock_refusal,
 )
 from app.tasks.kalshi_ws import PRICE_FLUSH_SECONDS
@@ -36,20 +37,32 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
     r = rig(**({"books": {1: (0.2, 0.8)}} | kwargs))
     r.release.set()
     state = SimpleNamespace(held=True, attempts=[], settings=[], commits=[], pending=set(),
-                            forced=[], ranks=[], values={}, nowait=[],
+                            forced=[], ranks=[], values={}, nowait=[], budgets=[],
+                            statement_budgets=[], rank_error=None,
                             refusal_delay=0.0, refusal_message=PRICE_ROW_LOCK_REFUSAL_MESSAGE)
 
     class Session:
+        def __init__(self):
+            self.info = {}  # no market frames staged by this lock-budget fake
+
+        budget_s = None  # no SET: the final drain waits for its locks
+
         async def execute(self, stmt, params=None):
             if stmt is SET_LOCK_TIMEOUT_SQL:
-                assert params == {"ms": "500ms"}
                 state.settings.append(clock.t)
+                state.budgets.append(params["ms"])
+                self.budget_s = int(params["ms"].removesuffix("ms")) / 1000
                 return SimpleNamespace(rowcount=1)
             kind, values = stmt
             if kind == "rank":
+                state.statement_budgets.append(("rank", self.budget_s))
+                if state.rank_error is not None:
+                    clock.t += self.budget_s
+                    raise state.rank_error
                 state.ranks.append(tuple(values))
                 return SimpleNamespace(rowcount=len(values))
             chunk, forced, nowait = values
+            state.statement_budgets.append(("price", self.budget_s))
             state.forced.append(set(forced))
             state.nowait.append(nowait)
             state.attempts.append((clock.t, tuple(chunk)))
@@ -57,8 +70,8 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
                 # A newer accepted quote survives the whole transaction rollback.
                 r.ns["price_buffer"][1] = 0.9
                 # NOWAIT is refused without waiting (its answer may still
-                # arrive late); otherwise the lock budget is spent.
-                clock.t += state.refusal_delay if nowait else 0.5
+                # arrive late); otherwise the statement's lock budget is spent.
+                clock.t += state.refusal_delay if nowait else self.budget_s
                 raise error or (
                     LockHeld(state.refusal_message) if nowait else LockHeld()
                 )
@@ -95,6 +108,7 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
         get_task_session=session, lock_retry_until={},
         _PMPriceWriteResult=_PMPriceWriteResult,
         PRICE_CHUNK_LOCK_TIMEOUT_MS=PRICE_CHUNK_LOCK_TIMEOUT_MS,
+        PRICE_STATEMENT_LOCK_TIMEOUT_MS=PRICE_STATEMENT_LOCK_TIMEOUT_MS,
         PRICE_FLUSH_SECONDS=PRICE_FLUSH_SECONDS, SET_LOCK_TIMEOUT_SQL=SET_LOCK_TIMEOUT_SQL,
         is_lock_timeout=is_lock_timeout, lock_timeout_value=lock_timeout_value,
         is_price_row_lock_refusal=is_price_row_lock_refusal,
@@ -108,7 +122,13 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
     return r, state
 
 
-async def test_failed_whole_chunk_cooldown_preserves_healthy_cadence_and_fences(monkeypatch):
+async def test_a_lock_held_whole_chunk_is_probed_each_flush_preserving_cadence_and_fences(
+    monkeypatch,
+):
+    # #10090 fast retry: the price UPDATE waits PRICE_STATEMENT_LOCK_TIMEOUT_MS,
+    # and its lock timeout arms no two-second cooldown. The rows stay
+    # known-held, so every later flush probes them NOWAIT (no wait spent) and
+    # the first after the holder lets go writes them.
     clock = _FakeTime(monkeypatch, t=1000)
     r, state = writer_rig(clock)
     starts = []
@@ -144,7 +164,7 @@ async def test_failed_whole_chunk_cooldown_preserves_healthy_cadence_and_fences(
         assert result is True, "a lock-held cohort must not invoke global failure sleep"
         if len(starts) < 4:
             assert r.ns["price_buffer"] == {1: 0.9, 2: 0.4}
-            assert r.ns["lock_retry_until"] == {1: 1003.5, 2: 1003.5}
+            assert r.ns["lock_retry_until"] == dict.fromkeys((1, 2), 1001 + 0.05)
             assert 1 not in r.ns["successful_price_write_at"], "rollback cannot acknowledge first observation"
             assert r.books == {1: (0.2, 0.8)}, "withdrawal must not bypass the hold"
             assert ("refresh", [10]) not in r.trace
@@ -156,13 +176,18 @@ async def test_failed_whole_chunk_cooldown_preserves_healthy_cadence_and_fences(
 
     await run_flush_cadence(flush, 1, stop, failed_retry_interval_s=2)
     assert starts == [1001, 1002, 1003, 1004]
-    assert [t for t, ids in state.attempts if 1 in ids] == [1001, 1004]
+    assert [t for t, ids in state.attempts if 1 in ids] == [1001, 1002, 1003, 1004]
+    assert [n for n, ids in zip(state.nowait, state.attempts) if 1 in ids[1]] == [
+        False, True, True, True,
+    ]
+    assert state.budgets[0] == f"{PRICE_STATEMENT_LOCK_TIMEOUT_MS}ms"
     # The fresh unrelated quote writes ahead of the retried cohort.
     assert state.commits == [900, 900, 900, 900, 1, 2]
     assert not r.ns["price_buffer"] and not r.ns["lock_retry_until"]
     assert not pending
     assert ("withdraw", [1]) in r.trace and ("refresh", [10]) in r.trace
     assert r.ns["stats"]["errors"] == 1 and r.ns["stats"]["requeued"] == 2
+    assert r.ns["stats"]["price_lock_probes_refused"] == 2
 
 
 async def test_final_drain_ignores_hold_and_does_not_set_periodic_lock_budget(monkeypatch):
@@ -175,6 +200,33 @@ async def test_final_drain_ignores_hold_and_does_not_set_periodic_lock_budget(mo
     assert len(state.settings) == 1  # no SET in the final transaction
     assert state.commits == [1, 2] and not r.ns["lock_retry_until"]
     assert state.nowait == [False, False], "the final drain still waits for its locks"
+
+
+async def test_the_short_budget_covers_only_the_price_update_and_a_rerank_lock_keeps_its_cooldown(
+    monkeypatch,
+):
+    # #10090 fast retry: only the price-row UPDATE runs under the short
+    # budget; rerank is restored to the chunk budget in the same transaction,
+    # and a lock timeout there (outside the price statement) keeps the
+    # existing two-second cooldown and error accounting.
+    clock = _FakeTime(monkeypatch, t=1000)
+    r, state = writer_rig(clock)
+    state.held = False
+    short = PRICE_STATEMENT_LOCK_TIMEOUT_MS / 1000
+    chunk_budget = PRICE_CHUNK_LOCK_TIMEOUT_MS / 1000
+    assert short < chunk_budget
+    assert (await r.ns["write_chunk"]({1: 0.6, 2: 0.4})).written_ids == (1, 2)
+    assert state.statement_budgets == [("price", short), ("rank", chunk_budget)]
+    state.statement_budgets.clear()
+    state.rank_error = LockHeld()
+    assert await r.ns["write_chunk"]({1: 0.7, 2: 0.3}) is None
+    assert state.statement_budgets == [("price", short), ("rank", chunk_budget)]
+    assert r.ns["lock_retry_until"] == dict.fromkeys(
+        (1, 2), 1000 + chunk_budget + PRICE_FLUSH_SECONDS,
+    )
+    assert r.ns["stats"]["errors"] == 1
+    assert not r.ns["stats"].get("price_lock_probes_refused")
+    assert state.commits == [1, 2], "the rerank failure rolled its prices back"
 
 
 async def test_a_probe_refusal_received_late_still_re_arms_no_cooldown(monkeypatch):
@@ -203,20 +255,84 @@ async def test_a_probe_refusal_received_late_still_re_arms_no_cooldown(monkeypat
     'konnte Sperre für Zeile in Relation "futures_outcomes" nicht setzen',
     'could not obtain lock on row in relation "futures_markets"',
 ])
-async def test_a_probe_55p03_that_is_not_the_known_row_refusal_keeps_the_cooldown(
+async def test_a_probe_55p03_that_is_not_the_known_row_refusal_is_a_counted_timeout_without_cooldown(
     monkeypatch, message,
 ):
     # Narrowly positive: an unrecognised 55P03 (lock timeout, a localised
-    # server, another relation) falls back to the ordinary cooldown and error.
+    # server, another relation) is never a counted refusal. #10090 fast retry:
+    # any 55P03 the price UPDATE raises arms no cooldown (each retry costs at
+    # most the 50 ms statement budget); a table lock the probe queues on is
+    # recovered at the next flush. On a probe the hold is already known, so it
+    # is counted as a repeat timeout, not logged as a fresh error (lane1 R1).
     clock = _FakeTime(monkeypatch, t=1000)
     r, state = writer_rig(clock)
     r.ns["lock_retry_until"].update({1: 0, 2: 0})
     state.refusal_message = message
     assert await r.ns["write_chunk"]({1: 0.6, 2: 0.4}) is None
     assert state.nowait == [True]
-    assert r.ns["lock_retry_until"] == {1: 1002, 2: 1002}
-    assert r.ns["stats"]["errors"] == 1
+    assert r.ns["lock_retry_until"] == {1: 0, 2: 0}
+    assert r.ns["stats"]["price_lock_timeouts"] == 1
+    assert not r.ns["stats"].get("errors")
     assert not r.ns["stats"].get("price_lock_probes_refused")
+    assert ("failure", None) not in r.trace, "a repeat timeout is not logged"
+
+
+async def test_a_sustained_price_lock_logs_one_error_per_hold_and_counts_each_repeat(
+    monkeypatch,
+):
+    # lane1 R1: with no cooldown a held price row is retried every 0.25 s
+    # flush, and a table lock times out every probe. Logged and counted as an
+    # error each time, that was ~20 Sentry events a second per held event
+    # (parent: ~2). The first timeout in a hold episode stays the one logged
+    # error; each repeat is counted in `price_lock_timeouts`. A rerank lock
+    # timeout is not the price statement's and still logs every attempt.
+    clock = _FakeTime(monkeypatch, t=1000)
+    r, state = writer_rig(clock)
+    state.refusal_message = LOCK_TIMEOUT_MESSAGE  # every probe queues on a table lock
+    logged = []
+
+    class RecordingLogger:
+        def __getattr__(self, level):
+            return lambda *args, **kwargs: logged.append(level)
+
+    r.ns["logger"] = RecordingLogger()
+    flushes, cadence = 6, 0.25  # production PM_WS_PRICE_FLUSH_SECONDS
+    for n in range(flushes):
+        clock.t = 1000 + n * cadence
+        assert await r.ns["flush_prices"](flush_started=clock.t) is True
+    held_attempts = [n for n, (_, ids) in zip(state.nowait, state.attempts) if 1 in ids]
+    assert held_attempts == [False] + [True] * (flushes - 1), "retried every flush"
+    assert logged == ["exception"], "one logged error for the whole hold"
+    assert r.ns["stats"]["errors"] == 1 and r.ns["stats"]["requeued"] == 2
+    assert r.ns["stats"]["price_lock_timeouts"] == flushes - 1
+    assert not r.ns["stats"].get("price_lock_probes_refused")
+    assert set(r.ns["lock_retry_until"]) == {1, 2}
+    assert max(r.ns["lock_retry_until"].values()) <= clock.t, "no cooldown armed"
+
+    # The table lock is gone; rerank now times out. Both attempts are probes
+    # of the known-held rows, and each still logs and counts as an error.
+    state.held = False
+    state.rank_error = LockHeld()
+    for _ in range(2):
+        clock.t = max(r.ns["lock_retry_until"].values()) + PRICE_FLUSH_SECONDS
+        assert await r.ns["write_chunk"]({1: 0.9, 2: 0.4}) is None
+        assert state.nowait[-1] is True
+    assert logged == ["exception"] * 3
+    assert r.ns["stats"]["errors"] == 3
+    assert r.ns["stats"]["price_lock_timeouts"] == flushes - 1
+
+    # The write lands and ends the episode; the next hold's first timeout is
+    # a fresh, logged error again.
+    state.rank_error = None
+    clock.t = max(r.ns["lock_retry_until"].values()) + PRICE_FLUSH_SECONDS
+    assert (await r.ns["write_chunk"]({1: 0.9, 2: 0.4})).written_ids == (1, 2)
+    assert not r.ns["lock_retry_until"]
+    state.held = True
+    clock.t += PRICE_FLUSH_SECONDS
+    assert await r.ns["write_chunk"]({1: 0.95, 2: 0.4}) is None
+    assert state.nowait[-1] is False
+    assert logged == ["exception"] * 4
+    assert r.ns["stats"]["errors"] == 4
 
 
 def _wrapped(fields):
@@ -288,7 +404,7 @@ async def test_mixed_lock_failure_retries_events_separately_and_keeps_full_fence
     assert await r.ns["flush_prices"](flush_started=1000)
     # First attempt keeps ordinary batching: two unrelated event pairs share
     # one rollback. The later successful chunks must not release either stamp.
-    assert state.attempts == [(1000, (1, 2, 900, 901)), (1000.5, (3, 902))]
+    assert state.attempts == [(1000, (1, 2, 900, 901)), (1000.05, (3, 902))]
     assert state.commits == [3, 902]
     assert pending == {10, 90} and all(not due for due in admitted)
     assert r.ns["lock_retry_events"] == {10, 90}
@@ -296,23 +412,28 @@ async def test_mixed_lock_failure_retries_events_separately_and_keeps_full_fence
 
     clock.t = 1001
     assert await r.ns["flush_prices"](flush_started=1001)
-    assert len(state.attempts) == 2, "cooldown still protects the original failed rows"
+    # #10090 fast retry: a price-statement lock timeout arms no cooldown.
+    # Each rolled-back event is its own retried cohort at the next flush,
+    # probed NOWAIT, so the healthy neighbour writes and the held one waits
+    # alone without spending a second lock budget.
+    assert state.attempts[-2:] == [(1001, (1, 2)), (1001, (900, 901))]
+    assert state.nowait[-2:] == [True, True]
+    assert state.commits == [3, 902, 900, 901]
+    assert r.ns["price_buffer"] == {1: 0.9, 2: 0.4}
+    assert r.ns["lock_retry_events"] == {10}
+    assert set(r.ns["lock_retry_until"]) == {1, 2}
+    assert r.books.keys() == {1} and pending == {10}
+    assert ("refresh", [90]) in r.trace and ("refresh", [10]) not in r.trace
+    assert ("withdraw", [900]) in r.trace and ("withdraw", [1]) not in r.trace
 
     clock.t = 1003
     # A new question for the held event is part of this admitted cohort too.
     r.ns["price_buffer"][3] = 0.85
     assert await r.ns["flush_prices"](flush_started=1003)
-    # #10090: the cohort a lock already refused is probed NOWAIT, so the
-    # healthy event behind it no longer waits out a second 500 ms budget.
-    assert state.attempts[-2:] == [(1003, (1, 2, 3)), (1003, (900, 901))]
-    assert state.nowait[-2:] == [True, True]
-    assert state.commits == [3, 902, 900, 901]
+    assert state.attempts[-1] == (1003, (1, 2, 3))
+    assert state.nowait[-1] is True
     assert r.ns["price_buffer"] == {1: 0.9, 2: 0.4, 3: 0.85}
-    assert r.ns["lock_retry_events"] == {10}
     assert set(r.ns["lock_retry_until"]) == {1, 2, 3}
-    assert r.books.keys() == {1} and pending == {10}
-    assert ("refresh", [90]) in r.trace and ("refresh", [10]) not in r.trace
-    assert ("withdraw", [900]) in r.trace and ("withdraw", [1]) not in r.trace
 
     clock.t = 1004
     r.ns["price_buffer"][900] = 0.75
@@ -323,7 +444,7 @@ async def test_mixed_lock_failure_retries_events_separately_and_keeps_full_fence
     assert state.attempts[-2:] == [(1004, (900,)), (1004, (1, 2, 3))]
     assert state.nowait[-2:] == [False, True]
     assert set(r.ns["lock_retry_until"]) == {1, 2, 3}
-    assert r.ns["stats"]["price_lock_probes_refused"] == 2
+    assert r.ns["stats"]["price_lock_probes_refused"] == 3
     state.held = False
     clock.t = 1006
     assert await r.ns["flush_prices"](flush_started=1006)
@@ -477,6 +598,7 @@ async def test_later_admitted_pair_adopts_latest_values_marks_and_new_withdrawal
     class DelayedSession:
         def __init__(self, session):
             self.session = session
+            self.info = session.info
 
         async def execute(self, stmt, params=None):
             if isinstance(stmt, tuple) and stmt[0] == "price":
@@ -514,3 +636,17 @@ async def test_later_admitted_pair_adopts_latest_values_marks_and_new_withdrawal
     assert r.ns["price_buffer"] == {1: 0.85, 2: 0.15, 940: 0.7}
     assert r.trace.index(("withdraw", [1])) < r.trace.index(("refresh", [10]))
     assert state.commits == [900, 901, 1, 2] and not r.books
+
+
+def test_the_minute_line_emits_repeat_price_lock_timeouts(caplog):
+    # lane1 R3: a counter computed and never emitted is the defect
+    # `_log_stats_line` exists to prevent. A sustained table lock shows as
+    # `errors=1` and then nothing, unless the repeats are on the line.
+    from app.tasks import polymarket_ws as poly_task
+
+    stats = {"price_updates": 0, "trade_updates": 0, "resolutions": 0, "errors": 1,
+             "price_lock_timeouts": 7}
+    blend_stats = {"stamped": 0, "no_reading": 0, "throttled": 0, "errors": 0}
+    with caplog.at_level("INFO", logger=poly_task.logger.name):
+        poly_task._log_stats_line(stats, {}, blend_stats)
+    assert "lock_timeouts=7" in caplog.text

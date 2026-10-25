@@ -313,6 +313,7 @@ class TestBeatScheduleCompleteness:
         "soccer-ghost-twin-sweep",
         "mlb-reschedule-ghost-sweep",
         "nhl-adjacent-day-ghost-sweep",
+        "unplayed-series-game-sweep",
         "polymarket-container-twin-sweep",
         "odds-api-reissued-twin-sweep",
         "odds-api-remint-sweep",

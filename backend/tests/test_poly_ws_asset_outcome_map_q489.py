@@ -22,12 +22,17 @@ import asyncio
 
 import pytest
 from tests.pm_bulk_test_support import price_writes
+from tests.test_ws_flush_retry_q491 import (
+    is_stored_live_slate_read,
+    stored_live_batches,
+)
 import websockets
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql.dml import Update
 
 import app.tasks.live_blend_refresh as blend_mod
 import app.tasks.polymarket_ws as poly_task
+from tests._pm_slate_market_read_10663 import answer_slate_market_read
 
 YES_TOKEN = "111"
 NO_TOKEN = "222"
@@ -117,9 +122,15 @@ class _RecordingSession:
     write, so the assertion has to read the write.
     """
 
-    def __init__(self, batches, writes):
+    def __init__(self, batches, writes, scenario=None):
+        # #10090: a real session's `.info` — one dict per session, kept
+        # through commit, rollback and close; the flush detaches committed
+        # market frames from it. These writes return no moved quote, so
+        # no frame is ever staged and it stays empty.
+        self.info = {}
         self._batches = batches
         self._writes = writes
+        self._scenario = scenario
 
     async def execute(self, stmt):
         if isinstance(stmt, Update):
@@ -128,7 +139,32 @@ class _RecordingSession:
             if table == "futures_outcomes" and price_writes(stmt):
                 self._writes.extend(price_writes(stmt))
             return _Result([])
-        return _Result(self._batches.pop(0) if self._batches else [])
+        if self._scenario is not None and is_stored_live_slate_read(stmt):
+            # #10090 attempt156: the stored-live load reads its own three
+            # batches; the full slate stays queued for the full read.
+            self._batches[:0] = stored_live_batches(*self._scenario)
+        rows = self._batches.pop(0) if self._batches else []
+        return _Result(answer_slate_market_read(stmt, rows))  # #10663
+
+
+def test_the_fake_session_has_its_own_empty_info_like_a_real_session():
+    """#10090: the flush detaches committed market frames from `session.info`
+    (`AsyncSession.info`, one dict per session). This fake must stand in for
+    that attribute: its own dict per session and, because its writes return no
+    moved quote, nothing committed for the flush to publish. A shared or
+    pre-filled dict would hand the flush a frame no commit here produced, and
+    the fake refresher would only log the failed publish, not fail a test."""
+    import inspect
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.market_quote_push import take_committed_market_changes
+
+    assert isinstance(inspect.getattr_static(AsyncSession, "info"), property)
+    first, second = _RecordingSession([], []), _RecordingSession([], [])
+    assert first.info is not second.info
+    assert take_committed_market_changes(first) == []
+    assert first.info == {}
 
 
 def _install_slate(monkeypatch, writes):
@@ -138,7 +174,7 @@ def _install_slate(monkeypatch, writes):
 
     class _Ctx:
         async def __aenter__(self):
-            return _RecordingSession(batches, writes)
+            return _RecordingSession(batches, writes, POLY_SLATE)
 
         async def __aexit__(self, *_exc):
             return False
@@ -261,10 +297,11 @@ class TestUnmappableAssetsAreDroppedNotGuessed:
             [(MARKET_ID, CONDITION_ID, {"clob_token_ids": [YES_TOKEN, NO_TOKEN, "999"]}, "scheduled")],
             list(POLY_SLATE[2]),
         ]
+        scenario = [list(b) for b in batches]
 
         class _Ctx:
             async def __aenter__(self):
-                return _RecordingSession(batches, writes)
+                return _RecordingSession(batches, writes, scenario)
 
             async def __aexit__(self, *_exc):
                 return False

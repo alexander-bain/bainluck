@@ -30,11 +30,16 @@ final class APageAndItsChartShareOneHistoryRead10090Tests: XCTestCase {
         }
         /// Answers every held request.
         static func release() {
+            release(where: { _ in true })
+        }
+        /// Answers the held requests `matching` selects, each body carrying
+        /// `0.<probability>` (default: the request's `hours`).
+        static func release(where matching: (URLRequest) -> Bool, probability: String? = nil) {
             lock.lock()
-            let waiting = held, code = status
-            held = []
+            let waiting = held.filter { matching($0.request) }, code = status
+            held.removeAll { matching($0.request) }
             lock.unlock()
-            for origin in waiting { origin.answer(status: code) }
+            for origin in waiting { origin.answer(status: code, probability: probability) }
         }
 
         override class func canInit(with request: URLRequest) -> Bool { true }
@@ -47,8 +52,8 @@ final class APageAndItsChartShareOneHistoryRead10090Tests: XCTestCase {
         }
         override func stopLoading() {}
 
-        private func answer(status: Int) {
-            let hours = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+        private func answer(status: Int, probability: String?) {
+            let hours = probability ?? URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
                 .queryItems?.first { $0.name == "hours" }?.value ?? "?"
             let isHistory = request.url?.path.hasSuffix("/history") == true
             let code = isHistory ? status : 404
@@ -271,6 +276,77 @@ final class APageAndItsChartShareOneHistoryRead10090Tests: XCTestCase {
         XCTAssertEqual(Origin.requests.count, 2, "a read under another principal must leave the device")
         Origin.release()
         _ = try await (signedOut.value, signedIn.value)
+    }
+
+    // MARK: - An earlier read never replaces a newer cache entry (lane1b C1b on fa4489b5f2)
+
+    private static func isFresh(_ request: URLRequest) -> Bool {
+        URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?
+            .contains { $0.name == "fresh" && $0.value == "true" } == true
+    }
+
+    /// An ordinary read issued before a reconcile pair, landing after the
+    /// pair's fresh read, used to refill the shared key with its older build;
+    /// the next ordinary read within 60 s was then served that build. Its own
+    /// caller still gets its own body (the page refuses it by generation).
+    func testAnEarlierStartedReadLandingLaterLeavesTheNewerBuildInTheCache() async throws {
+        let api = client()
+        let ordinary = read(api)
+        try await awaitRequests(1)
+        let fresh = Task { try await api.fetchFreshEventHistory(id: 4242, hours: 168) }
+        try await awaitRequests(2)
+        Origin.release(where: Self.isFresh, probability: "62")
+        let newer = try await fresh.value
+        XCTAssertEqual(newer.aggregateLine?.last?.homeProbability, 0.62)
+
+        Origin.release(where: { _ in true }, probability: "41")
+        let older = try await ordinary.value
+        XCTAssertEqual(older.aggregateLine?.last?.homeProbability, 0.41, "its own caller still gets its own body")
+
+        let next = try await api.fetchEventHistory(id: 4242, hours: 168)
+        XCTAssertEqual(next.aggregateLine?.last?.homeProbability, 0.62, "the cache keeps the newer build")
+        XCTAssertEqual(Origin.requests.count, 2, "and serves it without a third request")
+    }
+
+    /// The more common overlap (lane1b 1439Z on 9b3893f54a): the earlier-started
+    /// ordinary read lands FIRST and fills the key, then the pair's later-started
+    /// fresh read lands. Ordering a start against the entry's FILL time refused
+    /// the fresh build here and kept the pre-withdrawal body for the next poll.
+    func testAnEarlierStartedReadLandingFirstDoesNotKeepTheEntry() async throws {
+        let api = client()
+        let ordinary = read(api)
+        try await awaitRequests(1)
+        let fresh = Task { try await api.fetchFreshEventHistory(id: 4242, hours: 168) }
+        try await awaitRequests(2)
+        Origin.release(where: { !Self.isFresh($0) }, probability: "41")
+        let older = try await ordinary.value
+        XCTAssertEqual(older.aggregateLine?.last?.homeProbability, 0.41)
+
+        Origin.release(where: Self.isFresh, probability: "62")
+        let newer = try await fresh.value
+        XCTAssertEqual(newer.aggregateLine?.last?.homeProbability, 0.62)
+
+        let next = try await api.fetchEventHistory(id: 4242, hours: 168)
+        XCTAssertEqual(next.aggregateLine?.last?.homeProbability, 0.62, "the later-started build replaces the entry")
+        XCTAssertEqual(Origin.requests.count, 2, "and is served without a third request")
+    }
+
+    /// The guard orders by start, not by kind: a read that started later
+    /// still replaces the entry, so the cache is never pinned to one body.
+    func testALaterStartedReadStillReplacesTheEntry() async throws {
+        let api = client()
+        let first = Task { try await api.fetchFreshEventHistory(id: 4242, hours: 168) }
+        try await awaitRequests(1)
+        Origin.release(where: { _ in true }, probability: "41")
+        _ = try await first.value
+        let second = Task { try await api.fetchFreshEventHistory(id: 4242, hours: 168) }
+        try await awaitRequests(2)
+        Origin.release(where: { _ in true }, probability: "62")
+        _ = try await second.value
+
+        let next = try await api.fetchEventHistory(id: 4242, hours: 168)
+        XCTAssertEqual(next.aggregateLine?.last?.homeProbability, 0.62)
+        XCTAssertEqual(Origin.requests.count, 2)
     }
 
     func testOnlyHistoryReadsShare() async throws {

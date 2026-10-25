@@ -94,6 +94,7 @@ def _build_price_statement(has_book: bool) -> Update:
             FuturesOutcome.id,
             FuturesOutcome.market_id,
             FuturesOutcome.last_updated,
+            func.clock_timestamp().label("database_clock"),
             quote_moved_column(
                 table,
                 (

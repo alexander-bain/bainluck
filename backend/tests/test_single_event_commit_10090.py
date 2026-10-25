@@ -8,8 +8,11 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.sql.dml import Update
 
-from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
+from app.utils.repair_lock_budget import (
+    SET_LOCK_AND_STATEMENT_TIMEOUT_SQL, SET_LOCK_TIMEOUT_SQL, SET_STATEMENT_TIMEOUT_SQL,
+)
 from tests.test_live_blend_refresh import (
+    NormalRecoverySession, is_normal_publication_intent, is_normal_recovery_owner,
     _LockTimeout, _RecordingSession, _event_and_market, _one_event_refresher,
 )
 
@@ -29,6 +32,7 @@ def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None, block
     r._inversion = dict.fromkeys(range(1, count + 1), (float("inf"), False))
     r._last_snapshot_at = dict.fromkeys(range(1, count + 1), 1000)
     sessions, committed, published, commands = [], [], [], []
+    recovery_sessions = []
     second_stamp, release = asyncio.Event(), asyncio.Event()
 
     class Session(_RecordingSession):
@@ -49,12 +53,24 @@ def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None, block
                 if eid == 2:
                     if failure == "lock":
                         raise _LockTimeout("canceling statement due to lock timeout")
+            elif is_normal_publication_intent(statement):
+                commands.append("intent")
             else:
-                commands.append("budget" if statement is SET_LOCK_TIMEOUT_SQL else "read")
+                budgets = (
+                    SET_LOCK_TIMEOUT_SQL, SET_LOCK_AND_STATEMENT_TIMEOUT_SQL,
+                    SET_STATEMENT_TIMEOUT_SQL,
+                )
+                commands.append("budget" if statement in budgets else "read")
             return await super().execute(statement, *args, **kwargs)
 
     @asynccontextmanager
     async def factory():
+        if is_normal_recovery_owner(r):
+            # attempt151: the publication-recovery owner, not a stamp.
+            session = NormalRecoverySession()
+            recovery_sessions.append(session)
+            yield session
+            return
         session = Session()
         sessions.append(session)
         yield session
@@ -80,6 +96,22 @@ def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None, block
     r._read_groups = filtered_read
     r._session_factory = factory
     r._publish = publish
+    publication_ready = set()
+    refresh_batch = r._refresh_batch
+
+    async def track_publication_ready(*args, **kwargs):
+        publish_committed = kwargs.get("publish_committed")
+        if publish_committed is not None:
+            async def queued(frames):
+                # The default ledger settles after COMMIT and before this
+                # callback. Observe the real sender boundary, not the earlier
+                # transaction exit, for tests interrupting queued frames.
+                publication_ready.update(frame["event_id"] for frame in frames)
+                await publish_committed(frames)
+            kwargs["publish_committed"] = queued
+        return await refresh_batch(*args, **kwargs)
+
+    r._refresh_batch = track_publication_ready
     return SimpleNamespace(**locals())
 
 
@@ -324,6 +356,8 @@ async def test_shared_read_and_per_event_command_tradeoff(monkeypatch, count):
         count if fits else 1 + count - FRESH_STAMP_WORKERS
     )
     assert x.commands.count("budget") == x.commands.count("update") == count
+    # attempt151: each committed stamp also commits one publication intent.
+    assert x.commands.count("intent") == count
     assert len(x.sessions) == (count if fits else count + 1)
     assert not any(s.savepoints or s.rollbacks for s in x.sessions)
     assert x.published == x.committed
@@ -522,7 +556,8 @@ async def test_cancel_preserves_both_waiting_committed_groups_and_one_sender(mon
         # Event 1 plus one stamp per fixed worker commit (a queued event
         # rereads its own row, 6d8b493900); then every worker waits on the
         # one sender, so 2..4 form the second waiting group.
-        await settle_until(lambda: sorted(x.committed) == [1, 2, 3, 4])
+        await settle_until(lambda: sorted(x.committed) == [1, 2, 3, 4]
+                           and x.publication_ready == {1, 2, 3, 4})
         task.cancel()
         await asyncio.wait_for(cleaning.wait(), 1)
         task.cancel()

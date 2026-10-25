@@ -128,7 +128,7 @@ final class TheEvolutionCardFitsTheScreenAtEveryTypeSize4445Tests: XCTestCase {
     /// phone has.
     func testTheControlBarNeverAsksForMoreWidthThanThePhoneHas() {
         for ranges in [regularRanges, tournamentRanges] {
-            // `6M` is the other word the widest chip can carry (#7077); it is
+            // `Max` is the other word the widest chip can carry (#7077); it is
             // narrower than `Season`, and measuring both keeps that a measurement.
             for seasonWord in ["Season", EvolutionRangeVocabulary.genericWidestWindow] {
                 for width in [narrowPhone, standardPhone] {

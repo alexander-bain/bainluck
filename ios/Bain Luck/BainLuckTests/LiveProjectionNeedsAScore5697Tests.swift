@@ -191,16 +191,61 @@ final class LiveProjectionNeedsAScore5697Tests: XCTestCase {
             "showsProjection is no longer passed the hero's own hasScore")
     }
 
-    /// #3014's label is retired, not merely unused: the string must be gone from
-    /// the code, or a later reader will wire it back to a branch that can no
-    /// longer fire.
-    func testTheSpelledOutLabelIsGoneFromTheCode() throws {
+    /// #3014's label is retired, not merely unused: `projectionLabel` is gone
+    /// and the legacy hero still draws the abbreviation. #9483 v476 brings the
+    /// words back for ONE place only: the adopted NFL/NBA row's caption, which
+    /// may exist only inside `projectionText`'s gate (so the scoreless-live
+    /// state this file guards can never reach it), beside `projectionText`'s own
+    /// figure. Any other spelling is the spoken label built from that figure.
+    func testTheSpelledOutLabelLivesOnlyInsideTheProjectionGate() throws {
         let code = try eventDetailCode()
-        XCTAssertFalse(code.contains("Projected final"),
-                       "\"Projected final\" is still in the code; #5697 AC2 removed its only population")
         XCTAssertFalse(code.contains("projectionLabel"),
                        "projectionLabel survived; every input it has left returns \"Proj.\"")
         XCTAssertTrue(code.contains("\"Proj. \\("),
                       "the abbreviation the hero still draws is gone too — that is not this ship")
+
+        let label = "Text(\"Projected final\")"
+        XCTAssertEqual(code.components(separatedBy: label).count - 1, 1,
+                       "the visible label has exactly one spelling")
+        let at = try XCTUnwrap(code.range(of: label))
+        let gate = "if let projection = projectionText(event, hasScore: hasScore) {"
+        let opener = try XCTUnwrap(code.range(of: gate, options: .backwards, range: code.startIndex..<at.lowerBound),
+                                   "the label is not under projectionText's gate")
+        XCTAssertFalse(code[opener.upperBound..<at.lowerBound].contains("}"),
+                       "the label left the gate's block: it can draw without an admitted projection")
+        XCTAssertTrue(code[opener.upperBound..<at.lowerBound].contains("let figure = Self.projectionFigure9483(projection)"),
+                      "the caption's figure is not projectionText's own")
+
+        let spoken = try XCTUnwrap(code.range(of: "static func projectionAccessibilityLabel9483("))
+        let spokenEnd = try XCTUnwrap(code.range(of: "struct AdoptedSide9483", range: spoken.upperBound..<code.endIndex))
+        var rest = code
+        rest.removeSubrange(spoken.lowerBound..<spokenEnd.lowerBound)
+        XCTAssertEqual(rest.components(separatedBy: "Projected final").count - 1, 1,
+                       "\"Projected final\" is spelled outside the gated caption and its spoken label")
+    }
+
+    // MARK: - #9483 v476 figure and spoken label (behaviour)
+
+    func testTheAdoptedFigureIsProjectionTextsOwnWithoutTheAbbreviation() throws {
+        let text = try XCTUnwrap(EventDetailView.projectionText(
+            sport: "americanfootball_nfl", status: "live", commenceTime: nil,
+            projectedHome: 32, projectedAway: 34, hasScore: true))
+        let figure = EventDetailView.projectionFigure9483(text)
+        XCTAssertEqual(figure, "34-32")
+        XCTAssertEqual("Proj. " + figure, text, "the figure and the legacy spelling are one value")
+        XCTAssertFalse(figure.contains("Proj."))
+        XCTAssertEqual(EventDetailView.projectionAccessibilityLabel9483(figure: figure, names: ("Texans", "Jaguars")),
+                       "Projected final, Texans 34, Jaguars 32")
+    }
+
+    func testTheAdoptedFigureKeepsAUnitAndTheGateStillRefusesAScorelessLiveGame() {
+        XCTAssertEqual(EventDetailView.projectionFigure9483("Proj. 13-13 games"), "13-13 games")
+        XCTAssertEqual(EventDetailView.projectionAccessibilityLabel9483(figure: "13-13 games", names: ("A", "B")),
+                       "Projected final, 13-13 games")
+        XCTAssertEqual(EventDetailView.projectionFigure9483("34-32"), "34-32", "no prefix, nothing stripped")
+        XCTAssertNil(EventDetailView.projectionText(
+            sport: "americanfootball_nfl", status: "live", commenceTime: nil,
+            projectedHome: 32, projectedAway: 34, hasScore: false),
+            "a live game without a score still shows no projection, so no caption")
     }
 }

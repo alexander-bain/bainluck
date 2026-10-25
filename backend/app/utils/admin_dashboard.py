@@ -165,6 +165,14 @@ async def _query_event_source_coverage(db: AsyncSession) -> list[dict[str, Any]]
 
     Measured on production: >10,300ms (statement timeout, panel dark) -> 1,307ms
     for the full 7-day window.
+
+    #847: Kalshi and Polymarket each reach an event through two channels — a
+    win-prob snapshot and a linked market. An event is covered when EITHER
+    channel holds it, so the count is the per-event OR over the two 1:1 joins.
+    It used to be ``max(snapshot count, market count)``, which under-counts any
+    event set where the channels are disjoint or only partly overlap ({1,2}
+    and {2,3} reported 2, not 3). Summing the counts is wrong the other way:
+    an event in both channels would count twice.
     """
     coverage_q = await db.execute(text("""
         WITH recent_events AS (
@@ -212,10 +220,8 @@ async def _query_event_source_coverage(db: AsyncSession) -> list[dict[str, Any]]
             COUNT(*) FILTER (WHERE wp.espn) AS has_espn_wp,
             COUNT(*) FILTER (WHERE wp.model) AS has_model,
             COUNT(*) FILTER (WHERE wp.mlb) AS has_mlb,
-            COUNT(*) FILTER (WHERE wp.kalshi) AS has_kalshi_wp,
-            COUNT(*) FILTER (WHERE wp.poly) AS has_polymarket_wp,
-            COUNT(*) FILTER (WHERE pm.kalshi) AS has_kalshi_pm,
-            COUNT(*) FILTER (WHERE pm.poly) AS has_polymarket_pm
+            COUNT(*) FILTER (WHERE wp.kalshi OR pm.kalshi) AS has_kalshi,
+            COUNT(*) FILTER (WHERE wp.poly OR pm.poly) AS has_polymarket
         FROM recent_events re
         LEFT JOIN wp ON wp.event_id = re.id
         LEFT JOIN pm ON pm.event_id = re.id
@@ -233,8 +239,8 @@ async def _query_event_source_coverage(db: AsyncSession) -> list[dict[str, Any]]
             "espn_wp": r.has_espn_wp,
             "model": r.has_model,
             "mlb": r.has_mlb,
-            "kalshi": max(r.has_kalshi_wp, r.has_kalshi_pm),
-            "polymarket": max(r.has_polymarket_wp, r.has_polymarket_pm),
+            "kalshi": r.has_kalshi,
+            "polymarket": r.has_polymarket,
             "expected_sources": _expected_sources_for_sport(r.sport_key),
         }
         for r in coverage_q.all()

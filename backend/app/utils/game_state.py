@@ -632,6 +632,60 @@ def _authority_is_correcting_itself(incoming_is_authority: bool) -> bool:
     return bool(incoming_is_authority)
 
 
+#: #6056, 2026-10-21: how long an AUTHORITY score observation outranks a
+#: secondary feed that cannot say where it is in the game. ESPN's live writer
+#: re-stamps the score on every pass that confirms it (#4571), on a 60 s beat
+#: whose measured p95 has run to ~112 s, so while ESPN is alive its stamp is
+#: younger than this. When ESPN goes quiet the stamp ages past it and the
+#: secondary feed's reading lands as it did before.
+UNPLACED_SECONDARY_DEFERS_TO_AUTHORITY_SECONDS = 120.0
+
+
+def _unplaced_secondary_would_regress_a_fresh_authority_score(
+    incoming_is_authority: bool,
+    stored_authority_score_age_seconds: float | None,
+    stored_home: object,
+    stored_away: object,
+    incoming_home: object,
+    incoming_away: object,
+) -> bool:
+    """With no position to compare, does a SECONDARY feed take a point off a
+    score the AUTHORITY observed within the last two minutes?
+
+    Production 2026-10-21, Spurs at Thunder (15195695), saved by ux's reader at
+    390 px: ESPN wrote 31-44 at `8:08 - 2nd Quarter` (stamped 02:33:35Z); price
+    cards served it at :43, :45 and :47; at 02:33:48Z StatPal wrote 30-42 and
+    the card at :49 served 30-42 STILL at `8:08 - 2nd Quarter`. 30-42 was StatPal's
+    own reading since 02:33:02Z: a feed that had not caught up, restoring the
+    score from before ESPN's advance. The period and clock it left untouched
+    say the reading carried no position this module can place, so the
+    comparison below this one returned "no evidence" and the write landed.
+
+    "No evidence" stays the answer about POSITION. This consults one other
+    fact, and only from a secondary feed: the authority saw the higher score
+    moments ago, and nothing in the incoming reading says it is from a later
+    moment. That is the #6251 tie-break's premise (a lower score with no proof
+    of being later is a lagging feed), applied where the positions cannot be
+    compared instead of where they are equal.
+
+    WHAT STILL LANDS: the authority's own corrections (it cannot lag itself);
+    any secondary reading that is placeable and later; any reading that does
+    not lower a side; and every reading once the authority's stamp is older
+    than :data:`UNPLACED_SECONDARY_DEFERS_TO_AUTHORITY_SECONDS`, so a dark
+    authority cannot freeze a real correction for longer than that.
+
+    A negative age (the authority read the score AFTER this feed read its
+    board) is fresh: the incoming reading is the older of the two. ``None``
+    means the row's score was not the authority's or has no stamp, and leaves
+    today's verdict alone.
+    """
+    if incoming_is_authority or stored_authority_score_age_seconds is None:
+        return False
+    if stored_authority_score_age_seconds > UNPLACED_SECONDARY_DEFERS_TO_AUTHORITY_SECONDS:
+        return False
+    return _score_would_regress(stored_home, stored_away, incoming_home, incoming_away)
+
+
 def live_write_would_revert(
     stored_period: str | None,
     stored_clock: str | None,
@@ -643,6 +697,7 @@ def live_write_would_revert(
     incoming_home_score: object = None,
     incoming_away_score: object = None,
     incoming_is_authority: bool = False,
+    stored_authority_score_age_seconds: float | None = None,
 ) -> bool:
     """Is this incoming live observation from EARLIER in the game than the row?
 
@@ -664,13 +719,23 @@ def live_write_would_revert(
     row's position is the stale value (#9020,
     `_authority_scoreboard_is_ahead_of_the_row`). From any other feed the
     strictly-earlier rule is unchanged.
+
+    ``stored_authority_score_age_seconds`` is how long ago the AUTHORITY
+    observed the row's score, or ``None`` when the row's score is not the
+    authority's. It is consulted only when either position is unplaceable —
+    see `_unplaced_secondary_would_regress_a_fresh_authority_score`.
     """
     incoming = live_progress_position(incoming_period, incoming_clock)
-    if incoming is None:
-        return False
     stored = live_progress_position(stored_period, stored_clock)
-    if stored is None:
-        return False
+    if incoming is None or stored is None:
+        return _unplaced_secondary_would_regress_a_fresh_authority_score(
+            incoming_is_authority,
+            stored_authority_score_age_seconds,
+            stored_home_score,
+            stored_away_score,
+            incoming_home_score,
+            incoming_away_score,
+        )
     if incoming < stored:
         return not _authority_scoreboard_is_ahead_of_the_row(
             incoming_is_authority,

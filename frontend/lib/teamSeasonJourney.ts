@@ -11,7 +11,7 @@
  *
  * Side-effect-free + SSR-safe so it is unit-testable.
  */
-import type { ChampionshipPathEntry, TeamFutureItem } from "./api";
+import type { ChampionshipPathEntry, TeamDecidedState, TeamFutureItem } from "./api";
 
 // Tier preference for the single journey line. Lower array index = preferred.
 const JOURNEY_TIER_PRIORITY = [1, 2, 4];
@@ -32,17 +32,35 @@ export function isPlayerDestinationMarket(marketName: string | null | undefined)
 }
 
 /**
+ * #11493 — the grid's verdict a path step or futures row carries, or null.
+ *
+ * Anything outside the two-word contract reads as null, i.e. today's
+ * behaviour: a verdict we do not recognise is not one we may print.
+ */
+export function decidedState(value: unknown): TeamDecidedState | null {
+  return value === "eliminated" || value === "won" ? value : null;
+}
+
+/**
  * The championship-path step a team page leads with: the tier-1 step, else the
- * strongest one — or null when the path is empty or that step has no number.
- * `teamHeadline` and the journey both read the headline through this, so the
- * chart can never name a different question than the number above it.
+ * strongest one — or null when the path is empty or that step has neither a
+ * number nor a verdict. `teamHeadline` and the journey both read the headline
+ * through this, so the chart can never name a different question than the
+ * number above it.
+ *
+ * #11493: a step carrying a verdict is KEPT, never skipped. Skipping it hands
+ * the headline to `pickJourneyFuture`'s fallback, where four MLB award boards
+ * sit at market_tier 1 with no verdict of their own ("NL Hank Aaron Winner"
+ * 0.001) — and the eliminated Braves would lead with "Championship <1%" again,
+ * from a market that is not the title.
  */
 export function headlinePathEntry(
   championshipPath: ChampionshipPathEntry[] | null | undefined,
 ): ChampionshipPathEntry | null {
   const path = championshipPath ?? [];
   const entry = path.find((e) => e.tier === 1) ?? path[0] ?? null;
-  return entry && entry.probability !== null ? entry : null;
+  if (!entry) return null;
+  return entry.probability !== null || decidedState(entry.state) ? entry : null;
 }
 
 export interface JourneyPick {
@@ -50,6 +68,8 @@ export interface JourneyPick {
   outcomeId: number;
   marketName: string;
   probability: number | null;
+  /** #11493 — the grid's verdict on this line's question; print it, not the number. */
+  state: TeamDecidedState | null;
 }
 
 /**
@@ -115,6 +135,7 @@ export function pickJourneyFuture(
       outcomeId: onHeadline.outcome_id,
       marketName: onHeadline.market_name,
       probability: headline.probability,
+      state: decidedState(headline.state),
     };
   }
 
@@ -128,6 +149,13 @@ export function pickJourneyFuture(
     const ra = rank(a.market_tier);
     const rb = rank(b.market_tier);
     if (ra !== rb) return ra - rb;
+    // #11493: within a tier, a row the grid has decided outranks one it has
+    // not. The verdict is only ever stamped on a grid column's own market, so
+    // on a page with no path the eliminated title row leads, not a tier-1
+    // award board at the same 0.001.
+    const da = decidedState(a.state) ? 0 : 1;
+    const db = decidedState(b.state) ? 0 : 1;
+    if (da !== db) return da - db;
     // Tie-break: higher probability wins (the more relevant line for the team).
     return (b.probability ?? 0) - (a.probability ?? 0);
   })[0];
@@ -137,5 +165,6 @@ export function pickJourneyFuture(
     outcomeId: best.outcome_id,
     marketName: best.market_name,
     probability: best.probability,
+    state: decidedState(best.state),
   };
 }

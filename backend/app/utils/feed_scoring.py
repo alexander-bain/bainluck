@@ -9,9 +9,10 @@ from datetime import datetime
 from typing import Any
 
 from app.utils.aggregation import parse_source_entry
-from app.utils.game_state import normalize_live_game_state
+from app.utils.game_state import authority_stoppage_label, normalize_live_game_state
 from app.utils.graded_card import rendered_duel_percents
 from app.utils.prematch_reading import resolve_prematch_reading
+from app.utils.scheduled_start import start_is_from_schedule
 from app.utils.start_placeholder import start_is_tbd
 
 
@@ -426,6 +427,7 @@ def format_event_data(
     prematch_by_source: dict[str, tuple] | None = None,
     hero: Any | None = None,
     stored_tags: Any | None = None,
+    commence_time_source: str | None = None,
 ) -> dict:
     """Build the compact event data dict for the feed response.
 
@@ -436,6 +438,13 @@ def format_event_data(
     ``start_is_tbd`` (#8954 / #8841), the flag ``/api/events`` and the team page
     already serve: without it a feed card prints StatPal's placeholder hour as a
     real clock — "Tue 1:00 PM" on a Wild Card game nobody has scheduled.
+
+    ``commence_time_source`` is the row's stored provenance for that start. It
+    feeds ``start_is_from_schedule`` (#10880), which is true only when a sports
+    schedule provider wrote the start (``app/utils/scheduled_start.py``). The
+    iPhone "Add to Calendar" item is offered only when this is true, because a
+    calendar entry cannot be corrected once it is saved. An omitted argument
+    serves false, which hides the item; it never offers one.
     """
     data: dict = {
         "id": event_id,
@@ -446,6 +455,7 @@ def format_event_data(
         "away_team": away_team,
         "commence_time": commence_time.isoformat(),
         "start_is_tbd": start_is_tbd(stored_tags, commence_time, status),
+        "start_is_from_schedule": start_is_from_schedule(commence_time_source),
         "status": status,
         "home_score": home_score,
         "away_score": away_score,
@@ -470,6 +480,16 @@ def format_event_data(
             espn_data["broadcast"] = broadcast_info
         if espn_data:
             data["espn"] = espn_data
+    elif status == "suspended":
+        # #9208 — the rained-out ALCS Game 4 (15330795, stored `Postponed`) led
+        # /sports as "No result reported · last score 0-0": only a live row got
+        # an `espn` block, so the card's `authorityStoppageLabel(espn.period)`
+        # had nothing to read while its own page said Postponed. ESPN's word
+        # only, through the exact allowlist the team page and typeahead use, so
+        # a live period left on a row that went dark never prints as a stoppage.
+        stoppage = authority_stoppage_label(period)
+        if stoppage:
+            data["espn"] = {"period": stoppage}
 
     if current_home_prob is not None:
         # UX-P114: the card prints BOTH of these side by side, and `feed.py` derives

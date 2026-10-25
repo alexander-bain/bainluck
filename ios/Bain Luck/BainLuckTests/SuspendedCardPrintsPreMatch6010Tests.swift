@@ -155,7 +155,7 @@ final class SuspendedCardPrintsPreMatch6010Tests: XCTestCase {
     func testTheScanCanSeeTheFileItIsAbout() throws {
         let code = try cardCode()
         XCTAssertTrue(
-            code.contains("privatefuncpreGameOddsLabel(forside:TeamSide)"),
+            code.contains("privatefuncpreGameOddsLabel(forside:TeamSide,labelled:Bool=false)"),
             "the scan is not reading EventCardView.swift"
         )
         XCTAssertTrue(

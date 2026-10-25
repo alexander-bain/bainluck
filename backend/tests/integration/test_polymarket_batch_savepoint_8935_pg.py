@@ -18,10 +18,21 @@ a real database-side error (a title longer than ``futures_markets.name``'s
 The payload is Gamma's own bytes (``tests/fixtures/polymarket_leg_dates_8466``),
 copied to three events with distinct event and condition ids, and driven
 through the REAL parser and the REAL ``_process_event_batch``.
+
+#10090 — the batch now COMMITs after each complete event, not once at the end.
+Releasing a savepoint releases no row lock, so a finished event's markets and
+outcomes stayed locked while the writer waited on a later, unrelated event, and
+a fresh live quote for the finished event waited behind it. The guards below
+hold the next event's row from a second connection and write the finished
+event's outcome with ``NOWAIT``; a failed per-event COMMIT (a real deferred
+constraint) rolls back that event and its counts; and a cancellation never
+commits a half-written event, while the events before it stay committed.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import copy
 import json
 import os
@@ -147,3 +158,172 @@ async def test_one_failing_event_rolls_back_only_itself(pg_engine):
     assert await _legs_of(pg_engine, FIRST) == 6
     assert await _legs_of(pg_engine, LAST) == 6
     assert await _legs_of(pg_engine, POISONED) == 0
+
+
+async def _first_outcome_and_last_parent(engine) -> tuple[int, int]:
+    from sqlalchemy import text
+
+    async with engine.connect() as conn:
+        first_oid = (await conn.execute(text(
+            "SELECT o.id FROM futures_outcomes o "
+            "JOIN futures_markets m ON m.id = o.market_id "
+            "WHERE m.source='polymarket' AND m.external_id LIKE :sfx "
+            "ORDER BY o.id LIMIT 1"
+        ), {"sfx": f"0x%{FIRST}"})).scalar_one()
+        last_mid = (await conn.execute(text(
+            "SELECT id FROM futures_markets "
+            "WHERE source='polymarket' AND external_id=:id"
+        ), {"id": LAST})).scalar_one()
+    return first_oid, last_mid
+
+
+async def test_a_finished_event_is_writable_while_the_next_event_waits(pg_engine):
+    """#10090: the live socket's price UPDATE on a finished event's outcome must
+    not wait for an unrelated later event in the same batch to finish.
+
+    A second connection holds the LAST event's parent row, so the writer blocks
+    on it with FIRST already written. FIRST's outcome must then be lockable with
+    NOWAIT and its write must commit, and survive the batch finishing."""
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+
+    raws = [_copy(FIRST), _copy(LAST)]
+    seeded = await _write_batch(raws)
+    assert not seeded["errors"], seeded["errors"]
+    first_oid, last_mid = await _first_outcome_and_last_parent(pg_engine)
+
+    task = None
+    stats = None
+    async with pg_engine.connect() as holder:
+        held = await holder.begin()
+        holder_pid = (await holder.execute(text("SELECT pg_backend_pid()"))).scalar_one()
+        await holder.execute(
+            text("SELECT id FROM futures_markets WHERE id=:id FOR UPDATE"), {"id": last_mid}
+        )
+        task = asyncio.create_task(_write_batch(raws))
+        try:
+            # The writer is provably parked on LAST's row, so FIRST is finished.
+            async with pg_engine.connect() as observer:
+                async with asyncio.timeout(15):
+                    while not (await observer.execute(text(
+                        "SELECT pid FROM pg_stat_activity "
+                        "WHERE :holder = ANY(pg_blocking_pids(pid))"
+                    ), {"holder": holder_pid})).scalars().all():
+                        assert not task.done(), task.exception()
+                        await asyncio.sleep(0.02)
+
+            async with pg_engine.connect() as live_writer:
+                try:
+                    await live_writer.execute(text(
+                        "SELECT id FROM futures_outcomes WHERE id=:id FOR UPDATE NOWAIT"
+                    ), {"id": first_oid})
+                except DBAPIError as exc:
+                    # 55P03 lock_not_available: the finished event is still locked.
+                    pytest.fail(
+                        f"finished event {FIRST} still locked while {LAST} waits: "
+                        f"{getattr(exc.orig, 'sqlstate', None)}"
+                    )
+                await live_writer.execute(text(
+                    "UPDATE futures_outcomes SET current_probability=0.4321 WHERE id=:id"
+                ), {"id": first_oid})
+                await live_writer.commit()
+        finally:
+            await held.rollback()
+            if task is not None:
+                stats = await asyncio.wait_for(task, 15)
+
+    assert not stats["errors"], stats["errors"]
+    assert await _parents(pg_engine) == {FIRST, LAST}
+    assert await _legs_of(pg_engine, FIRST) == 6
+    assert await _legs_of(pg_engine, LAST) == 6
+    async with pg_engine.connect() as conn:
+        survived = (await conn.execute(text(
+            "SELECT current_probability FROM futures_outcomes WHERE id=:id"
+        ), {"id": first_oid})).scalar_one()
+    assert float(survived) == 0.4321
+
+
+async def test_a_failed_event_commit_rolls_back_that_event_and_its_counts(pg_engine):
+    """#10090: a per-event COMMIT can fail on its own (a deferred constraint, a
+    serialization failure). That event is rolled back, reported once, and does
+    not count as processed; the next event still lands."""
+    from sqlalchemy import text
+
+    async with pg_engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE OR REPLACE FUNCTION reject_8935001_at_commit() RETURNS trigger "
+            "LANGUAGE plpgsql AS $$ BEGIN "
+            "RAISE EXCEPTION 'deferred failure for 8935001'; END $$"
+        ))
+        # Deferred: every statement succeeds and only the COMMIT fails.
+        await conn.execute(text(
+            "CREATE CONSTRAINT TRIGGER reject_8935001_at_commit "
+            "AFTER INSERT OR UPDATE ON futures_markets "
+            "DEFERRABLE INITIALLY DEFERRED FOR EACH ROW "
+            f"WHEN (NEW.external_id = '{FIRST}') "
+            "EXECUTE FUNCTION reject_8935001_at_commit()"
+        ))
+    try:
+        stats = await _write_batch([_copy(FIRST), _copy(LAST)])
+    finally:
+        async with pg_engine.begin() as conn:
+            await conn.execute(text(
+                "DROP TRIGGER IF EXISTS reject_8935001_at_commit ON futures_markets"
+            ))
+            await conn.execute(text("DROP FUNCTION IF EXISTS reject_8935001_at_commit()"))
+
+    assert len(stats["errors"]) == 1, stats["errors"]
+    assert stats["errors"][0].startswith(f"{FIRST}: commit failed:"), stats["errors"]
+    assert await _parents(pg_engine) == {LAST}
+    assert await _legs_of(pg_engine, FIRST) == 0
+    assert await _legs_of(pg_engine, LAST) == 6
+    # The counters are LAST's alone: FIRST's attempt was rolled back with it.
+    assert stats["events_processed"] == 1, dict(stats)
+    assert stats["sub_markets_created"] == 6, dict(stats)
+
+
+@pytest.mark.parametrize("finished_first", [False, True], ids=["first-event", "after-a-finished-event"])
+async def test_a_cancelled_batch_commits_no_half_written_event(pg_engine, monkeypatch, finished_first):
+    """#10090: cancellation (a worker shutdown, a timeout) arrives between two
+    statements of one event. That event must not be committed half-written by
+    the per-event COMMIT, the CancelledError must propagate, and an event that
+    had already finished stays committed with all six legs."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    target = LAST if finished_first else FIRST
+    paused = asyncio.Event()
+    original_execute = AsyncSession.execute
+
+    async def pause_after_target_parent(self, statement, *args, **kwargs):
+        result = await original_execute(self, statement, *args, **kwargs)
+        table = getattr(getattr(statement, "table", None), "name", None)
+        if (
+            not paused.is_set()
+            and getattr(statement, "is_insert", False)
+            and table == "futures_markets"
+            and statement.compile().params.get("external_id") == target
+        ):
+            paused.set()
+            await asyncio.Event().wait()  # cancelled here, parent row written
+        return result
+
+    monkeypatch.setattr(AsyncSession, "execute", pause_after_target_parent)
+    raws = [_copy(FIRST)] + ([_copy(LAST)] if finished_first else [])
+    task = asyncio.create_task(_write_batch(raws))
+    try:
+        await asyncio.wait_for(paused.wait(), 15)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    if finished_first:
+        assert await _parents(pg_engine) == {FIRST}
+        assert await _legs_of(pg_engine, FIRST) == 6
+    else:
+        assert await _parents(pg_engine) == set()
+    assert await _legs_of(pg_engine, LAST) == 0

@@ -76,7 +76,7 @@ export default function DesktopNav() {
   ];
 
   return (
-    <nav className="hidden md:flex items-center gap-1" aria-label="Main navigation">
+    <nav className="hidden md:flex items-center gap-1 shrink-0" aria-label="Main navigation">
       {tabs.slice(0, 2).map((tab) => (
         <Link
           key={tab.href}
@@ -90,7 +90,7 @@ export default function DesktopNav() {
               });
             }
           }}
-          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+          className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 transition-colors ${
             tab.isActive
               ? "text-accent-brand bg-accent-brand/10"
               : "text-text-muted hover:text-text-secondary hover:bg-surface-elevated"
@@ -101,14 +101,14 @@ export default function DesktopNav() {
       ))}
 
       {/* Browse dropdown */}
-      <div ref={browseRef} className="relative">
+      <div ref={browseRef} className="relative shrink-0">
         <button
           ref={browseButtonRef}
           onClick={() => setBrowseOpen(!browseOpen)}
           onMouseEnter={() => setBrowseOpen(true)}
           aria-expanded={browseOpen}
           aria-controls={browseOpen ? "desktop-browse-panel" : undefined}
-          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 ${
+          className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 transition-colors flex items-center gap-1 ${
             isBrowseActive
               ? "text-accent-brand bg-accent-brand/10"
               : "text-text-muted hover:text-text-secondary hover:bg-surface-elevated"
@@ -177,7 +177,7 @@ export default function DesktopNav() {
               });
             }
           }}
-          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+          className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 transition-colors ${
             tab.isActive
               ? "text-accent-brand bg-accent-brand/10"
               : "text-text-muted hover:text-text-secondary hover:bg-surface-elevated"

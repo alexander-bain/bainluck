@@ -45,6 +45,33 @@ def _record_rendered_market_ids(rc, page: str, *payloads) -> None:
         logger.debug("category served-ids record failed for %s", page, exc_info=True)
 
 
+def _record_grid_market_ids(rc, slug: str, payload) -> None:
+    """#11251: record which futures markets this championship grid just published.
+
+    The grids had no price path for an existing Polymarket row past the poll's
+    newest-2,000 window. On 2026-10-19 seven of the eight Polymarket NFL division
+    markets on `/playoffs/nfl` had not been written since 10-16 16:37Z: the
+    sweep's value arm orders by volume and its Polymarket wall ran out above
+    them, and the sunk-event rotation laps far-dated rows about every 2.5 days.
+    The Division column blends that mark, so a 2.5-day-old 75.5% moved it.
+    Publishing under the category key puts the grid's markets on the sweep's
+    category-page arm (by id, its own clock). Never raises: a failure here must
+    not cost the league its warm.
+    """
+    try:
+        from app.utils.category_served_markets import (
+            PLAYOFF_GRID_PAGE_PREFIX,
+            market_ids_in_playoff_grid,
+            record_category_served_market_ids,
+        )
+
+        record_category_served_market_ids(
+            rc, f"{PLAYOFF_GRID_PAGE_PREFIX}{slug}", market_ids_in_playoff_grid(payload)
+        )
+    except Exception:
+        logger.debug("grid served-ids record failed for %s", slug, exc_info=True)
+
+
 async def _precompute_politics():
     """Build the politics response and cache it.
 
@@ -2052,6 +2079,7 @@ async def _precompute_grids(report: dict | None = None):
                     cache_key = f"bainluck:category:playoffs:{slug}"
                     rc.setex(cache_key, 3600, payload)
                     rc.setex(f"{cache_key}:stale", 86400, payload)
+                    _record_grid_market_ids(rc, slug, result)
                     warmed.append(slug)
                     leagues[slug] = {
                         "outcome": "ok",

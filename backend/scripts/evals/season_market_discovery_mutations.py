@@ -65,9 +65,9 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         "M2",
         ROUTE,
         "never publish — every reader is the first reader, forever",
-        """        if not debug:
-            _smd.write(event_sport_key, event_is_finished, season_market_ids)""",
-        """        pass""",
+        """            if not debug:
+                _smd.write(event_sport_key, event_is_finished, season_market_ids)""",
+        """            pass""",
     ),
     (
         "M3",
@@ -80,21 +80,21 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         "M4",
         ROUTE,
         "let debug publish — the debug reader's build becomes everyone's answer",
-        """        if not debug:
-            _smd.write""",
-        """        if True:
-            _smd.write""",
+        """            if not debug:
+                _smd.write""",
+        """            if True:
+                _smd.write""",
     ),
     (
         "M5",
         ROUTE,
         "cache the RAW rows, not the tier-capped list — an extra market reaches the page",
-        """        if not debug:
-            _smd.write(event_sport_key, event_is_finished, season_market_ids)""",
-        """        if not debug:
-            _smd.write(
-                event_sport_key, event_is_finished, [r.id for r in _tier_rows]
-            )""",
+        """            if not debug:
+                _smd.write(event_sport_key, event_is_finished, season_market_ids)""",
+        """            if not debug:
+                _smd.write(
+                    event_sport_key, event_is_finished, [r.id for r in _tier_rows]
+                )""",
     ),
     (
         "M6",

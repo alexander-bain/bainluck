@@ -102,6 +102,8 @@ final class ALiveHeroCarriesTheStoryNotTheContext8320Tests: XCTestCase {
             "ifcarriesContext,letrecord=event.homeTeamData?.record",
             "ifcarriesContext,letcaption=SinceOpenCaption.caption(",
             "ifcarriesContext,letprojection=projectionText(event,hasScore:hasScore)",
+            // #9483 v476 — the adopted NFL/NBA header's broadcast + start line.
+            "ifcarriesContext,letcontext=adoptedPregameContext9483(event)",
         ] {
             XCTAssertTrue(hero.contains(gated), "the hero no longer gates: \(gated)")
         }
@@ -132,7 +134,7 @@ final class ALiveHeroCarriesTheStoryNotTheContext8320Tests: XCTestCase {
                                to: "staticfuncgameMarketsHaveContent(")
         let chart = try XCTUnwrap(content.range(of: "OddsChartView(eventId:"))
         let segments = try XCTUnwrap(content.range(of: "GameSegmentsView("))
-        let hero = try XCTUnwrap(content.range(of: "heroSection(event)"))
+        let hero = try XCTUnwrap(content.range(of: "heroSection(vm.headline(event))"))
         XCTAssertLessThan(hero.lowerBound, chart.lowerBound)
         XCTAssertLessThan(chart.lowerBound, segments.lowerBound,
                           "the inning table stands between the hero and the chart again")

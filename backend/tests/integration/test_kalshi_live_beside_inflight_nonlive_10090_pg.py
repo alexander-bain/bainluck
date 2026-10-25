@@ -268,6 +268,7 @@ def _rig(engine, side, ids, source=None):
     from app.tasks.base import get_task_session
     from app.tasks.kalshi import _kalshi_yes_probability
     from app.tasks.live_blend_refresh import LiveBlendRefresher, event_ids_for_outcomes
+    from app.utils.kalshi_primary_quote import PrimaryQuoteCustody
     from app.utils.futures_rank import rerank_market_fields_stmt
     from app.utils.kalshi_price_statement import (
         KALSHI_PRICE_STATEMENTS, kalshi_price_parameters,
@@ -336,6 +337,9 @@ def _rig(engine, side, ids, source=None):
         event_ids_for_outcomes=event_ids_for_outcomes,
         _kalshi_yes_probability=_kalshi_yes_probability,
         price_buffer={}, buffer_lock=asyncio.Lock(), input_marks={},
+        # #10090: the worker's primary-quote custody (bundled pair).
+        primary_quote_custody=PrimaryQuoteCustody(),
+        observation_continuity={}, game_clients=[],
         market_id_by_outcome=market_of, event_id_by_outcome=event_of,
         tail_receipts=_Receipts(), open_contract_outcome_ids=set(),
         blend_refresher=refresher, non_blend_outcome_ids=set(),
@@ -351,7 +355,8 @@ def _rig(engine, side, ids, source=None):
         flush_wake=asyncio.Event(), admission_wake=asyncio.Event(),
     )
     tree = ast.parse(source or SOURCE.read_text())
-    wanted = ("flush_prices", "drain_prices", "handle_ticker", "_parse_dollar")
+    wanted = ("flush_prices", "drain_prices", "handle_ticker", "_parse_dollar",
+              "steady_book_signature", "observation_signature", "note_observation_continuity")
     nodes = [n for n in ast.walk(tree)
              if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef)) and n.name in wanted]
     assert sorted(n.name for n in nodes) == sorted(wanted)
@@ -825,3 +830,186 @@ async def test_a_bridged_live_winner_is_written_beside_without_a_regular_ticker(
     assert stamp is not None and stamp[0] < BOUND_S and stamp[1] == 0.30, (stamp, record.stamps)
     assert ns["stats"]["open_contract_prices_written"] >= 2
     _assert_settled(ns, await _stored(side), ids, 0.65)
+
+
+# ── #10090 Root attempt26: the helper also serves beside a LIVE phase ─────────
+#
+# Two live games. The "pregame" fixture event joins `live_event_ids`, so its
+# market's phase is a live phase and its legs are live input. Marks carry the
+# consumer's `seq` (buffer order), which the helper's newest-first order reads.
+
+
+class _SeqReceipts(_Receipts):
+    def __init__(self):
+        self.seq = 0
+
+    def note_input(self, _event_id, outcome_id, prob, _kind):
+        self.seq += 1
+        return SimpleNamespace(seq=self.seq, outcome_id=outcome_id, probability=prob)
+
+
+def _two_live_games(engine, side, ids, source=None):
+    ns, record = _rig(engine, side, ids, source=source)
+    ns["live_event_ids"].add(ids["events"]["pregame"])
+    ns["tail_receipts"] = _SeqReceipts()
+    return ns, record
+
+
+def _served(record, market, leg, since, value):
+    """(seconds from ``since``, every committed row) at ``value``'s first publication."""
+    hit = _first(record.publications,
+                 lambda p: p[0] >= since and p[1] == market and p[2][leg] == value)
+    return None if hit is None else (round(hit[0] - since, 3), hit[2])
+
+
+async def _committed(side, leg, value):
+    return (await _stored(side))[leg][0] == value
+
+
+async def _beside_a_live_phase(ns, record, side, ids):
+    """Game P's live phase sleeps in its UPDATE; game L's quote arrives."""
+    legs, markets = ids["legs"], ids["markets"]
+    await _block(side, markets["pregame"], SLOW_S)
+    async with _consumer(ns):
+        await _tick(ns, "p1", 0.79, 0.81)
+        await _wait_until(lambda: _sleeping(side), 5)
+        arrived = time.monotonic()
+        await _tick(ns, "home", 0.64, 0.66)
+        await _wait_until(lambda: _committed(side, legs["p1"], 0.80), SLOW_S + 5)
+        released = time.monotonic()
+    served = _served(record, markets["live"], legs["home"], arrived, 0.65)
+    print("EVIDENCE beside-live: home", served and served[0],
+          f"p1 committed {released - arrived:.2f}s after home arrived")
+    return served, released - arrived
+
+
+async def test_a_live_quote_is_written_beside_another_live_games_slow_transaction(pg):
+    """Root attempt26: the helper was started only beside a NON-live phase, so a
+    live game's quote waited out another live game's slow transaction."""
+    engine, side, ids = pg
+    legs = ids["legs"]
+    ns, record = _two_live_games(engine, side, ids)
+    served, held = await _beside_a_live_phase(ns, record, side, ids)
+    assert held >= SLOW_S / 2, "game P's live transaction was not slow"
+    assert served is not None and served[0] < BOUND_S, (served, record.publications)
+    # Served while game P's row was still uncommitted.
+    assert served[1][legs["p1"]] == 0.45, served
+    assert ns["stats"]["live_beside"] == 1
+    stored = await _stored(side)
+    assert stored[legs["p1"]][0] == 0.80 and stored[legs["home"]][0] == 0.65
+    assert all(rank == field for _p, rank, field in stored.values()), stored
+    assert not ns["price_buffer"] and not ns["prices"].lock_retry_until
+    assert ns["stats"]["errors"] == 0 and ns["stats"]["final_flush_dropped"] == 0
+
+
+async def test_strawman_without_a_helper_beside_live_phases_the_quote_waits(pg):
+    """The same case on the earlier start condition (non-live phases only)."""
+    engine, side, ids = pg
+    text_ = SOURCE.read_text()
+    start = "beside is None and live_event_ids and not final_drain\n                ):"
+    assert text_.count(start) == 1
+    old = start.replace("\n                ):", "\n                    and not phase_live\n                ):")
+    ns, record = _two_live_games(engine, side, ids, source=text_.replace(start, old))
+    served, _held = await _beside_a_live_phase(ns, record, side, ids)
+    assert served is not None and served[0] >= BOUND_S, served
+    assert served[1][ids["legs"]["p1"]] == 0.80, served
+    assert ns["stats"]["live_beside"] == 0
+
+
+async def _older_slow_newer_fast(ns, record, side, ids):
+    """One helper snapshot holds game P's older quote (its UPDATE sleeps) and
+    game L's newer quote, both arriving inside a slow non-live transaction."""
+    legs, markets = ids["legs"], ids["markets"]
+    await _block(side, markets["pregame"], 2.0)
+    async with _consumer(ns):
+        x1_committed = await _in_flight(ns, side, ids)
+        arrived = time.monotonic()
+        # No await yields between the two: one buffer, one helper snapshot.
+        await _tick(ns, "p1", 0.79, 0.81)
+        await _tick(ns, "home", 0.64, 0.66)
+        await _wait_until(x1_committed, SLOW_S + 5)
+    served = _served(record, markets["live"], legs["home"], arrived, 0.65)
+    print("EVIDENCE newest-first: home", served and served[0])
+    return served
+
+
+async def test_the_helper_serves_the_newest_whole_event_first(pg):
+    engine, side, ids = pg
+    legs = ids["legs"]
+    ns, record = _two_live_games(engine, side, ids)
+    served = await _older_slow_newer_fast(ns, record, side, ids)
+    assert served is not None and served[0] < BOUND_S, (served, record.publications)
+    # Before game P's older, slower quote and before the non-live commit.
+    assert served[1][legs["p1"]] == 0.45 and served[1][legs["x1"]] == 0.30, served
+    assert ns["stats"]["live_beside"] == 2
+    stored = await _stored(side)
+    assert stored[legs["p1"]][0] == 0.80 and stored[legs["home"]][0] == 0.65
+    assert not ns["price_buffer"]
+    assert ns["stats"]["errors"] == 0 and ns["stats"]["final_flush_dropped"] == 0
+
+
+async def test_strawman_in_first_seen_order_the_newer_quote_waits_behind_the_older(pg):
+    engine, side, ids = pg
+    text_ = SOURCE.read_text()
+    order = "        if beside is not None:\n            # The main writer keeps oldest-first"
+    assert text_.count(order) == 1
+    ns, record = _two_live_games(
+        engine, side, ids,
+        source=text_.replace(order, "        if False:\n            # The main writer keeps oldest-first"),
+    )
+    served = await _older_slow_newer_fast(ns, record, side, ids)
+    assert served is not None and served[0] >= BOUND_S, served
+    assert served[1][ids["legs"]["p1"]] == 0.80, served
+
+
+async def _owner_joins_mid_helper_phase(ns, record, side, ids):
+    """The owner's non-live phase commits while its helper is inside game P's
+    slow phase, with game L's quote still untouched in the same snapshot."""
+    legs, markets = ids["legs"], ids["markets"]
+    await _block(side, markets["nonlive"], 1.0)
+    await _block(side, markets["pregame"], 2.5)
+    async with _consumer(ns):
+        await _tick(ns, "x1", 0.79, 0.81)
+        await _wait_until(lambda: _sleeping(side), 5)
+        # Older first: newest-first puts game P's slow phase ahead of game L.
+        await _tick(ns, "home", 0.64, 0.66)
+        await _tick(ns, "p1", 0.79, 0.81)
+        await _wait_until(lambda: _committed(side, legs["p1"], 0.80), 10)
+        await _wait_until(lambda: _committed(side, legs["home"], 0.65), 5)
+    # Anchored on p1's own publication, not on when the poll noticed its
+    # commit: the next flush can publish home inside that poll's step.
+    p1_pub = _first(record.publications,
+                    lambda p: p[1] == markets["pregame"] and p[2][legs["p1"]] == 0.80)
+    served = None if p1_pub is None else _served(
+        record, markets["live"], legs["home"], p1_pub[0], 0.65)
+    print("EVIDENCE cooperative-stop: home after p1", served and served[0],
+          "beside", ns["stats"]["live_beside"])
+    return served
+
+
+async def test_a_joining_owner_leaves_the_helpers_untouched_events_to_the_next_flush(pg):
+    """Root attempt26 cooperative stop: once the owner joins, the helper ends
+    its in-flight whole event and starts no other; the untouched one stays
+    buffered and the next flush writes it — nothing is cancelled or lost."""
+    engine, side, ids = pg
+    legs = ids["legs"]
+    ns, record = _two_live_games(engine, side, ids)
+    served = await _owner_joins_mid_helper_phase(ns, record, side, ids)
+    assert ns["stats"]["live_beside"] == 1  # p1 only: home was the next flush's
+    assert served is not None and served[0] < BOUND_S, (served, record.publications)
+    stored = await _stored(side)
+    assert stored[legs["x1"]][0] == 0.80
+    assert stored[legs["p1"]][0] == 0.80 and stored[legs["home"]][0] == 0.65
+    assert all(rank == field for _p, rank, field in stored.values()), stored
+    assert not ns["price_buffer"] and not ns["prices"].lock_retry_until
+    assert ns["stats"]["errors"] == 0 and ns["stats"]["final_flush_dropped"] == 0
+
+
+async def test_strawman_without_the_stop_the_helper_runs_on_through_its_snapshot(pg):
+    engine, side, ids = pg
+    text_ = SOURCE.read_text()
+    stop = "                if beside_stopping is not None and beside_stopping():\n                    break\n"
+    assert text_.count(stop) == 1
+    ns, record = _two_live_games(engine, side, ids, source=text_.replace(stop, ""))
+    await _owner_joins_mid_helper_phase(ns, record, side, ids)
+    assert ns["stats"]["live_beside"] == 2

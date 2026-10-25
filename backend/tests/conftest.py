@@ -384,3 +384,16 @@ def unavailable_body(result) -> dict:
     )
     assert result.status_code == 503
     return json.loads(bytes(result.body))
+
+
+@pytest.fixture(autouse=True)
+def isolated_dnpl_process_registry():
+    """Each test has its own worker state and asyncio-lock lifetime.
+
+    DNPL stays enabled by default; reset only process-local observations and
+    claims so a prior test's event loop cannot own the next test's lock.
+    """
+    from app.utils.blend_preview import reset_registry_for_tests
+    reset_registry_for_tests()
+    yield
+    reset_registry_for_tests()

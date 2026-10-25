@@ -519,6 +519,59 @@ class _Result:
         return None if self._scalar is None else (self._scalar, self._rev)
 
 
+def is_normal_publication_intent(statement) -> bool:
+    """#10090 attempt151: the stamp's durable publication intent.
+
+    One INSERT into `owed_chart_points` under `<source>_price_publish`,
+    written in the committed stamp's own transaction after its UPDATE.
+    Statement-classifying rigs count it as its own kind, never as a read.
+    """
+    from sqlalchemy.sql.dml import Insert
+
+    if not isinstance(statement, Insert) or statement.table.name != "owed_chart_points":
+        return False
+    return str(statement.compile().params.get("source", "")).endswith("_price_publish")
+
+
+class NormalRecoverySession:
+    """#10090 attempt151: the publication-recovery owner's own session.
+
+    Every publication starts one recovery opportunity, awaited by nothing: it
+    settles acknowledged intents, then runs a bounded discovery over
+    `owed_chart_points` under `<source>_price_publish`. Rigs that hand out
+    sessions by position or count statements per session give that owner
+    this one instead (an empty intent table) and count it as its own kind,
+    never as a stamp's or a chart point's.
+    """
+
+    def __init__(self):
+        self.statements = []
+
+    async def execute(self, statement, *args, **kwargs):
+        self.statements.append(statement)
+        return _Result()
+
+
+async def _join_run_history(refresher):
+    """Join the run's own chart attempt, then close without a final one.
+
+    `drain_history` forces one final attempt whenever the run's attempt has
+    already finished. attempt151's publication-recovery owner is joined first
+    inside it, which gives a failing in-run attempt time to finish, so a
+    drain would add the shutdown retry to the in-run cost these cases pin.
+    """
+    await refresher._history_task
+    await refresher._close_normal_recovery()
+
+
+def is_normal_recovery_owner(refresher) -> bool:
+    """True inside `refresher`'s publication-recovery task."""
+    import asyncio
+
+    task = getattr(refresher, "_normal_task", None)
+    return task is not None and asyncio.current_task() is task
+
+
 class _RecordingSession:
     """A session whose UPDATE ... RETURNING hands back a chosen dict.
 
@@ -548,6 +601,14 @@ class _RecordingSession:
         if isinstance(statement, Update):
             self.updates.append(statement)
             return _Result(scalar=self._returned, rev=self.returned_rev)
+        columns = list(getattr(statement, "selected_columns", ()))
+        if [(getattr(getattr(c, "table", None), "name", None), getattr(c, "name", None))
+                for c in columns] == [("events", "id")]:
+            # #10090 — a failed chart point's retry asks whether its event row
+            # still exists; answered from the events this session holds.
+            wanted = set(statement.compile().params.values())
+            found = [event.id for _market, event in self._market_rows if event.id in wanted]
+            return _Result(scalar=found[0] if found else None)
         self._selects += 1
         from app.tasks.live_blend_refresh import (
             PREPARED_EVENT_FIELDS, PREPARED_MARKET_FIELDS, PREPARED_OUTCOME_FIELDS,
@@ -556,12 +617,24 @@ class _RecordingSession:
         column = columns[len(PREPARED_MARKET_FIELDS) + PREPARED_EVENT_FIELDS.index(
             "win_probability_sources"
         )] if columns else None
-        source = column.element.right.value if hasattr(column, "element") else None
+        from copy import deepcopy
+        from sqlalchemy.sql.elements import Cast, Null
+        null_source = (hasattr(column, "element") and isinstance(column.element, Cast)
+                       and isinstance(column.element.clause, Null))
+        source = (column.element.right.value
+                  if hasattr(getattr(column, "element", None), "right") else None)
+        preview = [c.name for c in columns[-3:]] == [
+            "preview_sources", "preview_rev", "preview_context_at",
+        ]
+        from datetime import datetime, timezone
+        read_at = datetime.now(timezone.utc)
 
         def field(obj, key):
             raw = getattr(obj, key, None)
+            if key == "win_probability_sources" and null_source:
+                return None
             if key == "win_probability_sources" and source is not None:
-                return raw.get(source) if isinstance(raw, dict) else None
+                return deepcopy(raw.get(source)) if isinstance(raw, dict) else None
             return raw
 
         # The read admits only the events it names (`event_id IN ...`), as the
@@ -579,7 +652,8 @@ class _RecordingSession:
                     (event, PREPARED_EVENT_FIELDS),
                     (outcome, PREPARED_OUTCOME_FIELDS),
                 ) for key in fields
-            )
+            ) + ((deepcopy(getattr(event, "win_probability_sources", None)),
+                  getattr(event, "win_probability_sources_rev", None), read_at) if preview else ())
             for market, event in self._market_rows
             if wanted is None or event.id in wanted
             for outcome in (
@@ -916,11 +990,15 @@ class TestTheHeadlineDoesNotWaitForItsChartPoint:
         })
         session.returned_rev = 42
         r, _ = _one_event_refresher(monkeypatch, session)
+        _refuse_redis_without_a_socket(monkeypatch)
         log = []
         sent = {eid: asyncio.Event() for eid in range(1, count + 1)}
 
         @asynccontextmanager
         async def factory():
+            if is_normal_recovery_owner(r):
+                yield NormalRecoverySession()
+                return
             if chart_open_fails and any(entry[0] == "frame" for entry in log):
                 raise RuntimeError("no connection for the chart point")
             log.append(("open",))
@@ -978,7 +1056,7 @@ class TestTheHeadlineDoesNotWaitForItsChartPoint:
     ):
         r, log = self._rig(monkeypatch, 1, chart_open_fails=True)
         await r.refresh([1])
-        await r.drain_history()
+        await _join_run_history(r)
 
         assert log == [("open",), ("commit",), ("frame", 1)]
         assert r.stats["stamped"] == 1 and r._last_written_value == {1: 0.9}
@@ -1022,7 +1100,7 @@ class TestTheChartTransactionCarriesItsOwnLockBudget:
 
         @asynccontextmanager
         async def factory():
-            yield next(sessions)
+            yield NormalRecoverySession() if is_normal_recovery_owner(r) else next(sessions)
 
         async def write_point(session, **kw):
             seen.append((
@@ -1091,7 +1169,7 @@ class TestTheChartTransactionCarriesItsOwnLockBudget:
 
         @asynccontextmanager
         async def factory():
-            yield next(sessions)
+            yield NormalRecoverySession() if is_normal_recovery_owner(r) else next(sessions)
 
         async def write_point(session, **kw):
             points.append(kw["event_id"])
@@ -1132,6 +1210,11 @@ class TestSingleEventStampTransaction:
         })
         session.returned_rev = 42
         r, _ = _one_event_refresher(monkeypatch, session)
+        # This chart-transaction control has no Redis. Fail that dependency
+        # deterministically rather than introducing network retry scheduling.
+        def unavailable_preview_client():
+            raise ConnectionError("offline chart transaction control")
+        monkeypatch.setattr(r, "_client", unavailable_preview_client)
         monkeypatch.setattr("app.tasks.live_blend_refresh.time.monotonic", lambda: 1000.0)
         if not snapshot_due:
             r._last_snapshot_at = {event_id: 999.0 for event_id in range(1, count + 1)}
@@ -1145,6 +1228,9 @@ class TestSingleEventStampTransaction:
 
         @asynccontextmanager
         async def factory():
+            if is_normal_recovery_owner(r):
+                yield NormalRecoverySession()
+                return
             yield session
             committed.append(True)
 
@@ -1218,6 +1304,9 @@ class TestSingleEventStampTransaction:
 
         @asynccontextmanager
         async def factory():
+            if is_normal_recovery_owner(r):
+                yield NormalRecoverySession()
+                return
             yield session
             committed.append(True)
 
@@ -1237,7 +1326,7 @@ class TestSingleEventStampTransaction:
 
         monkeypatch.setattr(r, "_publish", publish)
         await r.refresh(list(range(1, count + 1)))
-        await r.drain_history()
+        await _join_run_history(r)
         assert r.stats["stamped"] == count
         assert session.rollbacks == 0
         assert session.savepoints == (
@@ -1271,6 +1360,29 @@ class _LockedRowSession(_RecordingSession):
         return await super().execute(statement, *args, **kwargs)
 
 
+def _refuse_redis_without_a_socket(monkeypatch):
+    """The ledger is always on, so a refresh reaches Redis. This rig has none.
+
+    Hand the refresher a client whose connections refuse at once, as an absent
+    local Redis does, but with no DNS lookup, no socket and no retry backoff.
+    A real lookup of ``localhost`` ran out a 0.25 s wait on CI (#11485)."""
+    import redis.asyncio as aioredis
+    from redis.backoff import NoBackoff
+    from redis.retry import Retry
+
+    class _Refused(aioredis.Connection):
+        async def _connect(self):
+            raise ConnectionRefusedError(61, "no Redis in the unit rig")
+
+    def client():
+        pool = aioredis.ConnectionPool(
+            connection_class=_Refused, retry=Retry(NoBackoff(), 0),
+        )
+        return aioredis.Redis(connection_pool=pool, retry=Retry(NoBackoff(), 0))
+
+    monkeypatch.setattr("app.tasks.redis_state.get_async_redis_client", client)
+
+
 def _one_event_refresher(monkeypatch, session, **kwargs):
     """A real refresher over one live event whose only market reads 0.9."""
     from contextlib import asynccontextmanager
@@ -1278,7 +1390,7 @@ def _one_event_refresher(monkeypatch, session, **kwargs):
 
     @asynccontextmanager
     async def _fake_session():
-        yield session
+        yield NormalRecoverySession() if is_normal_recovery_owner(r) else session
 
     monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
     monkeypatch.setattr(

@@ -1,0 +1,30 @@
+{
+ "source": "#2644 retained venue bytes for futures_markets 109548 / KXOSCARSONG-26. Live pair: shopper pass 0396 (artifacts/shopper/pass-0396/kalshi-event.json + kalshi-markets.json, written 2026-10-13T21:48:05Z/21:48:09Z; path and query verbatim from that pass's #2644 comment of 2026-10-13T21:49:30Z, host not recorded there, so the KalshiAPIService base host is named). Archive: Measurement 2026-10-15T21:15:30Z (artifacts/calibration-2644-oscar-archive-20261015/archive.json, result.json requests[0]). HTTP 200, no retries. Copied byte for byte; every hash equals the hash of its retained original.",
+ "events": [
+  {
+   "id": 109548,
+   "event_ticker": "KXOSCARSONG-26",
+   "classification": "settled"
+  }
+ ],
+ "responses": [
+  {
+   "file": "live_listing.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/markets?event_ticker=KXOSCARSONG-26&limit=50",
+   "status": 200,
+   "sha256": "50699ea1db13415ea46ec367dcfa58decd9660083271c5dc061561f38337fbac"
+  },
+  {
+   "file": "archive.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/historical/markets?event_ticker=KXOSCARSONG-26&limit=200",
+   "status": 200,
+   "sha256": "68c6ff4feb54e461e6d369494236c9f51e867de869b6243a3865f2f53af6722e"
+  }
+ ],
+ "identity": {
+  "file": "event.json",
+  "url": "https://api.elections.kalshi.com/trade-api/v2/events/KXOSCARSONG-26",
+  "status": 200,
+  "sha256": "bd97a8cf3b905cf898fc77aef8c1582e97a0b512c8c6704ea8eb2ab78e6456ad"
+ }
+}

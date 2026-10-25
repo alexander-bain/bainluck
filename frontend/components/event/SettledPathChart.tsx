@@ -17,6 +17,7 @@ import useSWR from "swr";
 import { fetchFuturesHistory } from "@/lib/api";
 import { historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
 import type { FuturesOutcomeHistory } from "@/lib/types";
+import { isSettlementPoint, splitSettlementPoints } from "@/lib/chartSettlementPoints";
 import { FuturesChart } from "@/components/FuturesChart";
 import ChartRangeChips from "@/components/event/ChartRangeChips";
 import {
@@ -38,11 +39,14 @@ interface SettledPathChartProps {
   championName?: string | null;
 }
 
-/** Last non-null probability of a series (its "current"/final value). */
+/** Last non-null probability of a series (its "current"/final value). #10955:
+ *  a settlement point is the result, not a reading — skipped, so evidenced
+ *  losers rank by their last real price instead of tying at 0. */
 function lastProbOf(o: FuturesOutcomeHistory): number {
   for (let i = o.history.length - 1; i >= 0; i--) {
-    const p = o.history[i]?.probability;
-    if (p != null) return p;
+    const point = o.history[i];
+    if (!point || isSettlementPoint(point)) continue;
+    if (point.probability != null) return point.probability;
   }
   return -1;
 }
@@ -72,7 +76,9 @@ export default function SettledPathChart({
     [data],
   );
   const hasHistory = outcomes.some(
-    (o) => o.history.filter((p) => p.probability != null).length >= 2,
+    // #10955 (U1): a settlement point is the result, not a recorded reading,
+    // so it never makes up the two readings a drawable history needs.
+    (o) => o.history.filter((p) => p.probability != null && !isSettlementPoint(p)).length >= 2,
   );
 
   const startMs = startDate ? new Date(startDate).getTime() : null;
@@ -89,20 +95,38 @@ export default function SettledPathChart({
   // pick the visible set = champion + the next strongest lines. FuturesChart
   // filters by the selected ids preserving `plotted` order, so the winner leads
   // the legend and can never be pushed out by an arbitrary top-5 slice. When the
-  // winner can't be named/matched, plotted === windowed and the default applies.
+  // winner can't be named/matched and no served grade names one, plotted ===
+  // windowed and the default applies.
   const { plotted, selected } = useMemo(() => {
     const target = championName?.trim().toLowerCase();
     const champ = target
       ? windowed.find((o) => (o.name ?? "").trim().toLowerCase() === target)
       : undefined;
-    if (!champ) return { plotted: windowed, selected: undefined as Set<number> | undefined };
+    if (!champ) {
+      // #10955 (350): no name matched, but the served grade can still name the
+      // winner. The server appends the graded winner AFTER its top 8, so the
+      // default first-5 could leave it off. Evidenced winners lead, then the
+      // strongest real readings. The grade comes from the served legs (a range
+      // choice never changes who won). No evidenced win: the default applies.
+      const { results } = splitSettlementPoints(outcomes);
+      const won = (o: FuturesOutcomeHistory) => results.get(o.outcome_id) === "won";
+      const winners = windowed.filter(won);
+      if (winners.length === 0) {
+        return { plotted: windowed, selected: undefined as Set<number> | undefined };
+      }
+      const rest = windowed
+        .filter((o) => !won(o))
+        .sort((a, b) => lastProbOf(b) - lastProbOf(a));
+      const plotted = [...winners, ...rest];
+      return { plotted, selected: new Set(plotted.slice(0, 6).map((o) => o.outcome_id)) };
+    }
     const rest = windowed
       .filter((o) => o.outcome_id !== champ.outcome_id)
       .sort((a, b) => lastProbOf(b) - lastProbOf(a));
     const plotted = [champ, ...rest];
     const selected = new Set(plotted.slice(0, 6).map((o) => o.outcome_id));
     return { plotted, selected };
-  }, [windowed, championName]);
+  }, [outcomes, windowed, championName]);
 
   // #683: a full read that left older prices out still owes the reader that
   // sentence when too few remain to draw; the chart's sparse state carries it.

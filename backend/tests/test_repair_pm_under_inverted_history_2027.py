@@ -317,3 +317,375 @@ def test_every_other_polymarket_capable_writer_stamps_odds():
         # Each stamps `captured_at` at write time and passes odds (sportsbook
         # writers always carry them; the venue writers also pass the book).
         assert "american_odds" in kw and "captured_at" in kw, (f, fn)
+
+
+# ---------------------------------------------------------------------------
+# #11158 — a leg whose rows sit only above the era bound
+# ---------------------------------------------------------------------------
+
+BOUND = 5000
+
+
+class _Row:
+    def __init__(self, m):
+        self._mapping = m
+
+    def __getattr__(self, k):
+        try:
+            return self.__dict__["_mapping"][k]
+        except KeyError:
+            raise AttributeError(k) from None
+
+
+class _Result:
+    def __init__(self, rows=(), scalar=None, rowcount=0):
+        self._rows, self._scalar, self.rowcount = list(rows), scalar, rowcount
+
+    def all(self):
+        return [_Row(r) for r in self._rows]
+
+    def one_or_none(self):
+        return _Row(self._rows[0]) if self._rows else None
+
+    def scalar_one(self):
+        return self._scalar
+
+
+class _PageSession:
+    """Answers the planner's reads, and one leg's apply, by their exact SQL text.
+    ``legs`` maps an Under outcome id to (rows as `_ROWS_SQL` returns them, has
+    an Over sibling). Any other statement fails the test."""
+
+    def __init__(self, legs):
+        self.page, self.siblings, self.rows = [], [], {}
+        for oid, (rows, has_sib) in sorted(legs.items()):
+            mid = oid * 10
+            self.page.append({**_leg(), "outcome_id": oid, "market_id": mid,
+                              "external_id": f"0x{oid}_no", "name": "Under",
+                              "market_status": "resolved", "resolution_date": None})
+            if has_sib:
+                self.siblings.append({"id": oid + 1, "market_id": mid,
+                                      "external_id": f"0x{oid}"})
+            self.rows[oid] = rows
+        self.deleted, self.withdrawn = [], []
+
+    async def execute(self, stmt, params=None):
+        sql, p = stmt.text, params or {}
+        if sql.startswith("SET LOCAL") or sql in (
+                rp._BAK_ROWS_CREATE, rp._BAK_FIELDS_CREATE, rp._BAK_ROWS_COPY,
+                rp._BAK_FIELDS_COPY):
+            return _Result()
+        if sql == rp._PAGE_SQL:
+            return _Result([lg for lg in self.page if lg["outcome_id"] > p["after_id"]]
+                           [:p["scan"]])
+        if sql == rp._SIBLINGS_SQL:
+            return _Result([s for s in self.siblings if s["market_id"] in p["mids"]])
+        if sql == rp._ROWS_SQL:
+            return _Result([{**r, "outcome_id": oid} for oid in p["legs"]
+                            for r in self.rows.get(oid, [])])
+        if sql == rp._KEPT_VALUE_SQL:
+            return _Result(scalar=False)
+        if sql == rp._LOCK_ROWS:
+            return _Result([r for r in self.rows[p["oid"]] if r["id"] in p["ids"]])
+        if sql == rp._LOCK_FIELDS:
+            return _Result([lg for lg in self.page if lg["outcome_id"] == p["oid"]])
+        if sql == rp._BAK_ROWS_UNPAIRED:
+            return _Result([])
+        if sql == rp._BAK_FIELDS_PAIRED:
+            return _Result(scalar=True)
+        if sql == rp._DELETE_ROWS:
+            self.deleted.append((p["oid"], sorted(p["ids"])))
+            return _Result(rowcount=len(p["ids"]))
+        if sql in (rp._WITHDRAW_OPENING, rp._WITHDRAW_CP):
+            self.withdrawn.append(p["oid"])
+            return _Result()
+        raise AssertionError(f"unexpected statement: {sql.strip()[:80]}")
+
+    async def commit(self):
+        pass
+
+    async def rollback(self):
+        pass
+
+
+def _post(rows):
+    """The same rows with ids above :data:`BOUND` (the fixed writer's era)."""
+    return [{**r, "id": BOUND + 1 + i} for i, r in enumerate(rows)]
+
+
+#: Post-only rows that read as the Over price, at each tier.
+SUSPECT_NEAR = _post(SPECIMEN_ROWS)
+SUSPECT_EXACT = _post(_rows([(0.745, 0.745)], exact=True))
+#: One contradicting pair: mixed testimony, still partly the Over price.
+SUSPECT_MIXED = _post(SPECIMEN_ROWS + _rows([(0.2, 0.8)], start_id=2000))
+
+
+async def _dry(monkeypatch, legs, boundary=BOUND):
+    monkeypatch.setattr(rp, "PRE_FIX_MAX_SNAPSHOT_ID", boundary)
+    return await rp.repair(_PageSession(legs), limit=50)
+
+
+@pytest.mark.asyncio
+class TestPostFixOnlyLegs:
+    @pytest.mark.parametrize("rows,tally", [
+        (SUSPECT_NEAR, {"kind": "near", "equal": 6, "complement": 0}),
+        (SUSPECT_EXACT, {"kind": "exact", "equal": 1, "complement": 0}),
+        (SUSPECT_MIXED, {"kind": "near", "equal": 6, "complement": 1}),
+    ])
+    async def test_a_post_only_leg_that_reads_as_over_is_reported_not_skipped(
+            self, monkeypatch, rows, tally):
+        out = await _dry(monkeypatch, {21: (rows, True)})
+        assert out["verdicts"] == {rp.AMBIGUOUS: 1}
+        assert out["ambiguous_reasons"] == {"post_fix_only_reads_as_over": 1}
+        assert out["legs_with_history_rows"] == 1
+        assert out["planned_outcome_ids"] == [] and out["rows_planned"] == 0
+        (ex,) = out["examples"][rp.AMBIGUOUS]
+        assert ex["outcome_id"] == 21 and ex["reason"] == "post_fix_only_reads_as_over"
+        assert ex["testimony"] == tally
+        assert ex["rows"] == 0 and ex["post_fix_rows"] == len(rows)
+        assert [s["id"] for s in ex["sample"]] == [r["id"] for r in rows][:rp._ROW_SAMPLE]
+        assert ex["withdraw_opening"] is None and ex["withdraw_cp"] is None
+
+    @pytest.mark.parametrize("rows,has_sib", [
+        # The fixed rail's own Under history: each row is its Over's complement.
+        (_post(CONTROL_ROWS), True),
+        (_post(_rows([(0.5, 0.5), (0.51, 0.49), (0.495, 0.5)])), True),
+        # No Over sibling: the rows query pairs it with no observation at all.
+        (_post([{**r, "near_p": None, "near_at": None} for r in SPECIMEN_ROWS]), False),
+        # The exact tier selects the testimony: one same-second complement
+        # outranks six near pairs that read as Over, which are not counted.
+        (_post(_rows([(0.3, 0.7)], exact=True, start_id=999) + SPECIMEN_ROWS), True),
+    ], ids=["genuine_complement", "near_even", "no_over_sibling", "exact_complement_selects"])
+    async def test_post_only_legs_the_fixed_writer_explains_stay_unreported(
+            self, monkeypatch, rows, has_sib):
+        out = await _dry(monkeypatch, {31: (rows, has_sib)})
+        assert out["verdicts"] == {} and out["ambiguous_reasons"] == {}
+        assert out["legs_with_history_rows"] == 0 and out["planned_outcome_ids"] == []
+
+    async def test_unpinned_every_row_is_pre_fix_as_before(self, monkeypatch):
+        out = await _dry(monkeypatch, {21: (SUSPECT_NEAR, True),
+                                       31: (_post(CONTROL_ROWS), True)}, boundary=None)
+        assert out["verdicts"] == {rp.INVERTED: 1, rp.COMPLEMENT: 1}
+        assert out["ambiguous_reasons"] == {}
+        assert out["planned_outcome_ids"] == [21] and out["rows_planned"] == 6
+
+    async def test_a_leg_with_pre_fix_rows_keeps_its_existing_post_fix_refusal(
+            self, monkeypatch):
+        over = _post(_rows([(0.745, 0.745)], exact=True))
+        comp = _post(_rows([(0.255, 0.745)], exact=True))
+        out = await _dry(monkeypatch, {11: (SPECIMEN_ROWS + over, True),
+                                       12: (SPECIMEN_ROWS + comp, True)})
+        assert out["ambiguous_reasons"] == {"post_fix_row_reads_as_over": 1}
+        assert out["planned_outcome_ids"] == [12]
+
+    async def test_the_report_moves_no_planned_row_hash_or_apply(self, monkeypatch):
+        alone = await _dry(monkeypatch, {11: (SPECIMEN_ROWS, True)})
+        legs = {11: (SPECIMEN_ROWS, True), 21: (SUSPECT_NEAR, True)}
+        both = await _dry(monkeypatch, legs)
+        assert both["ambiguous_reasons"] == {"post_fix_only_reads_as_over": 1}
+        for key in ("planned_outcome_ids", "rows_planned", "openings_planned",
+                    "cp_planned", "plan_hash"):
+            assert both[key] == alone[key], key
+        session = _PageSession(legs)
+        out = await rp.repair(session, apply=True, limit=50, plan_hash=both["plan_hash"])
+        assert out["terminal"] == "applied" and out["legs_written"] == 1
+        assert session.deleted == [(11, [r["id"] for r in SPECIMEN_ROWS])]
+        assert session.withdrawn == []
+
+
+# ---------------------------------------------------------------------------
+# #11158 — the complete 16-point Vassell specimen, and why it stays refused
+# ---------------------------------------------------------------------------
+#
+# The six pairs above are COMPONENT coverage: Live's quoted pairs, all of which
+# read as the Over price. The retained served payload holds sixteen whole-second
+# Under points, and two of them read as the Over price's COMPLEMENT. Those two
+# contrary near readings are what keeps the real leg refused, so the six-pair
+# fixture alone cannot represent it.
+#
+# PROVENANCE (tests/fixtures/vassell_under_11158/PROVENANCE.md): values and
+# times are RETAINED SERVED-DERIVED (history-all.json, sha256 312906e7…f4a5).
+# Every snapshot id below is SYNTHETIC; the served payload carries none. Nothing
+# here is a raw production row, a token, a writer or a run.
+
+import json as _json
+from pathlib import Path as _Path
+
+_VASSELL = _json.loads((_Path(__file__).resolve().parent / "fixtures"
+                        / "vassell_under_11158" / "served-points.json").read_text())
+_V_UNDER = [(datetime.fromisoformat(p["captured_at"]), p["probability"])
+            for p in _VASSELL["under_history_shape_points"]]
+_V_OVER = [(datetime.fromisoformat(p["captured_at"]), p["probability"])
+           for p in _VASSELL["over_poll_points_within_60_min"]]
+#: SYNTHETIC ids, used only for the nearest-sibling tie-break.
+_V_OVER_IDS = [280_000_001 + i for i in range(len(_V_OVER))]
+
+
+def _rows_sql_view(under, ids):
+    """What `_ROWS_SQL` returns for these Under rows against the Over points:
+    the same-second sibling (ORDER BY id LIMIT 1) and the nearest sibling within
+    `NEAR_WINDOW_MIN` (ORDER BY |dt|, id LIMIT 1). The PostgreSQL gate executes
+    the real statement on the same values."""
+    win = timedelta(minutes=rp.NEAR_WINDOW_MIN)
+    over = sorted(zip(_V_OVER_IDS, _V_OVER))
+    out = []
+    for rid, (at, p) in zip(ids, under):
+        ex = [q for _, (t, q) in over if t == at]
+        near = sorted(((abs((t - at).total_seconds()), oid, t, q)
+                       for oid, (t, q) in over if abs(t - at) <= win))
+        out.append({"id": rid, "probability": p, "captured_at": at,
+                    "exact_p": ex[0] if ex else None,
+                    "near_p": near[0][3] if near else None,
+                    "near_at": near[0][2] if near else None})
+    return out
+
+
+#: History A — one SYNTHETIC block of ids for all sixteen rows.
+_A_IDS = [290_000_001 + i for i in range(16)]
+#: History B — the two complement testifiers (indexes 7 and 13: 22:00:08Z at
+#: 0.54, 04:00:05Z at 0.41) in a later SYNTHETIC block. Served data cannot tell
+#: A from B; that is the point of having both.
+_B_LATE = (7, 13)
+_B_IDS = [291_000_001 + _B_LATE.index(i) if i in _B_LATE else 290_000_001 + i
+          - sum(1 for j in _B_LATE if j < i) for i in range(16)]
+VASSELL_16_A = _rows_sql_view(_V_UNDER, _A_IDS)
+VASSELL_16_B = _rows_sql_view(_V_UNDER, _B_IDS)
+
+
+def _boundaries(ids):
+    """Every distinct place an era bound can fall among these ids."""
+    return [min(ids) - 1] + sorted(ids)
+
+
+class TestTheSixteenPointSpecimen:
+    def test_the_fixture_is_the_retained_payload(self):
+        assert _VASSELL["source_sha256"].startswith("312906e7")
+        assert len(_V_UNDER) == 16 and len(_V_OVER) == 10
+        assert all(at.microsecond == 0 for at, _ in _V_UNDER)
+        assert _V_UNDER[0] == (datetime(2026, 6, 3, 15, 0, 7, tzinfo=UTC), 0.745)
+        assert _V_UNDER[-1] == (datetime(2026, 6, 4, 6, 0, 4, tzinfo=UTC), 0.0005)
+
+    def test_the_two_contrary_near_readings(self):
+        contrary = [(r["captured_at"], r["probability"], r["near_p"])
+                    for r in VASSELL_16_A
+                    if rp.pair_testimony(r["probability"], r["near_p"] or -9, False)
+                    == "complement"]
+        assert contrary == [
+            (datetime(2026, 6, 3, 22, 0, 8, tzinfo=UTC), 0.54, 0.465),
+            (datetime(2026, 6, 4, 4, 0, 5, tzinfo=UTC), 0.41, 0.59),
+        ]
+
+    def test_the_six_quoted_pairs_are_a_subset_that_omits_both_contrary_readings(self):
+        pairs = [(r["probability"], r["near_p"]) for r in VASSELL_16_A]
+        for pair in SPECIMEN_PAIRS:
+            assert pair in pairs, pair
+        assert (0.54, 0.465) not in SPECIMEN_PAIRS and (0.41, 0.59) not in SPECIMEN_PAIRS
+
+    def test_the_complete_specimen_testifies_mixed(self):
+        t = rp.testify(VASSELL_16_A)
+        assert t == {"kind": "near", "equal": 12, "complement": 2}
+        assert rp.classify_testimony(t) == (rp.AMBIGUOUS, "mixed_testimony")
+
+
+#: SYNTHETIC genuine-Under residual (Root's disclosed counterexample): four rows
+#: of the Under token's own prices that swing so three read Over-equal against a
+#: sibling capture 20 minutes later and one reads as its complement. Ids 100-103.
+_RESIDUAL_T0 = datetime(2026, 6, 3, 1, 0, 7, tzinfo=UTC)
+GENUINE_RESIDUAL = [
+    {"id": 100 + i, "probability": u, "captured_at": _RESIDUAL_T0 + timedelta(hours=i),
+     "exact_p": None, "near_p": o,
+     "near_at": _RESIDUAL_T0 + timedelta(hours=i, minutes=20, microseconds=123)}
+    for i, (u, o) in enumerate([(0.70, 0.70), (0.75, 0.76), (0.80, 0.79), (0.40, 0.60)])
+]
+
+#: SYNTHETIC adjacent-id counterexample: ids 100-101 read as the Over price (an
+#: old run, Over token) and 102-103 as its complement (another run, Under token).
+#: The ids are consecutive; the tokens are not the same. Sequence proximity names
+#: neither a run nor a token.
+ADJACENT_TWO_TOKENS = [
+    {"id": 100 + i, "probability": p, "captured_at": _RESIDUAL_T0 + timedelta(hours=i),
+     "exact_p": None, "near_p": q,
+     "near_at": _RESIDUAL_T0 + timedelta(hours=i, minutes=21)}
+    for i, (p, q) in enumerate([(0.745, 0.745), (0.74, 0.74), (0.26, 0.74), (0.41, 0.59)])
+]
+
+
+def _planned(out):
+    return out["planned_outcome_ids"], out["rows_planned"]
+
+
+@pytest.mark.asyncio
+class TestConservativeRefusalHolds:
+    @pytest.mark.parametrize("boundary", [None, 10**9], ids=["unpinned", "above_all"])
+    async def test_the_all_in_era_specimen_plans_nothing(self, monkeypatch, boundary):
+        out = await _dry(monkeypatch, {51: (VASSELL_16_A, True)}, boundary=boundary)
+        assert out["verdicts"] == {rp.AMBIGUOUS: 1}
+        assert out["ambiguous_reasons"] == {"mixed_testimony": 1}
+        assert _planned(out) == ([], 0)
+        (ex,) = out["examples"][rp.AMBIGUOUS]
+        assert ex["testimony"] == {"kind": "near", "equal": 12, "complement": 2}
+        assert ex["rows"] == 16 and ex["post_fix_rows"] == 0
+
+    @pytest.mark.parametrize("boundary", [None, 10**9], ids=["unpinned", "above_all"])
+    async def test_the_genuine_under_residual_plans_nothing(self, monkeypatch, boundary):
+        out = await _dry(monkeypatch, {52: (GENUINE_RESIDUAL, True)}, boundary=boundary)
+        assert out["ambiguous_reasons"] == {"mixed_testimony": 1}
+        assert _planned(out) == ([], 0)
+
+    async def test_adjacent_ids_with_two_tokens_are_refused(self, monkeypatch):
+        ids = [r["id"] for r in ADJACENT_TWO_TOKENS]
+        assert max(b - a for a, b in zip(ids, ids[1:])) == 1
+        t = rp.testify(ADJACENT_TWO_TOKENS)
+        assert t == {"kind": "near", "equal": 2, "complement": 2}
+        out = await _dry(monkeypatch, {53: (ADJACENT_TWO_TOKENS, True)}, boundary=None)
+        assert out["ambiguous_reasons"] == {"mixed_testimony": 1}
+        assert _planned(out) == ([], 0)
+
+    async def test_history_a_plans_at_no_boundary(self, monkeypatch):
+        planning = []
+        for b in _boundaries(_A_IDS):
+            out = await _dry(monkeypatch, {51: (VASSELL_16_A, True)}, boundary=b)
+            if out["rows_planned"]:
+                planning.append(b)
+        assert len(_boundaries(_A_IDS)) == 17 and planning == []
+
+    async def test_history_b_plans_only_between_its_two_synthetic_runs(self, monkeypatch):
+        # NOT "every boundary refuses": in this SYNTHETIC layout a bound that
+        # falls exactly between the two blocks plans the fourteen old-block rows
+        # and never the two later ones. That is a conditional counterexample to
+        # "a pin can never help", not evidence about production ids, and the
+        # shipped constant stays unpinned.
+        old = sorted(i for k, i in enumerate(_B_IDS) if k not in _B_LATE)
+        planning = {}
+        for b in _boundaries(_B_IDS):
+            out = await _dry(monkeypatch, {51: (VASSELL_16_B, True)}, boundary=b)
+            if out["rows_planned"]:
+                planning[b] = out
+        assert list(planning) == [max(old)]
+        out = planning[max(old)]
+        assert out["rows_planned"] == 14
+        (ex,) = out["examples"][rp.INVERTED]
+        assert ex["testimony"] == {"kind": "near", "equal": 12, "complement": 0}
+        assert ex["post_fix_rows"] == 2
+
+    async def test_control_a_relaxed_classifier_would_plan_the_genuine_rows(
+            self, monkeypatch):
+        # CAUSAL CONTROL for the two guards above. The rejected proposal lets
+        # fewer than MIN_NEAR_TESTIMONY contrary near readings be outvoted when
+        # the leg's in-era rows are one id run. Every fixture here is one id run,
+        # so substituting that rule (here, not in the rail) is enough to show the
+        # guards discriminate: the genuine residual and the full specimen both
+        # get planned. The rail itself is not changed by this test.
+        original = rp.classify_testimony
+
+        def relaxed(t):
+            eq, comp = t["equal"], t["complement"]
+            if t["kind"] == "near" and eq >= rp.MIN_NEAR_TESTIMONY and 0 < comp < rp.MIN_NEAR_TESTIMONY:
+                return rp.INVERTED, None
+            return original(t)
+
+        monkeypatch.setattr(rp, "classify_testimony", relaxed)
+        residual = await _dry(monkeypatch, {52: (GENUINE_RESIDUAL, True)}, boundary=None)
+        assert _planned(residual) == ([52], 4)
+        specimen = await _dry(monkeypatch, {51: (VASSELL_16_A, True)}, boundary=None)
+        assert _planned(specimen) == ([51], 16)

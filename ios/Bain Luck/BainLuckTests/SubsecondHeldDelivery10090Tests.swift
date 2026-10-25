@@ -669,7 +669,8 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
 
     /// The page as drawn: the text printed above the chart, and the vertical
     /// extent of the line's rightmost drawn column as probabilities, scaled by
-    /// the two farthest-apart of the chart's own axis labels that were read. Every burst point is seconds
+    /// the chart's own axis labels that were read (#11356: the falling run of a
+    /// focused window). Every burst point is seconds
     /// apart on an hour-wide axis, so the line's end is one column.
     nonisolated private static func readDrawn(_ image: UIImage) throws -> (hero: [String], endTop: Double, endBottom: Double) {
         let cg = try XCTUnwrap(image.cgImage)
@@ -685,14 +686,30 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
                                    width: b.width * CGFloat(w), height: b.height * CGFloat(h)))
         }
         // The line can touch a label ("50% /") or hide it from the reader.
-        let ticks: [(p: Double, y: CGFloat)] = [("100%", 1.0), ("75%", 0.75), ("50%", 0.5), ("25%", 0.25), ("0%", 0)]
-            .compactMap { label, p in
-                texts.first { $0.0.hasPrefix(label) && $0.1.midX < CGFloat(w) * 0.3 }.map { (p, $0.1.midY) }
+        // #11356 — the axis is a focused window, not 0–100: read the gutter's
+        // own numbers top to bottom. On a two-sided axis a tick below 50% prints
+        // the away side's chance, so the scale is taken from the run that still
+        // falls (the home side and 50%), and the plot's floor is the lowest tick
+        // of either side. Only text under the chart's own header is the gutter,
+        // so a hero number at the page's left edge is never read as a tick.
+        let header = texts.first { $0.0.hasPrefix("Win Probability") }?.1.maxY ?? 0
+        let gutter: [(n: Int, y: CGFloat)] = texts
+            .filter { $0.1.midX < CGFloat(w) * 0.3 && $0.1.minY > header }
+            .compactMap { text, box in
+                guard let match = text.range(of: #"^\d{1,3}%"#, options: .regularExpression),
+                      let n = Int(text[match].dropLast()) else { return nil }
+                return (n, box.midY)
             }
+            .sorted { $0.y < $1.y }
+        var ticks: [(p: Double, y: CGFloat)] = []
+        for tick in gutter where ticks.last.map({ Double(tick.n) / 100 < $0.p }) ?? true {
+            ticks.append((Double(tick.n) / 100, tick.y))
+        }
         let (top, bottom) = try (XCTUnwrap(ticks.first), XCTUnwrap(ticks.last))
-        XCTAssertGreaterThanOrEqual(top.p - bottom.p, 0.5, "two axis labels at least 50 points apart: \(texts.map(\.0))")
+        XCTAssertGreaterThanOrEqual(top.p - bottom.p, 0.2, "two axis labels at least 20 points apart: \(texts.map(\.0))")
         let perPoint = (bottom.y - top.y) / CGFloat(top.p - bottom.p)
-        let y100 = top.y - CGFloat(1 - top.p) * perPoint, y0 = y100 + perPoint
+        let y100 = top.y - CGFloat(1 - top.p) * perPoint
+        let floorY = try XCTUnwrap(gutter.last).y
         func probability(_ y: Int) -> Double { 1 - Double((CGFloat(y) - y100) / perPoint) }
 
         var bytes = [UInt8](repeating: 0, count: w * h * 4)
@@ -707,13 +724,13 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             let (r, g, b) = (Int(bytes[i]), Int(bytes[i + 1]), Int(bytes[i + 2]))
             return max(r, g, b) - min(r, g, b) > 60 || max(r, g, b) < 110
         }
-        let rows = Int(y100) - 6 ... Int(y0)
+        let rows = max(0, Int(top.y) - 6) ... min(h - 1, Int(floorY))
         let right = try XCTUnwrap(stride(from: w - 1, through: w / 2, by: -1).first { x in
             rows.filter { line(x, $0) }.count >= 2
         }, "a drawn line in the plot")
         let band = max(w / 2, right - Int(image.scale) * 2) ... right
         let ys = rows.filter { y in band.contains { line($0, y) } }
-        return (texts.filter { $0.1.maxY < y100 }.map(\.0),
+        return (texts.filter { $0.1.maxY < top.y }.map(\.0),
                 probability(try XCTUnwrap(ys.first)), probability(try XCTUnwrap(ys.last)))
     }
 }

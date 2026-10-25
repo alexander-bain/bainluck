@@ -106,12 +106,48 @@ WHAT IS NOT DONE HERE, NAMED SO IT IS A DECISION.
     expensive `sport_filters` OR** and is NOT covered here, because it also
     matches on both team names and so is not a function of the sport. Parked as
     **P144-3**.
+
+ONE BUILDER PER SLOT (#2316, 2026-10-17).
+
+The table under this query has doubled since the measurement above (1.9 GB
+heap, 1.7M rows), and the FINISHED shape — whose status set admits every row —
+is now a cold sequential scan. Production `pg_stat_statements` on 2026-10-17:
+the two finished fingerprints averaged 19.2 s and 23.7 s (max 61.4 s), reading
+83k-115k blocks from disk per call. The slow-event ring held 87 related-futures
+requests since 2026-10-16 23:00Z whose single slowest statement was over 5 s,
+and **27 of them started while another such statement was already running** —
+several readers of one sport missing the same slot together, each paying for
+its own copy of the scan and slowing the others down by competing for the same
+disk.
+
+So a miss now takes a short `single_flight` lease on the slot. The holder runs
+the query and publishes as before. A reader that finds the lease held waits for
+the holder's answer instead of running a second scan. It re-reads the slot
+every `PEER_POLL_SECONDS` while the lease stands. If the lease disappears and
+the slot is still empty, the holder ended without publishing (it failed, or
+was cancelled), and the reader tries to take the lease itself. The query, the
+key, the TTLs and what is stored are unchanged. The only thing that changes is
+how many readers run the query at once.
+
+Fails open, like the cache: no Redis, any lease error, or one poll slower than
+`POLL_REDIS_BUDGET_SECONDS`, means the reader runs the query itself, exactly as
+before. The wait is bounded by `BUILD_LEASE_TTL_SECONDS`, the longest any lease
+can stand. A holder that keeps failing slowly is a degraded mode, not a hang:
+each waiter takes over in turn, until its own deadline.
+
+What this does NOT fix: the FIRST reader of each slot still pays the whole
+scan. Only an index on the tier 1-4 rows removes that, and an index is a
+migration (P144-1 above).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
+
+from app.utils import single_flight as _single_flight
 
 logger = logging.getLogger(__name__)
 
@@ -237,3 +273,129 @@ def write(
         )
         return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# One builder per slot (#2316)
+# ---------------------------------------------------------------------------
+
+#: How long one reader may hold the right to run a slot's discovery query.
+#: Above the slowest discovery production has recorded (61.4 s,
+#: `pg_stat_statements` 2026-10-17), so a holder that is still working is
+#: never mistaken for a dead one. A holder killed mid-query (a dyno SIGKILL
+#: skips its `finally`) leaves the lease to expire after this many seconds.
+#: This is also the most a waiting reader can wait.
+BUILD_LEASE_TTL_SECONDS = 75
+
+#: How often a waiting reader re-reads the slot. Each poll is TWO synchronous
+#: Redis round trips on the event loop (the slot GET and the lease EXISTS), so a
+#: waiter costs 8 sync ops a second for as long as the holder's scan runs.
+PEER_POLL_SECONDS = 0.25
+
+#: The most one poll's round trips may take before the waiter stops waiting.
+#: The poll's calls are synchronous, so a Redis that is slow WITHOUT erroring
+#: (100 ms an op) would block this worker's whole event loop for most of every
+#: second, for the holder's 19-24 s scan. Over this budget the waiter fails open
+#: and runs the query itself, exactly as before #2316. A healthy Redis answers a
+#: poll in a few milliseconds.
+POLL_REDIS_BUDGET_SECONDS = 0.05
+
+
+def build_task_name(sport_key: str, event_is_finished: bool) -> str:
+    """The `single_flight` task name for one slot.
+
+    One lease per cache key, never per sport: the live and finished shapes are
+    different queries with different answers (see `cache_key`), so one must
+    never wait for the other.
+    """
+    shape = "final" if event_is_finished else "live"
+    return f"season_markets:{shape}:{sport_key}"
+
+
+async def claim_or_await(
+    sport_key: str,
+    event_is_finished: bool,
+    rc=None,
+    *,
+    sleep=asyncio.sleep,
+    clock=time.monotonic,
+):
+    """After a MISS: take the slot's build lease, or wait for whoever holds it.
+
+    Returns `(market_ids, lease)`:
+
+    * `(ids, None)`  — a peer published while we waited. Use `ids` (possibly
+      `[]`, a real answer — gotcha #53) and do not run the query.
+    * `(None, lease)` — we hold the lease. Run the query, publish, then pass
+      the lease to `release_build` in a `finally`.
+    * `(None, None)` — fail open: no Redis, a lease error, or the wait bound
+      ran out. Run the query exactly as before this lease existed.
+
+    Call it ONLY on a genuine miss. A slot that was read and then rejected
+    (the competition-scope re-check in the route) must not come here: the
+    re-read below would hand back the rejected ids.
+    """
+    client = rc if rc is not None else _client()
+    if client is None:
+        return None, None
+    task = build_task_name(sport_key, event_is_finished)
+    deadline = clock() + BUILD_LEASE_TTL_SECONDS
+    while True:
+        lease = _single_flight.acquire(task, BUILD_LEASE_TTL_SECONDS, rc=client)
+        if lease.acquired:
+            if lease.token is None:
+                # `redis_unavailable`: acquire failed open, there is no lease.
+                return None, None
+            # A peer can publish and release between our miss and our claim.
+            # One GET here saves a whole scan.
+            market_ids = read(sport_key, event_is_finished, rc=client)
+            if market_ids is not None:
+                _single_flight.release(lease, rc=client)
+                return market_ids, None
+            return None, lease
+        # A peer is building. Wait for its answer while its lease stands.
+        while True:
+            poll_started = clock()
+            market_ids = read(sport_key, event_is_finished, rc=client)
+            if market_ids is not None:
+                return market_ids, None
+            if clock() >= deadline:
+                logger.warning(
+                    "season-market discovery: waited %ss for a peer's %s build "
+                    "and got nothing — running it here",
+                    BUILD_LEASE_TTL_SECONDS,
+                    sport_key,
+                )
+                return None, None
+            try:
+                held = bool(client.exists(lease.key))
+            except Exception:
+                return None, None
+            poll_seconds = clock() - poll_started
+            if poll_seconds > POLL_REDIS_BUDGET_SECONDS:
+                # Slow without erroring: polling on would stall every request
+                # on this worker. Stop using Redis and run the query here.
+                logger.warning(
+                    "season-market discovery: one poll for %s took %.3fs "
+                    "(budget %ss) — Redis is slow, running the build here",
+                    sport_key,
+                    poll_seconds,
+                    POLL_REDIS_BUDGET_SECONDS,
+                )
+                return None, None
+            if not held:
+                # The holder ended without publishing. Try to take over.
+                break
+            await sleep(PEER_POLL_SECONDS)
+
+
+def release_build(lease, rc=None) -> bool:
+    """Release a lease from `claim_or_await`. Compare-and-delete; never raises.
+
+    Through this module's client, the one the claim was taken with, rather
+    than letting `single_flight` open its own.
+    """
+    if lease is None:
+        return False
+    client = rc if rc is not None else _client()
+    return client is not None and _single_flight.release(lease, rc=client)

@@ -147,10 +147,11 @@ export default async function Image({
 
   // ── AN AWARDS CATEGORY ANNOUNCED OR CLOSED (#10987) ─────────────────────────
   // The caption's branches, in the caption's order: its own winners with no
-  // number, or a closed category with no price. A parent result outranks only
-  // the closed arm, exactly as in `buildEventConceptShareCopy`. "moving", not
-  // "settled": the parent is not over, and a regrade must reach the picture.
-  if (category && (category.state === "announced" || !winner)) {
+  // number, or a closed category with no price. Nothing outranks it — the facts
+  // clear `winner` whenever `category` is set, because the primary's `won` flag
+  // can be a price crown. "moving", not "settled": a regrade must reach the
+  // picture, and a closed category is exactly the one waiting for its grade.
+  if (category) {
     const announced = category.state === "announced";
     return new ImageResponse(
       (
@@ -160,7 +161,7 @@ export default async function Image({
           subtitle={label ?? where}
           rows={[]}
           verdict={announced ? `${category.names} won` : "Trading closed"}
-          note={announced ? (category.winners.length > 1 ? "Joint winners" : null) : "Result not announced yet"}
+          note={announced ? (category.winners.length > 1 ? "Joint winners" : null) : "Result not yet confirmed"}
           accent={accent}
         />
       ),

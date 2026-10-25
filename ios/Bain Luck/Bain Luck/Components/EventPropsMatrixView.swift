@@ -17,6 +17,10 @@ struct EventPropsMatrixView: View {
     /// After payload). A question missing then ended with the game; missing
     /// before then, it was withdrawn.
     var gameEnded = false
+    /// #10236 — the page's display clock (`EventDetailView.displayAsOf`); nil
+    /// is the real clock, ticking each minute so a quote that crosses 30
+    /// minutes on screen stops reading as current without a new payload.
+    var displayAsOf: Date? = nil
     var onDetailPresentationChanged: (Bool) -> Void = { _ in }
     var onMatrixUnavailableDismissed: () -> Void = {}
 
@@ -36,6 +40,8 @@ struct EventPropsMatrixView: View {
     @ScaledMetric(relativeTo: .subheadline) private var cellWidth: CGFloat = 58
     @ScaledMetric(relativeTo: .subheadline) private var nameWidth: CGFloat = 112
     private let maxNameWidth: CGFloat = 150
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var matrixWidth: CGFloat = 0
 
     var body: some View {
         let statKey = selection.resolvedStat(in: props)
@@ -50,14 +56,19 @@ struct EventPropsMatrixView: View {
                 statPicker(selected: statKey)
             }
 
-            if let statKey, let grid = EventPropsMatrixLayout.grid(props, statKey: statKey) {
-                matrix(grid)
-                if !grid.unplaced.isEmpty { unplacedList(grid) }
-                footer(grid)
-            } else {
-                Text("No questions for this stat right now")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            TimelineView(.periodic(from: .now, by: 60)) { tick in
+                let now = displayAsOf ?? tick.date
+                if let statKey, let grid = EventPropsMatrixLayout.grid(props, statKey: statKey, now: now) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        matrix(grid, now: now)
+                        if !grid.unplaced.isEmpty { unplacedList(grid, now: now) }
+                        footer(grid)
+                    }
+                } else {
+                    Text("No prop lines for this stat right now")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(16)
@@ -66,7 +77,8 @@ struct EventPropsMatrixView: View {
         .sheet(item: $selection.openQuestion, onDismiss: restoreQuestionFocus) { open in
             EventPropsMatrixDetailView(
                 open: open, subjectLabel: selection.openedSubjectLabel,
-                props: props, afterProps: afterProps, gameEnded: gameEnded
+                props: props, afterProps: afterProps, gameEnded: gameEnded,
+                displayAsOf: displayAsOf
             )
         }
     }
@@ -130,7 +142,16 @@ struct EventPropsMatrixView: View {
 
     // MARK: - Matrix
 
-    private func matrix(_ grid: EventPropsMatrixLayout.Grid) -> some View {
+    @ViewBuilder
+    private func matrix(_ grid: EventPropsMatrixLayout.Grid, now: Date) -> some View {
+        if typeSize.isAccessibilitySize {
+            stackedMatrix(grid, now: now)
+        } else {
+            sideBySideMatrix(grid, now: now)
+        }
+    }
+
+    private func sideBySideMatrix(_ grid: EventPropsMatrixLayout.Grid, now: Date) -> some View {
         HStack(alignment: .top, spacing: 0) {
             // Fixed identity column.
             VStack(alignment: .leading, spacing: 4) {
@@ -167,7 +188,7 @@ struct EventPropsMatrixView: View {
                     ForEach(grid.players) { player in
                         HStack(spacing: 4) {
                             ForEach(grid.columns, id: \.self) { count in
-                                cell(player.cells[count], stat: grid.stat)
+                                cell(player.cells[count], stat: grid.stat, now: now)
                             }
                         }
                     }
@@ -177,6 +198,58 @@ struct EventPropsMatrixView: View {
         }
     }
 
+    /// At accessibility sizes a surname alone outgrows any column that leaves
+    /// room for one cell ("Hartenstein" is ~225pt at AX5; the column held 150
+    /// and read "Harten…"). So each name takes its own full-width line above
+    /// its row and wraps by word, at the reader's size. The cells stay in one
+    /// sideways scroller, so every column still lines up, and the names are
+    /// pinned to the visible width while it scrolls.
+    private func stackedMatrix(_ grid: EventPropsMatrixLayout.Grid, now: Date) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 4) {
+                pinnedToViewport(
+                    Text(grid.stat.label)
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.secondary)
+                )
+                HStack(spacing: 4) {
+                    ForEach(grid.columns, id: \.self) { count in
+                        Text(columnLabel(count, grid: grid))
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.secondary)
+                            .frame(width: cellWidth)
+                            .accessibilityHidden(true)
+                    }
+                }
+                ForEach(grid.players) { player in
+                    pinnedToViewport(Text(player.label).font(.subheadline))
+                        .padding(.top, 6)
+                        .accessibilityHidden(true)
+                    HStack(spacing: 4) {
+                        ForEach(grid.columns, id: \.self) { count in
+                            cell(player.cells[count], stat: grid.stat, now: now)
+                        }
+                    }
+                }
+            }
+        }
+        .id(grid.stat.statKey)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { matrixWidth = $0 }
+    }
+
+    /// A line as wide as the scroller's viewport that stays put while the
+    /// cells beneath it move sideways.
+    private func pinnedToViewport(_ line: some View) -> some View {
+        line
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(width: matrixWidth > 0 ? matrixWidth : nil, alignment: .leading)
+            .visualEffect { content, proxy in
+                content.offset(x: -proxy.frame(in: .scrollView(axis: .horizontal)).minX)
+            }
+    }
+
     /// The column header is the server's own label for that count's over
     /// question ("2+"), read from the first row that has it.
     private func columnLabel(_ count: Int, grid: EventPropsMatrixLayout.Grid) -> String {
@@ -184,17 +257,23 @@ struct EventPropsMatrixView: View {
     }
 
     @ViewBuilder
-    private func cell(_ row: DuringPropRow?, stat: DuringPropStat) -> some View {
+    private func cell(_ row: DuringPropRow?, stat: DuringPropStat, now: Date) -> some View {
         if let row {
             Button {
                 openQuestion(row)
             } label: {
                 VStack(spacing: 1) {
-                    Text(EventPropsMatrixLayout.cellText(row))
+                    let current = row.current.currentProbability(now: now)
+                    let text = EventPropsMatrixLayout.cellText(row, now: now)
+                    Text(text)
                         .font(.subheadline.monospacedDigit())
-                        .fontWeight(row.current.quotedProbability == nil ? .regular : .semibold)
-                        .foregroundStyle(row.current.quotedProbability == nil ? Color.secondary : Color.primary)
-                    if let change = EventPropsMatrixLayout.changeText(row) {
+                        .fontWeight(current == nil ? .regular : .semibold)
+                        .foregroundStyle(current == nil ? Color.secondary : Color.primary)
+                        // #10236 — "No update" is two words in a cell sized for
+                        // "39%": it wraps onto two lines rather than print "No upda…".
+                        .lineLimit(text == EventPropsMatrixLayout.staleCellText ? 2 : 1)
+                        .multilineTextAlignment(.center)
+                    if let change = EventPropsMatrixLayout.changeText(row, now: now) {
                         Text(change)
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(.secondary)
@@ -207,8 +286,8 @@ struct EventPropsMatrixView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(EventPropsMatrixLayout.accessibilityLabel(row, stat: stat))
-            .accessibilityHint("Shows this question and its sources")
+            .accessibilityLabel(EventPropsMatrixLayout.accessibilityLabel(row, stat: stat, now: now))
+            .accessibilityHint("Shows this prop line and its sources")
             .accessibilityFocused($accessibilityFocus, equals: .question(.init(row)))
         } else {
             // Not offered for this player: an empty slot, not a dash — a dash
@@ -221,7 +300,7 @@ struct EventPropsMatrixView: View {
 
     // MARK: - Questions with no over cell
 
-    private func unplacedList(_ grid: EventPropsMatrixLayout.Grid) -> some View {
+    private func unplacedList(_ grid: EventPropsMatrixLayout.Grid, now: Date) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(grid.unplaced) { row in
                 Button {
@@ -231,14 +310,14 @@ struct EventPropsMatrixView: View {
                         Text("\(row.subject.label) · \(EventPropsMatrixLayout.question(row, stat: grid.stat))")
                             .font(.caption)
                         Spacer()
-                        Text(EventPropsMatrixLayout.cellText(row))
+                        Text(EventPropsMatrixLayout.cellText(row, now: now))
                             .font(.caption.monospacedDigit())
                             .fontWeight(.semibold)
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(EventPropsMatrixLayout.accessibilityLabel(row, stat: grid.stat))
+                .accessibilityLabel(EventPropsMatrixLayout.accessibilityLabel(row, stat: grid.stat, now: now))
                 .accessibilityFocused($accessibilityFocus, equals: .question(.init(row)))
             }
         }
@@ -248,9 +327,12 @@ struct EventPropsMatrixView: View {
 
     private func footer(_ grid: EventPropsMatrixLayout.Grid) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("\(grid.playerCount) \(grid.playerCount == 1 ? "player" : "players") · \(grid.questionCount) \(grid.questionCount == 1 ? "question" : "questions")")
+            Text("\(grid.playerCount) \(grid.playerCount == 1 ? "player" : "players") · \(grid.questionCount) \(grid.questionCount == 1 ? "prop line" : "prop lines")")
             if grid.showsChange {
-                Text("+/\u{2212} is the change since the pregame price, in points")
+                Text("+/\u{2212} is the change from the saved pregame chance, in percentage points")
+            }
+            if grid.staleCount > 0 {
+                Text(EventPropsMatrixLayout.staleLegend)
             }
         }
         .font(.caption2)
@@ -296,6 +378,9 @@ struct EventPropsMatrixDetailView: View {
     let props: DuringPlayerProps
     var afterProps: AfterPlayerProps? = nil
     var gameEnded = false
+    /// #10236 — the matrix's display clock, so the sheet and the cell behind
+    /// it agree on whether the quote is current.
+    var displayAsOf: Date? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var typeSize
 
@@ -313,9 +398,11 @@ struct EventPropsMatrixDetailView: View {
 
     private func liveBody(_ content: EventPropsMatrixDetailContent) -> some View {
         NavigationStack {
+            TimelineView(.periodic(from: .now, by: 60)) { tick in
+            let now = displayAsOf ?? tick.date
             List {
                 if case .live(let row) = content {
-                    summary(row)
+                    summary(row, now: now)
                     sources(row)
                     if let other = EventPropsMatrixLayout.otherSide(of: row, in: props) {
                         Section("Other side") {
@@ -327,7 +414,7 @@ struct EventPropsMatrixDetailView: View {
                             layout {
                                 Text(EventPropsMatrixLayout.question(other, stat: stat))
                                 if !typeSize.isAccessibilitySize { Spacer() }
-                                Text(EventPropsMatrixLayout.cellText(other))
+                                Text(EventPropsMatrixLayout.cellText(other, now: now))
                                     .monospacedDigit()
                                     .fontWeight(.semibold)
                             }
@@ -338,9 +425,10 @@ struct EventPropsMatrixDetailView: View {
                     Text("This game is over.")
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("This question isn't being offered right now.")
+                    Text("This prop line isn't being offered right now.")
                         .foregroundStyle(.secondary)
                 }
+            }
             }
             .navigationTitle(liveTitle(content))
             #if os(iOS)
@@ -360,20 +448,27 @@ struct EventPropsMatrixDetailView: View {
         return subjectLabel ?? "Player prop"
     }
 
-    private func summary(_ row: DuringPropRow) -> some View {
+    private func summary(_ row: DuringPropRow, now: Date) -> some View {
         Section {
             VStack(alignment: .leading, spacing: 6) {
                 Text(EventPropsMatrixLayout.question(row, stat: stat))
                     .font(.headline)
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(EventPropsMatrixLayout.cellText(row))
+                    Text(EventPropsMatrixLayout.cellText(row, now: now))
                         .font(.largeTitle.monospacedDigit())
                         .fontWeight(.bold)
-                    if let p = row.current.quotedProbability {
+                    if let p = row.current.currentProbability(now: now) {
                         Text(EventPropsMatrixLayout.exactPercent(p))
                             .font(.subheadline.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
+                }
+                // #10236 — the old quote stays inspectable, named as the last
+                // one and never as the current chance.
+                if row.current.isStale(now: now), let last = row.current.quotedProbability {
+                    Text("Last quote \(EventPropsMatrixLayout.exactPercent(last))")
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.secondary)
                 }
                 if row.current.isActualOnly, let actual = row.result?.actual {
                     Text("Final: \(actual.formatted(.number.precision(.fractionLength(0...1))))")
@@ -385,22 +480,21 @@ struct EventPropsMatrixDetailView: View {
                 SourceAgeText(observedAt: row.current.observedAt, prefix: "Updated")
             }
             .accessibilityElement(children: .combine)
-            if row.current.quotedProbability != nil {
-                comparison(row)
+            if let current = row.current.currentProbability(now: now) {
+                comparison(row, current: current, clock: now)
             }
         }
     }
 
     @ViewBuilder
-    private func comparison(_ row: DuringPropRow) -> some View {
-        if let c = row.comparison, c.isComparable, let base = c.baseline?.probability, base.isFinite,
-           let now = row.current.quotedProbability {
+    private func comparison(_ row: DuringPropRow, current now: Double, clock: Date) -> some View {
+        if let c = row.comparison, c.isComparable, let base = c.baseline?.probability, base.isFinite {
             HStack {
                 Text("Pregame \(formatProbability(base))")
                 Image(systemName: "arrow.right").font(.caption).accessibilityHidden(true)
                 Text("now \(formatProbability(now))")
                 Spacer()
-                if let change = EventPropsMatrixLayout.changeText(row) {
+                if let change = EventPropsMatrixLayout.changeText(row, now: clock) {
                     Text(change).monospacedDigit().foregroundStyle(.secondary)
                 }
             }
@@ -653,7 +747,7 @@ struct AfterPropsMatrixView: View {
                 if !grid.withoutChance.isEmpty { withoutChanceSection(grid) }
                 footer(grid)
             } else {
-                Text("No questions for this stat")
+                Text("No prop lines for this stat")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -842,7 +936,7 @@ struct AfterPropsMatrixView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(PropExpectationActualDisplay.accessibilityLabel(
                 question, actual: props.actual(for: question), stat: stat))
-            .accessibilityHint("Shows this question and its sources")
+            .accessibilityHint("Shows this prop line and its sources")
             .accessibilityFocused($accessibilityFocus, equals: .question(.init(question)))
         } else {
             Color.clear
@@ -939,7 +1033,7 @@ struct AfterPropsMatrixView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(PropExpectationActualDisplay.accessibilityLabel(question, actual: actual, stat: stat))
-                .accessibilityHint("Shows this question and its sources")
+                .accessibilityHint("Shows this prop line and its sources")
                 .accessibilityFocused($accessibilityFocus, equals: .question(.init(question)))
             }
         }
@@ -971,7 +1065,7 @@ struct AfterPropsDetailView: View {
                     result(question)
                     if !question.expectation.contributors.isEmpty { sources(question) }
                 } else {
-                    Text("This question isn't available right now.")
+                    Text("This prop line isn't available right now.")
                         .foregroundStyle(.secondary)
                 }
             }
