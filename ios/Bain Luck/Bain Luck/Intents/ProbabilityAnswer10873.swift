@@ -226,10 +226,22 @@ extension ProbabilityAnswer10873 {
                         text: "That outcome is no longer listed in \(market.name).",
                         figure: nil)
         }
-        switch FuturesDetailRowValue.of(outcome, marketStatus: market.status) {
+        // The page's own read, `marketSource` included, so a settled Polymarket
+        // row the page calls "Result unknown" is never answered as Lost (#698).
+        switch FuturesDetailRowValue.of(outcome, marketStatus: market.status, marketSource: market.source) {
         case .verdict(let verdict):
             let word = verdict == .won ? "won" : "lost"
             return Self(kind: .result, text: "\(market.name): \(outcome.name) \(word).", figure: nil)
+        case .resultUnknown(let lastRecorded):
+            // #698: settled, result not known. The page prints "Result unknown"
+            // and, for a finite price, "Last recorded N%" — never a chance, a
+            // Won or a Lost.
+            let recorded = lastRecorded.map {
+                " Its last recorded chance was \(formatProbability($0, renderedPercent: futuresDetailRenderedPercents(market.outcomes)[outcome.id]))."
+            } ?? ""
+            return Self(kind: .noResult,
+                        text: "\(market.name) has closed. The result for \(outcome.name) is not known.\(recorded)",
+                        figure: nil)
         case .none:
             return Self(kind: .unavailable,
                         text: "\(market.name): Bain Luck has no price for \(outcome.name) right now.",

@@ -276,6 +276,41 @@ final class SiriShortcutsAnswerTheDetail10873Tests: XCTestCase {
         XCTAssertTrue(answer.text.contains("has closed"), answer.text)
     }
 
+    /// #698 composed onto master after this suite was written: a settled row the
+    /// market page prints as "Result unknown" (served `settlement_display`, or a
+    /// resolved Polymarket market's fallback) is answered the same way, never as
+    /// Lost and never as a chance.
+    func testASettledRowWhoseResultIsUnknownAnswersAsThePageDoes() throws {
+        let served = try market(#""status":"resolved","#, outcomes: """
+        {"id":1,"name":"Yes","probability":0.62,"is_winner":false,"resolution_source":"api_settlement",
+         "settlement_display":{"verdict":"unknown","basis":null},"last_updated":"\(freshStamp)"},
+        {"id":2,"name":"No","probability":null,"settlement_display":{"verdict":"unknown","basis":null},
+         "last_updated":"\(freshStamp)"}
+        """)
+        XCTAssertEqual(FuturesDetailRowValue.of(served.outcomes[0], marketStatus: served.status, marketSource: served.source),
+                       .resultUnknown(lastRecorded: 0.62))
+        let priced = ProbabilityAnswer10873.market(served, outcomeID: 1, now: now)
+        XCTAssertEqual(priced.kind, .noResult)
+        XCTAssertNil(priced.figure)
+        XCTAssertTrue(priced.text.contains("The result for Yes is not known."), priced.text)
+        XCTAssertTrue(priced.text.contains("last recorded chance was "
+            + formatProbability(0.62, renderedPercent: futuresDetailRenderedPercents(served.outcomes)[1])), priced.text)
+        XCTAssertFalse(priced.text.contains("lost"), priced.text)
+        XCTAssertFalse(priced.text.contains("current"), priced.text)
+        let unpriced = ProbabilityAnswer10873.market(served, outcomeID: 2, now: now)
+        XCTAssertEqual(unpriced.kind, .noResult)
+        XCTAssertFalse(unpriced.text.contains("%"), unpriced.text)
+
+        // No served contract: only the market's source decides, as on the page.
+        let fallback = try market(#""status":"resolved","source":"polymarket","#, outcomes: """
+        {"id":1,"name":"Yes","probability":0.4,"is_winner":false,"resolution_source":"api_settlement",
+         "last_updated":"\(freshStamp)"}
+        """)
+        let answer = ProbabilityAnswer10873.market(fallback, outcomeID: 1, now: now)
+        XCTAssertEqual(answer.kind, .noResult)
+        XCTAssertFalse(answer.text.contains("lost"), answer.text)
+    }
+
     // MARK: - Failures
 
     func testOfflineIsNotNoDataAndNoStatusCodeIsSpoken() {
