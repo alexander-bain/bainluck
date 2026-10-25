@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.sql.dml import Update
@@ -11,6 +14,7 @@ from app.utils import blend_preview
 from tests.test_blend_preview_ledger_tsp1_10090 import redis_kwargs  # noqa: F401
 from tests.test_blend_preview_display_before_persist_195 import _PreviewSession, _event, STORED
 from tests.test_live_blend_refresh import _one_event_refresher
+from tests.test_dnpl_redis_authority_10090 import rig, initial  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
@@ -59,11 +63,22 @@ def test_scope_selects_finite_arriving_batches():
 
 @pytest.mark.parametrize("source", ["kalshi", "polymarket"])
 async def test_new_events_publish_before_locked_persistence_without_enrollment(
-    monkeypatch, redis_kwargs, source,
+    monkeypatch, redis_kwargs, source, rig,  # noqa: F811
 ):
     from redis.asyncio import Redis
+    from app.services.dnpl_authority import AuthorityStore
+    from app.utils.dnpl_authority_transport import decode_preview
     from app.utils.live_push import event_channel
 
+    authority_client, authority = rig
+    await initial(authority_client, authority)
+    ready = replace(authority, state="ready")
+    sampled_at = datetime.now(timezone.utc) - timedelta(seconds=2)
+
+    async def sample(store):
+        return ready, sampled_at
+
+    monkeypatch.setattr(AuthorityStore, "read_for_producer", sample)
     for key in (blend_preview.SOURCE_ENV, blend_preview.EVENT_IDS_ENV, blend_preview.LEDGER_SOURCES_ENV):
         monkeypatch.delenv(key, raising=False)
     client = Redis(**redis_kwargs)
@@ -76,11 +91,25 @@ async def test_new_events_publish_before_locked_persistence_without_enrollment(
             if isinstance(statement, Update):
                 message = await listener.get_message(ignore_subscribe_messages=True, timeout=1)
                 assert message is not None, "event UPDATE began before DNPL publication"
-                seen.append(json.loads(message["data"]))
+                receipt = decode_preview(message["channel"].decode(), message["data"], 0)
+                assert receipt is not None and receipt.authority == ready
+                seen.append(json.loads(receipt.payload))
             return await super().execute(statement, *args, **kwargs)
 
     session = Session([], None, stored=STORED, rev=10)
     worker, committed = _one_event_refresher(monkeypatch, session)
+    # The recovered domain requires a genuine post-binding source observation.
+    # The shared helper's old reading has no contributing row or source clock.
+    monkeypatch.setattr(
+        "app.utils.live_blend.compute_source_home_probability",
+        lambda group, home, away: SimpleNamespace(
+            home_probability=.9, away_probability=None, draw_probability=None,
+            eligibility=None,
+            contributing_outcomes=(SimpleNamespace(
+                id=1, last_updated=datetime.now(timezone.utc),
+            ),),
+        ),
+    )
     worker.source = source
     monkeypatch.setattr(worker, "_client", lambda: client)
     try:

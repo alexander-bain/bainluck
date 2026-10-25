@@ -1626,6 +1626,10 @@ class LedgerRegistry(PreviewRegistry):
                 op.update(read_ticket=ticket, bucket=context.bucket, context_clock=context.clock_us)
         return ops
 
+    def terminal_read(self, event_id: int, source: str, rev: int, ticket: int) -> dict:
+        return {"ledger_op": "terminal", "event_id": event_id, "source": source,
+                "ctx_rev": rev, "read_ticket": ticket}
+
     def retire_read(self, event_id: int, source: str, rev: int, ticket: int, *,
                     committed_rev: int) -> dict:
         """After terminal-only DB revision advance COMMITTED (rev -> rev+1).
@@ -2159,7 +2163,9 @@ def registry() -> PreviewRegistry:
     """The process's one registry: both source arms must share it."""
     global _REGISTRY
     if _REGISTRY is None:
-        _REGISTRY = LedgerRegistry(sources=ledger_sources())
+        from app.utils.dnpl_authority_registry import AuthorityLedgerRegistry
+
+        _REGISTRY = AuthorityLedgerRegistry(sources=ledger_sources())
     return _REGISTRY
 
 

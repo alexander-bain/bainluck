@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict, dataclass, replace
+from datetime import datetime
 import re
 from typing import Callable
 from uuid import UUID
@@ -40,6 +41,9 @@ _FIELDS = (
 _COLUMNS = ", ".join(_FIELDS)
 _MATCH = " AND ".join(f"{key} = :old_{key}" for key in _FIELDS)
 _READ = text(f"SELECT {_COLUMNS} FROM dnpl_authority WHERE id = 1")
+_READ_PRODUCER = text(
+    f"SELECT {_COLUMNS}, clock_timestamp() AS sampled_at FROM dnpl_authority WHERE id = 1"
+)
 _CAS = text(
     "UPDATE dnpl_authority SET "
     + ", ".join(f"{key} = :new_{key}" for key in _FIELDS)
@@ -156,6 +160,21 @@ class AuthorityStore:
                 if row is None:
                     raise AuthorityLost("dnpl_authority row missing")
                 return Authority(**row)
+
+    async def read_for_producer(self) -> tuple[Authority, datetime]:
+        """Fresh primary sample also bounds which observations may open chains.
+
+        Use the database clock shared by observation bounds, never host wall
+        time. Caller must require ready and never rebind an existing registry.
+        """
+        async with asyncio.timeout(self.budget_s):
+            async with self.sessions() as session:
+                row = (await session.execute(_READ_PRODUCER)).mappings().one_or_none()
+                if row is None:
+                    raise AuthorityLost("dnpl_authority row missing")
+                values = dict(row)
+                sampled_at = values.pop("sampled_at")
+                return Authority(**values), sampled_at
 
     async def prepare(self, expected: Authority, candidate: Authority) -> Authority:
         # Prevent callers using this as a generic arbitrary-authority setter.

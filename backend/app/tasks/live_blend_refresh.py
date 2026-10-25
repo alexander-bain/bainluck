@@ -5064,7 +5064,13 @@ class LiveBlendRefresher:
         )
 
         if preview.ledger:
-            # TSP-1: this source's owner claim in the shared ledger.
+            bind_primary = getattr(preview, "bind_primary", None)
+            if callable(bind_primary):
+                from app.services.dnpl_authority import AuthorityStore
+                from app.tasks.base import get_task_session
+
+                await bind_primary(AuthorityStore(self._session_factory or get_task_session))
+            # Owner claim remains atomic inside the exact ready namespace.
             await preview.claim(self._preview_call(connection), self.source)
         else:
             await connection.send_command(
@@ -5507,10 +5513,9 @@ class LiveBlendRefresher:
                 # Close the preview first, including if the durable advance
                 # cannot acquire its row. Later duplicate terminal operations
                 # carry the old ticket and cannot recreate retired state.
-                await self._publish_previews([{
-                    "ledger_op": "terminal", "event_id": event_id, "source": self.source,
-                    "ctx_rev": read_rev, "read_ticket": ticket,
-                }])
+                await self._publish_previews([
+                    preview.terminal_read(event_id, self.source, read_rev, ticket),
+                ])
                 factory = self._session_factory or get_task_session
                 async with factory() as session:
                     durable = (await session.execute(update(Event).where(

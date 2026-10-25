@@ -281,3 +281,29 @@ async def test_candidate_cannot_jump_or_reuse_namespace(rig):
             redis_master_replid="b" * 40,
             policy_fingerprint=current.policy_fingerprint,
         )
+
+
+async def test_producer_sample_uses_current_primary_clock_and_exact_ready_record(rig):
+    prepared = await rig.store.prepare(
+        await rig.store.read(), next_candidate(await rig.store.read())
+    )
+    ready = await rig.store.ready(prepared)
+    async with rig.maker() as session:
+        before = await session.scalar(text("SELECT clock_timestamp()"))
+    actual, sampled_at = await rig.store.read_for_producer()
+    async with rig.maker() as session:
+        after = await session.scalar(text("SELECT clock_timestamp()"))
+    assert actual == ready
+    assert before <= sampled_at <= after
+    assert sampled_at.tzinfo is not None
+
+
+async def test_producer_sample_does_not_bootstrap_missing_control(rig):
+    async with rig.engine.begin() as conn:
+        await conn.execute(text("DELETE FROM dnpl_authority"))
+    from app.services.dnpl_authority import AuthorityLost
+
+    with pytest.raises(AuthorityLost):
+        await rig.store.read_for_producer()
+    async with rig.maker() as session:
+        assert await session.scalar(text("SELECT count(*) FROM dnpl_authority")) == 0
