@@ -34,6 +34,22 @@ enum DiscoverGroupRows {
         return "See all \(itemCount)"
     }
 
+    /// #9925: the collection row's words, as web's `CollectionEntryLink` reads
+    /// them. The name is the collection's own, never the card's header.
+    static func collectionTitle(for ref: FeedThemeCollectionRef) -> String {
+        "View the \(ref.name) collection"
+    }
+
+    /// The page's full count, not the card's preview count.
+    static func collectionCountLabel(for ref: FeedThemeCollectionRef) -> String {
+        "\(ref.collectionCount) \(ref.collectionCount == 1 ? "market" : "markets")"
+    }
+
+    /// The existing hub route, keyed by the server's slug alone.
+    static func collectionRoute(for ref: FeedThemeCollectionRef) -> Route {
+        .containerHub(slug: ref.slug, name: ref.name)
+    }
+
     /// Reuse the card's existing date/threshold rule, never the maximum price.
     static func markedRung(in points: [FeedDiscoverThresholdPoint]) -> FeedDiscoverThresholdPoint? {
         let priced = points.filter { $0.probability != nil }

@@ -96,6 +96,7 @@ CONTRACT = ROOT / "tests" / "test_prop_families_cache_lat_p138.py"
 #: queue added, add your queue's suite here in the same edit.**
 BUDGET_SUITE = ROOT / "tests" / "test_prop_families_reader_budget_lat_p164.py"
 COMPLETION_SUITE = ROOT / "tests" / "test_prop_families_completion_cert557.py"
+PRIMARY_SUITE = ROOT / "tests" / "test_prop_families_partial_primary_2311.py"
 
 #: (id, description, old, new, target). `old` must appear EXACTLY once in
 #: `target` — a mutation that matches zero or many places is a harness bug
@@ -106,21 +107,27 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M1",
         "a lost branch ends the loop — branch 3 never gets its turn again",
-        """            lost.append(_name)
-            continue""",
-        """            lost.append(_name)
-            break""",
+        # #2311: the branch loop no longer `continue`s on a loss — the chunk
+        # loop does — so the branch-level "end the loop" mutant is a `break`
+        # after the loss is recorded.
+        """        if _branch_lost:
+            lost.append(_name)
+""",
+        """        if _branch_lost:
+            lost.append(_name)
+            break
+""",
         ROUTE,
     ),
     (
         "M2",
         "drop the rollback — the next branch inherits an aborted transaction",
-        """            try:
-                await db.rollback()
-            except Exception:""",
-        """            try:
-                pass
-            except Exception:""",
+        """                try:
+                    await db.rollback()
+                except Exception:""",
+        """                try:
+                    pass
+                except Exception:""",
         ROUTE,
     ),
     (
@@ -135,9 +142,9 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M4",
         "set the timeout once, before the loop — branches 2 and 3 run unbounded",
-        """            await db.execute(text(f"SET LOCAL statement_timeout = '{_timeout_ms}'"))
-            _result = (await db.execute(_branch(_cond))).all()""",
-        """            _result = (await db.execute(_branch(_cond))).all()""",
+        """                await db.execute(text(f"SET LOCAL statement_timeout = '{_timeout_ms}'"))
+                _result = (await db.execute(_branch(_cond))).all()""",
+        """                _result = (await db.execute(_branch(_cond))).all()""",
         ROUTE,
     ),
     (
@@ -371,6 +378,40 @@ return 1""",
 return 1""",
         CACHE,
     ),
+    # --- #2311: a partial never replaces a full PRIMARY ----------------------
+    (
+        "M28",
+        "the full-primary check is dropped — a second refresh's timeout partial "
+        "replaces a live full build three minutes in (Seahawks, 2026-10-24)",
+        """    if primary_is_full:
+        logger.info(""",
+        """    if False:
+        logger.info(""",
+        ROUTE,
+    ),
+    (
+        "M29",
+        "the primary compare-and-set is anchored to `None` — a partial can never "
+        "replace an older partial, so the page freezes on its first partial",
+        """    return setex_if_unchanged(
+        rc, keys.primary, expected, PROP_FAMILIES_PRIMARY_TTL, encoded
+    )""",
+        """    return setex_if_unchanged(
+        rc, keys.primary, None, PROP_FAMILIES_PRIMARY_TTL, encoded
+    )""",
+        ROUTE,
+    ),
+    (
+        "M30",
+        "the primary write goes back to a plain SETEX — a full build landing "
+        "between the read and the write is overwritten",
+        """    return setex_if_unchanged(
+        rc, keys.primary, expected, PROP_FAMILIES_PRIMARY_TTL, encoded
+    )""",
+        """    rc.setex(keys.primary, PROP_FAMILIES_PRIMARY_TTL, encoded)
+    return True""",
+        ROUTE,
+    ),
 ]
 
 
@@ -384,6 +425,7 @@ def _run_suite() -> int:
             str(CONTRACT),
             str(BUDGET_SUITE),
             str(COMPLETION_SUITE),
+            str(PRIMARY_SUITE),
             "-q",
             "--no-header",
             "-x",

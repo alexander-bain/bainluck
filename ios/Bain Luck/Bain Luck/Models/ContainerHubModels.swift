@@ -20,6 +20,9 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
     let withheldCount: Int
     let assembled: Bool
     let knownClasses: [String]
+    let counts: ContainerHubCounts?
+    let page: ContainerHubPage?
+    let revisionMoved: Bool
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -41,11 +44,36 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
         withheldCount = try c.decodeIfPresent(Int.self, forKey: .withheldCount) ?? 0
         assembled = try c.decodeIfPresent(Bool.self, forKey: .assembled) ?? false
         knownClasses = try c.decodeIfPresent([String].self, forKey: .knownClasses) ?? []
+        counts = try c.decodeIfPresent(ContainerHubCounts.self, forKey: .counts)
+        page = try c.decodeIfPresent(ContainerHubPage.self, forKey: .page)
+        revisionMoved = try c.decodeIfPresent(Bool.self, forKey: .revisionMoved) ?? false
+        if state == .published {
+            guard revision.map({ $0 > 0 }) == true, edition?.matches(slug: slug) == true,
+                  container?.slug == slug, memberCount >= 0, withheldCount >= 0 else {
+                throw DecodingError.dataCorruptedError(forKey: .edition, in: c, debugDescription: "Published collection identity is invalid")
+            }
+            if edition?.isTheme == true {
+                guard let counts, let page, counts.shownCount >= memberCount,
+                      counts.eligibleCount >= counts.shownCount, counts.withheldCount.values.allSatisfy({ $0 >= 0 }),
+                      (1...100).contains(page.limit), page.nextCursor.map(ContainerHubPage.validCursor) ?? true else {
+                    throw DecodingError.dataCorruptedError(forKey: .counts, in: c, debugDescription: "Theme page requires valid full-inventory counts and cursor")
+                }
+            }
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
         case state, slug, revision, reason, edition, container, children, sections
-        case memberCount, withheld, withheldCount, assembled, knownClasses
+        case memberCount, withheld, withheldCount, assembled, knownClasses, counts, page, revisionMoved
+    }
+
+    /// Preserve the accepted page inventory while replacing its fresh envelope.
+    init(envelope: ContainerHubResponse, sections: [ContainerHubSection], memberCount: Int, page: ContainerHubPage?, withheld: [ContainerHubWithheld], withheldCount: Int) {
+        state = envelope.state; slug = envelope.slug; revision = envelope.revision; reason = envelope.reason
+        edition = envelope.edition; container = envelope.container; children = envelope.children
+        self.sections = sections; self.memberCount = memberCount; self.page = page
+        self.withheld = withheld; self.withheldCount = withheldCount; assembled = envelope.assembled
+        knownClasses = envelope.knownClasses; counts = envelope.counts; revisionMoved = envelope.revisionMoved
     }
 
     var identity: Identity { Identity(slug: slug, revision: revision) }
@@ -57,10 +85,54 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
 
 nonisolated struct ContainerHubEdition: Decodable, Equatable, Sendable {
     let kind: String
-    let league: String
-    let season: Int
+    let league: String?
+    let season: Int?
     let stage: String?
     let week: Int?
+    let subject: String?
+    let edition: Int?
+
+    var isTheme: Bool { kind == "theme_continuing" || kind == "theme_edition" }
+    func matches(slug: String) -> Bool {
+        if isTheme {
+            guard let subject, !subject.isEmpty else { return false }
+            if kind == "theme_continuing" { return slug == subject }
+            return edition.map { $0 > 0 && slug == "\(subject)-\($0)" } ?? false
+        }
+        guard let season, season > 0 else { return false }
+        switch kind {
+        case "nfl_season": return league == "nfl" && slug == "nfl-\(season)"
+        case "mlb_postseason": return league == "mlb" && slug == "mlb-\(season)-postseason"
+        case "nfl_week":
+            guard league == "nfl", let week, (1...99).contains(week) else { return false }
+            let prefix: String
+            switch stage {
+            case "Regular Season": prefix = ""
+            case "Pre Season": prefix = "preseason-"
+            case "Post Season": prefix = "postseason-"
+            default: return false
+            }
+            return slug == "nfl-\(season)-\(prefix)week-\(week)"
+        default: return false
+        }
+    }
+}
+
+nonisolated struct ContainerHubCounts: Decodable, Sendable {
+    let shownCount: Int
+    let eligibleCount: Int
+    let withheldCount: [String: Int]
+    let inventoryComplete: Bool
+}
+
+nonisolated struct ContainerHubPage: Decodable, Sendable {
+    let limit: Int
+    let nextCursor: String?
+    static func validCursor(_ value: String) -> Bool {
+        !value.isEmpty && value.count <= 64 && value.unicodeScalars.allSatisfy {
+            CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-").contains($0)
+        }
+    }
 }
 
 nonisolated struct ContainerHubHeader: Decodable, Sendable {
@@ -125,6 +197,10 @@ nonisolated struct ContainerHubSection: Decodable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case sectionClass = "class"
         case count, members
+    }
+
+    init(sectionClass: String, count: Int, slots: [ContainerHubMemberSlot]) {
+        self.sectionClass = sectionClass; self.count = count; self.slots = slots
     }
 
     var members: [ContainerHubMember] { slots.compactMap(\.member).filter(\.canOpen) }

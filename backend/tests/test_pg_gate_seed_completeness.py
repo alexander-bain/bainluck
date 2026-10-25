@@ -48,6 +48,8 @@ from app.models.models import Base
 #: the discovery arm below fails if such a gate grows an INSERT and is not
 #: listed, so this list cannot silently fall behind.
 COVERED = (
+    # #10090: raw event/sport seeds exercise tier reservation maintenance.
+    "test_dnpl_reservations_10090_pg.py",
     # #683. The constraint case seeds an import, an evidence row and intervals by
     # raw INSERT to prove the database refuses impossible rows.
     "test_kalshi_archive_store_683_pg.py",

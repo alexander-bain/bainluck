@@ -1,4 +1,5 @@
 import { awardsRefreshInterval, awardsResult, splitChildren, childLeader } from "@/lib/eventConceptDisplay";
+import { ALL_COPY_BANS, VENUE_BANS, findBannedCopy } from "@/lib/copyBans";
 import type { EventConceptChild } from "@/lib/types";
 const NOW = Date.UTC(2026, 9, 12, 12);
 const pending: EventConceptChild = { market_id: 1, market_name: "Best Picture", settled: false, probability: .99, outcomes: [{ name: "Favorite", probability: .99, won: false }] };
@@ -16,7 +17,118 @@ test("announcement requires own outcome grade, never price or standalone conveni
 test("ties preserve every grade; prop result keeps its distinction", () => {
   const tie = { ...pending, graded_winner: null, outcomes: [{ name: "A", probability: .1, won: true }, { name: "B", probability: null, won: true }, { name: "Favorite", probability: .99, won: false }] };
   expect(awardsResult(tie).names).toEqual(["A", "B"]);
-  expect(awardsResult({ ...tie, kind: "prop", prop_type: "nominations" }).prop).toBe(true);
+  expect(awardsResult({ ...tie, kind: "prop", prop_type: "nominations" })).toMatchObject({
+    prop: true,
+    nominations: true,
+    settledByLabel: null,
+  });
+  expect(awardsResult({ ...tie, kind: "prop", prop_type: "occurrence" })).toMatchObject({
+    prop: true,
+    nominations: false,
+    settledByLabel: null,
+  });
+  expect(awardsResult({ ...tie, prop_type: "nominations" })).toMatchObject({
+    prop: false,
+    nominations: false,
+    settledByLabel: null,
+  });
+});
+
+test("result.venue maps supported settling providers and never invents a provider when null or unconfirmed", () => {
+  const announcedOutcomes = [{ name: "The Pitt", probability: 1, won: true }];
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "announced", evidence_kind: "venue_settlement", venue: "kalshi" },
+    }).settledByLabel,
+  ).toBe("Result source · Kalshi");
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "announced", evidence_kind: "venue_settlement", venue: "  Kalshi  " },
+    }).settledByLabel,
+  ).toBe("Result source · Kalshi");
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "announced", evidence_kind: "venue_settlement", venue: "Polymarket" },
+    }).settledByLabel,
+  ).toBe("Result source · Polymarket");
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "announced", evidence_kind: "venue_settlement", venue: null },
+    }).settledByLabel,
+  ).toBeNull();
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "announced", evidence_kind: "venue_settlement", venue: "   " },
+    }).settledByLabel,
+  ).toBeNull();
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "announced", evidence_kind: "venue_settlement", venue: "oddschecker" },
+    }).settledByLabel,
+  ).toBeNull();
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: [{ name: "Favorite", probability: 0.99, won: false }],
+      result: { state: "announced", evidence_kind: "venue_settlement", venue: "kalshi" },
+    }).settledByLabel,
+  ).toBeNull();
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "closed", evidence_kind: "venue_settlement", venue: "kalshi" },
+    }).settledByLabel,
+  ).toBeNull();
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: announcedOutcomes,
+      result: { state: "announced", evidence_kind: "unconfirmed_grade", venue: "kalshi" },
+    }).settledByLabel,
+  ).toBeNull();
+  expect(
+    awardsResult({
+      ...pending,
+      settled: true,
+      outcomes: [{ name: "Favorite", probability: 0.99, won: false }],
+      result: { state: "closed", evidence_kind: "unconfirmed_grade", venue: "kalshi" },
+    }).settledByLabel,
+  ).toBeNull();
+});
+
+test("result attribution labels pass the Ruling 141 copy classifier while narrative supplier copy remains rejected", () => {
+  expect(findBannedCopy("Result source · Kalshi", ALL_COPY_BANS)).toEqual([]);
+  expect(findBannedCopy("Result source · Polymarket", ALL_COPY_BANS)).toEqual([]);
+  expect(findBannedCopy("Result source · Kalshi", VENUE_BANS)).toEqual([]);
+  expect(findBannedCopy("Result source · Polymarket", VENUE_BANS)).toEqual([]);
+  expect(findBannedCopy("Settled by Kalshi", VENUE_BANS).map((h) => h.ban.id)).toEqual(["venue-kalshi"]);
+  expect(findBannedCopy("Settled by Polymarket", VENUE_BANS).map((h) => h.ban.id)).toEqual(["venue-polymarket"]);
+  expect(
+    findBannedCopy("we asked Kalshi and Polymarket and neither runs that market.", VENUE_BANS).map((h) => h.ban.id),
+  ).toEqual(["venue-kalshi", "venue-polymarket"]);
+  expect(findBannedCopy("Polymarket 20 days ago", VENUE_BANS).map((h) => h.ban.id)).toEqual(["venue-polymarket"]);
 });
 test("bounded relevant unknown edition uses existing cadence and stops with own results", () => {
   expect(awardsRefreshInterval(edition(), NOW, NOW)).toBe(30000);

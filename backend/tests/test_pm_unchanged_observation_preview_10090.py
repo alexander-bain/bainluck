@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 from app.tasks.polymarket_ws import books_with_complements, _poly_book_is_untradeable
+from app.tasks.live_blend_refresh import HeldRowQuotes
 import pytest
 
 from tests.test_pm_quote_lock_bound_10090 import writer_rig
@@ -23,7 +24,9 @@ async def test_successful_unchanged_ack_hands_frozen_observation_to_preview_only
     refresher.preview_events = {10}
     observed = []
 
-    class Bounds:
+    class Bounds(HeldRowQuotes):
+        # Keep the real returned-clock ticket API; this no-row acknowledgement
+        # has no write clock and must retain the existing sampling fallback.
         def bound_for(self, mark):
             return None if mark is None else 1000.5
 
