@@ -5,10 +5,28 @@
 import type { FuturesFamily, FuturesMarket, FuturesOutcome } from "@/lib/types";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { stripSeasonYear } from "@/lib/searchSuggestionDisplay";
+import { outcomeRowVerdict } from "@/lib/futuresOutcomeVerdict";
+import { effectiveSettlement, isResultUnknown } from "@/lib/settledResultDisplay";
+import { openFieldLegIsOut } from "@/lib/openFieldLegOut";
 import { answerRung, inThresholdOrder } from "@/lib/discover/leaderOrder";
 
+/** The same served/legacy settlement decision as detail, plus Search's existing
+ * open-field elimination rule. A result does not require a prediction price. */
+export function familyOutcomeResult(
+  market: FuturesMarket,
+  outcome: FuturesOutcome,
+): "won" | "lost" | "out" | "unknown" | null {
+  const row = {
+    ...outcome,
+    settlement_display: effectiveSettlement(outcome, market),
+  };
+  const resolved = market.status === "resolved";
+  if (isResultUnknown(row, resolved)) return "unknown";
+  return outcomeRowVerdict(row, resolved) ?? (openFieldLegIsOut(market, outcome) ? "out" : null);
+}
+
 /** The leader outcome to display (leader-pick already applied server-side): the
- *  first top_outcome with a probability.
+ *  first top_outcome with a supported price or result.
  *
  *  #8834 — EXCEPT on a threshold ladder. Search serves a ladder as the rungs
  *  around its crossing in threshold order, so "the first" is the loosest rung:
@@ -18,14 +36,14 @@ import { answerRung, inThresholdOrder } from "@/lib/discover/leaderOrder";
  *  the whole shipped set by `inThresholdOrder`, the gate that card uses. */
 export function leaderOutcome(market: FuturesMarket): FuturesOutcome | null {
   const shipped = market.top_outcomes ?? [];
-  const outs = shipped.filter((o) => o.probability != null);
+  const outs = shipped.filter((o) => o.probability != null || familyOutcomeResult(market, o) !== null);
   if (!outs.length) return null;
-  if (inThresholdOrder(shipped.map((o) => o.name))) return answerRung(outs);
+  if (inThresholdOrder(shipped.map((o) => o.name))) return answerRung(outs) ?? outs[0];
   return outs[0];
 }
 
 /**
- * "Cleveland Cavaliers 27%" — name + probability ONLY (D1: never odds).
+ * "Cleveland Cavaliers 27%" or a supported result — never odds.
  *
  * #7320 — ROUTED THROUGH THE CONTRACT EVEN THOUGH NOTHING CALLS IT. Measured:
  * the only importer of this symbol is this module's own test; the card renders
@@ -38,8 +56,13 @@ export function leaderOutcome(market: FuturesMarket): FuturesOutcome | null {
  */
 export function leaderLabel(market: FuturesMarket): string | null {
   const ld = leaderOutcome(market);
-  if (!ld || ld.probability == null) return null;
-  return `${ld.name} ${formatProbabilityPercent(ld.probability)}`;
+  if (!ld) return null;
+  const result = familyOutcomeResult(market, ld);
+  if (result) {
+    const labels = { won: "Won", lost: "Lost", out: "Out", unknown: "Result unknown" };
+    return `${ld.name} ${labels[result]}`;
+  }
+  return ld.probability == null ? null : `${ld.name} ${formatProbabilityPercent(ld.probability)}`;
 }
 
 /** Movement arrow only when |Δ24h| ≥ 2pts (0.02 on the 0-1 scale). */

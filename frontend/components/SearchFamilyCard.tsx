@@ -13,9 +13,9 @@
 import Link from "next/link";
 import type { FuturesFamily, FuturesMarket } from "@/lib/types";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
-import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 import {
   leaderOutcome,
+  familyOutcomeResult,
   movementArrow,
   answerDateLabel,
   familyRowTitles,
@@ -23,7 +23,6 @@ import {
 } from "@/components/searchFamilyDisplay";
 import { spreadSideLabels } from "@/lib/gamePropCardContext";
 import { relatedGameListingText } from "@/lib/relatedGameListing";
-import { openFieldLegIsOut } from "@/lib/openFieldLegOut";
 
 function AnswerRow({
   market,
@@ -55,8 +54,7 @@ function AnswerRow({
   // today's price.
   // #11493: and a leader the venue has knocked out of a still-open field reads
   // Out, the same rule Search's futures cards use (`lib/openFieldLegOut`).
-  const graded = ld ? outcomeRowVerdict(ld, market.status === "resolved") : null;
-  const verdict = graded ?? (ld && openFieldLegIsOut(market, ld) ? "out" : null);
+  const verdict = ld ? familyOutcomeResult(market, ld) : null;
   const arrow = ld && verdict === null ? movementArrow(ld.movement) : null;
   // #8906: a row about a game is dated by its kickoff, not its settlement.
   const reso = answerDateLabel(market);
@@ -152,7 +150,7 @@ function AnswerRow({
           <span className="truncate">{listing}</span>
           <span aria-hidden className="flex-shrink-0">›</span>
         </span>
-      ) : ld && ld.probability != null ? (
+      ) : ld ? (
         /* #4136: the outcome NAME may be arbitrarily long — production served an
            outcome called "Istanbul 3: Timofey Skatov vs Yanki Erel Set 2 O/U 9.5"
            — and this column used to be `flex-shrink-0`, so one row like that blew
@@ -180,11 +178,13 @@ function AnswerRow({
             <span className="flex-shrink-0 text-text-muted">Lost</span>
           ) : verdict === "out" ? (
             <span className="flex-shrink-0 text-text-muted" data-open-field-out>Out</span>
-          ) : (
+          ) : verdict === "unknown" ? (
+            <span className="flex-shrink-0 text-text-muted">Result unknown</span>
+          ) : ld.probability != null ? (
             <span className="flex-shrink-0 text-text-primary font-medium">
               {formatProbabilityPercent(ld.probability)}
             </span>
-          )}
+          ) : null}
           {arrow && (
             <span
               className={`flex-shrink-0 ${arrow.up ? "text-accent-live" : "text-accent-danger"}`}
