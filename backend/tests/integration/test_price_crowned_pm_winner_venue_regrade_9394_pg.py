@@ -107,6 +107,22 @@ GAMMA_890355 = {
     ],
 }
 
+#: #698 — SYNTHETIC VERIFIED-INPUT QUALIFICATION, not a newly observed field.
+#: The negRisk arm now grades a leg only on the verified-result contract
+#: (`closed` + `umaResolutionStatus: "resolved"` + an exact 1/0 payout). The
+#: 2026-09-28 read above kept only `closed` and the payouts; whether Gamma then
+#: reported UMA `resolved` for 890355 was not retained and is not claimed here.
+#: This copy adds it so the #9394 requirements (venue grades Gotterup Lost, one
+#: champion, the one-leg mint refusal, no re-selection once graded) are still
+#: exercised; `GAMMA_890355` itself is kept byte-for-byte and is proven below to
+#: grade NOTHING, so the reduced payload can never become authoritative.
+GAMMA_890355_VERIFIED = {
+    **GAMMA_890355,
+    "markets": [
+        {**leg, "umaResolutionStatus": "resolved"} for leg in GAMMA_890355["markets"]
+    ],
+}
+
 
 class _FakeRedis:
     def __init__(self):
@@ -168,6 +184,10 @@ async def engine():
                 external_id varchar(200),
                 name varchar(300) NOT NULL,
                 current_probability numeric(10, 6),
+                -- #698: the negRisk arm now settles through
+                -- `settled_price_set_sql`, which nulls this real column
+                -- (models.FuturesOutcome.current_american_odds).
+                current_american_odds integer,
                 is_winner boolean,
                 resolution_source varchar(40),
                 last_updated timestamptz,
@@ -223,9 +243,9 @@ async def engine():
     await admin.dispose()
 
 
-@pytest.fixture
-def run_rail(engine, monkeypatch):
-    """Drive the real Phase-3 rail, scheduled form, against the gate schema."""
+def _rail_driver(engine, monkeypatch, payload):
+    """Drive the real Phase-3 rail, scheduled form, against the gate schema,
+    with Gamma answering 890355 with ``payload``."""
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -253,7 +273,7 @@ def run_rail(engine, monkeypatch):
 
         async def get_event_by_id(self, eid):
             asked.append(str(eid))
-            return GAMMA_890355 if str(eid) == EVENT_ID else None
+            return payload if str(eid) == EVENT_ID else None
 
         async def close(self):
             return None
@@ -265,6 +285,18 @@ def run_rail(engine, monkeypatch):
         return stats, asked
 
     return _run
+
+
+@pytest.fixture
+def run_rail(engine, monkeypatch):
+    """The #9394 requirements, on the SYNTHETIC verified-input copy (#698)."""
+    return _rail_driver(engine, monkeypatch, GAMMA_890355_VERIFIED)
+
+
+@pytest.fixture
+def run_rail_historic(engine, monkeypatch):
+    """The retained reduced payload, unchanged: no `umaResolutionStatus`."""
+    return _rail_driver(engine, monkeypatch, GAMMA_890355)
 
 
 async def _rows(engine, market_id):
@@ -340,6 +372,51 @@ class TestWhatTheRailMustNotTouch:
         _stats, asked = await run_rail()
         # Second run: Gotterup is api_settlement now, so nothing re-selects it.
         assert asked.count(EVENT_ID) == 1
+
+
+class TestAnUnverifiedPayloadIsNotAResult:
+    """#698 — the reduced payload carries `closed` and a 0/1 payout but no UMA
+    resolution. The arm no longer reads that as a result: Gotterup's price
+    crown is left exactly as stored, nothing is minted, and the market stays
+    in the population (reach unchanged) until a verified answer arrives."""
+
+    async def test_the_reduced_payload_grades_nothing(
+        self, engine, run_rail_historic
+    ):
+        before = await _rows(engine, SPECIMEN)
+        stats, asked = await run_rail_historic()
+        assert EVENT_ID in asked
+        assert await _rows(engine, SPECIMEN) == before
+        assert before[0]["is_winner"] is True
+        assert before[0]["resolution_source"] == "clean_resolution"
+        assert stats["legs_closed_without_verified_result"] == 2
+        assert stats["champion_mint"] == {}
+
+    async def test_an_unverified_market_stays_selected(self, run_rail_historic):
+        await run_rail_historic()
+        _stats, asked = await run_rail_historic()
+        assert asked.count(EVENT_ID) == 2
+
+    async def test_a_verified_grade_lands_with_its_terminal_price_in_one_write(
+        self, engine, run_rail
+    ):
+        # Real-Postgres proof of the shared settle clause on this arm: the
+        # grade, the source, the terminal price, NULL odds and the change
+        # stamp, from one statement over the real column set.
+        async with engine.begin() as conn:
+            await conn.execute(text(
+                "UPDATE futures_outcomes SET current_american_odds = -9900"
+                " WHERE market_id = :m"), {"m": SPECIMEN})
+        await run_rail()
+        async with engine.connect() as conn:
+            row = (await conn.execute(text(
+                "SELECT is_winner, resolution_source, current_probability,"
+                " current_american_odds, price_changed_at"
+                " FROM futures_outcomes WHERE market_id = :m"), {"m": SPECIMEN})).one()
+        assert row.is_winner is False and row.resolution_source == "api_settlement"
+        assert float(row.current_probability) == 0.0
+        assert row.current_american_odds is None
+        assert row.price_changed_at is not None
 
 
 def _market(mid, name, source, outcomes):

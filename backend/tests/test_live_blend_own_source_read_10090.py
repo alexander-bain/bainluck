@@ -65,7 +65,7 @@ async def test_actual_select_narrows_only_source_json_and_preserves_joined_graph
         assert "events.win_probability_sources -> " in str(compiled)
         assert "::JSONB" not in str(compiled)
     expected = [
-        f"{table}.{key}"
+        "sports.key" if key == "sport_key" else f"{table}.{key}"
         for table, fields in (
             ("futures_markets", PREPARED_MARKET_FIELDS),
             ("events", PREPARED_EVENT_FIELDS),
@@ -74,20 +74,25 @@ async def test_actual_select_narrows_only_source_json_and_preserves_joined_graph
     ]
     metadata_position = PREPARED_MARKET_FIELDS.index("market_metadata")
     assert [str(c) for i, c in enumerate(columns) if i not in (position, metadata_position)] == expected + ([
-        "events.win_probability_sources", "events.win_probability_sources_rev",
+        "events.win_probability_sources", "events.win_probability_sources_rev", "statement_timestamp()",
     ] if preview else [])
     metadata_projection = columns[metadata_position]
     assert metadata_projection.name == "market_metadata"
     assert metadata_projection.element.name == "jsonb_build_object"
     assert list(metadata_projection.element.clauses)[0].value == "content_understanding_v1"
     if preview:
-        assert [c.name for c in columns[-2:]] == ["preview_sources", "preview_rev"]
+        assert [c.name for c in columns[-3:]] == [
+            "preview_sources", "preview_rev", "preview_context_at",
+        ]
         assert context.preview_sources == e.win_probability_sources
         assert context.preview_rev == e.win_probability_sources_rev
+        assert context.preview_context_at == session.read_at
     else:
         assert not hasattr(context, "preview_sources")
     sql = str(statement.compile(dialect=postgresql.dialect()))
     assert "JOIN events" in sql and "LEFT OUTER JOIN futures_outcomes" in sql
+    assert "LEFT OUTER JOIN sports ON sports.id = events.sport_id" in sql
+    assert context.sport_key == "basketball_nba"
     assert not statement._order_by_clauses and not statement._group_by_clauses
     assert "OVER (" not in sql and not statement._distinct
 

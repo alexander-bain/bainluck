@@ -30,6 +30,21 @@ same game that holds no ESPN id (a StatPal or Odds API twin; `event_twin_fold`
 folds those at serve time by name and minute) cannot get in — it is reported,
 and if it holds questions the collection is short them and says so.
 
+A PROVEN DUPLICATE'S QUESTIONS COME IN THROUGH ITS MEMBER (#9886). A row that
+carries `provenance:duplicate-of:<member>` was proven, at the write side and on
+an id-anchored correspondence (ruling 048), to be the same game as a member.
+`proven_duplicates.folded_event_ids` already serves its markets on the member's
+page; `admit_proven_duplicates` lets the postseason count them the same way.
+The row itself never becomes a member and no market moves: each question keeps
+its own `event_id`, and the report names the row it sits on and the member it
+came in through. The label is trusted exactly as far as that reader trusts it —
+ONE HOP. A label naming a row that is not this postseason's member, naming
+itself, naming a row that is itself labelled, or sitting beside a second label
+admits nothing, and neither does a row on another sport, another season, or
+holding an ESPN id of its own. Each refusal is named, and a refused row in the
+postseason's span stays unidentified, so its questions still make the pass
+`partial`.
+
 A MARKET IS A MEMBER BECAUSE ITS EVENT IS (`futures_markets.event_id`, gotcha
 #15) — except the game's own winner market. Kalshi's and Polymarket's "who wins
 Game 1" markets are the game card's blended number, not two more questions, so
@@ -52,10 +67,12 @@ board days the caller reads; everything in it is discovered from ESPN.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Iterable, Optional
 
+from app.services.anchor_channel import DUPLICATE_TAG_PREFIX
 from app.utils.container_class import MemberEvidence
 from app.utils.container_game_winner import (
     EXCLUDED_GAME_WINNER_MARKET,
@@ -93,6 +110,18 @@ EXCLUDED_PLACEHOLDER = "placeholder_game"
 EXCLUDED_CONFLICTING_IDENTITY = "conflicting_identity"
 EXCLUDED_DUPLICATE_EVENT_ROWS = "duplicate_event_rows"
 EXCLUDED_MARKET_ON_DUPLICATE = "market_on_duplicate_event"
+EXCLUDED_DUPLICATE_LABEL_REFUSED = "duplicate_label_refused"
+
+# --- why a `duplicate-of` label admits nothing (closed; tests read these names)
+
+REFUSED_OTHER_SPORT = "other_sport"
+REFUSED_CONFLICTING_LABELS = "conflicting_labels"
+REFUSED_MALFORMED_LABEL = "malformed_label"
+REFUSED_SELF_LABEL = "self_label"
+REFUSED_TARGET_NOT_A_MEMBER = "target_not_a_member"
+REFUSED_ROW_HOLDS_ESPN_ID = "row_holds_espn_id"
+REFUSED_TARGET_IS_LABELLED = "target_is_labelled"
+REFUSED_OTHER_SEASON = "other_season"
 
 UNAVAILABLE_NO_BOARD_DAYS = "no_board_days"
 UNAVAILABLE_BOARDS_DARK = "espn_boards_dark"
@@ -109,6 +138,7 @@ INCOMPLETE_DUPLICATE_ROWS = "game_with_duplicate_event_rows"
 INCOMPLETE_CONFLICTING_IDENTITY = "game_with_conflicting_identity"
 INCOMPLETE_MARKETS_TRUNCATED = "market_read_truncated"
 INCOMPLETE_STRANDED_QUESTIONS = "questions_on_rows_without_espn_id"
+INCOMPLETE_DUPLICATES_UNREAD = "proven_duplicates_unread"
 
 
 @dataclass(frozen=True)
@@ -317,6 +347,117 @@ class EventRow:
     commence_time: Optional[datetime]
     home: Optional[str]
     away: Optional[str]
+    #: The tail of every `provenance:duplicate-of:` label the row carries
+    #: (`duplicate_labels`). Read on a member so a label naming it can tell
+    #: whether it is itself a duplicate.
+    duplicate_labels: tuple = ()
+
+
+def duplicate_labels(event_tags: Any) -> tuple:
+    """The tail of every ``provenance:duplicate-of:`` element, verbatim, in order.
+
+    Verbatim so a malformed or second label is SEEN and refused rather than
+    skipped: `proven_duplicates.canonical_id_from_tags` returns the first
+    numeric tail, which is right for a page printing one row and wrong for a
+    membership rule that must refuse a row naming two games. JSONB arrives as a
+    list from asyncpg and as serialised text from a test double; text is
+    decoded, never iterated (iterating it yields characters and finds nothing).
+    """
+    if isinstance(event_tags, str):
+        try:
+            event_tags = json.loads(event_tags)
+        except ValueError:
+            return ()
+    if not isinstance(event_tags, (list, tuple)):
+        return ()
+    return tuple(
+        tag[len(DUPLICATE_TAG_PREFIX):]
+        for tag in event_tags
+        if isinstance(tag, str) and tag.startswith(DUPLICATE_TAG_PREFIX)
+    )
+
+
+@dataclass(frozen=True)
+class DuplicateRow:
+    """One of our rows carrying a `duplicate-of` label that names a member."""
+
+    id: int
+    espn_id: Optional[str]
+    status: Optional[str]
+    commence_time: Optional[datetime]
+    home: Optional[str]
+    away: Optional[str]
+    sport_key: Optional[str]
+    duplicate_labels: tuple
+    markets: int = 0
+
+    def receipt(self, **extra) -> dict:
+        return {
+            "event_id": self.id,
+            "teams": [self.away, self.home],
+            "commence_time": self.commence_time.isoformat() if self.commence_time else None,
+            "status": self.status,
+            "espn_id": self.espn_id,
+            "sport": self.sport_key,
+            "labels": list(self.duplicate_labels),
+            "markets": self.markets,
+            **extra,
+        }
+
+
+@dataclass
+class ProvenDuplicates:
+    """Which labelled rows bring their questions in, through which member."""
+
+    #: duplicate row id -> the member it was proven to duplicate.
+    admitted: dict = field(default_factory=dict)
+    receipts: list = field(default_factory=list)
+    refused: list = field(default_factory=list)
+
+
+def admit_proven_duplicates(
+    target: MlbPostseason,
+    members: dict,
+    rows: Iterable[DuplicateRow],
+) -> ProvenDuplicates:
+    """Admit the rows whose ONE label names one of ``members`` directly.
+
+    ``members`` is ``{event id: EventRow}`` for this postseason's members — the
+    rows `resolve_postseason_members` admits by ESPN id, and nothing else. The
+    label is the write side's proof and is trusted, never re-litigated by name
+    or kickoff; everything here is the read side declining what that proof does
+    not cover. First matching refusal wins, in a fixed order.
+    """
+    out = ProvenDuplicates()
+    for row in sorted(rows, key=lambda r: r.id):
+        labels = set(row.duplicate_labels)
+        tail = next(iter(labels)) if len(labels) == 1 else None
+        canonical = int(tail) if tail is not None and tail.isdigit() else None
+        if row.sport_key != MLB_SPORT_KEY:
+            refusal = REFUSED_OTHER_SPORT
+        elif len(labels) != 1:
+            refusal = REFUSED_CONFLICTING_LABELS
+        elif canonical is None:
+            refusal = REFUSED_MALFORMED_LABEL
+        elif canonical == row.id:
+            refusal = REFUSED_SELF_LABEL
+        elif canonical not in members:
+            refusal = REFUSED_TARGET_NOT_A_MEMBER
+        elif (row.espn_id or "").strip():
+            # ESPN's id is a game's identity; a row holding one is that game.
+            refusal = REFUSED_ROW_HOLDS_ESPN_ID
+        elif members[canonical].duplicate_labels:
+            # One hop: a duplicate of a duplicate is a matching defect, and a
+            # cycle ends here too — never walked.
+            refusal = REFUSED_TARGET_IS_LABELLED
+        elif row.commence_time is None or mlb_season_for_date(row.commence_time) != target.season:
+            refusal = REFUSED_OTHER_SEASON
+        else:
+            out.admitted[row.id] = canonical
+            out.receipts.append(row.receipt(duplicate_of=canonical))
+            continue
+        out.refused.append(row.receipt(refusal=refusal))
+    return out
 
 
 @dataclass(frozen=True)
@@ -342,27 +483,100 @@ class PostseasonMembers:
     excluded: dict = field(default_factory=dict)
     unavailable: list = field(default_factory=list)
     not_yet_certain: list = field(default_factory=list)
+    #: Rows proven to duplicate a member, whose questions came in through it.
+    proven_duplicates: list = field(default_factory=list)
 
     def exclude(self, reason: str, receipt: dict) -> None:
         self.excluded.setdefault(reason, []).append(receipt)
+
+
+def postseason_member_rows(
+    selection: PostseasonSelection, event_rows: Iterable[EventRow]
+) -> dict:
+    """``{event id: EventRow}`` for the rows that are members — the game half of
+    `resolve_postseason_members`, which a `duplicate-of` label must name."""
+    rows = list(event_rows)
+    members, _, _ = _resolve_games(selection, rows)
+    by_id = {row.id: row for row in rows}
+    return {c.child_id: by_id[c.child_id] for c in members.candidates}
 
 
 def resolve_postseason_members(
     selection: PostseasonSelection,
     event_rows: Iterable[EventRow],
     market_rows: Iterable[MarketRow],
+    proven: Optional[ProvenDuplicates] = None,
 ) -> PostseasonMembers:
     """Join ESPN's postseason games to our rows by ESPN id, then take their markets.
 
     Exactly one of our rows per game, or none is a member: two rows holding one
     ESPN id are two rows for one game, and picking one would hide the finding
     while admitting half of it. Their markets are held back with them.
+
+    ``proven`` (`admit_proven_duplicates`) names rows whose questions come in
+    through a member. Only a member's own duplicates count — a label whose
+    member did not survive this join admits nothing — and each question is
+    counted once, receipted with the row it actually sits on.
     """
+    from app.tasks.container_assembly import Candidate
+
+    members, member_events, duplicate_events = _resolve_games(selection, list(event_rows))
+    if selection.unavailable:
+        return members
+
+    via: dict[int, int] = {}
+    if proven is not None:
+        for receipt in proven.receipts:
+            if receipt["duplicate_of"] in member_events:
+                via[receipt["event_id"]] = receipt["duplicate_of"]
+                members.proven_duplicates.append(receipt)
+        for receipt in proven.refused:
+            members.exclude(EXCLUDED_DUPLICATE_LABEL_REFUSED, receipt)
+
+    seen_markets: set[int] = set()
+    for market in sorted(market_rows, key=lambda m: m.id):
+        if market.id in seen_markets:
+            continue
+        seen_markets.add(market.id)
+        on_member = market.event_id in member_events or market.event_id in via
+        receipt = {"market_id": market.id, "event_id": market.event_id, "source": market.source}
+        if market.event_id in via:
+            receipt["via_member"] = via[market.event_id]
+        if on_member and is_the_games_own_winner_market(
+            market.market_type, market.name, market.external_id
+        ):
+            members.exclude(EXCLUDED_GAME_WINNER_MARKET, receipt)
+        elif on_member:
+            members.candidates.append(
+                Candidate(
+                    child_type="market",
+                    child_id=market.id,
+                    source=MARKET_EDGE_SOURCE,
+                    evidence=MemberEvidence(
+                        node_type="market",
+                        name=market.name,
+                        market_shape=market.market_type,
+                        external_id=market.external_id,
+                    ),
+                    external_id=market.external_id,
+                    market_source=market.source,
+                )
+            )
+        elif market.event_id in duplicate_events:
+            members.exclude(EXCLUDED_MARKET_ON_DUPLICATE, receipt)
+
+    return members
+
+
+def _resolve_games(
+    selection: PostseasonSelection, event_rows: list
+) -> tuple[PostseasonMembers, set, set]:
+    """The game half: members, their event ids, and rows refused as duplicates."""
     from app.tasks.container_assembly import Candidate
 
     members = PostseasonMembers()
     if selection.unavailable:
-        return members
+        return members, set(), set()
 
     by_id: dict[str, list[EventRow]] = {}
     for row in event_rows:
@@ -408,42 +622,7 @@ def resolve_postseason_members(
                 external_id=game.espn_id,
             )
         )
-
-    seen_markets: set[int] = set()
-    for market in sorted(market_rows, key=lambda m: m.id):
-        if market.id in seen_markets:
-            continue
-        seen_markets.add(market.id)
-        if market.event_id in member_events and is_the_games_own_winner_market(
-            market.market_type, market.name, market.external_id
-        ):
-            members.exclude(
-                EXCLUDED_GAME_WINNER_MARKET,
-                {"market_id": market.id, "event_id": market.event_id, "source": market.source},
-            )
-        elif market.event_id in member_events:
-            members.candidates.append(
-                Candidate(
-                    child_type="market",
-                    child_id=market.id,
-                    source=MARKET_EDGE_SOURCE,
-                    evidence=MemberEvidence(
-                        node_type="market",
-                        name=market.name,
-                        market_shape=market.market_type,
-                        external_id=market.external_id,
-                    ),
-                    external_id=market.external_id,
-                    market_source=market.source,
-                )
-            )
-        elif market.event_id in duplicate_events:
-            members.exclude(
-                EXCLUDED_MARKET_ON_DUPLICATE,
-                {"market_id": market.id, "event_id": market.event_id, "source": market.source},
-            )
-
-    return members
+    return members, member_events, duplicate_events
 
 
 def postseason_incompleteness(
@@ -452,15 +631,22 @@ def postseason_incompleteness(
     *,
     markets_truncated: bool,
     stranded_questions: int = 0,
+    duplicates_skipped: Optional[str] = None,
 ) -> list[str]:
     """Every reason this pass cannot say it holds the whole postseason read.
 
     [] means whole *over the board days read*. Members admitted around a gap
     are still right, so a caller may keep them — but an unread day, a game owed
     a row that has none, a game held as two rows, a contradicted game, a capped
-    question read, or questions sitting on a row with no ESPN id make the pass
-    `partial`, never `complete` (gotcha #53). Uncertain games with no row are
-    not owed yet and do not count. Fixed order: the first is the headline.
+    question read, questions sitting on a row with no ESPN id, or a skipped
+    proven-duplicate read make the pass `partial`, never `complete` (gotcha
+    #53). Uncertain games with no row are not owed yet and do not count. Fixed
+    order: the first is the headline.
+
+    ``duplicates_skipped`` is the reason the bounded duplicate read did not run
+    (``too_many_members`` / ``duplicate_read_overflow``). A skip is a gap on its
+    own: a proven duplicate OUTSIDE the span is never in the in-span report, so
+    without this its questions would go unread under a `complete` verdict.
     """
     reasons: list[str] = []
     if selection.days_dark:
@@ -475,4 +661,6 @@ def postseason_incompleteness(
         reasons.append(INCOMPLETE_MARKETS_TRUNCATED)
     if stranded_questions:
         reasons.append(INCOMPLETE_STRANDED_QUESTIONS)
+    if duplicates_skipped:
+        reasons.append(INCOMPLETE_DUPLICATES_UNREAD)
     return reasons

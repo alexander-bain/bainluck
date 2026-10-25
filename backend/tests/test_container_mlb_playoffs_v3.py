@@ -21,6 +21,8 @@ those real ids; no production row is read.
 from __future__ import annotations
 
 import copy
+import json
+import re
 from dataclasses import replace
 from datetime import date, datetime, timezone
 
@@ -29,13 +31,16 @@ from sqlalchemy.dialects import postgresql
 
 from app.services.espn_api import ESPNAPIService
 from app.tasks.container_assembly import SOURCE_CONFIDENCE, UNDO_LINE
+from app.services.anchor_channel import DUPLICATE_TAG_PREFIX
 from app.tasks.container_mlb_playoffs_assembly import (
+    DUPLICATES_OF_MEMBERS_SQL_HEAD,
     EVENTS_FOR_ESPN_IDS_SQL,
     MARKETS_FOR_EVENTS_SQL,
     MAX_BOARD_DAYS,
     UNIDENTIFIED_IN_SPAN_SQL,
     assemble_mlb_postseason,
     board_days,
+    duplicates_of_members_sql,
     gather_mlb_postseason_candidates,
     run_mlb_postseason_assembly,
 )
@@ -356,10 +361,12 @@ class _Session:
     probes from in-memory rows, and records every write. Anything else is a
     query this test did not expect, and fails it."""
 
-    def __init__(self, events, markets, unidentified=(), live_markets=None):
+    def __init__(self, events, markets, unidentified=(), live_markets=None, labelled=()):
         self.events = list(events)
         self.markets = list(markets)
         self.unidentified = list(unidentified)
+        #: `DuplicateRow`s: every row carrying a `duplicate-of` label (#9886).
+        self.labelled = list(labelled)
         self.live_markets = live_markets
         self.writes = []
         self.reads = []
@@ -382,23 +389,48 @@ class _Session:
             return _Result([])
         if sql == EVENTS_FOR_ESPN_IDS_SQL:
             ids = set(params["espn_ids"])
-            return _Result([self._event(r) for r in self.events if r.espn_id in ids])
+            return _Result(
+                [self._event(r) + (_tags_json(r.duplicate_labels),) for r in self.events if r.espn_id in ids]
+            )
+        if sql.startswith(DUPLICATES_OF_MEMBERS_SQL_HEAD):
+            # Exactly the builder's statement for the tags bound, and exact
+            # ELEMENT containment, as `@>` is: `duplicate-of:1530` never
+            # matches a row labelled `duplicate-of:15304938`.
+            tags = {v for k, v in params.items() if k.startswith("tag_")}
+            assert sql == duplicates_of_members_sql(len(tags))
+            return _Result(
+                [
+                    (r.id, r.espn_id, r.status, r.commence_time, r.home, r.away, r.sport_key,
+                     _tags_json(r.duplicate_labels), sum(1 for m in self.markets if m.event_id == r.id))
+                    for r in sorted(self.labelled, key=lambda r: r.id)
+                    if tags & {DUPLICATE_TAG_PREFIX + t for t in r.duplicate_labels}
+                ][: params["limit"]]
+            )
         if sql == MARKETS_FOR_EVENTS_SQL:
             ids = set(params["event_ids"])
+            # Keyset page (#9886): honoured exactly as the statement says, and
+            # a statement naming `:after_id` without binding it fails here as
+            # it would on Postgres.
+            keyset = re.search(r"fm\.id (>=?) :after_id", sql)
+            after = params["after_id"] if keyset else float("-inf")
+            inclusive = bool(keyset) and keyset.group(1) == ">="
             return _Result(
                 [
                     (m.id, m.event_id, m.name, m.external_id, m.source, m.market_type, m.status)
                     for m in sorted(self.markets, key=lambda m: m.id)
-                    if m.event_id in ids
+                    if m.event_id in ids and (m.id >= after if inclusive else m.id > after)
                 ][: params["limit"]]
             )
         if sql == UNIDENTIFIED_IN_SPAN_SQL:
             listed = set(params["listed_ids"])
+            # Honoured only if the statement itself excludes them, so a bound
+            # parameter the SQL never reads cannot pass for the exclusion.
+            admitted = set(params["admitted_ids"]) if "NOT (e.id = ANY(:admitted_ids))" in sql else set()
             return _Result(
                 [
                     self._event(r) + (sum(1 for m in self.markets if m.event_id == r.id),)
                     for r in self.unidentified
-                    if r.espn_id is None or r.espn_id not in listed
+                    if (r.espn_id is None or r.espn_id not in listed) and r.id not in admitted
                 ]
             )
         if sql.startswith("SELECT id FROM events WHERE id = ANY"):
@@ -415,6 +447,11 @@ class _Session:
     @staticmethod
     def _event(r):
         return (r.id, r.espn_id, r.status, r.commence_time, r.home, r.away)
+
+
+def _tags_json(labels):
+    """`event_tags` as the guard suite's driver hands it back: serialised text."""
+    return json.dumps([DUPLICATE_TAG_PREFIX + t for t in labels]) if labels else None
 
 
 class _Container:
@@ -542,12 +579,13 @@ async def test_an_unread_board_day_is_partial_not_an_empty_day(corpus):
 
 @pytest.mark.asyncio
 async def test_a_capped_market_read_is_partial(corpus):
+    # One page of `limit` (#9886 pages the read): an exhausted budget is a cap.
     session = _Session(_rows(), _markets())
-    report = await run_mlb_postseason_assembly(session, _Container(), _boards(corpus), POST_2026, limit=3)
+    report = await run_mlb_postseason_assembly(session, _Container(), _boards(corpus), POST_2026, limit=3, max_pages=1)
     assert report["harvest"]["markets_truncated"] is True
     assert report["incomplete"] == [INCOMPLETE_MARKETS_TRUNCATED]
     session = _Session(_rows(), _markets())
-    report = await run_mlb_postseason_assembly(session, _Container(), _boards(corpus), POST_2026, limit=4)
+    report = await run_mlb_postseason_assembly(session, _Container(), _boards(corpus), POST_2026, limit=4, max_pages=1)
     assert report["terminal"] == "complete"
 
 
@@ -608,9 +646,17 @@ async def test_a_ghost_market_is_unresolved_not_written(corpus):
 async def test_membership_reads_are_by_id_only(corpus):
     session = _Session(_rows(), _markets())
     await gather_mlb_postseason_candidates(session, _boards(corpus), POST_2026)
-    assert [s for s, _ in session.reads] == [EVENTS_FOR_ESPN_IDS_SQL, MARKETS_FOR_EVENTS_SQL, UNIDENTIFIED_IN_SPAN_SQL]
-    for sql in (EVENTS_FOR_ESPN_IDS_SQL, MARKETS_FOR_EVENTS_SQL):
+    duplicates_sql = duplicates_of_members_sql(3)
+    assert [s for s, _ in session.reads] == [
+        EVENTS_FOR_ESPN_IDS_SQL, duplicates_sql, MARKETS_FOR_EVENTS_SQL, UNIDENTIFIED_IN_SPAN_SQL
+    ]
+    for sql in (EVENTS_FOR_ESPN_IDS_SQL, duplicates_sql, MARKETS_FOR_EVENTS_SQL):
         assert "team_name =" not in sql and "commence_time >=" not in sql and "llm_importance" not in sql
+    # The duplicate read is keyed on the members' ids, inside the exact label.
+    [(_, params)] = [(s, p) for s, p in session.reads if s == duplicates_sql]
+    assert sorted(v for k, v in params.items() if k.startswith("tag_")) == sorted(
+        f"{DUPLICATE_TAG_PREFIX}{e}" for e in (G1_EVENT, G2_EVENT, CWS_HOU_G2_EVENT)
+    )
 
 
 # --- the dispatch entry ---------------------------------------------------------

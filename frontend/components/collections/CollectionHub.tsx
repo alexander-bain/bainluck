@@ -23,7 +23,9 @@ export default function CollectionHub({ slug }: { slug: string }) {
   const request = useRef<AbortController | null>(null);
   const pageRequest = useRef<AbortController | null>(null);
   const latest = useRef<Hub | null>(hub);
-  const restored = useRef(false);
+  const restoredRevision = useRef<string | null>(null);
+  const restoredMember = useRef<string | null>(null);
+  const userMoved = useRef(false);
   const pendingRestore = useRef<{ memberKey: string; offset: number } | null>(null);
 
   const load = useCallback(async () => {
@@ -38,8 +40,11 @@ export default function CollectionHub({ slug }: { slug: string }) {
       const fresh = await fetchCollection(slug, controller.signal);
       if (request.current !== controller || !collectionReadAdmitted(slug, ticket)) return;
       const next = settleCollectionRead(slug, { hub: fresh });
+      if (next.hub?.revision !== latest.current?.revision || next.hub?.state !== "published") {
+        pageRequest.current?.abort(); pageRequest.current = null; setPaging(false);
+      }
       latest.current = next.hub?.slug === slug ? next.hub : null;
-      setHub(next.hub); setError(next.error);
+      setHub(next.hub); setError(next.error); setPageError(null);
     } catch {
       if (request.current !== controller || !collectionReadAdmitted(slug, ticket)) return;
       // A failed read is not a withdrawal: keep this slug's last accepted hub
@@ -54,7 +59,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
   }, [slug]);
 
   useEffect(() => {
-    restored.current = false;
+    restoredRevision.current = null; restoredMember.current = null; userMoved.current = false; pendingRestore.current = null;
     setHub(acceptedCollection(slug)); setError(null); setPageError(null); setPaging(false);
     void load();
     const freshRead = () => { if (document.visibilityState !== "hidden") void load(); };
@@ -109,22 +114,38 @@ export default function CollectionHub({ slug }: { slug: string }) {
   }, [interval, load]);
 
   useEffect(() => {
-    if (!shown || restored.current) return;
-    restored.current = true;
+    if (!shown) return;
+    const revisionKey = `${shown.state}:${shown.revision ?? ""}`;
+    if (restoredRevision.current === revisionKey) return;
+    restoredRevision.current = revisionKey;
     let context: CollectionReadingContext | null = null;
-    try { context = reconcileCollectionContext(JSON.parse(sessionStorage.getItem(storageKey(slug)) ?? "null"), shown); } catch { /* blocked/corrupt storage never stops browsing */ }
+    try {
+      const raw = JSON.parse(sessionStorage.getItem(storageKey(slug)) ?? "null");
+      context = reconcileCollectionContext(raw, shown);
+      if (raw && typeof raw === "object" && (raw as { slug?: unknown }).slug === slug && !context?.memberKey) {
+        sessionStorage.removeItem(storageKey(slug));
+      }
+    } catch { /* blocked/corrupt storage never stops browsing */ }
+    pendingRestore.current = null;
+    if (userMoved.current) return;
     // No disclosures to reopen since #10146, so the drawn layout is the one the reader left (#9982).
-    if (context?.memberKey && restoreTo(context.memberKey, context.offset)) pendingRestore.current = { memberKey: context.memberKey, offset: context.offset };
+    if (context?.memberKey && restoreTo(context.memberKey, context.offset)) {
+      restoredMember.current = context.memberKey;
+      pendingRestore.current = { memberKey: context.memberKey, offset: context.offset };
+    } else if (restoredMember.current !== null) {
+      restoredMember.current = null;
+      window.scrollTo({ top: 0, behavior: "instant" });
+    }
   }, [shown, slug]);
 
   // #11555: the week links draw after their own read, above the games, so the
   // first restore lands short by their height. Once they settle the offset is
   // applied one more time — unless the reader has already moved the page.
   useEffect(() => {
-    const release = () => { pendingRestore.current = null; };
+    const release = () => { userMoved.current = true; pendingRestore.current = null; };
     const inputs = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
     inputs.forEach((input) => window.addEventListener(input, release, { passive: true }));
-    return () => { release(); inputs.forEach((input) => window.removeEventListener(input, release)); };
+    return () => { pendingRestore.current = null; inputs.forEach((input) => window.removeEventListener(input, release)); };
   }, [slug]);
   const settleWeekNavigation = () => {
     const pending = pendingRestore.current;

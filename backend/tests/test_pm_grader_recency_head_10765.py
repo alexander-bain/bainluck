@@ -57,6 +57,9 @@ def _gamma_market(cid, yes_price, question):
         "question": question,
         "outcomePrices": json.dumps([str(yes_price), str(1 - yes_price)]),
         "closed": True,
+        # #698: a settled Gamma leg carries this beside `closed`; the negRisk /
+        # multi-leg arm requires it before it reads a payout.
+        "umaResolutionStatus": "resolved",
     }
 
 
@@ -178,6 +181,12 @@ def _install(monkeypatch, rig, rc=None):
             return _Result(picked[: (p.get("limit") or len(picked))])
         if "UPDATE futures_outcomes" in sql:
             key = (p.get("mid"), p.get("cid"))
+            # #698: the multi-leg arm grades in ONE text() statement whose grade
+            # is a SQL literal; the price-sync statements carry no grade.
+            if key in rig.stored and "SET is_winner = true," in sql:
+                rig.grades[key] = True
+            elif key in rig.stored and "SET is_winner = false," in sql:
+                rig.grades[key] = False
             return MagicMock(rowcount=1 if key in rig.stored else 0)
         return MagicMock(rowcount=0)
 

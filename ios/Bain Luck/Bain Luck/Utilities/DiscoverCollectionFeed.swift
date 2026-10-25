@@ -6,10 +6,11 @@ enum DiscoverCollectionFeed {
     nonisolated static func entry(for card: ContainerHubCollection?) -> ContainerDiscoveryEntry? {
         guard let card, card.canOpen, card.id > 0, card.revision >= 1,
               !card.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              card.edition.season > 0, card.gameCount >= 0, card.questionCount >= 0,
+              let season = card.edition.season, season > 0,
+              let rawLeague = card.edition.league,
+              card.gameCount >= 0, card.questionCount >= 0,
               card.gameCount > 0 || card.questionCount > 0 else { return nil }
-        let season = card.edition.season
-        guard let league = ContainerDiscoveryLeague(rawValue: card.edition.league) else { return nil }
+        guard let league = ContainerDiscoveryLeague(rawValue: rawLeague) else { return nil }
         switch league {
         case .mlb:
             guard card.edition.kind == "mlb_postseason", card.edition.stage == nil,
@@ -29,9 +30,12 @@ enum DiscoverCollectionFeed {
         return ContainerDiscoveryEntry(collection: card)
     }
 
-    nonisolated static func editionLabel(for entry: ContainerDiscoveryEntry) -> String {
-        let edition = entry.collection.edition
-        var parts = [edition.league.uppercased(), String(edition.season)]
+    nonisolated static func editionLabel(for entry: ContainerDiscoveryEntry) -> String? {
+        guard let validated = Self.entry(for: entry.collection),
+              let league = validated.collection.edition.league,
+              let season = validated.collection.edition.season else { return nil }
+        let edition = validated.collection.edition
+        var parts = [league.uppercased(), String(season)]
         if let stage = edition.stage { parts.append(stage) }
         if let week = edition.week { parts.append("Week \(week)") }
         if edition.kind == "mlb_postseason" { parts.append("Postseason") }

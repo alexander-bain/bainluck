@@ -365,11 +365,16 @@ def payload_built_at(payload: dict | None) -> datetime | None:
     return _parse_aware(payload.get("built_at"))
 
 
-def payload_age_seconds(payload: dict | None, *, now: datetime) -> float | None:
-    """Seconds since the last fill ATTEMPT that wrote, or None when it will not say."""
+def payload_attempted_at(payload: dict | None) -> datetime | None:
+    """When the last fill ATTEMPT that wrote asked the venue, or None."""
     if not isinstance(payload, dict):
         return None
-    stamp = _parse_aware(payload.get("attempted_at") or payload.get("built_at"))
+    return _parse_aware(payload.get("attempted_at") or payload.get("built_at"))
+
+
+def payload_age_seconds(payload: dict | None, *, now: datetime) -> float | None:
+    """Seconds since the last fill ATTEMPT that wrote, or None when it will not say."""
+    stamp = payload_attempted_at(payload)
     if stamp is None:
         return None
     return max(0.0, (now - stamp).total_seconds())
@@ -1013,6 +1018,78 @@ def leg_absent_beside_dense_sibling(
                 absent += 1
         if absent and absent >= COARSE_TRIGGER_MIN_WINDOW_COVERAGE * countable:
             return True
+    return False
+
+
+def headline_moved_past_history(
+    captures_by_line: Mapping[Any, Sequence[tuple[datetime, float | None]]],
+    stored_by_line: Mapping[Any, tuple[float | None, datetime | None]],
+    *,
+    bank_attempted_at: datetime | None,
+) -> bool:
+    """Did a line's STORED price move after everything its chart can draw?
+
+    #10955 / #7547, the ITF specimens (`/futures/66891390`, `66871111`,
+    2026-10-21 23:17Z). The headline read Mercier 0.455 / Persson 0.545 with
+    `price_changed_at` 23:16:56Z, written by the Kalshi socket's open-contract
+    arm (`ws_open_contracts`, #9484), which prices every unlinked contract and
+    writes no `futures_odds_snapshots` row. The newest captures were the
+    discovery poll's at 19:03Z and 15:05Z, because its oldest-first rotation
+    (`_least_recently_polled_first`) reaches a small market every few hours.
+    So the chart's last number was Persson 0.895, four hours old, under a
+    headline saying the opposite.
+
+    The venue bank exists to fill exactly that, and the planner's three-hour
+    negative cache (`REFRESH_AFTER_SECONDS`) was written on the premise "under
+    this the captures cover the difference". For a socket-priced market that
+    premise is false: a move after the bank was asked is drawn by nothing until
+    the cache ages out.
+
+    True when, for at least one line, ALL of:
+
+      * the stored price and its `price_changed_at` stamp are both present;
+      * the stamp is later than the line's newest capture AND later than the
+        bank's last attempt. A move the venue was asked about after it happened
+        is the bank's to draw, and a capture after it already draws it;
+      * the stored price differs from the line's newest capture. The discovery
+        poll stamps `price_changed_at` with the transaction clock, which can
+        trail its own `captured_at` by minutes (19:03:13Z capture, 19:06:18Z
+        row write on the specimen). The capture holds the same number, so that
+        gap is not a move nobody drew.
+
+    🪤 THIS DECIDES WHETHER TO ASK, AND NOTHING ELSE. It never puts the stored
+    price on the chart. A socket write is not a venue-timed observation (it is
+    when WE wrote it), and the chart gets new points only from the venue's own
+    candles, at the venue's own instants, under the existing claim and budgets.
+    The caller hands in captures only, never settlement markers or venue
+    points, and leaves out graded lines and settled markets: a settlement's
+    stamp records a result, not a trade.
+    """
+    def _posix(stamp: datetime) -> float:
+        # Database stamps are UTC; a naive one must not be read in the host's zone.
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        return stamp.timestamp()
+
+    floor = _posix(bank_attempted_at) if bank_attempted_at is not None else None
+    for key, (price, changed_at) in stored_by_line.items():
+        if price is None or changed_at is None:
+            continue
+        moved = _posix(changed_at)
+        if floor is not None and moved <= floor:
+            continue
+        captures = [
+            (_posix(ts), p)
+            for ts, p in (captures_by_line.get(key) or ())
+            if ts is not None
+        ]
+        if captures:
+            newest_at, newest_price = max(captures, key=lambda c: c[0])
+            if moved <= newest_at:
+                continue
+            if newest_price is not None and abs(float(newest_price) - float(price)) < 1e-9:
+                continue
+        return True
     return False
 
 

@@ -1740,22 +1740,42 @@ class TestConsoleInsideTheWall:
     def test_a_line_written_while_working_cannot_hold_the_import_past_the_wall(
         self, tmp_path, capsys, monkeypatch, slow_console, delay
     ):
-        """A log line mid-operation is bounded by the work deadline, leaving the reserve."""
+        """A log line mid-operation is bounded by the work deadline, leaving the reserve.
+
+        The wall's clock holds still from the instant the line is written
+        (``_HeldClock``). The line is still cut on real time: the console's
+        alarm is armed for the real rest of the work slice, so a stalled sink
+        returns at the real work deadline, and the cut is asserted on both
+        sides. What the hold removes is the race this case never meant to
+        test: the receipt file had to be sealed in the 60 ms between the cut
+        (0.72 s) and ``artifact_deadline`` (0.78 s), against a real alarm, and
+        a runner that stalled ~80 ms after the cut lost R.json (#11582).
+        Writing the receipt inside the wall on real time is
+        ``test_import_cli_timeout_receipt_is_written_inside_the_wall``'s job.
+        """
         slow_console.update(delay=delay, prefix="PROGRESS")
         returned_at = []
+        clock = _HeldClock()
+        walls = []
+        real_wall = bounds.OperationWall
+
+        def held_wall(seconds, **kw):
+            walls.append(real_wall(seconds, monotonic=clock, **kw))
+            return walls[-1]
 
         async def fake_apply(report, **kw):
+            clock.hold()
             print("PROGRESS one outcome", file=sys.stderr)
             returned_at.append(time.monotonic())
             return {"status": "applied", "import_key": "k", "committed_outcomes": [{"outcome_id": 7}]}
 
         monkeypatch.setattr(imp, "apply_archive_plan", fake_apply)
-        walls = _record_walls(monkeypatch)
+        monkeypatch.setattr(bounds, "OperationWall", held_wall)
         plan = tmp_path / "P.json"
         plan.write_text("{}")
         out = tmp_path / "R.json"
-        # Real wall, real alarm; only the pytest heap's full collection is kept
-        # out of the reserve (see the timeout-receipt case).
+        # Real alarm; only the pytest heap's full collection is kept out of the
+        # cut (a C-level collection defers the SIGALRM; see the timeout-receipt case).
         with _a_collection_scans_only_the_cli():
             full_before = _full_collections()
             t0 = time.monotonic()
@@ -1768,16 +1788,20 @@ class TestConsoleInsideTheWall:
             elapsed = time.monotonic() - t0
             full_during = _full_collections() - full_before
         (wall,) = walls
-        assert wall.seconds == 0.8 and len(returned_at) == 1
+        assert wall.seconds == 0.8 and len(returned_at) == 1 and clock.held_at is not None
         assert out.exists(), (  # the reserve was left for the artifact
             f"no artifact after {elapsed:.3f}s (exit {code}); the line returned "
             f"{returned_at[0] - wall.started:.3f}s into the wall; "
             f"full collections during the call {full_during} (frozen heap)"
         )
         if delay:
-            # Precondition: the stalled line was cut AT the work deadline, not
-            # before it (1 ms: the alarm's tolerance).
-            assert returned_at[0] >= wall.work_deadline - 1e-3
+            # The stalled line was cut AT the work deadline: not before it, and
+            # by the work deadline's alarm, not the hard deadline's, which
+            # cannot fire before ``deadline`` (1 ms: the alarm's tolerance).
+            assert wall.work_deadline - 1e-3 <= returned_at[0] < wall.deadline - 1e-3, (
+                f"the line returned {returned_at[0] - wall.started:.3f}s into the wall; "
+                f"full collections during the call {full_during} (frozen heap)"
+            )
             assert code == 3 and elapsed < 0.8 + 0.15
             assert capsys.readouterr().out == ""  # a lost console is not tried again
         else:

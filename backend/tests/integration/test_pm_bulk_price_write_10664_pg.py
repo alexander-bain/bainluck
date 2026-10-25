@@ -501,7 +501,8 @@ async def test_a_known_held_pair_is_written_by_the_first_flush_after_a_brief_hol
     rig, refusal_delivery_delay,
 ):
     # #10090 recovery (Root's review_pg_transient_retry control): the pair's
-    # cooldown is due and its holder lets go 100 ms after the probe starts,
+    # cooldown is due and its holder lets go after a confirmed probe refusal
+    # and at least 100 ms after the probe starts,
     # under the production 500 ms budget and the 250 ms flush cadence. A
     # refused probe used to re-arm the two-second cooldown, so every flush
     # skipped the pair for 2.2 s after the holder had gone (parent: 0.62 s).
@@ -521,6 +522,7 @@ async def test_a_known_held_pair_is_written_by_the_first_flush_after_a_brief_hol
 
     rig.publisher.record = stamped
     released = []
+    first_refusal = asyncio.Event()
     async with rig.engine.connect() as holder:
         txn = await holder.begin()
         await holder.execute(text("SELECT id FROM futures_outcomes WHERE id = 1 FOR UPDATE"))
@@ -528,6 +530,7 @@ async def test_a_known_held_pair_is_written_by_the_first_flush_after_a_brief_hol
         async def let_go():
             await asyncio.wait_for(rig.price_started.wait(), 2)
             await asyncio.sleep(0.1)
+            await asyncio.wait_for(first_refusal.wait(), 5)
             await txn.rollback()
             released.append(loop.time())
 
@@ -541,10 +544,17 @@ async def test_a_known_held_pair_is_written_by_the_first_flush_after_a_brief_hol
                 if not released:
                     rig.buffer[1] = 0.61 + len(attempts) / 100  # latest input wins
                 pair = {oid: rig.buffer[oid] for oid in (1, 2)}
-                attempts.append((began, await rig.write(pair), loop.time()))
+                attempts.append((began, await asyncio.wait_for(rig.write(pair), 5), loop.time()))
+                if len(attempts) == 1:
+                    assert attempts[-1][1] is None
+                    assert rig.price_errors and module.is_price_row_lock_refusal(rig.price_errors[-1])
+                    first_refusal.set()
                 # A row no lock refused, written in the same flush, never waits.
                 fresh_write = await rig.write({3: 0.5 + len(attempts) / 100})
                 assert fresh_write.written_ids == (3,)
+                if len(attempts) == 1:
+                    # Establish the release boundary before testing the next flush.
+                    await letting_go
             await letting_go
         finally:
             if txn.is_active:
