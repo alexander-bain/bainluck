@@ -139,8 +139,21 @@ local function ledger()
 end
 local result = ledger()
 if dirty then
-  local completed = {ok=true, expired=true, published=true, classified=true, current=true}
-  if type(result) ~= 'table' or not completed[result[1]] then return {'dirty_result'} end
+  -- Completion is operation-specific: some successful writes return a refusal
+  -- to open a preview, or only advance a barrier/base with no pending value.
+  -- Never let a status valid for another operation bless a partial mutation.
+  local completed = {
+    claim={ok=true}, classify={classified=true},
+    propose={ok=true, expired=true, migration_debt=true},
+    settle={ok=true, unchanged=true, current=true},
+    terminal={ok=true, none=true},
+    retire={ok=true, none=true}, retire_missing={ok=true, none=true},
+    retire_idle={ok=true}, retire_policy={ok=true},
+    publish={published=true}, revoke={published=true}
+  }
+  if type(result) ~= 'table' or not completed[op] or not completed[op][result[1]] then
+    return {'dirty_result'}
+  end
   if raw.call('GET', guard) ~= 'dirty:' .. token then return {'guard_lost'} end
   raw.call('SET', guard, 'clean:' .. token)
 end

@@ -206,3 +206,136 @@ async def test_new_namespace_does_not_reuse_old_state_and_old_token_refuses(rig)
     # Old namespace may still exist: PostgreSQL/fanout must refuse its output.
     # The Redis wrapper alone is deliberately not claimed as that authority.
     assert await client.hget(namespace_keys(a)[0], "epoch") == "1"
+
+
+async def claimed(rig):
+    client, a = rig
+    assert await initial(client, a) == ["initialized"]
+    assert await call(client, a, "claim", "kalshi") == ["ok", "1"]
+    return client, a
+
+
+async def assert_clean_and_next_operation(client, a):
+    assert await client.get(namespace_keys(a)[5]) == "clean:" + guard_token(a)
+    assert (await call(client, a, "claim", "kalshi"))[0] == "ok"
+
+
+@pytest.mark.parametrize(
+    "op,args",
+    [
+        ("terminal", ("10", "512", "0")),
+        ("retire", ("10", "0", "11")),
+        ("retire_missing", ("0",)),
+    ],
+)
+async def test_absent_retirement_advances_barrier_without_poisoning(rig, op, args):
+    client, a = await claimed(rig)
+    assert await call(
+        client, a, op, "kalshi", "1", "42", "kalshi", *args, owner="1"
+    ) == ["none"]
+    assert await client.hget(namespace_keys(a)[0], "retired") == "1"
+    # The completed retirement must still invalidate an already-prepared open.
+    assert (await propose(client, a, ticket="0"))[0] == "read_required"
+    await assert_clean_and_next_operation(client, a)
+
+
+async def propose(client, a, *, chain="1", bucket="0", clock="1", ticket="0"):
+    return await call(
+        client,
+        a,
+        "propose",
+        "kalshi",
+        "1",
+        "42",
+        "kalshi",
+        "open",
+        chain,
+        chain,
+        "10",
+        "60000",
+        "512",
+        '{"value":0.6}',
+        "10",
+        '{"base":10}',
+        ticket,
+        bucket,
+        clock,
+        owner="1",
+    )
+
+
+@pytest.mark.parametrize(
+    "mode,expected", [("settle", "unchanged"), ("expire", "current")]
+)
+async def test_base_only_settle_remains_clean(rig, mode, expected):
+    client, a = await claimed(rig)
+    assert (await propose(client, a))[0] == "ok"
+    assert (
+        await call(
+            client,
+            a,
+            "settle",
+            "kalshi",
+            "1",
+            "42",
+            "kalshi",
+            "settle",
+            "1",
+            "10",
+            '{"base":10}',
+            owner="1",
+        )
+    )[0] == "ok"
+    assert await client.hget(namespace_keys(a)[0], "e:42:m:kalshi") is None
+    result = await call(
+        client,
+        a,
+        "settle",
+        "kalshi",
+        "1",
+        "42",
+        "kalshi",
+        mode,
+        "1",
+        "11",
+        '{"base":11}',
+        "1",
+        owner="1",
+    )
+    assert result[0] == expected
+    assert await client.hget(namespace_keys(a)[0], "e:42:base_rev") == "11"
+    assert await client.hget(namespace_keys(a)[0], "e:42:base") == '{"base":11}'
+    await assert_clean_and_next_operation(client, a)
+
+
+async def test_migration_debt_preserves_active_preview_and_clean_guard(rig):
+    client, a = await claimed(rig)
+    assert (await propose(client, a))[0] == "ok"
+    key = namespace_keys(a)[0]
+    held = {
+        field: await client.hget(key, "e:42:" + field)
+        for field in ("gen", "seq", "m:kalshi", "p:kalshi")
+    }
+    assert await propose(client, a, chain="2", bucket="6", clock="2") == [
+        "migration_debt"
+    ]
+    assert await client.hget(key, "e:42:r_target") == "6"
+    assert await client.hget(key, "e:42:r_clock") == "2"
+    assert held == {field: await client.hget(key, "e:42:" + field) for field in held}
+    await assert_clean_and_next_operation(client, a)
+
+
+@pytest.mark.parametrize("status", ["none", "unchanged", "migration_debt", "published"])
+async def test_completion_status_from_wrong_operation_stays_dirty(rig, status):
+    client, a = rig
+    await initial(client, a)
+    marker = "  redis.call('HSET', L, 'policy_owner:' .. src, decimal(n))"
+    assert LEDGER_SCRIPT.count(marker) == 1
+    fault = LEDGER_SCRIPT.replace(
+        marker, marker + "\n  do return {'" + status + "'} end"
+    )
+    assert await call(
+        client, a, "claim", "kalshi", script=guarded_ledger_script(fault)
+    ) == ["dirty_result"]
+    assert await client.get(namespace_keys(a)[5]) == "dirty:" + guard_token(a)
+    assert await call(client, a, "claim", "kalshi") == ["guard_refused"]
