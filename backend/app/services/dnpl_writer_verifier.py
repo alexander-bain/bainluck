@@ -95,7 +95,22 @@ class HTTP:
                         continue
                     k, v = line.split(":", 1)
                     k, v = k.lower(), v.strip()
-                    need(k not in headers, "http_duplicate_header")
+                    # Ignore repeated unused metadata; never merge framing,
+                    # representation or pagination authority.
+                    if k in headers:
+                        need(
+                            k
+                            not in {
+                                "content-length",
+                                "transfer-encoding",
+                                "content-type",
+                                "content-encoding",
+                                "next-range",
+                                "content-range",
+                            },
+                            "http_duplicate_header",
+                        )
+                        continue
                     headers[k] = v
                 need(
                     headers.get("content-encoding", "identity") == "identity",

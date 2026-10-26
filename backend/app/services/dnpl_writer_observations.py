@@ -20,7 +20,7 @@ from uuid import UUID
 from app.services.dnpl_operation_hold import OperationHoldRefused
 
 VERIFIER = Path(__file__).with_name("dnpl_writer_verifier.py")
-VERIFIER_SHA256 = "513f962edca3d31573b31af1d85c6fec852031f069ce96aed4146f3ff40dab9e"
+VERIFIER_SHA256 = "7522af71e87fe8af046f09c2ae44e41e7f21463d77c31340086208e8f5e67cb5"
 FRESHNESS_NS = 120_000_000_000
 CLOCK_SKEW_NS = 1_000_000_000
 MAX_BYTES = 1048576

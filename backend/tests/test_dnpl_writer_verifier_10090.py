@@ -213,6 +213,43 @@ def test_bounded_eof_and_chunked_bodies(monkeypatch, payload):
     )
 
 
+@pytest.mark.parametrize("field", ["Via", "Set-Cookie", "Link", "X-Request-Id"])
+def test_unused_repeated_metadata_does_not_block_verification(monkeypatch, field):
+    attempts, writes, closed = wire(
+        monkeypatch, [response(headers=(f"{field}: first", f"{field.lower()}: second"))]
+    )
+    http = collector.HTTP("fake")
+    assert asyncio.run(http.get(collector.PLATFORM, "/apps/bainluck/dynos")) == b"[]"
+    assert http.attempts == len(attempts) == len(writes) == len(closed) == 1
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("Content-Length", "2"),
+        ("Transfer-Encoding", "chunked"),
+        ("Content-Type", "application/json"),
+        ("Content-Encoding", "identity"),
+        ("Next-Range", ""),
+        ("Content-Range", "id first..last"),
+    ],
+)
+@pytest.mark.parametrize("conflicting", [False, True])
+def test_repeated_critical_headers_refuse_case_insensitively(
+    monkeypatch, field, value, conflicting
+):
+    second = "conflicting" if conflicting else value
+    payload = (
+        f"HTTP/1.1 200 OK\r\n{field}: {value}\r\n"
+        f"{field.lower()}: {second}\r\n\r\n[]"
+    ).encode()
+    attempts, writes, closed = wire(monkeypatch, [payload])
+    http = collector.HTTP("fake")
+    with pytest.raises(ValueError, match="http_duplicate_header"):
+        asyncio.run(http.get(collector.PLATFORM, "/apps/bainluck/dynos"))
+    assert http.attempts == len(attempts) == len(writes) == len(closed) == 1
+
+
 def test_ninth_attempt_is_refused_before_connection(monkeypatch):
     attempts, _, _ = wire(monkeypatch, [response()] * 8)
 
