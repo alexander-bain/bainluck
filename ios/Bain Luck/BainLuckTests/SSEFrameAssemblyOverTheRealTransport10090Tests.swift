@@ -213,19 +213,40 @@ final class SSEFrameAssemblyOverTheRealTransport10090Tests: XCTestCase {
                        "the replacement delivers its own frames from the first, once each, in order")
         XCTAssertEqual(ChunkedStream.requests, 2)
     }
-    func testFoldedPreviewCapabilityIsExplicitAndDefaultIsUnchanged() async throws {
+    /// #11564: the page asks for v3 only — never the legacy folded-v2 previews.
+    func testAuthorityV3CapabilityIsExplicitAndDefaultIsUnchanged() async throws {
         for enabled in [false, true] {
             ChunkedStream.script([.init(body: Data("event: heartbeat\ndata: {}\n\n".utf8),
                                         chunkSize: 64, interval: 0, finish: false)])
-            let transport = try LiveEventStreamTransport(eventId: 4242, foldedPreviews: enabled,
+            let transport = try LiveEventStreamTransport(eventId: 4242, authorityPreviews: enabled,
                 baseURL: "https://stub.invalid", session: session())
             transport.connect()
             await waitUntil(1) { !ChunkedStream.requestedURLs.isEmpty }
             transport.close()
             let url = try XCTUnwrap(ChunkedStream.requestedURLs.first)
             XCTAssertEqual(url.path, "/api/events/4242/stream")
-            XCTAssertEqual(url.query, enabled ? "preview_protocol=folded-v2" : nil)
+            XCTAssertEqual(url.query, enabled ? "preview_protocol=authority-v3" : nil)
         }
+    }
+
+    /// #11564: a handler can read when its frame finished assembling, on the
+    /// monotonic clock and before it ran — and only while it runs.
+    func testAHandlerReadsItsFramesMonotonicReceipt() async throws {
+        ChunkedStream.script([.init(body: Data("event: heartbeat\ndata: {}\n\n".utf8),
+                                    chunkSize: 64, interval: 0, finish: false)])
+        let transport = try LiveEventStreamTransport(eventId: 4242, authorityPreviews: true,
+            baseURL: "https://stub.invalid", session: session())
+        var receipts: [(TimeInterval?, TimeInterval)] = []
+        transport.on("heartbeat") { _ in
+            receipts.append((transport.frameReceivedAt, ProcessInfo.processInfo.systemUptime))
+        }
+        transport.connect()
+        await waitUntil(1) { !receipts.isEmpty }
+        transport.close()
+        let (receipt, ran) = try XCTUnwrap(receipts.first)
+        let at = try XCTUnwrap(receipt, "the frame being handled carries its receipt")
+        XCTAssertLessThanOrEqual(at, ran, "taken before the handler ran")
+        XCTAssertNil(transport.frameReceivedAt, "and cleared once it returned")
     }
 
 }

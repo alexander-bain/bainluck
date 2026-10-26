@@ -185,6 +185,16 @@ final class TheHeldChartEndsOnThePreviewAtItsObservation10090Tests: XCTestCase {
         @MainActor func fire(_ event: String, _ data: String = "") {
             for h in handlers[event] ?? [] { h(data) }
         }
+        /// #11564: a transport open, then the v3 domain on a fresh session.
+        var session = ""
+        @MainActor func openV3() {
+            fire("open")
+            session = V3PageWire.nextSession()
+            fire("preview_open_v3", V3PageWire.open(4242, members: [4242], session: session))
+        }
+        @MainActor func previewV3(_ frame: String) {
+            fire("preview_v3", V3PageWire.preview(frame, eventId: 4242, session: session))
+        }
     }
 
     private struct Client: EventDetailProviding {
@@ -241,23 +251,23 @@ final class TheHeldChartEndsOnThePreviewAtItsObservation10090Tests: XCTestCase {
     func testTheHeldPageChartAndClockFollowTheAdmittedPreview() async throws {
         let (vm, handle, _) = try await heldPage()
         defer { vm.stopRefresh() }
-        handle.fire("open")
+        handle.openV3()
         XCTAssertEqual(try shown(vm), Shown(headline: "60%", chartEnd: nil, clock: Self.committedClock))
 
-        handle.fire("preview", Self.blendJSON(1, 0.751, observed: Self.quoted("2026-10-20T19:00:04Z")))
+        handle.previewV3(Self.blendJSON(1, 0.751, observed: Self.quoted("2026-10-20T19:00:04Z")))
         let first = LiveBlendPoint(date: Self.date("2026-10-20T19:00:04Z"), homeProbability: 0.751)
         XCTAssertEqual(try shown(vm), Shown(headline: "75%", chartEnd: first, clock: first.date))
 
         // Same rounded digits, newer genuine observation: only the time moves.
-        handle.fire("preview", Self.blendJSON(2, 0.754, observed: Self.quoted("2026-10-20T19:00:09Z")))
+        handle.previewV3(Self.blendJSON(2, 0.754, observed: Self.quoted("2026-10-20T19:00:09Z")))
         let second = LiveBlendPoint(date: Self.date("2026-10-20T19:00:09Z"), homeProbability: 0.754)
         XCTAssertEqual(try shown(vm), Shown(headline: "75%", chartEnd: second, clock: second.date))
 
         // A replay of seq 2 and a delayed seq 1 move nothing, whatever the
         // producer's attempt clock says.
-        handle.fire("preview", Self.blendJSON(2, 0.754, observed: Self.quoted("2026-10-20T19:00:30Z"),
+        handle.previewV3(Self.blendJSON(2, 0.754, observed: Self.quoted("2026-10-20T19:00:30Z"),
                                               attempt: "2026-10-20T19:01:30+00:00"))
-        handle.fire("preview", Self.blendJSON(1, 0.751, observed: Self.quoted("2026-10-20T19:00:40Z")))
+        handle.previewV3(Self.blendJSON(1, 0.751, observed: Self.quoted("2026-10-20T19:00:40Z")))
         XCTAssertEqual(try shown(vm), Shown(headline: "75%", chartEnd: second, clock: second.date))
 
         XCTAssertTrue(vm.liveBlend.isEmpty, "the projection is never stored")
@@ -269,13 +279,13 @@ final class TheHeldChartEndsOnThePreviewAtItsObservation10090Tests: XCTestCase {
     func testAPreviewWithNoObservationClockLeavesTheChartCommittedAndTheTimeUnknown() async throws {
         let (vm, handle, _) = try await heldPage()
         defer { vm.stopRefresh() }
-        handle.fire("open")
-        handle.fire("preview", Self.blendJSON(1, 0.8, observed: nil))
+        handle.openV3()
+        handle.previewV3(Self.blendJSON(1, 0.8, observed: nil))
         XCTAssertEqual(try shown(vm), Shown(headline: "80%", chartEnd: nil, clock: nil))
-        handle.fire("preview", Self.blendJSON(2, 0.81, observed: "null"))
+        handle.previewV3(Self.blendJSON(2, 0.81, observed: "null"))
         XCTAssertEqual(try shown(vm), Shown(headline: "81%", chartEnd: nil, clock: nil))
         // A clock behind the served edge dates the number but cannot extend the line.
-        handle.fire("preview", Self.blendJSON(3, 0.82, observed: Self.quoted("2026-10-20T18:59:50Z")))
+        handle.previewV3(Self.blendJSON(3, 0.82, observed: Self.quoted("2026-10-20T18:59:50Z")))
         XCTAssertEqual(try shown(vm), Shown(headline: "82%", chartEnd: nil,
                                             clock: Self.date("2026-10-20T18:59:50Z")))
     }
@@ -283,28 +293,28 @@ final class TheHeldChartEndsOnThePreviewAtItsObservation10090Tests: XCTestCase {
     func testRevokeExpiryReconnectNewerCommitAndTheEndRestoreCommittedTruth() async throws {
         let (vm, handle, clock) = try await heldPage()
         defer { vm.stopRefresh() }
-        handle.fire("open")
+        handle.openV3()
         let committed = Shown(headline: "60%", chartEnd: nil, clock: Self.committedClock)
         let observed = Self.quoted("2026-10-20T19:00:04Z")
 
-        handle.fire("preview", Self.blendJSON(1, 0.8, observed: observed))
+        handle.previewV3(Self.blendJSON(1, 0.8, observed: observed))
         XCTAssertEqual(try shown(vm).headline, "80%")
-        handle.fire("preview", Self.revokeJSON(2, through: 1))
+        handle.previewV3(Self.revokeJSON(2, through: 1))
         XCTAssertEqual(try shown(vm), committed, "revoked")
 
         let arrival = clock.t
-        handle.fire("preview", Self.blendJSON(3, 0.8, observed: observed, ttl: 2_000))
+        handle.previewV3(Self.blendJSON(3, 0.8, observed: observed, ttl: 2_000))
         clock.t = arrival + 1.5
         XCTAssertEqual(try shown(vm).headline, "80%")
         clock.t = arrival + 2
         XCTAssertEqual(try shown(vm), committed, "expired")
 
-        handle.fire("preview", Self.blendJSON(4, 0.8, observed: observed))
+        handle.previewV3(Self.blendJSON(4, 0.8, observed: observed))
         XCTAssertEqual(try shown(vm).headline, "80%")
-        handle.fire("open")
+        handle.openV3()
         XCTAssertEqual(try shown(vm), committed, "reopened transport")
 
-        handle.fire("preview", Self.blendJSON(5, 0.8, observed: observed))
+        handle.previewV3(Self.blendJSON(5, 0.8, observed: observed))
         handle.fire("probability", Self.commit(11, 0.72, at: "2026-10-20T19:00:06Z"))
         let newer = try shown(vm)
         XCTAssertEqual(newer.headline, "72%", "the newer commit wins")
@@ -312,7 +322,7 @@ final class TheHeldChartEndsOnThePreviewAtItsObservation10090Tests: XCTestCase {
         XCTAssertEqual(newer.chartEnd, vm.liveBlend.last, "the chart ends on the committed push")
         XCTAssertEqual(newer.chartEnd?.homeProbability, 0.72)
 
-        handle.fire("preview", Self.blendJSON(6, 0.9, observed: Self.quoted("2026-10-20T19:00:08Z"), base: 11))
+        handle.previewV3(Self.blendJSON(6, 0.9, observed: Self.quoted("2026-10-20T19:00:08Z"), base: 11))
         XCTAssertEqual(try shown(vm).headline, "90%")
         handle.fire("closed")
         XCTAssertEqual(try shown(vm), newer, "the end of the match")

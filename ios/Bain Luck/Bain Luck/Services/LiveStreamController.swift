@@ -366,12 +366,18 @@ protocol LiveStreamHandle: AnyObject {
     /// web's `readyState === CONNECTING`. `tick()` reads it to tell a network
     /// that went away (still retrying: wait) from a socket nothing is retrying.
     var isConnecting: Bool { get }
+    /// #11564 — the monotonic receipt of the frame now being handled
+    /// (`LiveEventStreamTransport.frameReceivedAt`), or nil when unknown.
+    var frameReceivedAt: TimeInterval? { get }
 }
 
 extension LiveStreamHandle {
     /// A transport that never retries is never connecting. That is the old,
     /// safe direction: silence retires it and the caller polls.
     var isConnecting: Bool { false }
+    /// A handle that does not time its frames leaves the receipt unknown; the
+    /// owner then dates a preview on arrival, as before.
+    var frameReceivedAt: TimeInterval? { nil }
 }
 
 // MARK: - Constants
@@ -459,8 +465,14 @@ final class LiveStreamController {
     private let onPreviewFloor: @MainActor (String) -> Void
     private let onPreviewOpen: @MainActor (String) -> Void
     private let onPreviewInvalidate: @MainActor () -> Void
-    /// #10090 — previews are never replayed, so every (re)open and the end of
-    /// the match clear them.
+    /// #11564 — a raw `preview_open_v3` (`PreviewEnvelopeV3`): the durable
+    /// domain and session the stream's v3 previews belong to.
+    private let onPreviewOpenV3: @MainActor (String) -> Void
+    /// #11564 — a raw `preview_v3`, with its monotonic receipt when the
+    /// transport timed it. Like `onPreview`, it touches no clock or delivery state.
+    private let onPreviewV3: @MainActor (String, TimeInterval?) -> Void
+    /// #10090 — previews are never replayed, so every (re)open, every
+    /// transport `error` (contract D2) and `stop()` clear them.
     private let onPreviewReset: @MainActor () -> Void
     /// #10090 — whether the owner reads `folded_probability`. Opt-in, so a
     /// surface that only needs "something moved" (Discover's cards) keeps its
@@ -507,6 +519,8 @@ final class LiveStreamController {
         onPreviewFloor: @escaping @MainActor (String) -> Void = { _ in },
         onPreviewOpen: @escaping @MainActor (String) -> Void = { _ in },
         onPreviewInvalidate: (@MainActor () -> Void)? = nil,
+        onPreviewOpenV3: @escaping @MainActor (String) -> Void = { _ in },
+        onPreviewV3: @escaping @MainActor (String, TimeInterval?) -> Void = { _, _ in },
         onPreviewReset: @escaping @MainActor () -> Void = {},
         deliversFoldedQuotes: Bool = false,
         schedule: @escaping LiveStreamSchedule = LiveStreamController.sleepThenRun,
@@ -524,6 +538,8 @@ final class LiveStreamController {
         self.onPreviewFloor = onPreviewFloor
         self.onPreviewOpen = onPreviewOpen
         self.onPreviewInvalidate = onPreviewInvalidate ?? onPreviewReset
+        self.onPreviewOpenV3 = onPreviewOpenV3
+        self.onPreviewV3 = onPreviewV3
         self.onPreviewReset = onPreviewReset
         self.deliversFoldedQuotes = deliversFoldedQuotes
         self.schedule = schedule
@@ -603,8 +619,11 @@ final class LiveStreamController {
         setDelivering(true)
     }
 
-    /// Terminal. No reopen, ever.
+    /// Terminal. No reopen, ever. A stream with no socket vouches for no
+    /// preview, so this ends the v3 session too (contract D2) — whether the
+    /// match closed, the transport gave up or went silent, or the page left.
     func stop() {
+        onPreviewReset()
         stopped = true
         reopenAt = nil
         disarmReopen()
@@ -778,6 +797,18 @@ final class LiveStreamController {
             self.onPreview(raw)
         }
 
+        // #11564: the v3 domain and its previews. Neither is a delivery, and
+        // a `resync` keeps the session they name; `open`, `closed`,
+        // `reconnect` and a transport `error` end it (`onPreviewReset`).
+        next.on("preview_open_v3") { [weak self, weak next] raw in
+            guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.onPreviewOpenV3(raw)
+        }
+        next.on("preview_v3") { [weak self, weak next] raw in
+            guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.onPreviewV3(raw, next.frameReceivedAt)
+        }
+
         // A raw commit invalidates folded preview authority before its slower
         // committed quote arrives. This control earns no delivery or freshness.
         next.on("fold_preview_floor") { [weak self, weak next] raw in
@@ -799,13 +830,15 @@ final class LiveStreamController {
         // page on the final number.
         next.on("closed") { [weak self, weak next] _ in
             guard let self, let next, self.handle === next else { return }
-            self.onPreviewReset()
             self.stop()
         }
 
         // The connection ceiling. NOT terminal — see `rollOver`.
         next.on("reconnect") { [weak self, weak next] _ in
             guard let self, let next, self.handle === next else { return }
+            // Ends the v3 session now, not at the next `open`: the server sends
+            // this when its preview authority can no longer be validated.
+            self.onPreviewReset()
             self.rollOver()
         }
 
@@ -815,9 +848,15 @@ final class LiveStreamController {
             // only give up once it has actually closed (a refusal), so a
             // release or a blip costs polling until it is back, not push for
             // the rest of the match.
+            //
+            // Either way the connection that vouched for the held preview is
+            // gone (contract D2): withdraw it and end the v3 session NOW, not
+            // at its TTL — `stop()` does that for a refusal. The retry's own
+            // `open` needs a fresh `preview_open_v3` before any preview shows.
             if next.isClosed {
                 self.stop()
             } else {
+                self.onPreviewReset()
                 self.setDelivering(false)
             }
         }

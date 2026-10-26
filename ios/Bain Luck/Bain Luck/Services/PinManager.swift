@@ -92,6 +92,10 @@ final class PinManager: ObservableObject {
     /// Whether the user is authenticated (set externally).
     private(set) var isAuthenticated = false
 
+    /// #10874 — the account these pins belong to, so a reader of `savedPins`
+    /// (the Spotlight index) can refuse a previous account's set mid-switch.
+    var boundUserID: String? { binding.userID }
+
     init(defaults: UserDefaults = .standard, allowLegacyGuestPins: Bool = true, initialBinding: PinAccountBinding? = nil, serverLoad: (() async throws -> PinsResponse)? = nil, serverSync: ServerSync? = nil) {
         self.defaults = defaults
         self.serverLoad = serverLoad ?? { try await APIClient.shared.fetchPins() }

@@ -123,13 +123,15 @@ final class LiveEventStreamTransport: LiveStreamHandle {
 
     convenience init(
         eventId: Int,
-        foldedPreviews: Bool = false,
+        authorityPreviews: Bool = false,
         baseURL: String = "https://api.bainluck.com",
         session: URLSession? = nil,
         retryDelay: TimeInterval = LiveEventStreamTransport.defaultRetryDelay,
         firstRetryDelay: TimeInterval = LiveEventStreamTransport.defaultFirstRetryDelay
     ) throws {
-        let capability = foldedPreviews ? "?preview_protocol=folded-v2" : ""
+        // #11564: v3 only. A v3 visit never reads a legacy `preview` frame, so a
+        // server that does not speak v3 leaves it committed-only.
+        let capability = authorityPreviews ? "?preview_protocol=authority-v3" : ""
         guard let url = URL(string: "\(baseURL)/api/events/\(eventId)/stream\(capability)") else {
             throw URLError(.badURL)
         }
@@ -164,6 +166,12 @@ final class LiveEventStreamTransport: LiveStreamHandle {
     func on(_ event: String, _ handler: @escaping @MainActor (String) -> Void) {
         handlers[event, default: []].append(handler)
     }
+
+    /// When the frame being handed to the handlers finished assembling, on the
+    /// monotonic `systemUptime` clock — before its hop to the main actor, so a
+    /// handler can subtract that wait from a preview's lifetime. Nil outside a
+    /// handler.
+    private(set) var frameReceivedAt: TimeInterval?
 
     func close() {
         closed = true
@@ -209,7 +217,7 @@ final class LiveEventStreamTransport: LiveStreamHandle {
     @concurrent
     nonisolated private static func readFrames(
         from bytes: URLSession.AsyncBytes,
-        deliver: @MainActor @Sendable (String, String) -> Bool
+        deliver: @MainActor @Sendable (String, String, TimeInterval) -> Bool
     ) async throws -> Bool {
         var parser = SSEFrameParser()
         var line: [UInt8] = []
@@ -222,7 +230,8 @@ final class LiveEventStreamTransport: LiveStreamHandle {
             if line.last == 0x0D { line.removeLast() }   // a CRLF sender
             let text = String(decoding: line, as: UTF8.self)
             line.removeAll(keepingCapacity: true)
-            if let frame = parser.feed(text), await !deliver(frame.event, frame.data) {
+            if let frame = parser.feed(text),
+               await !deliver(frame.event, frame.data, ProcessInfo.processInfo.systemUptime) {
                 return false
             }
         }
@@ -282,11 +291,13 @@ final class LiveEventStreamTransport: LiveStreamHandle {
             // longer shares an executor with the byte loop. Each COMPLETE frame
             // comes back to `emit` in order, and the next is not handed over
             // until it has run.
-            let finished = try await Self.readFrames(from: bytes) { [self] event, data in
+            let finished = try await Self.readFrames(from: bytes) { [self] event, data, receivedAt in
                 // `close()` cancels this task, and a handler may have called it
                 // for an earlier frame: nothing is handed on after either.
                 if Task.isCancelled || closed { return false }
+                frameReceivedAt = receivedAt
                 emit(event, data)
+                frameReceivedAt = nil
                 return true
             }
             if !finished { return .ended }

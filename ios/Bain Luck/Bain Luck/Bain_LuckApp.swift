@@ -232,6 +232,8 @@ struct Bain_LuckApp: App {
             .environmentObject(authManager)
             .environmentObject(navCoordinator)
             .environmentObject(pinManager)
+            // #10875 — the saved items (and their account) the Home/Lock Screen widget may show.
+            .savedItemWidgets10875(pins: pinManager)
             .overlay {
                 PinFeedbackToast()
                     .environmentObject(pinManager)
@@ -348,6 +350,8 @@ struct Bain_LuckApp: App {
                     _ = navCoordinator.handleURL(url)
                 }
             }
+            // #10874 — saved/recent Spotlight index + opening a tapped result.
+            .spotlight10874(userID: authManager.activeFeedUserId, pins: pinManager, navigation: navCoordinator)
             .preferredColorScheme(.light)
     }
 
