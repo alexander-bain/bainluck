@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 
@@ -74,6 +75,33 @@ def test_helper_exit_zero_for_other_owner_is_not_accepted(hold):
             pytest.fail("must not enter")
 
 
+@pytest.mark.parametrize("existing", [False, True])
+def test_serialization_file_is_private_on_creation_and_existing_inode_is_preserved(
+    hold, existing
+):
+    sidecar = Path(str(hold.path) + ".claimlock")
+    if existing:
+        # The existing helper may already have created its empty sidecar.
+        sidecar.touch(mode=0o644)
+        sidecar.chmod(0o644)
+        original = sidecar.stat()
+    previous_umask = os.umask(0)
+    try:
+        with hold.held():
+            current = sidecar.stat()
+            if existing:
+                assert (current.st_dev, current.st_ino) == (
+                    original.st_dev, original.st_ino
+                )
+                assert stat.S_IMODE(current.st_mode) == 0o644
+            else:
+                assert stat.S_IMODE(current.st_mode) == 0o600
+            assert sidecar.read_bytes() == b""
+    finally:
+        os.umask(previous_umask)
+    assert sidecar.is_file()
+
+
 def test_replaced_serialization_inode_refuses(hold):
     with pytest.raises(OperationHoldRefused, match="inode changed"):
         with hold.held():
@@ -119,6 +147,7 @@ def test_capture_uses_live_helper_and_never_accepts_a_supplied_record(hold, tmp_
     run = tmp_path / "operation"
     run.mkdir(mode=0o700)
     with DeskHold.capture(hold.path, hold.identity, run) as captured:
+        assert type(captured) is DeskHold
         captured.check()
         assert captured.owner_pid == os.getpid()
         assert (run / "lock-identity").is_file()

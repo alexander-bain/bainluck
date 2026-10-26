@@ -66,9 +66,9 @@ class DeskHold:
         self._fd = None
         self._inode = None
 
-    @classmethod
+    @staticmethod
     @contextmanager
-    def capture(cls, lock_path: Path, identity: str, run_dir: Path):
+    def capture(lock_path: Path, identity: str, run_dir: Path):
         """Capture from the actual helper/lock now; never load a supplied receipt."""
         fd = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW)
         try:
@@ -91,7 +91,7 @@ class DeskHold:
         )
         if started.returncode != 0 or not started.stdout.strip():
             raise OperationHoldRefused("owner process not running")
-        hold = cls(
+        hold = DeskHold(
             lock_path, identity, int(pids[0]), started.stdout.strip(), int(epochs[0])
         )
         with hold.held():
@@ -194,7 +194,7 @@ class DeskHold:
         if self._fd is not None:
             raise OperationHoldRefused("hold already entered")
         fd = os.open(
-            str(self.path) + ".claimlock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o644
+            str(self.path) + ".claimlock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600
         )
         try:
             inode = _owned_regular(fd)
