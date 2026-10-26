@@ -54,6 +54,9 @@ PAIR_SKEW_MAX_SECONDS = 30.0
 #: Lane1's I7 refusal guard: an admitted pair whose two raw values disagree with
 #: a complementary book by more than this is withheld and counted. It catches a
 #: mixed pair across a move; it is never evidence of identity or of a clock.
+#: POLYMARKET ONLY: its premise is one condition's Yes and No sharing one book.
+#: A Kalshi pair is two tickers on two books, so a sum off 1.00 there is two
+#: genuine prices, not a straddle (#10955 R1) — the reader never asks it of one.
 PAIR_COHERENCE_EPSILON = 0.01
 
 

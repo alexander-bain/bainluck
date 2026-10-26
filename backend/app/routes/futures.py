@@ -7332,9 +7332,17 @@ def _venue_pair_admission(
     WITHHELD PER POINT AND COUNTED, NEVER A WHOLE-SERIES REFUSAL:
       * a half whose peer is not in this window (never paired, dropped by the
         support filter, claimed by a capture) — `unpaired`;
-      * a pair whose values disagree with one complementary book by more than
-        `PAIR_COHERENCE_EPSILON` — a mixed pair across a move — `incoherent`.
-        A refusal guard only; agreement proves neither identity nor a clock.
+      * POLYMARKET ONLY: a pair whose values disagree with one complementary book
+        by more than `PAIR_COHERENCE_EPSILON` — a mixed pair across a move —
+        `incoherent`. A refusal guard only; agreement proves neither identity nor
+        a clock.
+    WHY THE COHERENCE GUARD IS POLYMARKET'S ALONE (#10955 R1). Its premise is the
+    Yes and No tokens of ONE condition, which share one book: stamped at their own
+    seconds, a sum off 1.00 can only mean the halves straddle a move. A Kalshi
+    pair is two tickers, each priced from its own book's mid or last trade, paired
+    only at an exact shared candle instant — so a sum of 0.98 or 1.03 is two
+    genuine prices, never a straddle, and base served those points. A Kalshi pair
+    goes straight to the scale contract below, exactly as base's field rule did.
     The scale contract itself is unchanged and still refuses WHOLE if an admitted
     pair's printed value differs from its raw one.
 
@@ -7358,6 +7366,7 @@ def _venue_pair_admission(
     ):
         return None
     at_b = {row.captured_at: row for row in venue_by_outcome.get(oid_b) or ()}
+    one_book = getattr(market, "source", None) == "polymarket"
     admitted: dict = {}
     columns: dict = {}
     incoherent = 0
@@ -7368,7 +7377,7 @@ def _venue_pair_admission(
         # alone and is withheld below. Never a whole-series refusal.
         if row_b is None or row_b.peer_at != row_a.captured_at:
             continue
-        if pair_is_incoherent(row_a.probability, row_b.probability):
+        if one_book and pair_is_incoherent(row_a.probability, row_b.probability):
             incoherent += 2
             continue
         # Keyed per tier too: two tiers may hold pairs sharing a knowledge time,
