@@ -11,7 +11,7 @@ from redis.exceptions import ResponseError
 
 from app.services import dnpl_activation as activation
 from app.services.dnpl_authority import AuthorityConflict, preparing_candidate
-from app.utils.dnpl_redis_authority import namespace_keys
+from app.utils.dnpl_redis_authority import guard_token, namespace_keys
 from app.utils.preview_reservations import ReservationPolicy
 from tests.integration.test_dnpl_authority_10090_pg import DB_URL, rig  # noqa: F401
 from tests.test_blend_preview_ledger_tsp1_10090 import redis_kwargs  # noqa: F401
@@ -58,11 +58,16 @@ async def wire(r, script, authority, *, predecessor=None, bootstrap=False):
         keys = (activation.ADMISSION_KEY,)
     else:
         keys = (*namespace_keys(predecessor or authority), activation.ADMISSION_KEY)
+    tail = (
+        guard_token(predecessor)
+        if script == activation.CLEAN_PREDECESSOR_SCRIPT and predecessor is not None
+        else "1" if bootstrap else "0"
+    )
     return await activation.eval_once(
         r.client,
         script,
         keys,
-        (*activation.arguments(authority), "1" if bootstrap else "0"),
+        (*activation.arguments(authority), tail),
     )
 
 
@@ -448,6 +453,16 @@ async def test_replacement_primary_frees_pending_predecessor_then_recovers(
             await controller.retire(third)
             assert (await controller.ready(third)).incarnation == 3
             assert await fresh.dbsize() == 5
+            # The address is reused, but the old replacement cleanup must not
+            # delete the new occupant after its original PG receipt was cleared.
+            assert namespace_keys(first) == namespace_keys(third)
+            before = {key: await fresh.dump(key) for key in namespace_keys(third)}
+            delayed = deletions[0]
+            assert await original(*delayed) == ["occupant_changed"]
+            assert before == {
+                key: await fresh.dump(key) for key in namespace_keys(third)
+            }
+            assert await controller.read_ready(third)
             # Old authority cannot recreate its cleaned namespace on replacement.
             assert await activation.eval_once(
                 fresh,

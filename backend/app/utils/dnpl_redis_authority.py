@@ -12,7 +12,10 @@ from app.utils.blend_preview import LEDGER_SCRIPT
 def namespace_keys(authority: Authority) -> tuple[str, ...]:
     if authority.incarnation == 0:
         raise ValueError("migration seed has no Redis namespace")
-    prefix = f"live:blend_preview:v3:{authority.incarnation}:{authority.namespace}:"
+    # Physical addresses are bounded even if a failover restores an acknowledged
+    # deletion. Full incarnation/UUID/primary identity remains in every guard;
+    # sharing a slot never grants authority to an older reader or command.
+    prefix = f"live:blend_preview:v3:slot:{authority.incarnation % 2}:"
     return tuple(
         prefix + suffix
         for suffix in (

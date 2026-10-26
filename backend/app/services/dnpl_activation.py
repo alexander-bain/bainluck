@@ -5,9 +5,10 @@ module cannot acquire that interlock, allocate an incarnation, change policy,
 restart Redis or start producers. A failed/uncertain mutation ends the attempt;
 only readback may resolve it. The operator must retain the candidate identity.
 
-One admission fence and at most current + one durably recorded predecessor keep
-namespace storage bounded. Missing admission evidence on an unchanged primary
-refuses recovery, rather than letting a delayed old arm resurrect deleted keys.
+One admission fence and two physical namespace slots keep storage bounded even
+when a rollback restores a forgotten predecessor. Missing admission evidence on
+an unchanged primary refuses recovery, rather than letting a delayed old arm
+resurrect deleted keys.
 Primary identity/rollback guarantees still require provider qualification.
 """
 
@@ -78,12 +79,30 @@ if stage ~= 'used' then return {'not_initialized'} end
 table.remove(KEYS, 7)
 """ + INITIAL_READBACK_SCRIPT
 
+
+# A physical slot may now hold a newer incarnation. Even replacement cleanup,
+# whose old admission fence was lost, must compare the exact occupant atomically.
+# Absence is safe to acknowledge; partial loss without the guard is not identity.
+def _occupant_check(argument: int) -> str:
+    return r"""
+if redis.call('EXISTS', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]) ~= 0 then
+  if redis.call('TYPE', KEYS[6]).ok ~= 'string' then return {'occupant_unknown'} end
+  local occupant = redis.call('GET', KEYS[6])
+  local expected = ARGV[""" + str(argument) + r"""]
+  if not expected or expected == '' then return {'occupant_unknown'} end
+  if occupant ~= 'clean:' .. expected and occupant ~= 'dirty:' .. expected
+      and occupant ~= 'initializing:' .. expected then return {'occupant_changed'} end
+end
+"""
+
+
 CLEAN_PREDECESSOR_SCRIPT = _IDENTITY + _FENCE + r"""
 if stage ~= 'armed' and stage ~= 'used' then return {'admission_corrupt'} end
 -- Python derives all six keys from the exact durable predecessor, never a scan.
 for i = 1, 6 do
   if KEYS[i] == admission then return {'malformed'} end
 end
+""" + _occupant_check(6) + r"""
 redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6])
 if redis.call('EXISTS', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]) ~= 0 then
   return {'cleanup_unverified'}
@@ -105,7 +124,7 @@ return {'retired'}
 # fence. Atomic INFO must instead prove a different identity from BOTH records:
 # neither current nor retired in-flight command may execute on this primary.
 _REPLACEMENT_IDENTITY = _IDENTITY + r"""
-if #KEYS ~= 6 or #ARGV ~= 7 then return {'malformed'} end
+if #KEYS ~= 6 or #ARGV ~= 8 then return {'malformed'} end
 if (ARGV[2] == ARGV[4] and ARGV[3] == ARGV[5])
     or (ARGV[2] == ARGV[6] and ARGV[3] == ARGV[7]) then
   return {'identity_not_replaced'}
@@ -117,7 +136,7 @@ if redis.call('EXISTS', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]) ~=
 end
 return {'retired'}
 """
-CLEAN_REPLACED_PREDECESSOR_SCRIPT = _REPLACEMENT_IDENTITY + r"""
+CLEAN_REPLACED_PREDECESSOR_SCRIPT = _REPLACEMENT_IDENTITY + _occupant_check(8) + r"""
 redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6])
 """ + _VERIFY_ABSENCE
 VERIFY_REPLACED_PREDECESSOR_SCRIPT = _REPLACEMENT_IDENTITY + _VERIFY_ABSENCE
@@ -238,7 +257,7 @@ class ActivationController:
                 self.redis,
                 CLEAN_PREDECESSOR_SCRIPT,
                 (*namespace_keys(old), ADMISSION_KEY),
-                arguments(current),
+                (*arguments(current), guard_token(old)),
             ),
             "retired",
         )
@@ -317,6 +336,7 @@ class ActivationController:
                     current.redis_master_replid,
                     old.redis_run_id,
                     old.redis_master_replid,
+                    guard_token(old),
                 ),
             ),
             "retired",

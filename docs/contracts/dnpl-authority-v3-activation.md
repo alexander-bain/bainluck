@@ -74,12 +74,54 @@ receipt bypass, identity rewrite or same-primary cleanup exception is introduced
 Do not advertise automatic recovery from arbitrary eviction. Source review and
 Integrator must account for this limit in the final procedure/storage policy.
 
-Under the separately required no-same-identity-rollback premise, storage is at
-most two bounded event namespaces (six keys each) plus one three-field admission
-fence; PostgreSQL has one current row and one predecessor. No history list,
-namespace scan or evidence eviction is used. This is not a proof that a hosted
-provider satisfies that premise. The supported provider/version qualification
-remains required; a compatibility Redis test does not supply it.
+### Bounded physical storage and restored deletions
+
+The two physical slots are `live:blend_preview:v3:slot:0:` and `:slot:1:`,
+selected by incarnation parity. Each has six possible keys. The full
+incarnation, UUID, primary identity and policy remain in the guard; parity is
+only an address and never authority. PostgreSQL retains one current row and
+one predecessor. There is one additional three-field admission fence.
+
+This bounds the new layout to twelve namespace keys plus that fence, even when
+a changed-identity rollback restores an already-acknowledged deletion. Each
+ledger remains subject to its existing event/reservation limits. No historical
+namespace list, scan, TTL-based evidence loss or reliance on LRU is introduced.
+Every cleanup atomically validates the full recorded occupant token, including
+on a replacement primary. A different occupant, or surviving keys with a
+missing/malformed guard, refuses deletion. Entirely absent keys can still be
+acknowledged through the exact PostgreSQL predecessor protocol. Old commands
+cannot act on a newer occupant merely because its address was reused.
+
+**Availability limit:** initialization still requires an entirely empty target
+slot. A rollback-restored occupant which PostgreSQL no longer records is not
+silently deleted or adopted. Activation refuses and committed updates remain
+available. This delta bounds storage; it does not promise automatic recovery
+from every restored or partially evicted dataset.
+
+**First-rollout condition:** this bound covers the two-slot layout only.
+Integrator must establish that no earlier UUID-addressed v3 namespaces exist
+in the selected dataset or can be imported from a pre-cutover snapshot. A new
+process or a fork is not proof of empty storage. If an earlier layout was used,
+its bounded cutover requires a separate qualified procedure before activation;
+this change performs no scan or deletion of legacy data.
+
+### Provider and administrative premise
+
+Pinned Redis/Valkey source supports identity changes on documented startup,
+restart, failover and promotion paths. That is conditional source evidence,
+not a guarantee about undisclosed provider operations. Actual service binding,
+INFO permission inside scripts and stable standby readiness remain part of
+Integrator's qualification.
+
+In-place dataset replacement is excluded throughout the lifetime of v3
+authority, retained evidence and in-flight commands, including preparing and
+disabled states. This covers RESTORE/SWAPDB, FLUSH followed by rewrites,
+DEBUG RELOAD/LOADAOF and equivalent restore tooling. Planned replacement must
+exclude writers and disable authority before touching data, then use a
+qualified identity-changing recovery path. Disabling alone does not qualify
+same-identity restoration. Suspected unexpected replacement breaches the
+premise: stop v3 delivery via the authority fallback and requalify recovery.
+An operating rule does not itself constrain provider-internal behavior.
 
 ## Validation boundaries
 

@@ -1,5 +1,6 @@
 """Focused real-Redis namespace controls; not a hosted failover proof."""
 
+from contextlib import contextmanager
 from dataclasses import replace
 from uuid import uuid4
 
@@ -8,6 +9,7 @@ from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
 from app.services.dnpl_authority import Authority
+from app.services import dnpl_activation as activation
 from app.utils.blend_preview import LEDGER_SCRIPT
 from app.utils.dnpl_redis_authority import (
     GUARDED_LEDGER_SCRIPT,
@@ -206,6 +208,102 @@ async def test_new_namespace_does_not_reuse_old_state_and_old_token_refuses(rig)
     # Old namespace may still exist: PostgreSQL/fanout must refuse its output.
     # The Redis wrapper alone is deliberately not claimed as that authority.
     assert await client.hget(namespace_keys(a)[0], "epoch") == "1"
+
+
+async def test_reused_slot_rejects_old_claim_and_refuses_restored_occupant(rig):
+    client, a = rig
+    assert await initial(client, a) == ["initialized"]
+    assert await call(client, a, "claim", "kalshi") == ["ok", "1"]
+    saved = {key: await client.dump(key) for key in namespace_keys(a)}
+    b = replace(a, incarnation=2, namespace=uuid4(), operation_id=uuid4())
+    assert await initial(client, b) == ["initialized"]
+    c = replace(a, incarnation=3, namespace=uuid4(), operation_id=uuid4())
+    # Snapshot bytes restored after cleanup must never be overwritten on a
+    # guessed identity. Refusal preserves the two-slot bound and all evidence.
+    for _ in range(3):
+        await client.delete(*namespace_keys(a))
+        for key, data in saved.items():
+            if data is not None:
+                await client.restore(key, 0, data)
+        before = {key: await client.dump(key) for key in namespace_keys(a)}
+        result = await initial(client, c)
+        assert await client.dbsize() <= 12
+        physical_namespaces = {
+            ":".join(key.split(":")[:5])
+            for key in await client.keys("live:blend_preview:v3:*")
+        }
+        assert len(physical_namespaces) <= 2
+        assert result == ["exists"]
+        assert before == {key: await client.dump(key) for key in namespace_keys(a)}
+        assert await client.dbsize() <= 12
+    # A separate real Redis process supplies a genuinely different primary
+    # identity; restored acknowledged bytes remain bounded and initialization
+    # refuses instead of deleting the unidentified older occupant.
+    snapshot = {key: await client.dump(key) for key in (*namespace_keys(a), *namespace_keys(b))}
+    with contextmanager(redis_kwargs.__wrapped__)() as fresh_kwargs:
+        fresh = Redis(**fresh_kwargs, decode_responses=True)
+        try:
+            for key, data in snapshot.items():
+                if data is not None:
+                    await fresh.restore(key, 0, data)
+            server, replication = await fresh.info("server"), await fresh.info("replication")
+            assert server["run_id"] != a.redis_run_id
+            replacement = replace(c, redis_run_id=server["run_id"], redis_master_replid=replication["master_replid"])
+            assert await initial(fresh, a) == ["identity_changed"]
+            assert await initial(fresh, replacement) == ["exists"]
+            assert snapshot == {key: await fresh.dump(key) for key in snapshot}
+            assert await fresh.dbsize() <= 12
+        finally:
+            await fresh.aclose()
+    # Lab-only explicit retirement, followed by legitimate address reuse.
+    await client.delete(*namespace_keys(a))
+    assert await initial(client, c) == ["initialized"]
+    before = {key: await client.dump(key) for key in namespace_keys(c)}
+    assert await call(client, a, "claim", "kalshi") == ["guard_refused"]
+    assert before == {key: await client.dump(key) for key in namespace_keys(c)}
+    assert await call(client, c, "claim", "kalshi") == ["ok", "1"]
+    addresses = set()
+    for incarnation in range(1, 101):
+        addresses.update(namespace_keys(replace(a, incarnation=incarnation, namespace=uuid4())))
+    assert len(addresses) == 12
+
+
+@pytest.mark.parametrize("replacement", [False, True])
+@pytest.mark.parametrize("state", ["clean", "dirty", "initializing", "missing", "different", "wrongtype"])
+async def test_slot_cleanup_requires_exact_occupant(rig, replacement, state):
+    client, a = rig
+    old = replace(a, redis_run_id="0" * 40, redis_master_replid="1" * 40) if replacement else a
+    current = replace(a, incarnation=2, namespace=uuid4(), operation_id=uuid4())
+    keys = namespace_keys(old)
+    await client.hset(keys[0], mapping={"retained": "evidence"})
+    if state == "wrongtype":
+        await client.hset(keys[5], mapping={"unknown": "owner"})
+    elif state != "missing":
+        token = guard_token(current) if state == "different" else guard_token(old)
+        await client.set(keys[5], ("clean" if state == "different" else state) + ":" + token)
+    if replacement:
+        script = activation.CLEAN_REPLACED_PREDECESSOR_SCRIPT
+        args = (guard_token(current), a.redis_run_id, a.redis_master_replid,
+                "2" * 40, "3" * 40, old.redis_run_id, old.redis_master_replid, guard_token(old))
+    else:
+        await client.hset(activation.ADMISSION_KEY, mapping={
+            "incarnation": str(current.incarnation), "state": "armed",
+            "token": activation.activation_token(current),
+        })
+        script = activation.CLEAN_PREDECESSOR_SCRIPT
+        keys = (*keys, activation.ADMISSION_KEY)
+        args = (*activation.arguments(current), guard_token(old))
+    before = {key: await client.dump(key) for key in keys}
+    result = await activation.eval_once(client, script, keys, args)
+    if state in ("clean", "dirty", "initializing"):
+        assert result == ["retired"]
+        assert await client.exists(*namespace_keys(old)) == 0
+        # Exact empty readback remains possible without inventing an occupant.
+        assert await activation.eval_once(client, script, keys, args) == ["retired"]
+    else:
+        expected = "occupant_changed" if state == "different" else "occupant_unknown"
+        assert result == [expected]
+        assert before == {key: await client.dump(key) for key in keys}
 
 
 async def claimed(rig):
