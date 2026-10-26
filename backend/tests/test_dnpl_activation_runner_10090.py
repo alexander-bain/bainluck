@@ -137,3 +137,36 @@ async def test_prepare_requires_retained_candidate_bound_to_primary(operation):
                 candidate=replace(operation.expected, redis_run_id="c" * 40),
             )
     operation.controller.store.prepare.assert_not_awaited()
+
+
+async def test_larger_preview_budget_never_changes_send_identity(operation):
+    with operation.hold.held():
+        assert (
+            await runner.run_step(**args(operation, "arm"), preview_budget_s=5)
+        ).status == "DONE"
+        with pytest.raises(OperationHoldRefused, match="already consumed"):
+            await runner.run_step(**args(operation, "arm"), preview_budget_s=30)
+    operation.controller.arm.assert_awaited_once()
+
+
+async def test_longer_preview_does_not_extend_writer_freshness(operation, monkeypatch):
+    expired = False
+
+    async def preview(*a, **k):
+        nonlocal expired
+        assert k["budget_s"] == 30
+        expired = True
+
+    def validate():
+        if expired:
+            raise OperationHoldRefused("collection stale")
+        return {"nonce": "before"}
+
+    monkeypatch.setattr(runner, "preview", preview)
+    monkeypatch.setattr(
+        runner, "execute_verifier", lambda *a, **k: SimpleNamespace(validate=validate)
+    )
+    with operation.hold.held(), pytest.raises(OperationHoldRefused, match="stale"):
+        await runner.run_step(**args(operation, "arm"), preview_budget_s=30)
+    operation.controller.arm.assert_not_awaited()
+    assert not list(operation.run_dir.glob("*.send-consumed"))

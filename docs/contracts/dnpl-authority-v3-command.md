@@ -175,3 +175,40 @@ CLI internal calls, rather than call this an eight-request operation. Each
 collection keeps the existing timeout/freshness checks; elapsed time is not a
 late-command drain proof. Invocation wiring requires its own focused review and
 release gates before any attended use.
+
+
+## Explicit operator network budgets
+
+The preview and execute-plan commands accept `--io-budget-ms` (default 150,
+integer 1–5000) and `--preview-budget-ms` (default 1000, at least the I/O
+allowance and at most 30000). The I/O setting applies separately to one
+operator PostgreSQL read/transaction and one Redis checkout/connect/send/reply.
+The preview setting bounds the entire six-read/INFO consistency sample, including
+inside the operation runner. For example, 1000/5000 accommodates the controlled
+200ms local connection-delay test; these are not measured production settings
+or a guarantee that every remote request completes. Integrator selects settings
+as part of its qualified operation, without spending an attempt to discover a
+predictable client-side refusal.
+
+Effective settings are retained in the exclusive `transport-budgets.json` before
+any mutation and included in results. They do not change the canonical consumed
+send identity. A timeout, cancellation or lost reply still ends the attempt;
+selecting a larger budget is not permission to replay. The PostgreSQL step latch,
+Redis admission fence, raw single-send path and zero command retries are unchanged.
+Disconnect retains its separate 150ms cleanup allowance; pool release and OS
+scheduling remain outside a claim of hard end-to-end real-time completion.
+
+Only the explicit operator/preview factories select OperatorAuthorityStore.
+Normal AuthorityStore still refuses budgets above 150ms; producer sampling even
+on the operator subclass delegates to a normal 150ms store. Existing SQL
+statement/lock limits (100ms in control transactions, 150ms connection defaults),
+live preview TTLs, fanout deadlines, writer-observation freshness (120s) and clock
+skew checks are unchanged. A longer preview may consume the observation freshness
+budget: the runner still refuses before send if it is stale. There is no refresh
+retry or extended writer-exclusion claim.
+
+The total operation can contain multiple bounded calls and up to eight steps;
+it is not bounded by one I/O or preview allowance. P-EXCL must cover the complete
+qualified interval. These options change how long an attended caller waits for
+the same operation, not server lock occupancy or any probability-delivery target.
+The separately accepted 6468 release remains independent of this successor.

@@ -142,3 +142,17 @@ def test_connection_failure_does_not_print_credentials(subject, monkeypatch, cap
         "status": "REFUSED",
         "error_type": "RuntimeError",
     }
+
+
+async def test_explicit_preview_total_still_bounds_all_reads(subject):
+    expected, store, redis = subject
+
+    async def blocked(*a):
+        await asyncio.Event().wait()
+
+    redis.info.side_effect = blocked
+    with pytest.raises(TimeoutError):
+        await command.preview(
+            store, redis, expected, ("a" * 40, "b" * 40), budget_s=0.01
+        )
+    redis.info.assert_awaited_once()

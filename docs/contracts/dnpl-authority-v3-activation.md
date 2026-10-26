@@ -4,8 +4,9 @@ PILLAR: TRUTH / FORMATTING.
 SHIP: held eligible event pages can resume fast updates after ordering authority
 loss, using a new domain without reviving old previews or losing chart history.
 
-This is the local implementation contract, awaiting independent source review
-and provider qualification. It does not authorize any production operation.
+This is the local implementation contract. Exact-source reviews are retained in
+the release offer; provider and operational qualification remain separate. This
+document does not authorize any production operation.
 
 ## Operator boundary
 
@@ -14,9 +15,9 @@ an automatic retry. Integrator must establish the approved all-writer
 stop/drain interlock before preparing an exact fresh authority and retain that
 identity. This is a prerequisite, not an existing reusable implementation:
 the operation owner confirmed that the prior formation checks alone do not
-satisfy it. The [command preparation boundary](dnpl-authority-v3-command.md)
-therefore exposes only read-only preview until that prerequisite is implemented
-and independently reviewed.
+satisfy it. The [explicit command boundary](dnpl-authority-v3-command.md) now
+provides preview and execute-plan. Its cooperative hold and writer checks do not
+themselves establish full external writer exclusion or grant an operation.
 No controller method allocates a namespace, restarts a provider, changes policy,
 starts writers or grants the interlock. The existing ready authority remains the
 only producer authority; preparing/disabled continues committed-only delivery.

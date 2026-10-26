@@ -13,6 +13,7 @@ Primary identity/rollback guarantees still require provider qualification.
 """
 
 import asyncio
+import math
 from dataclasses import replace
 
 from app.services.dnpl_authority import Authority, AuthorityConflict, AuthorityStore
@@ -160,7 +161,7 @@ class ActivationRefused(RuntimeError):
     """No automatic resend, recovery allocation or ready transition permitted."""
 
 
-async def eval_once(client, script, keys, args):
+async def eval_once(client, script, keys, args, *, budget_s=None):
     """One low-level send/read; bypass redis-py's automatic command retry path.
 
     A timeout may leave a command queued at Redis. Disconnecting is hygiene, not
@@ -168,10 +169,17 @@ async def eval_once(client, script, keys, args):
     that ambiguity safe. Redis connection setup may retry connection/handshake;
     it must not resend this EVAL. No register_script/NOSCRIPT fallback either.
     """
+    budget_s = COMMAND_BUDGET_S if budget_s is None else budget_s
+    if (
+        isinstance(budget_s, bool)
+        or not math.isfinite(budget_s)
+        or not 0 < budget_s <= 5
+    ):
+        raise ValueError("operator command budget must be positive and at most 5s")
     pool = client.connection_pool
     connection = None
     try:
-        async with asyncio.timeout(COMMAND_BUDGET_S):
+        async with asyncio.timeout(budget_s):
             connection = await pool.get_connection()
             await connection.send_command(
                 "EVAL", script, len(keys), *keys, *args, check_health=False
@@ -199,14 +207,28 @@ def require_result(result, status):
 class ActivationController:
     """Explicit operator steps only; ordinary producers never call this class."""
 
-    def __init__(self, store: AuthorityStore, redis):
+    def __init__(self, store: AuthorityStore, redis, *, command_budget_s=None):
+        if command_budget_s is not None and (
+            isinstance(command_budget_s, bool)
+            or not math.isfinite(command_budget_s)
+            or not 0 < command_budget_s <= 5
+        ):
+            raise ValueError("operator command budget must be positive and at most 5s")
         self.store = store
         self.redis = redis
+        self.command_budget_s = command_budget_s
+
+    async def _eval_once(self, client, script, keys, args):
+        if self.command_budget_s is None:
+            return await eval_once(client, script, keys, args)
+        return await eval_once(
+            client, script, keys, args, budget_s=self.command_budget_s
+        )
 
     async def arm(self, prepared: Authority) -> None:
         bootstrap = await self.store.take_activation_step(prepared, 1)
         require_result(
-            await eval_once(
+            await self._eval_once(
                 self.redis,
                 ARM_SCRIPT,
                 (ADMISSION_KEY,),
@@ -218,7 +240,7 @@ class ActivationController:
     async def initialize(self, prepared: Authority) -> None:
         await self.store.take_activation_step(prepared, 2)
         require_result(
-            await eval_once(
+            await self._eval_once(
                 self.redis,
                 INITIALIZE_ONCE_SCRIPT,
                 (*namespace_keys(prepared), ADMISSION_KEY),
@@ -236,7 +258,7 @@ class ActivationController:
                 "initialization send not consumed for current preparation"
             )
         require_result(
-            await eval_once(
+            await self._eval_once(
                 self.redis,
                 VERIFY_INITIAL_SCRIPT,
                 (*namespace_keys(prepared), ADMISSION_KEY),
@@ -253,7 +275,7 @@ class ActivationController:
         if old is None or not 0 < old.incarnation < current.incarnation:
             raise AuthorityConflict("no exact older namespace to retire")
         require_result(
-            await eval_once(
+            await self._eval_once(
                 self.redis,
                 CLEAN_PREDECESSOR_SCRIPT,
                 (*namespace_keys(old), ADMISSION_KEY),
@@ -276,7 +298,7 @@ class ActivationController:
         if old is None or not 0 < old.incarnation < current.incarnation:
             raise AuthorityConflict("no exact older namespace to acknowledge")
         require_result(
-            await eval_once(
+            await self._eval_once(
                 self.redis,
                 VERIFY_RETIRED_SCRIPT,
                 (*namespace_keys(old), ADMISSION_KEY),
@@ -325,7 +347,7 @@ class ActivationController:
             else CLEAN_REPLACED_PREDECESSOR_SCRIPT
         )
         require_result(
-            await eval_once(
+            await self._eval_once(
                 self.redis,
                 script,
                 namespace_keys(old),

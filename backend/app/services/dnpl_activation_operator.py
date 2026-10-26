@@ -25,7 +25,8 @@ from app.services.dnpl_activation_command import (
     parse_primary,
 )
 from app.services.dnpl_activation_runner import STEPS, run_step
-from app.services.dnpl_authority import Authority, AuthorityStore, preparing_candidate
+from app.services.dnpl_operator_budget import OperatorAuthorityStore, OperatorBudgets
+from app.services.dnpl_authority import Authority, preparing_candidate
 from app.services.dnpl_operation_hold import DeskHold, _write_once
 from app.services.dnpl_writer_observations import APPS
 
@@ -181,9 +182,16 @@ def read_plan(path: Path) -> Plan:
     return parse_plan(encoded)
 
 
-async def execute_plan(plan, controller, *, lock_path, identity, run_dir):
+async def execute_plan(
+    plan, controller, *, lock_path, identity, run_dir, budgets=OperatorBudgets()
+):
     """One uninterrupted local hold; every step retains the reviewed verifier."""
     _write_once(run_dir, "plan.json", plan.encoded)
+    _write_once(
+        run_dir,
+        "transport-budgets.json",
+        json.dumps(asdict(budgets), sort_keys=True).encode(),
+    )
     outcomes = []
     with DeskHold.capture(lock_path, identity, run_dir) as hold:
         for item in plan.steps:
@@ -197,10 +205,15 @@ async def execute_plan(plan, controller, *, lock_path, identity, run_dir):
                 step=item.step,
                 expected=item.expected,
                 candidate=item.candidate,
+                preview_budget_s=budgets.preview_s,
             )
             outcomes.append(asdict(result))
             if result.status != "DONE":
-                return {"status": result.status, "steps": outcomes}
+                return {
+                    "status": result.status,
+                    "steps": outcomes,
+                    "transport_budgets": asdict(budgets),
+                }
         if plan.steps[-1].step == "ready":
             hold.check()
             if not await controller.read_ready(plan.steps[-1].expected):
@@ -208,12 +221,17 @@ async def execute_plan(plan, controller, *, lock_path, identity, run_dir):
                     "status": "UNCERTAIN",
                     "steps": outcomes,
                     "ready_readback": False,
+                    "transport_budgets": asdict(budgets),
                 }
             hold.check()
-    return {"status": "PLAN_DONE", "steps": outcomes}
+    return {
+        "status": "PLAN_DONE",
+        "steps": outcomes,
+        "transport_budgets": asdict(budgets),
+    }
 
 
-async def configured_plan(plan, **kwargs):
+async def configured_plan(plan, *, budgets=OperatorBudgets(), **kwargs):
     from redis.asyncio import Redis
     from redis.backoff import NoBackoff
     from redis.retry import Retry
@@ -230,7 +248,7 @@ async def configured_plan(plan, **kwargs):
         url.set(drivername="postgresql+asyncpg"),
         poolclass=NullPool,
         connect_args={
-            "timeout": 1.0,
+            "timeout": max(1.0, budgets.io_s),
             "server_settings": {
                 "statement_timeout": "150",
                 "lock_timeout": "150",
@@ -242,15 +260,18 @@ async def configured_plan(plan, **kwargs):
         client = Redis.from_url(
             redis_url,
             decode_responses=True,
-            socket_timeout=0.150,
-            socket_connect_timeout=0.150,
+            socket_timeout=budgets.io_s,
+            socket_connect_timeout=budgets.io_s,
             retry=Retry(NoBackoff(), 0),
         )
         controller = ActivationController(
-            AuthorityStore(async_sessionmaker(engine, expire_on_commit=False)),
+            OperatorAuthorityStore(
+                async_sessionmaker(engine, expire_on_commit=False), budgets
+            ),
             client,
+            command_budget_s=budgets.io_s,
         )
-        return await execute_plan(plan, controller, **kwargs)
+        return await execute_plan(plan, controller, budgets=budgets, **kwargs)
     finally:
         try:
             if client is not None:
@@ -266,8 +287,11 @@ def main(argv=None) -> int:
     parser.add_argument("--lock", type=Path, required=True)
     parser.add_argument("--owner", required=True)
     parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--io-budget-ms", type=int, default=150)
+    parser.add_argument("--preview-budget-ms", type=int, default=1000)
     args = parser.parse_args(argv)
     try:
+        budgets = OperatorBudgets(args.io_budget_ms, args.preview_budget_ms)
         plan = read_plan(args.plan)
     except Exception as exc:
         print(json.dumps({"status": "REFUSED", "error_type": type(exc).__name__}))
@@ -276,6 +300,7 @@ def main(argv=None) -> int:
         result = asyncio.run(
             configured_plan(
                 plan,
+                budgets=budgets,
                 lock_path=args.lock,
                 identity=args.owner,
                 run_dir=args.run_dir,
@@ -289,6 +314,7 @@ def main(argv=None) -> int:
                 {
                     "status": "STOPPED",
                     "may_have_sent": True,
+                    "transport_budgets": asdict(budgets),
                     "error_type": type(exc).__name__,
                 }
             )

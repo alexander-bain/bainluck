@@ -1,9 +1,9 @@
 """One explicit recovery step under the local operation hold, never a retry.
 
-Not exposed by the CLI until the operation premises and this implementation are
-independently accepted. The caller must satisfy P-EXCL, exact deployed-source
+Invoked by the explicit operator; source acceptance does not grant an operation.
+The caller must satisfy P-EXCL, exact deployed-source
 and migration binding, late-command closure and provider qualification. Neither
-this API nor verifier output grants those premises. Local tests only so far.
+this API nor verifier output grants those premises.
 """
 
 import asyncio
@@ -54,6 +54,7 @@ async def run_step(
     primary: tuple[str, str],
     apps: dict,
     candidate: Authority | None = None,
+    preview_budget_s: float | None = None,
 ) -> StepResult:
     """Directly execute verifier, validate, consume, call controller once, verify.
 
@@ -82,7 +83,16 @@ async def run_step(
         expected_primary=list(primary),
         apps=apps,
     )
-    await preview(controller.store, controller.redis, expected, primary)
+    if preview_budget_s is None:
+        await preview(controller.store, controller.redis, expected, primary)
+    else:
+        await preview(
+            controller.store,
+            controller.redis,
+            expected,
+            primary,
+            budget_s=preview_budget_s,
+        )
     hold.check()
     binding = before.validate()  # freshness measured immediately before send
     identity = {
