@@ -873,7 +873,9 @@ class _CandleBook:
         return VenuePoint(ts, probability, book[1], book[2], book[3], book[4])
 
 
-def _annotate_pairs(outcomes: Sequence[Any], entries: dict[int, dict]) -> tuple[int, int] | None:
+def _annotate_pairs(
+    outcomes: Sequence[Any], entries: dict[int, dict], *, market: Any = None
+) -> tuple[int, int] | None:
     """Pair an identity-admitted binary's RAW legs afresh and annotate both halves (#11157).
 
     Runs after layering and the last-good merge, before compaction, so the rule
@@ -898,7 +900,7 @@ def _annotate_pairs(outcomes: Sequence[Any], entries: dict[int, dict]) -> tuple[
             replace(p, pair_at=None, peer_at=None) if p.pair_at or p.peer_at else p
             for p in entry["points"]
         ]
-    pair = _paired_binary_leg_ids(outcomes, entries)
+    pair = _paired_binary_leg_ids(outcomes, entries, market=market)
     if pair is None:
         return None
     oid_a, oid_b = pair
@@ -916,7 +918,7 @@ def _annotate_pairs(outcomes: Sequence[Any], entries: dict[int, dict]) -> tuple[
 
 
 def _compact_entries(
-    outcomes: Sequence[Any], entries: dict[int, dict], now: datetime
+    outcomes: Sequence[Any], entries: dict[int, dict], now: datetime, *, market: Any = None
 ) -> None:
     """Compact each outcome by band; for an identity-admitted binary pair, keep both halves of every pair either leg kept.
 
@@ -928,7 +930,7 @@ def _compact_entries(
     """
     from app.utils.futures_chart_series import compact_by_band
 
-    pair = _annotate_pairs(outcomes, entries)
+    pair = _annotate_pairs(outcomes, entries, market=market)
     by_oid_ts: dict[int, dict[datetime, VenuePoint]] = {}
     kept_by_oid: dict[int, set[datetime]] = {}
     for oid, entry in entries.items():
@@ -1107,7 +1109,7 @@ async def build_generic_history(
         if len(entry["points"]) > before:
             stats["carried_points"] = stats.get("carried_points", 0) + (len(entry["points"]) - before)
 
-    _compact_entries(outcomes, entries, now)
+    _compact_entries(outcomes, entries, now, market=market)
     for entry in entries.values():
         if entry["points"]:
             stats["outcomes_built"] += 1
