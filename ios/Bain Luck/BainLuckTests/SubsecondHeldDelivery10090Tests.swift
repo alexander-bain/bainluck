@@ -149,13 +149,18 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         nonisolated(unsafe) private static var burst = false
         nonisolated(unsafe) private static var burstFinal: String?
         nonisolated(unsafe) private static var baseEpoch = SubsecondHeldDelivery10090Tests.fixedBase
+        /// Diagnostics only: when the resync frame's bytes were handed to
+        /// URLSession. Kept out of `emitted`, which the lags and the burst read.
+        nonisolated(unsafe) private static var resyncEmitted: UInt64?
         private let queue = DispatchQueue(label: "paced-stream")
         private var stopped = false
 
         static func reset(quarter: Bool, base: TimeInterval, burst: Bool = false, burstFinal: String? = nil) {
             lock.lock(); emitted = [:]; finished = false; Self.quarter = quarter; Self.burst = burst
             Self.burstFinal = burstFinal; baseEpoch = base; lock.unlock()
+            lock.lock(); resyncEmitted = nil; lock.unlock()
         }
+        static var resyncEmittedAt: UInt64? { lock.lock(); defer { lock.unlock() }; return resyncEmitted }
         static var base: TimeInterval { lock.lock(); defer { lock.unlock() }; return baseEpoch }
         static var emittedAt: [String: UInt64] { lock.lock(); defer { lock.unlock() }; return emitted }
         static var done: Bool { lock.lock(); defer { lock.unlock() }; return finished }
@@ -198,6 +203,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
                     client?.urlProtocol(self, didLoad: SubsecondHeldDelivery10090Tests.frame(
                         "probability", SubsecondHeldDelivery10090Tests.raw(i, quarter: quarter)))
                     if i == SubsecondHeldDelivery10090Tests.resyncAfter {
+                        Self.lock.lock(); Self.resyncEmitted = DispatchTime.now().uptimeNanoseconds; Self.lock.unlock()
                         client?.urlProtocol(self, didLoad: SubsecondHeldDelivery10090Tests.frame(
                             "resync", #"{"generation":1}"#))
                     }
@@ -228,10 +234,15 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         let response: EventDetail
         let history: EventHistoryResponse?
         private(set) var reads = 0
+        /// Diagnostics only: each `fetchEvent` entry on the process clock.
+        private(set) var readStamps: [UInt64] = []
         init(_ response: EventDetail, history: EventHistoryResponse? = nil) {
             self.response = response; self.history = history
         }
-        func fetchEvent(id: Int) async throws -> EventDetail { reads += 1; return response }
+        func fetchEvent(id: Int) async throws -> EventDetail {
+            readStamps.append(DispatchTime.now().uptimeNanoseconds)
+            reads += 1; return response
+        }
         func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
             guard let history else { throw Missing() }
             return history
@@ -408,6 +419,8 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     }
 
     private func run(quarter: Bool, hosted: Bool) async throws -> Run {
+        diagnostics = Diagnostics()
+        diagnostics.loadStart = Self.loadAverage()
         PacedStream.reset(quarter: quarter, base: hosted ? Self.recentBase() : Self.fixedBase)
         let base = PacedStream.base
         let config = URLSessionConfiguration.ephemeral
@@ -440,7 +453,9 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         // A periodic poll lands mid-burst, carrying the older held read.
         let poll = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 2_100_000_000)
+            self.diagnostics.pollStart = DispatchTime.now().uptimeNanoseconds
             await vm.load()
+            self.diagnostics.pollEnd = DispatchTime.now().uptimeNanoseconds
         }
         let doneMark: LiveTimingSeam.Name = hosted ? .viewHeadlineUpdated : .modelHeadlineAdopted
         await waitUntil(Double(Self.quotes) * Self.spacing + 3) {
@@ -461,6 +476,8 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             print("SUBSECOND-10090 capture=\(url.path)")
         }
         marks = Array(marks.prefix(measured))
+        diagnostics.reads = client.readStamps
+        diagnostics.loadEnd = Self.loadAverage()
 
         return Run(
             adopted: marks.filter { $0.mark.name == .modelHeadlineAdopted },
@@ -486,6 +503,95 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
                       sorted[sorted.count / 2], last)
     }
 
+    // MARK: - Diagnostics (461be90b1c red; lane1 C1–C7)
+
+    /// What a run records beside its marks, for the appended diagnostics only.
+    /// Nothing here is asserted on. `anchorWall` and `anchorUptime` are one
+    /// paired sample, taken as the run starts: the only bridge from the process
+    /// clock to the wall clock the app's log lines and Spotlight's `viewedAt` use.
+    private struct Diagnostics {
+        var anchorWall = Date()
+        var anchorUptime = DispatchTime.now().uptimeNanoseconds
+        var loadStart: [Double] = []
+        var loadEnd: [Double] = []
+        var reads: [UInt64] = []
+        var pollStart: UInt64?
+        var pollEnd: UInt64?
+    }
+
+    private var diagnostics = Diagnostics()
+
+    /// The host's 1, 5 and 15 minute load averages (the simulator shares the
+    /// Mac's kernel), or none when the call fails.
+    nonisolated private static func loadAverage() -> [Double] {
+        var load = [Double](repeating: 0, count: 3)
+        return getloadavg(&load, 3) == 3 ? load : []
+    }
+
+    /// The fields appended after `reads=N`. Every time is the process clock in
+    /// ms, offset from the first fold's emit, so the quote that stalled and what
+    /// ran beside it read on one timeline. Each per-quote list has 16 slots,
+    /// slot i for `rev:4242=<20+i>`; a missing emit or mark prints `-`, so a gap
+    /// never shifts the slots after it.
+    ///
+    /// Spotlight is read, never driven: no bind, refresh or recordViewed. Its
+    /// `viewedAt` is when `recordViewed` ran; the CoreSpotlight writes run later,
+    /// in the queued main-actor sync pass, which is not stamped here, so a sync
+    /// stall would land after the `viewedAt` printed, not at it.
+    private func diagnosticFields(_ r: Run, headline: [(mark: LiveTimingSeam.Mark, at: UInt64)]? = nil,
+                                  chart: [(mark: LiveTimingSeam.Mark, at: UInt64)]? = nil,
+                                  stampToBasis: [String: String] = [:]) -> String {
+        let d = diagnostics
+        let origin = r.emitted[expected[0]]
+        func ms(_ at: UInt64?) -> String {
+            guard let at, let origin else { return "-" }
+            return String(format: "%.2f", Double(Int64(bitPattern: at &- origin)) / 1e6)
+        }
+        func byQuote(_ list: [(mark: LiveTimingSeam.Mark, at: UInt64)], _ basis: (LiveTimingSeam.Mark) -> String?) -> String {
+            "[" + expected.map { b in
+                guard let e = r.emitted[b], let m = list.first(where: { basis($0.mark) == b }) else { return "-" }
+                return String(format: "%.2f", Double(Int64(bitPattern: m.at &- e)) / 1e6)
+            }.joined(separator: ",") + "]"
+        }
+        func load(_ l: [Double]) -> String {
+            l.isEmpty ? "-" : l.map { String(format: "%.2f", $0) }.joined(separator: "/")
+        }
+        // The wall clock at an uptime stamp, and back, through the one anchor.
+        func wall(_ at: UInt64) -> Date {
+            d.anchorWall.addingTimeInterval(Double(Int64(bitPattern: at &- d.anchorUptime)) / 1e9)
+        }
+        func uptime(_ date: Date) -> UInt64 {
+            UInt64(bitPattern: Int64(bitPattern: d.anchorUptime) + Int64(date.timeIntervalSince(d.anchorWall) * 1e9))
+        }
+
+        var fields = "emit_ms=[" + expected.map { ms(r.emitted[$0]) }.joined(separator: ",") + "]"
+        fields += " model_lag_ms=" + byQuote(r.adopted, { $0.basis })
+        if let headline { fields += " view_headline_lag_ms=" + byQuote(headline, { $0.basis }) }
+        if let chart { fields += " view_chart_lag_ms=" + byQuote(chart, { stampToBasis[$0.stamp] }) }
+        fields += " resync_ms=" + ms(PacedStream.resyncEmittedAt)
+        fields += " reads_ms=[" + d.reads.map { ms($0) }.joined(separator: ",") + "]"
+        fields += " poll_ms=" + ms(d.pollStart) + "/" + ms(d.pollEnd)
+
+        let index = SpotlightIndex10874.shared
+        let readAt = Date()
+        let viewed = index.entries.compactMap { e -> (SpotlightEntry10874, Date)? in
+            guard let at = e.viewedAt, at >= d.anchorWall, at <= readAt else { return nil }
+            return (e, at)
+        }.sorted { $0.1 < $1.1 }
+        fields += " spotlight_scope=" + (index.scope == nil ? "unbound" : "bound")
+        fields += " spotlight_window_ms=" + ms(d.anchorUptime) + "/" + ms(uptime(readAt))
+        let recorded: [String] = viewed.map { entry, at in
+            "\(entry.subject.kind.rawValue):\(entry.subject.id)@" + ms(uptime(at))
+        }
+        fields += " spotlight_recorded_viewed_ms=" + (recorded.isEmpty ? "none" : "[" + recorded.joined(separator: ",") + "]")
+
+        fields += " loadavg_start=" + load(d.loadStart) + " loadavg_end=" + load(d.loadEnd)
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        fields += " wall_at_first_emit=" + (origin.map { iso.string(from: wall($0)) } ?? "-")
+        return fields
+    }
+
     private func assertModel(_ r: Run, quarter: Bool) -> [Double] {
         XCTAssertEqual(r.adopted.map(\.mark.basis), expected,
                        "every changed quote is adopted once, in revision order, and nothing rolls it back")
@@ -507,6 +613,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         let lags = assertModel(r, quarter: quarter)
         let line = "SUBSECOND-10090 depth=model clocks=\(quarter ? "250ms" : "1s") "
             + summary("emit_to_model_ms", lags) + " spacing_ms=250 reads=\(r.reads)"
+            + " \(diagnosticFields(r))"
         print(line)
         XCTAssertLessThan(lags.max() ?? .infinity, Self.spacing * 1000,
                           "a quote was still unadopted when the next one was sent: \(line)")
@@ -545,6 +652,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             + summary("emit_to_view_headline_ms", headLags) + " "
             + summary("emit_to_view_chart_ms", chartLags)
             + " view_headline_marks=\(r.viewHeadline.count) view_chart_marks=\(r.viewChart.count) reads=\(r.reads)"
+            + " \(diagnosticFields(r, headline: headline, chart: r.viewChart, stampToBasis: stampToBasis))"
         print(line)
         XCTAssertLessThan(max(headLags.max() ?? .infinity, chartLags.max() ?? .infinity), Self.spacing * 1000,
                           "a quote had not reached the view's inputs when the next one was sent: \(line)")
