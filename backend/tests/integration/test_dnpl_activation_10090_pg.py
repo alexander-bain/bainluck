@@ -498,8 +498,9 @@ async def test_replacement_cleanup_requires_distinct_actual_identity(recovery):
 
 
 @pytest.mark.parametrize("lost_reply", [False, True])
+@pytest.mark.parametrize("remote_budget", [False, True])
 async def test_operator_plan_real_lifecycle_stops_without_replaying(
-    recovery, tmp_path, monkeypatch, lost_reply
+    recovery, tmp_path, monkeypatch, lost_reply, remote_budget
 ):
     from dataclasses import asdict
     import json
@@ -509,6 +510,37 @@ async def test_operator_plan_real_lifecycle_stops_without_replaying(
     from app.services.dnpl_operation_hold import OperationHoldRefused
 
     r = recovery
+    from app.services.dnpl_operator_budget import (
+        OperatorAuthorityStore,
+        OperatorBudgets,
+    )
+
+    budgets = OperatorBudgets(1000, 5000) if remote_budget else OperatorBudgets()
+    if remote_budget:
+        import asyncio
+        from contextlib import asynccontextmanager
+
+        sessions = r.store.sessions
+
+        @asynccontextmanager
+        async def delayed_sessions():
+            await asyncio.sleep(0.2)
+            async with sessions() as session:
+                yield session
+
+        r.store = OperatorAuthorityStore(delayed_sessions, budgets)
+        r.controller = activation.ActivationController(
+            r.store, r.client, command_budget_s=budgets.io_s
+        )
+        acquire = r.client.connection_pool.get_connection
+
+        async def delayed_connection(*args, **kwargs):
+            await asyncio.sleep(0.2)
+            return await acquire(*args, **kwargs)
+
+        monkeypatch.setattr(
+            r.client.connection_pool, "get_connection", delayed_connection
+        )
     seed = await r.store.read()
     server, repl = await r.client.info("server"), await r.client.info("replication")
     primary = (server["run_id"], repl["master_replid"])
@@ -555,8 +587,8 @@ async def test_operator_plan_real_lifecycle_stops_without_replaying(
     )
     original, sent = activation.eval_once, []
 
-    async def transport(*args):
-        result = await original(*args)
+    async def transport(*args, **kwargs):
+        result = await original(*args, **kwargs)
         sent.append(args[1])
         if lost_reply and args[1] == activation.INITIALIZE_ONCE_SCRIPT:
             raise ConnectionError("lost actual initializer reply")
@@ -564,12 +596,18 @@ async def test_operator_plan_real_lifecycle_stops_without_replaying(
 
     monkeypatch.setattr(activation, "eval_once", transport)
     kwargs = {"lock_path": lock, "identity": "local-plan", "run_dir": run_dir}
-    result = await operator.execute_plan(plan, r.controller, **kwargs)
+    result = await operator.execute_plan(plan, r.controller, budgets=budgets, **kwargs)
     assert result["status"] == ("UNCERTAIN" if lost_reply else "PLAN_DONE")
+    assert result["transport_budgets"] == {
+        "io_ms": budgets.io_ms,
+        "preview_ms": budgets.preview_ms,
+    }
     assert sent.count(activation.INITIALIZE_ONCE_SCRIPT) == 1
     assert (await r.store.read()).state == ("preparing" if lost_reply else "ready")
     with pytest.raises(OperationHoldRefused, match="already consumed"):
-        await operator.execute_plan(plan, r.controller, **kwargs)
+        await operator.execute_plan(
+            plan, r.controller, budgets=OperatorBudgets(5000, 30000), **kwargs
+        )
     if lost_reply:
         assert result["steps"][-1]["step"] == "initialize"
         # Explicit local readback resolves the sent initializer; the CLI did

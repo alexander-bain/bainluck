@@ -266,7 +266,8 @@ async def test_application_credentials_are_never_fallback(monkeypatch):
     factory.assert_not_called()
 
 
-async def test_explicit_connections_are_bounded_and_cleaned(monkeypatch):
+@pytest.mark.parametrize("io_ms", [150, 1000])
+async def test_explicit_connections_are_bounded_and_cleaned(monkeypatch, io_ms):
     from unittest.mock import Mock
     import redis.asyncio as redis
     import sqlalchemy.ext.asyncio as sa
@@ -286,14 +287,16 @@ async def test_explicit_connections_are_bounded_and_cleaned(monkeypatch):
         operator, "execute_plan", AsyncMock(side_effect=RuntimeError("stop"))
     )
     with pytest.raises(RuntimeError):
-        await operator.configured_plan(parse(plan_data()))
+        await operator.configured_plan(
+            parse(plan_data()), budgets=operator.OperatorBudgets(io_ms, 5000)
+        )
     assert factory.call_args.kwargs["poolclass"] is NullPool
     assert factory.call_args.kwargs["connect_args"]["server_settings"] == {
         "statement_timeout": "150",
         "lock_timeout": "150",
     }
-    assert redis_factory.call_args.kwargs["socket_timeout"] == 0.150
-    assert redis_factory.call_args.kwargs["socket_connect_timeout"] == 0.150
+    assert redis_factory.call_args.kwargs["socket_timeout"] == io_ms / 1000
+    assert redis_factory.call_args.kwargs["socket_connect_timeout"] == io_ms / 1000
     assert redis_factory.call_args.kwargs["retry"].get_retries() == 0
     client.aclose.assert_awaited_once()
     engine.dispose.assert_awaited_once()
@@ -419,3 +422,64 @@ def test_replacement_cleanup_plan_retains_distinct_primary_requirement(step):
         parse(data)
     data["primary"] = "d" * 40 + ":" + "e" * 40
     assert parse(data).steps[0].step == step
+
+
+async def test_effective_budget_receipt_and_runner_selection_are_retained(
+    local_run, monkeypatch
+):
+    from app.services.dnpl_operator_budget import OperatorBudgets
+
+    budgets = OperatorBudgets(1000, 5000)
+    calls = []
+
+    async def step(**kwargs):
+        calls.append(kwargs)
+        return StepResult("UNCERTAIN", kwargs["step"])
+
+    monkeypatch.setattr(operator, "run_step", step)
+    result = await operator.execute_plan(
+        parse(plan_data()), object(), budgets=budgets, **local_run
+    )
+    assert result["transport_budgets"] == {"io_ms": 1000, "preview_ms": 5000}
+    assert (
+        json.loads((local_run["run_dir"] / "transport-budgets.json").read_text())
+        == result["transport_budgets"]
+    )
+    assert calls[0]["preview_budget_s"] == 5
+    with pytest.raises(OperationHoldRefused, match="already consumed"):
+        await operator.execute_plan(
+            parse(plan_data()),
+            object(),
+            budgets=OperatorBudgets(5000, 30000),
+            **local_run,
+        )
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "io,preview", [("5001", "30000"), ("1000", "999"), ("0", "1000")]
+)
+def test_cli_budget_refuses_before_clients(tmp_path, monkeypatch, io, preview):
+    configured = AsyncMock()
+    monkeypatch.setattr(operator, "configured_plan", configured)
+    assert (
+        operator.main(
+            [
+                "execute-plan",
+                "--plan",
+                str(tmp_path / "absent"),
+                "--lock",
+                "/unused",
+                "--owner",
+                "unused",
+                "--run-dir",
+                str(tmp_path),
+                "--io-budget-ms",
+                io,
+                "--preview-budget-ms",
+                preview,
+            ]
+        )
+        == 2
+    )
+    configured.assert_not_awaited()
