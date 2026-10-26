@@ -495,3 +495,85 @@ async def test_replacement_cleanup_requires_distinct_actual_identity(recovery):
         )
     assert await r.client.exists(*namespace_keys(first)) == 4
     assert await r.store.read_retirement() == first
+
+
+@pytest.mark.parametrize("lost_reply", [False, True])
+async def test_operator_plan_real_lifecycle_stops_without_replaying(
+    recovery, tmp_path, monkeypatch, lost_reply
+):
+    from dataclasses import asdict
+    import json
+    import os
+    from app.services import dnpl_activation_operator as operator
+    from app.services import dnpl_activation_runner as runner
+    from app.services.dnpl_operation_hold import OperationHoldRefused
+
+    r = recovery
+    seed = await r.store.read()
+    server, repl = await r.client.info("server"), await r.client.info("replication")
+    primary = (server["run_id"], repl["master_replid"])
+    candidate = preparing_candidate(
+        seed,
+        namespace=uuid4(),
+        operation_id=uuid4(),
+        redis_run_id=primary[0],
+        redis_master_replid=primary[1],
+        policy_fingerprint=ReservationPolicy().fingerprint,
+    )
+    payload = {
+        "run_id": str(uuid4()),
+        "primary": ":".join(primary),
+        "apps": {
+            app: {"release": 1, "slug": str(uuid4()), "commit": "c" * 40}
+            for app in operator.APPS
+        },
+        "steps": [
+            {
+                "step": "prepare",
+                "expected": asdict(seed),
+                "candidate": asdict(candidate),
+            }
+        ]
+        + [
+            {"step": step, "expected": asdict(candidate), "candidate": None}
+            for step in ("arm", "initialize", "ready")
+        ],
+    }
+    plan = operator.parse_plan(json.dumps(payload, default=str).encode())
+    lock = tmp_path / "operator.lock"
+    lock.write_text(
+        f"status: HELD\nowner_identity: local-plan\nowner_pid: {os.getpid()}\nclaimed_epoch_s: 1\n"
+    )
+    run_dir = tmp_path / "operator-run"
+    run_dir.mkdir(mode=0o700)
+    # Only platform observations are simulated. The hold, runner, controller,
+    # PG send permissions and Redis commands are the actual implementation.
+    monkeypatch.setattr(
+        runner,
+        "execute_verifier",
+        lambda *a, **k: SimpleNamespace(validate=lambda: {"nonce": str(uuid4())}),
+    )
+    original, sent = activation.eval_once, []
+
+    async def transport(*args):
+        result = await original(*args)
+        sent.append(args[1])
+        if lost_reply and args[1] == activation.INITIALIZE_ONCE_SCRIPT:
+            raise ConnectionError("lost actual initializer reply")
+        return result
+
+    monkeypatch.setattr(activation, "eval_once", transport)
+    kwargs = {"lock_path": lock, "identity": "local-plan", "run_dir": run_dir}
+    result = await operator.execute_plan(plan, r.controller, **kwargs)
+    assert result["status"] == ("UNCERTAIN" if lost_reply else "PLAN_DONE")
+    assert sent.count(activation.INITIALIZE_ONCE_SCRIPT) == 1
+    assert (await r.store.read()).state == ("preparing" if lost_reply else "ready")
+    with pytest.raises(OperationHoldRefused, match="already consumed"):
+        await operator.execute_plan(plan, r.controller, **kwargs)
+    if lost_reply:
+        assert result["steps"][-1]["step"] == "initialize"
+        # Explicit local readback resolves the sent initializer; the CLI did
+        # not automatically continue after uncertainty or resend anything.
+        assert (await r.controller.ready(candidate)).state == "ready"
+    assert sent.count(activation.INITIALIZE_ONCE_SCRIPT) == 1
+    assert await r.controller.read_ready(candidate)
