@@ -7227,7 +7227,11 @@ class _PairAdmission(NamedTuple):
 
 
 def _verify_pair_bank(
-    accepted: dict, payload: Optional[dict], outcomes: list
+    accepted: dict,
+    payload: Optional[dict],
+    outcomes: list,
+    *,
+    market: Optional[FuturesMarket] = None,
 ) -> tuple[Optional[tuple], Optional[str]]:
     """`(pair, None)` when the bank's pair annotations verify for an identity-
     admitted Yes/No pair; `(None, None)` when pairing does not apply; `(None,
@@ -7237,7 +7241,7 @@ def _verify_pair_bank(
     IDENTITY IS RE-DERIVED HERE, never trusted from the bank (lane1's I3): the
     fill's own predicate (`async_binary_pair.paired_binary_leg_ids`), asked of the contracts the
     bank was built from, which `validate_payload` has already bound to these
-    outcome rows. Any other market — Kalshi, multi-outcome, wrong token,
+    outcome rows. Any other market — multi-outcome, non-exclusive, wrong token,
     condition or leg — reads its bank exactly as before: annotations, if a bank
     somehow carried them, are not consulted.
 
@@ -7257,12 +7261,14 @@ def _verify_pair_bank(
     ):
         return None, None
     cached = (payload or {}).get("outcomes") or {}
+    if not isinstance(cached, dict) or len(cached) != 2:
+        return None, None
     entries = {
         int(key): entry
-        for key, entry in (cached.items() if isinstance(cached, dict) else ())
+        for key, entry in cached.items()
         if str(key).isdigit() and isinstance(entry, dict) and int(key) in accepted
     }
-    pair = paired_binary_leg_ids(outcomes, entries)
+    pair = paired_binary_leg_ids(outcomes, entries, market=market)
     if pair is None:
         return None, None
     dropped = next(
@@ -7663,7 +7669,9 @@ async def _load_generic_venue_history(
         # beside its peer, not mistaken for a forged one. A failure is RECORDED,
         # never applied here: this loader also feeds `/probability-timeline`,
         # which does not pair and keeps master's points (lane1's R1).
-        pair, venue.pair_refusal = _verify_pair_bank(accepted, payload, charted_outcomes)
+        pair, venue.pair_refusal = _verify_pair_bank(
+            accepted, payload, charted_outcomes, market=market
+        )
         for oid, points in accepted.items():
             rows = as_snapshot_rows(oid, market.source, points)
             supported = _drop_unsupported_snapshot_points(

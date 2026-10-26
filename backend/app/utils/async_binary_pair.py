@@ -123,14 +123,18 @@ def pair_observations(
 
 
 def paired_binary_leg_ids(
-    outcomes: Sequence[Any], entries: dict[int, dict]
+    outcomes: Sequence[Any], entries: dict[int, dict], *, market: Any = None
 ) -> tuple[int, int] | None:
-    """Return `(oid_a, oid_b)` only for an identity-admitted Polymarket `_yes`/`_no` binary pair.
+    """Return `(oid_a, oid_b)` only for an identity-admitted 2-leg mutually-exclusive binary pair.
 
-    #11160's identity rule, moved here from the fill so the fill and the reader
-    import one copy from a module neither depends on: one 0x condition, two
-    distinct tokens, exactly `{c}_yes` / `{c}_no`. `entries` maps outcome id to
-    a dict carrying that outcome's `contract`.
+    #11160's Polymarket identity rule, moved here from the fill so the fill and
+    the reader import one copy from a module neither depends on: one 0x
+    condition, two distinct tokens, exactly `{c}_yes` / `{c}_no`. `entries` maps
+    outcome id to a dict carrying that outcome's `contract`.
+
+    #10955 extends admission to 2-leg mutually-exclusive Kalshi events only when
+    full-field exclusivity is proved from the stored market and contract
+    representation (`_kalshi_paired_binary_leg_ids`).
     """
     if len(outcomes) != 2:
         return None
@@ -139,20 +143,160 @@ def paired_binary_leg_ids(
         return None
     c_a = entries[oid_a].get("contract") or {}
     c_b = entries[oid_b].get("contract") or {}
-    if c_a.get("venue") != "polymarket" or c_b.get("venue") != "polymarket":
+    if c_a.get("venue") == "polymarket" and c_b.get("venue") == "polymarket":
+        if market is not None and getattr(market, "source", None) != "polymarket":
+            return None
+        cond_id = c_a.get("condition_id")
+        if (
+            not isinstance(cond_id, str)
+            or not cond_id.startswith("0x")
+            or c_b.get("condition_id") != cond_id
+        ):
+            return None
+        if not c_a.get("token_id") or not c_b.get("token_id") or c_a.get("token_id") == c_b.get("token_id"):
+            return None
+        if {c_a.get("outcome_external_id"), c_b.get("outcome_external_id")} != {
+            f"{cond_id}_yes",
+            f"{cond_id}_no",
+        }:
+            return None
+        return oid_a, oid_b
+    if c_a.get("venue") == "kalshi" and c_b.get("venue") == "kalshi":
+        return _kalshi_paired_binary_leg_ids(
+            outcomes, entries, c_a, c_b, oid_a, oid_b, market=market
+        )
+    return None
+
+
+def _kalshi_paired_binary_leg_ids(
+    outcomes: Sequence[Any],
+    entries: dict[int, dict],
+    c_a: dict,
+    c_b: dict,
+    oid_a: int,
+    oid_b: int,
+    *,
+    market: Any = None,
+) -> tuple[int, int] | None:
+    """Full-field semantic identity check for a 2-leg mutually-exclusive Kalshi market (#10955).
+
+    Shared event ticker prefix + two displayed rows is never sufficient by itself:
+    Kalshi events can have >=3 sub-markets (with 1 withdrawn/unlisted), cumulative
+    threshold ladders (gotcha #17), numeric range bins, participation/multi-winner
+    contracts, or draw-capable 3-way boards. Numerical near-complementarity is
+    never used as evidence of identity.
+    """
+    from app.utils.market_shape import (
+        REL_COMPETITORS,
+        REL_COMPLEMENTS,
+        SHAPE_CLAIM,
+        SHAPE_DUEL,
+        classify_market_semantics,
+    )
+
+    if market is None:
+        m_a = getattr(outcomes[0], "market", None)
+        m_b = getattr(outcomes[1], "market", None)
+        if m_a is not None and m_a is m_b:
+            market = m_a
+    if market is None or getattr(market, "source", None) != "kalshi":
         return None
-    cond_id = c_a.get("condition_id")
+    if getattr(market, "mutually_exclusive", None) is not True:
+        return None
+    if len(entries) != 2:
+        return None
+    market_id = getattr(market, "id", None)
+    for o in outcomes:
+        o_market = getattr(o, "market", None)
+        if o_market is not None and o_market is not market:
+            return None
+        o_mid = getattr(o, "market_id", None)
+        if o_mid is not None and market_id is not None and int(o_mid) != int(market_id):
+            return None
+
+    event_ticker = (getattr(market, "external_id", None) or "").strip()
+    if not event_ticker:
+        return None
+    meta = getattr(market, "market_metadata", None)
+    if not isinstance(meta, dict):
+        return None
+    meta_ticker = meta.get("kalshi_event_ticker")
+    if meta_ticker is not None and str(meta_ticker).strip() != event_ticker:
+        return None
+    # `poll_kalshi_markets` writes `market_count = len(event.markets)`. Requiring
+    # exact integer 2 refuses any >=3-leg event where a leg was withdrawn/unlisted.
+    market_count = meta.get("market_count")
+    if type(market_count) is not int or market_count != 2:
+        return None
+
+    market_outcomes = getattr(market, "outcomes", None)
     if (
-        not isinstance(cond_id, str)
-        or not cond_id.startswith("0x")
-        or c_b.get("condition_id") != cond_id
+        isinstance(market_outcomes, (str, bytes))
+        or not isinstance(market_outcomes, Sequence)
+        or len(market_outcomes) != 2
     ):
         return None
-    if not c_a.get("token_id") or not c_b.get("token_id") or c_a.get("token_id") == c_b.get("token_id"):
+    try:
+        market_oids = {int(getattr(o, "id")) for o in market_outcomes}
+    except (TypeError, ValueError):
         return None
-    if {c_a.get("outcome_external_id"), c_b.get("outcome_external_id")} != {
-        f"{cond_id}_yes",
-        f"{cond_id}_no",
-    }:
+    if market_oids != {oid_a, oid_b}:
+        return None
+
+    legs: list[str] = []
+    for outcome, contract in ((outcomes[0], c_a), (outcomes[1], c_b)):
+        ticker = contract.get("ticker")
+        if not isinstance(ticker, str) or not ticker or "-" not in ticker:
+            return None
+        if contract.get("outcome_external_id") != ticker:
+            return None
+        if (getattr(outcome, "external_id", None) or "").strip() != ticker:
+            return None
+        ev, leg = ticker.rsplit("-", 1)
+        if ev != event_ticker or not leg:
+            return None
+        legs.append(leg)
+    if c_a.get("ticker") == c_b.get("ticker") or legs[0] == legs[1]:
+        return None
+
+    catchall_names = {
+        "field",
+        "the field",
+        "other",
+        "others",
+        "all other",
+        "all others",
+        "any other",
+        "someone else",
+    }
+    names = [(getattr(o, "name", None) or "").strip() for o in outcomes]
+    if any(not n or n.lower() in catchall_names for n in names):
+        return None
+    persisted_shape = meta.get("shape")
+    if isinstance(persisted_shape, dict):
+        if (
+            persisted_shape.get("exhaustive") is not True
+            or str(persisted_shape.get("expected_winners")).strip() != "1"
+            or persisted_shape.get("outcome_relation") not in (REL_COMPETITORS, REL_COMPLEMENTS)
+        ):
+            return None
+    source_kind = str(meta.get("source_market_kind") or meta.get("market_kind") or "")
+    if any(tok in source_kind.lower() for tok in ("top", "make_cut", "qualif", "advance")):
+        return None
+    sem = classify_market_semantics(
+        outcome_names=names,
+        external_id=event_ticker,
+        source="kalshi",
+        source_kind=source_kind,
+        mutually_exclusive=True,
+        venue_leg_count=2,
+    )
+    if (
+        sem.get("display_shape") not in (SHAPE_CLAIM, SHAPE_DUEL)
+        or sem.get("exhaustive") is not True
+        or sem.get("expected_winners") != 1
+        or sem.get("outcome_relation") not in (REL_COMPETITORS, REL_COMPLEMENTS)
+        or "draw_capable" in (sem.get("evidence") or ())
+    ):
         return None
     return oid_a, oid_b
