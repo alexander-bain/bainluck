@@ -162,9 +162,9 @@ def _page(*, container=True, team_leg_name="Thunder O/U {line}"):
     return markets, outcomes, seen
 
 
-def _payload(**page):
+def _payload(page=None, **kw):
     event = _event()
-    markets, outcomes, seen = _page(**page)
+    markets, outcomes, seen = (page or _page)(**kw)
     observations = [
         SimpleNamespace(
             id=oid, observed_at=at, price_changed_at=None,
@@ -239,6 +239,35 @@ class TestTheFullGameLadderKeepsItsOwnPrices:
         without, _ = _payload(container=False)
         assert len(without["totals"]) == len(FULL_GAME)
         assert shape(with_container) == shape(without)
+
+
+def _shared_line_page():
+    """One container, no members, so no leg is a redundant-parent candidate.
+
+    Its one-club leg and a full-game leg share line 205.5, the one-club leg
+    listed first, so on a tie it is the incumbent at that line.
+    """
+    markets = [_market(CONTAINER_ID, "Clippers vs. Thunder", "nba-lac-okc-2026-10-25")]
+    outcomes = [
+        _outcome(900001, CONTAINER_ID, "Thunder O/U 205.5", 0.10, "0xokc205.5"),
+        _outcome(900002, CONTAINER_ID, "O/U 205.5", 0.9995, "0xou205.5"),
+        _outcome(900003, CONTAINER_ID, "O/U 209.5", 0.765, "0xou209.5"),
+        _outcome(900004, CONTAINER_ID, "O/U 213.5", 0.305, "0xou213.5"),
+    ]
+    return markets, outcomes, {o.id: CAPTURED for o in outcomes}
+
+
+class TestAOneClubLegNeverTakesARealRungsLine:
+    def test_the_full_game_rung_at_a_shared_line_is_served(self):
+        # Where a team-total line meets the game band (hockey, soccer: 0.5-2.5)
+        # the ORDER is the fix: left out after the one-row-per-line pick, the
+        # one-club leg would win 205.5 there and then be filtered, taking the
+        # real rung's line with it. lane1's M3 on PR #11647.
+        payload, _seen = _payload(page=_shared_line_page)
+        row = _totals_by_line(payload).get(205.5)
+        assert row is not None, "the 205.5 full-game rung left the page"
+        assert row["over_probability"] == 0.9995, row
+        assert row["outcome_name"] == "O/U 205.5", row
 
 
 class TestTheCapStillDoesItsJob:
