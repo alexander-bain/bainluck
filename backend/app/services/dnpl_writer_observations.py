@@ -20,7 +20,7 @@ from uuid import UUID
 from app.services.dnpl_operation_hold import OperationHoldRefused
 
 VERIFIER = Path(__file__).with_name("dnpl_writer_verifier.py")
-VERIFIER_SHA256 = "4a1b80bc686b5ec2dbd990cb9e3901e194b44722e496f896e615321f05488c7f"
+VERIFIER_SHA256 = "513f962edca3d31573b31af1d85c6fec852031f069ce96aed4146f3ff40dab9e"
 FRESHNESS_NS = 120_000_000_000
 CLOCK_SKEW_NS = 1_000_000_000
 MAX_BYTES = 1048576
@@ -232,6 +232,13 @@ def execute_verifier(
             stdout=raw,
             stderr=subprocess.DEVNULL,
             timeout=100,
+            # This read-only child needs no database/Redis credentials, CLI,
+            # HOME, proxies or ambient application configuration.
+            env={
+                key: os.environ[key]
+                for key in ("HEROKU_API_KEY", "SSL_CERT_FILE", "SSL_CERT_DIR")
+                if key in os.environ
+            },
         )
     _require(result.returncode == 0, "verifier did not complete")
     _require(
