@@ -37,14 +37,14 @@ const SLUG = "katie-zacharia-press-secretary-2026";
 const EDITION = { kind: "theme_edition", subject: "katie-zacharia-press-secretary", edition: 2026, family: "departure", role: "White House press secretary" };
 const READ_AT = "2026-10-14T23:51:09Z"; // the retained read (Wed Oct 14, 4:51 PM PT)
 
-type Outcome = { name: string; probability: number | null; movement?: number | null; is_winner?: boolean | null };
+type Outcome = { name: string; probability: number | null; movement?: number | null; is_winner?: boolean | null; resolution_source?: string | null };
 function market(id: number, name: string, outcomes: Outcome[], o: { source?: string; status?: string; pricesAt?: string | null } = {}) {
   return { type: "market", id, event_id: null, class: null,
     destination: { kind: "market", id, web: `/futures/${id}`, api: `/api/futures/${id}` },
     card: { id, name, sport: null, sport_name: null, llm_sport_category: "politics", source: o.source ?? "polymarket", source_count: 1,
       market_tier: 2, status: o.status ?? "open", resolution_date: "2026-11-01T03:59:00+00:00", outcome_count: outcomes.length, canonical_market_key: null,
       prices_updated_at: o.pricesAt === undefined ? "2026-10-14T23:38:28.890565+00:00" : o.pricesAt,
-      top_outcomes: outcomes.map((x, i) => ({ id: id * 10 + i, name: x.name, probability: x.probability, rank: i + 1, movement: x.movement ?? null, is_winner: x.is_winner ?? null })) } };
+      top_outcomes: outcomes.map((x, i) => ({ id: id * 10 + i, name: x.name, probability: x.probability, rank: i + 1, movement: x.movement ?? null, is_winner: x.is_winner ?? null, ...(x.resolution_source !== undefined ? { resolution_source: x.resolution_source } : {}) })) } };
 }
 const OCT31 = (o = {}) => market(65678073, "Katie Zacharia out as Press Secretary by October 31?", [{ name: "No", probability: 0.927, movement: -0.034 }, { name: "Yes", probability: 0.073, movement: 0.034 }], o);
 const DEC31 = (o = {}) => market(65678074, "Katie Zacharia out as Press Secretary by December 31?", [{ name: "No", probability: 0.755, movement: 0.065 }, { name: "Yes", probability: 0.245, movement: -0.065 }], o);
@@ -202,6 +202,24 @@ describe("AC-R5 an old number says how old it is", () => {
     expect(html).toContain("Probability unavailable");
     expect(html).not.toMatch(/>0%</);
     expect(html).not.toContain("price-age-mark");
+  });
+  test("a partially priced card with a stale supported number still discloses its age", () => {
+    jest.useFakeTimers({ now: new Date("2026-10-15T08:38:28Z") });
+    const partialStale = market(65678073, "Katie Zacharia out as Press Secretary by October 31?", [{ name: "Yes", probability: 0.55 }, { name: "No", probability: null }], { pricesAt: "2026-10-14T23:38:28Z" });
+    const html = card(departurePage([{ class: "departure_announced", members: [partialStale] }]));
+    expect(html).toContain("55%");
+    expect(html).toContain("Probability unavailable");
+    expect(html).toContain('data-testid="price-age-mark"');
+    expect(html).toContain('data-cadence="futures"');
+  });
+  test("a partially priced card with a fresh number or unusable timestamp shows no age", () => {
+    jest.useFakeTimers({ now: new Date("2026-10-15T08:38:28Z") });
+    const partialFresh = market(65678073, "Katie Zacharia out as Press Secretary by October 31?", [{ name: "Yes", probability: 0.55 }, { name: "No", probability: null }], { pricesAt: "2026-10-15T08:30:00Z" });
+    const partialUndatable = market(65678073, "Katie Zacharia out as Press Secretary by October 31?", [{ name: "Yes", probability: 0.55 }, { name: "No", probability: null }], { pricesAt: null });
+    const resultOnlyOpen = market(65678073, "Katie Zacharia out as Press Secretary by October 31?", [{ name: "Yes", probability: 1, is_winner: true, resolution_source: "api_settlement" }, { name: "No", probability: null }], { status: "open", pricesAt: "2026-10-14T23:38:28Z" });
+    for (const row of [partialFresh, partialUndatable, resultOnlyOpen]) {
+      expect(card(departurePage([{ class: "departure_announced", members: [row] }]))).not.toContain("price-age-mark");
+    }
   });
 });
 

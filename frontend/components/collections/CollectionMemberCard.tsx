@@ -68,7 +68,16 @@ export function CollectionMemberCard({ member, relatedGame, presentation }: { me
   // #11040: the card a collection draws has no action bar, so its
   // existing age mark never shows. Say when an open market's number is old, with
   // the same mark and the same futures cadence (draws nothing when fresh).
-  const age = market && !resolved && !missingPrices
+  const hasDisplayedProbability =
+    !!market &&
+    !resolved &&
+    !!outcomes?.some(
+      (outcome) =>
+        outcomeRowVerdict(outcome, resolved) === null &&
+        typeof outcome.probability === "number" &&
+        Number.isFinite(outcome.probability),
+    );
+  const age = hasDisplayedProbability
     ? <div data-collection-price-age className="flex justify-end px-1 pt-1"><PriceAgeMark observedAt={(market as FeedFuturesData & { prices_updated_at?: string | null }).prices_updated_at} scope="card" cadence={market.status === "live" ? "live" : "futures"} /></div>
     : null;
   return <ErrorBoundary resetKey={member.item.data} fallback={<p role="status" className="rounded-card border border-surface-border bg-surface-card p-4 text-text-secondary">{presentation ? "This market isn’t available right now." : "This game or question isn’t available right now."}</p>}>{card}{age}</ErrorBoundary>;

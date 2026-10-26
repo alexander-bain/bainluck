@@ -229,6 +229,10 @@ REGISTRATIONS: dict[tuple[str, str], dict[str, Any]] = {
         "person": "Katie Zacharia",
         "edition": 2026,
         "event_id": "1183118",
+        "condition_ids": (
+            "0x57e97ab7f68a11013e7e4096ce6b0601b40b9e5a8609c4cb4196ef1b753e6953",
+            "0xc587f97b3eaac5948ed7e148bb5248f51f98795ea0e1c3bc9acf635b0a2f95b0",
+        ),
         "predicate": "announced",
         "basis": "rules",
         "rules_field": "description",
@@ -283,10 +287,8 @@ _DEPARTURE_RE = re.compile(
 _ROLE_FRAME_RE = re.compile(
     r"\b(out as|resign\w* as|step\w* down as|leave\w* as)\s+([^?.,;]+)", re.I
 )
-_IN_ROLE_RE = re.compile(r"\bas\b", re.I)
-_AFTER_ROLE_RE = re.compile(
-    r"\b(new (?:role|job|position)|next (?:role|job)|appointed|nominated)\b", re.I
-)
+_IN_ROLE_RE = re.compile(r"\bgive another press briefing\b", re.I)
+_AFTER_ROLE_RE = re.compile(r"\bgiven a new role in the [a-z ]+ administration\b", re.I)
 _ANNOUNCED_TITLE_RE = re.compile(
     r"\b(departure announced|announces? (?:her|his|their)? ?(?:resignation|departure))\b",
     re.I,
@@ -384,49 +386,118 @@ def _split_sentences(text: str) -> list[str]:
     return chunks
 
 
-def _extract_rules_fields(row: Any) -> dict[str, str]:
+_RULES_FIELD_KEYS: tuple[str, ...] = (
+    "description",
+    "rules_primary",
+    "rules_secondary",
+    "resolution_rules",
+)
+
+
+def _extract_rules_carriers(row: Any) -> tuple[dict[str, str], list[str], bool]:
+    """Return ``(merged_fields, all_carrier_texts, has_conflicting_duplicate)``.
+
+    Inspects both top-level and ``market_metadata`` carriers for every rules
+    field so a populated top-level field never hides a conflicting metadata
+    carrier (#11040 B2).
+    """
     meta = _metadata(row)
     fields: dict[str, str] = {}
-    desc = _get(row, "description")
-    if not isinstance(desc, str) or not desc.strip():
-        desc = meta.get("description")
-    if isinstance(desc, str) and desc.strip():
-        fields["description"] = desc.strip()
-    for key in ("rules_primary", "rules_secondary", "resolution_rules"):
-        val = _get(row, key)
-        if not isinstance(val, str) or not val.strip():
-            val = meta.get(key)
-        if isinstance(val, str) and val.strip():
-            fields[key] = val.strip()
+    all_texts: list[str] = []
+    has_conflict = False
+    for key in _RULES_FIELD_KEYS:
+        top_raw = _get(row, key)
+        meta_raw = meta.get(key)
+        top_val = top_raw.strip() if isinstance(top_raw, str) and top_raw.strip() else None
+        meta_val = meta_raw.strip() if isinstance(meta_raw, str) and meta_raw.strip() else None
+        if top_val is not None:
+            all_texts.append(top_val)
+        if meta_val is not None:
+            all_texts.append(meta_val)
+        if top_val is not None and meta_val is not None and top_val != meta_val:
+            has_conflict = True
+        chosen = top_val if top_val is not None else meta_val
+        if chosen is not None:
+            fields[key] = chosen
+    return fields, all_texts, has_conflict
+
+
+def _extract_rules_fields(row: Any) -> dict[str, str]:
+    fields, _, _ = _extract_rules_carriers(row)
     return fields
+
+
+def _polymarket_event_carriers(row: Any) -> list[str]:
+    meta = _metadata(row)
+    pi = _provider_identity(row)
+    carriers: list[str] = []
+    for raw in (meta.get("polymarket_event_id"), pi.get("event_id")):
+        if raw is not None and str(raw).strip():
+            carriers.append(str(raw).strip())
+    for raw_gid in (_get(row, "group_id"), meta.get("group_id"), pi.get("group_id")):
+        if raw_gid is not None and str(raw_gid).strip():
+            gid = str(raw_gid).strip()
+            if gid.startswith("polymarket:"):
+                ev = gid.split(":", 1)[1].strip()
+                if ev:
+                    carriers.append(ev)
+            else:
+                carriers.append(f"non_polymarket:{gid}")
+    return carriers
+
+
+def _polymarket_condition_carriers(row: Any) -> list[str]:
+    meta = _metadata(row)
+    pi = _provider_identity(row)
+    carriers: list[str] = []
+    for raw in (
+        _get(row, "external_id"),
+        meta.get("condition_id"),
+        meta.get("conditionId"),
+        pi.get("condition_id"),
+        pi.get("conditionId"),
+    ):
+        if isinstance(raw, str) and raw.strip():
+            carriers.append(raw.strip().lower())
+    return carriers
+
+
+def _kalshi_series_carriers(row: Any) -> list[str]:
+    meta = _metadata(row)
+    pi = _provider_identity(row)
+    source = str(_get(row, "source") or pi.get("venue") or "").lower()
+    ext = str(_get(row, "external_id") or pi.get("market_ticker") or "").strip().upper()
+    carriers: list[str] = []
+    for raw in (
+        meta.get("series_ticker"),
+        meta.get("kalshi_series_ticker"),
+        meta.get("series"),
+        pi.get("series"),
+    ):
+        if raw is not None and str(raw).strip():
+            carriers.append(str(raw).strip().upper())
+    if (source == "kalshi" or ext.startswith("KX")) and ext:
+        carriers.append(ext.split("-", 1)[0])
+    for raw_gid in (_get(row, "group_id"), meta.get("group_id"), pi.get("group_id")):
+        if raw_gid is not None and str(raw_gid).strip():
+            gid = str(raw_gid).strip()
+            if gid.upper().startswith("KALSHI:"):
+                suffix = gid.split(":", 1)[1].strip().upper()
+                if suffix:
+                    carriers.append(suffix.split("-", 1)[0])
+    return carriers
 
 
 def _registration_key(row: Any) -> Optional[tuple[str, str]]:
     rk = _get(row, "registration_key")
     if isinstance(rk, (list, tuple)) and len(rk) == 2:
         return (str(rk[0]), str(rk[1]))
-    meta = _metadata(row)
-    pi = _provider_identity(row)
-    source = str(_get(row, "source") or pi.get("venue") or "").lower()
-    ext = str(_get(row, "external_id") or pi.get("market_ticker") or "").upper()
-    series = str(
-        meta.get("series_ticker")
-        or meta.get("kalshi_series_ticker")
-        or meta.get("series")
-        or pi.get("series")
-        or ""
-    ).upper()
-    if not series and (source == "kalshi" or ext.startswith("KX")) and ext:
-        series = ext.split("-", 1)[0]
-    if series and ("kalshi_series", series) in REGISTRATIONS:
-        return ("kalshi_series", series)
-    pm_ev = str(meta.get("polymarket_event_id") or pi.get("event_id") or "").strip()
-    if not pm_ev:
-        gid = str(_get(row, "group_id") or meta.get("group_id") or pi.get("group_id") or "").strip()
-        if gid.startswith("polymarket:"):
-            pm_ev = gid.split(":", 1)[1].strip()
-    if pm_ev and ("polymarket_event", pm_ev) in REGISTRATIONS:
-        return ("polymarket_event", pm_ev)
+    for series in _kalshi_series_carriers(row):
+        if ("kalshi_series", series) in REGISTRATIONS:
+            return ("kalshi_series", series)
+    for pm_ev in _polymarket_event_carriers(row):
+        if ("polymarket_event", pm_ev) in REGISTRATIONS:
+            return ("polymarket_event", pm_ev)
     return None
 
 
@@ -436,8 +507,8 @@ def _validate_registration(
     row: Any,
     subject: Optional[DepartureSubject],
 ) -> dict[str, Any]:
-    """Validate provider, subject/edition, registered event identity, and stored
-    rules text before assigning a known predicate section (#11040 B2)."""
+    """Validate provider, subject/edition, simultaneous identity carriers, and
+    stored rules text before assigning a known predicate section (#11040 B2)."""
     meta = _metadata(row)
     pi = _provider_identity(row)
 
@@ -501,36 +572,70 @@ def _validate_registration(
             "registration": list(key),
         }
 
-    # 2. Provider check.
-    source = str(_get(row, "source") or pi.get("venue") or "").strip().lower()
-    if source and source != str(reg["provider"]).lower():
-        return {
-            "predicate": "unknown",
-            "basis": "registration_mismatch",
-            "reason": "provider_mismatch",
-            "registration": list(key),
-        }
+    # 2. Provider check across all venue carriers.
+    expected_provider = str(reg["provider"]).lower()
+    for raw_source in (_get(row, "source"), pi.get("venue")):
+        if raw_source is not None and str(raw_source).strip():
+            if str(raw_source).strip().lower() != expected_provider:
+                return {
+                    "predicate": "unknown",
+                    "basis": "registration_mismatch",
+                    "reason": "provider_mismatch",
+                    "registration": list(key),
+                }
 
-    # 3. Specific event check (never extend one Kalshi event's evidence to every
-    # future event in a series).
+    has_explicit_reg_key = isinstance(_get(row, "registration_key"), (list, tuple))
+
+    # 3. Simultaneous identity carrier check (never extend one Kalshi event's
+    # evidence to every future event in a series, and never accept conflicting
+    # simultaneous event/group/condition carriers).
     if key[0] == "kalshi_series":
-        expected_event = str(reg["event_ticker"]).upper()
-        event_ticker = str(
-            meta.get("event_ticker")
-            or meta.get("kalshi_event_ticker")
-            or pi.get("event")
-            or ""
-        ).strip().upper()
-        ext = str(_get(row, "external_id") or pi.get("market_ticker") or "").strip().upper()
-        has_explicit_reg_key = isinstance(_get(row, "registration_key"), (list, tuple))
+        expected_series = str(reg["series_ticker"]).upper()
+        series_carriers = _kalshi_series_carriers(row)
+        if any(s != expected_series for s in series_carriers):
+            return {
+                "predicate": "unknown",
+                "basis": "registration_mismatch",
+                "reason": "conflicting_provider_identity",
+                "registration": list(key),
+                "observed_series": sorted(set(series_carriers)),
+                "expected_series": expected_series,
+            }
 
-        if event_ticker and event_ticker != expected_event:
+        expected_event = str(reg["event_ticker"]).upper()
+        event_carriers: list[str] = []
+        for raw_ev in (
+            meta.get("event_ticker"),
+            meta.get("kalshi_event_ticker"),
+            pi.get("event"),
+        ):
+            if raw_ev is not None and str(raw_ev).strip():
+                event_carriers.append(str(raw_ev).strip().upper())
+        for raw_gid in (_get(row, "group_id"), meta.get("group_id"), pi.get("group_id")):
+            if raw_gid is not None and str(raw_gid).strip():
+                gid = str(raw_gid).strip()
+                if gid.upper().startswith("KALSHI:"):
+                    ev_from_gid = gid.split(":", 1)[1].strip().upper()
+                    if ev_from_gid:
+                        event_carriers.append(ev_from_gid)
+                else:
+                    return {
+                        "predicate": "unknown",
+                        "basis": "registration_mismatch",
+                        "reason": "conflicting_provider_identity",
+                        "registration": list(key),
+                        "observed_group_id": gid,
+                    }
+
+        ext = str(_get(row, "external_id") or pi.get("market_ticker") or "").strip().upper()
+
+        if any(ev != expected_event for ev in event_carriers):
             return {
                 "predicate": "unknown",
                 "basis": "registration_mismatch",
                 "reason": "unregistered_series_event",
                 "registration": list(key),
-                "observed_event": event_ticker,
+                "observed_event": next(ev for ev in event_carriers if ev != expected_event),
                 "expected_event": expected_event,
             }
         if ext and not (ext == expected_event or ext.startswith(expected_event + "-")):
@@ -542,7 +647,7 @@ def _validate_registration(
                 "observed_ticker": ext,
                 "expected_event": expected_event,
             }
-        if not event_ticker and not ext and not has_explicit_reg_key:
+        if not event_carriers and not ext and not has_explicit_reg_key:
             return {
                 "predicate": "unknown",
                 "basis": "registration_mismatch",
@@ -553,23 +658,64 @@ def _validate_registration(
 
     elif key[0] == "polymarket_event":
         expected_event_id = str(reg["event_id"]).strip()
-        pm_ev = str(meta.get("polymarket_event_id") or pi.get("event_id") or "").strip()
-        gid = str(_get(row, "group_id") or meta.get("group_id") or pi.get("group_id") or "").strip()
-        if gid.startswith("polymarket:") and not pm_ev:
-            pm_ev = gid.split(":", 1)[1].strip()
-        if pm_ev and pm_ev != expected_event_id:
+        event_carriers = _polymarket_event_carriers(row)
+        distinct_events = set(event_carriers)
+        if len(distinct_events) > 1:
+            return {
+                "predicate": "unknown",
+                "basis": "registration_mismatch",
+                "reason": "conflicting_provider_identity",
+                "registration": list(key),
+                "observed_events": sorted(distinct_events),
+                "expected_event": expected_event_id,
+            }
+        if distinct_events and next(iter(distinct_events)) != expected_event_id:
             return {
                 "predicate": "unknown",
                 "basis": "registration_mismatch",
                 "reason": "unregistered_provider_event",
                 "registration": list(key),
-                "observed_event": pm_ev,
+                "observed_event": next(iter(distinct_events)),
+                "expected_event": expected_event_id,
+            }
+        if not distinct_events and not has_explicit_reg_key:
+            return {
+                "predicate": "unknown",
+                "basis": "registration_mismatch",
+                "reason": "unregistered_provider_event",
+                "registration": list(key),
                 "expected_event": expected_event_id,
             }
 
-    # 4. Stored rules text verification.
-    rules_fields = _extract_rules_fields(row)
-    if not rules_fields:
+        cond_carriers = _polymarket_condition_carriers(row)
+        if len(set(cond_carriers)) > 1:
+            return {
+                "predicate": "unknown",
+                "basis": "registration_mismatch",
+                "reason": "conflicting_provider_identity",
+                "registration": list(key),
+                "observed_condition_ids": sorted(set(cond_carriers)),
+            }
+
+    # 4. Stored rules text verification & bounded registration-only policy.
+    rules_fields, all_carrier_texts, has_carrier_conflict = _extract_rules_carriers(row)
+    if not all_carrier_texts:
+        if key[0] == "polymarket_event":
+            allowed_cids = {
+                str(c).strip().lower()
+                for c in reg.get("condition_ids", ())
+                if str(c).strip()
+            }
+            if allowed_cids:
+                cond_carriers = _polymarket_condition_carriers(row)
+                if not cond_carriers or cond_carriers[0] not in allowed_cids:
+                    return {
+                        "predicate": "unknown",
+                        "basis": "registration_mismatch",
+                        "reason": "unregistered_condition_id",
+                        "registration": list(key),
+                        "observed_condition_id": cond_carriers[0] if cond_carriers else None,
+                    }
         return {
             "predicate": reg["predicate"],
             "basis": "registration_only",
@@ -579,7 +725,7 @@ def _validate_registration(
             "rules_sha256": reg["rules_sha256"],
         }
 
-    all_rules_text = "\n".join(rules_fields.values())
+    all_rules_text = "\n".join(all_carrier_texts)
     expected_pred = str(reg["predicate"])
     contradiction_re = (
         _ANNOUNCED_CONTRADICTION_RE
@@ -594,8 +740,16 @@ def _validate_registration(
             "registration": list(key),
         }
 
+    if has_carrier_conflict:
+        return {
+            "predicate": "unknown",
+            "basis": "registration_mismatch",
+            "reason": "conflicting_rules_carriers",
+            "registration": list(key),
+        }
+
     primary_field = str(reg.get("rules_field") or "description")
-    primary_text = rules_fields.get(primary_field) or rules_fields.get("description") or ""
+    primary_text = rules_fields.get(primary_field) or ""
     if not primary_text or _norm_ws(str(reg["quote"])) not in _norm_ws(primary_text):
         return {
             "predicate": "unknown",
@@ -615,14 +769,26 @@ def _validate_registration(
             "expected_rules_sha256": reg["rules_sha256"],
         }
 
-    if key == ("kalshi_series", "KXZACHARIAOUT") and "rules_primary" in rules_fields:
-        rp = " ".join(rules_fields["rules_primary"].split())
-        if not _KALSHI_ZACHARIA_PRIMARY_RE.match(rp):
+    for other_key, other_val in rules_fields.items():
+        if other_key == primary_field:
+            continue
+        if key == ("kalshi_series", "KXZACHARIAOUT") and other_key == "rules_primary":
+            rp = " ".join(other_val.split())
+            if not _KALSHI_ZACHARIA_PRIMARY_RE.match(rp):
+                return {
+                    "predicate": "unknown",
+                    "basis": "registration_mismatch",
+                    "reason": "contradictory_settlement_clause",
+                    "registration": list(key),
+                }
+            continue
+        if other_val != primary_text:
             return {
                 "predicate": "unknown",
                 "basis": "registration_mismatch",
-                "reason": "contradictory_settlement_clause",
+                "reason": "unreviewed_additional_rules_field",
                 "registration": list(key),
+                "unreviewed_field": other_key,
             }
 
     return {
@@ -735,10 +901,10 @@ def decide_departure_subject(subject: DepartureSubject, row: Any) -> SubjectDeci
 
     if _DEPARTURE_RE.search(name):
         relation = "departure"
+    elif _IN_ROLE_RE.search(name) and office_named:
+        relation = "in_role"
     elif _AFTER_ROLE_RE.search(name):
         relation = "after_role"
-    elif office_named and _IN_ROLE_RE.search(name):
-        relation = "in_role"
     else:
         evidence.append({"clause": "relation", "result": "fail", "input": name})
         return SubjectDecisionResult("excluded", NOT_THIS_STORY, None, evidence)

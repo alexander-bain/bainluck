@@ -299,7 +299,7 @@ class TestTheNamedClasses:
                     "source": "polymarket",
                     "name": "Katie Zacharia out as Press Secretary by October 31?",
                     "llm_sport_category": "politics",
-                    "external_id": "pm_1",
+                    "external_id": "0x57e97ab7f68a11013e7e4096ce6b0601b40b9e5a8609c4cb4196ef1b753e6953",
                     "group_id": "polymarket:1183118",
                     "market_metadata": {"polymarket_event_id": "1183118"},
                     "event_date": datetime(2026, 10, 31, 23, 59, tzinfo=timezone.utc),
