@@ -11,7 +11,6 @@ file dependencies).
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-import copy
 import dataclasses
 from datetime import datetime, timezone
 import hashlib
@@ -49,7 +48,6 @@ from app.utils.theme_definitions import (
     PETE_HEGSETH_DEFENSE_SECRETARY_2025,
     candidate_population,
     parse_theme_slug,
-    theme_class_rank,
 )
 
 NOW = datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc)
@@ -961,6 +959,86 @@ class TestEvidenceBoundRegistrationsB2:
         assert res_unlisted.section == "departure_rules_unread"
         assert res_unlisted.evidence[-1]["basis"] == "registration_mismatch"
         assert res_unlisted.evidence[-1]["reason"] == "conflicting_rules_carriers"
+
+    def test_simultaneous_kalshi_ticker_carriers_validate_every_present_ticker(self):
+        """Validate every present Kalshi ticker carrier against the registered
+        series/event without letting a valid external_id hide a conflicting
+        provider_identity.market_ticker (or vice versa), while preserving
+        legitimate event + child market ticker agreement and story membership."""
+        base = {
+            "source": "kalshi",
+            "name": "Katie Zacharia out as White House Press Secretary?",
+            "llm_sport_category": "politics",
+            "external_id": "KXZACHARIAOUT-26OCT",
+            "resolution_date": "2029-01-01T04:59:00+00:00",
+            "market_metadata": {"series_ticker": "KXZACHARIAOUT"},
+        }
+
+        # 1. Exact check_ticker_carriers.py controls (both registration_only and stored rules).
+        for with_rules in (False, True):
+            rules_meta = (
+                {
+                    "series_ticker": "KXZACHARIAOUT",
+                    "rules_primary": KALSHI_KXZACHARIAOUT_PRIMARY_RULES,
+                    "rules_secondary": KALSHI_KXZACHARIAOUT_SECONDARY_RULES,
+                }
+                if with_rules
+                else {"series_ticker": "KXZACHARIAOUT"}
+            )
+            for ticker, expected_section, expected_reason in (
+                ("KXZACHARIAOUT-26OCT", "departure_vacated", None),
+                ("KXZACHARIAOUT-26OCT-26NOV01", "departure_vacated", None),
+                ("KXZACHARIAOUT-27OCT", "departure_rules_unread", "unregistered_series_event"),
+                ("KXOTHER-26OCT", "departure_rules_unread", "conflicting_provider_identity"),
+            ):
+                row_forward = {
+                    **base,
+                    "market_metadata": rules_meta,
+                    "provider_identity": {"venue": "kalshi", "market_ticker": ticker},
+                }
+                res_forward = decide_departure_subject(
+                    KATIE_ZACHARIA_PRESS_SECRETARY, row_forward
+                )
+                assert res_forward.outcome == "admitted"
+                assert res_forward.section == expected_section
+                if expected_reason is not None:
+                    assert res_forward.evidence[-1]["basis"] == "registration_mismatch"
+                    assert res_forward.evidence[-1]["reason"] == expected_reason
+
+                row_reverse = {
+                    **base,
+                    "external_id": ticker,
+                    "market_metadata": rules_meta,
+                    "provider_identity": {
+                        "venue": "kalshi",
+                        "market_ticker": "KXZACHARIAOUT-26OCT",
+                    },
+                }
+                res_reverse = decide_departure_subject(
+                    KATIE_ZACHARIA_PRESS_SECRETARY, row_reverse
+                )
+                assert res_reverse.outcome == "admitted"
+                assert res_reverse.section == expected_section
+                if expected_reason is not None:
+                    assert res_reverse.evidence[-1]["basis"] == "registration_mismatch"
+                    assert res_reverse.evidence[-1]["reason"] == expected_reason
+
+        # 2. Two distinct child leg market tickers on the same row are refused to rules_unread.
+        conflicting_children = {
+            **base,
+            "external_id": "KXZACHARIAOUT-26OCT-26NOV01",
+            "provider_identity": {
+                "venue": "kalshi",
+                "market_ticker": "KXZACHARIAOUT-26OCT-27JAN01",
+            },
+        }
+        res_children = decide_departure_subject(
+            KATIE_ZACHARIA_PRESS_SECRETARY, conflicting_children
+        )
+        assert res_children.outcome == "admitted"
+        assert res_children.section == "departure_rules_unread"
+        assert res_children.evidence[-1]["basis"] == "registration_mismatch"
+        assert res_children.evidence[-1]["reason"] == "conflicting_provider_identity"
 
     def test_changed_or_contradictory_rules_route_to_rules_unread_while_preserving_membership(self):
         pm_changed = {

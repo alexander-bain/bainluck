@@ -462,11 +462,31 @@ def _polymarket_condition_carriers(row: Any) -> list[str]:
     return carriers
 
 
+def _kalshi_ticker_carriers(row: Any) -> list[str]:
+    meta = _metadata(row)
+    pi = _provider_identity(row)
+    source = str(_get(row, "source") or pi.get("venue") or "").strip().lower()
+    tickers: list[str] = []
+    for raw in (
+        _get(row, "external_id"),
+        meta.get("external_id"),
+        meta.get("ticker"),
+        meta.get("market_ticker"),
+        meta.get("kalshi_ticker"),
+        pi.get("market_ticker"),
+        pi.get("ticker"),
+        pi.get("external_id"),
+    ):
+        if raw is not None and str(raw).strip():
+            ticker = str(raw).strip().upper()
+            if source == "kalshi" or ticker.startswith("KX"):
+                tickers.append(ticker)
+    return tickers
+
+
 def _kalshi_series_carriers(row: Any) -> list[str]:
     meta = _metadata(row)
     pi = _provider_identity(row)
-    source = str(_get(row, "source") or pi.get("venue") or "").lower()
-    ext = str(_get(row, "external_id") or pi.get("market_ticker") or "").strip().upper()
     carriers: list[str] = []
     for raw in (
         meta.get("series_ticker"),
@@ -476,8 +496,8 @@ def _kalshi_series_carriers(row: Any) -> list[str]:
     ):
         if raw is not None and str(raw).strip():
             carriers.append(str(raw).strip().upper())
-    if (source == "kalshi" or ext.startswith("KX")) and ext:
-        carriers.append(ext.split("-", 1)[0])
+    for ticker in _kalshi_ticker_carriers(row):
+        carriers.append(ticker.split("-", 1)[0])
     for raw_gid in (_get(row, "group_id"), meta.get("group_id"), pi.get("group_id")):
         if raw_gid is not None and str(raw_gid).strip():
             gid = str(raw_gid).strip()
@@ -608,6 +628,7 @@ def _validate_registration(
             meta.get("event_ticker"),
             meta.get("kalshi_event_ticker"),
             pi.get("event"),
+            pi.get("event_ticker"),
         ):
             if raw_ev is not None and str(raw_ev).strip():
                 event_carriers.append(str(raw_ev).strip().upper())
@@ -627,7 +648,7 @@ def _validate_registration(
                         "observed_group_id": gid,
                     }
 
-        ext = str(_get(row, "external_id") or pi.get("market_ticker") or "").strip().upper()
+        ticker_carriers = _kalshi_ticker_carriers(row)
 
         if any(ev != expected_event for ev in event_carriers):
             return {
@@ -638,16 +659,31 @@ def _validate_registration(
                 "observed_event": next(ev for ev in event_carriers if ev != expected_event),
                 "expected_event": expected_event,
             }
-        if ext and not (ext == expected_event or ext.startswith(expected_event + "-")):
+        for ticker in ticker_carriers:
+            if not (ticker == expected_event or ticker.startswith(expected_event + "-")):
+                return {
+                    "predicate": "unknown",
+                    "basis": "registration_mismatch",
+                    "reason": "unregistered_series_event",
+                    "registration": list(key),
+                    "observed_ticker": ticker,
+                    "expected_event": expected_event,
+                }
+        child_tickers = {
+            ticker
+            for ticker in ticker_carriers
+            if ticker.startswith(expected_event + "-")
+        }
+        if len(child_tickers) > 1:
             return {
                 "predicate": "unknown",
                 "basis": "registration_mismatch",
-                "reason": "unregistered_series_event",
+                "reason": "conflicting_provider_identity",
                 "registration": list(key),
-                "observed_ticker": ext,
+                "observed_tickers": sorted(child_tickers),
                 "expected_event": expected_event,
             }
-        if not event_carriers and not ext and not has_explicit_reg_key:
+        if not event_carriers and not ticker_carriers and not has_explicit_reg_key:
             return {
                 "predicate": "unknown",
                 "basis": "registration_mismatch",
