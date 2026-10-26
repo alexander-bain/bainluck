@@ -113,5 +113,55 @@ revision and the shown, eligible and withheld counts that would go live. A
 publish or withdrawal bumps the revision and sends one `rebuild_theme_snapshot`,
 so the page answers "building" until that rebuild writes the new revision's
 snapshot on `worker-background` (main app; the apply dyno shares its Redis).
-Member operations (`withdraw-members` / `readmit-members`) still accept NFL/MLB
-hubs only.
+
+## Theme member corrections (#9936)
+
+`withdraw-members` / `readmit-members --restore-from-ledger` also take `ai` and
+`oscars-2027`, but only from a manifest whose pin says `"variant": "theme"`. A
+theme slug without it, or an NFL/MLB pin that carries it, is refused before any
+database. A pin with no `variant` is the original NFL/MLB shape, so existing
+manifests and backups read exactly as before.
+
+A theme target names a `theme_rule` market edge. It pins `edge_id`,
+`edge_class`, `edge_source: "theme_rule"`, `market_id`, `venue`, `external_id`
+and the market's stored `market_type` and `event_id` (either may be `null`). No
+game, winner rule or admitted game edge is asked for, and none may be invented
+to pass validation. The hub pin is the same as for sports: `slug`,
+`publication_state`, `membership_revision`, `events` (0 for a theme),
+`market_edges`, `targets` and `ledger_rows`. Under the root-first lock and the
+market row locks, the apply refuses the whole hub before its first write if any
+of these has drifted: the revision, publication state, ledger, edge counts, the
+edge's container, class or source (another source's edge is not a theme member),
+or the market's venue, external id, type or game link. A missing edge or market
+refuses the same way.
+
+Writes, preimage backup, fingerprint, ledger readback and receipts are the
+sports path's. The correction helper sends one `rebuild_theme_snapshot` after
+commit (one per hub transaction; none on rollback). While theme assembly is
+stopped, that rebuild writes the corrected page only for a published
+collection whose live revision has no page. It allocates the next revision
+without a ledger row, so the withdrawn member is gone from the page, an old
+`revision` is answered with the live page (`revision_moved`), and withdrawing
+the last member gives an `empty` page, not "building". A duplicate delivery
+writes nothing (`assembly_stopped_page_present`). Automatic assembly stays
+stopped throughout.
+
+Undo has two separate meanings. A bare `readmit_member` only lifts the
+withdrawal and writes no edge: the member returns when an enabled assembly pass
+proves it again under the theme's rule. This operator does not offer it. The
+exact undo (`--restore-from-ledger --backup`) re-inserts the backed-up edge row
+under the unchanged sports guards: hub at the backup's `post_revision`, no later
+ledger row, same edge columns, free slot, unchanged market identity. Its theme
+variant also requires the backed-up row to be this collection's own
+`theme_rule` edge for that market. Its receipt states that the theme's rule,
+not this tool, decides the restored member once assembly runs. The sports
+"never re-proves" wording is not used for themes.
+
+**Known limit.** The rebuild a withdrawal sends normally moves the hub one
+revision past `post_revision`, with no ledger row. After that rebuild has run,
+the exact undo refuses as a stale revision. The withdrawal receipt says so in
+`undo.theme_limit`.
+
+Coverage: `backend/tests/test_collection_publication_operator.py` (SQL double,
+real helpers) and `backend/tests/integration/test_theme_collections_9935_pg.py`
+(real Postgres, the real rebuild and page reader; CI `shared-tail`, PG15).

@@ -745,6 +745,7 @@ class MemberSession:
                         "child_id": int(e["child_id"]),
                         "kind": e["kind"],
                         "class": e["class"],
+                        "edge_source": e["source"],
                         "market_id": int(e["child_id"]) if m else None,
                         **(
                             m
@@ -1817,3 +1818,486 @@ async def test_the_default_reader_is_the_pages_own(monkeypatch):
         and receipt["publish_refusal"] == operator.THEME_REFUSED_SNAPSHOT_ABSENT
     )
     assert seen == [(101, 7)]
+
+
+# ---------------------------------------------------------------------------
+# #9936 theme member withdraw / exact restore — the theme variant
+# ---------------------------------------------------------------------------
+#
+# Same double, same real helpers. A theme collection holds `theme_rule` market
+# edges with no game: the targets pin the market's stored market_type and
+# nullable event_id. Postgres, the page and the rebuild are graded in
+# tests/integration/test_theme_collections_9935_pg.py.
+
+
+def _theme_world(tmp_path):
+    """AI (101: three members) and Oscars 2027 (102: two), both published at
+    revision 5; the manifest withdraws one member of each."""
+    world = World()
+    world.receipts = set()
+    layout = {
+        101: (
+            "ai",
+            [
+                (71001, None, "kalshi"),
+                (71002, "claim", "polymarket"),
+                (71003, None, "polymarket"),
+            ],
+        ),
+        102: (
+            "oscars-2027",
+            [(72001, "field", "kalshi"), (72002, "field", "polymarket")],
+        ),
+    }
+    targets, pins, edge_id = [], {}, 9000
+    for cid, (slug, members) in layout.items():
+        world.state["containers"][cid] = {
+            "slug": slug,
+            "pub": "published",
+            "revision": 5,
+        }
+        world.state["ledger"].append(
+            {
+                "id": len(world.state["ledger"]) + 1,
+                "container_id": cid,
+                "scope": "publication",
+                "action": "publish",
+                "child_type": None,
+                "child_id": None,
+                "revision": 4,
+                "evidence": None,
+            }
+        )
+        for n, (market_id, market_type, venue) in enumerate(members):
+            edge_id += 1
+            world.state["markets"][market_id] = {
+                "source": venue,
+                "external_id": f"T-{market_id}",
+                "name": f"Theme question {market_id}?",
+                "market_type": market_type,
+                "event_id": None,
+            }
+            world.edge(edge_id, cid, "market", market_id, "side_question")
+            world.state["edges"][edge_id].update(
+                source="theme_rule", confidence="1.000"
+            )
+            if n == 1:
+                targets.append(
+                    dict(
+                        container_id=cid,
+                        container_slug=slug,
+                        expected_revision=5,
+                        edge_id=edge_id,
+                        edge_class="side_question",
+                        edge_source="theme_rule",
+                        child_type="market",
+                        market_id=market_id,
+                        venue=venue,
+                        market_type=market_type,
+                        event_id=None,
+                        external_id=f"T-{market_id}",
+                    )
+                )
+        pins[str(cid)] = {
+            "slug": slug,
+            "variant": "theme",
+            "publication_state": "published",
+            "membership_revision": 5,
+            "events": 0,
+            "market_edges": len(members),
+            "targets": 1,
+            "ledger_rows": [
+                r["id"] for r in world.state["ledger"] if r["container_id"] == cid
+            ],
+        }
+    world.seal()
+    manifest = {"issue": 9936, "pins": pins, "targets": targets}
+    path = tmp_path / "THEME-MANIFEST.json"
+    path.write_text(json.dumps(manifest))
+    return world, manifest, path
+
+
+def _theme_manifest(tmp_path, change):
+    _, manifest, _ = _theme_world(tmp_path)
+    change(manifest)
+    return _write(tmp_path, "changed.json", manifest)
+
+
+def test_the_operator_names_the_producers_theme_edge_source():
+    from app.tasks.theme_assembly import EDGE_SOURCE
+
+    assert operator.THEME_EDGE_SOURCE == EDGE_SOURCE
+
+
+def _unset(key):
+    return lambda m: m["targets"][0].pop(key)
+
+
+def _target(key, value):
+    return lambda m: m["targets"][0].update({key: value})
+
+
+def _pin(key, value):
+    return lambda m: m["pins"]["101"].update({key: value})
+
+
+@pytest.mark.parametrize(
+    "change,match",
+    [
+        (lambda m: m["pins"]["101"].pop("variant"), "needs, and only a theme"),
+        (_pin("variant", "sports"), "needs, and only a theme"),
+        (_pin("variant", "themes"), "unknown variant"),
+        (_target("edge_source", "venue_grouping"), "not a theme_rule market edge"),
+        (_target("child_type", "event"), "not a theme_rule market edge"),
+        (_unset("edge_source"), "no valid edge_source"),
+        (_unset("event_id"), "no valid event_id"),
+        (_target("event_id", "14780550"), "no valid event_id"),
+        (_unset("market_type"), "no valid market_type"),
+        (_target("market_type", " "), "no valid market_type"),
+    ],
+)
+def test_a_theme_manifest_must_say_theme_and_pin_a_theme_rule_edge(
+    tmp_path, change, match
+):
+    path = _theme_manifest(tmp_path, change)
+    with pytest.raises(operator.OperatorRefused, match=match):
+        operator.load_member_plan(member_options(manifest=path))
+
+
+def test_a_sports_hub_may_not_borrow_the_theme_variant(tmp_path):
+    world, manifest, _ = _week_world(tmp_path)
+    manifest["pins"]["7"]["variant"] = "theme"
+    path = _write(tmp_path, "sports-as-theme.json", manifest)
+    with pytest.raises(operator.OperatorRefused, match="needs, and only a theme"):
+        operator.load_member_plan(member_options(manifest=path))
+    manifest["pins"]["7"]["variant"] = "sports"
+    plan = operator.load_member_plan(
+        member_options(manifest=_write(tmp_path, "explicit-sports.json", manifest))
+    )
+    assert [h.variant for h in plan.hubs] == ["sports", "sports"]
+
+
+@pytest.mark.asyncio
+async def test_a_theme_preview_is_read_only_and_names_its_rebuild(tmp_path):
+    world, manifest, path = _theme_world(tmp_path)
+    doc, code = await operator.run_members(
+        member_options(manifest=str(path)), world.factory
+    )
+    assert code == 0 and doc["status"] == "preview", doc
+    assert world.commits == 0 and _no_writes(world)
+    assert not any(
+        "FOR UPDATE" in sql or "FOR SHARE" in sql for sql, _ in world.statements
+    )
+    ai, oscars = doc["hubs"]
+    assert (ai["slug"], oscars["slug"]) == ("ai", "oscars-2027")
+    for hub in doc["hubs"]:
+        assert hub["variant"] == "theme" and hub["would_be_revision"] == 6
+        assert hub["after_commit"] == operator.THEME_AFTER_COMMIT
+        assert hub["games"] == {"before": 0}
+        (target,) = hub["targets"]
+        assert target["event_id"] is None
+        assert target["classifier"]["rule"] == operator.THEME_PROVENANCE_RULE
+        assert target["classifier"]["edge_source"] == "theme_rule"
+        assert "admitted_event_edge_id" not in target["identity"]
+    assert oscars["targets"][0]["classifier"]["market_type"] == "field"
+    assert ai["targets"][0]["classifier"]["market_type"] == "claim"
+
+
+@pytest.mark.asyncio
+async def test_a_theme_apply_withdraws_only_the_reviewed_member(tmp_path):
+    world, manifest, path = _theme_world(tmp_path)
+    before = copy.deepcopy(world.state["edges"])
+    doc, code = await operator.run_members(
+        member_apply(path, {101: 5, 102: 5}), world.factory
+    )
+    assert (
+        code == 0 and doc["status"] == "applied" and doc["committed_hubs"] == [101, 102]
+    )
+    gone = {t["edge_id"] for t in manifest["targets"]}
+    assert set(world.committed["edges"]) == set(before) - gone
+    for edge_id in set(before) - gone:
+        assert world.committed["edges"][edge_id] == before[edge_id]
+    for hub in doc["hubs"]:
+        assert hub["receipt_kind"] == "withdraw_apply" and hub["variant"] == "theme"
+        assert (hub["pre_revision"], hub["post_revision"]) == (5, 6)
+        assert hub["games"] == {"before": 0, "after": 0}
+        assert hub["undo"]["theme_limit"] == operator.THEME_UNDO_LIMIT
+        (target,) = hub["targets"]
+        assert target["preimage"] == before[target["edge_id"]]
+        assert target["preimage"]["source"] == "theme_rule"
+        row = next(
+            r for r in world.committed["ledger"] if r["id"] == target["ledger_id"]
+        )
+        assert (row["action"], row["child_id"], row["revision"]) == (
+            "withdraw",
+            target["market_id"],
+            6,
+        )
+        evidence = json.loads(row["evidence"])
+        assert evidence["preimage"] == target["preimage"]
+        assert evidence["classifier"]["rule"] == operator.THEME_PROVENANCE_RULE
+    assert world.committed["containers"][101]["revision"] == 6
+
+
+def _theme_drift(kind):
+    def market(world, mid):
+        return world.state["markets"][mid]
+
+    def edge(world, edge_id):
+        return world.state["edges"][edge_id]
+
+    return {
+        "provenance": lambda w, t: edge(w, t["edge_id"]).update(
+            source="venue_grouping"
+        ),
+        "class": lambda w, t: edge(w, t["edge_id"]).update({"class": "title"}),
+        "wrong_container": lambda w, t: edge(w, t["edge_id"]).update(parent_id="103"),
+        "game_link": lambda w, t: market(w, t["market_id"]).update(event_id=14780550),
+        "market_type": lambda w, t: market(w, t["market_id"]).update(
+            market_type="duel"
+        ),
+        "external_id": lambda w, t: market(w, t["market_id"]).update(external_id="T-x"),
+        "venue": lambda w, t: market(w, t["market_id"]).update(source="kalshi"),
+        "dangling": lambda w, t: w.state["markets"].pop(t["market_id"]),
+        "edge_gone": lambda w, t: w.state["edges"].pop(t["edge_id"]),
+        "ledger": lambda w, t: w.state["ledger"].append(
+            {
+                "id": 99,
+                "container_id": 101,
+                "scope": "member",
+                "action": "withdraw",
+                "child_type": "market",
+                "child_id": 71003,
+                "revision": 5,
+                "evidence": None,
+            }
+        ),
+        "revision": lambda w, t: w.state["containers"][101].update(revision=6),
+        "slug": lambda w, t: w.state["containers"][101].update(slug="oscars-2027"),
+    }[kind]
+
+
+@pytest.mark.parametrize(
+    "kind,match",
+    [
+        ("provenance", "source is 'venue_grouping', expected 'theme_rule'"),
+        ("class", "class is 'title'"),
+        ("wrong_container", "parent_id is 103"),
+        ("game_link", "event_id is 14780550, expected None"),
+        ("market_type", "market_type is 'duel', expected 'claim'"),
+        ("external_id", "external_id is 'T-x'"),
+        ("venue", "source is 'kalshi', expected 'polymarket'"),
+        ("dangling", "does not exist"),
+        ("edge_gone", "does not exist"),
+        ("ledger", "ledger drift"),
+        ("revision", "revision"),
+        ("slug", "slug is 'oscars-2027'"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_drifted_theme_target_refuses_both_hubs_before_a_write(
+    tmp_path, kind, match
+):
+    world, manifest, path = _theme_world(tmp_path)
+    _theme_drift(kind)(world, manifest["targets"][0])
+    world.seal()
+    doc, code = await operator.run_members(
+        member_apply(path, {101: 5, 102: 5}), world.factory
+    )
+    assert code == 1 and doc["status"] == "refused" and doc["committed_hubs"] == []
+    ai, oscars = doc["hubs"]
+    assert ai["status"] == "refused" and oscars["status"] == "not_attempted"
+    assert match in json.dumps(ai["errors"] or ai["error"]), ai
+    assert world.commits == 0 and _no_writes(world)
+
+
+@pytest.mark.asyncio
+async def test_a_theme_commit_failure_is_unknown_never_a_backup(tmp_path):
+    world, _, path = _theme_world(tmp_path)
+    world.commit_error_on = 101
+    doc, code = await operator.run_members(
+        member_apply(path, {101: 5, 102: 5}), world.factory
+    )
+    assert code == 1 and doc["commit_unknown_hubs"] == [101]
+    assert (
+        doc["hubs"][0]["committed"] is None
+        and doc["hubs"][1]["status"] == "not_attempted"
+    )
+    backup = _write(tmp_path, "unknown.json", doc)
+    with pytest.raises(operator.OperatorRefused, match="unknown commit outcome"):
+        operator.load_member_plan(
+            member_apply(backup, {101: 6}, operator.MEMBER_RESTORE)
+        )
+
+
+async def _theme_backup(tmp_path):
+    world, _, path = _theme_world(tmp_path)
+    doc, code = await operator.run_members(
+        member_apply(path, {101: 5, 102: 5}), world.factory
+    )
+    assert code == 0, doc
+    return world, doc, _write(tmp_path, "THEME-BACKUP.json", doc)
+
+
+@pytest.mark.asyncio
+async def test_a_theme_exact_undo_restores_the_backed_up_edge_and_says_theme_rules_decide(
+    tmp_path,
+):
+    world, withdrawn, backup = await _theme_backup(tmp_path)
+    original = {
+        t["edge_id"]: t["preimage"] for h in withdrawn["hubs"] for t in h["targets"]
+    }
+    preview, code = await operator.run_members(restore_options(backup), world.factory)
+    assert code == 0 and [h["would_be_revision"] for h in preview["hubs"]] == [7, 7]
+    assert all(h["variant"] == "theme" for h in preview["hubs"])
+
+    doc, code = await operator.run_members(
+        member_apply(backup, {101: 6, 102: 6}, operator.MEMBER_RESTORE), world.factory
+    )
+    assert code == 0 and doc["status"] == "applied", doc
+    for edge_id, row in original.items():
+        assert world.committed["edges"][edge_id] == row
+    for hub in doc["hubs"]:
+        assert hub["receipt_kind"] == "restore_apply"
+        assert (hub["pre_revision"], hub["post_revision"]) == (6, 7)
+        assert hub["later_assembly"] == operator.THEME_LATER_ASSEMBLY
+        assert "never re-proves" not in json.dumps(hub)
+    readmits = [r for r in world.committed["ledger"] if r["action"] == "readmit"]
+    assert len(readmits) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_bare_readmit_lifts_a_theme_withdrawal_and_writes_no_edge(tmp_path):
+    """The helper the operator never offers bare: it records the readmit and
+    bumps the revision, and the edge stays gone until a pass re-proves it."""
+    world, withdrawn, _ = await _theme_backup(tmp_path)
+    (target,) = withdrawn["hubs"][0]["targets"]
+    session = world.factory()
+    result = await cc.readmit_member(
+        session,
+        container_id=101,
+        child_type="market",
+        child_id=target["market_id"],
+        reason="lift",
+        actor="test",
+        expected_revision=6,
+    )
+    await session.commit()
+    assert result.applied and result.revision == 7 and result.edges_removed == 0
+    assert target["edge_id"] not in world.committed["edges"]
+
+
+@pytest.mark.asyncio
+async def test_a_theme_undo_after_its_own_rebuild_refuses_as_stale(tmp_path):
+    """#9936 CONFLICT, returned to Root rather than loosened here: the rebuild
+    the withdrawal sends allocates the next revision with no ledger row, and
+    the unchanged exact-undo guard then refuses as a stale revision."""
+    world, _, backup = await _theme_backup(tmp_path)
+    world.state["containers"][101]["revision"] = 7  # the rebuild's bump: no ledger row
+    world.seal()
+    doc, code = await operator.run_members(
+        restore_options(backup, container_id=101), world.factory
+    )
+    assert code == 1 and doc["hubs"][0]["status"] == "refused"
+    assert doc["hubs"][0]["current_revision"] == 7
+    assert "revision 7, not 6" in doc["hubs"][0]["error"]
+    with pytest.raises(operator.OperatorRefused, match="verified precondition 6"):
+        operator.load_member_plan(
+            member_apply(backup, {101: 7}, operator.MEMBER_RESTORE, container_id=101)
+        )
+
+
+@pytest.mark.parametrize(
+    "drift,match",
+    [
+        ("intervening", "intervening correction"),
+        ("slot", "already exists"),
+        ("game_link", "event_id is 14780550"),
+        ("not_theme_rule", "not a theme_rule member withdrawal"),
+        ("foreign_preimage", "backed-up source is 'venue_grouping'"),
+        ("variant", "needs, and only a theme"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_theme_undo_refuses_drift_or_lost_provenance_before_a_write(
+    tmp_path, drift, match
+):
+    world, withdrawn, backup = await _theme_backup(tmp_path)
+    (target,) = withdrawn["hubs"][0]["targets"]
+    if drift == "intervening":
+        world.state["ledger"].append(
+            {
+                "id": 99,
+                "container_id": 101,
+                "scope": "member",
+                "action": "withdraw",
+                "child_type": "market",
+                "child_id": 71003,
+                "revision": 6,
+                "evidence": None,
+            }
+        )
+    elif drift == "slot":
+        world.edge(9999, 101, "market", target["market_id"], "side_question")
+    elif drift == "game_link":
+        world.state["markets"][target["market_id"]]["event_id"] = 14780550
+    elif drift == "not_theme_rule":
+        row = next(r for r in world.state["ledger"] if r["id"] == target["ledger_id"])
+        evidence = json.loads(row["evidence"])
+        evidence["classifier"]["rule"] = operator.WINNER_RULE
+        row["evidence"] = json.dumps(evidence)
+    elif drift == "foreign_preimage":
+        # A self-consistent forgery: ledger and backup agree, fingerprint and
+        # all, on a row that was never this collection's theme_rule edge.
+        row = next(r for r in world.state["ledger"] if r["id"] == target["ledger_id"])
+        evidence = json.loads(row["evidence"])
+        hub = withdrawn["hubs"][0]
+        for preimage in (evidence["preimage"], hub["targets"][0]["preimage"]):
+            preimage["source"] = "venue_grouping"
+        fingerprint = operator.preimage_fingerprint([hub["targets"][0]["preimage"]])
+        evidence["backup_sha256"] = hub["backup_sha256"] = fingerprint
+        row["evidence"] = json.dumps(evidence)
+        backup = _write(tmp_path, "forged.json", withdrawn)
+    else:
+        withdrawn["hubs"][0].pop("variant")
+        backup = _write(tmp_path, "no-variant.json", withdrawn)
+    world.seal()
+    statements, commits = len(world.statements), world.commits
+    if drift == "variant":
+        with pytest.raises(operator.OperatorRefused, match=match):
+            operator.load_member_plan(restore_options(backup))
+        return
+    doc, code = await operator.run_members(
+        member_apply(backup, {101: 6, 102: 6}, operator.MEMBER_RESTORE), world.factory
+    )
+    assert code == 1 and doc["status"] == "refused"
+    assert match in json.dumps(doc["hubs"][0]["errors"]), doc["hubs"][0]
+    assert world.commits == commits
+    assert not any(
+        sql.startswith(("DELETE", "INSERT")) or "RETURNING" in sql
+        for sql, _ in world.statements[statements:]
+    )
+
+
+def test_a_bare_readmit_refusal_no_longer_speaks_of_winners():
+    with pytest.raises(operator.OperatorRefused) as refused:
+        operator.parse_args(["--operation", "readmit-members", "--backup", "b"])
+    assert "re-prove" not in str(refused.value) and "writes no edge" in str(
+        refused.value
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_theme_hub_plan_never_operates_a_sports_hub(tmp_path):
+    """Defence in depth under the loader's variant check: a theme plan handed a
+    sports hub is refused by the hub read itself, before any target is read."""
+    world, _, path = _week_world(tmp_path)
+    plan = operator.load_member_plan(member_options(manifest=str(path)))
+    hub = replace(plan.hubs[0], variant=operator.VARIANT_THEME)
+    with pytest.raises(
+        operator.OperatorRefused, match="not a canonical theme collection"
+    ):
+        await operator.withdraw_hub(
+            world.factory(), plan, hub, member_options(manifest=str(path))
+        )
+    assert _no_writes(world)

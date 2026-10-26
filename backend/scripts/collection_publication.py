@@ -15,6 +15,15 @@ persisted row in that ledger row. ``readmit-members --restore-from-ledger
 rows, ids and all, because after #9990 assembly never re-proves a game's own
 winner market. Preview is the default; one transaction per hub; any drift
 refuses the whole hub before its first write.
+
+THEME MEMBERS (#9936). The same two operations take an AI or Oscars collection
+when its manifest pin says ``"variant": "theme"``: each target is a
+``theme_rule`` market edge, pinned by its stored ``market_type`` and nullable
+``event_id`` instead of a game's winner market and admitted game edge. The
+correction helper sends the page rebuild after commit, as for any theme
+correction. The exact undo keeps the sports guards unchanged; it never becomes
+admission, and theme lifecycle rules, not this tool, decide a restored member
+when assembly runs.
 """
 
 from __future__ import annotations
@@ -163,7 +172,7 @@ def validate_member(options: Options) -> None:
         if not options.restore_from_ledger:
             raise OperatorRefused(
                 "readmit-members is offered only as --restore-from-ledger: a bare "
-                "readmit writes no edge, and assembly no longer re-proves winners"
+                "readmit only lifts the withdrawal and writes no edge"
             )
         if not options.backup:
             raise OperatorRefused(
@@ -593,6 +602,37 @@ BACKUP_LOCATION = (
     "this receipt is a copy and must match the ledger exactly to be restored"
 )
 
+#: #9936: which member-target shape a hub takes. A manifest pin or backup
+#: receipt with no ``variant`` is the original NFL/MLB shape, so every existing
+#: manifest reads exactly as before; a theme collection must say so.
+VARIANT_SPORTS = "sports"
+VARIANT_THEME = "theme"
+
+#: ``theme_assembly.EDGE_SOURCE``: the only provenance a theme target may carry.
+#: Not imported, so a refused apply still loads no task module.
+THEME_EDGE_SOURCE = "theme_rule"
+THEME_PROVENANCE_RULE = "event_edges.source = 'theme_rule'"
+
+THEME_AFTER_COMMIT = (
+    "the correction helper sends one rebuild_theme_snapshot after commit; the "
+    "page answers 503 building until it runs. While theme assembly is stopped "
+    "it writes a page only for a published collection whose live revision has "
+    "none, and that rebuild allocates the next revision without a ledger row"
+)
+
+THEME_UNDO_LIMIT = (
+    "the rebuild this withdrawal sends normally moves the hub one revision past "
+    "hub_revision without a ledger row; from then on this exact undo refuses as "
+    "a stale revision"
+)
+
+THEME_LATER_ASSEMBLY = (
+    "the restored theme_rule edge is on the page after the rebuild this restore "
+    "sends, also while assembly is stopped; when assembly runs, the theme's own "
+    "rule decides it like any other theme_rule member: kept, reclassified or "
+    "retired"
+)
+
 
 class MemberDrift(OperatorRefused):
     """The stored state no longer matches the reviewed plan. Nothing written."""
@@ -614,6 +654,7 @@ class HubPlan:
     publication_state: str
     targets: tuple
     pin: dict
+    variant: str = VARIANT_SPORTS
 
 
 @dataclass(frozen=True)
@@ -714,6 +755,50 @@ _PIN_FIELDS = {
     "targets": int,
     "ledger_rows": list,
 }
+#: #9936: a theme target has no game. ``event_id`` and ``market_type`` are the
+#: market's stored values (either may be null) and are checked, not required.
+_THEME_TARGET_FIELDS = {
+    **{k: v for k, v in _TARGET_FIELDS.items() if k not in ("event_id", "market_type")},
+    "edge_source": str,
+}
+
+
+def _variant(record: dict, where: str) -> str:
+    """The member shape a pin or backup receipt declares, checked against the
+    slug's canonical edition. Only a theme slug may (and must) say theme."""
+    declared = record.get("variant")
+    if declared not in (None, VARIANT_SPORTS, VARIANT_THEME):
+        raise OperatorRefused(f"{where} names unknown variant {declared!r}")
+    slug = record.get("slug")
+    edition = edition_for_slug(slug) if isinstance(slug, str) else None
+    theme = edition is not None and edition["kind"] in THEME_EDITION_KINDS
+    if theme != (declared == VARIANT_THEME):
+        raise OperatorRefused(
+            f"{where}: a theme collection needs, and only a theme collection may "
+            f'carry, "variant": "{VARIANT_THEME}" ({slug!r} declares {declared!r})'
+        )
+    return VARIANT_THEME if theme else VARIANT_SPORTS
+
+
+def _nullable(record: dict, key: str, kind: type) -> bool:
+    if key not in record or record[key] is None:
+        return key in record
+    value = record[key]
+    return (
+        _is_int(value)
+        if kind is int
+        else isinstance(value, kind) and bool(value.strip())
+    )
+
+
+def _require_theme_target(target: dict, where: str) -> None:
+    _require(target, _THEME_TARGET_FIELDS, where)
+    if not _nullable(target, "event_id", int):
+        raise OperatorRefused(f"{where} has no valid event_id (an id or null)")
+    if not _nullable(target, "market_type", str):
+        raise OperatorRefused(f"{where} has no valid market_type (a type or null)")
+    if target["child_type"] != "market" or target["edge_source"] != THEME_EDGE_SOURCE:
+        raise OperatorRefused(f"{where} is not a {THEME_EDGE_SOURCE} market edge")
 
 
 def load_withdraw_plan(options: Options) -> MemberPlan:
@@ -724,16 +809,24 @@ def load_withdraw_plan(options: Options) -> MemberPlan:
         raise OperatorRefused("manifest has no pins")
     if not isinstance(targets, list) or not targets:
         raise OperatorRefused("manifest has no targets")
+    variants = {
+        key: _variant(pin, f"manifest pin {key}")
+        for key, pin in pins.items()
+        if isinstance(pin, dict)
+    }
     by_hub: dict = {}
     edges, members = set(), set()
     for index, target in enumerate(targets):
         if not isinstance(target, dict):
             raise OperatorRefused(f"manifest target {index} is not an object")
-        _require(target, _TARGET_FIELDS, f"manifest target {index}")
-        if target["child_type"] != "market" or target["market_type"] != SHAPE_DUEL:
-            raise OperatorRefused(
-                f"manifest target {index} is not a market of shape {SHAPE_DUEL}"
-            )
+        if variants.get(str(target.get("container_id"))) == VARIANT_THEME:
+            _require_theme_target(target, f"manifest target {index}")
+        else:
+            _require(target, _TARGET_FIELDS, f"manifest target {index}")
+            if target["child_type"] != "market" or target["market_type"] != SHAPE_DUEL:
+                raise OperatorRefused(
+                    f"manifest target {index} is not a market of shape {SHAPE_DUEL}"
+                )
         member = (target["container_id"], target["market_id"])
         if target["edge_id"] in edges or member in members:
             raise OperatorRefused(
@@ -777,6 +870,7 @@ def load_withdraw_plan(options: Options) -> MemberPlan:
                 publication_state=pin["publication_state"],
                 targets=tuple(sorted(hub_targets, key=lambda t: t["edge_id"])),
                 pin=pin,
+                variant=variants[key],
             )
         )
     hubs.sort(key=lambda h: h.container_id)
@@ -808,6 +902,9 @@ _BACKUP_TARGET_FIELDS = {
     "revision_after": int,
     "preimage": dict,
 }
+_THEME_BACKUP_TARGET_FIELDS = {
+    k: v for k, v in _BACKUP_TARGET_FIELDS.items() if k != "event_id"
+}
 
 
 def load_restore_plan(options: Options) -> MemberPlan:
@@ -838,6 +935,7 @@ def load_restore_plan(options: Options) -> MemberPlan:
                 "committed withdraw apply is a backup"
             )
         _require(receipt, _BACKUP_HUB_FIELDS, where)
+        variant = _variant(receipt, where)
         targets = receipt["targets"]
         if not targets:
             raise OperatorRefused(f"{where} lists no targets")
@@ -845,7 +943,16 @@ def load_restore_plan(options: Options) -> MemberPlan:
         for t_index, target in enumerate(targets):
             if not isinstance(target, dict):
                 raise OperatorRefused(f"{where} target {t_index} is not an object")
-            _require(target, _BACKUP_TARGET_FIELDS, f"{where} target {t_index}")
+            if variant == VARIANT_THEME:
+                _require(
+                    target, _THEME_BACKUP_TARGET_FIELDS, f"{where} target {t_index}"
+                )
+                if not _nullable(target, "event_id", int):
+                    raise OperatorRefused(
+                        f"{where} target {t_index} has no valid event_id (an id or null)"
+                    )
+            else:
+                _require(target, _BACKUP_TARGET_FIELDS, f"{where} target {t_index}")
             keys = {("edge", target["edge_id"]), ("ledger", target["ledger_id"])}
             if keys & seen or str(target["preimage"].get("id")) != str(
                 target["edge_id"]
@@ -873,6 +980,7 @@ def load_restore_plan(options: Options) -> MemberPlan:
                 publication_state=receipt["publication_state"],
                 targets=tuple(sorted(targets, key=lambda t: t["edge_id"])),
                 pin=receipt,
+                variant=variant,
             )
         )
     if not hubs:
@@ -930,7 +1038,7 @@ EDGE_PREIMAGE_SQL = (
 
 WITHDRAW_TARGETS_SQL = """
 SELECT e.id AS edge_id, e.parent_type, e.parent_id, e.child_type, e.child_id,
-       e.kind, e.class, fm.id AS market_id, fm.source, fm.external_id, fm.name,
+       e.kind, e.class, e.source AS edge_source, fm.id AS market_id, fm.source, fm.external_id, fm.name,
        fm.market_type, fm.event_id, admitted.id AS admitted_edge_id
 FROM event_edges e
 LEFT JOIN futures_markets fm ON e.child_type = 'market' AND fm.id = e.child_id
@@ -1020,7 +1128,10 @@ async def _hub_facts(session, hub: HubPlan) -> dict:
             f"container {hub.container_id} slug is {facts['slug']!r}, not {hub.slug!r}"
         )
     edition = edition_for_slug(facts["slug"])
-    if edition is None or edition["kind"] not in DISCOVERABLE_EDITIONS:
+    if hub.variant == VARIANT_THEME:
+        if edition is None or edition["kind"] not in THEME_EDITION_KINDS:
+            raise OperatorRefused("target is not a canonical theme collection")
+    elif edition is None or edition["kind"] not in DISCOVERABLE_EDITIONS:
         raise OperatorRefused("target is not a canonical NFL-week/MLB-postseason hub")
     if facts["parent_container_id"] is not None:
         raise OperatorRefused("target is nested; only a reviewed root may be operated")
@@ -1091,6 +1202,43 @@ def _hub_receipt(plan: MemberPlan, hub: HubPlan) -> dict:
     }
 
 
+def _theme_target_checks(row: dict, target: dict, errors: list) -> tuple:
+    """#9936: a theme target is its ``theme_rule`` edge and the market's stored
+    identity. No game, winner rule or admitted game edge exists to ask; the
+    nullable ``event_id``/``market_type`` must equal the reviewed values."""
+    market_id = target["market_id"]
+    if row["edge_source"] != THEME_EDGE_SOURCE:
+        errors.append(
+            f"edge {target['edge_id']}: source is {row['edge_source']!r}, "
+            f"expected {THEME_EDGE_SOURCE!r}"
+        )
+    for column, want in (
+        ("source", target["venue"]),
+        ("external_id", target["external_id"]),
+        ("event_id", target["event_id"]),
+        ("market_type", target["market_type"]),
+    ):
+        if row[column] != want:
+            errors.append(
+                f"market {market_id}: {column} is {row[column]!r}, expected {want!r}"
+            )
+    classifier = {
+        "rule": THEME_PROVENANCE_RULE,
+        "edge_source": row["edge_source"],
+        "edge_class": row["class"],
+        "market_type": row["market_type"],
+        "name": row["name"],
+        "external_id": row["external_id"],
+    }
+    identity = {
+        "market_id": market_id,
+        "source": row["source"],
+        "external_id": row["external_id"],
+        "event_id": row["event_id"],
+    }
+    return classifier, identity
+
+
 async def withdraw_hub(
     session, plan: MemberPlan, hub: HubPlan, options: Options
 ) -> dict:
@@ -1149,26 +1297,44 @@ async def withdraw_hub(
         if row["market_id"] is None:
             errors.append(f"edge {edge_id}: market {market_id} does not exist")
             continue
-        for column, want in (
-            ("source", target["venue"]),
-            ("external_id", target["external_id"]),
-            ("event_id", target["event_id"]),
-            ("market_type", SHAPE_DUEL),
-        ):
-            if row[column] != want:
-                errors.append(
-                    f"market {market_id}: {column} is {row[column]!r}, expected {want!r}"
-                )
-        winner = is_the_games_own_winner_market(
-            row["market_type"], row["name"], row["external_id"]
-        )
-        if not winner:
-            errors.append(f"market {market_id}: {WINNER_RULE} no longer says True")
-        if row["admitted_edge_id"] is None:
-            errors.append(
-                f"market {market_id}: event {row['event_id']} is not an admitted "
-                f"game of container {hub.container_id}"
+        if hub.variant == VARIANT_THEME:
+            classifier, identity = _theme_target_checks(row, target, errors)
+        else:
+            for column, want in (
+                ("source", target["venue"]),
+                ("external_id", target["external_id"]),
+                ("event_id", target["event_id"]),
+                ("market_type", SHAPE_DUEL),
+            ):
+                if row[column] != want:
+                    errors.append(
+                        f"market {market_id}: {column} is {row[column]!r}, "
+                        f"expected {want!r}"
+                    )
+            winner = is_the_games_own_winner_market(
+                row["market_type"], row["name"], row["external_id"]
             )
+            if not winner:
+                errors.append(f"market {market_id}: {WINNER_RULE} no longer says True")
+            if row["admitted_edge_id"] is None:
+                errors.append(
+                    f"market {market_id}: event {row['event_id']} is not an admitted "
+                    f"game of container {hub.container_id}"
+                )
+            classifier = {
+                "rule": WINNER_RULE,
+                "market_type": row["market_type"],
+                "name": row["name"],
+                "external_id": row["external_id"],
+                "result": winner,
+            }
+            identity = {
+                "market_id": market_id,
+                "source": row["source"],
+                "external_id": row["external_id"],
+                "event_id": row["event_id"],
+                "admitted_event_edge_id": row["admitted_edge_id"],
+            }
         preimage = preimages.get(edge_id)
         if not preimage or set(preimage) != set(columns):
             errors.append(f"edge {edge_id}: full preimage unreadable")
@@ -1180,20 +1346,8 @@ async def withdraw_hub(
                 "event_id": target["event_id"],
                 "venue": target["venue"],
                 "preimage": preimage,
-                "classifier": {
-                    "rule": WINNER_RULE,
-                    "market_type": row["market_type"],
-                    "name": row["name"],
-                    "external_id": row["external_id"],
-                    "result": winner,
-                },
-                "identity": {
-                    "market_id": market_id,
-                    "source": row["source"],
-                    "external_id": row["external_id"],
-                    "event_id": row["event_id"],
-                    "admitted_event_edge_id": row["admitted_edge_id"],
-                },
+                "classifier": classifier,
+                "identity": identity,
             }
         )
     if errors:
@@ -1210,6 +1364,8 @@ async def withdraw_hub(
         backup_sha256=fingerprint,
         targets=entries,
     )
+    if hub.variant == VARIANT_THEME:
+        receipt.update(variant=VARIANT_THEME, after_commit=THEME_AFTER_COMMIT)
     if not options.apply:
         receipt["would_be_revision"] = facts["revision"] + len(entries)
         return receipt
@@ -1301,6 +1457,8 @@ async def withdraw_hub(
             ],
         },
     )
+    if hub.variant == VARIANT_THEME:
+        receipt["undo"]["theme_limit"] = THEME_UNDO_LIMIT
     return receipt
 
 
@@ -1315,6 +1473,30 @@ async def _insert_preimage(session, preimage: dict, columns: dict) -> None:
         text(f"INSERT INTO event_edges ({target}) VALUES ({values})"),
         {f"v{i}": preimage[name] for i, name in enumerate(names)},
     )
+
+
+def _theme_restore_provenance(hub: HubPlan, target: dict, classifier: dict) -> list:
+    """#9936: the row being re-inserted is this collection's own ``theme_rule``
+    edge for this market, as the withdrawal's ledger row recorded it."""
+    preimage, errors = target["preimage"], []
+    for column, want in (
+        ("parent_type", "container"),
+        ("parent_id", str(hub.container_id)),
+        ("kind", "contains"),
+        ("child_type", "market"),
+        ("child_id", str(target["market_id"])),
+        ("source", THEME_EDGE_SOURCE),
+    ):
+        if preimage.get(column) != want:
+            errors.append(
+                f"edge {target['edge_id']}: backed-up {column} is "
+                f"{preimage.get(column)!r}, expected {want!r}"
+            )
+    if classifier.get("rule") != THEME_PROVENANCE_RULE:
+        errors.append(
+            f"ledger row {target['ledger_id']} is not a theme_rule member withdrawal"
+        )
+    return errors
 
 
 async def restore_hub(
@@ -1399,14 +1581,18 @@ async def restore_hub(
             continue
         identity = evidence.get("identity") or {}
         classifier = evidence.get("classifier") or {}
-        for column, want in (
+        checks = [
             ("source", identity.get("source")),
             ("external_id", identity.get("external_id")),
             ("event_id", identity.get("event_id")),
             ("admitted_edge_id", identity.get("admitted_event_edge_id")),
             ("market_type", classifier.get("market_type")),
             ("name", classifier.get("name")),
-        ):
+        ]
+        if hub.variant == VARIANT_THEME:
+            del checks[3]  # a theme member has no admitted game edge
+            errors.extend(_theme_restore_provenance(hub, target, classifier))
+        for column, want in checks:
             if market[column] != want:
                 errors.append(
                     f"market {target['market_id']}: {column} is {market[column]!r}, "
@@ -1450,6 +1636,8 @@ async def restore_hub(
             for t in hub.targets
         ],
     )
+    if hub.variant == VARIANT_THEME:
+        receipt.update(variant=VARIANT_THEME, after_commit=THEME_AFTER_COMMIT)
     if not options.apply:
         receipt["would_be_revision"] = facts["revision"] + len(hub.targets)
         return receipt
@@ -1520,8 +1708,10 @@ async def restore_hub(
             "evidence": options.evidence,
         },
         later_assembly=(
-            "restored rows stand until a named correction; assembly never retires "
-            "a member it fails to see and, after #9990, never re-proves these"
+            THEME_LATER_ASSEMBLY
+            if hub.variant == VARIANT_THEME
+            else "restored rows stand until a named correction; assembly never "
+            "retires a member it fails to see and, after #9990, never re-proves these"
         ),
     )
     return receipt

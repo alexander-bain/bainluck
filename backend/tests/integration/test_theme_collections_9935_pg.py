@@ -210,7 +210,7 @@ def _is_building(resp) -> bool:
     )
 
 
-async def _assemble_and_publish(world) -> int:
+async def _assemble_and_publish(world, slug=AI_SLUG) -> int:
     """Run the real producer pass, publish through the real correction, and run
     the rebuild that correction sent. Returns the container id."""
     from app.tasks.theme_assembly import (
@@ -219,9 +219,9 @@ async def _assemble_and_publish(world) -> int:
     )
     from app.utils import container_corrections as cc
 
-    report = await _run_assemble_theme_collections(only=AI_SLUG)
+    report = await _run_assemble_theme_collections(only=slug)
     assert report["terminal"] == "complete", report
-    cid = await _container_id(world, AI_SLUG)
+    cid = await _container_id(world, slug)
 
     async with world["Session"]() as db:
         await cc.publish_container(db, container_id=cid, reason="reviewed", actor="test")
@@ -1075,3 +1075,370 @@ async def test_9936_d1b_two_rebuilds_racing_while_stopped_serve_one_corrected_pa
     assert written and all(gone not in page["shown_ids"] for page in written.values())
     after = await _get(world, AI_SLUG)
     assert after["revision"] == live and gone not in _page_ids(after)
+
+
+# ---------------------------------------------------------------------------
+# #9936 — the reviewed member operator corrects a theme collection
+# ---------------------------------------------------------------------------
+#
+# SHIP: after an explicitly authorized member correction, an AI or Oscars
+# collection stays readable with the corrected membership while automatic
+# assembly is stopped. These drive ``scripts/collection_publication.py``'s
+# member operations (preview, apply, exact undo) against the real server, the
+# real producer's rebuild and the real page reader — never the helper directly,
+# except where a test names the bare readmit it contrasts with.
+
+OSCARS_SLUG = "oscars-2027"
+
+OSCARS_NAMES = (
+    ("KXOSCARPIC-27", "kalshi", "Oscar Winner: Best Picture", ("The Odyssey", "Hamnet")),
+    ("PM-OSC-DIR", "polymarket", "Oscars 2027: Best Director Winner",
+     ("Christopher Nolan", "Chloé Zhao")),
+    ("PM-OSC-ACTRESS", "polymarket", "Oscars 2027: Best Actress Winner",
+     ("Jessie Buckley", "Emma Stone")),
+)
+
+
+async def _seed_oscars_markets(session) -> dict:
+    """Three priced Oscars 2027 category questions (one Kalshi ticker, two
+    structurally titled Polymarket rows)."""
+    from app.models.models import FuturesMarket, FuturesOutcome
+
+    ids = {}
+    for external_id, source, name, legs in OSCARS_NAMES:
+        m = FuturesMarket(
+            source=source, external_id=external_id, name=name, status="open",
+            category="entertainment", llm_sport_category="entertainment",
+            resolution_date=datetime(2027, 3, 15, tzinfo=timezone.utc), market_tier=3,
+        )
+        session.add(m)
+        await session.flush()
+        for leg, price in zip(legs, (0.55, 0.45)):
+            session.add(FuturesOutcome(
+                market_id=m.id, external_id=f"{external_id}-{leg}", name=leg,
+                current_probability=price,
+            ))
+        ids[external_id] = m.id
+    await session.commit()
+    return ids
+
+
+async def _member_manifest(world, tmp_path, cid, market_ids, name="MANIFEST.json"):
+    """What a reviewer writes from the stored rows: the hub's pins and, per
+    target, its theme_rule edge and the market's own identity."""
+    async with world["Session"]() as db:
+        hub = (await db.execute(text(
+            "SELECT slug, publication_state, membership_revision FROM containers "
+            "WHERE id = :c"), {"c": cid})).mappings().one()
+        counts = dict((await db.execute(text(
+            "SELECT child_type, count(*) FROM event_edges WHERE parent_type = 'container' "
+            "AND parent_id = :c AND kind = 'contains' GROUP BY child_type"),
+            {"c": cid})).fetchall())
+        ledger = [int(r[0]) for r in (await db.execute(text(
+            "SELECT id FROM container_corrections WHERE container_id = :c ORDER BY id"),
+            {"c": cid})).fetchall()]
+        rows = (await db.execute(text(
+            "SELECT e.id AS edge_id, e.class, e.source AS edge_source, fm.id AS market_id, "
+            "fm.source, fm.external_id, fm.market_type, fm.event_id FROM event_edges e "
+            "JOIN futures_markets fm ON fm.id = e.child_id "
+            "WHERE e.parent_type = 'container' AND e.parent_id = :c "
+            "AND e.child_type = 'market' AND e.child_id = ANY(:ids) ORDER BY e.id"),
+            {"c": cid, "ids": list(market_ids)})).mappings().all()
+    assert len(rows) == len(market_ids)
+    manifest = {
+        "issue": 9936,
+        "pins": {str(cid): {
+            "slug": hub["slug"], "variant": "theme",
+            "publication_state": hub["publication_state"],
+            "membership_revision": hub["membership_revision"],
+            "events": counts.get("event", 0), "market_edges": counts.get("market", 0),
+            "targets": len(rows), "ledger_rows": ledger,
+        }},
+        "targets": [{
+            "container_id": cid, "container_slug": hub["slug"],
+            "expected_revision": hub["membership_revision"], "edge_id": int(r["edge_id"]),
+            "edge_class": r["class"], "edge_source": r["edge_source"],
+            "child_type": "market", "market_id": int(r["market_id"]), "venue": r["source"],
+            "market_type": r["market_type"], "event_id": r["event_id"],
+            "external_id": r["external_id"],
+        } for r in rows],
+    }
+    path = tmp_path / name
+    path.write_text(json.dumps(manifest))
+    return str(path), hub["membership_revision"]
+
+
+def _member_options(operation, source, *, apply=False, revision=None, cid=None):
+    from scripts import collection_publication as op
+
+    key = "manifest" if operation == op.MEMBER_WITHDRAW else "backup"
+    return op.Options(
+        operation=operation,
+        restore_from_ledger=operation == op.MEMBER_RESTORE,
+        apply=apply,
+        hub_revisions=((cid, revision),) if apply else None,
+        actor="authority" if apply else None,
+        reason="#9936 not this subject" if apply else None,
+        evidence={"review": "fixture"} if apply else None,
+        **{key: source},
+    )
+
+
+async def _operate(world, operation, source, **apply):
+    from scripts import collection_publication as op
+
+    return await op.run_members(_member_options(operation, source, **apply), world["Session"])
+
+
+async def _ledger_ids(world, cid) -> list:
+    async with world["Session"]() as db:
+        return [int(r[0]) for r in (await db.execute(text(
+            "SELECT id FROM container_corrections WHERE container_id = :c ORDER BY id"),
+            {"c": cid})).fetchall()]
+
+
+async def _edge_rows(world, cid) -> dict:
+    async with world["Session"]() as db:
+        return {int(r[0]): tuple(r[1:]) for r in (await db.execute(text(
+            "SELECT id, child_id, class, source, confidence, created_at FROM event_edges "
+            "WHERE parent_type = 'container' AND parent_id = :c"), {"c": cid})).fetchall()}
+
+
+@pytest.mark.asyncio
+async def test_9936_operator_withdraws_an_ai_member_while_stopped_and_the_page_is_corrected(
+    world, monkeypatch, tmp_path
+):
+    from scripts import collection_publication as op
+    from app.tasks.theme_assembly import (
+        _run_assemble_theme_collections,
+        _run_rebuild_theme_snapshot,
+    )
+
+    async with world["Session"]() as db:
+        ids = await _seed_ai_markets(db)
+    cid = await _assemble_and_publish(world)
+    before = await _get(world, AI_SLUG)
+    gone = ids["PM-GROK5"]
+    assert gone in _page_ids(before) and before["counts"]["inventory_complete"] is True
+    monkeypatch.setenv("THEME_ASSEMBLY_ENABLED", "false")  # assembly stopped
+    manifest, revision = await _member_manifest(world, tmp_path, cid, [gone])
+    edges, ledger, keys = await _edge_rows(world, cid), await _ledger_ids(world, cid), set(world["store"])
+
+    # Preview: read only, nothing sent, nothing stored.
+    preview, code = await _operate(world, op.MEMBER_WITHDRAW, manifest)
+    assert code == 0 and preview["status"] == "preview", preview
+    (hub,) = preview["hubs"]
+    assert hub["variant"] == "theme" and hub["would_be_revision"] == revision + 1
+    assert hub["targets"][0]["event_id"] is None
+    assert hub["targets"][0]["preimage"]["source"] == "theme_rule"
+    assert await _edge_rows(world, cid) == edges and await _ledger_ids(world, cid) == ledger
+    assert await _live_revision(world, cid) == revision
+    assert world["sent"] == [] and set(world["store"]) == keys
+
+    # Apply: exactly the reviewed edge goes, one rebuild is sent after commit.
+    doc, code = await _operate(world, op.MEMBER_WITHDRAW, manifest, apply=True,
+                               revision=revision, cid=cid)
+    assert code == 0 and doc["status"] == "applied", doc
+    (hub,) = doc["hubs"]
+    assert (hub["pre_revision"], hub["post_revision"]) == (revision, revision + 1)
+    assert world["sent"] == [(REBUILD, [cid], "background")]
+    world["sent"].clear()
+    remaining = await _edge_rows(world, cid)
+    (edge_id,) = set(edges) - set(remaining)
+    assert edges[edge_id][0] == gone and remaining == {k: edges[k] for k in remaining}
+    assert _is_building(await _get(world, AI_SLUG))  # until the rebuild lands
+
+    rebuilt = await _run_rebuild_theme_snapshot(cid)
+    assert rebuilt["terminal"] == "complete", rebuilt
+    assert rebuilt["containers"][0]["assembly"] == "stopped"
+    after = await _get(world, AI_SLUG)
+    assert after["state"] == "published" and gone not in _page_ids(after)
+    assert after["counts"]["shown_count"] == before["counts"]["shown_count"] - 1
+    assert after["counts"]["inventory_complete"] is True
+    old = await _get(world, AI_SLUG, revision=str(before["revision"]))
+    assert old["revision_moved"] is True and old["revision"] == after["revision"]
+    assert gone not in _page_ids(old)
+
+    # Stopped stays stopped; a duplicate delivery of the rebuild writes nothing.
+    stopped = await _run_assemble_theme_collections(only=AI_SLUG)
+    assert (stopped["terminal"], stopped["reason"]) == ("skipped", "theme_assembly_disabled")
+    store = dict(world["store"])
+    again = await _run_rebuild_theme_snapshot(cid)
+    assert (again["terminal"], again["reason"]) == ("skipped", "assembly_stopped_page_present")
+    assert world["store"] == store and await _live_revision(world, cid) == after["revision"]
+
+    # The old manifest is now stale; re-running it refuses before a write.
+    stale, code = await _operate(world, op.MEMBER_WITHDRAW, manifest, apply=True,
+                                 revision=revision, cid=cid)
+    assert code == 1 and stale["status"] == "refused" and stale["committed_hubs"] == []
+    assert stale["hubs"][0]["current_revision"] == after["revision"]
+
+    # #9936 CONFLICT, returned rather than loosened: the rebuild moved the
+    # revision with no ledger row, so the unchanged exact undo refuses as stale.
+    backup = tmp_path / "BACKUP.json"
+    backup.write_text(json.dumps(doc))
+    undo, code = await _operate(world, op.MEMBER_RESTORE, str(backup))
+    assert code == 1 and undo["hubs"][0]["current_revision"] == after["revision"]
+    assert gone not in _page_ids(await _get(world, AI_SLUG))
+    assert world["sent"] == []
+
+
+@pytest.mark.asyncio
+async def test_9936_operator_withdraws_every_oscars_member_while_stopped_to_an_honest_empty_page(
+    world, monkeypatch, tmp_path
+):
+    from scripts import collection_publication as op
+    from app.tasks.theme_assembly import _run_rebuild_theme_snapshot
+
+    async with world["Session"]() as db:
+        await _seed_oscars_markets(db)
+    cid = await _assemble_and_publish(world, slug=OSCARS_SLUG)
+    before = await _get(world, OSCARS_SLUG)
+    assert before["state"] == "published" and before["counts"]["shown_count"] >= 2, before
+    assert before["edition"] == {"kind": "theme_edition", "subject": "oscars", "edition": 2027}
+    monkeypatch.setenv("THEME_ASSEMBLY_ENABLED", "false")
+    members = await _edge_ids(world, cid)
+    manifest, revision = await _member_manifest(world, tmp_path, cid, members)
+
+    doc, code = await _operate(world, op.MEMBER_WITHDRAW, manifest, apply=True,
+                               revision=revision, cid=cid)
+    assert code == 0 and doc["status"] == "applied", doc
+    assert doc["hubs"][0]["post_revision"] == revision + len(members)
+    assert world["sent"] == [(REBUILD, [cid], "background")]  # one, keyed on the container
+    assert await _edge_ids(world, cid) == []
+    assert _is_building(await _get(world, OSCARS_SLUG))
+
+    assert (await _run_rebuild_theme_snapshot(cid))["terminal"] == "complete"
+    empty = await _get(world, OSCARS_SLUG)
+    assert empty["state"] == "empty" and empty["sections"] == []
+    assert empty["counts"]["shown_count"] == 0 and empty["page"]["next_cursor"] is None
+    assert await _publication(world, cid) == "published"
+
+
+@pytest.mark.asyncio
+async def test_9936_operator_exact_undo_restores_the_member_while_stopped_unlike_a_bare_readmit(
+    world, monkeypatch, tmp_path
+):
+    """Two members, two corrections, assembly stopped. The exact undo (taken
+    before the rebuild moved the revision) re-inserts the very edge row and the
+    member is back on the page; a bare readmit lifts the withdrawal and the
+    page stays without its member until the theme rule re-proves it."""
+    from scripts import collection_publication as op
+    from app.tasks.theme_assembly import (
+        _run_assemble_theme_collections,
+        _run_rebuild_theme_snapshot,
+    )
+    from app.utils import container_corrections as cc
+
+    async with world["Session"]() as db:
+        ids = await _seed_ai_markets(db)
+    cid = await _assemble_and_publish(world)
+    undone, lifted = ids["PM-GEM3"], ids["PM-OAI-IPO"]
+    monkeypatch.setenv("THEME_ASSEMBLY_ENABLED", "false")
+    edges = await _edge_rows(world, cid)
+
+    # Exact undo: withdraw, then restore from the receipt at its post revision.
+    manifest, revision = await _member_manifest(world, tmp_path, cid, [undone])
+    doc, code = await _operate(world, op.MEMBER_WITHDRAW, manifest, apply=True,
+                               revision=revision, cid=cid)
+    assert code == 0, doc
+    backup = tmp_path / "BACKUP.json"
+    backup.write_text(json.dumps(doc))
+    post = doc["hubs"][0]["post_revision"]
+    preview, code = await _operate(world, op.MEMBER_RESTORE, str(backup))
+    assert code == 0 and preview["hubs"][0]["would_be_revision"] == post + 1, preview
+    restored, code = await _operate(world, op.MEMBER_RESTORE, str(backup), apply=True,
+                                    revision=post, cid=cid)
+    assert code == 0 and restored["status"] == "applied", restored
+    (hub,) = restored["hubs"]
+    assert hub["later_assembly"] == op.THEME_LATER_ASSEMBLY
+    assert await _edge_rows(world, cid) == edges  # the same row: id, class, created_at
+    assert world["sent"] == [(REBUILD, [cid], "background")] * 2
+    world["sent"].clear()
+    assert (await _run_rebuild_theme_snapshot(cid))["terminal"] == "complete"
+    page = await _get(world, AI_SLUG)
+    assert undone in _page_ids(page)
+
+    # Bare readmit: withdraw through the operator, then lift with the helper.
+    manifest, revision = await _member_manifest(world, tmp_path, cid, [lifted], "M2.json")
+    doc, code = await _operate(world, op.MEMBER_WITHDRAW, manifest, apply=True,
+                               revision=revision, cid=cid)
+    assert code == 0, doc
+    assert (await _run_rebuild_theme_snapshot(cid))["terminal"] == "complete"
+    async with world["Session"]() as db:
+        result = await cc.readmit_member(db, container_id=cid, child_type="market",
+                                         child_id=lifted, reason="lift", actor="test")
+        await db.commit()
+    assert result.applied and result.edges_removed == 0
+    assert (await _run_rebuild_theme_snapshot(cid))["terminal"] == "complete"
+    lifted_page = await _get(world, AI_SLUG)
+    assert lifted not in _page_ids(lifted_page) and lifted not in await _edge_ids(world, cid)
+    assert undone in _page_ids(lifted_page)
+
+    # Assembly resumes: the theme rule, not the operator, decides both.
+    monkeypatch.setenv("THEME_ASSEMBLY_ENABLED", "true")
+    report = await _run_assemble_theme_collections(only=AI_SLUG)
+    assert report["terminal"] == "complete", report
+    resumed = await _get(world, AI_SLUG)
+    assert {lifted, undone} <= set(_page_ids(resumed))
+
+
+@pytest.mark.asyncio
+async def test_9936_operator_failure_mid_hub_rolls_back_and_sends_nothing(
+    world, monkeypatch, tmp_path
+):
+    from scripts import collection_publication as op
+    from app.utils import container_corrections as cc
+
+    async with world["Session"]() as db:
+        ids = await _seed_ai_markets(db)
+    cid = await _assemble_and_publish(world)
+    monkeypatch.setenv("THEME_ASSEMBLY_ENABLED", "false")
+    manifest, revision = await _member_manifest(
+        world, tmp_path, cid, [ids["PM-GROK5"], ids["PM-GEM3"]])
+    edges, ledger = await _edge_rows(world, cid), await _ledger_ids(world, cid)
+    real, calls = cc.withdraw_member, []
+
+    async def second_fails(session, **kwargs):
+        calls.append(kwargs["child_id"])
+        if len(calls) == 2:
+            raise RuntimeError("database went away")
+        return await real(session, **kwargs)
+
+    monkeypatch.setattr(cc, "withdraw_member", second_fails)
+    doc, code = await _operate(world, op.MEMBER_WITHDRAW, manifest, apply=True,
+                               revision=revision, cid=cid)
+    assert code == 1 and doc["status"] == "refused" and doc["committed_hubs"] == []
+    assert doc["hubs"][0]["status"] == "failed" and len(calls) == 2
+    assert await _edge_rows(world, cid) == edges and await _ledger_ids(world, cid) == ledger
+    assert await _live_revision(world, cid) == revision and world["sent"] == []
+    assert ids["PM-GROK5"] in _page_ids(await _get(world, AI_SLUG))
+
+
+@pytest.mark.asyncio
+async def test_9936_operator_refuses_a_member_another_source_holds(world, tmp_path):
+    """Provenance: a venue_grouping edge in a theme collection is not a
+    theme_rule member, whatever the manifest claims."""
+    from scripts import collection_publication as op
+
+    async with world["Session"]() as db:
+        ids = await _seed_ai_markets(db)
+    cid = await _assemble_and_publish(world)
+    foreign = ids["PM-MONET"]
+    async with world["Session"]() as db:
+        await db.execute(text(
+            "INSERT INTO event_edges (parent_type, parent_id, child_type, child_id, kind, "
+            "class, source, confidence) VALUES ('container', :c, 'market', :m, "
+            "'contains', 'side_question', 'venue_grouping', 0.9)"), {"c": cid, "m": foreign})
+        await db.commit()
+    manifest, revision = await _member_manifest(world, tmp_path, cid, [foreign])
+    doc = json.loads(open(manifest).read())
+    doc["targets"][0]["edge_source"] = "theme_rule"  # the claim the store contradicts
+    open(manifest, "w").write(json.dumps(doc))
+    edges = await _edge_rows(world, cid)
+
+    refused, code = await _operate(world, op.MEMBER_WITHDRAW, manifest, apply=True,
+                                   revision=revision, cid=cid)
+    assert code == 1 and refused["status"] == "refused"
+    assert "expected 'theme_rule'" in json.dumps(refused["hubs"][0]["errors"])
+    assert await _edge_rows(world, cid) == edges and world["sent"] == []
