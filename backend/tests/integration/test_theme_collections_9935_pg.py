@@ -1419,6 +1419,7 @@ async def test_9936_operator_failure_mid_hub_rolls_back_and_sends_nothing(
 async def test_9936_operator_refuses_a_member_another_source_holds(world, tmp_path):
     """Provenance: a venue_grouping edge in a theme collection is not a
     theme_rule member, whatever the manifest claims."""
+    from app.models.models import EventEdge
     from scripts import collection_publication as op
 
     async with world["Session"]() as db:
@@ -1426,10 +1427,9 @@ async def test_9936_operator_refuses_a_member_another_source_holds(world, tmp_pa
     cid = await _assemble_and_publish(world)
     foreign = ids["PM-MONET"]
     async with world["Session"]() as db:
-        await db.execute(text(
-            "INSERT INTO event_edges (parent_type, parent_id, child_type, child_id, kind, "
-            "class, source, confidence) VALUES ('container', :c, 'market', :m, "
-            "'contains', 'side_question', 'venue_grouping', 0.9)"), {"c": cid, "m": foreign})
+        db.add(EventEdge(parent_type="container", parent_id=cid, child_type="market",
+                         child_id=foreign, kind="contains", edge_class="side_question",
+                         source="venue_grouping", confidence=0.9))
         await db.commit()
     manifest, revision = await _member_manifest(world, tmp_path, cid, [foreign])
     doc = json.loads(open(manifest).read())
