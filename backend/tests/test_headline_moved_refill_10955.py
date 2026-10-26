@@ -21,10 +21,13 @@ the hour's existing coarse budget.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from app.tasks import generic_market_history_fill as fill
 from app.utils import generic_market_history as gmh
@@ -927,3 +930,148 @@ def test_kalshi_semantic_identity_requires_full_field_exclusivity_and_preserves_
     wrong_source = _constructed_kalshi_match_market(source="polymarket")
     assert paired_binary_leg_ids(wrong_source.outcomes, make_entries(wrong_source)) is None
 
+
+# ── #10955 R1 (lane1b's review of rev2 e61fef59): a Kalshi pair is two books ─────
+#
+# The 1% coherence guard in `_venue_pair_admission` was set for the Yes/No tokens
+# of ONE Polymarket condition. A Kalshi pair is two tickers, each priced from its
+# own book, paired only at an exact shared candle instant, so its legs routinely
+# sum to 0.98 or 1.03. Base served those complete instants through the field rule
+# (the squeeze is a no-op up to 1.05); rev2 withheld every one as "incoherent"
+# and left the state "warm" over an empty chart. These pin base's behaviour back.
+
+
+def _serve_kalshi_bank(raw_nagel, raw_henning, snapshots=()):
+    """Fill a constructed Kalshi bank and read it back through `/history`."""
+    import asyncio
+    import json
+    from unittest.mock import patch
+
+    from app.routes import futures as futures_route
+    from tests.test_generic_history_paired_compaction_11157 import _Redis, _Result, _Session
+
+    market = _constructed_kalshi_match_market()
+    venue = _FakeKalshiCandleService(
+        {
+            CONSTRUCTED_NAGEL_TICKER: [_constructed_candle(ts, p) for ts, p in raw_nagel],
+            CONSTRUCTED_HENNING_TICKER: [_constructed_candle(ts, p) for ts, p in raw_henning],
+        }
+    )
+    payload = asyncio.run(fill.build_generic_history(None, market, kalshi_service=venue, now=R3_NOW))
+    rows = list(snapshots)
+    rc = _Redis({gmh.cache_key(market.id): json.dumps(payload)})
+    db = _Session(_Result(value=market), _Result(rows=rows), _Result(rows=rows))
+    with (
+        patch.object(futures_route, "_request_path_redis", return_value=rc),
+        patch.object(futures_route, "_refuted_midpoint_outcome_ids", return_value=set()),
+    ):
+        res = asyncio.run(
+            futures_route.get_futures_history(
+                market.id, outcome_id=None, hours=168, top_n=10, champion=None,
+                db=db, history_range=None,
+            )
+        )
+    return payload, res
+
+
+def _served_venue_points(res, name):
+    return {
+        datetime.fromisoformat(pt["timestamp"]): pt["probability"]
+        for o in res["outcomes"] if o["name"] == name
+        for pt in o["history"] if pt.get("provenance") == "venue_history"
+    }
+
+
+def _assert_every_raw_point_served(res, raw_nagel, raw_henning):
+    """Each leg's served venue points are exactly its raw candles: own clock, own value."""
+    for name, raw in (("Arthur Nagel", raw_nagel), ("Philip Henning", raw_henning)):
+        served = _served_venue_points(res, name)
+        assert sorted(served) == sorted(ts for ts, _ in raw), name
+        for ts, p in raw:
+            assert served[ts] == pytest.approx(p, abs=1e-9), (name, ts)
+
+
+def _complete_synchronous_bank(book_sum):
+    base = datetime.fromisoformat("2026-10-24T19:00:00+00:00") + R3_SHIFT
+    nagel = [(base + timedelta(minutes=m), round(0.30 + 0.005 * m, 4)) for m in range(30)]
+    henning = [(ts, round(book_sum - p, 4)) for ts, p in nagel]
+    return nagel, henning
+
+
+@pytest.mark.parametrize("book_sum", [1.00, 0.98, 1.02, 1.03])
+def test_R1_a_complete_synchronous_kalshi_bank_off_one_dollar_is_served_whole(book_sum):
+    """lane1b control A: 30 shared minutes, two books summing to `book_sum`, no
+    asymmetry, no capture. Base served all 60; rev2 served 0 (incoherent 60)."""
+    nagel, henning = _complete_synchronous_bank(book_sum)
+    _, res = _serve_kalshi_bank(nagel, henning)
+    vh = res["venue_history"]
+    assert vh["state"] == "warm", vh
+    assert vh["points_served"] == 60, vh
+    assert vh.get("incoherent_pair_points_withheld", 0) == 0, vh
+    assert vh.get("unpaired_points_withheld", 0) == 0, vh
+    assert not vh.get("refusals"), vh
+    _assert_every_raw_point_served(res, nagel, henning)
+
+
+def test_R1_a_kalshi_bank_the_squeeze_would_move_is_still_refused_whole():
+    """The printed-scale contract is unchanged: at 1.06 the squeeze would print a
+    number the venue never quoted, so the WHOLE series is refused, as on base."""
+    nagel, henning = _complete_synchronous_bank(1.06)
+    _, res = _serve_kalshi_bank(nagel, henning)
+    vh = res["venue_history"]
+    assert vh["points_served"] == 0, vh
+    assert vh.get("incoherent_pair_points_withheld", 0) == 0, vh
+    assert "printed_scale_is_not_the_venue_raw_scale" in json.dumps(vh.get("refusals") or []), vh
+    assert not _served_venue_points(res, "Arthur Nagel")
+    assert not _served_venue_points(res, "Philip Henning")
+
+
+def test_R1_the_retained_r3_pairs_off_one_dollar_survive_at_their_own_clocks_and_values():
+    """Fable's F1 specimen: the retained R3 pairs (Nagel 0.305 / Henning 0.65 = 0.955,
+    then 0.975 and 0.985) banked as Kalshi candles at their own instants. Every
+    paired point is served with its raw value; Nagel's lone 18:52 point has no
+    peer and is withheld, and nothing is invented on Henning there."""
+    def at_second(iso):
+        return datetime.fromisoformat(iso).replace(microsecond=0) + R3_SHIFT
+
+    raw_nagel = [(at_second(ts), p) for ts, p in RETAINED_R3_NAGEL_POINTS]
+    raw_henning = [(at_second(ts), p) for ts, p in RETAINED_R3_HENNING_POINTS]
+    shared = dict(raw_henning)
+    sums = sorted(round(p + shared[ts], 4) for ts, p in raw_nagel if ts in shared)
+    assert sums[:3] == [0.955, 0.975, 0.985]  # the three rev2 called "incoherent"
+
+    _, res = _serve_kalshi_bank(raw_nagel, raw_henning)
+    vh = res["venue_history"]
+    assert vh.get("incoherent_pair_points_withheld", 0) == 0, vh
+    assert vh["unpaired_points_withheld"] == 1, vh
+    assert vh["points_served"] == 12, vh
+    lone = raw_nagel[0]
+    _assert_every_raw_point_served(res, raw_nagel[1:], raw_henning)
+    assert lone[0] not in _served_venue_points(res, "Philip Henning")
+
+
+@pytest.mark.parametrize("henning_offset", [-0.025, 0.02])
+def test_R1_the_asymmetric_overlap_fixture_off_one_dollar_serves_its_genuine_points(henning_offset):
+    """The rev2 repair itself, on books that do not sum to 1.00: the asymmetric
+    1-minute fixture with Henning's book shifted (sums 0.975-0.984 / 1.02-1.029).
+    Union retention keeps both halves of every kept instant, and every retained
+    raw point is SERVED at its own clock and value — not merely a warm state."""
+    base = (R3_NOW - timedelta(hours=36)).replace(second=0)
+    raw_nagel, raw_henning = _constructed_asymmetric_kalshi_minute_series(base)
+    raw_henning = [(ts, round(p + henning_offset, 4)) for ts, p in raw_henning]
+
+    payload, res = _serve_kalshi_bank(raw_nagel, raw_henning)
+    nagel_bank = [r[0] for r in payload["outcomes"][str(R3_NAGEL_ID)]["points"]]
+    henning_bank = [r[0] for r in payload["outcomes"][str(R3_HENNING_ID)]["points"]]
+    assert nagel_bank == henning_bank and len(nagel_bank) > 60
+
+    vh = res["venue_history"]
+    assert vh["state"] == "warm", vh
+    assert vh.get("incoherent_pair_points_withheld", 0) == 0, vh
+    assert vh["points_served"] == 2 * len(nagel_bank), vh
+    kept = {datetime.fromisoformat(ts) for ts in nagel_bank}
+    _assert_every_raw_point_served(
+        res,
+        [(ts, p) for ts, p in raw_nagel if ts in kept],
+        [(ts, p) for ts, p in raw_henning if ts in kept],
+    )
