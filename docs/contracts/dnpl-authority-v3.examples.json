@@ -1,0 +1,70 @@
+{
+  "contract": "dnpl-authority-v3-r2",
+  "clarifications": {
+    "D1": {"accepted_number_spellings": ["3", "3.0", "3e0"], "rejected_incarnation_strings": ["3.0", "3e0"]},
+    "D2": {"case": "transport_error_retrying_same_handle", "expected": "retire_held_end_session_preserve_evidence_require_fresh_open"},
+    "D3": {"case": "early_open_refused_then_first_detail_membership", "expected": "close_prior_handle_reopen_require_new_open_never_replay_refused_open"}
+  },
+  "messages": {
+    "singleton_open": {
+      "protocol": 3, "event_id": 42,
+      "authority": {"incarnation": "1", "namespace": "11111111-1111-4111-8111-111111111111"},
+      "stream_session": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "members": [42]
+    },
+    "singleton_blend": {
+      "protocol": 3, "event_id": 42,
+      "authority": {"incarnation": "1", "namespace": "11111111-1111-4111-8111-111111111111"},
+      "stream_session": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "frame": {"event_id": 42, "p": 0.6, "p_away": 0.4, "sport": "tennis_atp", "status": "live", "display_observed_at": "2026-10-25T17:00:00.000Z", "preview": {"kind": "blend", "epoch": 2, "seq": 1, "base_rev": 10, "ttl_ms": 800}}
+    },
+    "singleton_revoke": {
+      "protocol": 3, "event_id": 42,
+      "authority": {"incarnation": "1", "namespace": "11111111-1111-4111-8111-111111111111"},
+      "stream_session": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "frame": {"event_id": 42, "p": null, "preview": {"kind": "revoke", "epoch": 2, "seq": 2, "through_seq": 1}}
+    },
+    "folded_open": {
+      "protocol": 3, "event_id": 42,
+      "authority": {"incarnation": "1", "namespace": "11111111-1111-4111-8111-111111111111"},
+      "stream_session": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "members": [42, 43]
+    },
+    "folded_blend": {
+      "protocol": 3, "event_id": 42,
+      "authority": {"incarnation": "1", "namespace": "11111111-1111-4111-8111-111111111111"},
+      "stream_session": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "frame": {"event_id": 42, "p": 0.6, "p_away": 0.4, "sport": "tennis_atp", "status": "live", "display_observed_at": "2026-10-25T17:00:00.000Z", "preview": {"kind": "blend", "folded_version": 2, "fold_session": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "fold_seq": 1, "base_fold_revision": {"42": 10, "43": 20}, "origin_authority": {"42": {"epoch": 2, "seq": 1, "state": "pending", "ttl_ms": 800}, "43": {"epoch": 3, "seq": 1, "state": "pending", "ttl_ms": 900}}, "ttl_ms": 800}}
+    },
+    "folded_revoke": {
+      "protocol": 3, "event_id": 42,
+      "authority": {"incarnation": "1", "namespace": "11111111-1111-4111-8111-111111111111"},
+      "stream_session": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "frame": {"event_id": 42, "p": null, "preview": {"kind": "revoke", "folded_version": 2, "fold_session": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "fold_seq": 2, "base_fold_revision": {"42": 10, "43": 20}, "origin_authority": {"42": {"epoch": 2, "seq": 1, "state": "expired"}, "43": {"epoch": 3, "seq": 1, "state": "revoked"}}, "ttl_ms": 0}}
+    }
+  },
+  "transitions": [
+    {"case": "legacy_maximum_to_v3", "prior_legacy_epoch": 9007199254740991, "input": "singleton_open", "expected": "enter_v3_preserve_committed_floors"},
+    {"case": "frame_without_open", "input": "singleton_blend", "expected": "reject"},
+    {"case": "same_domain_reconnect", "prior": "singleton_open", "input": "singleton_open", "replace_stream_session": "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "expected": "retire_held_preserve_fences_deadlines"},
+    {"case": "duplicate_open", "prior": "singleton_open", "input": "singleton_open", "expected": "no_op"},
+    {"case": "new_domain_open", "prior": "singleton_open", "input": "singleton_open", "replace_incarnation": "2", "replace_namespace": "22222222-2222-4222-8222-222222222222", "expected": "retire_held_preserve_committed_floors_and_saturation"},
+    {"case": "same_incarnation_wrong_namespace", "prior": "singleton_open", "input": "singleton_open", "replace_namespace": "22222222-2222-4222-8222-222222222222", "expected": "reject"},
+    {"case": "delayed_old_domain", "prior_incarnation": "2", "input": "singleton_blend", "expected": "reject"},
+    {"case": "obsolete_connection_callback", "input": "singleton_open", "current_connection": false, "expected": "reject"},
+    {"case": "uncovered_committed_floor", "prior_committed_floor": {"42": 11}, "input": "singleton_blend", "expected": "reject"},
+    {"case": "retired_tuple_replay", "prior": "singleton_revoke", "input": "singleton_blend", "expected": "reject"},
+    {"case": "same_tuple_later_arrival", "prior": "singleton_blend", "input": "singleton_blend", "delay_ms": 200, "expected": "no_deadline_extension"},
+    {"case": "validation_uses_entire_ttl", "input": "singleton_blend", "server_queue_ms": 800, "expected": "do_not_emit"},
+    {"case": "open_disagrees_with_detail", "detail_members": [42, 43], "input": "singleton_open", "expected": "reject_without_fence_change"},
+    {"case": "singleton_open_folded_payload", "prior": "singleton_open", "input": "folded_blend", "replace_stream_session": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "replace_inner_fold_session": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": "reject"},
+    {"case": "folded_open_singleton_payload", "prior": "folded_open", "input": "singleton_blend", "replace_stream_session": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "expected": "reject"},
+    {"case": "resync", "prior": "singleton_blend", "expected": "retire_held_keep_session_and_evidence"},
+    {"case": "reconnect", "prior": "singleton_blend", "expected": "retire_held_end_session_require_new_open"},
+    {"case": "higher_incarnation_retired_floor", "prior_committed_floor": {"42": 11, "43": 25}, "prior_retired_member": 43, "input": "singleton_open", "replace_incarnation": "2", "replace_namespace": "22222222-2222-4222-8222-222222222222", "expected": "keep_all_committed_floors_clear_preview_fences"},
+    {"case": "incarnation_cannot_reset_visit_count", "prior_distinct_row_count": 32, "input": "singleton_open", "replace_incarnation": "2", "replace_namespace": "22222222-2222-4222-8222-222222222222", "expected": "keep_visit_count_and_saturation"}
+  ],
+  "duplicate_key_fragments_rejected_at_any_depth": ["{\"a\":1,\"a\":2}", "{\"a\":1,\"\\u0061\":2}"],
+  "invalid_uuids": ["00000000-0000-0000-0000-000000000000", "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"],
+  "invalid_incarnations": [0, 1, "0", "01", "-1", "1.0", "1e3", " 1", "9007199254740992"],
+  "maximum_incarnation": "9007199254740991",
+  "limits": {"frame_bytes": 16384, "members": 32, "active_rows": 32, "pending_origins": 2, "retired_threshold": 8, "retired_max_after_batch": 40}
+}

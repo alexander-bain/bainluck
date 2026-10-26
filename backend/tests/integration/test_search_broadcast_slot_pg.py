@@ -18,9 +18,10 @@ THE CONTROLS: `nfl` still serves every NFL game, and a team word beside the slot
 WHY THE ROUTE AND POSTGRES: the slot is `timezone('America/New_York', …)` with
 `extract(isodow …)`, wired inside two route bodies. SQLite serves neither.
 
-Kickoffs are placed branch-free (clock_sweep rule): each is a fixed Eastern
-weekday wall time, reached as `now + ((REF - now) mod 7 days)` — always the
-next occurrence, always inside the dropdown's seven-day pool.
+Kickoffs and both routes share a frozen clock. Each kickoff is a fixed Eastern
+weekday wall time, reached branch-free as `now + ((REF - now) mod 7 days)`.
+The frozen week has no DST change: a wall-clock week across fall-back can exceed
+the dropdown's seven elapsed days, so live wall time is not a valid fixture.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ pytestmark = [
 ]
 
 ET = ZoneInfo("America/New_York")
+SLOT_CLOCK = datetime(2026, 9, 28, 12, tzinfo=timezone.utc)
 NFL = "americanfootball_nfl"
 NCAAF = "americanfootball_ncaaf"
 
@@ -80,10 +82,24 @@ def _next_occurrence(ref: datetime) -> datetime:
     Same-tzinfo arithmetic is wall-clock in Python, so a DST change between the
     reference and now still lands on 8:15 PM Eastern.
     """
-    now_et = datetime.now(timezone.utc).astimezone(ET)
+    now_et = SLOT_CLOCK.astimezone(ET)
     # A minute of margin so the route's own `now` cannot overtake the kickoff.
     now_et = now_et + timedelta(minutes=1)
     return (now_et + (ref - now_et) % timedelta(days=7)).astimezone(timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def slot_clock(monkeypatch):
+    from app.routes import events as events_module
+
+    class SlotDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return SLOT_CLOCK.replace(tzinfo=None)
+            return SLOT_CLOCK.astimezone(tz)
+
+    monkeypatch.setattr(events_module, "datetime", SlotDateTime)
 
 
 @pytest.fixture
@@ -111,13 +127,15 @@ async def maker():
         session.add_all(sports.values())
         await session.flush()
         for i, (sport_key, (away, home), ref) in enumerate(SEEDS):
+            kickoff = _next_occurrence(ref)
+            assert SLOT_CLOCK < kickoff <= SLOT_CLOCK + timedelta(days=7)
             session.add(
                 Event(
                     sport_id=sports[sport_key].id,
                     external_id=f"slot-{i}",
                     home_team_name=home,
                     away_team_name=away,
-                    commence_time=_next_occurrence(ref),
+                    commence_time=kickoff,
                     status="scheduled",
                 )
             )

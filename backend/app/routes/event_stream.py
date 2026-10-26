@@ -39,10 +39,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -297,15 +299,17 @@ async def _fold_stream_ids(db: AsyncSession, event_id: int) -> list[int]:
 class _FoldSubscription:
     """Read contributor mailboxes concurrently through the existing shared hub."""
 
-    def __init__(self, hub):
+    def __init__(self, hub, *, authority_v3=False):
         self.hub = hub
+        self.authority_v3 = authority_v3
         self.subscriptions = {}
         self.pending = {}
 
     async def subscribe(self, event_ids):
         watch = getattr(self.hub, "watch_confirmation", None)
         for event_id in dict.fromkeys(event_ids):
-            subscription = await self.hub.subscribe(event_channel(event_id))
+            kwargs = {"authority_v3": True} if self.authority_v3 else {}
+            subscription = await self.hub.subscribe(event_channel(event_id), **kwargs)
             self.subscriptions[event_id] = subscription
             if callable(watch):
                 watch(subscription)
@@ -452,12 +456,16 @@ async def _stream(
     from app.utils.live_fanout import CLOSED, CONFIRMED, Recovery, fanout
 
     hub = fanout()
-    subscription = _FoldSubscription(hub)
+    protocol = getattr(request, "query_params", {}).get("preview_protocol")
+    authority_v3 = protocol == "authority-v3"
+    subscription = _FoldSubscription(hub, authority_v3=authority_v3)
+    stream_session = str(uuid4()) if authority_v3 else None
+    stream_authority = None
     preview_on = event_id in preview_route_events()
     # Old readers treat a folded frame as a singleton claim. Require explicit
     # vector-aware admission support before sending provisional folded values.
     folded_preview_capable = (
-        getattr(request, "query_params", {}).get("preview_protocol") in {"folded-v1", "folded-v2"}
+        protocol in {"folded-v1", "folded-v2", "authority-v3"}
     )
     started = asyncio.get_event_loop().time()
     _open_connections += 1
@@ -477,6 +485,21 @@ async def _stream(
     preview_floors = {}
     active_preview_origin = None
     preview_session = None
+
+    def preview_wire(frame):
+        if not authority_v3:
+            return sse_encode(json.dumps(frame), event="preview")
+        if stream_authority is None:
+            return ""  # no v3 preview before a validated current-domain open
+        envelope = {
+            "protocol": 3, "event_id": event_id,
+            "authority": stream_authority.wire_identity(),
+            "stream_session": stream_session, "frame": frame,
+        }
+        encoded = json.dumps(envelope, separators=(",", ":"), allow_nan=False)
+        if len(encoded.encode("utf-8")) > 16384:
+            raise ValueError("v3 preview envelope exceeds reader bound")
+        return sse_encode(encoded, event="preview_v3")
 
     def update_preview_session(frame=None, elapsed_ms=0):
         if preview_session is None:
@@ -512,12 +535,16 @@ async def _stream(
         return control, retained
 
     try:
-        await subscription.subscribe([event_id, *(contributor_ids or [])])
+        members = sorted(set([event_id, *(contributor_ids or [])]))
+        if authority_v3 and len(members) > 32:
+            yield sse_encode(json.dumps({"reason": "preview_membership_limit"}), event="reconnect")
+            return
+        await subscription.subscribe(members if authority_v3 else [event_id, *(contributor_ids or [])])
         if (preview_on and len(subscription.subscriptions) > 1
-                and getattr(request, "query_params", {}).get("preview_protocol") == "folded-v2"):
+                and protocol in {"folded-v2", "authority-v3"}):
             from app.utils.folded_blend_preview_v2 import FoldedPreviewSession
 
-            preview_session = FoldedPreviewSession(event_id, list(subscription.subscriptions))
+            preview_session = FoldedPreviewSession(event_id, list(subscription.subscriptions), session=stream_session)
         yield f"retry: {RETRY_MS}\n\n"
         yield sse_encode(json.dumps({
             "event_id": event_id,
@@ -568,7 +595,7 @@ async def _stream(
 
             projected_preview = update_preview_session()
             if projected_preview is not None:
-                yield sse_encode(json.dumps(projected_preview), event="preview")
+                yield preview_wire(projected_preview)
             if preview_session is not None and preview_session.reconnect_required:
                 # Withdraw the previous election before rolling over through
                 # the existing client reconnect path. Keeping this disabled
@@ -704,6 +731,9 @@ async def _stream(
                 pending_confirmations.add(origin_id)
                 continue
             if isinstance(payload, Recovery):
+                if authority_v3:
+                    yield sse_encode(json.dumps({"reason": "authority_transport_recovery"}), event="reconnect")
+                    return
                 # Fold subscriptions share a hub generation; emit it only once.
                 if payload.generation > recovery_generation:
                     recovery_generation = payload.generation
@@ -715,7 +745,7 @@ async def _stream(
                         preview_session.reset()
                         projected_preview = update_preview_session()
                         if projected_preview is not None:
-                            yield sse_encode(json.dumps(projected_preview), event="preview")
+                            yield preview_wire(projected_preview)
                     yield sse_encode(
                         json.dumps({"generation": recovery_generation}), event="resync"
                     )
@@ -739,6 +769,32 @@ async def _stream(
                     from app.utils.live_fanout import mailbox_age_ms
 
                     elapsed_ms = mailbox_age_ms(payload)
+                    if authority_v3:
+                        incoming_authority = getattr(payload, "authority", None)
+                        # Plain legacy JSON and replay never establish a domain.
+                        if incoming_authority is None or not preview_on:
+                            continue
+                        if stream_authority is not None and incoming_authority != stream_authority:
+                            yield sse_encode(json.dumps({"reason": "authority_changed"}), event="reconnect")
+                            return
+                        if stream_authority is None:
+                            stream_authority = incoming_authority
+                            yield sse_encode(json.dumps({
+                                "protocol": 3, "event_id": event_id,
+                                "authority": stream_authority.wire_identity(),
+                                "stream_session": stream_session, "members": members,
+                            }), event="preview_open_v3")
+                        # The open yield may wait behind transport backpressure.
+                        # Charge that wait too; never renew the original lease.
+                        elapsed_ms = mailbox_age_ms(payload)
+                        if len(subscription.subscriptions) == 1 and frame["preview"].get("kind") == "blend":
+                            ttl = frame["preview"].get("ttl_ms")
+                            if type(ttl) is not int or ttl <= math.ceil(elapsed_ms):
+                                yield sse_encode(json.dumps({"reason": "preview_expired_in_transit"}), event="reconnect")
+                                return
+                            frame = {**frame, "preview": {**frame["preview"], "ttl_ms": ttl - math.ceil(elapsed_ms)}}
+                    elif getattr(payload, "authority", None) is not None:
+                        continue
                     # #10090: a provisional blend has no revision and is
                     # never a `probability` frame. Forwarded under its own
                     # event name only for a canary event's unfolded page;
@@ -747,14 +803,14 @@ async def _stream(
                     if (preview_on and origin_id == event_id
                             and frame.get("event_id") == event_id
                             and len(subscription.subscriptions) == 1):
-                        yield sse_encode(json.dumps(frame), event="preview")
+                        yield preview_wire(frame)
                     elif (preview_on and folded_preview_capable
                           and frame.get("event_id") == origin_id
                           and len(subscription.subscriptions) > 1):
                         if preview_session is not None:
                             projected_preview = update_preview_session(frame, elapsed_ms)
                             if projected_preview is not None:
-                                yield sse_encode(json.dumps(projected_preview), event="preview")
+                                yield preview_wire(projected_preview)
                             continue
                         meta = frame.get("preview", {})
                         if meta.get("kind") == "revoke" and active_preview_origin == origin_id:
@@ -786,7 +842,7 @@ async def _stream(
                                 preview_session.reset()
                             projected_preview = update_preview_session()
                             if projected_preview is not None:
-                                yield sse_encode(json.dumps(projected_preview), event="preview")
+                                yield preview_wire(projected_preview)
                     control = _withdrawal_reconcile(frame, event_id, origin_id)
                     if control is not None:
                         note_floors(control.get("removal_rev"))
