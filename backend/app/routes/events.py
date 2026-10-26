@@ -27388,6 +27388,16 @@ async def _build_game_markets(
             # on them.
             if _game_total_leg_prices_a_period(t.get("outcome_name")):
                 continue
+            # #11488, second entrance: a leg naming ONE club is that club's
+            # total, not the game's. On `/events/15335537` the Polymarket
+            # container "Clippers vs. Thunder" carried "Thunder O/U 121.5 …
+            # 131.5"; basketball's band admits them, "Thunder O/U 127.5" (0.48)
+            # sorted below every full-game rung, and 7b served 193.5–211.5 at
+            # 48% after the game had gone 209 — then the container left the
+            # payload. A full-game leg names no club ("O/U 221.5", "Over 220.5
+            # points") or both, so only a one-club leg is left out.
+            if len(_clubs_named(t.get("outcome_name"))) == 1:
+                continue
             key = t["threshold"]
             incumbent = seen_thresholds.get(key)
             if incumbent is None:
