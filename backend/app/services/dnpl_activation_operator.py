@@ -86,6 +86,9 @@ def parse_plan(encoded: bytes) -> Plan:
     if not isinstance(data["steps"], list) or not 1 <= len(data["steps"]) <= MAX_STEPS:
         raise ValueError("bounded nonempty step list required")
     steps, seen, following = [], set(), None
+    # Starting durable step/predecessor state is unknown and belongs to runtime
+    # checks. Facts established by this plan must not become unknown again.
+    activation_step, retirement, allocated_here = None, None, False
     for item in data["steps"]:
         if not isinstance(item, dict) or set(item) != {"step", "expected", "candidate"}:
             raise ValueError("exact step fields required")
@@ -112,6 +115,39 @@ def parse_plan(encoded: bytes) -> Plan:
                 policy_fingerprint=candidate.policy_fingerprint,
             ):
                 raise ValueError("candidate must be the exact next allocation")
+            if retirement is True:
+                raise ValueError(
+                    "plan must acknowledge its predecessor before another allocation"
+                )
+            if allocated_here and expected.state != "ready":
+                raise ValueError("plan cannot abandon its own unready allocation")
+            activation_step, retirement, allocated_here = (
+                0,
+                expected.incarnation > 0,
+                True,
+            )
+        elif step in {"arm", "initialize", "ready"}:
+            if expected.state != "preparing":
+                raise ValueError("activation requires preparing authority")
+            if (expected.redis_run_id, expected.redis_master_replid) != primary:
+                raise ValueError("activation requires the authority's primary")
+            required = {"arm": 0, "initialize": 1, "ready": 2}[step]
+            if activation_step is not None and activation_step != required:
+                raise ValueError("plan skips or repeats an activation transition")
+            activation_step = min(required + 1, 2)
+        else:
+            if expected.incarnation == 0 or retirement is False:
+                raise ValueError("plan has no predecessor to acknowledge")
+            replacement = "after_primary_change" in step
+            same_primary = (
+                expected.redis_run_id,
+                expected.redis_master_replid,
+            ) == primary
+            if replacement == same_primary:
+                raise ValueError("retirement route does not match primary identity")
+            if not replacement and activation_step == 0:
+                raise ValueError("plan must arm before normal retirement")
+            retirement = False
         identity = (step, expected, candidate)
         if identity in seen:
             raise ValueError("duplicate operation in plan")

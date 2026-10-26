@@ -134,6 +134,15 @@ The plan file must be a private regular file owned by the invoking user, at most
   step must match the preceding step's declared transition. Duplicate operations
   are refused before execution.
 
+Plan-local lifecycle facts are retained during validation: preparing an
+allocation establishes step zero; arm precedes initialize, which precedes ready.
+The plan cannot abandon its own unready allocation or allocate again while its
+known predecessor remains unacknowledged. Activation requires preparing state
+and the authority's primary; retirement selects the matching normal or
+replacement route. Partial/readback plans beginning against an existing
+authority retain unknown starting step/predecessor state for runtime checks;
+they do not erase facts established by earlier steps in the same plan.
+
 All input is validated before clients are configured. The same explicit
 `DNPL_COMMAND_DATABASE_URL` and `DNPL_COMMAND_REDIS_URL` variables select targets;
 application defaults are never used. Unlike preview, operator PG connections

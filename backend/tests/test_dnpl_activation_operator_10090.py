@@ -6,13 +6,13 @@ import json
 import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 from app.services import dnpl_activation_operator as operator
 from app.services.dnpl_activation_runner import StepResult
-from app.services.dnpl_authority import Authority
+from app.services.dnpl_authority import Authority, preparing_candidate
 from app.services.dnpl_operation_hold import OperationHoldRefused
 
 
@@ -312,3 +312,110 @@ async def test_cancellation_keeps_plan_and_releases_hold(local_run, monkeypatch)
     assert (local_run["run_dir"] / "plan.json").exists()
     with pytest.raises(OperationHoldRefused, match="not acquired"):
         holds[0].check()
+
+
+def lifecycle_plan(sequence):
+    data = plan_data()
+    current = Authority(3, 0, UUID(int=0), UUID(int=0), "disabled", "", "", "")
+    data["steps"] = []
+    for step in sequence:
+        candidate = (
+            preparing_candidate(
+                current,
+                namespace=uuid4(),
+                operation_id=uuid4(),
+                redis_run_id="a" * 40,
+                redis_master_replid="b" * 40,
+                policy_fingerprint="p",
+            )
+            if step == "prepare"
+            else None
+        )
+        data["steps"].append(
+            {
+                "step": step,
+                "expected": asdict(current),
+                "candidate": None if candidate is None else asdict(candidate),
+            }
+        )
+        if candidate is not None:
+            current = candidate
+        elif step == "ready":
+            from dataclasses import replace
+
+            current = replace(current, state="ready")
+    return json.loads(json.dumps(data, default=str))
+
+
+@pytest.mark.parametrize(
+    "sequence",
+    [
+        ("prepare", "prepare", "arm"),
+        ("prepare", "initialize"),
+        ("prepare", "ready"),
+        ("prepare", "arm", "ready"),
+        ("prepare", "arm", "initialize", "prepare"),
+        ("prepare", "arm", "retire"),
+        ("prepare", "arm", "initialize", "ready", "initialize"),
+    ],
+)
+def test_impossible_lifecycle_is_refused_before_clients(
+    sequence, tmp_path, monkeypatch, capsys
+):
+    source = tmp_path / "plan"
+    source.write_text(json.dumps(lifecycle_plan(sequence)))
+    source.chmod(0o600)
+    configured = AsyncMock()
+    monkeypatch.setattr(operator, "configured_plan", configured)
+    assert (
+        operator.main(
+            [
+                "execute-plan",
+                "--plan",
+                str(source),
+                "--lock",
+                "/unused",
+                "--owner",
+                "unused",
+                "--run-dir",
+                str(tmp_path),
+            ]
+        )
+        == 2
+    )
+    configured.assert_not_awaited()
+    assert json.loads(capsys.readouterr().out)["status"] == "REFUSED"
+    assert not (tmp_path / "plan.json").exists()
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        ("initialize", "ready"),
+        ("ready",),
+        ("retire",),
+        ("acknowledge_retirement",),
+        ("arm", "retire", "initialize", "ready"),
+    ],
+)
+def test_existing_authority_partial_and_readback_plans_remain_valid(steps):
+    data = plan_data()
+    expected = data["steps"][0]["expected"]
+    data["steps"] = [
+        {"step": step, "expected": expected.copy(), "candidate": None} for step in steps
+    ]
+    assert len(parse(data).steps) == len(steps)
+
+
+@pytest.mark.parametrize(
+    "step", ["retire_after_primary_change", "readback_retirement_after_primary_change"]
+)
+def test_replacement_cleanup_plan_retains_distinct_primary_requirement(step):
+    data = plan_data()
+    data["steps"] = [
+        {"step": step, "expected": data["steps"][0]["expected"], "candidate": None}
+    ]
+    with pytest.raises(ValueError, match="primary"):
+        parse(data)
+    data["primary"] = "d" * 40 + ":" + "e" * 40
+    assert parse(data).steps[0].step == step
