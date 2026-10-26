@@ -31,6 +31,7 @@ import json
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -1432,9 +1433,9 @@ async def test_9936_operator_refuses_a_member_another_source_holds(world, tmp_pa
                          source="venue_grouping", confidence=0.9))
         await db.commit()
     manifest, revision = await _member_manifest(world, tmp_path, cid, [foreign])
-    doc = json.loads(open(manifest).read())
+    doc = json.loads(Path(manifest).read_text())
     doc["targets"][0]["edge_source"] = "theme_rule"  # the claim the store contradicts
-    open(manifest, "w").write(json.dumps(doc))
+    Path(manifest).write_text(json.dumps(doc))
     edges = await _edge_rows(world, cid)
 
     refused, code = await _operate(world, op.MEMBER_WITHDRAW, manifest, apply=True,
