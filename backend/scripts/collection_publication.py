@@ -620,10 +620,15 @@ THEME_AFTER_COMMIT = (
     "none, and that rebuild allocates the next revision without a ledger row"
 )
 
-THEME_UNDO_LIMIT = (
-    "the rebuild this withdrawal sends normally moves the hub one revision past "
-    "hub_revision without a ledger row; from then on this exact undo refuses as "
-    "a stale revision"
+#: #9936: what a theme undo needs, in place of the sports "hub still at R".
+THEME_UNDO_REQUIRES = (
+    "no ledger row for this collection after these withdrawals; the revision "
+    "may have moved past revision_floor without one (the page rebuild does)",
+    "a fresh readmit-members --restore-from-ledger preview of this backup; the "
+    "apply names that preview's live revision as --hub-revision ID:REVISION",
+    "the theme's current rule, run at apply time on the stored row, still keeps "
+    "each member at its backed-up class",
+    "explicit apply, actor, reason and evidence",
 )
 
 THEME_LATER_ASSEMBLY = (
@@ -649,12 +654,16 @@ class MemberDrift(OperatorRefused):
 class HubPlan:
     container_id: int
     slug: str
-    #: withdraw: the manifest's historical revision; restore: the backup's post.
-    expected_revision: int
+    #: withdraw: the manifest's historical revision; restore: the backup's post;
+    #: theme restore: the live revision the apply names (None in a preview).
+    expected_revision: int | None
     publication_state: str
     targets: tuple
     pin: dict
     variant: str = VARIANT_SPORTS
+    #: #9936 theme restore only: the backup's post_revision. The live revision
+    #: may be above it (page rebuilds bump without a ledger row), never below.
+    revision_floor: int | None = None
 
 
 @dataclass(frozen=True)
@@ -723,6 +732,8 @@ def _select_hubs(options: Options, hubs: list, label: str) -> tuple:
                 f"--hub-revision must name exactly the hubs operated: {sorted(wanted)}"
             )
         for hub in hubs:
+            if hub.revision_floor is not None:
+                continue  # a theme restore names its live revision, checked below
             if supplied[hub.container_id] != hub.expected_revision:
                 raise OperatorRefused(
                     f"container {hub.container_id}: supplied revision "
@@ -730,7 +741,28 @@ def _select_hubs(options: Options, hubs: list, label: str) -> tuple:
                     f"precondition {hub.expected_revision}; a changed precondition "
                     "needs a fresh reviewed plan"
                 )
-    return tuple(hubs)
+    return tuple(_bind_live_revision(hub, supplied) for hub in hubs)
+
+
+def _bind_live_revision(hub: HubPlan, supplied: dict) -> HubPlan:
+    """#9936: a theme undo binds to the live revision a fresh preview showed.
+
+    The collection's own page rebuild moves the revision past the backup's
+    ``post_revision`` without a ledger row, so the backup cannot name the
+    revision to apply at. The operator supplies it (``--hub-revision``) and the
+    apply compares it under the chain lock; it is never replaced by whatever
+    revision is live. Without one (a preview) the hub reads at any revision at
+    or above the floor and reports it.
+    """
+    if hub.revision_floor is None:
+        return hub
+    revision = supplied.get(hub.container_id)
+    if revision is not None and revision < hub.revision_floor:
+        raise OperatorRefused(
+            f"container {hub.container_id}: supplied revision {revision} is below "
+            f"the backup's post_revision {hub.revision_floor}"
+        )
+    return replace(hub, expected_revision=revision)
 
 
 _TARGET_FIELDS = {
@@ -981,6 +1013,9 @@ def load_restore_plan(options: Options) -> MemberPlan:
                 targets=tuple(sorted(targets, key=lambda t: t["edge_id"])),
                 pin=receipt,
                 variant=variant,
+                revision_floor=(
+                    receipt["post_revision"] if variant == VARIANT_THEME else None
+                ),
             )
         )
     if not hubs:
@@ -1140,7 +1175,11 @@ async def _hub_facts(session, hub: HubPlan) -> dict:
             f"container {hub.container_id} publication state drifted: "
             f"{facts['publication_state']!r}, reviewed {hub.publication_state!r}"
         )
-    if facts["revision"] != hub.expected_revision:
+    if hub.revision_floor is not None and facts["revision"] < hub.revision_floor:
+        raise corrections.StaleRevision(
+            hub.container_id, hub.revision_floor, facts["revision"]
+        )
+    if hub.expected_revision is not None and facts["revision"] != hub.expected_revision:
         raise corrections.StaleRevision(
             hub.container_id, hub.expected_revision, facts["revision"]
         )
@@ -1458,7 +1497,9 @@ async def withdraw_hub(
         },
     )
     if hub.variant == VARIANT_THEME:
-        receipt["undo"]["theme_limit"] = THEME_UNDO_LIMIT
+        undo = receipt["undo"]
+        del undo["hub_revision"]
+        undo.update(revision_floor=revision, requires=list(THEME_UNDO_REQUIRES))
     return receipt
 
 
@@ -1473,6 +1514,92 @@ async def _insert_preimage(session, preimage: dict, columns: dict) -> None:
         text(f"INSERT INTO event_edges ({target}) VALUES ({values})"),
         {f"v{i}": preimage[name] for i, name in enumerate(names)},
     )
+
+
+def _apply_clock() -> datetime:
+    """The clock a theme undo is judged at: the apply's own, never the
+    withdrawal's. A module function so a test can move it."""
+    return datetime.now(timezone.utc)
+
+
+async def _theme_member_rows(session, market_ids) -> dict:
+    """``{id: MemberRow}``: the stored rows exactly as a producer pass loads
+    them (outcomes included). Imported here, so sports never loads it."""
+    from app.tasks.theme_assembly import _load_markets
+
+    return await _load_markets(session, market_ids)
+
+
+def theme_undo_verdict(
+    slug: str, row, preimage_class, *, now: datetime, registry=None
+) -> tuple:
+    """#9936 G7: would the collection's own rule keep this member NOW, at its
+    backed-up class, had it never been withdrawn? ``(verdict, reason, evidence)``.
+
+    The exact undo re-creates a ``theme_rule`` edge without the rule re-proving
+    it; ledger, preimage and identity checks prove the member existed, not that
+    it is still justified (an AI result can cross retention by the clock alone).
+    So this runs the registry definition's ``decide()`` on the stored row and
+    feeds it through the real ``plan_container_pass`` with the member standing.
+    Missing evidence never allows. Composition from Fable's advisory packet
+    ``fable-9936-theme-undo-evidence-20261025`` (``undo_verdict``).
+    """
+    from app.tasks.theme_assembly import MemberDecision, plan_container_pass
+    from app.utils.theme_definitions import REGISTRY
+
+    defn = (REGISTRY if registry is None else registry).get(slug)
+    if defn is None:
+        return "refused", "rule_unavailable", {"slug": slug}
+    if row is None:
+        return "refused", "market_row_absent", {}
+    try:
+        decision = defn.decide(row, now=now)
+        plan = plan_container_pass(
+            [MemberDecision(row.id, decision, withdrawn=False)],
+            {row.id: preimage_class},  # as if the withdrawal had never happened
+            inventory_complete=True,
+            rule_version=defn.rule_version,
+        )
+    except Exception as exc:  # noqa: BLE001 — an undecidable row is never admitted
+        return "refused", "rule_undecidable", {"error": type(exc).__name__}
+    evidence = {
+        "rule_version": defn.rule_version,
+        "outcome": decision.outcome,
+        "rule_reason": decision.reason,
+        "rule_class": decision.edge_class,
+    }
+    if plan.edge_deletes:
+        return "refused", "not_justified_now", evidence
+    if plan.edge_upserts and plan.edge_upserts[0][1] != preimage_class:
+        return "refused", "class_changed", evidence
+    if plan.edge_upserts:
+        return "allowed", "rule_admits_now", evidence
+    return "allowed", "retained_as_member", evidence  # e.g. settle time unknown
+
+
+async def _theme_justified_now(session, hub: HubPlan, errors: list) -> dict:
+    """G7 for every target, under the market row locks, before any write."""
+    judged_at = _apply_clock()
+    rows = await _theme_member_rows(session, [t["market_id"] for t in hub.targets])
+    verdicts = {}
+    for target in hub.targets:
+        backed_up = target["preimage"].get("class")
+        verdict, reason, evidence = theme_undo_verdict(
+            hub.slug, rows.get(target["market_id"]), backed_up, now=judged_at
+        )
+        verdicts[target["edge_id"]] = {
+            "verdict": verdict,
+            "reason": reason,
+            **evidence,
+            "judged_at": judged_at.isoformat(),
+        }
+        if verdict != "allowed":
+            errors.append(
+                f"market {target['market_id']}: the theme's current rule does not "
+                f"keep it at class {backed_up!r} ({reason}"
+                f"{', ' + evidence['rule_reason'] if evidence.get('rule_reason') else ''})"
+            )
+    return verdicts
 
 
 def _theme_restore_provenance(hub: HubPlan, target: dict, classifier: dict) -> list:
@@ -1614,6 +1741,9 @@ async def restore_hub(
         }
         for missing in sorted(set(receipt_ids) - present):
             errors.append(f"match receipt {missing} no longer exists")
+    verdicts = {}
+    if hub.variant == VARIANT_THEME:
+        verdicts = await _theme_justified_now(session, hub, errors)
     if errors:
         raise MemberDrift(hub.container_id, errors)
 
@@ -1637,7 +1767,14 @@ async def restore_hub(
         ],
     )
     if hub.variant == VARIANT_THEME:
-        receipt.update(variant=VARIANT_THEME, after_commit=THEME_AFTER_COMMIT)
+        receipt.update(
+            variant=VARIANT_THEME,
+            after_commit=THEME_AFTER_COMMIT,
+            revision_floor=hub.revision_floor,
+            apply_hub_revision=f"{hub.container_id}:{facts['revision']}",
+        )
+        for entry in receipt["targets"]:
+            entry["justified_now"] = verdicts[entry["edge_id"]]
     if not options.apply:
         receipt["would_be_revision"] = facts["revision"] + len(hub.targets)
         return receipt

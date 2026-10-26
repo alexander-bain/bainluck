@@ -9,7 +9,7 @@ import builtins
 import json
 import sys
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1830,27 +1830,91 @@ async def test_the_default_reader_is_the_pages_own(monkeypatch):
 # tests/integration/test_theme_collections_9935_pg.py.
 
 
+THEME_MARKETS = {
+    # id: (slug, venue, external_id, name, market_type, category)
+    71001: (
+        "ai",
+        "kalshi",
+        "KXCLAUDE-27-C6",
+        "Will Anthropic release Claude 6 before 2027?",
+        None,
+        "tech",
+    ),
+    71002: (
+        "ai",
+        "polymarket",
+        "PM-OAI-IPO",
+        "OpenAI IPO before 2027?",
+        "claim",
+        "tech",
+    ),
+    71003: (
+        "ai",
+        "polymarket",
+        "PM-GROK5",
+        "Will xAI release Grok 5 by December?",
+        None,
+        "tech",
+    ),
+    72001: (
+        "oscars-2027",
+        "kalshi",
+        "KXOSCARPIC-27",
+        "Oscar Winner: Best Picture",
+        "field",
+        "entertainment",
+    ),
+    72002: (
+        "oscars-2027",
+        "polymarket",
+        "PM-OSC-DIR",
+        "Oscars 2027: Best Director Winner",
+        "field",
+        "entertainment",
+    ),
+}
+THEME_IDS = {"ai": 101, "oscars-2027": 102}
+
+
+def _member_rows(world, ids):
+    from app.tasks.theme_assembly import MemberRow
+
+    return {
+        i: MemberRow(
+            id=i,
+            name=m["name"],
+            source=m["source"],
+            external_id=m["external_id"],
+            status=m["status"],
+            llm_sport_category=m["llm_sport_category"],
+            settled_at=m["settled_at"],
+            market_metadata=m["market_metadata"],
+        )
+        for i in ids
+        if (m := world.state["markets"].get(i)) is not None
+    }
+
+
+@pytest.fixture(autouse=True)
+def _theme_rows_from_the_double(monkeypatch):
+    """The SQL double has no ORM; G7 reads the same rows from its state."""
+
+    async def rows(session, ids):
+        return _member_rows(session.world, ids)
+
+    monkeypatch.setattr(operator, "_theme_member_rows", rows)
+
+
 def _theme_world(tmp_path):
     """AI (101: three members) and Oscars 2027 (102: two), both published at
-    revision 5; the manifest withdraws one member of each."""
+    revision 5, each edge at the class the theme's own rule gives it now; the
+    manifest withdraws the second member of each."""
+    from app.utils.theme_definitions import REGISTRY
+
     world = World()
     world.receipts = set()
-    layout = {
-        101: (
-            "ai",
-            [
-                (71001, None, "kalshi"),
-                (71002, "claim", "polymarket"),
-                (71003, None, "polymarket"),
-            ],
-        ),
-        102: (
-            "oscars-2027",
-            [(72001, "field", "kalshi"), (72002, "field", "polymarket")],
-        ),
-    }
     targets, pins, edge_id = [], {}, 9000
-    for cid, (slug, members) in layout.items():
+    for slug, cid in THEME_IDS.items():
         world.state["containers"][cid] = {
             "slug": slug,
             "pub": "published",
@@ -1868,16 +1932,27 @@ def _theme_world(tmp_path):
                 "evidence": None,
             }
         )
-        for n, (market_id, market_type, venue) in enumerate(members):
+        members = [(i, m) for i, m in THEME_MARKETS.items() if m[0] == slug]
+        for n, (
+            market_id,
+            (_, venue, external_id, name, market_type, cat),
+        ) in enumerate(members):
             edge_id += 1
             world.state["markets"][market_id] = {
                 "source": venue,
-                "external_id": f"T-{market_id}",
-                "name": f"Theme question {market_id}?",
+                "external_id": external_id,
+                "name": name,
                 "market_type": market_type,
                 "event_id": None,
+                "status": "open",
+                "llm_sport_category": cat,
+                "settled_at": None,
+                "market_metadata": None,
             }
-            world.edge(edge_id, cid, "market", market_id, "side_question")
+            row = _member_rows(world, [market_id])[market_id]
+            decision = REGISTRY[slug].decide(row, now=datetime.now(timezone.utc))
+            assert decision.admitted, (name, decision)
+            world.edge(edge_id, cid, "market", market_id, decision.edge_class)
             world.state["edges"][edge_id].update(
                 source="theme_rule", confidence="1.000"
             )
@@ -1888,14 +1963,14 @@ def _theme_world(tmp_path):
                         container_slug=slug,
                         expected_revision=5,
                         edge_id=edge_id,
-                        edge_class="side_question",
+                        edge_class=decision.edge_class,
                         edge_source="theme_rule",
                         child_type="market",
                         market_id=market_id,
                         venue=venue,
                         market_type=market_type,
                         event_id=None,
-                        external_id=f"T-{market_id}",
+                        external_id=external_id,
                     )
                 )
         pins[str(cid)] = {
@@ -2021,7 +2096,9 @@ async def test_a_theme_apply_withdraws_only_the_reviewed_member(tmp_path):
         assert hub["receipt_kind"] == "withdraw_apply" and hub["variant"] == "theme"
         assert (hub["pre_revision"], hub["post_revision"]) == (5, 6)
         assert hub["games"] == {"before": 0, "after": 0}
-        assert hub["undo"]["theme_limit"] == operator.THEME_UNDO_LIMIT
+        undo = hub["undo"]
+        assert "hub_revision" not in undo and undo["revision_floor"] == 6
+        assert undo["requires"] == list(operator.THEME_UNDO_REQUIRES)
         (target,) = hub["targets"]
         assert target["preimage"] == before[target["edge_id"]]
         assert target["preimage"]["source"] == "theme_rule"
@@ -2187,24 +2264,175 @@ async def test_a_bare_readmit_lifts_a_theme_withdrawal_and_writes_no_edge(tmp_pa
     assert target["edge_id"] not in world.committed["edges"]
 
 
-@pytest.mark.asyncio
-async def test_a_theme_undo_after_its_own_rebuild_refuses_as_stale(tmp_path):
-    """#9936 CONFLICT, returned to Root rather than loosened here: the rebuild
-    the withdrawal sends allocates the next revision with no ledger row, and
-    the unchanged exact-undo guard then refuses as a stale revision."""
-    world, _, backup = await _theme_backup(tmp_path)
-    world.state["containers"][101]["revision"] = 7  # the rebuild's bump: no ledger row
+def _rebuilt(world, *cids):
+    """The page rebuild each withdrawal sends: one bump, no ledger row."""
+    for cid in cids:
+        world.state["containers"][cid]["revision"] += 1
     world.seal()
+
+
+@pytest.mark.asyncio
+async def test_a_theme_undo_after_its_own_rebuild_binds_the_fresh_previews_revision(
+    tmp_path,
+):
+    """#9936 G3: the rebuild moved the revision past post_revision with no
+    ledger row. A fresh preview names the live revision; the apply must supply
+    exactly that one; the backup's post_revision is a floor, never substituted."""
+    world, withdrawn, backup = await _theme_backup(tmp_path)
+    original = {
+        t["edge_id"]: t["preimage"] for h in withdrawn["hubs"] for t in h["targets"]
+    }
+    _rebuilt(world, 101, 102)
+
+    statements = len(world.statements)
+    preview, code = await operator.run_members(restore_options(backup), world.factory)
+    assert code == 0 and preview["status"] == "preview", preview
+    for hub in preview["hubs"]:
+        assert (hub["revision_floor"], hub["pre_revision"]) == (6, 7)
+        assert hub["apply_hub_revision"] == f"{hub['container_id']}:7"
+        assert hub["would_be_revision"] == 8
+        assert hub["targets"][0]["justified_now"]["verdict"] == "allowed"
+    assert world.commits == 2 and _no_writes_after(world, statements)
+
+    commits = world.commits
+    old, code = await operator.run_members(
+        member_apply(backup, {101: 6, 102: 6}, operator.MEMBER_RESTORE), world.factory
+    )
+    assert code == 1 and old["committed_hubs"] == [] and world.commits == commits
+    assert old["hubs"][0]["current_revision"] == 7  # the post pin is stale, not reused
+
+    with pytest.raises(
+        operator.OperatorRefused, match="below the backup's post_revision 6"
+    ):
+        operator.load_member_plan(
+            member_apply(backup, {101: 5, 102: 7}, operator.MEMBER_RESTORE)
+        )
+
     doc, code = await operator.run_members(
+        member_apply(backup, {101: 7, 102: 7}, operator.MEMBER_RESTORE), world.factory
+    )
+    assert code == 0 and doc["status"] == "applied", doc
+    for edge_id, row in original.items():
+        assert world.committed["edges"][edge_id] == row
+    for hub in doc["hubs"]:
+        assert (hub["pre_revision"], hub["post_revision"]) == (7, 8)
+        assert hub["targets"][0]["justified_now"]["reason"] == "rule_admits_now"
+
+    replay, code = await operator.run_members(
+        member_apply(backup, {101: 8, 102: 8}, operator.MEMBER_RESTORE), world.factory
+    )
+    assert code == 1 and replay["committed_hubs"] == []
+    assert "intervening correction" in json.dumps(replay["hubs"][0]["errors"])
+
+
+def _no_writes_after(world, index):
+    return not any(
+        sql.startswith(("DELETE", "INSERT")) or "RETURNING" in sql
+        for sql, _ in world.statements[index:]
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_bump_between_preview_and_apply_refuses_the_theme_undo(tmp_path):
+    """G3 race: the preview saw 7; another ledger-less bump lands before the
+    apply's lock. The apply refuses; it never takes the newer revision."""
+    world, _, backup = await _theme_backup(tmp_path)
+    _rebuilt(world, 101)
+    preview, code = await operator.run_members(
         restore_options(backup, container_id=101), world.factory
     )
-    assert code == 1 and doc["hubs"][0]["status"] == "refused"
-    assert doc["hubs"][0]["current_revision"] == 7
-    assert "revision 7, not 6" in doc["hubs"][0]["error"]
-    with pytest.raises(operator.OperatorRefused, match="verified precondition 6"):
-        operator.load_member_plan(
-            member_apply(backup, {101: 7}, operator.MEMBER_RESTORE, container_id=101)
-        )
+    assert code == 0 and preview["hubs"][0]["apply_hub_revision"] == "101:7"
+
+    def bump(w):
+        w.state["containers"][101]["revision"] += 1  # under the lock, before the read
+
+    world.on_lock = bump
+    commits, statements = world.commits, len(world.statements)
+    doc, code = await operator.run_members(
+        member_apply(backup, {101: 7}, operator.MEMBER_RESTORE, container_id=101),
+        world.factory,
+    )
+    assert code == 1 and doc["committed_hubs"] == [] and world.commits == commits
+    assert doc["hubs"][0]["current_revision"] == 8
+    assert not any(
+        sql.startswith(("DELETE", "INSERT")) or "RETURNING" in sql
+        for sql, _ in world.statements[statements:]
+    )
+
+
+async def _resolved_ai_backup(tmp_path, settled_days_ago):
+    """The AI target resolved ``settled_days_ago`` before now, withdrawn now."""
+    world, manifest, path = _theme_world(tmp_path)
+    market = world.state["markets"][manifest["targets"][0]["market_id"]]
+    market.update(
+        status="resolved",
+        settled_at=datetime.now(timezone.utc) - timedelta(days=settled_days_ago),
+    )
+    world.seal()
+    doc, code = await operator.run_members(
+        member_apply(path, {101: 5}, container_id=101), world.factory
+    )
+    assert code == 0, doc
+    return world, doc, _write(tmp_path, "AI-BACKUP.json", doc)
+
+
+@pytest.mark.asyncio
+async def test_a_theme_undo_refuses_a_member_the_clock_moved_out_of_retention(
+    tmp_path, monkeypatch
+):
+    """#9936 G7: nothing in the row changed, only the clock. Every identity
+    pin matches; the AI rule now retires the result, so the undo writes nothing."""
+    world, _, backup = await _resolved_ai_backup(tmp_path, settled_days_ago=3)
+    later = datetime.now(timezone.utc) + timedelta(days=17)  # 20 days after settling
+    monkeypatch.setattr(operator, "_apply_clock", lambda: later)
+    commits, statements = world.commits, len(world.statements)
+    for options in (
+        restore_options(backup, container_id=101),
+        member_apply(backup, {101: 6}, operator.MEMBER_RESTORE, container_id=101),
+    ):
+        doc, code = await operator.run_members(options, world.factory)
+        assert code == 1 and doc["committed_hubs"] == [], doc
+        errors = json.dumps(doc["hubs"][0]["errors"])
+        assert "not_justified_now, resolved_beyond_retention" in errors
+    assert world.commits == commits
+    assert not any(
+        sql.startswith(("DELETE", "INSERT")) or "RETURNING" in sql
+        for sql, _ in world.statements[statements:]
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_theme_undo_within_retention_is_still_allowed(tmp_path, monkeypatch):
+    world, _, backup = await _resolved_ai_backup(tmp_path, settled_days_ago=3)
+    monkeypatch.setattr(
+        operator, "_apply_clock", lambda: datetime.now(timezone.utc) + timedelta(days=5)
+    )
+    doc, code = await operator.run_members(
+        member_apply(backup, {101: 6}, operator.MEMBER_RESTORE, container_id=101),
+        world.factory,
+    )
+    assert code == 0 and doc["status"] == "applied", doc
+    verdict = doc["hubs"][0]["targets"][0]["justified_now"]
+    assert (verdict["verdict"], verdict["rule_version"]) == ("allowed", "ai-subject@2")
+
+
+@pytest.mark.asyncio
+async def test_a_theme_undo_refuses_when_the_stored_row_now_says_another_subject(
+    tmp_path,
+):
+    """Identity (venue, external id, type, game link, name) unchanged; the
+    stored category moved, so the rule excludes the member. No write."""
+    world, withdrawn, backup = await _theme_backup(tmp_path)
+    (target,) = withdrawn["hubs"][0]["targets"]
+    world.state["markets"][target["market_id"]]["llm_sport_category"] = "sports"
+    world.seal()
+    commits = world.commits
+    doc, code = await operator.run_members(
+        member_apply(backup, {101: 6}, operator.MEMBER_RESTORE, container_id=101),
+        world.factory,
+    )
+    assert code == 1 and world.commits == commits
+    assert "not_justified_now, wrong_category" in json.dumps(doc["hubs"][0]["errors"])
 
 
 @pytest.mark.parametrize(

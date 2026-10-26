@@ -1274,12 +1274,16 @@ async def test_9936_operator_withdraws_an_ai_member_while_stopped_and_the_page_i
     assert code == 1 and stale["status"] == "refused" and stale["committed_hubs"] == []
     assert stale["hubs"][0]["current_revision"] == after["revision"]
 
-    # #9936 CONFLICT, returned rather than loosened: the rebuild moved the
-    # revision with no ledger row, so the unchanged exact undo refuses as stale.
+    # The rebuild moved the revision with no ledger row. A fresh undo preview
+    # names that live revision; the backup's own post_revision is refused.
     backup = tmp_path / "BACKUP.json"
     backup.write_text(json.dumps(doc))
     undo, code = await _operate(world, op.MEMBER_RESTORE, str(backup))
-    assert code == 1 and undo["hubs"][0]["current_revision"] == after["revision"]
+    assert code == 0, undo
+    assert undo["hubs"][0]["apply_hub_revision"] == f"{cid}:{after['revision']}"
+    stale_undo, code = await _operate(world, op.MEMBER_RESTORE, str(backup), apply=True,
+                                      revision=hub["post_revision"], cid=cid)
+    assert code == 1 and stale_undo["hubs"][0]["current_revision"] == after["revision"]
     assert gone not in _page_ids(await _get(world, AI_SLUG))
     assert world["sent"] == []
 
@@ -1320,10 +1324,11 @@ async def test_9936_operator_withdraws_every_oscars_member_while_stopped_to_an_h
 async def test_9936_operator_exact_undo_restores_the_member_while_stopped_unlike_a_bare_readmit(
     world, monkeypatch, tmp_path
 ):
-    """Two members, two corrections, assembly stopped. The exact undo (taken
-    before the rebuild moved the revision) re-inserts the very edge row and the
-    member is back on the page; a bare readmit lifts the withdrawal and the
-    page stays without its member until the theme rule re-proves it."""
+    """Two members, two corrections, assembly stopped. The exact undo, taken
+    after the withdrawal's own rebuild moved the revision, re-inserts the very
+    edge row and the member is back on the page; a bare readmit lifts the
+    withdrawal and the page stays without its member until the theme rule
+    re-proves it. A correction racing the undo, and a replay, both refuse."""
     from scripts import collection_publication as op
     from app.tasks.theme_assembly import (
         _run_assemble_theme_collections,
@@ -1338,27 +1343,35 @@ async def test_9936_operator_exact_undo_restores_the_member_while_stopped_unlike
     monkeypatch.setenv("THEME_ASSEMBLY_ENABLED", "false")
     edges = await _edge_rows(world, cid)
 
-    # Exact undo: withdraw, then restore from the receipt at its post revision.
+    # Exact undo: withdraw, let the rebuild finish, preview fresh, restore.
     manifest, revision = await _member_manifest(world, tmp_path, cid, [undone])
     doc, code = await _operate(world, op.MEMBER_WITHDRAW, manifest, apply=True,
                                revision=revision, cid=cid)
     assert code == 0, doc
+    assert (await _run_rebuild_theme_snapshot(cid))["terminal"] == "complete"
+    world["sent"].clear()
+    assert undone not in _page_ids(await _get(world, AI_SLUG))
     backup = tmp_path / "BACKUP.json"
     backup.write_text(json.dumps(doc))
-    post = doc["hubs"][0]["post_revision"]
+    post, live = doc["hubs"][0]["post_revision"], await _live_revision(world, cid)
+    assert live == post + 1  # the rebuild's bump: no ledger row
     preview, code = await _operate(world, op.MEMBER_RESTORE, str(backup))
-    assert code == 0 and preview["hubs"][0]["would_be_revision"] == post + 1, preview
+    assert code == 0 and preview["hubs"][0]["apply_hub_revision"] == f"{cid}:{live}", preview
+    assert preview["hubs"][0]["targets"][0]["justified_now"]["verdict"] == "allowed"
     restored, code = await _operate(world, op.MEMBER_RESTORE, str(backup), apply=True,
-                                    revision=post, cid=cid)
+                                    revision=live, cid=cid)
     assert code == 0 and restored["status"] == "applied", restored
     (hub,) = restored["hubs"]
     assert hub["later_assembly"] == op.THEME_LATER_ASSEMBLY
     assert await _edge_rows(world, cid) == edges  # the same row: id, class, created_at
-    assert world["sent"] == [(REBUILD, [cid], "background")] * 2
+    assert world["sent"] == [(REBUILD, [cid], "background")]
     world["sent"].clear()
     assert (await _run_rebuild_theme_snapshot(cid))["terminal"] == "complete"
     page = await _get(world, AI_SLUG)
     assert undone in _page_ids(page)
+    replay, code = await _operate(world, op.MEMBER_RESTORE, str(backup), apply=True,
+                                  revision=await _live_revision(world, cid), cid=cid)
+    assert code == 1 and replay["committed_hubs"] == [] and world["sent"] == []
 
     # Bare readmit: withdraw through the operator, then lift with the helper.
     manifest, revision = await _member_manifest(world, tmp_path, cid, [lifted], "M2.json")
@@ -1443,3 +1456,91 @@ async def test_9936_operator_refuses_a_member_another_source_holds(world, tmp_pa
     assert code == 1 and refused["status"] == "refused"
     assert "expected 'theme_rule'" in json.dumps(refused["hubs"][0]["errors"])
     assert await _edge_rows(world, cid) == edges and world["sent"] == []
+
+
+@pytest.mark.asyncio
+async def test_9936_operator_undo_refuses_a_correction_that_lands_after_its_preview(
+    world, monkeypatch, tmp_path
+):
+    """G3 race: the preview named revision L; another member's withdrawal
+    commits before the apply. The apply refuses and writes nothing."""
+    from scripts import collection_publication as op
+    from app.tasks.theme_assembly import _run_rebuild_theme_snapshot
+    from app.utils import container_corrections as cc
+
+    async with world["Session"]() as db:
+        ids = await _seed_ai_markets(db)
+    cid = await _assemble_and_publish(world)
+    monkeypatch.setenv("THEME_ASSEMBLY_ENABLED", "false")
+    target, other = ids["PM-GEM3"], ids["PM-GROK5"]
+    manifest, revision = await _member_manifest(world, tmp_path, cid, [target])
+    doc, code = await _operate(world, op.MEMBER_WITHDRAW, manifest, apply=True,
+                               revision=revision, cid=cid)
+    assert code == 0, doc
+    assert (await _run_rebuild_theme_snapshot(cid))["terminal"] == "complete"
+    backup = tmp_path / "BACKUP.json"
+    backup.write_text(json.dumps(doc))
+    preview, code = await _operate(world, op.MEMBER_RESTORE, str(backup))
+    assert code == 0, preview
+    live = await _live_revision(world, cid)
+
+    async with world["Session"]() as db:
+        await cc.withdraw_member(db, container_id=cid, child_type="market",
+                                 child_id=other, reason="racing", actor="test")
+        await db.commit()
+    world["sent"].clear()
+    edges, ledger = await _edge_rows(world, cid), await _ledger_ids(world, cid)
+    raced, code = await _operate(world, op.MEMBER_RESTORE, str(backup), apply=True,
+                                 revision=live, cid=cid)
+    assert code == 1 and raced["committed_hubs"] == [], raced
+    assert raced["hubs"][0]["current_revision"] == live + 1
+    assert await _edge_rows(world, cid) == edges and await _ledger_ids(world, cid) == ledger
+    assert world["sent"] == [] and target not in await _edge_ids(world, cid)
+
+
+@pytest.mark.asyncio
+async def test_9936_operator_undo_refuses_an_ai_result_the_clock_moved_beyond_retention(
+    world, monkeypatch, tmp_path
+):
+    """G7: the AI result settled 3 days before its withdrawal; 17 days later
+    nothing in its row has changed, only the clock. The rule now retires it,
+    so the undo refuses with zero writes and the corrected page stands."""
+    from datetime import timedelta
+
+    from scripts import collection_publication as op
+    from app.tasks.theme_assembly import _run_rebuild_theme_snapshot
+
+    async with world["Session"]() as db:
+        ids = await _seed_ai_markets(db)
+        settled = datetime.now(timezone.utc) - timedelta(days=3)
+        await db.execute(text(
+            "UPDATE futures_markets SET status = 'resolved', settled_at = :t WHERE id = :m"),
+            {"t": settled, "m": ids["PM-GROK5"]})
+        await db.commit()
+    cid = await _assemble_and_publish(world)
+    gone = ids["PM-GROK5"]
+    assert gone in _page_ids(await _get(world, AI_SLUG))  # within retention: a member
+    monkeypatch.setenv("THEME_ASSEMBLY_ENABLED", "false")
+    manifest, revision = await _member_manifest(world, tmp_path, cid, [gone])
+    doc, code = await _operate(world, op.MEMBER_WITHDRAW, manifest, apply=True,
+                               revision=revision, cid=cid)
+    assert code == 0, doc
+    assert (await _run_rebuild_theme_snapshot(cid))["terminal"] == "complete"
+    world["sent"].clear()
+    backup = tmp_path / "BACKUP.json"
+    backup.write_text(json.dumps(doc))
+    live = await _live_revision(world, cid)
+    edges, ledger, store = (await _edge_rows(world, cid), await _ledger_ids(world, cid),
+                            dict(world["store"]))
+
+    later = datetime.now(timezone.utc) + timedelta(days=17)  # 20 days after settling
+    monkeypatch.setattr(op, "_apply_clock", lambda: later)
+    preview, code = await _operate(world, op.MEMBER_RESTORE, str(backup))
+    assert code == 1, preview
+    assert "not_justified_now, resolved_beyond_retention" in json.dumps(preview["hubs"][0]["errors"])
+    refused, code = await _operate(world, op.MEMBER_RESTORE, str(backup), apply=True,
+                                   revision=live, cid=cid)
+    assert code == 1 and refused["committed_hubs"] == [], refused
+    assert await _edge_rows(world, cid) == edges and await _ledger_ids(world, cid) == ledger
+    assert await _live_revision(world, cid) == live and world["sent"] == []
+    assert world["store"] == store and gone not in _page_ids(await _get(world, AI_SLUG))

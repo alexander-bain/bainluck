@@ -149,19 +149,42 @@ stopped throughout.
 Undo has two separate meanings. A bare `readmit_member` only lifts the
 withdrawal and writes no edge: the member returns when an enabled assembly pass
 proves it again under the theme's rule. This operator does not offer it. The
-exact undo (`--restore-from-ledger --backup`) re-inserts the backed-up edge row
-under the unchanged sports guards: hub at the backup's `post_revision`, no later
-ledger row, same edge columns, free slot, unchanged market identity. Its theme
-variant also requires the backed-up row to be this collection's own
-`theme_rule` edge for that market. Its receipt states that the theme's rule,
-not this tool, decides the restored member once assembly runs. The sports
-"never re-proves" wording is not used for themes.
+exact undo (`--restore-from-ledger --backup`) re-inserts the backed-up edge row.
+It keeps the sports checks: no later ledger row for the collection (strict, any
+member), same edge columns, a free slot and edge id, unchanged market identity,
+and the same publication state. Its theme variant adds the following:
 
-**Known limit.** The rebuild a withdrawal sends normally moves the hub one
-revision past `post_revision`, with no ledger row. After that rebuild has run,
-the exact undo refuses as a stale revision. The withdrawal receipt says so in
-`undo.theme_limit`.
+- **Provenance.** The backed-up row must be this collection's own `theme_rule`
+  edge for that market.
+- **Revision (G3).** The page rebuild a withdrawal sends moves the revision
+  one past `post_revision` with no ledger row, so the backup cannot name the
+  revision to apply at. `post_revision` is a floor: the live revision may be
+  above it, never below. A fresh restore preview reports the live revision as
+  `apply_hub_revision`, and the apply must name exactly that value in
+  `--hub-revision ID:REVISION`. It is compared under the chain lock and never
+  replaced by whatever is live, so any bump or correction between the preview
+  and the apply refuses. The withdrawal receipt's `undo` carries
+  `revision_floor` and these `requires`, not the sports `hub_revision`.
+- **Justified now (G7).** Under the market row locks, the theme's current
+  definition runs on the stored row at the apply's own clock, through the real
+  planner, as if the member had never been withdrawn. The member is restored
+  only if it is kept at its backed-up class: admitted, or retained as a
+  standing member (an AI result whose settle time is unknown). Otherwise the
+  undo refuses with the rule's reason (for example
+  `resolved_beyond_retention`, `wrong_category`, `other_edition`,
+  `class_changed`), and so does a missing row, an unknown definition or a rule
+  that raises. Each restore target records its verdict in `justified_now`
+  (rule version, outcome, reason, class, time judged).
 
-Coverage: `backend/tests/test_collection_publication_operator.py` (SQL double,
-real helpers) and `backend/tests/integration/test_theme_collections_9935_pg.py`
-(real Postgres, the real rebuild and page reader; CI `shared-tail`, PG15).
+The receipt states that the theme's rule, not this tool, decides the restored
+member once assembly runs. The sports "never re-proves" wording is not used
+for themes.
+
+Coverage:
+
+- `backend/tests/test_collection_publication_operator.py`: SQL double, real
+  helpers.
+- `backend/tests/test_theme_undo_verdict_9936.py`: G7 on the real rule and
+  planner.
+- `backend/tests/integration/test_theme_collections_9935_pg.py`: real Postgres,
+  with the real rebuild and page reader (CI `shared-tail`, PG15).
