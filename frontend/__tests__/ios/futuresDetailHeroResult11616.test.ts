@@ -9,10 +9,17 @@ const share = source.split("func futuresDetailShareMessage")[1].split("// MARK: 
 const hero = source.split("private func heroSection")[1].split("private func heroBackground")[0];
 
 test("hero selection admits an explicit lead result and a supported winner through the shared row rule", () => {
-  expect(selection).toContain("FuturesDetailRowValue.of(lead,");
-  expect(selection).toContain("FuturesDetailRowValue.of($0,");
-  expect(selection).toContain("== .verdict(.won)");
+  // Native 0d239c9d (N1/N2) routes every candidate through one `value` closure
+  // over the shared row rule instead of calling it inline per candidate.
+  expect(selection).toContain(
+    "FuturesDetailRowValue.of(outcome, marketStatus: market.status, marketSource: market.source)",
+  );
+  expect(selection).toContain("value(lead) != .none");
+  expect(selection).toContain("value($0) == .verdict(.won)");
+  expect(selection).not.toMatch(/\.isWinner == true|heroWearsWinnerBadge/);
   expect(selection.indexOf("market.leadOutcomeId")).toBeLessThan(selection.indexOf("let winner"));
+  // N2: a resolved board with no supported winner never heads with a loser.
+  expect(selection).toContain("value($0) != .verdict(.lost)");
 });
 test("hero value uses the shared decision and only the price branch prints movement", () => {
   expect(hero).toContain("FuturesDetailRowValue.of($0,");
