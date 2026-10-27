@@ -1277,7 +1277,9 @@ def _live_twin_first(markets: list, now: Optional[datetime] = None) -> list:
     return out
 
 
-def _search_market_is_past_and_frozen(market, now: Optional[datetime] = None) -> bool:
+def _search_market_is_past_and_frozen(
+    market, now: Optional[datetime] = None, *, out_division_labels=None
+) -> bool:
     """A Kalshi board whose own ticker date has passed and whose prices stopped.
 
     #8852 — `?q=recession` (390px, 2026-09-26) served "What will Truist Financial
@@ -1311,7 +1313,7 @@ def _search_market_is_past_and_frozen(market, now: Optional[datetime] = None) ->
     stamp = _newest_price_stamp(market)
     return (
         stamp is not None and stamp < now - _SEARCH_TWIN_FROZEN_AFTER
-        and not _search_supported_result_ids(market)
+        and not _search_card_result_ids(market, out_division_labels=out_division_labels)
     )
 
 
@@ -13269,7 +13271,9 @@ async def search_events(
             out_division_labels=_out_divisions_by_market.get(m.id),
         )
         # #8852: a promoted contender that closed in April is not the headline.
-        and not _search_market_is_past_and_frozen(m)
+        and not _search_market_is_past_and_frozen(
+            m, out_division_labels=_out_divisions_by_market.get(m.id)
+        )
         # #8734: a promoted headline contender is asked too.
         and not _answers_a_served_game_card(m, _served_event_ids)
     ]
@@ -15831,7 +15835,9 @@ async def typeahead_search(
         # answer (`top_outcomes` below prints April's settled legs as `>99%`),
         # so its row is a stale claim, not an honest title. Asked before the
         # dedup key so a live row sharing the key can take it.
-        if _search_market_is_past_and_frozen(market):
+        if _search_market_is_past_and_frozen(
+            market, out_division_labels=_ta_out_divisions.get(market.id)
+        ):
             continue
         # #10165: before the dedup key, for #8852's reason — the container must
         # not claim a key a real row would otherwise take.
@@ -37072,8 +37078,16 @@ def _futures_market_prices_only_empty_books(market: "FuturesMarket") -> bool:
     return bool(priced) and all(_leg_prices_an_empty_book(o) for o in priced)
 
 
-def _search_surviving_legs(market: "FuturesMarket") -> list:
+def _search_surviving_legs(
+    market: "FuturesMarket", *, drop_empty_book: bool = True
+) -> list:
     """The legs the search ladder will actually draw, before its sort and slice.
+
+    #11616 F5: ``drop_empty_book=False`` returns the same chain before its last
+    (#6676) drop. The builder and the card predicates decide supported results
+    on that set, and :func:`_search_card_legs` draws a supported result on an
+    empty book result-only; the default stays the priced set the #5516/#6676
+    arms read.
 
     Lifted out of :func:`_build_search_top_outcomes` unchanged for #5516, so the
     market-level withdrawal predicate and the builder judge the SAME legs. The
@@ -37210,6 +37224,9 @@ def _search_surviving_legs(market: "FuturesMarket") -> list:
     # now asks whether the quote bounds anything at all (spread >= 0.90) instead of
     # testing each side against its own bound. This line did not change for that
     # either.
+    #
+    if not drop_empty_book:
+        return real  # F5: `_search_card_legs` applies it, keeping results unpriced
     return [o for o in real if not _leg_prices_an_empty_book(o)]
 
 
@@ -37381,6 +37398,47 @@ def _futures_board_is_mostly_unserved(market: "FuturesMarket") -> bool:
     return 0 < served < _BOARD_MIN_SERVED_SUM  # all-zero rungs are #6327's
 
 
+def _search_card_legs(
+    market, candidates: list, result_ids: set[int]
+) -> tuple[list, set[int]]:
+    """``(drawn legs, empty-book result ids)`` from the pre-empty-book legs.
+
+    #11616 F5: the card predicates and the builder decide supported results on
+    ONE leg set. An empty-book leg's number is not a price (#6676) and is never
+    served, but a supported RESULT on it is still the venue's verdict: it is
+    drawn result-only (no probability, integer, odds, rank or movement), so a
+    card kept for that result is never served with no rows.
+    """
+    empty_book_results = {
+        o.id for o in candidates
+        if o.id in result_ids and _leg_prices_an_empty_book(o)
+    }
+    drawn = [
+        o for o in candidates
+        if o.id in empty_book_results or not _leg_prices_an_empty_book(o)
+    ]
+    return drawn, empty_book_results
+
+
+def _search_card_result_ids(market, *, out_division_labels=None) -> set[int]:
+    """Supported results on the legs the builder draws (#11616 F5, O2).
+
+    The predicates' half of the one universe: eligible legs (division labels
+    applied) that survive search's own pre-empty-book drops. The representation
+    removes no supported result from that set — expired rungs are dropped only
+    on open boards, where only a graded winner prints, and winners are exempt.
+    """
+    if not any(getattr(o, "resolution_source", None) is not None for o in getattr(market, "outcomes", ())):
+        return set()
+    from app.utils.futures_outcome_representation import eligible_futures_outcomes
+
+    eligible = {o.id for o in eligible_futures_outcomes(market, out_division_labels)}
+    return _search_supported_result_ids(
+        market,
+        [o for o in _search_surviving_legs(market, drop_empty_book=False) if o.id in eligible],
+    )
+
+
 def _search_supported_result_ids(market, outcomes=None, *, out_division_labels=None) -> set[int]:
     """Results the destination's existing reader policy can actually print.
 
@@ -37443,8 +37501,9 @@ def _futures_card_has_no_answer(
     prices stopped (`_search_market_is_past_and_frozen`). Its numbers are real
     but they answer a question that already closed, printed as if it were open.
     """
-    # #11616: an absent/refused prediction does not erase a supported result.
-    if _search_supported_result_ids(market, out_division_labels=out_division_labels):
+    # #11616: an absent/refused prediction does not erase a supported result —
+    # judged on the legs the builder draws (F5), division labels applied (O2).
+    if _search_card_result_ids(market, out_division_labels=out_division_labels):
         return False
     return (
         _futures_market_has_no_outcome_rows(market)
@@ -37452,7 +37511,7 @@ def _futures_card_has_no_answer(
         or _futures_market_prices_only_empty_books(market)
         or _futures_board_is_mostly_unserved(market)
         or _futures_market_prices_all_withheld(market, withheld)
-        or _search_market_is_past_and_frozen(market)
+        or _search_market_is_past_and_frozen(market, out_division_labels=out_division_labels)
     )
 
 
@@ -37469,7 +37528,7 @@ def _futures_market_prices_all_withheld(
     """
     if not withheld:
         return False
-    if _search_supported_result_ids(market, out_division_labels=out_division_labels):
+    if _search_card_result_ids(market, out_division_labels=out_division_labels):
         return False
     priced = [
         o for o in _search_surviving_legs(market) if o.current_probability is not None
@@ -38114,8 +38173,12 @@ def _build_search_top_outcomes(
     by_id = {row["id"]: row for row in represented.outcomes}
     # Surface reachability/selection remains bounded, but its values and state
     # come from the destination's whole eligible field before the top-N cut.
-    real = [o for o in _search_surviving_legs(market) if o.id in by_id]
-    _result_ids = _search_supported_result_ids(market, real)
+    # #11616 F5: results are decided on the same pre-empty-book legs the card
+    # predicates judge (`_search_card_result_ids`); a supported result on an
+    # empty book is drawn result-only and never carries the book's midpoint.
+    _candidates = [o for o in _search_surviving_legs(market, drop_empty_book=False) if o.id in by_id]
+    _result_ids = _search_supported_result_ids(market, _candidates)
+    real, _empty_book_results = _search_card_legs(market, _candidates, _result_ids)
     # #5516: an exclusive board whose whole served ladder sums far under 100% is
     # incoherent as a SET even when every rung in it is honest — `Cubs 24% ·
     # Reds 18%` on a three-way inning market whose tie leg was never stored.
@@ -38170,7 +38233,11 @@ def _build_search_top_outcomes(
     # `0`, not `-1`: a genuine `0.0` price sorts here too, and the two are
     # equally uninteresting as headlines. The nulling below is what tells them
     # apart on the wire, not this ordering.
-    _withheld_ids = (withheld or set()) | {oid for oid, row in by_id.items() if row["probability"] is None}
+    _withheld_ids = (
+        (withheld or set())
+        | {oid for oid, row in by_id.items() if row["probability"] is None}
+        | _empty_book_results
+    )
     # #8640: A GRADED RUNG ON A STILL-OPEN LADDER IS A RESULT, NOT THE ANSWER.
     # Measured live 2026-09-25, `?q=Fed rate` led market 113427 *What will Fed
     # Rate hit before 2027* (polymarket, open, `mutually_exclusive=false`) with
@@ -38251,7 +38318,7 @@ def _build_search_top_outcomes(
         real.sort(
             key=lambda o: (
                 _headline_tier(o),
-                by_id[o.id]["probability"] or 0,
+                0 if o.id in _empty_book_results else by_id[o.id]["probability"] or 0,
             ),
             reverse=True,
         )
@@ -38315,6 +38382,11 @@ def _build_search_top_outcomes(
             item["settlement_display"] = row["settlement_display"]
         if not lean:
             item.update(id=o.id, american_odds=row["american_odds"], rank=row["rank"] if row["probability"] is not None else None)
+        if o.id in _empty_book_results:
+            # F5: the verdict, never the empty book's midpoint.
+            item.update(probability=None, rendered_percent=None, movement=None, price_changed_at=None)
+            if not lean:
+                item.update(american_odds=None, rank=None)
         out.append(item)
 
     if pinned is not None and not lean:
