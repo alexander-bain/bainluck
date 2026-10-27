@@ -424,12 +424,17 @@ function OutcomeRow({
   //     means "this payload cannot say" ⇒ unchanged behaviour, not a blackout.
   // That asymmetry is the intended outcome, not a gap.
   //
-  // The `✓` chip below is deliberately NOT routed through this: it reads the TRUE
-  // arm, and `(is_winner true, resolution_source null)` is **0 rows** site-wide
-  // (measured same session), so it tells no lie. Gating it would instead delete the
-  // chip from the 3,885 graded legs sitting on markets still `open` — a different
-  // question ("may an open market show a winner tick?") that is not this ship's.
+  // #11616 W1-b: the `✓` chip IS routed through this now. It used to read the raw
+  // TRUE arm on the premise that `(is_winner true, resolution_source null)` was 0
+  // rows; the search payload serves that shape (Shopper R10: a tick beside "First
+  // Contender 55%" on an open board whose detail and suggestion name no result).
+  // The verdict already keeps every authoritative open winner (#6082's tier-3
+  // arm), so those legs keep their chip. A payload that omits the field entirely
+  // keeps today's chip: absent is "cannot say", the verdict's own rule.
   const graded = outcomeRowVerdict(outcome, isResolved);
+  const winnerTick = outcome.resolution_source === undefined
+    ? Boolean(outcome.is_winner)
+    : graded === "won";
   // #11493: an open field's knocked-out leg draws like a loss and reads "Out",
   // the championship grid's word for the same club. A verdict always wins.
   const verdict = graded ?? (out ? "out" : null);
@@ -476,7 +481,7 @@ function OutcomeRow({
           >
             {displayName}
           </span>
-          {outcome.is_winner && (
+          {winnerTick && (
             <span className="text-[10px] bg-accent-live/15 text-accent-live px-1 py-0.5 rounded flex-shrink-0">
               ✓
             </span>
