@@ -162,7 +162,7 @@ describe("cache-adapted payload mounted controls (#11616)", () => {
   );
 
   test("mounted FuturesCard renders dashes for adapted legacy outcomes and preserves destination and proven winners (negative + positive controls)", async () => {
-    const adaptedLegacyMarket: FuturesMarket = {
+    const adaptedLegacyMarket = {
       id: 66031970,
       name: "NBA MVP",
       sport: "basketball_nba",
@@ -214,7 +214,7 @@ describe("cache-adapted payload mounted controls (#11616)", () => {
           opening_american_odds: null,
         },
       ],
-    };
+    } as unknown as FuturesMarket;
 
     await act(async () => {
       root.render(<FuturesCard market={adaptedLegacyMarket} />);
