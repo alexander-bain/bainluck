@@ -23,6 +23,11 @@ from unittest.mock import patch
 import pytest
 
 from app.routes import events, futures
+from app.utils.search_cache import (
+    adapt_cached_futures_row,
+    adapt_cached_search_response,
+    is_current_represented_futures_row,
+)
 
 NOW = datetime(2026, 10, 27, 15, 0, tzinfo=timezone.utc)
 SEEN = NOW - timedelta(hours=1)
@@ -174,3 +179,107 @@ def test_r_o2_a_result_the_grid_put_out_does_not_keep_a_wholly_refused_board():
     assert not events._futures_card_has_no_answer(market, withheld)
     # Control: a refusal that leaves one priced leg withdraws nothing.
     assert not events._futures_card_has_no_answer(market, {1, 2}, out_division_labels=labels)
+
+
+def test_query_pinned_empty_book_result_keeps_null_matched_rank_and_survives_cache():
+    # Catching case: when a non-first F5 empty-book result is query-pinned on
+    # /api/events/search (lean=False), its wire probability is None, so
+    # matched_rank must also be None. Otherwise is_current_represented_futures_row
+    # rejects the producer's own attested card and adapt_cached_futures_row
+    # demotes the card to legacy (stripping live sibling prices and open loser
+    # grades on cache hits), while FuturesCard boardRank prints an invented
+    # numeric rank on a priceless result row.
+    beta_terms = [("beta", None)]
+    resolved_p4 = _p4("resolved")
+    resolved_card = events._format_futures_for_search(resolved_p4, query_terms=beta_terms)
+    resolved_by_name = {r["name"]: r for r in resolved_card["top_outcomes"]}
+    assert resolved_by_name["Beta Example"]["probability"] is None
+    assert resolved_by_name["Beta Example"]["rank"] is None
+    assert resolved_by_name["Beta Example"]["query_match"] is True
+    assert resolved_by_name["Beta Example"]["matched_rank"] is None
+    assert is_current_represented_futures_row(resolved_card) is True
+    assert adapt_cached_futures_row(resolved_card) == resolved_card
+
+    open_mixed = _board(
+        [
+            _leg(1, "Alpha Example", 0.50, bid=0.01, ask=0.99, is_winner=True, src="api_settlement"),
+            _leg(2, "Beta Example", 0.50, bid=0.01, ask=0.99, is_winner=True, src="api_settlement"),
+            _leg(3, "Gamma Example", 0.30, bid=0.29, ask=0.31),
+            _leg(4, "Delta Example", 0.00, bid=0.00, ask=0.01, is_winner=False, src="api_settlement"),
+        ],
+        status="open",
+    )
+    open_card = events._format_futures_for_search(open_mixed, query_terms=beta_terms)
+    open_by_name = {r["name"]: r for r in open_card["top_outcomes"]}
+    assert open_by_name["Beta Example"]["probability"] is None
+    assert open_by_name["Beta Example"]["query_match"] is True
+    assert open_by_name["Beta Example"]["matched_rank"] is None
+    assert is_current_represented_futures_row(open_card) is True
+
+    adapted_payload = adapt_cached_search_response(
+        {"query": "beta", "futures": [open_card], "futures_families": []}
+    )
+    adapted_card = adapted_payload["futures"][0]
+    assert adapted_card == open_card
+    adapted_by_name = {r["name"]: r for r in adapted_card["top_outcomes"]}
+    assert adapted_by_name["Gamma Example"]["probability"] == open_by_name["Gamma Example"]["probability"]
+    assert adapted_by_name["Gamma Example"]["probability"] is not None
+    assert adapted_by_name["Gamma Example"]["rendered_percent"] == open_by_name["Gamma Example"]["rendered_percent"]
+    assert adapted_by_name["Gamma Example"]["rendered_percent"] is not None
+    assert adapted_by_name["Delta Example"]["is_winner"] is False
+    assert adapted_by_name["Delta Example"]["resolution_source"] == "api_settlement"
+
+
+def test_control_query_pinned_priced_leg_beside_empty_book_result_keeps_matched_rank_and_survives_cache():
+    epsilon_terms = [("epsilon", None)]
+    market = _board(
+        [
+            _leg(1, "Alpha Example", 0.50, bid=0.01, ask=0.99, is_winner=True, src="api_settlement"),
+            _leg(2, "Gamma Example", 0.30, bid=0.29, ask=0.31),
+            _leg(3, "Epsilon Example", 0.20, bid=0.19, ask=0.21),
+        ],
+        status="open",
+    )
+    card = events._format_futures_for_search(market, query_terms=epsilon_terms)
+    by_name = {r["name"]: r for r in card["top_outcomes"]}
+    assert by_name["Alpha Example"]["probability"] is None
+    assert by_name["Epsilon Example"]["probability"] == 0.20
+    assert by_name["Epsilon Example"]["query_match"] is True
+    # #11616 O-P1a (lane1b ARGON-F5-PREREVIEW): a priced pin prints detail's
+    # number for the same row — the served `rank`, which the search card reads
+    # before `matched_rank` — and keeps a non-null matched_rank for legacy
+    # (rank-stripped) cards. The #8863 count is not what the reader sees.
+    detail_rank = {
+        r["name"]: r["rank"] for r in futures._format_market_detail(market)["outcomes"]
+    }
+    assert by_name["Epsilon Example"]["rank"] == detail_rank["Epsilon Example"] == 3
+    assert by_name["Epsilon Example"]["matched_rank"] is not None
+    assert is_current_represented_futures_row(card) is True
+    assert adapt_cached_futures_row(card) == card
+
+
+def test_open_mixed_board_priced_pin_prints_detail_s_rank_beside_empty_book_results():
+    # lane1b's "gamma" arm: two empty-book supported results (detail ranks them
+    # 1 and 2) above a priced Gamma that detail ranks 3. The pin's served rank is
+    # 3; matched_rank counts only drawn priced legs above it (1).
+    market = _board(
+        [
+            _leg(1, "Alpha Example", 0.50, bid=0.01, ask=0.99, is_winner=True, src="api_settlement"),
+            _leg(2, "Beta Example", 0.50, bid=0.01, ask=0.99, is_winner=True, src="api_settlement"),
+            _leg(3, "Gamma Example", 0.30, bid=0.29, ask=0.31),
+            _leg(4, "Delta Example", 0.00, bid=0.00, ask=0.01, is_winner=False, src="api_settlement"),
+        ],
+        status="open",
+    )
+    card = events._format_futures_for_search(market, query_terms=[("gamma", None)])
+    by_name = {r["name"]: r for r in card["top_outcomes"]}
+    detail_rank = {
+        r["name"]: r["rank"] for r in futures._format_market_detail(market)["outcomes"]
+    }
+    assert by_name["Gamma Example"]["query_match"] is True
+    assert by_name["Gamma Example"]["rank"] == detail_rank["Gamma Example"] == 3
+    # The priceless results print no number (rank and matched_rank null).
+    for name in ("Alpha Example", "Beta Example"):
+        assert by_name[name]["rank"] is None and by_name[name].get("matched_rank") is None
+    assert is_current_represented_futures_row(card) is True
+    assert adapt_cached_futures_row(card) == card

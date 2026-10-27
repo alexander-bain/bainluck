@@ -38456,7 +38456,7 @@ def _build_search_top_outcomes(
         for (o, _name), od in zip(named, out):
             if o is pinned:
                 od["query_match"] = True
-                od["matched_rank"] = None if by_id[o.id]["probability"] is None else 1 + sum(
+                od["matched_rank"] = None if od["probability"] is None else 1 + sum(
                     1 for leg in real
                     if leg.id not in _withheld_ids
                     and (by_id[leg.id]["probability"] or 0) > (by_id[o.id]["probability"] or 0)
