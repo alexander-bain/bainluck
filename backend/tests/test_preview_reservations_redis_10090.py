@@ -660,3 +660,150 @@ async def test_maintenance_receipt_sink_failure_preserves_ticket_outcome(rig, mo
         assert ticket == 0 and candidates == [] and idle == set() and redis_ms > 0
         assert rig.k.capacity_status["ready"] is True
     assert len(attempts) == 1
+
+
+def _final_read_local_residue(*, protected=False, deferred=False):
+    """Reach the final read's 38/19 shape using actual local transitions.
+
+    No production event attribution is implied. Redis expiry acknowledgements
+    enter through _local_expired; actual Redis/held-reader coverage is separate.
+    """
+    r = bp.LedgerRegistry(sources=SOURCES)
+    future = NOW + timedelta(hours=1)
+
+    def put(eid, *, upcoming=False, at=0, value=0.61):
+        return r.propose(
+            eid,
+            "kalshi",
+            value=value,
+            event=context(
+                status="scheduled" if upcoming else "live",
+                start=future if upcoming else None,
+                at=at,
+            ),
+            row_sources=BASE10,
+            row_rev=10,
+        )
+
+    for eid in range(1, 42):
+        assert put(eid)
+    for eid in range(101, 117):
+        assert put(eid, upcoming=True)
+    for eid in (1, 2, 3):
+        assert put(eid, upcoming=True, at=1, value=0.62)
+        seq = r.pending_seq(eid, "kalshi")
+        r._local_expired(dict(event_id=eid, source="kalshi", local_seq=seq, value=0.62))
+        if not protected:
+            r.committed(eid, "kalshi", seq=seq, sources=BASE10, rev=11)
+    if deferred:
+        assert put(4, upcoming=True, at=1, value=0.62)
+        r.committed(4, "kalshi", seq=r.pending_seq(4, "kalshi"), sources=BASE10, rev=11)
+    assert r.local_capacity_status["counts"] == [0, 0, 0, 0, 38, 19, 0]
+    assert r.local_capacity_status["debt"] == 3 + int(deferred)
+    return r, put
+
+
+@pytest.mark.parametrize("deferred", [False, True])
+@pytest.mark.asyncio
+async def test_maintenance_clears_clean_local_overage_without_another_quote(
+    deferred, monkeypatch
+):
+    from app.tasks.live_blend_refresh import LiveBlendRefresher
+
+    r, _ = _final_read_local_residue(deferred=deferred)
+    held = {eid: dict(st.pending) for eid, st in r._events.items() if st.pending}
+    monkeypatch.setattr(bp, "registry", lambda: r)
+    worker = LiveBlendRefresher("kalshi")
+
+    async def no_ticket(**kwargs):
+        return None, [], set(), None
+
+    worker._preview_ticket = no_ticket
+    await worker._maintain_preview_capacity()
+    assert len(r._events) == 57 - 3 - int(deferred)
+    assert r.local_capacity_status == {
+        "counts": [0, 0, 0, 0, 38 - int(deferred), 16, 0],
+        "debt": 0,
+        "proofs": 0,
+        "ready": True,
+    }
+    assert {eid: dict(st.pending) for eid, st in r._events.items()} == held
+    assert r.maintain_local_capacity() == 0
+
+
+def test_maintenance_keeps_protected_excess_until_the_matching_commit():
+    r, put = _final_read_local_residue(protected=True)
+    evidence = {
+        eid: (dict(st.expired), dict(st.expired_through))
+        for eid, st in r._events.items()
+        if st.expired
+    }
+    assert r.maintain_local_capacity() == 0
+    assert r.local_capacity_status["debt"] == 3
+    assert r.local_capacity_status["proofs"] == 3
+    for eid, (expired, through) in evidence.items():
+        assert not put(eid, upcoming=True, at=2, value=0.62)
+        # Even a later event revision cannot settle a newer local sequence.
+        r.committed(eid, "kalshi", seq=through["kalshi"] - 1, sources=BASE10, rev=11)
+        assert r._events[eid].expired == expired
+        assert r._events[eid].expired_through == through
+    assert r.maintain_local_capacity() == 0
+    for eid, (_, through) in evidence.items():
+        r.committed(eid, "kalshi", seq=through["kalshi"], sources=BASE10, rev=12)
+    assert r.maintain_local_capacity() == 3
+    assert r.local_capacity_status["ready"]
+
+
+def test_maintenance_does_not_erase_new_pending_work_after_an_old_commit():
+    r, put = _final_read_local_residue()
+    assert put(1, upcoming=True, at=2, value=0.63)
+    entry = r._events[1].pending["kalshi"]
+    assert r.maintain_local_capacity() == 2
+    assert r._events[1].pending["kalshi"] is entry
+    assert r.local_capacity_status["debt"] == 1
+    assert not r.local_capacity_status["ready"]
+
+
+@pytest.mark.parametrize("proof", ["last_seq", "revoked_through", "chain"])
+def test_local_cleanup_preserves_ordering_and_chain_evidence(proof):
+    r, _ = _final_read_local_residue()
+    if proof == "chain":
+        r._chains[(1, "kalshi")] = 999
+    else:
+        setattr(r._events[1], proof, 999)
+    state = r._events[1]
+    assert r.maintain_local_capacity() == 2
+    assert r._events[1] is state
+    assert r.local_capacity_status["debt"] == 1
+
+
+def test_local_cleanup_is_bounded_and_normalizes_drained_outside_window_entries():
+    r = bp.LedgerRegistry(sources=SOURCES)
+    for eid in range(1, 65):
+        assert r.propose(
+            eid,
+            "kalshi",
+            value=0.61,
+            event=context(sport=T1),
+            row_sources=BASE10,
+            row_rev=10,
+        )
+        assert r.propose(
+            eid,
+            "kalshi",
+            value=0.62,
+            event=context(
+                sport=T1, status="scheduled", at=1, start=NOW + timedelta(hours=8)
+            ),
+            row_sources=BASE10,
+            row_rev=10,
+        )
+        r.committed(
+            eid, "kalshi", seq=r.pending_seq(eid, "kalshi"), sources=BASE10, rev=11
+        )
+    assert r.local_capacity_status["debt"] == 64
+    assert r.maintain_local_capacity() == 32
+    assert len(r._events) == 32
+    assert r.local_capacity_status["counts"][6] == 32
+    assert r.maintain_local_capacity() == 32
+    assert not r._events and r.local_capacity_status["ready"]

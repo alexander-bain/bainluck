@@ -1558,6 +1558,33 @@ class LedgerRegistry(PreviewRegistry):
         # to make room would grant an unchanged expired value a fresh lease.
         return not state.pending and not state.expired and not state.expired_through
 
+    def maintain_local_capacity(self) -> int:
+        """Converge clean local residue without a new quote or Redis resident.
+
+        One synchronous pass over the existing bounded cache: no selected
+        entry survives an await before deletion. Expiry and ordering evidence
+        remain charged, even when that leaves explicit reservation debt.
+        """
+        for state in self._events.values():
+            self._reclassify_local_proof(state)
+        counts = self.local_capacity_status["counts"]
+        removed = 0
+        for eid, state in list(self._events.items()):
+            bucket = state.reservation_bucket
+            if bucket is None:
+                continue
+            excess = bucket == 6 or counts[bucket] > self.policy.limits[bucket]
+            if (not excess or not self._clean_context(state)
+                    or state.last_seq or state.revoked_through
+                    or any((eid, source) in self._chains for source in self.sources)):
+                continue
+            del self._events[eid]
+            counts[bucket] -= 1
+            removed += 1
+            if removed == 32:
+                break
+        return removed
+
     def _reserve_local(self, event_id: int, context) -> bool:
         state = self._events.get(event_id)
         bucket = context.bucket

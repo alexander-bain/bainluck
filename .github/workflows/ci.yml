@@ -5268,8 +5268,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]237 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row/default-DNPL/reservations/returned-clock gate did not run all 237 cases"
+          grep -qE "[^0-9]246 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row/default-DNPL/reservations/returned-clock gate did not run all 246 cases"
             exit 1
           }
 

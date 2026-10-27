@@ -5211,6 +5211,12 @@ class LiveBlendRefresher:
         counts = self._preview_capacity_counts((), (), None)
         try:
             async with asyncio.timeout(1) as budget:
+                preview = registry()
+                if preview.ledger:
+                    # Local-only clean residue is absent from Redis's hints.
+                    # Reconcile it before the receipt, even if no shared
+                    # resident or network ticket is available this pass.
+                    preview.maintain_local_capacity()
                 ticket, candidates, idle, redis_now = await self._preview_ticket(include_candidates=True)
                 when = budget.when()
                 deadline_ms = (redis_now + int((when - asyncio.get_running_loop().time()) * 1000)
