@@ -1,7 +1,5 @@
 /** @jest-environment jsdom */
 
-import fs from "fs";
-import path from "path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import SearchBar from "@/components/SearchBar";
@@ -9,10 +7,24 @@ import MobileSearchOverlay from "@/components/MobileSearchOverlay";
 import FuturesCard from "@/components/FuturesCard";
 import { fetchTypeahead } from "@/lib/api";
 import type { TypeaheadOutcome, TypeaheadSuggestion } from "@/lib/api";
-import type { FuturesMarket } from "@/lib/types";
+import type { FuturesMarket, FuturesOutcome } from "@/lib/types";
 import { futuresAnswer } from "@/lib/searchSuggestionDisplay";
 import { outcomeRowVerdict } from "@/lib/futuresOutcomeVerdict";
 import { outcomeRowVerdict as detailVerdict } from "@/components/futures/OutcomeRow";
+// Static import, not an fs read: same committed repo-relative file and no
+// fallback, and no file-data source reaching FuturesCard's image fetch (CodeQL
+// js/file-access-to-http on 35549713).
+import exportedFixture from "../fixtures/backend_to_web_fixtures_11616.json";
+
+// A search row is not a detail market: it carries `market_type_label` and each
+// outcome's `price_changed_at`, and omits detail-only fields. Typed narrowly so
+// a misspelled or mistyped fixture field still fails tsc; FuturesMarket is
+// assignable to it, so the card boundary needs only a plain `as`.
+type SearchRowOutcome = FuturesOutcome & { price_changed_at?: string | null };
+type SearchRow = Omit<
+  FuturesMarket,
+  "description" | "external_id" | "mutually_exclusive" | "commence_time" | "created_at" | "top_outcomes"
+> & { market_type_label?: string; top_outcomes?: SearchRowOutcome[] };
 
 const mockPush = jest.fn();
 const mockTrack = jest.fn();
@@ -162,7 +174,7 @@ describe("cache-adapted payload mounted controls (#11616)", () => {
   );
 
   test("mounted FuturesCard renders dashes for adapted legacy outcomes and preserves destination and proven winners (negative + positive controls)", async () => {
-    const adaptedLegacyMarket = {
+    const adaptedLegacyMarket: SearchRow = {
       id: 66031970,
       name: "NBA MVP",
       sport: "basketball_nba",
@@ -214,10 +226,10 @@ describe("cache-adapted payload mounted controls (#11616)", () => {
           opening_american_odds: null,
         },
       ],
-    } as unknown as FuturesMarket;
+    };
 
     await act(async () => {
-      root.render(<FuturesCard market={adaptedLegacyMarket} />);
+      root.render(<FuturesCard market={adaptedLegacyMarket as FuturesMarket} />);
     });
     const link = host.querySelector<HTMLAnchorElement>("a[href='/futures/66031970']")!;
     expect(link).not.toBeNull();
@@ -228,11 +240,9 @@ describe("cache-adapted payload mounted controls (#11616)", () => {
   });
 
   test("committed backend-exported R1/R2/C1/R3 cache fixtures render identical truth across SearchBar, MobileSearchOverlay, FuturesCard, and detailVerdict", async () => {
-    const exportedFixturePath = path.join(
-      __dirname,
-      "../fixtures/backend_to_web_fixtures_11616.json"
-    );
-    const exported = JSON.parse(fs.readFileSync(exportedFixturePath, "utf8"));
+    // Untyped runtime JSON, exactly as the JSON.parse this replaces read it:
+    // each use below asserts its own client shape at the boundary it feeds.
+    const exported: any = exportedFixture;
 
     // 1. R1: Current default-False board retains 55% / 45% in both typeahead and FuturesCard:
     const r1TaAnswer = futuresAnswer(
