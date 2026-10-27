@@ -6,21 +6,25 @@ import XCTest
 final class FuturesDetailHeroResult11616Tests: XCTestCase {
     private func row(_ id: Int, _ name: String, price: Double? = nil,
                      won: Bool? = nil, source: String? = nil,
-                     settlement: String? = nil, percent: Int? = nil) -> [String: Any] {
+                     settlement: String? = nil, percent: Int? = nil,
+                     updated: String? = nil) -> [String: Any] {
         var value: [String: Any] = ["id": id, "name": name,
             "probability": price.map { $0 as Any } ?? NSNull(),
             "is_winner": won.map { $0 as Any } ?? NSNull(),
             "resolution_source": source.map { $0 as Any } ?? NSNull()]
         if let settlement { value["settlement_display"] = ["verdict": settlement, "basis": "fixture"] }
         if let percent { value["rendered_percent"] = percent }
+        if let updated { value["last_updated"] = updated }
         return value
     }
 
     private func market(_ outcomes: [[String: Any]], status: String = "resolved",
                         source: String = "kalshi", lead: Int? = nil,
-                        verified: Bool = false, exclusive: Bool? = false) throws -> FuturesMarketDetail {
-        var value: [String: Any] = ["id": 11616, "name": "Awards field", "status": status,
+                        verified: Bool = false, exclusive: Bool? = false,
+                        shape: String? = nil, name: String = "Awards field") throws -> FuturesMarketDetail {
+        var value: [String: Any] = ["id": 11616, "name": name, "status": status,
             "source": source, "outcomes": outcomes]
+        if let shape { value["market_type"] = shape }
         if let exclusive { value["mutually_exclusive"] = exclusive }
         if let lead { value["lead_outcome_id"] = lead }
         if verified { value["representation"] = "verified_title" }
@@ -293,5 +297,120 @@ final class FuturesDetailHeroResult11616Tests: XCTestCase {
         XCTAssertNil(futuresDetailHeroOutcome(empty))
         XCTAssertEqual(futuresDetailShareMessage(empty), "Awards field on Bain Luck")
         XCTAssertEqual(futuresDetailShareMessage(nil), "Check this out on Bain Luck")
+    }
+
+    // MARK: - B2 / #7906: an open peer board with several supported winners crowns none
+
+    private static let bmw = "BMW PGA Championship - Make the Cut"
+
+    /// lane1b `zzLane1bProbePeerOpen6430` (DELTA-REVIEW-6430a461 §3), both arms:
+    /// open, `participation`, `mutually_exclusive: false`, no lead; Aberg and
+    /// McIlroy Won on `api_settlement` at 1.0 (arm 1) or null (arm 2); Fleetwood
+    /// and Rahm graded false at 0.0. Before B2 both arms heroed "Won · Ludvig
+    /// Aberg" and shared "Ludvig Aberg: Won — …" (00791f95 / 6430a461 iOS tree).
+    private func peerOpenBoard(winnersPriced: Bool, updated: (String?, String?) = (nil, nil)) throws -> FuturesMarketDetail {
+        let price: Double? = winnersPriced ? 1.0 : nil
+        return try market([row(1, "Ludvig Aberg", price: price, won: true, source: "api_settlement"),
+                           row(2, "Tommy Fleetwood", price: 0.0, won: false, source: "api_settlement",
+                               updated: updated.0),
+                           row(3, "Rory McIlroy", price: price, won: true, source: "api_settlement"),
+                           row(4, "Jon Rahm", price: 0.0, won: false, source: "api_settlement",
+                               updated: updated.1)],
+                          status: "open", exclusive: false, shape: "participation", name: Self.bmw)
+    }
+
+    func testAnOpenPeerBoardWithSeveralSupportedWinnersNamesNoneInHeroOrShare() throws {
+        for priced in [true, false] {
+            let m = try peerOpenBoard(winnersPriced: priced)
+            XCTAssertNil(futuresDetailHeroOutcome(m), "priced=\(priced)")
+            // No crown and no winner's last price promoted to a forecast.
+            XCTAssertEqual(futuresDetailHeroValue(m, hero: nil), .none, "priced=\(priced)")
+            let share = futuresDetailShareMessage(m)
+            XCTAssertEqual(share, "\(Self.bmw) on Bain Luck", "priced=\(priced)")
+            XCTAssertFalse(share.contains("Won"), "priced=\(priced)")
+            XCTAssertFalse(share.contains("%"), "priced=\(priced)")
+            // Every successful participant keeps its own Won row.
+            let values = m.outcomes.map { FuturesDetailRowValue.of($0, marketStatus: m.status, marketSource: m.source) }
+            XCTAssertEqual(values, [.verdict(.won), .price(0.0), .verdict(.won), .price(0.0)], "priced=\(priced)")
+        }
+    }
+
+    /// The saved card consumes the page's hero, so it names no winner either and
+    /// stays an open card; both winners keep their Won and lead the rows.
+    func testTheSavedCardOfAnOpenPeerBoardNamesNoWinnerAndKeepsBothWonRows() throws {
+        for priced in [true, false] {
+            let card = FeedFuturesData(savedPinDetail: try peerOpenBoard(winnersPriced: priced))
+            XCTAssertNil(card.winner, "priced=\(priced)")
+            XCTAssertEqual(card.topOutcomes?.prefix(2).map(\.id), [1, 3], "priced=\(priced)")
+            XCTAssertEqual(card.topOutcomes?.prefix(2).map(\.detailValue), [.verdict(.won), .verdict(.won)])
+        }
+    }
+
+    /// The shape survives the reconciliation rebuild (a preserved older quote
+    /// re-composes the body through the memberwise init), so a refresh cannot
+    /// bring the crown back.
+    func testThePeerShapeSurvivesAReconciledRefresh() throws {
+        let held = try peerOpenBoard(winnersPriced: true,
+                                     updated: ("2026-09-22T06:45:00Z", "2026-09-22T06:45:00Z"))
+        let incoming = try peerOpenBoard(winnersPriced: true,
+                                         updated: ("2026-09-22T06:40:00Z", "2026-09-22T06:45:00Z"))
+        let adopted = FuturesPriceReconciliation.adopting(incoming, over: held)
+        XCTAssertEqual(adopted.marketType, "participation")
+        XCTAssertNil(futuresDetailHeroOutcome(adopted))
+    }
+
+    /// Opposite: a participation board with exactly ONE supported winner keeps its
+    /// crown, as web `gradedWinner` allows.
+    func testAnOpenPeerBoardWithOneSupportedWinnerKeepsItsCrown() throws {
+        let m = try market([row(1, "Ludvig Aberg", won: true, source: "api_settlement"),
+                            row(2, "Tommy Fleetwood", price: 0.0, won: false, source: "api_settlement")],
+                           status: "open", exclusive: false, shape: "participation", name: Self.bmw)
+        XCTAssertEqual(futuresDetailHeroOutcome(m)?.id, 1)
+        XCTAssertEqual(try value(m), .verdict(.won))
+        XCTAssertEqual(futuresDetailShareMessage(m), "Ludvig Aberg: Won — \(Self.bmw) on Bain Luck")
+    }
+
+    /// Opposite: an unsupported raw flag cannot manufacture the second winner.
+    func testAnUnsupportedRawFlagDoesNotCountTowardSeveralWinners() throws {
+        let m = try market([row(1, "Flagged", won: true),
+                            row(2, "Ludvig Aberg", won: true, source: "api_settlement"),
+                            row(3, "Retracted", won: true, source: "ungradeable_result")],
+                           status: "open", exclusive: false, shape: "participation")
+        XCTAssertEqual(futuresDetailHeroOutcome(m)?.id, 2)
+        XCTAssertEqual(try value(m), .verdict(.won))
+    }
+
+    /// Opposite: a genuine live, priced, ungraded row still leads the peer board.
+    func testAGenuineLiveRowStillLeadsAnOpenPeerBoardWithSeveralWinners() throws {
+        let m = try market([row(1, "Ludvig Aberg", price: 1.0, won: true, source: "api_settlement"),
+                            row(2, "Still playing", price: 0.42),
+                            row(3, "Rory McIlroy", price: 1.0, won: true, source: "api_settlement")],
+                           status: "open", exclusive: false, shape: "participation")
+        XCTAssertEqual(futuresDetailHeroOutcome(m)?.id, 2)
+        XCTAssertEqual(try value(m), .price(0.42))
+    }
+
+    /// The contradiction door: an affirmative exclusivity claim contradicted by
+    /// two supported winners names neither (#6590 / #4923). One winner on the
+    /// same claim is `testOpenExclusiveOrUnstatedBoardStillLeadsWithItsSupportedWinner`.
+    func testAnOpenExclusiveBoardWithTwoSupportedWinnersNamesNeither() throws {
+        let m = try market([row(1, "SK Beveren", won: true, source: "api_settlement"),
+                            row(2, "Draw", won: true, source: "api_settlement"),
+                            row(3, "Away", price: 0.2)], status: "open", exclusive: true)
+        XCTAssertNil(futuresDetailHeroOutcome(m))
+        XCTAssertEqual(futuresDetailShareMessage(m), "Awards field on Bain Luck")
+    }
+
+    /// Opposite: with no affirming shape and no `true` claim (a ladder, a grouped
+    /// independent board), plural winners are the design and served order holds
+    /// — the same input as `testAnOpenBoardKeepsServedOrderAmongItsSupportedWinners`
+    /// (8280), and the shape door is keyed positively, never "anything but quantity".
+    func testWithoutAPeerShapeOrAnExclusivityClaimSeveralOpenWinnersKeepServedOrder() throws {
+        for shape in [nil, "quantity", "duel", "field"] as [String?] {
+            let m = try market([row(1, "77° or above", won: true, source: "api_settlement"),
+                                row(2, "78° or above", won: true, source: "api_settlement")],
+                               status: "open", exclusive: false, shape: shape)
+            XCTAssertEqual(futuresDetailHeroOutcome(m)?.id, 1, "\(String(describing: shape))")
+        }
     }
 }

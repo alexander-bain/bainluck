@@ -87,7 +87,8 @@ nonisolated func futuresDetailRenderedPercents(_ outcomes: [FuturesOutcome]) -> 
 ///
 /// Otherwise, on an open board, a supported winner leads, in served order. When
 /// none is supported the highest-priced row leads (first in served order on a
-/// tie, as web's sort).
+/// tie, as web's sort). A peer or contradictory board with several supported
+/// winners names nobody (B2, below).
 ///
 /// #11616 R1 — A SETTLED BOARD NAMES ITS SUPPORTED WINNER OR NOBODY. A resolved
 /// market's hero is a row whose OWN decision is Won, else nil, exactly as web's
@@ -123,6 +124,13 @@ nonisolated func futuresDetailHeroOutcome(_ market: FuturesMarketDetail) -> Futu
            return p > 0
        })) {
         return live
+    }
+    // #11616 B2 / #7906: a peer board (`participation`) or one that claims
+    // exclusivity (`== true` only) and supports MORE THAN ONE Won names none of
+    // them — web `gradedWinner`'s two doors and count. Each row keeps its Won;
+    // no winner's last price is promoted to a forecast in its place.
+    if winners.count > 1, market.marketType == "participation" || market.mutuallyExclusive == true {
+        return nil
     }
     // #11616: a supported winner remains the answer after its price is withheld.
     // Keep served order when several outcomes won; do not imply exclusivity.

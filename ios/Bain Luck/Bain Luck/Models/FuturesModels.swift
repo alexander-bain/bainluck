@@ -299,6 +299,10 @@ nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
     /// `polymarket`). Metadata only — the hero names its OWN outcome's sources.
     @TolerantNumeric var contributingSources: [String]? = nil
     @TolerantNumeric var representationFallback: String? = nil
+    /// `market_type` (#194 shape field; #7906): read only by
+    /// `futuresDetailHeroOutcome`, where `participation` affirms that several
+    /// winners are peers. Absent on older payloads and decodes to nil.
+    @TolerantNumeric var marketType: String? = nil
 }
 
 /// #9387 — the provider-backed question a verified response answers. Every field
