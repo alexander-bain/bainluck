@@ -6243,6 +6243,28 @@ def _alias_futures_arms(terms: list[str]) -> list:
     return arms + _postseason_round_futures_arms(terms)
 
 
+def _person_alias_literal_futures_arms(q: str, person_alias) -> list:
+    """#11617 A1: on a reviewed person-alias hit, the literal query's own NAME arm.
+
+    The alias replaces `_q_identity` with the canonical name, so every recall arm
+    reads "Shai Gilgeous-Alexander" and a market NAMED with what the reader typed
+    ("SGA regulatory decision") reached none of them — though alias-off finds it
+    on both routes. This is the plain name arm alias-off uses, compiled from the
+    literal terms; the canonical recall is untouched, so the rails see the union.
+
+    Name-only, like `_alias_futures_arms`: no outcome subquery and no team/event
+    arm, because the literal is a person's initials, not a club. [] with no alias,
+    so the common path compiles byte-identical SQL.
+    """
+    if person_alias is None:
+        return []
+    literal = _strip_search_scaffolding(q.strip().split())
+    if not literal:
+        return []
+    expanded = _apply_search_synonyms(expand_search_terms(literal))
+    return [and_(*[_build_round_word_ilike(FuturesMarket.name, t, e) for t, e in expanded])]
+
+
 #: #9333 — a postseason ROUND, named by the reader and by no stored text.
 #: `/search?q=wild card` on Monday 2026-09-28 served ZERO games with four MLB
 #: Wild Card series opening the next day, and led its futures with the NCAAB and
@@ -12106,6 +12128,10 @@ async def search_events(
     # `pats` and `revs`. Recall, tier1 window, relevance tier — all three.
     _futures_nickname_arms = _team_nickname_futures_arms(terms)
     _futures_where_or.extend(_futures_nickname_arms)
+    # #11617 A1: the literal name arm on a person-alias hit (three wirings, as
+    # the alias arms above: recall here, the tier<=1 split and tier 0 below).
+    _futures_literal_arms = _person_alias_literal_futures_arms(q, _person_alias)
+    _futures_where_or.extend(_futures_literal_arms)
 
     # #10024: a team-plus-competition query (`dodgers world series`) splits across
     # the market name and one outcome. NOT a `_futures_where_or` arm: it is read
@@ -12181,7 +12207,7 @@ async def search_events(
     # candidate set this route can see is exactly what it was.
     _futures_tier1_arms = [
         arm for arm in (futures_name_match, league_ticker_match) if arm is not None
-    ] + list(_futures_alias_arms) + list(_futures_nickname_arms)
+    ] + list(_futures_alias_arms) + list(_futures_nickname_arms) + list(_futures_literal_arms)
 
     # #993 Slice-Speed: rank by the NAME vector only. The old vector appended a
     # correlated string_agg(outcome names) computed for every candidate row
@@ -12323,6 +12349,11 @@ async def search_events(
     # so this appends nothing and the compiled SQL is byte-identical on the
     # no-alias path — the same no-cost property the recall arms already have.
     _futures_tier_whens = [(futures_name_match, 0)]
+    # #11617 A1: tier 0, the literal-name tier — exactly the tier this market
+    # takes with the alias off — placed directly after the canonical name match
+    # so no tier-1 inference arm below can claim a literal-name row first.
+    if _futures_literal_arms:
+        _futures_tier_whens.append((or_(*_futures_literal_arms), 0))
     # #9340: a bare round query's own markets sit ABOVE the name matches (tier
     # -1) — "Season Series Winner" matches `championship series` by name through
     # the `winner` synonym and would fill the window. Every such row is recalled
@@ -15286,6 +15317,9 @@ async def typeahead_search(
     # `_build_league_ticker_match` comment warns about is how /search kept a defect
     # for three cycles after /typeahead's twin was fixed.
     ta_futures_where.extend(_team_nickname_futures_arms(terms))
+
+    # #11617 A1: the literal name arm on a person-alias hit, as /search.
+    ta_futures_where.extend(_person_alias_literal_futures_arms(q, _person_alias))
 
     # LAT-P007: UNION, not OR — the LAT-P006 treatment, same reasoning, same
     # measurement rail. A top-level OR blocks the hash-semi-join transformation,

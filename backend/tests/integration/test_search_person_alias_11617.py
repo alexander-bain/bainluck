@@ -403,3 +403,74 @@ async def test_july_queries_and_registry_keep_same_inventory_answers(
     assert all(row["identical"] for row in comparisons), [
         row for row in comparisons if not row["identical"]
     ]
+
+
+# ── #11617 A1: an alias hit keeps the literal "SGA" market ──────────────────
+# lane1b WHOLE-PR-REVIEW-00791f95 §3.3, Root ROOT-WHOLE-00791-DISPOSITION item 3.
+# The alias replaced the query identity outright, so "SGA regulatory decision"
+# — found with the alias off — vanished from both endpoints with it on. The
+# literal now rides one name arm beside Shai's canonical recall.
+
+LITERAL = "SGA regulatory decision"
+
+
+def _futures_names(body):
+    if "futures" in body:
+        return [r["name"] for r in body["futures"]]
+    return [s["text"] for s in body["suggestions"] if s["type"] == "futures"]
+
+
+def _literal_row(body):
+    rows = body["futures"] if "futures" in body else [
+        s for s in body["suggestions"] if s["type"] == "futures"
+    ]
+    return next(r for r in rows if r.get("name", r.get("text")) == LITERAL)
+
+
+@pytest.mark.parametrize("endpoint", ["search", "typeahead"])
+async def test_a1_alias_on_keeps_the_literal_market_and_shai_s_destinations(
+    inventory, endpoint, monkeypatch
+):
+    request, ids, expected, cache, statements, _ = inventory
+    on = await request(endpoint)
+    # Shai's board leads; the literal follows it (no lead moves to the literal).
+    assert _futures_names(on) == ["NBA MVP Winner 2027", LITERAL]
+    detail = {o["name"]: o for o in expected["outcomes"]}
+    for rows in _rows(on, ids["market"]):
+        shai = next(o for o in rows if o["name"] == NAME)
+        assert (shai["probability"], shai["rendered_percent"]) == (
+            detail[NAME]["probability"], detail[NAME]["rendered_percent"],
+        )
+    if endpoint == "search":
+        assert any(t["id"] == ids["team"] for t in on["teams"])
+        assert any(g["id"] == ids["event"] for g in on["results"])
+    else:
+        assert any(
+            s["type"] == "team" and s["team_id"] == ids["team"] for s in on["suggestions"]
+        )
+        assert any(
+            s["type"] == "event" and s["event_id"] == ids["event"] for s in on["suggestions"]
+        )
+
+    # Warm hit: the same bytes, no SQL, the TTL not renewed.
+    count = len(statements)
+    cached_bytes, cached_expiry = dict(cache.store), dict(cache.expires_at)
+    assert await request(endpoint) == on
+    assert len(statements) == count
+    assert cache.store == cached_bytes and cache.expires_at == cached_expiry
+
+    # The literal row is the one alias-off serves for the same inventory.
+    monkeypatch.setattr(person_aliases, "REVIEWED_PERSON_ALIASES", ())
+    token = (
+        events._force_search_cache_rebuild if endpoint == "search"
+        else events._force_cache_rebuild
+    ).set(True)
+    try:
+        off = await request(endpoint)
+    finally:
+        (
+            events._force_search_cache_rebuild if endpoint == "search"
+            else events._force_cache_rebuild
+        ).reset(token)
+    assert _futures_names(off) == [LITERAL]
+    assert _literal_row(on).get("top_outcomes") == _literal_row(off).get("top_outcomes")
