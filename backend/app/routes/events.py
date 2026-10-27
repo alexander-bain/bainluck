@@ -37818,10 +37818,24 @@ async def _search_container_parent_ids(
     ) | _search_unlinked_container_parents_among(unlinked, named_rows)
 
 
+def _search_now() -> datetime:
+    """The request's real instant, the clock detail's representation reads
+    (``_format_market_detail`` passes ``datetime.now(timezone.utc)``). Search's
+    one clock: the day-granular ladder window derives from it, so a test pins
+    this and both stay consistent (gotcha #44).
+
+    #11616 F1: the representation used to receive MIDNIGHT of today. A rung
+    expires at ``D+1 11:59:59Z`` (deadline ``D 23:59:59Z`` + 0.5 d grace), so
+    from 12:00Z to 24:00Z detail dropped yesterday's rung while search kept it,
+    and an exclusive board normalized over a different field (44/28/20 on
+    search vs 48/30/22 on detail)."""
+    return datetime.now(timezone.utc)
+
+
 def _search_today_ymd() -> float:
-    """Today (UTC) on the ``YYYYMMDD`` scale date rungs sort on (#8930). One
-    function so tests pin the clock instead of branching on it (gotcha #44)."""
-    today = datetime.now(timezone.utc).date()
+    """Today (UTC) on the ``YYYYMMDD`` scale date rungs sort on (#8930), read
+    from :func:`_search_now`. Day-granular, for the ladder window only."""
+    today = _search_now().date()
     return float(today.year * 10000 + today.month * 100 + today.day)
 
 
@@ -38089,12 +38103,13 @@ def _build_search_top_outcomes(
     # about the chain itself changed.
     from app.utils.futures_outcome_representation import represent_futures_outcomes
 
-    # The existing date-rung clock governs both admission and window selection.
-    today = int(_search_today_ymd())
+    # #11616 F1: the request's real instant, as detail passes it — never
+    # midnight. Expired-rung admission is instant-granular; only the ladder
+    # window below is day-granular (`_search_today_ymd`, same clock).
     represented = represent_futures_outcomes(
         market, withheld,
         out_division_labels=out_division_labels,
-        now=datetime(today // 10000, (today // 100) % 100, today % 100, tzinfo=timezone.utc),
+        now=_search_now(),
     )
     by_id = {row["id"]: row for row in represented.outcomes}
     # Surface reachability/selection remains bounded, but its values and state
