@@ -80,6 +80,9 @@ class _Rig:
             self.missing.extend(frames)
 
         class _Registry:
+            # Receipt-only rig: ledger cleanup has separate reservation controls.
+            ledger = False
+
             @staticmethod
             def retire_missing(eid, source, ticket):
                 return ('retire_missing', eid)
@@ -268,7 +271,8 @@ async def test_cancelled_pass_logs_no_receipt(monkeypatch, caplog):
     monkeypatch.setattr(rig, 'execute', held)
     caplog.set_level(logging.INFO, logger=lbr.__name__)
     task = asyncio.create_task(rig.worker._maintain_preview_capacity())
-    await started.wait()
+    # Fail promptly if maintenance exits before reaching the held DB read.
+    await asyncio.wait_for(started.wait(), timeout=2)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
