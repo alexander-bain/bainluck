@@ -38400,7 +38400,15 @@ def _build_search_top_outcomes(
         if "settlement_display" in row:
             item["settlement_display"] = row["settlement_display"]
         if not lean:
-            item.update(id=o.id, american_odds=row["american_odds"], rank=row["rank"] if row["probability"] is not None else None)
+            # #11616: odds follow the served probability, as rank does — a
+            # NULL price beside stored odds would be attested here and then
+            # refused by the cache validator on the producer's own card.
+            priced = row["probability"] is not None
+            item.update(
+                id=o.id,
+                american_odds=row["american_odds"] if priced else None,
+                rank=row["rank"] if priced else None,
+            )
         if o.id in _empty_book_results:
             # F5: the verdict, never the empty book's midpoint.
             item.update(probability=None, rendered_percent=None, movement=None, price_changed_at=None)
