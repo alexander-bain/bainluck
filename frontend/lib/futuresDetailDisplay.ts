@@ -2,6 +2,7 @@ import { formatShareProbability } from "./share";
 // #7906 — the ONE shape measured to hold true peers. Every other shape was read
 // against production and rejected; the tally is in `gradedWinner`'s comment.
 import { SHAPE_PARTICIPATION } from "./marketShape";
+import { outcomeRowVerdict, type GradedRow } from "./futuresOutcomeVerdict";
 
 const PEER_WINNER_SHAPES: ReadonlySet<string> = new Set([SHAPE_PARTICIPATION]);
 
@@ -91,19 +92,28 @@ export interface MovementLeader {
  * between "unlikely" and "nothing here".
  */
 export function pickHeroOutcome<
-  T extends { is_winner?: boolean | null; probability?: number | null; name?: string | null },
+  T extends GradedRow & { probability?: number | null; name?: string | null },
 >(
   outcomes: readonly T[],
   leader: T | null,
   resolved: boolean,
   mutuallyExclusive?: boolean | null,
 ): T | null {
+  // #11616 L3 — a WINNER is a row whose own table cell prints `Won`
+  // (`outcomeRowVerdict`), never a raw `is_winner` the row itself refuses: a
+  // `true` with a null or retracted source is crowned nowhere else (search,
+  // iOS, this page's own Final Results), so the hero must not crown it either.
+  // An open board's supported winner is an authoritative settlement (#6082)
+  // and is the answer on an exclusive/unstated board, as on iOS and search —
+  // "a verified result is not replaced by a near-100% prediction". An
+  // independent board keeps its live leader and falls back to that winner.
+  const winners = outcomes.filter((o) => outcomeRowVerdict(o, resolved) === "won");
+  const winner = winners.find((o) => !isLineOrPropLeg(o.name)) ?? winners[0] ?? null;
   if (!resolved) {
-    if (mutuallyExclusive !== false) return leader;
-    return pickLiveLeader(outcomes) ?? leader;
+    if (mutuallyExclusive !== false) return winner ?? leader;
+    return pickLiveLeader(outcomes) ?? winner ?? leader;
   }
-  const winners = outcomes.filter((o) => o.is_winner === true);
-  return winners.find((o) => !isLineOrPropLeg(o.name)) ?? winners[0] ?? leader;
+  return winner ?? leader;
 }
 
 /**
@@ -230,6 +240,27 @@ export function servedLeadOutcome<T extends { id: number; probability?: number |
   if (leadOutcomeId == null || status === "resolved") return null;
   const lead = outcomes.find((o) => o.id === leadOutcomeId);
   return lead && lead.probability != null ? lead : null;
+}
+
+/**
+ * #11616 L3(c) — the HERO's lead admission: the priced lead above, or, on a
+ * board still open, a named lead whose row prints a supported `Won` with no
+ * price (Root's ruling over Native's R2). A container's match-winner leg that
+ * has settled is still who won; without this the hero fell through to
+ * `pickLiveLeader` and headlined an O/U leg (#8892's shape). Hero only: the
+ * page's `leader`, row badge, unfurl and picture keep `servedLeadOutcome`.
+ */
+export function servedLeadHeroOutcome<
+  T extends GradedRow & { id: number; probability?: number | null },
+>(
+  outcomes: readonly T[],
+  leadOutcomeId: number | null | undefined,
+  status: string | null | undefined,
+): T | null {
+  const priced = servedLeadOutcome(outcomes, leadOutcomeId, status);
+  if (priced || leadOutcomeId == null || status === "resolved") return priced;
+  const lead = outcomes.find((o) => o.id === leadOutcomeId);
+  return lead && outcomeRowVerdict(lead, false) === "won" ? lead : null;
 }
 
 /**
@@ -547,7 +578,9 @@ export const CHECK_AN_OUTCOME_CHART_NOTE = "Check an outcome below to see its pa
  * CROWN, never a row: the Final Results table still badges all seventy-two, which
  * is the honest place for that fact and the reason the silence leaves no hole.
  * ─────────────────────────────────────────────────────────────────────────── */
-export function gradedWinner<T extends { is_winner?: boolean | null }>(
+export function gradedWinner<
+  T extends GradedRow & { probability?: number | null; name?: string | null },
+>(
   outcomes: readonly T[],
   leader: T | null,
   status: string | null | undefined,
@@ -565,14 +598,16 @@ export function gradedWinner<T extends { is_winner?: boolean | null }>(
     // and a participation board carries 163 rows.
     let graded = 0;
     for (const outcome of outcomes) {
-      if (outcome?.is_winner === true) {
+      // #11616 — counted on the row's own verdict, like the crown below.
+      if (outcome && outcomeRowVerdict(outcome, true) === "won") {
         graded += 1;
         if (graded > 1) return null;
       }
     }
   }
   const featured = pickHeroOutcome(outcomes, leader, true);
-  return featured?.is_winner === true ? featured : null;
+  // #11616 — the crown is the row's supported `Won`, not a raw `is_winner`.
+  return featured && outcomeRowVerdict(featured, true) === "won" ? featured : null;
 }
 
 /** Generic binary-style outcome names that read better as "Yes" in a headline. */

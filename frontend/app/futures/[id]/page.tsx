@@ -82,6 +82,7 @@ import {
   pickCaptionSubject,
   pickChartSeedOutcomes,
   pickHeroOutcome,
+  servedLeadHeroOutcome,
   servedLeadOutcome,
   sortFuturesOutcomes,
   visibleChartOutcomes,
@@ -929,9 +930,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // literal `true` and is unaffected.
   // #8892 — a named lead leg outranks `pickLiveLeader`: a game container is
   // `mutually_exclusive: false`, so without this the hero kept its O/U leg.
+  // #11616 L3(c) — the hero also admits a named lead whose row prints a
+  // supported `Won` without a price; `leader` and the row badge do not move.
   const heroOutcome =
-    leadOutcome ??
+    servedLeadHeroOutcome(market.outcomes, market.lead_outcome_id, market.status) ??
     pickHeroOutcome(market.outcomes, leader, isResolved, market.mutually_exclusive);
+  // #11616 L3(d) — an open board whose hero row prints `Won` shows the result,
+  // as the row, iOS and search do, never that row's last price as a forecast.
+  const heroWonOpen =
+    !isResolved && heroOutcome != null && outcomeRowVerdict(heroOutcome, false) === "won";
   // #6301 — the GRADE, asked for BY NAME through the one helper that owns the test.
   // `gradedWinner` returns the featured row only when `is_winner === true`, and null
   // on every settled field that never graded one. `layout.tsx` adopted it under #6079
@@ -1133,6 +1140,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         isMultiOutcome={(market.outcome_count ?? 0) > 2}
         sparklinePoints={ambientPoints}
         resolved={isResolved}
+        wonOpen={heroWonOpen}
         resolvedWon={gradedChampion !== null}
         resultUnknown={resultCertainty === "all"}
       />

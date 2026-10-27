@@ -1,0 +1,288 @@
+/**
+ * #11616 L3(a)-(d) and the resolved raw-crown observation: the web detail hero
+ * follows the row's supported verdict (`outcomeRowVerdict`), as iOS and search do.
+ *
+ * Root's ROOT-NATIVE-DELTA-DISPOSITION items 3-4, from lane1b's
+ * NATIVE-DELTA-REVIEW-0d239c9d §3.1/§3.3:
+ *   (a) an open exclusive/unstated board heroed Shai 97% while its own table
+ *       printed Victor Won — "a verified result is not replaced by a prediction";
+ *   (b) an independent board with no live row above 0 fell back to the price
+ *       leader instead of its supported winner;
+ *   (c) a served lead with a supported Won and no price was refused (Root chose
+ *       L3(c) over Native rolling back to R2);
+ *   (d) an open supported-winner hero printed its last price, not "Won".
+ * And: a resolved board crowned a raw `is_winner` true whose source is null or
+ * the retraction, which its own row, search and iOS all refuse.
+ *
+ * Mounted with effects running, like #8222's harness this file copies.
+ */
+import "./helpers/minimalDom";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  gradedWinner,
+  pickHeroOutcome,
+  servedLeadHeroOutcome,
+} from "@/lib/futuresDetailDisplay";
+
+jest.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(""),
+  useRouter: () => ({ replace: () => {}, push: () => {} }),
+}));
+
+let MARKET: Record<string, unknown> | null = null;
+let HISTORY: Record<string, unknown> | null = null;
+jest.mock("swr", () => ({
+  __esModule: true,
+  default: (key: unknown) => {
+    const none = { data: undefined, error: undefined, isLoading: false, mutate: () => {} };
+    if (key == null) return none;
+    const tag = Array.isArray(key) ? key[0] : key;
+    if (tag === "futures-market") return { ...none, data: MARKET };
+    if (tag === "futures-history") return { ...none, data: HISTORY };
+    return none;
+  },
+}));
+jest.mock("@/hooks", () => ({
+  usePageTracking: () => {},
+  useScrollDepth: () => {},
+  useEngagementTime: () => {},
+  usePinnedFutures: () => ({ isPinned: () => false, togglePin: () => {}, isMaxReached: false }),
+}));
+jest.mock("@/components/Analytics", () => ({ useAnalyticsContext: () => ({ track: () => {} }) }));
+jest.mock("@/hooks/useMarketStream", () => ({ useMarketStream: () => {} }));
+// next/link prefetches through `requestIdleCallback`, which reads the browser
+// global `self` that the minimal DOM does not provide. The link is not under test.
+jest.mock("next/link", () => ({
+  __esModule: true,
+  default: ({ children, href, ...rest }: { children: React.ReactNode; href: unknown }) =>
+    React.createElement("a", { href: String(href), ...rest }, children),
+}));
+
+import FuturesDetailPage from "../app/futures/[id]/page";
+
+
+/* ─────────────────────────────── fixture ─────────────────────────────── */
+
+type Leg = { name: string; p: number | null; won?: boolean | null; src?: string | null };
+function board(legs: Leg[], extra: Record<string, unknown> = {}) {
+  return {
+    id: 11616, name: "Hero board", status: "open", mutually_exclusive: true,
+    source: "kalshi", created_at: "2026-09-20T00:00:00+00:00",
+    outcomes: legs.map((l, i) => ({
+      id: 500 + i, name: l.name, probability: l.p, rank: i + 1,
+      opening_probability: null, probability_change_24h: null, american_odds: null,
+      opening_american_odds: null, is_winner: l.won ?? false,
+      resolution_source: l.src ?? null, last_updated: "2026-10-27T12:00:00+00:00",
+    })),
+    ...extra,
+  };
+}
+const WON = { won: true, src: "api_settlement" };
+
+/* ─────────────────────────────── readers ─────────────────────────────── */
+
+
+type El = HTMLElement & { [k: string]: unknown };
+function descendants(node: El): El[] {
+  return [node, ...Array.from(node.childNodes).flatMap((n) => descendants(n as El))];
+}
+function reactProps(node: El): Record<string, (arg?: unknown) => void> {
+  const key = Object.keys(node).find((k) => k.startsWith("__reactProps$"))!;
+  return node[key] as Record<string, (arg?: unknown) => void>;
+}
+let host: El;
+let root: ReturnType<typeof createRoot>;
+function mount() {
+  act(() => root.render(<FuturesDetailPage params={{ id: "11616" }} />));
+}
+function byTestId(id: string): El[] {
+  return descendants(host).filter((n) => n["data-testid"] === id);
+}
+function text(): string {
+  return host.textContent ?? "";
+}
+
+beforeEach(() => {
+  HISTORY = null;
+  host = document.createElement("div") as unknown as El;
+  document.body.appendChild(host);
+  root = createRoot(host);
+});
+afterEach(() => {
+  act(() => root.unmount());
+  document.body.removeChild(host);
+});
+
+
+const one = (id: string) => byTestId(id).map((n) => n.textContent ?? "");
+function hero() {
+  return {
+    percent: one("hero-percent"),
+    openWon: one("hero-open-won-name"),
+    openWonChip: one("hero-open-won-chip"),
+    resolvedName: one("hero-resolved-name"),
+    resolvedChip: one("hero-resolved-chip"),
+  };
+}
+
+/* ─────────────────────────────── the ship ─────────────────────────────── */
+
+describe("L3(a)+(d): an open exclusive board heroes its supported result as Won", () => {
+  it.each([0.95, null])("Victor Won (price %p) over Shai 97%%", (victor) => {
+    MARKET = board([{ name: "Shai Gilgeous-Alexander", p: 0.97 }, { name: "Victor Wembanyama", p: victor, ...WON }]);
+    mount();
+    const h = hero();
+    expect(h.openWon).toEqual(["Victor Wembanyama"]);
+    expect(h.openWonChip).toEqual(["Won"]);
+    expect(h.percent).toEqual([]);
+    expect(h.resolvedChip).toEqual([]); // still an open board: no RESOLVED chip
+  });
+
+  it("an unstated exclusivity claim reads as exclusive (serializer default)", () => {
+    MARKET = board(
+      [{ name: "Shai Gilgeous-Alexander", p: 0.97 }, { name: "Victor Wembanyama", p: 0.95, ...WON }],
+      { mutually_exclusive: undefined },
+    );
+    mount();
+    expect(hero().openWon).toEqual(["Victor Wembanyama"]);
+  });
+
+  it.each([
+    ["a null source", null],
+    ["a non-authoritative source on an open board", "manual"],
+    ["the retraction", "ungradeable_result"],
+  ])("CONTROL: a raw winner flag with %s is a price, not a result", (_label, src) => {
+    MARKET = board([
+      { name: "Shai Gilgeous-Alexander", p: 0.97 },
+      { name: "Victor Wembanyama", p: 0.95, won: true, src: src as string | null },
+    ]);
+    mount();
+    const h = hero();
+    expect(h.openWon).toEqual([]);
+    expect(h.percent).toEqual(["97"]);
+  });
+});
+
+describe("L3(b): an independent open board keeps a live lead, else its supported winner", () => {
+  it("a live row above 0 leads (#7439)", () => {
+    MARKET = board(
+      [{ name: "↑ 4.25%", p: 0.4 }, { name: "↓ 3.5%", p: 0.95, ...WON }],
+      { mutually_exclusive: false },
+    );
+    mount();
+    const h = hero();
+    expect(h.percent).toEqual(["40"]);
+    expect(h.openWon).toEqual([]);
+  });
+
+  it("with every live row at 0 the supported winner leads, as Won", () => {
+    MARKET = board(
+      [{ name: "↑ 4.25%", p: 0.0 }, { name: "↓ 3.5%", p: null, ...WON }],
+      { mutually_exclusive: false },
+    );
+    mount();
+    expect(hero().openWon).toEqual(["↓ 3.5%"]);
+  });
+});
+
+describe("L3(c): a served lead with a supported Won and no price stays the hero", () => {
+  it("a container's settled match-winner leg leads over its O/U leg (#8892)", () => {
+    MARKET = board(
+      [{ name: "Over — O/U 3.5 Games", p: 0.71 }, { name: "Cloud9 — Match Winner", p: null, ...WON }],
+      { mutually_exclusive: false, lead_outcome_id: 501 },
+    );
+    mount();
+    expect(hero().openWon).toEqual(["Cloud9 — Match Winner"]);
+  });
+
+  it("CONTROL: a priceless lead with only a raw flag is refused; the live leader leads", () => {
+    MARKET = board(
+      [{ name: "Over — O/U 3.5 Games", p: 0.71 }, { name: "Cloud9 — Match Winner", p: null, won: true }],
+      { mutually_exclusive: false, lead_outcome_id: 501 },
+    );
+    mount();
+    const h = hero();
+    expect(h.openWon).toEqual([]);
+    expect(h.percent).toEqual(["71"]);
+  });
+});
+
+describe("resolved raw crown: only a supported Won is crowned", () => {
+  it.each([
+    ["a null source", null],
+    ["the retraction", "ungradeable_result"],
+  ])("a raw true with %s names nobody", (_label, src) => {
+    MARKET = board(
+      [{ name: "Tadej Pogacar", p: 0.6, won: true, src: src as string | null }, { name: "Enric Mas", p: 0.4 }],
+      { status: "resolved" },
+    );
+    mount();
+    const h = hero();
+    expect(h.resolvedName).toEqual([]);
+    expect(h.resolvedChip).toEqual(["Resolved"]);
+  });
+
+  it("CONTROL: a supported grade is crowned", () => {
+    MARKET = board(
+      [{ name: "Tadej Pogacar", p: 0.6 }, { name: "Enric Mas", p: 0.4, ...WON }],
+      { status: "resolved" },
+    );
+    mount();
+    const h = hero();
+    expect(h.resolvedName).toEqual(["Enric Mas"]);
+    expect(h.resolvedChip).toEqual(["Won"]);
+  });
+
+  it("#8280: among supported winners the side-naming leg is crowned (Kings, 114108)", () => {
+    MARKET = board(
+      [
+        { name: "O/U 5.5", p: 1, ...WON },
+        { name: "O/U 6.5", p: 1, ...WON },
+        { name: "Kings", p: 1, ...WON },
+        { name: "Spread -1.5", p: 0, won: false, src: "api_settlement" },
+      ],
+      { status: "resolved", mutually_exclusive: false },
+    );
+    mount();
+    expect(hero().resolvedName).toEqual(["Kings"]);
+  });
+});
+
+describe("the helpers the unfurl and picture share", () => {
+  const rows = [
+    { id: 1, name: "A", probability: 0.6, is_winner: true, resolution_source: null },
+    { id: 2, name: "B", probability: 0.4, is_winner: false, resolution_source: null },
+  ];
+  it("gradedWinner refuses a raw true the row refuses", () => {
+    expect(gradedWinner(rows, rows[0], "resolved")).toBeNull();
+    const supported = rows.map((r) => (r.id === 1 ? { ...r, resolution_source: "api_settlement" } : r));
+    expect(gradedWinner(supported, supported[0], "resolved")?.id).toBe(1);
+  });
+  it("a peer-shaped board counts supported grades, not raw flags (#7906)", () => {
+    const peers = [
+      { id: 1, name: "A", probability: 0.6, is_winner: true, resolution_source: "api_settlement" },
+      { id: 2, name: "B", probability: 0.4, is_winner: true, resolution_source: null },
+    ];
+    expect(gradedWinner(peers, peers[0], "resolved", "participation")?.id).toBe(1);
+    const two = peers.map((r) => ({ ...r, resolution_source: "api_settlement" }));
+    expect(gradedWinner(two, two[0], "resolved", "participation")).toBeNull();
+  });
+  it("servedLeadHeroOutcome admits a priced lead or a supported priceless Won, never on a resolved board", () => {
+    const legs = [
+      { id: 1, probability: 0.7, is_winner: false, resolution_source: null },
+      { id: 2, probability: null, is_winner: true, resolution_source: "api_settlement" },
+    ];
+    expect(servedLeadHeroOutcome(legs, 1, "open")?.id).toBe(1);
+    expect(servedLeadHeroOutcome(legs, 2, "open")?.id).toBe(2);
+    expect(servedLeadHeroOutcome(legs, 2, "resolved")).toBeNull();
+    expect(servedLeadHeroOutcome(legs, null, "open")).toBeNull();
+  });
+  it("pickHeroOutcome on an open exclusive board without a supported winner keeps the leader", () => {
+    const legs = [
+      { name: "A", probability: 0.97, is_winner: false, resolution_source: null },
+      { name: "B", probability: 0.95, is_winner: true, resolution_source: null },
+    ];
+    expect(pickHeroOutcome(legs, legs[0], false, true)).toBe(legs[0]);
+  });
+});
