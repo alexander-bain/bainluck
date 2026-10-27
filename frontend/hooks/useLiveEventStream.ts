@@ -6,16 +6,15 @@ import { frameFoldOrder } from '@/lib/foldRevision';
 import { rememberLiveChartFrame, type LiveChartFrame } from '@/lib/liveChartHistory';
 import { frameCarriesUnpricedSnapshot } from '@/lib/sourceSnapshot';
 import {
-  EMPTY_BLEND_PREVIEW_READER,
-  parseBlendPreview,
-  readerAfter,
-  readerAfterCommitFloor,
-  readerAfterPreviewOpen,
-  readerAfterPreviewReset,
-  readerAfterPreviewMembership,
-  type BlendPreviewReader,
-  type BlendPreviewState,
-} from '@/lib/blendPreview';
+  EMPTY_AUTHORITY_PREVIEW,
+  authorityPreviewFrame,
+  authorityPreviewFloor,
+  authorityPreviewOpen,
+  authorityPreviewReset,
+  authorityPreviewMembership,
+  type AuthorityPreviewReader,
+} from '@/lib/authorityPreview';
+import type { BlendPreviewState } from '@/lib/blendPreview';
 import type { ReconcileControl } from '@/lib/reconcileControl';
 import {
   TICK_INTERVAL_MS,
@@ -112,7 +111,7 @@ interface UseLiveEventStreamResult {
    * (`lib/blendPreview.ts`). Always null when the server sends none.
    */
   blendPreview: BlendPreviewState | null;
-  /** #10090: `Date.now()` at the last preview change or expiry, for `displayedPreview`. */
+  /** #10090: Monotonic time at the last preview change or expiry, for `displayedPreview`. */
   blendPreviewNow: number;
 }
 
@@ -148,9 +147,9 @@ export function useLiveEventStream(
   }>({ statusEventId: eventId, status: 'idle' });
   const [recovery, setRecovery] = useState({ eventId, ordinal: 0 });
   const [{ reader, previewNow }, setPreview] = useState<{
-    reader: BlendPreviewReader; previewNow: number;
-  }>({ reader: EMPTY_BLEND_PREVIEW_READER, previewNow: 0 });
-  const preview = reader.held;
+    reader: AuthorityPreviewReader; previewNow: number;
+  }>({ reader: EMPTY_AUTHORITY_PREVIEW, previewNow: 0 });
+  const preview = reader.preview.held;
   // A replacement controller starts its own ordinal at one; the hook does not.
   const recoveryOrdinal = useRef(0);
   // A ref so the controller's callbacks never close over a stale setter.
@@ -173,14 +172,17 @@ export function useLiveEventStream(
   }, []);
 
   useEffect(() => {
-    setPreview({ reader: EMPTY_BLEND_PREVIEW_READER, previewNow: 0 });
+    setPreview({ reader: EMPTY_AUTHORITY_PREVIEW, previewNow: 0 });
   }, [eventId]);
 
   useEffect(() => {
-    setRecovery({ eventId, ordinal: 0 });
     if (eventId) setPreview(previous => ({
-      reader: readerAfterPreviewMembership(previous.reader, membershipRef.current, eventId), previewNow: Date.now(),
+      reader: authorityPreviewMembership(previous.reader, membershipRef.current, eventId), previewNow: performance.now(),
     }));
+  }, [eventId, authoritativeMembership]);
+
+  useEffect(() => {
+    setRecovery({ eventId, ordinal: 0 });
     if (!enabled || !eventId || typeof window === 'undefined') {
       setConnected(false);
       setStatus({ statusEventId: eventId, status: 'idle' });
@@ -195,11 +197,14 @@ export function useLiveEventStream(
     const controller = createLiveStreamController({
       open: () =>
         new EventSource(
-          `${API_URL}/api/events/${eventId}/stream?preview_protocol=folded-v2`,
+          `${API_URL}/api/events/${eventId}/stream?preview_protocol=authority-v3`,
         ) as unknown as StreamHandle,
       now: () => Date.now(),
       onFrame: (next) => {
         if (mounted.current) {
+          if (next.event_id === eventId && next.rev) setPreview(previous => ({
+            reader: authorityPreviewFloor(previous.reader, next.rev), previewNow: performance.now(),
+          }));
           setFrame(previous => heldFrameAfter(previous, next));
           // Collect in the transport callback, not an effect on `frame`: React
           // may batch several publications into one render.
@@ -229,8 +234,8 @@ export function useLiveEventStream(
       onReconcile: (control) => {
         if (!mounted.current) return;
         setPreview(previous => ({
-          reader: readerAfterCommitFloor(previous.reader, control.floor),
-          previewNow: Date.now(),
+          reader: authorityPreviewFloor(previous.reader, control.floor),
+          previewNow: performance.now(),
         }));
         try {
           onReconcileRef.current?.(control);
@@ -240,17 +245,14 @@ export function useLiveEventStream(
           });
         }
       },
-      onPreview: (raw) => {
+      previewNow: () => performance.now(),
+      onAuthorityPreview: (raw, receivedAt) => {
         if (!mounted.current) return;
-        const parsed = parseBlendPreview(raw);
-        if (!parsed) return;
-        const at = Date.now();
-        // The controller is per event, so the reader (and its epoch floor)
-        // never carries over from another event: see the effect cleanup.
-        setPreview(previous => ({
-          reader: readerAfter(previous.reader, parsed, eventId, at),
-          previewNow: at,
-        }));
+        setPreview(previous => {
+          const at = performance.now();
+          const reader = authorityPreviewFrame(previous.reader, raw, eventId, receivedAt, at);
+          return { reader, previewNow: performance.now() };
+        });
       },
       onPreviewFloor: (raw) => {
         if (!mounted.current) return;
@@ -258,26 +260,23 @@ export function useLiveEventStream(
           const packet = typeof raw === 'string' ? JSON.parse(raw) : raw;
           if (!packet || packet.event_id !== eventId) return;
           setPreview(previous => ({
-            reader: readerAfterCommitFloor(previous.reader, packet.floor), previewNow: Date.now(),
+            reader: authorityPreviewFloor(previous.reader, packet.floor), previewNow: performance.now(),
           }));
         } catch {
           setPreview(previous => ({
-            reader: readerAfterPreviewReset(previous.reader), previewNow: Date.now(),
+            reader: authorityPreviewReset(previous.reader), previewNow: performance.now(),
           }));
         }
       },
-      onPreviewOpen: (raw) => {
+      onAuthorityPreviewOpen: (raw) => {
         if (mounted.current) setPreview(previous => ({
-          reader: readerAfterPreviewOpen(previous.reader, raw, eventId), previewNow: Date.now(),
+          reader: authorityPreviewOpen(previous.reader, raw, eventId), previewNow: performance.now(),
         }));
       },
-      onPreviewReset: () => {
-        // Clears the held preview; keeps the epoch floor (epochs only rise).
-        if (mounted.current) {
-          setPreview(previous => ({
-            reader: readerAfterPreviewReset(previous.reader), previewNow: Date.now(),
-          }));
-        }
+      onPreviewReset: (endSession = true) => {
+        if (mounted.current) setPreview(previous => ({
+          reader: authorityPreviewReset(previous.reader, endSession), previewNow: performance.now(),
+        }));
       },
       onDeliveringChange: (delivering) => {
         if (mounted.current) setConnected(delivering);
@@ -300,7 +299,7 @@ export function useLiveEventStream(
     return () => {
       clearInterval(timer);
       controller.stop();
-      setPreview(previous => ({ reader: readerAfterPreviewReset(previous.reader), previewNow: Date.now() }));
+      setPreview(previous => ({ reader: authorityPreviewReset(previous.reader), previewNow: performance.now() }));
     };
   }, [eventId, enabled, memberKeys]);
 
@@ -309,9 +308,9 @@ export function useLiveEventStream(
   const previewExpiresAt = preview?.expiresAt;
   useEffect(() => {
     if (previewExpiresAt === undefined) return;
-    const wait = Math.max(0, previewExpiresAt - Date.now());
+    const wait = Math.max(0, previewExpiresAt - performance.now());
     const timer = setTimeout(() => {
-      if (mounted.current) setPreview(previous => ({ ...previous, previewNow: Date.now() }));
+      if (mounted.current) setPreview(previous => ({ ...previous, previewNow: performance.now() }));
     }, wait + 1);
     return () => clearTimeout(timer);
   }, [previewExpiresAt]);

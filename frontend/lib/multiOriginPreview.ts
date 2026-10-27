@@ -78,7 +78,7 @@ export function resetMultiOrigin(reader: MultiOriginReader | undefined): MultiOr
 }
 
 /** Returns nothing for a refused packet; never partially advances its fences. */
-export function advanceMultiOrigin(reader: MultiOriginReader | undefined, packet: MultiOriginPreview, now: number):
+export function advanceMultiOrigin(reader: MultiOriginReader | undefined, packet: MultiOriginPreview, now: number, maxAuthorities = 2):
   { reader: MultiOriginReader; expiresAt: number } | null {
   if (!reader || (reader.members && (Object.keys(packet.base_fold_revision).length !== reader.members.length
       || reader.members.some(key => !Object.prototype.hasOwnProperty.call(packet.base_fold_revision, key))))
@@ -98,9 +98,9 @@ export function advanceMultiOrigin(reader: MultiOriginReader | undefined, packet
     authorities[key] = { ...authority, ...(deadline === undefined ? {} : { expiresAt: deadline }) };
     if (deadline !== undefined) expiresAt = Math.min(expiresAt, deadline);
   }
-  // Membership changes require a new detail/navigation boundary; never grow
-  // remembered origin state without bound on a long-held page.
-  if (Object.keys(authorities).length > 2) return null;
+  // Legacy keeps its two-origin bound. The v3 adapter supplies its bounded
+  // member capacity and preserves prior election fences across sessions.
+  if (Object.keys(authorities).length > maxAuthorities) return null;
   return { reader: { session: reader.session, sequence: packet.fold_seq, entered: true,
     seen: Object.keys(packet.origin_authority), authorities, ...(reader.members ? {members: reader.members} : {}) }, expiresAt };
 }

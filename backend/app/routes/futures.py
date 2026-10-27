@@ -7235,7 +7235,11 @@ class _PairAdmission(NamedTuple):
 
 
 def _verify_pair_bank(
-    accepted: dict, payload: Optional[dict], outcomes: list
+    accepted: dict,
+    payload: Optional[dict],
+    outcomes: list,
+    *,
+    market: Optional[FuturesMarket] = None,
 ) -> tuple[Optional[tuple], Optional[str]]:
     """`(pair, None)` when the bank's pair annotations verify for an identity-
     admitted Yes/No pair; `(None, None)` when pairing does not apply; `(None,
@@ -7245,7 +7249,7 @@ def _verify_pair_bank(
     IDENTITY IS RE-DERIVED HERE, never trusted from the bank (lane1's I3): the
     fill's own predicate (`async_binary_pair.paired_binary_leg_ids`), asked of the contracts the
     bank was built from, which `validate_payload` has already bound to these
-    outcome rows. Any other market — Kalshi, multi-outcome, wrong token,
+    outcome rows. Any other market — multi-outcome, non-exclusive, wrong token,
     condition or leg — reads its bank exactly as before: annotations, if a bank
     somehow carried them, are not consulted.
 
@@ -7265,12 +7269,14 @@ def _verify_pair_bank(
     ):
         return None, None
     cached = (payload or {}).get("outcomes") or {}
+    if not isinstance(cached, dict) or len(cached) != 2:
+        return None, None
     entries = {
         int(key): entry
-        for key, entry in (cached.items() if isinstance(cached, dict) else ())
+        for key, entry in cached.items()
         if str(key).isdigit() and isinstance(entry, dict) and int(key) in accepted
     }
-    pair = paired_binary_leg_ids(outcomes, entries)
+    pair = paired_binary_leg_ids(outcomes, entries, market=market)
     if pair is None:
         return None, None
     dropped = next(
@@ -7334,9 +7340,17 @@ def _venue_pair_admission(
     WITHHELD PER POINT AND COUNTED, NEVER A WHOLE-SERIES REFUSAL:
       * a half whose peer is not in this window (never paired, dropped by the
         support filter, claimed by a capture) — `unpaired`;
-      * a pair whose values disagree with one complementary book by more than
-        `PAIR_COHERENCE_EPSILON` — a mixed pair across a move — `incoherent`.
-        A refusal guard only; agreement proves neither identity nor a clock.
+      * POLYMARKET ONLY: a pair whose values disagree with one complementary book
+        by more than `PAIR_COHERENCE_EPSILON` — a mixed pair across a move —
+        `incoherent`. A refusal guard only; agreement proves neither identity nor
+        a clock.
+    WHY THE COHERENCE GUARD IS POLYMARKET'S ALONE (#10955 R1). Its premise is the
+    Yes and No tokens of ONE condition, which share one book: stamped at their own
+    seconds, a sum off 1.00 can only mean the halves straddle a move. A Kalshi
+    pair is two tickers, each priced from its own book's mid or last trade, paired
+    only at an exact shared candle instant — so a sum of 0.98 or 1.03 is two
+    genuine prices, never a straddle, and base served those points. A Kalshi pair
+    goes straight to the scale contract below, exactly as base's field rule did.
     The scale contract itself is unchanged and still refuses WHOLE if an admitted
     pair's printed value differs from its raw one.
 
@@ -7360,6 +7374,7 @@ def _venue_pair_admission(
     ):
         return None
     at_b = {row.captured_at: row for row in venue_by_outcome.get(oid_b) or ()}
+    one_book = getattr(market, "source", None) == "polymarket"
     admitted: dict = {}
     columns: dict = {}
     incoherent = 0
@@ -7370,7 +7385,7 @@ def _venue_pair_admission(
         # alone and is withheld below. Never a whole-series refusal.
         if row_b is None or row_b.peer_at != row_a.captured_at:
             continue
-        if pair_is_incoherent(row_a.probability, row_b.probability):
+        if one_book and pair_is_incoherent(row_a.probability, row_b.probability):
             incoherent += 2
             continue
         # Keyed per tier too: two tiers may hold pairs sharing a knowledge time,
@@ -7671,7 +7686,9 @@ async def _load_generic_venue_history(
         # beside its peer, not mistaken for a forged one. A failure is RECORDED,
         # never applied here: this loader also feeds `/probability-timeline`,
         # which does not pair and keeps master's points (lane1's R1).
-        pair, venue.pair_refusal = _verify_pair_bank(accepted, payload, charted_outcomes)
+        pair, venue.pair_refusal = _verify_pair_bank(
+            accepted, payload, charted_outcomes, market=market
+        )
         for oid, points in accepted.items():
             rows = as_snapshot_rows(oid, market.source, points)
             supported = _drop_unsupported_snapshot_points(

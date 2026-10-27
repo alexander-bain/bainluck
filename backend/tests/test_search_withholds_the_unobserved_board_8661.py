@@ -27,7 +27,7 @@ drawing a ladder of dashes.
 
 import inspect
 import textwrap
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -247,8 +247,12 @@ async def test_a_graded_board_keeps_its_result(five_arms_refuse_nothing):
 @pytest.mark.asyncio
 async def test_a_live_board_pays_no_read_and_keeps_its_prices(five_arms_refuse_nothing):
     """Priced this minute and touched this minute: the gate never asks the fleet."""
+    # "This minute" is the route's own clock, so the stamp is read from it. A fixed
+    # stamp is only "live" for BOARD_UNOBSERVED_DAYS: FLEET_NEWEST aged past the floor
+    # at 2026-10-25 17:13Z and the gate rightly asked the fleet.
+    now = datetime.now(timezone.utc)
     db = _FleetDB()
-    market = _market(_legs(stamp=FLEET_NEWEST), touched=FLEET_NEWEST)
+    market = _market(_legs(stamp=now), touched=now)
     withheld = await _search_withheld_price_ids(db, market)
     assert withheld == set()
     assert db.reads == 0

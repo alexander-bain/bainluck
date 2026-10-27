@@ -23,6 +23,10 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.skipif(
 @pytest.fixture
 async def capacity(rig, redis_kwargs, monkeypatch):
     blend_preview.reset_registry_for_tests()
+    # These retained lifecycle/relay controls exercise the legacy key and wire
+    # contract explicitly. Default v3 producer coverage uses a ready PG domain.
+    monkeypatch.setattr(blend_preview, '_REGISTRY',
+                        blend_preview.LedgerRegistry(sources=('kalshi', 'polymarket')))
     client = Redis(**redis_kwargs)
     registry = blend_preview.registry()
     await registry.claim(client.execute_command, 'kalshi')

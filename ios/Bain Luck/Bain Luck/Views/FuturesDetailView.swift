@@ -163,6 +163,10 @@ struct FuturesDetailView: View {
         horizontalSizeClass == .regular ? 0 : 120
     }
 
+    /// #10876 — the ScrollView's own space: `contextualTipHero10876` measures
+    /// the hero against the visible scroll area, as the event page does.
+    static let scrollSpace = "futuresDetailScroll"
+
     var body: some View {
         Group {
             if viewModel.loading {
@@ -178,6 +182,9 @@ struct FuturesDetailView: View {
                     VStack(spacing: 0) {
                         // Hero section (matches Discover card visual quality)
                         heroSection(market)
+                            // #10876 — the pin tip opens over the top of the page,
+                            // so it waits until this hero is out of view.
+                            .contextualTipHero10876(type: "future", id: marketId, scrollSpace: Self.scrollSpace)
 
                         VStack(spacing: 20) {
                             // Hook description (journalist-style blurb)
@@ -229,6 +236,8 @@ struct FuturesDetailView: View {
                     #endif
                     .frame(maxWidth: .infinity)
                 }
+                // #10876 — the hero's bottom edge is measured in this space.
+                .coordinateSpace(name: Self.scrollSpace)
             }
         }
         .navigationTitle("Market Details")
@@ -264,6 +273,11 @@ struct FuturesDetailView: View {
             // Detail AND chart (#9387).
             await viewModel.refresh()
         }
+        // #10874 — a viewed market joins Spotlight's recent entries.
+        .spotlightViewed10874(viewModel.market.flatMap { market in
+            market.id == marketId ? SpotlightSubject10874.market(
+                id: market.id, name: market.name, category: market.llmSportCategory ?? market.sport) : nil
+        })
         .onChange(of: scenePhase) { _, phase in
             viewModel.setVisible(pageVisible && phase == .active)
         }

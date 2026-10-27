@@ -742,6 +742,10 @@ class TestRefresherBoundary:
         monkeypatch.setenv(blend_preview.LEDGER_SOURCES_ENV, "kalshi,polymarket")
         monkeypatch.setenv(blend_preview.EVENT_IDS_ENV, str(EV))
         blend_preview.reset_registry_for_tests()
+        # This control exercises the retained v1 ledger protocol explicitly.
+        # The default registry now requires a ready PostgreSQL v3 authority;
+        # its real-refresher publication is covered in the v3 producer suite.
+        monkeypatch.setattr(blend_preview, "_REGISTRY", blend_preview.LedgerRegistry(sources=SOURCES))
         client = Redis(**redis_kwargs)
         listener_client = Redis(**redis_kwargs)
         listener = listener_client.pubsub()

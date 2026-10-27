@@ -213,33 +213,48 @@ async def test_a_pass_after_ten_quiet_days_moves_no_revision(db, clocked):
 
 
 @pytest.mark.asyncio
-async def test_a_withdrawal_while_off_answers_building_never_the_withdrawn_page(
+async def test_a_withdrawal_while_off_serves_the_corrected_page_never_the_withdrawn_one(
     db, clocked, monkeypatch
 ):
+    """#9936 D1b. Before: the rebuild skipped while off and the page answered
+    "building" until assembly came back. Now the correction's own rebuild
+    publishes the corrected page; the withdrawn page is still stored under the
+    bound and is still never served."""
     db.add_markets(OPENAI_IPO, CLAUDE_6, slug="ai")
     await _assemble()
+    db.publish("ai")
+    assert (await ta._run_rebuild_theme_snapshot(db.container_id("ai")))["terminal"] == "complete"
     cid, r = db.container_id("ai"), db.revision("ai")
 
-    monkeypatch.delenv(ta.THEME_ASSEMBLY_ENABLED_ENV)  # the off switch is not bypassed
+    monkeypatch.delenv(ta.THEME_ASSEMBLY_ENABLED_ENV)  # assembly stopped
     clocked.now = 5 * DAY
-    live = db.withdraw("ai", CLAUDE_6.id)
-    rebuilt = await ta._run_rebuild_theme_snapshot(cid)
-    assert rebuilt["reason"] == "theme_assembly_disabled"
-
-    old = await routes._read_theme_snapshot(cid, r)
-    assert old is not None and CLAUDE_6.id in old["shown_ids"]  # still stored under the bound
-    # The route reads only the live revision, even for a reader holding the old
-    # one. Membership is the live published read: the withdrawn member is gone.
+    corrected = db.withdraw("ai", CLAUDE_6.id)
     members = [{"container_id": cid, "type": MEMBER_MARKET, "id": i, "class": c}
                for i, c in db.theme_edges("ai").items()]
     assert [m["id"] for m in members] == [OPENAI_IPO.id]
-    published = SimpleNamespace(container_id=cid, revision=live, members=members)
+
+    # Between the commit and the rebuild: "building", never the old page.
     for held in (None, str(r)):
         response = await routes._serve_theme_page(
-            None, published, {}, revision=held, cursor=None, limit=None
+            None, SimpleNamespace(container_id=cid, revision=corrected, members=members),
+            {}, revision=held, cursor=None, limit=None,
         )
         assert response.status_code == 503
         assert json.loads(response.body) == {"detail": {"state": "building"}}
+
+    rebuilt = await ta._run_rebuild_theme_snapshot(cid)
+    report = rebuilt["containers"][0]
+    assert (rebuilt["terminal"], report["assembly"]) == ("complete", "stopped")
+    live = db.revision("ai")
+    assert (report["revision_before"], live) == (corrected, corrected + 1)
+
+    old = await routes._read_theme_snapshot(cid, r)
+    assert old is not None and CLAUDE_6.id in old["shown_ids"]  # still stored under the bound
+    page = await routes._read_theme_snapshot(cid, live)  # the only key the route reads
+    assert page["shown_ids"] == [OPENAI_IPO.id] and page["inventory_complete"] is True
+    window = theme_page_window(page["shown_ids"], {m["id"]: m["class"] for m in members},
+                               cursor_key=None, limit=50)
+    assert window == ([OPENAI_IPO.id], None)
 
 
 @pytest.mark.asyncio

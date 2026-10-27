@@ -27,7 +27,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.skipif(
 
 
 @pytest.fixture(autouse=True)
-async def preview(monkeypatch, private_redis_socket):
+async def preview(monkeypatch, private_redis_socket, rig):  # noqa: F811
     """Default ledger runs real Lua; the existing sink still verifies commits.
 
     Record actual Redis subscriber receipts, not pre-CAS composed frames.
@@ -35,10 +35,39 @@ async def preview(monkeypatch, private_redis_socket):
     composition, publication and committed readback assertions remain intact.
     """
     from redis.asyncio import Redis
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from uuid import uuid4
+    import runpy
+    from app.services.dnpl_authority import AuthorityStore, preparing_candidate
+    from app.services.dnpl_activation import ActivationController
+    from app.utils.dnpl_authority_transport import decode_preview
     from app.utils.live_push import event_channel
 
     blend_preview.reset_registry_for_tests()
     client = Redis(unix_socket_path=str(private_redis_socket))
+    # Exercise the real default v3 path: explicit migrations and activation,
+    # followed by primary binding before this fixture accepts any source input.
+    def upgrade(conn):
+        with Operations.context(MigrationContext.configure(conn)):
+            for name in ('dnpl_authority_10090.py', 'dnpl_retirement_10090.py'):
+                runpy.run_path(str(Path(__file__).parents[2] / 'alembic/versions' / name))['upgrade']()
+
+    async with rig.engine.begin() as conn:
+        await conn.run_sync(upgrade)
+    store = AuthorityStore(rig.maker)
+    server, repl = await client.info('server'), await client.info('replication')
+    old = await store.read()
+    current = await store.prepare(old, preparing_candidate(
+        old, namespace=uuid4(), operation_id=uuid4(), redis_run_id=server['run_id'],
+        redis_master_replid=repl['master_replid'],
+        policy_fingerprint=blend_preview.registry().policy.fingerprint,
+    ))
+    controller = ActivationController(store, client)
+    await controller.arm(current)
+    await controller.initialize(current)
+    ready = await controller.ready(current)
+    await blend_preview.registry().bind_primary(store)
     subscriber = client.pubsub()
     await subscriber.subscribe(*(event_channel(eid) for eid in (1, 2, 3)))
     for _ in range(3):
@@ -46,11 +75,14 @@ async def preview(monkeypatch, private_redis_socket):
 
     async def call(*args):
         result = await client.execute_command(*args)
-        if (args[0] == 'EVAL' and args[4 + int(args[2])] in ('publish', 'revoke')
+        if (args[0] == 'EVAL' and args[9 + int(args[2])] in ('publish', 'revoke')
                 and result and result[0] == b'published'):
             message = await subscriber.get_message(ignore_subscribe_messages=True, timeout=1)
             assert message is not None, 'successful DNPL PUBLISH must reach subscriber'
-            call.frames.append((time.monotonic(), json.loads(message['data'])))
+            at = time.monotonic()
+            receipt = decode_preview(message['channel'].decode(), message['data'], at)
+            assert receipt.authority == ready
+            call.frames.append((at, json.loads(receipt.payload)))
         return result
 
     call.frames = []

@@ -771,7 +771,9 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
         XCTAssertEqual(count(".frame(minWidth:44,minHeight:44,alignment:.leading).contentShape(Rectangle())", in: buttons), 2,
                        "each state's shape is laid on its 44pt frame, not on the caption")
         XCTAssertFalse(buttons.contains(".padding(.vertical,6).contentShape("), "the ~26pt target is back")
-        XCTAssertTrue(chart.contains("tennis:tennis)}.frame(height:chartHeight)legendView(dataPoints:dataPoints,"
+        XCTAssertTrue(chart.contains("tennis:tennis)}.frame(height:chartHeight)"
+                                     + ".exploreChartTip10876(eventId:eventId,touchSurfaceInstalled:scrubSurfaces,dataPoints:dataPoints)"
+                                     + "legendView(dataPoints:dataPoints,"
                                      + "sources:history.winProbSources??[:],sourcesOpen:$inlineSourcesOpen,rail:false)"),
                       "inline: the key sits below the fixed-height plot")
         XCTAssertTrue(chart.contains(".frame(height:enlargedPlotFloor)legendView(dataPoints:dataPoints,"
@@ -788,8 +790,9 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
         XCTAssertTrue(chart.contains("tennis:tennis)}.frame(height:chartHeight)"),
                       "(a)/(b) the one inline chart container, framed at the inline height")
         XCTAssertEqual(count("selection.end()", in: chart), 1, "(c) one scrub end")
-        XCTAssertTrue(chart.contains("iflettennis,letdate=selection.date{tennisPin.hold(tennis.inspect(at:date))}selection.end()"),
-                      "(c) the onEnd still runs with the selection alive before end()")
+        XCTAssertTrue(chart.contains("iflettennis,letdate=selection.date{tennisPin.hold(tennis.inspect(at:date))}"
+                                     + "ifselection.isScrubbing{ContextualTips10876.chartLearned()}selection.end()"),
+                      "(c) the onEnd still runs with the selection alive before end(): tennis hold, then the tip's action")
     }
 
     /// The plot owner reads no finger state (#8651): the new end label is static.

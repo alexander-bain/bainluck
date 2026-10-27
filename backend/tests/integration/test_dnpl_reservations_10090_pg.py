@@ -283,3 +283,52 @@ async def test_complete_maintenance_preserves_held_reader_while_reclaiming_clean
         assert worker.preview_stats["publish_errors"] == 0
     finally:
         await subscriber.aclose()
+
+
+async def test_maintenance_cleans_local_only_residue_even_with_no_shared_candidates(
+    rig,
+    actors,
+    monkeypatch,
+):
+    from tests.test_preview_reservations_redis_10090 import context, BASE10, T1, T2
+
+    worker, registry, client = actors
+    for eid, sport in ((1, T1), (2, T2), (3, "unknown")):
+        assert registry.propose(
+            eid,
+            "polymarket",
+            value=0.61,
+            event=context(sport=sport),
+            row_sources=BASE10,
+            row_rev=10,
+        )
+    for eid in (1, 2):
+        assert registry.propose(
+            eid,
+            "polymarket",
+            value=0.62,
+            event=context(at=1),
+            row_sources=BASE10,
+            row_rev=10,
+        )
+    for eid in (1, 2, 3):
+        registry.committed(
+            eid,
+            "polymarket",
+            seq=registry.pending_seq(eid, "polymarket"),
+            sources=BASE10,
+            rev=11,
+        )
+    assert registry.local_capacity_status["debt"] == 2
+    assert await h(client, "nevents") in (None, "0")
+
+    async def no_database():
+        raise AssertionError("empty shared candidates require no database scan")
+
+    worker._session_factory = no_database
+    await worker._maintain_preview_capacity()
+    assert registry.local_capacity_status["ready"]
+    assert registry.capacity_status["local"]["ready"]
+    assert len(registry._events) == 1
+    assert await h(client, "nevents") in (None, "0")
+    assert worker.preview_stats["publish_errors"] == 0

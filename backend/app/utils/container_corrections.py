@@ -385,7 +385,9 @@ def _send_theme_rebuild(container_id: int) -> None:
         from app.tasks import celery_app
 
         celery_app.send_task(THEME_REBUILD_TASK, args=[container_id], queue="background")
-    except Exception:  # noqa: BLE001 — the next producer pass rebuilds anyway
+    except Exception:  # noqa: BLE001 — the page answers "building" until a rebuild
+        # runs: a later correction's, one a person re-sends, or the next producer
+        # pass. While assembly is stopped there is no next pass (#9936 D1b).
         logger.warning(
             "theme snapshot rebuild dispatch failed for container %s", container_id,
             exc_info=True,

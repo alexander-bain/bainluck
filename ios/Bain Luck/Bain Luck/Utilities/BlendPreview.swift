@@ -328,6 +328,29 @@ nonisolated struct BlendPreviewReader: Sendable, Equatable {
     /// (`readerAfter`); a visit that never folded keeps the legacy singleton
     /// display rules exactly as they were.
     var hasFolded = false
+    /// #11564 — the durable ordering domain this visit entered through a
+    /// validated `preview_open_v3` (`PreviewAuthorityV3`), or nil before one.
+    /// Only a newer incarnation replaces it; nothing ever lowers it.
+    var v3Authority: PreviewAuthorityV3? = nil
+    /// The active v3 `stream_session`. A transport open, close or reconnect
+    /// ends it (`readerReset`); a frame is admitted only under it.
+    var v3Session: String? = nil
+    /// The membership the active v3 open named; equal to the page's adopted
+    /// membership when it was accepted.
+    var v3Members: Set<String>? = nil
+    /// Every row identity a v3 open named this visit. A new incarnation never
+    /// resets it; past `maxRowsV3` the visit saturates.
+    var v3Rows: Set<String> = []
+    static let maxRowsV3 = 32
+    /// This connection's `preview_open_v3` was refused because the page had
+    /// no adopted membership yet (`readerOpenedV3`). The open is never
+    /// replayed: the first membership the page adopts reopens the stream
+    /// instead (`membershipReopens`). The connection ending clears it.
+    var v3OpenAwaitingMembership = false
+    /// Whether the page row's singleton frames order against its recorded
+    /// fence: after a fold, and always in the v3 domain, where a new session
+    /// can neither revive an equal tuple nor renew its first-seen deadline.
+    var fencesOwnRow: Bool { hasFolded || v3Authority != nil }
 
     struct OriginFence: Sendable, Equatable {
         let epoch: Int
@@ -374,6 +397,8 @@ nonisolated enum BlendPreview {
         next.foldSession = nil
         next.foldSeq = -1
         next.sessionOrigins = []
+        next.v3Session = nil
+        next.v3OpenAwaitingMembership = false
         return next
     }
 
@@ -419,6 +444,7 @@ nonisolated enum BlendPreview {
         guard !members.isEmpty else { return reader }
         var next = reader
         next.authorityMembers = members
+        next.v3OpenAwaitingMembership = false
         if members.count >= 2 { next.hasFolded = true }
         guard membershipChanges(reader, members: members) else { return next }
         next = readerReset(next)
@@ -727,7 +753,7 @@ nonisolated enum BlendPreview {
         guard reader.legacyOrders[row] != nil || reader.legacyOrders.count < BlendPreviewReader.maxOrigins else {
             return reader
         }
-        if !singleton || reader.hasFolded, let order = reader.legacyOrders[row],
+        if !singleton || reader.fencesOwnRow, let order = reader.legacyOrders[row],
            frame.epoch < order.epoch || (frame.epoch == order.epoch && frame.seq <= order.seq) {
             return reader
         }
@@ -746,7 +772,7 @@ nonisolated enum BlendPreview {
         // come back, and a same tuple keeps its first-seen deadline. A visit
         // that never folded keeps the legacy singleton display rules unchanged.
         var cap: TimeInterval? = nil
-        let fenced = frame.originEventId.map { String($0) } ?? (reader.hasFolded ? own : nil)
+        let fenced = frame.originEventId.map { String($0) } ?? (reader.fencesOwnRow ? own : nil)
         if frame.kind == .blend, let fenced, let fence = reader.originFences[fenced] {
             if frame.epoch < fence.epoch || (frame.epoch == fence.epoch && frame.seq < fence.seq) { return reader }
             if frame.epoch == fence.epoch, frame.seq == fence.seq {
@@ -789,7 +815,7 @@ nonisolated enum BlendPreview {
         }
         if let base = frame.baseFoldRevision, let floors = reader.floors, !base.covers(floors) {
             next.held = nil
-        } else if singleton, frame.kind == .blend, reader.hasFolded, let floor = reader.floors?.rows[own],
+        } else if singleton, frame.kind == .blend, reader.fencesOwnRow, let floor = reader.floors?.rows[own],
                   let baseRev = frame.baseRev, baseRev < floor {
             // A commit floor the fold taught withdraws a singleton composed
             // below it, as it withdraws an uncovered folded base.

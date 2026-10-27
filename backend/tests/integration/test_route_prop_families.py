@@ -8,6 +8,8 @@ mock_db / client fixtures from integration/conftest.py.
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 
 def _scalars_result(items):
     """Mock result with .scalars().first()/all() and .all() for row tuples."""
@@ -180,3 +182,103 @@ class TestPropFamiliesHTTP:
     async def test_rejects_post(self, client):
         resp = await client.post("/api/teams/lakers/prop-families")
         assert resp.status_code == 405
+
+
+@pytest.mark.parametrize("hint", [None, "cy young", "mvp"])
+async def test_dodgers_joint_award_stays_out_of_single_award_http_payload(client, mock_db, hint):
+    """#9858: exercise the actual route and its screen before grouping.
+
+    Synthetic IDs/prices, reported joint title; DB and Redis are test doubles.
+    This does not establish live cache adoption or standalone page acceptance.
+    """
+    team = _mock_team(team_id=9858, slug="dodgers", name="Los Angeles Dodgers")
+    cy = _market(1, "Cy Young Winner", group_id="kalshi:synthetic-cy")
+    mvp = _market(2, "MVP Winner", group_id="kalshi:synthetic-mvp")
+    joint = _market(3, "Shohei Ohtani: Cy Young and MVP Winner", source="polymarket",
+                    group_id="polymarket:synthetic-joint")
+    if hint:
+        joint.market_metadata = {"prop_family": {"family_key": hint}}
+    rows = [
+        (_outcome(11, "Yoshinobu Yamamoto", 0.4), cy),
+        (_outcome(12, "Shohei Ohtani", 0.2), cy),
+        (_outcome(21, "Shohei Ohtani", 0.5), mvp),
+        (_outcome(22, "Freddie Freeman", 0.1), mvp),
+        (_outcome(31, "Yes", 0.01), joint),
+    ]
+    mock_db.execute.side_effect = _routed(
+        team, [rows, [], []],
+        markets=[_screened(m, [o for o, parent in rows if parent is m]) for m in (cy, mvp, joint)],
+    )
+    response = await client.get("/api/teams/dodgers/prop-families")
+    assert response.status_code == 200
+    families = {f["family_key"]: f for f in response.json()["families"]}
+    assert set(families) == {"cy young", "mvp"}
+    for key, market, expected in (
+        ("cy young", cy, {"Yoshinobu Yamamoto": 0.4, "Shohei Ohtani": 0.2}),
+        ("mvp", mvp, {"Shohei Ohtani": 0.5, "Freddie Freeman": 0.1}),
+    ):
+        family = families[key]
+        assert {r["entity"]: r["probability"] for r in family["rows"]} == expected
+        assert family["sources"] == ["kalshi"]
+        for row in family["rows"]:
+            assert row["market_id"] == market.id
+            assert row["group_id"] == market.group_id
+            assert row["settled"] is False
+
+
+@pytest.mark.parametrize("hint", [None, "mvp", "finals mvp"])
+async def test_conference_and_league_awards_stay_distinct_in_http_payload(
+    client, mock_db, hint
+):
+    """Same named people, different awards; a cached winner hint cannot mix them."""
+    team = _mock_team(team_id=9859, slug="thunder", name="Oklahoma City Thunder")
+    west = _market(
+        401, "Western Conference Finals MVP Winner", group_id="kalshi:synthetic-west"
+    )
+    east = _market(
+        402, "Eastern Conference Finals MVP Winner", group_id="kalshi:synthetic-east"
+    )
+    league = _market(403, "NBA Finals MVP Winner", group_id="kalshi:synthetic-finals")
+    shortlist = _market(404, "NBA MVP Finalists", group_id="kalshi:synthetic-shortlist")
+    markets = (west, east, league, shortlist)
+    if hint:
+        for market in markets:
+            market.market_metadata = {"prop_family": {"family_key": hint}}
+    rows = [
+        (_outcome(4011, "Shai Gilgeous-Alexander", 0.6), west),
+        (_outcome(4012, "Chet Holmgren", 0.1), west),
+        (_outcome(4021, "Jayson Tatum", 0.4), east),
+        (_outcome(4022, "Jaylen Brown", 0.2), east),
+        (_outcome(4031, "Shai Gilgeous-Alexander", 0.25), league),
+        (_outcome(4032, "Jayson Tatum", 0.2), league),
+        (_outcome(4041, "Shai Gilgeous-Alexander", 0.8), shortlist),
+        (_outcome(4042, "Jayson Tatum", 0.7), shortlist),
+    ]
+    mock_db.execute.side_effect = _routed(
+        team,
+        [rows, [], []],
+        markets=[
+            _screened(m, [o for o, parent in rows if parent is m]) for m in markets
+        ],
+    )
+    response = await client.get("/api/teams/thunder/prop-families")
+    assert response.status_code == 200
+    families = {f["family_key"]: f for f in response.json()["families"]}
+    expected = {
+        "western conference finals mvp": (
+            west,
+            {"Shai Gilgeous-Alexander": 0.6, "Chet Holmgren": 0.1},
+        ),
+        "eastern conference finals mvp": (
+            east,
+            {"Jayson Tatum": 0.4, "Jaylen Brown": 0.2},
+        ),
+        "finals mvp": (league, {"Shai Gilgeous-Alexander": 0.25, "Jayson Tatum": 0.2}),
+    }
+    assert set(families) == set(expected)
+    for key, (market, prices) in expected.items():
+        family = families[key]
+        assert {r["entity"]: r["probability"] for r in family["rows"]} == prices
+        assert {r["market_id"] for r in family["rows"]} == {market.id}
+        assert {r["group_id"] for r in family["rows"]} == {market.group_id}
+        assert all(row["settled"] is False for row in family["rows"])

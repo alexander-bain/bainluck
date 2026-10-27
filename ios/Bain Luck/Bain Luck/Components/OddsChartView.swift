@@ -1086,6 +1086,8 @@ struct OddsChartView: View {
                                   tennis: tennis)
                     }
                     .frame(height: chartHeight)
+                    // #10876 — the explore-the-chart tip, inline chart only.
+                    .exploreChartTip10876(eventId: eventId, touchSurfaceInstalled: scrubSurfaces, dataPoints: dataPoints)
 
                     // UX-P090 — the legend hung off the card's left edge while the
                     // thing it describes started 24pt further in, behind the
@@ -2234,10 +2236,12 @@ struct OddsChartView: View {
                     holdsTheScrollStill: { selection.holdsTheScrollStill },
                     onEnd: {
                         // #9483 tennis — the lifted finger holds the observation
-                        // it was reading, or the break it was over.
+                        // it was reading, or the break it was over. #10876 — then
+                        // a scrub that read a moment is the chart tip's action.
                         if let tennis, let date = selection.date {
                             tennisPin.hold(tennis.inspect(at: date))
                         }
+                        if selection.isScrubbing { ContextualTips10876.chartLearned() }
                         selection.end()
                     }
                 )

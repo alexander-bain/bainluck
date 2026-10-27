@@ -215,7 +215,7 @@ def real_redis():
 
 
 @pytest.fixture
-async def default_preview_redis(monkeypatch, real_redis, consumer):
+async def default_preview_redis(monkeypatch, real_redis, consumer, rig):
     """Run default DNPL Lua alongside the independently checked commit sink.
 
     The recording connection implements committed packed publications only.
@@ -226,12 +226,42 @@ async def default_preview_redis(monkeypatch, real_redis, consumer):
     from app.tasks.live_blend_refresh import LiveBlendRefresher
     from tests.integration.test_pm_stamp_release_wake_10090_pg import _Connection
     from tests.integration.test_pm_nongame_first_wait_10090_pg import warm_price_statement
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from pathlib import Path
+    from uuid import uuid4
+    import runpy
+    from app.services.dnpl_authority import AuthorityStore, preparing_candidate
+    from app.services.dnpl_activation import ActivationController
+    from app.utils import blend_preview
 
     # These cases inject publication faults into a running price consumer.
     # Prepare asyncpg's array types on its five connections before arming the
     # unchanged 250 ms price deadline; no rows are changed by the warmup.
     await warm_price_statement(consumer)
     client = real_redis.client()
+    blend_preview.reset_registry_for_tests()
+
+    def upgrade(conn):
+        with Operations.context(MigrationContext.configure(conn)):
+            for name in ('dnpl_authority_10090.py', 'dnpl_retirement_10090.py'):
+                runpy.run_path(str(Path(__file__).parents[2] / 'alembic/versions' / name))['upgrade']()
+
+    async with rig.engine.begin() as conn:
+        await conn.run_sync(upgrade)
+    store = AuthorityStore(rig.maker)
+    server, repl = await client.info('server'), await client.info('replication')
+    old = await store.read()
+    current = await store.prepare(old, preparing_candidate(
+        old, namespace=uuid4(), operation_id=uuid4(), redis_run_id=server['run_id'],
+        redis_master_replid=repl['master_replid'],
+        policy_fingerprint=blend_preview.registry().policy.fingerprint,
+    ))
+    controller = ActivationController(store, client)
+    await controller.arm(current)
+    await controller.initialize(current)
+    await controller.ready(current)
+    await blend_preview.registry().bind_primary(store)
     shipped = LiveBlendRefresher._preview_call
     monkeypatch.setattr(
         LiveBlendRefresher, "_preview_call",
@@ -242,6 +272,7 @@ async def default_preview_redis(monkeypatch, real_redis, consumer):
         yield
     finally:
         await client.aclose()
+        blend_preview.reset_registry_for_tests()
 
 
 async def next_message(pubsub, timeout=1):

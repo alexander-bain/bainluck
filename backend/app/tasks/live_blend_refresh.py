@@ -3417,7 +3417,11 @@ class LiveBlendRefresher:
                     if preview_columns:
                         # Trailing columns; the outcome slice below zips by
                         # field name, so they never reach an outcome row.
-                        context["preview_sources"] = row[-3]
+                        # This SELECT proves an authoritative null bag is
+                        # empty at preview_rev, including before the first
+                        # source stamp commits. Missing reads and malformed
+                        # non-null roots must still fail closed downstream.
+                        context["preview_sources"] = {} if row[-3] is None else row[-3]
                         context["preview_rev"] = row[-2]
                         context["preview_context_at"] = row[-1]
                         context["preview_read_ticket"] = preview_ticket
@@ -5060,7 +5064,13 @@ class LiveBlendRefresher:
         )
 
         if preview.ledger:
-            # TSP-1: this source's owner claim in the shared ledger.
+            bind_primary = getattr(preview, "bind_primary", None)
+            if callable(bind_primary):
+                from app.services.dnpl_authority import AuthorityStore
+                from app.tasks.base import get_task_session
+
+                await bind_primary(AuthorityStore(self._session_factory or get_task_session))
+            # Owner claim remains atomic inside the exact ready namespace.
             await preview.claim(self._preview_call(connection), self.source)
         else:
             await connection.send_command(
@@ -5201,6 +5211,12 @@ class LiveBlendRefresher:
         counts = self._preview_capacity_counts((), (), None)
         try:
             async with asyncio.timeout(1) as budget:
+                preview = registry()
+                if preview.ledger:
+                    # Local-only clean residue is absent from Redis's hints.
+                    # Reconcile it before the receipt, even if no shared
+                    # resident or network ticket is available this pass.
+                    preview.maintain_local_capacity()
                 ticket, candidates, idle, redis_now = await self._preview_ticket(include_candidates=True)
                 when = budget.when()
                 deadline_ms = (redis_now + int((when - asyncio.get_running_loop().time()) * 1000)
@@ -5503,10 +5519,9 @@ class LiveBlendRefresher:
                 # Close the preview first, including if the durable advance
                 # cannot acquire its row. Later duplicate terminal operations
                 # carry the old ticket and cannot recreate retired state.
-                await self._publish_previews([{
-                    "ledger_op": "terminal", "event_id": event_id, "source": self.source,
-                    "ctx_rev": read_rev, "read_ticket": ticket,
-                }])
+                await self._publish_previews([
+                    preview.terminal_read(event_id, self.source, read_rev, ticket),
+                ])
                 factory = self._session_factory or get_task_session
                 async with factory() as session:
                     durable = (await session.execute(update(Event).where(

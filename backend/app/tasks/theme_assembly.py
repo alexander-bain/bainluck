@@ -1159,6 +1159,42 @@ async def _completeness_from_lineage(session, redis_client, container_id: int,
                                           "corrections_since": int(revision) - base}}
 
 
+#: #9936 D1b: why a rebuild while assembly is stopped wrote nothing.
+STOPPED_NOT_PUBLISHED = "assembly_stopped_not_published"
+STOPPED_PAGE_PRESENT = "assembly_stopped_page_present"
+STOPPED_STORE_UNAVAILABLE = "assembly_stopped_store_unavailable"
+
+
+def _held_while_stopped(redis_client: Any, container_id: int, locked: Any) -> Optional[str]:
+    """#9936 D1b, under the caller's lock: why a rebuild while assembly is
+    stopped must write nothing, or None when the published page is missing.
+
+    Reads only. ``locked`` is ``lock_container_chain``'s row: (id,
+    publication_state, membership_revision, depth). A collection that is not
+    ``published`` needs no page (its reader answers withdrawn or unpublished
+    without one). A live page that exists is never refreshed or replaced while
+    stopped. A store that cannot be read is not treated as absent: the running
+    path does that and bumps, and the next pass repairs it; while stopped there
+    is no next pass, so the correction's revision — and the lineage that
+    carries its completeness — is kept for a re-send.
+    """
+    if locked[1] != "published":
+        return STOPPED_NOT_PUBLISHED
+    if redis_client is None:
+        return STOPPED_STORE_UNAVAILABLE
+    try:
+        stored = redis_client.get(snapshot_key(container_id, int(locked[2])))
+    except Exception:  # noqa: BLE001 — unreadable is not absent while stopped
+        logger.warning(
+            "theme snapshot read failed for container %s while assembly is stopped; "
+            "nothing written", container_id, exc_info=True,
+        )
+        return STOPPED_STORE_UNAVAILABLE
+    if stored is not None:
+        return STOPPED_PAGE_PRESENT
+    return None
+
+
 async def _run_rebuild_theme_snapshot(container_id: int) -> dict:
     """Semantics 10: members and revision read together under the lock, then
     7–9 with ``membership_changed=False``. No gather, no decide, no edge or
@@ -1170,9 +1206,18 @@ async def _run_rebuild_theme_snapshot(container_id: int) -> dict:
     is a correction of this container (``_completeness_from_lineage``). Short
     of that proof — a bound, a bump with no ledger row, an absent or invalid
     page — it is False, as it always was before.
+
+    #9936 D1b — A CORRECTION STILL FINISHES WHILE ASSEMBLY IS STOPPED.
+    ``THEME_ASSEMBLY_ENABLED`` stops the automatic producer: the hourly pass
+    gathers, decides, writes edges, decision rows and pages, and creates
+    containers — none of which this function does. Its only sender is a
+    committed correction (or a person re-sending it). With the flag off it
+    runs only for a ``published`` collection whose live revision has no page
+    (``_held_while_stopped``), and then exactly as above: one bump and one
+    ``SET NX EX`` page, built from the members the collection already has.
+    Otherwise it writes nothing and says why.
     """
-    if not theme_assembly_enabled():
-        return _skipped("theme_assembly_disabled")
+    stopped = not theme_assembly_enabled()
 
     from app.tasks.base import get_task_session
 
@@ -1192,6 +1237,12 @@ async def _run_rebuild_theme_snapshot(container_id: int) -> dict:
             if locked is None:
                 return _skipped("container_absent", container_id=container_id)
             revision_before = int(locked[2])
+            if stopped:
+                held = _held_while_stopped(redis_client, container_id, locked)
+                if held is not None:
+                    await session.rollback()  # reads only: releases the chain lock
+                    return _skipped(held, container_id=container_id,
+                                    revision=revision_before, assembly="stopped")
             members = await _market_members(session, container_id)
             complete, lineage = await _completeness_from_lineage(
                 session, redis_client, container_id, revision_before
@@ -1226,6 +1277,12 @@ async def _run_rebuild_theme_snapshot(container_id: int) -> dict:
         "shown_count": snapshot.shown_count,
         "eligible_count": snapshot.eligible_count,
     }
+    if stopped:
+        report["assembly"] = "stopped"
+        logger.info(
+            "theme snapshot rebuilt while assembly is stopped: container %s revision %s -> %s (%s)",
+            container_id, revision_before, snapshot.revision, outcome,
+        )
     if outcome == "publication_conflict":
         terminal, reason = "failed", "publication_conflict"
     elif outcome == "write_failed":

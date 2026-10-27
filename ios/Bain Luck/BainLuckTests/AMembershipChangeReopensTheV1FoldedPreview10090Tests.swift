@@ -69,7 +69,13 @@ final class AMembershipChangeReopensTheV1FoldedPreview10090Tests: XCTestCase {
         vm.headline(try XCTUnwrap(vm.event)).currentOdds?.homeProbability
     }
 
-    func testTheAdoptedMembershipChangeReopensTheStreamAndKeepsEveryFence() async throws {
+    /// #11564 (contract R2): a page reads v3 only, and a fold of two or more
+    /// rows admits only folded v2. The v1 folded projection this file once
+    /// drove through a membership change can no longer reach the page — neither
+    /// as a legacy `preview` event nor wrapped in a v3 envelope — so the page
+    /// shows committed truth throughout. The v1 reader rules themselves stay
+    /// pinned at reader level (`FoldedBlendPreview10090Tests`).
+    func testAV1FoldedProjectionNeverReachesAV3Page() async throws {
         let client = Client(page: try Self.detail(Self.oldFold))
         let handles = Handles()
         let vm = EventDetailViewModel(
@@ -84,56 +90,30 @@ final class AMembershipChangeReopensTheV1FoldedPreview10090Tests: XCTestCase {
         )
         defer { vm.stopRefresh() }
         await vm.load()
-        XCTAssertEqual(handles.all.count, 1)
         let first = try XCTUnwrap(handles.all.last)
+        let session = V3PageWire.nextSession()
         first.fire("open")
         first.fire("preview", Self.preview(origin: 4243, epoch: 900, seq: 1))
-        XCTAssertEqual(try headline(vm), 0.65, "the 4242/4243 fold shows its pending blend")
-        // A commit of the row about to leave: the parent withheld every later fold on it.
-        first.fire("fold_preview_floor", #"{"event_id":4242,"floor":{"4243":21}}"#)
-        XCTAssertEqual(try headline(vm), 0.5)
-
-        // The authoritative detail now folds 4242 with 4244 instead of 4243.
-        client.page = try Self.detail(Self.newFold)
-        await vm.load(fresh: false)
-        XCTAssertEqual(vm.event?.blendFoldRevision?.revision?.rows, ["4242": 10, "4244": 30])
+        XCTAssertEqual(try headline(vm), 0.5, "a legacy preview event is never read")
+        first.fire("preview_open_v3", V3PageWire.open(Self.id, members: [4242, 4243], session: session))
+        first.fire("preview_v3", V3PageWire.preview(Self.preview(origin: 4243, epoch: 900, seq: 2),
+                                                    eventId: Self.id, session: session))
+        XCTAssertEqual(try headline(vm), 0.5, "a v1 folded payload is refused on a v3 fold")
         XCTAssertNil(vm.blendPreview)
-        XCTAssertTrue(first.isClosed, "the connection composed on the old membership is closed")
-        XCTAssertEqual(handles.all.count, 2, "and the page opened one for the new fold")
-        let second = try XCTUnwrap(handles.all.last)
-        second.fire("open")
-        first.fire("preview", Self.preview(origin: 4244, epoch: 12, seq: 1, p: 0.9))
-        XCTAssertEqual(try headline(vm), 0.5, "the retired connection delivers nothing")
-        second.fire("preview", Self.preview(origin: 4243, epoch: 900, seq: 2))
-        XCTAssertEqual(try headline(vm), 0.5, "a frame composed for the old membership is refused")
-        // Neither the removed row's floor nor its epoch 900 withholds the new row's epoch 12.
-        second.fire("preview", Self.preview(origin: 4244, epoch: 12, seq: 1, p: 0.7))
-        XCTAssertEqual(try headline(vm), 0.7, "the already-open page shows the new fold's pending blend")
-        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.5, "the committed event is untouched")
 
-        await vm.load(fresh: false)
-        XCTAssertEqual(handles.all.count, 2, "an unchanged membership keeps the connection")
-        XCTAssertFalse(second.isClosed)
-        XCTAssertEqual(try headline(vm), 0.7)
-
-        // A cached detail flips back to the old fold, then the fresh one returns.
-        client.page = try Self.detail(Self.oldFold)
-        await vm.load(fresh: false)
-        XCTAssertEqual(handles.all.count, 3)
-        let third = try XCTUnwrap(handles.all.last)
-        third.fire("open")
-        third.fire("preview", Self.preview(origin: 4243, epoch: 900, seq: 1))
-        XCTAssertEqual(try headline(vm), 0.5, "the returned row's old identity gets no new lease")
-        third.fire("preview", Self.preview(origin: 4243, epoch: 900, seq: 3))
-        XCTAssertEqual(try headline(vm), 0.5, "nor a base its kept commit floor has passed")
+        // The membership change still reopens the stream, and the new fold
+        // still refuses the v1 shape.
         client.page = try Self.detail(Self.newFold)
         await vm.load(fresh: false)
-        XCTAssertEqual(handles.all.count, 4)
-        let fourth = try XCTUnwrap(handles.all.last)
-        fourth.fire("open")
-        fourth.fire("preview", Self.preview(origin: 4244, epoch: 12, seq: 1, p: 0.7))
-        XCTAssertEqual(try headline(vm), 0.5, "the replayed identity stays fenced across the flap")
-        fourth.fire("preview", Self.preview(origin: 4244, epoch: 12, seq: 2, p: 0.72))
-        XCTAssertEqual(try headline(vm), 0.72)
+        XCTAssertTrue(first.isClosed)
+        XCTAssertEqual(handles.all.count, 2)
+        let second = try XCTUnwrap(handles.all.last)
+        let next = V3PageWire.nextSession()
+        second.fire("open")
+        second.fire("preview_open_v3", V3PageWire.open(Self.id, members: [4242, 4244], session: next))
+        second.fire("preview_v3", V3PageWire.preview(Self.preview(origin: 4244, epoch: 12, seq: 1, p: 0.7),
+                                                     eventId: Self.id, session: next))
+        XCTAssertEqual(try headline(vm), 0.5)
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.5, "the committed event is untouched")
     }
 }

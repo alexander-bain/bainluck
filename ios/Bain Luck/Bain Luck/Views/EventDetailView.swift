@@ -366,6 +366,12 @@ struct EventDetailView: View {
             // Its own modifier so the existing disappearance block is untouched:
             // a load still in flight can no longer reopen readiness.
             .onDisappear { publicationCaller.suspend() }
+            // #10874 — a viewed game joins Spotlight's recent entries.
+            .spotlightViewed10874(vm.event.flatMap { event in
+                event.id == eventId ? SpotlightSubject10874.game(
+                    id: event.id, away: event.awayTeam, home: event.homeTeam,
+                    sportKey: event.sport, commenceTime: event.commenceTime) : nil
+            })
             .task {
                 marketPageVisible = true
                 vm.setMarketPageVisible(scenePhase == .active)
@@ -426,6 +432,9 @@ struct EventDetailView: View {
                                     heroBottom: proxy.frame(in: .named(Self.scrollSpace)).maxY,
                                     viewportTop: scrollViewportTop))
                         })
+                        // #10876 — no tip (the bar's pin tip, the chart's tip)
+                        // opens while this hero is on screen.
+                        .contextualTipHero10876(type: "event", id: eventId, scrollSpace: Self.scrollSpace)
                     VStack(spacing: 0) {
                         TimelineView(.periodic(from: .now, by: 60)) { tick in
                             OddsChartView(eventId: event.id, teamColors: teamColors(event),

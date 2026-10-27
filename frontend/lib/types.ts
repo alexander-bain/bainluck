@@ -3119,6 +3119,12 @@ export interface EventConceptSection {
   [k: string]: unknown;
 }
 
+export interface EventConceptChildResult {
+  state: "pending" | "closed" | "announced";
+  evidence_kind: "none" | "venue_settlement" | "unconfirmed_grade" | "retracted_grade" | string;
+  venue: string | null;
+}
+
 export interface EventConceptChild {
   // L2-130: matchup children (soccer games) come from the events table and carry
   // `event_id`, not `market_id` — so `market_id` is optional now.
@@ -3132,6 +3138,8 @@ export interface EventConceptChild {
   // (or a `settled` outcome carries `won:true`) the stage card renders the winner +
   // "Won" chip instead of two riders at 90%+ stale independent-binary prices.
   graded_winner?: string | null;
+  // #5349: additive per-category/prop settlement provenance emitted by event_awards.py.
+  result?: EventConceptChildResult | null;
   // #6816: `rendered_percent` — the whole percent the SERVER decided for this row
   // when the child is a proven two-sided bout (combat `kind: "fight"`), so the pair
   // cannot print 74 / 28. Read it through `servedBoutPercents` (both or neither),

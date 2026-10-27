@@ -5428,8 +5428,11 @@ def rebuild_theme_snapshot(self, container_id):
     Sent by `container_corrections` after a correction on a theme container
     commits, so a withdrawn member leaves the page in seconds rather than at
     the next hourly pass. No gather, no decision: members and revision are
-    read together under the container lock. Same gates as the pass; a
-    non-theme container is `skipped / not_a_theme_container`."""
+    read together under the container lock. Same schema gates as the pass; a
+    non-theme container is `skipped / not_a_theme_container`. While
+    `THEME_ASSEMBLY_ENABLED` is off it still finishes a correction (#9936
+    D1b): it writes only for a published collection whose live page is
+    missing, and otherwise returns `skipped` with the reason."""
     from app.tasks.theme_assembly import _run_rebuild_theme_snapshot
     return _tracked_run(
         "rebuild_theme_snapshot",
