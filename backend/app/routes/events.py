@@ -38326,7 +38326,24 @@ def _build_search_top_outcomes(
                     if leg.id not in _withheld_ids
                     and (by_id[leg.id]["probability"] or 0) > (by_id[o.id]["probability"] or 0)
                 )
-    return attest_represented_top_outcomes(_leader_pick_order(out))
+    # #11616 F2: the same winner rule detail's representation orders by
+    # (`_is_graded_winner`: `is_winner` with a source), plus this builder's own
+    # supported winners. Without it `demote_dominant_field` sent a settled
+    # "Other" 1.0 to the END, and the dropdown led with a loser ("Alice Lost")
+    # on a board detail leads with "Other · Won".
+    _winner_rows = {
+        id(item) for (o, _name), item in zip(named, out)
+        if o.id in _result_ids and item.get("is_winner") is True
+    }
+
+    def _is_supported_winner(item: dict) -> bool:
+        return id(item) in _winner_rows or (
+            bool(item.get("is_winner")) and item.get("resolution_source") is not None
+        )
+
+    return attest_represented_top_outcomes(
+        _leader_pick_order(out, is_winner_of=_is_supported_winner)
+    )
 
 
 async def _search_withheld_price_ids(
