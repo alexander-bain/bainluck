@@ -348,7 +348,7 @@ describe("T1: the three Native inputs, the same answer on web", () => {
   it("8280Tests:89 — an unsupported winner flag on a side does not outrank a supported line", () => {
     // row(1, "O/U 5.5", price: 0.99, won: true, source: "game_score"),
     // row(2, "Kings", price: 0.99, won: true, source: nil); source "kalshi". Native: hero id 1.
-    const m = {
+    const m: Record<string, unknown> = {
       ...nativeMarket([
         { id: 1, name: "O/U 5.5", price: 0.99, won: true, source: "game_score" },
         { id: 2, name: "Kings", price: 0.99, won: true },

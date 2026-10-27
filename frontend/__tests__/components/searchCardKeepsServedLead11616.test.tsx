@@ -213,7 +213,7 @@ describe("O-P1a: the query pin prints detail's rank", () => {
 
   it("CONTROL: a pin with no served price prints no number on a ranked card", () => {
     const served = [
-      outcome(51, "Shai Gilgeous-Alexander", null, { rank: null, query_match: true, matched_rank: null }),
+      outcome(51, "Shai Gilgeous-Alexander", null, { rank: null, query_match: true }),
       ...M1U.slice(1),
     ];
     const r = rows(SEARCH(market(served)));
