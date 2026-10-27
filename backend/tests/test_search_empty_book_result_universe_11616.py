@@ -246,14 +246,13 @@ def test_control_query_pinned_priced_leg_beside_empty_book_result_keeps_matched_
     assert by_name["Epsilon Example"]["probability"] == 0.20
     assert by_name["Epsilon Example"]["query_match"] is True
     # #11616 O-P1a (lane1b ARGON-F5-PREREVIEW): a priced pin prints detail's
-    # number for the same row — the served `rank`, which the search card reads
-    # before `matched_rank` — and keeps a non-null matched_rank for legacy
-    # (rank-stripped) cards. The #8863 count is not what the reader sees.
+    # number for the same row, in `rank` and in `matched_rank` alike — not the
+    # #8863 count of drawn priced legs above it (2 here).
     detail_rank = {
         r["name"]: r["rank"] for r in futures._format_market_detail(market)["outcomes"]
     }
     assert by_name["Epsilon Example"]["rank"] == detail_rank["Epsilon Example"] == 3
-    assert by_name["Epsilon Example"]["matched_rank"] is not None
+    assert by_name["Epsilon Example"]["matched_rank"] == detail_rank["Epsilon Example"]
     assert is_current_represented_futures_row(card) is True
     assert adapt_cached_futures_row(card) == card
 
@@ -261,7 +260,8 @@ def test_control_query_pinned_priced_leg_beside_empty_book_result_keeps_matched_
 def test_open_mixed_board_priced_pin_prints_detail_s_rank_beside_empty_book_results():
     # lane1b's "gamma" arm: two empty-book supported results (detail ranks them
     # 1 and 2) above a priced Gamma that detail ranks 3. The pin's served rank is
-    # 3; matched_rank counts only drawn priced legs above it (1).
+    # 3, and so is its matched_rank (the #8863 count of drawn priced legs above
+    # it would be 1).
     market = _board(
         [
             _leg(1, "Alpha Example", 0.50, bid=0.01, ask=0.99, is_winner=True, src="api_settlement"),
@@ -278,6 +278,7 @@ def test_open_mixed_board_priced_pin_prints_detail_s_rank_beside_empty_book_resu
     }
     assert by_name["Gamma Example"]["query_match"] is True
     assert by_name["Gamma Example"]["rank"] == detail_rank["Gamma Example"] == 3
+    assert by_name["Gamma Example"]["matched_rank"] == 3
     # The priceless results print no number (rank and matched_rank null).
     for name in ("Alpha Example", "Beta Example"):
         assert by_name[name]["rank"] is None and by_name[name].get("matched_rank") is None

@@ -375,9 +375,10 @@ export default function FuturesCard({
  *  last (it is below the cut by construction, so the leader-first sort cannot
  *  lift it), only the digit changes. */
 function boardRank(outcome: FuturesOutcome, index: number, servedRanks = false): number | null {
-  // #11616 O-P1a: a card that prints served ranks prints the pin's too.
-  // `matched_rank` counts only the legs priced STRICTLY above the pin, so on a
-  // tie it took a neighbour's number (1, 2, 2 beside detail's 1, 2, 3).
+  // #11616 O-P1a: a card that prints served ranks prints the pin's too. The
+  // producer now serves `matched_rank` as that rank; a row cached from the old
+  // producer still carries its count of legs priced STRICTLY above the pin,
+  // which gave a tie a neighbour's number (1, 2, 2 beside detail's 1, 2, 3).
   if (servedRanks && typeof outcome.rank === "number" && outcome.rank >= 1) {
     return outcome.rank;
   }

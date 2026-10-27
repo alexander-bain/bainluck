@@ -38490,10 +38490,16 @@ def _build_search_top_outcomes(
         for (o, _name), od in zip(named, out):
             if o is pinned:
                 od["query_match"] = True
-                od["matched_rank"] = None if od["probability"] is None else 1 + sum(
-                    1 for leg in real
-                    if leg.id not in _withheld_ids
-                    and (by_id[leg.id]["probability"] or 0) > (by_id[o.id]["probability"] or 0)
+                # #11616 O-P1a: a priced pin's place is its served rank —
+                # detail's number for the row. The #8863 count of legs priced
+                # STRICTLY above it gave a tie a neighbour's number (1, 2, 2
+                # beside detail's 1, 2, 3); it remains only where no rank is served.
+                od["matched_rank"] = None if od["probability"] is None else (
+                    od.get("rank") if od.get("rank") is not None else 1 + sum(
+                        1 for leg in real
+                        if leg.id not in _withheld_ids
+                        and (by_id[leg.id]["probability"] or 0) > (by_id[o.id]["probability"] or 0)
+                    )
                 )
     # #11616 F2: the same winner rule detail's representation orders by
     # (`_is_graded_winner`: `is_winner` with a source), plus this builder's own
