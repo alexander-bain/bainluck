@@ -85,22 +85,39 @@ nonisolated func futuresDetailRenderedPercents(_ outcomes: [FuturesOutcome]) -> 
 /// every live rung at 0%) the board falls through to the rule below, which is
 /// what keeps an open single-row authoritative result leading.
 ///
-/// Otherwise a supported winner leads, in served order. When none is supported
-/// the highest-priced row leads (first in served order on a tie, as web's sort),
-/// except — #11616 N2 — a resolved board of several rows never heroes a row it
-/// graded LOST: when every row lost, the page names nobody, as web's
-/// `heroNamesNobody`. A one-row board keeps its Lost: that row IS the question.
+/// Otherwise, on an open board, a supported winner leads, in served order. When
+/// none is supported the highest-priced row leads (first in served order on a
+/// tie, as web's sort).
+///
+/// #11616 R1 — A SETTLED BOARD NAMES ITS SUPPORTED WINNER OR NOBODY. A resolved
+/// market's hero is a row whose OWN decision is Won, else nil, exactly as web's
+/// `heroNamesNobody = isResolved && gradedChampion === null` (#6301). No price
+/// leader, no "Result unknown" row and no ungraded quote is named over a
+/// settled board: the 52pt slot would read a forecast or crown a row the table
+/// does not crown. The one exception is a one-row board graded Lost — that row
+/// IS the question, and only it could be named. Among several supported
+/// winners the first that names a SIDE leads, web's #8280 settled-board rule
+/// (`/futures/114108`: Kings, not "O/U 5.5").
 nonisolated func futuresDetailHeroOutcome(_ market: FuturesMarketDetail) -> FuturesOutcome? {
     let value = { (outcome: FuturesOutcome) in
         FuturesDetailRowValue.of(outcome, marketStatus: market.status, marketSource: market.source)
     }
-    let isResolved = market.status == "resolved"
-    if let leadId = market.leadOutcomeId, !isResolved,
+    let winners = market.outcomes.filter { value($0) == .verdict(.won) }
+    if market.status == "resolved" {
+        if let winner = winners.first(where: { !FuturesLineOrPropLeg8280.matches($0.name) }) ?? winners.first {
+            return winner
+        }
+        if market.outcomes.count == 1, let only = market.outcomes.first, value(only) == .verdict(.lost) {
+            return only
+        }
+        return nil
+    }
+    if let leadId = market.leadOutcomeId,
        let lead = market.outcomes.first(where: { $0.id == leadId }),
        value(lead) != .none {
         return lead
     }
-    if !isResolved, market.mutuallyExclusive == false,
+    if market.mutuallyExclusive == false,
        let live = futuresDetailPriceLeader(market.outcomes.filter({ outcome in
            guard outcome.isWinner != true, case .price(let p) = value(outcome) else { return false }
            return p > 0
@@ -109,13 +126,52 @@ nonisolated func futuresDetailHeroOutcome(_ market: FuturesMarketDetail) -> Futu
     }
     // #11616: a supported winner remains the answer after its price is withheld.
     // Keep served order when several outcomes won; do not imply exclusivity.
-    if let winner = market.outcomes.first(where: { value($0) == .verdict(.won) }) {
-        return winner
+    return winners.first ?? futuresDetailPriceLeader(market.outcomes)
+}
+
+/// What the hero prints in its headline slot: the hero row's own decision, or —
+/// #11616 R1, with nobody named — "Result unknown" for a settled board whose
+/// EVERY row's result is unknown (web `resultUnknown={resultCertainty === "all"}`).
+/// A partly unknown or ungraded settled board prints nothing there; its rows
+/// carry it. Never a row's last price: `lastRecorded` is nil.
+nonisolated func futuresDetailHeroValue(_ market: FuturesMarketDetail, hero: FuturesOutcome?) -> FuturesDetailRowValue {
+    if let value = hero.map({ FuturesDetailRowValue.of($0, marketStatus: market.status, marketSource: market.source) }) {
+        return value
     }
-    if isResolved, market.outcomes.count > 1 {
-        return futuresDetailPriceLeader(market.outcomes.filter { value($0) != .verdict(.lost) })
+    if market.status == "resolved", SettledResultDisplay698.board(market) == .all {
+        return .resultUnknown(lastRecorded: nil)
     }
-    return futuresDetailPriceLeader(market.outcomes)
+    return .none
+}
+
+/// #8280 — web's `isLineOrPropLeg` (`frontend/lib/futuresDetailDisplay.ts`):
+/// a totals, spread or prop leg of a game board, or a bare matchup, which
+/// names no side. Used only to ORDER supported winners on a settled board;
+/// it never promotes an ungraded row and never withholds one.
+///
+/// The patterns are web's regex literals verbatim (`\/` unescaped), paired by
+/// `FuturesHeroNamesTheWinningSide8280Tests`, which reads the web source.
+nonisolated enum FuturesLineOrPropLeg8280 {
+    /// (pattern, case-insensitive) in web's order.
+    static let patterns: [(String, Bool)] = [
+        (#"\bO/U\b"#, true),
+        (#"^(1H |2H )?Spread\b"#, true),
+        (#"\([+-]\d+(\.\d+)?\)$"#, false),
+        (#"^(over|under)\s+\d"#, true),
+        (#"both teams to sco"#, true),
+        (#"\?$"#, false),
+        (#"\svs\.?\s"#, true),
+    ]
+
+    static func matches(_ name: String?) -> Bool {
+        let n = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty else { return false }
+        return patterns.contains { pattern, caseInsensitive in
+            var options: String.CompareOptions = .regularExpression
+            if caseInsensitive { options.insert(.caseInsensitive) }
+            return n.range(of: pattern, options: options) != nil
+        }
+    }
 }
 
 /// The highest-priced outcome, a missing price reading as 0, and the FIRST in
@@ -334,10 +390,9 @@ struct FuturesDetailView: View {
         // share sentence above (#8097).
         let heroPercent = leader.flatMap { futuresDetailRenderedPercents(market.outcomes)[$0.id] }
         // #11616: hero, rows and search consume one result decision, with no
-        // price precondition for a supported result or explicit unknown.
-        let heroValue: FuturesDetailRowValue = leader.map {
-            FuturesDetailRowValue.of($0, marketStatus: market.status, marketSource: market.source)
-        } ?? .none
+        // price precondition for a supported result. With nobody named, a board
+        // whose every result is unknown says so, naming no row (R1).
+        let heroValue = futuresDetailHeroValue(market, hero: leader)
 
         // #7074, the second instance. The Discover card had this exact shape — a
         // backdrop pinned to a height, a sibling overlay free to exceed it, and a
@@ -389,41 +444,48 @@ struct FuturesDetailView: View {
 
             Spacer(minLength: 16)
 
-            if let leader {
-                switch heroValue {
-                case .verdict(let verdict):
-                    Text(verdict.label)
-                        .font(.system(size: 52, weight: .black))
+            switch heroValue {
+            case .verdict(let verdict):
+                Text(verdict.label)
+                    .font(.system(size: 52, weight: .black))
+                    .minimumScaleFactor(0.76)
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
+            case .resultUnknown:
+                Text("Result unknown")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
+            case .price(let prob):
+                HStack(alignment: .bottom, spacing: 10) {
+                    Text(futuresProbabilityLabel(prob, renderedPercent: heroPercent))
+                        .font(.system(size: 52, weight: .black).monospacedDigit())
                         .minimumScaleFactor(0.76)
                         .foregroundStyle(.white)
                         .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
-                case .resultUnknown:
-                    Text("Result unknown")
-                        .font(.system(size: 28, weight: .bold))
-                        .foregroundStyle(.white)
-                        .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
-                case .price(let prob):
-                    HStack(alignment: .bottom, spacing: 10) {
-                        Text(futuresProbabilityLabel(prob, renderedPercent: heroPercent))
-                            .font(.system(size: 52, weight: .black).monospacedDigit())
-                            .minimumScaleFactor(0.76)
-                            .foregroundStyle(.white)
-                            .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 3)
 
+                    if let leader {
                         detailMovementBadge(leader.probabilityChange24h)
                             .padding(.bottom, 8)
                     }
-                case .none:
-                    EmptyView()
                 }
+            case .none:
+                EmptyView()
+            }
 
-                if heroValue != .none {
+            // Only a verdict or a price names its row; a board-level
+            // "Result unknown" names nobody.
+            if let leader {
+                switch heroValue {
+                case .verdict, .price:
                     Text(leader.name)
                         .font(.headline.weight(.bold))
                         .foregroundStyle(.white.opacity(0.92))
                         .lineLimit(3)
                         .minimumScaleFactor(0.92)
                         .fixedSize(horizontal: false, vertical: true)
+                case .resultUnknown, .none:
+                    EmptyView()
                 }
             }
 

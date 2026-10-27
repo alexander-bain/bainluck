@@ -104,7 +104,10 @@ final class ASettledCoinFlipSaysResultUnknown698Tests: XCTestCase {
     // MARK: - The four specimens, both modes
 
     /// 62134744 — both legs 0.5 / false / clob_authoritative. Before #698 each
-    /// row printed Lost. Now both say Result unknown, Last recorded 50%.
+    /// row printed Lost. Now both say Result unknown, Last recorded 50%, and the
+    /// hero names NOBODY over a board-level "Result unknown" — web's mounted page
+    /// on this same verbatim fixture (`settledCoinFlipSaysResultUnknown698.test.tsx`:
+    /// "crowns nobody … says Result unknown"). #11616 R1: 0d239c9d named "Over" here.
     func testTheCoinFlipSaysResultUnknownOnBothRows() throws {
         for mode in [Mode.served, .contract] {
             let m = try market("62134744", mode)
@@ -115,10 +118,9 @@ final class ASettledCoinFlipSaysResultUnknown698Tests: XCTestCase {
                 XCTAssertFalse(value.printsMovement)
             }
             XCTAssertEqual(SettledResultDisplay698.board(m), .all, "\(mode)")
-            let hero = try XCTUnwrap(futuresDetailHeroOutcome(m))
-            XCTAssertTrue(SettledResultDisplay698.isUnknown(hero, in: m))
-            XCTAssertFalse(SettledResultDisplay698.heroWearsWinnerBadge(hero, in: m))
-            XCTAssertEqual(heroValue(m), .resultUnknown(lastRecorded: 0.5), "\(mode)")
+            XCTAssertNil(futuresDetailHeroOutcome(m), "a row whose result is unknown is not the answer: \(mode)")
+            XCTAssertEqual(heroValue(m), .resultUnknown(lastRecorded: nil),
+                           "the board says Result unknown, with no last price: \(mode)")
             XCTAssertEqual(futuresDetailShareMessage(m), "\(m.name) on Bain Luck",
                            "a settled unknown is never quoted as a live chance")
         }
@@ -211,25 +213,40 @@ final class ASettledCoinFlipSaysResultUnknown698Tests: XCTestCase {
         XCTAssertEqual(S.fallback(probability: .nan, isWinner: false, resolutionSource: "api_settlement"), .unknown)
     }
 
-    /// A midrange `true` must not crown a phantom champion on the hero.
+    /// A midrange `true` must not crown a phantom champion on the hero — nor be
+    /// named at all (web `:291` "a midrange TRUE marked unknown crowns nobody").
     func testAMidrangeTrueIsNeverCrowned() throws {
         for mode in [Mode.served, .contract] {
             let m = try market("62134744", mode, edit: [234738381: ["is_winner": true, "probability": 0.55]])
-            let hero = try XCTUnwrap(futuresDetailHeroOutcome(m))
-            XCTAssertEqual(hero.id, 234738381)
-            XCTAssertTrue(SettledResultDisplay698.isUnknown(hero, in: m), "\(mode)")
-            XCTAssertFalse(SettledResultDisplay698.heroWearsWinnerBadge(hero, in: m), "\(mode)")
-            // The decision the hero actually prints: unknown, never Won.
-            XCTAssertEqual(heroValue(m), .resultUnknown(lastRecorded: 0.55), "\(mode)")
+            let row = try XCTUnwrap(m.outcomes.first { $0.id == 234738381 })
+            XCTAssertTrue(SettledResultDisplay698.isUnknown(row, in: m), "\(mode)")
+            XCTAssertNil(futuresDetailHeroOutcome(m), "\(mode)")
+            // The decision the hero actually prints: the board's unknown, never Won.
+            XCTAssertEqual(heroValue(m), .resultUnknown(lastRecorded: nil), "\(mode)")
             XCTAssertEqual(futuresDetailShareMessage(m), "\(m.name) on Bain Luck", "\(mode)")
         }
     }
 
+    /// The opposite direction on the same board: with no contract served, a
+    /// terminal 1 / true leg IS a supported winner, so the hero names it and the
+    /// board is no longer all-unknown. With the served contract still saying
+    /// "unknown" for that row, the contract governs and nobody is named.
+    func testATerminalWinnerOnTheCoinFlipBoardIsNamedUnlessTheContractSaysUnknown() throws {
+        let edit: [Int: [String: Any]] = [234738381: ["is_winner": true, "probability": 1.0]]
+        let fallback = try market("62134744", .served, edit: edit)
+        XCTAssertEqual(futuresDetailHeroOutcome(fallback)?.id, 234738381)
+        XCTAssertEqual(heroValue(fallback), .verdict(.won))
+        XCTAssertEqual(SettledResultDisplay698.board(fallback), .some)
+        XCTAssertEqual(futuresDetailShareMessage(fallback), "Over: Won — \(fallback.name) on Bain Luck")
+
+        let contract = try market("62134744", .contract, edit: edit)
+        XCTAssertNil(futuresDetailHeroOutcome(contract))
+        XCTAssertEqual(heroValue(contract), .resultUnknown(lastRecorded: nil))
+    }
+
     /// The hero's own decision for a market, as `heroSection` computes it.
-    private func heroValue(_ m: FuturesMarketDetail) -> FuturesDetailRowValue? {
-        futuresDetailHeroOutcome(m).map {
-            FuturesDetailRowValue.of($0, marketStatus: m.status, marketSource: m.source)
-        }
+    private func heroValue(_ m: FuturesMarketDetail) -> FuturesDetailRowValue {
+        futuresDetailHeroValue(m, hero: futuresDetailHeroOutcome(m))
     }
 
     /// An unsupported `is_winner = true` (open, no resolution source) is not a
@@ -309,8 +326,22 @@ final class ASettledCoinFlipSaysResultUnknown698Tests: XCTestCase {
         let hero = String(source[start.upperBound..<end.lowerBound])
         // #11616 replaced the separate unknown flag and Winner capsule with the
         // row's own decision; the runtime half is in the specimen tests above.
-        XCTAssertTrue(hero.contains(
+        // R1 moved that decision into `futuresDetailHeroValue`, which the
+        // specimen tests call directly; the hero must print exactly it.
+        XCTAssertTrue(hero.contains("let leader = futuresDetailHeroOutcome(market)"))
+        XCTAssertTrue(hero.contains("let heroValue = futuresDetailHeroValue(market, hero: leader)"))
+        let valueStart = try XCTUnwrap(source.range(of: "nonisolated func futuresDetailHeroValue("))
+        let valueEnd = try XCTUnwrap(source.range(of: "nonisolated enum FuturesLineOrPropLeg8280",
+                                                  range: valueStart.upperBound..<source.endIndex))
+        let value = String(source[valueStart.upperBound..<valueEnd.lowerBound])
+        XCTAssertTrue(value.contains(
             "FuturesDetailRowValue.of($0, marketStatus: market.status, marketSource: market.source)"))
+        XCTAssertTrue(value.contains("SettledResultDisplay698.board(market) == .all"))
+        XCTAssertTrue(value.contains(".resultUnknown(lastRecorded: nil)"), "the board's unknown quotes no last price")
+        // Only a verdict or a price names the row; the board's unknown names nobody.
+        let nameGate = try XCTUnwrap(hero.range(of: "case .verdict, .price:"))
+        let name = try XCTUnwrap(hero.range(of: "Text(leader.name)"))
+        XCTAssertLessThan(nameGate.lowerBound, name.lowerBound)
         XCTAssertTrue(hero.contains("case .resultUnknown:"))
         XCTAssertTrue(hero.contains("Text(\"Result unknown\")"))
         XCTAssertTrue(hero.contains("case .verdict(let verdict):"))

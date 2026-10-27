@@ -187,7 +187,8 @@ extension FeedFuturesData {
     /// #11616: every choice here is the market page's own, so the card a reader
     /// saved and the page it opens agree. The hero row leads (#8892's lead leg, the
     /// live rung of an open independent board, a supported winner — or nobody on a
-    /// resolved field of losers); then supported winners; then price. Each row
+    /// settled board with no supported winner, R1); then supported winners; then
+    /// price. Each row
     /// carries the page's decision (`FuturesDetailRowValue`) and its full-field
     /// integer (`futuresDetailRenderedPercents`), so a selected top three is never
     /// re-rounded on its own. A winner is named — which makes

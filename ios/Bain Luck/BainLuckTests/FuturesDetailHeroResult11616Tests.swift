@@ -76,6 +76,9 @@ final class FuturesDetailHeroResult11616Tests: XCTestCase {
         XCTAssertEqual(try value(m), .price(0.355))
     }
 
+    /// lane1b N5: an open lead with a supported Won and NO price still leads.
+    /// Root chose L3(c) (web admits this lead), not R2's rollback to
+    /// `lead.probability != nil` — so this must keep passing.
     func testExplicitOpenLeadRetainsItsUnpricedSupportedResult() throws {
         let m = try market([row(1, "Match winner", won: true, source: "api_settlement"),
                             row(2, "Prop", price: 0.9)], status: "open", lead: 1)
@@ -95,11 +98,16 @@ final class FuturesDetailHeroResult11616Tests: XCTestCase {
         XCTAssertEqual(futuresDetailHeroOutcome(m)?.id, 2)
     }
 
+    /// R1: a settled one-row board whose result is unknown names nobody; the
+    /// hero says "Result unknown" for the board and the row keeps its last price.
     func testUnknownServedAndLegacyResultsAreNeverSharedAsLiveChances() throws {
         for served in [true, false] {
             let m = try market([row(1, "Victor", price: 0.5, won: false, source: "clob_authoritative",
                                     settlement: served ? "unknown" : nil)], source: "polymarket")
-            XCTAssertEqual(try value(m), .resultUnknown(lastRecorded: 0.5))
+            XCTAssertNil(futuresDetailHeroOutcome(m), "\(served)")
+            XCTAssertEqual(futuresDetailHeroValue(m, hero: nil), .resultUnknown(lastRecorded: nil))
+            XCTAssertEqual(FuturesDetailRowValue.of(m.outcomes[0], marketStatus: m.status, marketSource: m.source),
+                           .resultUnknown(lastRecorded: 0.5))
             XCTAssertEqual(futuresDetailShareMessage(m), "Awards field on Bain Luck")
         }
     }
@@ -164,7 +172,9 @@ final class FuturesDetailHeroResult11616Tests: XCTestCase {
     }
 
     /// An exclusive (or unstated) open board is answered by its supported winner,
-    /// as web keeps it and as search's result tier does.
+    /// as search's result tier does. Web at 0d239c9d's base did NOT: it led with
+    /// its price `leader` (Shai 97%) over its own table's Victor Won. Root's
+    /// disposition gives web's alignment to Lane1 (lane1b L3(a)); this pins iOS.
     func testOpenExclusiveOrUnstatedBoardStillLeadsWithItsSupportedWinner() throws {
         for exclusive in [true, nil] as [Bool?] {
             let m = try market([row(1, "Shai", price: 0.97),
@@ -182,7 +192,7 @@ final class FuturesDetailHeroResult11616Tests: XCTestCase {
         XCTAssertEqual(try value(m), .price(0.3))
     }
 
-    // MARK: - N2: a resolved board of several losers names nobody (web heroNamesNobody)
+    // MARK: - N2 / R1: a settled board names its supported winner or nobody (web heroNamesNobody)
 
     /// Interim review N2: the Vuelta shape — every row lost at 0.0.
     func testResolvedMultiRowAllLostBoardNamesNobodyInHeroOrShare() throws {
@@ -194,16 +204,53 @@ final class FuturesDetailHeroResult11616Tests: XCTestCase {
         XCTAssertFalse(futuresDetailShareMessage(m).contains("Lost"))
     }
 
-    /// A resolved board with no winner never heroes a LOST row over one whose
-    /// result is unknown; the unknown row keeps the explicit "Result unknown".
-    /// The loser is served LAST so `max(by:)`'s last-of-ties cannot pass this.
-    func testResolvedBoardWithoutWinnerPrefersAnUnknownRowOverALoser() throws {
+    /// R1(a), lane1b §2.3(a): mixed Lost/unknown names nobody, and — certainty
+    /// only "some" — the hero has no board-level "Result unknown" either (web).
+    /// 0d239c9d named the unknown row here.
+    func testResolvedMixedLostAndUnknownBoardNamesNobody() throws {
         let m = try market([row(2, "Unknown", price: 0.0, won: false, source: "clob_authoritative",
                                 settlement: "unknown"),
                             row(1, "Lost", price: 0.0, won: false, source: "clob_authoritative")], source: "polymarket")
-        XCTAssertEqual(futuresDetailHeroOutcome(m)?.id, 2)
-        XCTAssertEqual(try value(m), .resultUnknown(lastRecorded: 0.0))
+        XCTAssertNil(futuresDetailHeroOutcome(m))
+        XCTAssertEqual(SettledResultDisplay698.board(m), .some)
+        XCTAssertEqual(futuresDetailHeroValue(m, hero: nil), .none)
         XCTAssertEqual(futuresDetailShareMessage(m), "Awards field on Bain Luck")
+    }
+
+    /// R1(a), lane1b §2.3(b): a settled board whose rows are ungraded but priced
+    /// (Kalshi `is_winner` null) is not a forecast. Before R1 the hero printed a
+    /// 52pt "60%" and a name under RESOLVED and shared "Yes at 60%"; web prints
+    /// nothing. Multi-row and single-row alike.
+    func testResolvedUngradedPricedBoardIsNeverANamedForecast() throws {
+        for rows in [[row(1, "Yes", price: 0.6), row(2, "No", price: 0.4)], [row(1, "Yes", price: 0.6)]] {
+            let m = try market(rows)
+            XCTAssertNil(futuresDetailHeroOutcome(m), "\(rows.count) rows")
+            XCTAssertNil(SettledResultDisplay698.board(m))
+            XCTAssertEqual(futuresDetailHeroValue(m, hero: nil), .none)
+            XCTAssertEqual(futuresDetailShareMessage(m), "Awards field on Bain Luck")
+            XCTAssertFalse(futuresDetailShareMessage(m).contains("%"))
+            // The rows below still print what they printed: the hero names nobody,
+            // it does not reprice the table.
+            XCTAssertEqual(FuturesDetailRowValue.of(m.outcomes[0], marketStatus: m.status, marketSource: m.source),
+                           .price(0.6))
+        }
+    }
+
+    /// The opposite direction: the same ungraded board with ONE supported winner
+    /// served last and priced lowest still names that winner, not the price leader.
+    func testResolvedBoardWithOneSupportedWinnerStillNamesIt() throws {
+        let m = try market([row(1, "Yes", price: 0.6), row(2, "No", price: 0.4),
+                            row(3, "Push", price: 0.01, won: true, source: "game_score")])
+        XCTAssertEqual(futuresDetailHeroOutcome(m)?.id, 3)
+        XCTAssertEqual(futuresDetailHeroValue(m, hero: futuresDetailHeroOutcome(m)), .verdict(.won))
+        XCTAssertEqual(futuresDetailShareMessage(m), "Push: Won — Awards field on Bain Luck")
+    }
+
+    /// A settled one-row board with no grade and no price names nobody.
+    func testResolvedSingleUnpricedUngradedRowNamesNobody() throws {
+        let m = try market([row(1, "Yes")])
+        XCTAssertNil(futuresDetailHeroOutcome(m))
+        XCTAssertEqual(futuresDetailHeroValue(m, hero: nil), .none)
     }
 
     /// The justified single-row case is unchanged: that row IS the question.
