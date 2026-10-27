@@ -283,6 +283,65 @@ def test_omitted_async_refusal_still_applies_the_destinations_local_age_policy()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# #11616 F4: the same legs, freshly stamped, so the ASYNC refusal is the only
+# cause. On the verbatim stamps detail's relative-age policy refuses 1597367 by
+# itself (April against September), and lane1b's mutant — the builder handing
+# the representation `None` instead of `withheld` — passed every test above.
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Every leg at the specimen's newest real stamp: nothing is old relative to
+#: anything, so the local age arm refuses nothing and only `withheld` can.
+FRESH_STAMP = datetime.fromisoformat("2026-09-12T03:51:38.881246+00:00")
+FRESH_SHORT = {WITHHELD_ID, GRADED_CONTROL_ID, 1597363, 1597362}
+
+
+def _fresh_legs(only=None):
+    legs = _legs(only=only)
+    for leg in legs:
+        leg.last_updated = FRESH_STAMP
+    return legs
+
+
+def test_fresh_control_without_the_async_refusal_the_defect_is_printed():
+    # What makes the next test meaningful: nobody refuses, so the refused leg is
+    # printed at 1.0 and leads, exactly as #6993 reported.
+    served = _build_search_top_outcomes(
+        _market(_fresh_legs(only=FRESH_SHORT)), limit=5, lean=False
+    )
+    assert served[0]["id"] == WITHHELD_ID
+    assert served[0]["probability"] == pytest.approx(1.0)
+
+
+def test_fresh_the_async_refusal_alone_nulls_the_refused_leg():
+    served = _by_id(_build_search_top_outcomes(
+        _market(_fresh_legs(only=FRESH_SHORT)), limit=5, lean=False,
+        withheld={WITHHELD_ID},
+    ))
+    assert served[WITHHELD_ID]["probability"] is None
+    assert served[WITHHELD_ID]["rank"] is None
+
+
+def test_fresh_over_withholding_control_the_graded_identical_book_keeps_its_price():
+    """Settled means settled: same 0.0000/1.0000 book, graded, so spared."""
+    served = _by_id(_build_search_top_outcomes(
+        _market(_fresh_legs(only=FRESH_SHORT)), limit=5, lean=False,
+        withheld={WITHHELD_ID},
+    ))
+    assert served[GRADED_CONTROL_ID]["probability"] == pytest.approx(0.99)
+    assert served[GRADED_CONTROL_ID]["resolution_source"] == "api_settlement"
+
+
+def test_fresh_every_surviving_row_keeps_its_rank_by_served_price():
+    served = _by_id(_build_search_top_outcomes(
+        _market(_fresh_legs(only=FRESH_SHORT)), limit=5, lean=False,
+        withheld={WITHHELD_ID},
+    ))
+    assert {oid: served[oid]["rank"] for oid in (1597363, GRADED_CONTROL_ID, 1597362)} == {
+        1597363: 1, GRADED_CONTROL_ID: 2, 1597362: 3,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # The age pip — the same defect arriving by a third door.
 # ─────────────────────────────────────────────────────────────────────────────
 
