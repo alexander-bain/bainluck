@@ -375,6 +375,12 @@ export default function FuturesCard({
  *  last (it is below the cut by construction, so the leader-first sort cannot
  *  lift it), only the digit changes. */
 function boardRank(outcome: FuturesOutcome, index: number, servedRanks = false): number | null {
+  // #11616 O-P1a: a card that prints served ranks prints the pin's too.
+  // `matched_rank` counts only the legs priced STRICTLY above the pin, so on a
+  // tie it took a neighbour's number (1, 2, 2 beside detail's 1, 2, 3).
+  if (servedRanks && typeof outcome.rank === "number" && outcome.rank >= 1) {
+    return outcome.rank;
+  }
   if (outcome.query_match && typeof outcome.matched_rank === "number" && outcome.matched_rank >= 1) {
     return outcome.matched_rank;
   }
@@ -391,7 +397,9 @@ function boardRank(outcome: FuturesOutcome, index: number, servedRanks = false):
 /** #11616 — search's served order, sliced. The query pin, which the server
  *  puts first for the one- and two-row surfaces (#10279), keeps the place its
  *  price gives it among this card's five rows, as under the leader-first sort
- *  (#8863): after every row priced at or above it, never above a result. */
+ *  (#8863): in front of the first row priced below it. A priceless result
+ *  served ahead of that row stays above the pin; a PRICED result below the
+ *  pin's price sits under it, as it did under the leader-first sort. */
 function servedLeadSlice<T extends { outcome: FuturesOutcome; probability: number | null }>(
   rows: readonly T[],
   count: number,

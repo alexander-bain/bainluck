@@ -15,6 +15,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import FuturesCard from "../../components/FuturesCard";
 import type { FuturesMarket, FuturesOutcome } from "../../lib/types";
+import producerFixture from "../fixtures/backend_to_web_fixtures_11616.json";
 
 function outcome(
   id: number,
@@ -120,7 +121,9 @@ describe("#11616 search card: served lead order and detail's badges", () => {
     expect(r[0][2]).toBe(true);
   });
 
-  it("a pin priced above the field rises to its price place, never above a result", () => {
+  // O-P1b: "never above a result" held only for a PRICELESS result. The test
+  // name says what the slice does; the priced case is pinned below.
+  it("a pin priced above the field rises to its price place, never above a priceless result", () => {
     const served = [
       outcome(31, "Victor Wembanyama", 0.2818, { rank: 1, query_match: true, matched_rank: 1 }),
       outcome(1, "Shai Gilgeous-Alexander", null, { is_winner: true, resolution_source: "api_settlement" }),
@@ -134,5 +137,99 @@ describe("#11616 search card: served lead order and detail's badges", () => {
     const legacy = M1U.map((o) => ({ ...o, rank: null }));
     const r = rows(SEARCH(market(legacy)));
     expect(r.map(([, b]) => b)).toEqual(["1", "2", "3", "4", "5"]);
+  });
+});
+
+describe("O-P1b: a PRICED result below the pin's price sits under it (#10279 pin precedence)", () => {
+  it("is the leader-first sort's behaviour, kept: the pin leads a priced Won it out-prices", () => {
+    const served = [
+      outcome(41, "Shai Gilgeous-Alexander", 0.97, { rank: 1, query_match: true, matched_rank: 1 }),
+      outcome(42, "Victor Wembanyama", 0.95, { rank: 2, is_winner: true, resolution_source: "api_settlement" }),
+      outcome(43, "Nikola Jokic", 0.02, { rank: 3 }),
+    ];
+    expect(rows(SEARCH(market(served))).map(([l]) => l)).toEqual([
+      "Shai Gilgeous-Alexander", "Victor Wembanyama", "Nikola Jokic",
+    ]);
+    expect(rows(OTHER(market(served))).map(([l]) => l)).toEqual([
+      "Shai Gilgeous-Alexander", "Victor Wembanyama", "Nikola Jokic",
+    ]);
+  });
+});
+
+/**
+ * O-P1a — the pin's badge is detail's rank. The cards below are the committed
+ * producer fixture (written by the backend's own `_format_futures_for_search`
+ * and `_format_market_detail`, pinned byte-for-byte by
+ * `test_committed_web_fixture_matches_actual_backend_producers`): one input,
+ * both pages. `matched_rank` counts legs priced STRICTLY above the pin, so on
+ * a priced tie it printed a neighbour's number — 1, 2, 2 beside detail's 1, 2, 3.
+ */
+type Payload = { top_outcomes: FuturesOutcome[] } & Record<string, unknown>;
+const FIXTURE = producerFixture as unknown as Record<
+  string,
+  { fresh_search: Payload; fresh_detail: { outcomes: { name: string; rank: number | null }[] } }
+>;
+function detailRanks(key: string): Record<string, string> {
+  return Object.fromEntries(
+    FIXTURE[key].fresh_detail.outcomes.map((o) => [o.name, o.rank == null ? "" : String(o.rank)]),
+  );
+}
+function servedCard(key: string, strip = false): FuturesMarket {
+  const card = FIXTURE[key].fresh_search;
+  const top = strip ? card.top_outcomes.map((o) => ({ ...o, rank: null })) : card.top_outcomes;
+  return { ...card, top_outcomes: top } as unknown as FuturesMarket;
+}
+
+describe("O-P1a: the query pin prints detail's rank", () => {
+  it.each(["op1a_tied_pin", "op1a_full_field_pin", "op1a_truncated_pin"])(
+    "%s: every badge on the card is detail's number for that row",
+    (key) => {
+      const ranks = detailRanks(key);
+      const r = rows(SEARCH(servedCard(key)));
+      expect(r.length).toBeGreaterThan(1);
+      for (const [label, badge] of r) expect([label, badge]).toEqual([label, ranks[label]]);
+    },
+  );
+
+  it("the tied pin: 1, 2, 3 as detail, not 1, 2, 2", () => {
+    const r = rows(SEARCH(servedCard("op1a_tied_pin")));
+    expect(r.map(([l, b]) => [l, b])).toEqual([
+      ["Leader Person", "1"],
+      ["Xavier Other", "2"],
+      ["Pinned Player", "3"],
+    ]);
+  });
+
+  it("the full-field pin below the cut prints its board place, 9 (detail), not 8", () => {
+    const r = rows(SEARCH(servedCard("op1a_full_field_pin")));
+    expect(r[r.length - 1].slice(0, 2)).toEqual(["Pinned Player", "9"]);
+  });
+
+  it("CONTROL: a legacy cached card (ranks stripped) still reads matched_rank for the pin", () => {
+    const r = rows(SEARCH(servedCard("op1a_truncated_pin", true)));
+    expect(r[r.length - 1].slice(0, 2)).toEqual(["Pinned Player", "8"]);
+    expect(r.slice(0, 4).map(([, b]) => b)).toEqual(["1", "2", "3", "4"]);
+  });
+
+  it("CONTROL: a pin with no served price prints no number on a ranked card", () => {
+    const served = [
+      outcome(51, "Shai Gilgeous-Alexander", null, { rank: null, query_match: true, matched_rank: null }),
+      ...M1U.slice(1),
+    ];
+    const r = rows(SEARCH(market(served)));
+    expect(r.find(([l]) => l === "Shai Gilgeous-Alexander")?.[1]).toBe("");
+  });
+
+  it("CONTROL: the query selection is the server's — the pin is the named leg", () => {
+    const top = FIXTURE.op1a_tied_pin.fresh_search.top_outcomes;
+    expect(top[0]).toMatchObject({ name: "Pinned Player", query_match: true });
+  });
+});
+
+describe("B1 on the card: the supported winner leads (same producer run)", () => {
+  it("highlights Beta, the row both detail heroes lead with", () => {
+    const r = rows(SEARCH(servedCard("b1_open_independent_raw_flag_beside_supported_winner")));
+    expect(r[0][0]).toBe("Beta rung");
+    expect(r[0][2]).toBe(true);
   });
 });
