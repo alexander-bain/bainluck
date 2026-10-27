@@ -9,6 +9,7 @@ import {
 } from "@/lib/share";
 import {
   gradedWinner,
+  openHeroResult,
   leaderLabel,
   futuresBoardPrice,
   futuresTitleText,
@@ -154,8 +155,11 @@ export async function generateMetadata({
   // #7906 — the shape is handed over for the same reason the page hands it over:
   // an og:title reading "Ludvig Aberg won - BMW PGA Championship - Make the Cut"
   // is the same false claim as the hero's, and it travels further.
+  // #11616 O-L3-1 — an open board whose page hero prints `Won` shares that
+  // result, never the price leader's forecast beside it.
   const winnerName = leaderLabel(
-    gradedWinner(outcomes, leader, market.status, market.market_type, market.mutually_exclusive),
+    gradedWinner(outcomes, leader, market.status, market.market_type, market.mutually_exclusive) ??
+      openHeroResult(outcomes, leader, market.status, market.lead_outcome_id, market.mutually_exclusive),
   );
 
   const titleText = futuresTitleText({

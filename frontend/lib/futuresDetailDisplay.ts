@@ -266,6 +266,29 @@ export function servedLeadHeroOutcome<
 }
 
 /**
+ * #11616 O-L3-1 — the row an OPEN board's page hero names as its result, or
+ * null. The page heroes `servedLeadHeroOutcome ?? pickHeroOutcome` and prints
+ * `Won` when that row's own verdict is "won" (L3(d)). The unfurl and picture
+ * name the same result; on "Victor · Won" they had shared "Shai 97%" and listed
+ * Victor's result as "95%", while the iOS share names the hero.
+ */
+export function openHeroResult<
+  T extends GradedRow & { id: number; probability?: number | null; name?: string | null },
+>(
+  outcomes: readonly T[],
+  leader: T | null,
+  status: string | null | undefined,
+  leadOutcomeId: number | null | undefined,
+  mutuallyExclusive?: boolean | null,
+): T | null {
+  if (status === "resolved") return null;
+  const hero =
+    servedLeadHeroOutcome(outcomes, leadOutcomeId, status) ??
+    pickHeroOutcome(outcomes, leader, false, mutuallyExclusive);
+  return hero && outcomeRowVerdict(hero, false) === "won" ? hero : null;
+}
+
+/**
  * #8892 — the chart a game container opens on draws the line its hero leads with,
  * ALONE.
  *
@@ -840,9 +863,10 @@ export function futuresTitleText(opts: {
   // settled titles and the same claim the card refuses to draw (no 96px numeral,
   // no bar, once `isResolved`). With no grade there is nothing to crown, so the
   // name stands alone; the RESOLVED pill in the picture carries the state.
-  if (opts.isResolved) {
-    return opts.winnerName ? `${opts.winnerName} won - ${opts.marketName}` : opts.marketName;
-  }
+  // #11616 O-L3-1: `winnerName` also carries an OPEN board's hero result
+  // (`openHeroResult`); on a resolved board it is the grade, as before.
+  if (opts.winnerName) return `${opts.winnerName} won - ${opts.marketName}`;
+  if (opts.isResolved) return opts.marketName;
   if (opts.leaderName && opts.probabilityLabel) {
     return `${opts.leaderName} ${opts.probabilityLabel} - ${opts.marketName}`;
   }
@@ -960,6 +984,9 @@ export interface FuturesUnfurlCopy {
   isResolved: boolean;
   /** True only when the featured outcome is GRADED a winner. */
   settledWon: boolean;
+  /** The card draws a result instead of a price: resolved, or an open board
+   *  whose page hero prints `Won` (#11616 O-L3-1). */
+  showsResult: boolean;
   /**
    * The grey supporting line under the headline, or `null` when the card already
    * draws every fact this line would carry (#6061). Never a restatement.
@@ -980,6 +1007,9 @@ export function futuresUnfurlCopy<
   /** `FuturesMarket.mutually_exclusive` (#7906) — only an affirmative `true`
    *  withholds a crown; absent or `false` leaves today's behaviour untouched. */
   mutuallyExclusive?: boolean | null;
+  /** #11616 O-L3-1 — `openHeroResult` for this board: an open board whose page
+   *  hero prints `Won` draws that result, not the price leader. */
+  openResult?: T | null;
 }): FuturesUnfurlCopy {
   const isResolved = opts.status === "resolved";
   // `is_winner === true` is required before the word "won" is printed, mirroring
@@ -999,7 +1029,8 @@ export function futuresUnfurlCopy<
     opts.marketType,
     opts.mutuallyExclusive,
   );
-  const settledWon = graded !== null;
+  const result = graded ?? opts.openResult ?? null;
+  const settledWon = result !== null;
   // #6301 — THE NAME GOES WITH THE VERDICT, and until now it did not.
   //
   // `settledWon` was gated on the grade (#6079) and `featuredName` was not: it took
@@ -1012,7 +1043,7 @@ export function futuresUnfurlCopy<
   //
   // The card degrades to the market title (`featuredName || title` at the call site),
   // which is honest and needs no explanation — notice 34.
-  const featuredName = graded ? leaderLabel(graded) : null;
+  const featuredName = result ? leaderLabel(result) : null;
 
   // A SETTLED CARD GETS NO CAPTION AT ALL (#6061), and that keeps #6032's rule
   // rather than relaxing it: the hook leads on a LIVE market only, because
@@ -1025,12 +1056,13 @@ export function futuresUnfurlCopy<
   // Live: the hook if there is one. If there is not, the leader's name and price
   // are drawn at 40px and 96px directly above, so the only thing left worth
   // saying is the standing line for a card with no market story on it at all.
-  const subtitle = isResolved
+  const showsResult = isResolved || opts.openResult != null;
+  const subtitle = showsResult
     ? null
     : opts.hookDescription ||
       (opts.leader ? null : "Prediction markets translated into intuitive probabilities.");
 
-  return { featuredName, isResolved, settledWon, subtitle };
+  return { featuredName, isResolved, settledWon, showsResult, subtitle };
 }
 
 /**
