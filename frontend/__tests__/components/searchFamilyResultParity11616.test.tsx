@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import SearchFamilyCard from "@/components/SearchFamilyCard";
 import { leaderOutcome } from "@/components/searchFamilyDisplay";
 import type { FuturesFamily, FuturesMarket, FuturesOutcome } from "@/lib/types";
+import producerFixture from "../fixtures/backend_to_web_fixtures_11616.json";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const outcome = (patch: Partial<FuturesOutcome> = {}): FuturesOutcome => ({
@@ -72,4 +73,22 @@ test("ladder still chooses its priced crossing; all-unpriced ladder retains its 
 });
 test("unknown contract on an open market does not override a live price", () => {
   expect(render(market([outcome({ probability: 0.4, settlement_display: { verdict: "unknown", basis: "nonterminal_stored_price" } })]))[0].textContent).toContain("Victor40%");
+});
+
+// #11616 LANE1-RETURN §5.5 disposition: the family card was not touched by the
+// card-order / P1 change because it has neither defect — it prints ONE row per
+// market, the first served row with a price or a result (wire order, no
+// probability re-sort), and it prints no rank badge. Same producer run as the
+// FuturesCard and detail guards (committed fixture, pinned by the backend).
+const FIXTURE = producerFixture as unknown as Record<string, { fresh_search: FuturesMarket }>;
+test.each([
+  ["b1_open_independent_raw_flag_beside_supported_winner", "Beta rungWon"],
+  ["t2_open_field_winner", "OtherWon"],
+  ["op1a_tied_pin", "Pinned Player20%"],
+])("%s: the family row is search's served lead, with no rank digit", (key, expected) => {
+  const served = FIXTURE[key].fresh_search;
+  const links = render(served);
+  expect(leaderOutcome(served)).toBe(served.top_outcomes?.[0]);
+  expect(links[0].textContent).toContain(expected);
+  expect(host.querySelector("[class*='w-5 h-5']")).toBeNull();
 });

@@ -60,6 +60,8 @@ jest.mock("next/link", () => ({
 }));
 
 import FuturesDetailPage from "../app/futures/[id]/page";
+import { generateMetadata as futuresMetadata } from "../app/futures/[id]/layout";
+import producerFixture from "./fixtures/backend_to_web_fixtures_11616.json";
 
 
 /* ─────────────────────────────── fixture ─────────────────────────────── */
@@ -292,5 +294,149 @@ describe("the helpers the unfurl and picture share", () => {
       { name: "B", probability: 0.95, is_winner: true, resolution_source: null },
     ];
     expect(pickHeroOutcome(legs, legs[0], false, true)).toBe(legs[0]);
+  });
+});
+
+/* ──────────── T1: Native's own inputs, verbatim (accepted f35750c9) ──────────── */
+
+/**
+ * lane1b EARLY-REPAIR-REVIEW-e3de8f84 §4 (T1): the three Native XCTest inputs
+ * Root named, byte-for-byte in their decoded shape — not analogues. Source:
+ * `ios/Bain Luck/BainLuckTests/FuturesDetailHeroResult11616Tests.swift` at
+ * f35750c988bf (`row`/`market` helpers: id 11616, "Awards field", kalshi,
+ * resolved, `mutually_exclusive: false` unless stated; a nil price/grade/source
+ * is JSON null) and `FuturesHeroNamesTheWinningSide8280Tests.swift` (id 114108,
+ * "Kings vs. Blue Jackets", resolved, `mutually_exclusive: false`).
+ */
+type NativeRow = { id: number; name: string; price?: number; won?: boolean; source?: string };
+function nativeRow(r: NativeRow) {
+  return {
+    id: r.id, name: r.name, probability: r.price ?? null,
+    is_winner: r.won ?? null, resolution_source: r.source ?? null,
+  };
+}
+function nativeMarket(
+  rows: NativeRow[],
+  { status = "resolved", source = "kalshi", lead }: { status?: string; source?: string; lead?: number } = {},
+) {
+  const value: Record<string, unknown> = {
+    id: 11616, name: "Awards field", status, source, outcomes: rows.map(nativeRow),
+    mutually_exclusive: false,
+  };
+  if (lead !== undefined) value.lead_outcome_id = lead;
+  return value;
+}
+
+describe("T1: the three Native inputs, the same answer on web", () => {
+  it("11616Tests:82 — an explicit open lead keeps its unpriced supported result", () => {
+    // row(1, "Match winner", won: true, source: "api_settlement"), row(2, "Prop", price: 0.9);
+    // status "open", lead 1. Native: hero id 1, value .verdict(.won).
+    const m = nativeMarket(
+      [{ id: 1, name: "Match winner", won: true, source: "api_settlement" }, { id: 2, name: "Prop", price: 0.9 }],
+      { status: "open", lead: 1 },
+    );
+    MARKET = m;
+    mount();
+    const h = hero();
+    expect(h.openWon).toEqual(["Match winner"]);
+    expect(h.openWonChip).toEqual(["Won"]);
+    expect(h.percent).toEqual([]);
+    const legs = m.outcomes as Parameters<typeof servedLeadHeroOutcome>[0];
+    expect((servedLeadHeroOutcome(legs, 1, "open") as { id?: number } | null)?.id).toBe(1);
+  });
+
+  it("8280Tests:89 — an unsupported winner flag on a side does not outrank a supported line", () => {
+    // row(1, "O/U 5.5", price: 0.99, won: true, source: "game_score"),
+    // row(2, "Kings", price: 0.99, won: true, source: nil); source "kalshi". Native: hero id 1.
+    const m = {
+      ...nativeMarket([
+        { id: 1, name: "O/U 5.5", price: 0.99, won: true, source: "game_score" },
+        { id: 2, name: "Kings", price: 0.99, won: true },
+      ]),
+      id: 114108, name: "Kings vs. Blue Jackets",
+    };
+    MARKET = m;
+    mount();
+    const h = hero();
+    expect(h.resolvedName).toEqual(["O/U 5.5"]);
+    expect(h.resolvedChip).toEqual(["Won"]);
+    const legs = m.outcomes as Parameters<typeof gradedWinner>[0];
+    expect((gradedWinner(legs, legs[0], "resolved") as { id?: number } | null)?.id).toBe(1);
+  });
+
+  it("11616Tests:241 — one supported winner served last and priced lowest is still named", async () => {
+    // row(1, "Yes", price: 0.6), row(2, "No", price: 0.4),
+    // row(3, "Push", price: 0.01, won: true, source: "game_score"). Native: hero id 3,
+    // .verdict(.won), share "Push: Won — Awards field on Bain Luck".
+    const m = nativeMarket([
+      { id: 1, name: "Yes", price: 0.6 },
+      { id: 2, name: "No", price: 0.4 },
+      { id: 3, name: "Push", price: 0.01, won: true, source: "game_score" },
+    ]);
+    MARKET = m;
+    mount();
+    const h = hero();
+    expect(h.resolvedName).toEqual(["Push"]);
+    expect(h.resolvedChip).toEqual(["Won"]);
+    expect(h.percent).toEqual([]);
+    // The web share is the unfurl: it names the same result, no percent.
+    const body = m;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, status: 200, json: async () => body,
+    }) as unknown as typeof fetch;
+    const meta = await futuresMetadata({ params: { id: "11616" } } as never);
+    expect(meta.title).toBe("Push won - Awards field");
+    expect(String(meta.description)).toMatch(/^Push won \(Awards field\)\./);
+    expect(String(meta.title)).not.toMatch(/%/);
+  });
+});
+
+/* ──────── B1 / T2: one producer run, search and detail on the same input ──────── */
+
+/**
+ * The committed fixture is written by the backend's own producers and pinned
+ * byte-for-byte by `test_committed_web_fixture_matches_actual_backend_producers`,
+ * so the detail payload mounted here and the search rows compared against it
+ * come from one input.
+ */
+type Served = { id?: number; name: string };
+const FIXTURE = producerFixture as unknown as Record<
+  string,
+  {
+    fresh_detail: Record<string, unknown>;
+    fresh_search: { top_outcomes: Served[] };
+    fresh_typeahead_top_outcomes?: Served[];
+  }
+>;
+
+describe("B1: an unsupported raw flag beside a supported winner (open, independent)", () => {
+  const entry = FIXTURE.b1_open_independent_raw_flag_beside_supported_winner;
+
+  it("detail heroes the supported winner as Won; search's card and dropdown lead with it", () => {
+    MARKET = entry.fresh_detail;
+    mount();
+    const h = hero();
+    expect(h.openWon).toEqual(["Beta rung"]);
+    expect(h.percent).toEqual([]);
+    expect(entry.fresh_search.top_outcomes[0]).toMatchObject({ id: 2, name: "Beta rung" });
+    expect(entry.fresh_typeahead_top_outcomes?.[0].name).toBe("Beta rung");
+  });
+
+  it("the served detail carries no lead, so the hero is chosen by the row rule alone", () => {
+    expect(entry.fresh_detail.lead_outcome_id).toBeNull();
+    const outcomes = entry.fresh_detail.outcomes as Parameters<typeof pickHeroOutcome>[0];
+    const picked = pickHeroOutcome(outcomes, outcomes[0], false, false) as { id?: number } | null;
+    expect(picked?.id).toBe(entry.fresh_search.top_outcomes[0].id);
+  });
+});
+
+describe("T2: an open board whose field won (the route-reachable arm)", () => {
+  const entry = FIXTURE.t2_open_field_winner;
+
+  it("detail heroes Other as Won and search's card leads with Other", () => {
+    MARKET = entry.fresh_detail;
+    mount();
+    expect(hero().openWon).toEqual(["Other"]);
+    expect(entry.fresh_search.top_outcomes[0].name).toBe("Other");
   });
 });
