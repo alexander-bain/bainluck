@@ -42,6 +42,7 @@ from app.utils.search_cache import (
     adapt_cached_futures_row,
     adapt_cached_search_response,
     adapt_cached_typeahead_response,
+    attest_represented_top_outcomes,
     is_attested_top_outcomes,
     is_current_represented_futures_row,
     search_response_cache_key,
@@ -221,6 +222,29 @@ class TestProducerAttestationAndEligibility:
         )
         assert SEARCH_FUTURES_REPRESENTATION_POLICY_KEY not in unexamined_row
         assert not is_current_represented_futures_row(unexamined_row)
+
+    def test_equal_content_does_not_confer_attestation(self):
+        # CodeQL py/missing-equals on _AttestedTopOutcomes: list equality is
+        # content equality by design; provenance is never read through ==.
+        outcomes = [
+            {
+                "name": "Victor Wembanyama",
+                "probability": 0.275,
+                "rendered_percent": 28,
+                "movement": 0.04,
+                "is_winner": False,
+                "resolution_source": None,
+            }
+        ]
+        attested = attest_represented_top_outcomes(copy.deepcopy(outcomes))
+        twin = copy.deepcopy(outcomes)
+        assert attested == twin and twin == attested
+        assert is_attested_top_outcomes(attested)
+        assert not is_attested_top_outcomes(twin)
+        row = stamp_futures_representation_policy(
+            {"id": 66031970, "name": "NBA MVP", "status": "open", "top_outcomes": twin}
+        )
+        assert SEARCH_FUTURES_REPRESENTATION_POLICY_KEY not in row
 
     def test_spoofed_policy_marker_without_valid_outcome_fields_is_rejected(self):
         spoofed_missing_rendered = {

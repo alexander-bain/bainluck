@@ -352,7 +352,16 @@ _LEGACY_OUTCOME_PREDICTION_FIELDS: tuple[str, ...] = (
 
 
 class _AttestedTopOutcomes(list):
-    """List of outcome dicts returned directly by ``_build_search_top_outcomes``."""
+    """List of outcome dicts returned directly by ``_build_search_top_outcomes``.
+
+    Equality is deliberately the inherited list equality: two lists holding the
+    same outcomes are the same CONTENT whoever built them. Attestation is
+    provenance, not content, and is read only through
+    ``is_attested_top_outcomes`` — a plain list that compares equal to an
+    attested one is still unattested, and a cache round trip (JSON) carries no
+    attestation at all, which is why a hit is judged by
+    ``is_current_represented_futures_row`` instead.
+    """
 
     __slots__ = ("_representation_policy",)
 
