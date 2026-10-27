@@ -127,16 +127,23 @@ def test_control_one_winner_board_keeps_its_graded_winner_as_headline():
     assert out[0]["id"] == GRADED_ID
 
 
-def test_control_graded_loss_badge_alone_also_demotes():
-    # `is_winner` False is the column default; the badge is what makes it a
-    # verdict (`leg_is_graded`). A graded-LOSS rung with a stale high price
-    # must not headline either.
+def test_control_graded_loss_badge_on_an_open_board_leads_as_the_live_number_it_prints():
+    # REVERSED by #11616 L2 (Root's ROOT-NATIVE-DELTA-DISPOSITION item 2, from
+    # lane1b's NATIVE-DELTA-REVIEW-0d239c9d §2.2). This control used to demote a
+    # graded-LOSS rung with a stale high price. But an open board prints a
+    # graded loser's number on every surface (#6082: web `outcomeRowVerdict`,
+    # iOS `OutcomeVerdict`, `_search_row_prints_a_verdict`), and both detail
+    # heroes lead with it (web `pickLiveLeader` excludes only a raw winner), so
+    # demoting it here made search the only surface leading with the 40% rung.
+    # Whether a settled loser's frozen price should print as live at all is a
+    # row-policy question for every surface, not a search lead rule.
     legs = [
         (1, "↓ 3.0%", "0xa", 0.97, 0.96, 0.98, False, "api_settlement"),
         (2, "↑ 4.0%", "0xb", 0.40, 0.39, 0.41, False, None),
     ]
     out = _build_search_top_outcomes(_market(legs=legs))
-    assert [o["name"] for o in out] == ["↑ 4.0%", "↓ 3.0%"]
+    assert [o["name"] for o in out] == ["↓ 3.0%", "↑ 4.0%"]
+    assert (out[0]["is_winner"], out[0]["resolution_source"]) == (False, "api_settlement")
 
 
 def test_control_ungraded_default_false_is_not_demoted():

@@ -38298,16 +38298,27 @@ def _build_search_top_outcomes(
 
     # On other boards a supported result is the answer even without a price;
     # ungraded rows retain their represented-price ordering within their tier.
+    #
+    # #11616 L1/L2: on the open multi-winner board the LIVE tier is exactly the
+    # rows both detail pages may lead with (web `pickLiveLeader`, iOS
+    # `futuresDetailHeroOutcome`): not a raw `is_winner` true, and a represented
+    # price above 0. A real 0.0 still prints 0% on the card (#6195) but cannot
+    # headline over a result (#7439's second clause: "0% Above 60" is a
+    # different wrong headline). A graded LOSER (`False` + a source) prints its
+    # live number on every surface (#6082), so it leads like any live row —
+    # Root's L2 ruling, which reverses #8640's graded-loss control on purpose.
     def _headline_tier(o) -> int:
         if not _demote_graded:
             return 1 if o.id in _result_ids else 0
         if o.id in _result_ids:
             return 1
-        if o.id in _withheld_ids or o.current_probability is None:
-            return 0
-        if leg_is_graded(
-            getattr(o, "is_winner", None), getattr(o, "resolution_source", None)
+        if (
+            o.id in _withheld_ids
+            or o.current_probability is None
+            or not (by_id[o.id]["probability"] or 0) > 0
         ):
+            return 0
+        if getattr(o, "is_winner", None) is True:
             return 1
         return 2
 
