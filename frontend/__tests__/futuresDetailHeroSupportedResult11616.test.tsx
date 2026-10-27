@@ -62,6 +62,7 @@ jest.mock("next/link", () => ({
 import FuturesDetailPage from "../app/futures/[id]/page";
 import { generateMetadata as futuresMetadata } from "../app/futures/[id]/layout";
 import producerFixture from "./fixtures/backend_to_web_fixtures_11616.json";
+import m1uDetail73 from "./fixtures/m1u_detail_73_0e5d583a.json";
 
 
 /* ─────────────────────────────── fixture ─────────────────────────────── */
@@ -89,10 +90,6 @@ type El = HTMLElement & { [k: string]: unknown };
 function descendants(node: El): El[] {
   return [node, ...Array.from(node.childNodes).flatMap((n) => descendants(n as El))];
 }
-function reactProps(node: El): Record<string, (arg?: unknown) => void> {
-  const key = Object.keys(node).find((k) => k.startsWith("__reactProps$"))!;
-  return node[key] as Record<string, (arg?: unknown) => void>;
-}
 let host: El;
 let root: ReturnType<typeof createRoot>;
 function mount() {
@@ -100,9 +97,6 @@ function mount() {
 }
 function byTestId(id: string): El[] {
   return descendants(host).filter((n) => n["data-testid"] === id);
-}
-function text(): string {
-  return host.textContent ?? "";
 }
 
 beforeEach(() => {
@@ -438,5 +432,16 @@ describe("T2: an open board whose field won (the route-reachable arm)", () => {
     mount();
     expect(hero().openWon).toEqual(["Other"]);
     expect(entry.fresh_search.top_outcomes[0].name).toBe("Other");
+  });
+});
+
+describe("U1: the SGA specimen (M1-U detail 73, verbatim) — the page hero the share must match", () => {
+  it("heroes Shai Gilgeous-Alexander as Won", () => {
+    MARKET = m1uDetail73 as unknown as Record<string, unknown>;
+    mount();
+    const h = hero();
+    expect(h.openWon).toEqual(["Shai Gilgeous-Alexander"]);
+    expect(h.openWonChip).toEqual(["Won"]);
+    expect(h.percent).toEqual([]);
   });
 });
