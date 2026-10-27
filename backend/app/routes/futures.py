@@ -5884,6 +5884,7 @@ def _apply_verified_title_to_detail(detail: dict, verdict) -> None:
     requested row's provenance. Badges are renumbered by the canonical
     `assign_display_ranks`, because the client sorts on the value it is given.
     """
+    from app.utils.futures_outcome_representation import stamp_rendered_percents
     from app.utils.outcome_display import assign_display_ranks
 
     _stamp_representation(detail, verdict)
@@ -5893,6 +5894,13 @@ def _apply_verified_title_to_detail(detail: dict, verdict) -> None:
     for row in detail["outcomes"]:
         changed |= _overlay_current(row, verdict.overlay.get(row["id"]), "probability")
     assign_display_ranks(detail["outcomes"])
+    # #11616 F3: the integers were stamped on the SOURCE values; web and iOS
+    # prefer the served integer, so the hero printed 31% for an overlaid 0.34
+    # and an unsupported (null) row kept 20. Re-stamped over the final served
+    # field with the representation's own rule — the verified-title estimator
+    # stays distinct from search's source mode (#10224); only the integer
+    # follows its own probability.
+    stamp_rendered_percents(detail["outcomes"], detail.get("mutually_exclusive", True))
     # The stored sentence was written about the source row's numbers.
     if changed and detail.get("hook_description"):
         detail["hook_description"] = None

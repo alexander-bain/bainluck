@@ -111,6 +111,27 @@ def local_futures_withheld_ids(
     return withheld
 
 
+def stamp_rendered_percents(outcomes: list[dict], mutually_exclusive) -> None:
+    """Write each row's served whole percent from its served ``probability``.
+
+    Decide on the complete represented field, before any top-N/query pinning.
+    A selected pair from a larger field is not a complete two-sided market.
+    Independent/multi-winner outcomes never acquire a sum-to-one constraint.
+    A null probability serves a null integer.
+
+    One rule for every writer of ``probability`` on a served field: the
+    representation below, and the verified-title overlay that rewrites current
+    values afterwards (#11616 F3), so no integer outlives its probability.
+    """
+    prices = [row["probability"] for row in outcomes]
+    if len(prices) == 2 and mutually_exclusive:
+        integers = rendered_duel_percents(prices[0], prices[1])
+    else:
+        integers = [rendered_percent(price) for price in prices]
+    for row, integer in zip(outcomes, integers):
+        row["rendered_percent"] = integer
+
+
 def represent_futures_outcomes(
     market,
     unsupported_price_outcome_ids=None,
@@ -268,16 +289,7 @@ def represent_futures_outcomes(
     )
     leader_pick_order(outcomes, is_winner_of=_is_graded_winner)
     assign_display_ranks(outcomes)
-    # Decide on the complete represented field, before any top-N/query pinning.
-    # A selected pair from a larger field is not a complete two-sided market.
-    # Independent/multi-winner outcomes never acquire a sum-to-one constraint.
-    prices = [row["probability"] for row in outcomes]
-    if len(prices) == 2 and getattr(market, "mutually_exclusive", True):
-        integers = rendered_duel_percents(prices[0], prices[1])
-    else:
-        integers = [rendered_percent(price) for price in prices]
-    for row, integer in zip(outcomes, integers):
-        row["rendered_percent"] = integer
+    stamp_rendered_percents(outcomes, getattr(market, "mutually_exclusive", True))
     return FuturesOutcomeRepresentation(
         outcomes,
         sorted_outcomes,
