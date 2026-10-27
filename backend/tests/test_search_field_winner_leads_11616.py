@@ -7,6 +7,11 @@ dropdown (``answers[0]``) then read "Alice Example Lost" for a board Other won.
 
 Control: an UNSETTLED dominant "Other" at ~100% on an open board is still an
 untraded artifact and still goes last (UX-P126/F5) on every surface.
+
+T2 (lane1b EARLY-REPAIR-REVIEW-e3de8f84 §3/§6): both search routes serve only
+``status="open"`` boards, so the resolved P2 arm alone cannot prove a card a
+reader can reach. The open arm below is the reachable one, and it goes through
+the card formatter itself (``_format_futures_for_search``), not just the builder.
 """
 
 from contextlib import ExitStack
@@ -85,3 +90,45 @@ def test_control_an_unsettled_dominant_field_row_still_goes_last_everywhere():
     for order in (detail, card, typeahead):
         assert order[0] == "Alice Example", order
         assert "Other" not in order[:2], order
+
+
+def _card_formatter_names(market):
+    class _Fixed(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW.astimezone(tz) if tz else NOW.replace(tzinfo=None)
+
+    with ExitStack() as stack:
+        for module in (events, futures):
+            stack.enter_context(patch.object(module, "datetime", _Fixed))
+        card = events._format_futures_for_search(market)
+    assert card is not None, "the open settled-Other board must keep its search card"
+    return [row["name"] for row in card["top_outcomes"]]
+
+
+def test_t2_an_open_board_whose_field_won_leads_with_other_everywhere():
+    # The route-reachable arm: same P2 legs, board still `open` (settled at the
+    # venue, not yet closed in our row — gotcha #33's population).
+    legs = [
+        _leg(1, "Other", 1.0, is_winner=True, src="api_settlement"),
+        _leg(2, "Alice Example", 0.0, is_winner=False, src="api_settlement"),
+        _leg(3, "Bob Example", 0.0, is_winner=False, src="api_settlement"),
+    ]
+    board = _board(legs, status="open")
+    detail, card, typeahead = _orders(board)
+    assert detail[0] == card[0] == typeahead[0] == "Other", (detail, card, typeahead)
+    assert _card_formatter_names(board)[0] == "Other"
+
+
+def test_t2_an_open_field_winner_beside_still_priced_losers_leads():
+    # The named legs still carry a stale live price while their grade says
+    # lost; the supported Other winner is the answer on every surface.
+    legs = [
+        _leg(1, "Other", 1.0, is_winner=True, src="api_settlement"),
+        _leg(2, "Alice Example", 0.04, is_winner=False, src="api_settlement"),
+        _leg(3, "Bob Example", 0.02, is_winner=False, src="api_settlement"),
+    ]
+    board = _board(legs, status="open")
+    detail, card, typeahead = _orders(board)
+    assert detail[0] == card[0] == typeahead[0] == "Other", (detail, card, typeahead)
+    assert _card_formatter_names(board)[0] == "Other"

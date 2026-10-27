@@ -72,12 +72,16 @@ def _hr_leaders():
 
 
 def _postseason():
+    # #11616 B1: the winners carry `api_settlement`, the authoritative grade
+    # they mean. They used to carry "kalshi", which no producer writes and no
+    # surface treats as a grade (web/iOS/search print that row as a price), so
+    # under B1 it is an unsupported raw flag and is not a kept #9675 winner.
     rows = [("Los Angeles Dodgers", 1.0, True), ("Houston Astros", 0.9, None),
             ("Philadelphia Phillies", 0.88, None), ("Arizona Diamondbacks", 0.6, None),
             ("Texas Rangers", 0.55, None), ("Seattle Mariners", 0.5, None),
             ("New York Yankees", 1.0, True)]
     return _Market(8861163, "MLB: Team to make postseason", [
-        _Outcome(i + 1, n, p, winner=w, resolution_source="kalshi" if w else None)
+        _Outcome(i + 1, n, p, winner=w, resolution_source="api_settlement" if w else None)
         for i, (n, p, w) in enumerate(rows)
     ], mutually_exclusive=False)
 
@@ -126,7 +130,7 @@ def test_a_settled_team_leg_is_pinned_with_its_result():
     rows = _card(_postseason(), YANKEES)
     pinned = [r for r in rows if r["name"] == "New York Yankees"]
     assert len(pinned) == 1
-    assert pinned[0]["is_winner"] is True and pinned[0]["resolution_source"] == "kalshi"
+    assert pinned[0]["is_winner"] is True and pinned[0]["resolution_source"] == "api_settlement"
 
 
 def test_already_inside_the_cut_is_not_duplicated():

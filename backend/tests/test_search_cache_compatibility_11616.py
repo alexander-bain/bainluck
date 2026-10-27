@@ -2344,6 +2344,87 @@ def build_backend_to_web_fixtures_11616() -> dict:
     )
     r3_poly_adapted_ta = adapt_cached_futures_row(r3_poly_ta_row)
 
+    # 8. #11616 B1: open independent board, no served lead, no live row above 0;
+    # an unsupported raw winner flag (null source) beside a supported winner.
+    # Both detail heroes lead with the supported winner; search must too.
+    b1_market = _make_market(
+        market_id=116162,
+        name="Which rungs hit in 2026",
+        status="open",
+        source="polymarket",
+        mutually_exclusive=False,
+        outcomes=[
+            _make_outcome(
+                1, "Alpha rung", 0.60, is_winner=True, resolution_source=None,
+                rank=1, last_updated=now,
+            ),
+            _make_outcome(
+                2, "Beta rung", 0.20, is_winner=True,
+                resolution_source="api_settlement", rank=2, last_updated=now,
+            ),
+        ],
+        updated_at=now,
+    )
+    b1_fresh_search = _format_futures_for_search(b1_market)
+    b1_fresh_typeahead = _build_search_top_outcomes(b1_market, limit=3, lean=True)
+    b1_fresh_detail = _format_market_detail(b1_market)
+
+    # 9. #11616 T2: the route-reachable OPEN arm of F2 — a settled Other winner
+    # on a board our row still holds open (search serves only open boards).
+    t2_market = _make_market(
+        market_id=116164,
+        name="Probe field board",
+        status="open",
+        source="kalshi",
+        outcomes=[
+            _make_outcome(
+                1, "Other", 1.0, is_winner=True,
+                resolution_source="api_settlement", last_updated=now,
+            ),
+            _make_outcome(
+                2, "Alice Example", 0.0, is_winner=False,
+                resolution_source="api_settlement", last_updated=now,
+            ),
+            _make_outcome(
+                3, "Bob Example", 0.0, is_winner=False,
+                resolution_source="api_settlement", last_updated=now,
+            ),
+        ],
+        updated_at=now,
+    )
+    t2_fresh_search = _format_futures_for_search(t2_market)
+    t2_fresh_detail = _format_market_detail(t2_market)
+
+    # 10. #11616 O-P1a: a query pin on a priced tie, a full field and a
+    # truncated (untied) field. The pin's served `rank` is detail's number.
+    def _op1a(market_id, legs):
+        market = _make_market(
+            market_id=market_id, name="NBA MVP", status="open", source="kalshi",
+            outcomes=[
+                _make_outcome(oid, name, p, last_updated=now) for oid, name, p in legs
+            ],
+            updated_at=now,
+        )
+        return {
+            "fresh_search": _format_futures_for_search(
+                market, query_terms=[("pinned", None)]
+            ),
+            "fresh_detail": _format_market_detail(market),
+        }
+
+    op1a_tied = _op1a(116165, [
+        (1, "Leader Person", 0.5), (2, "Xavier Other", 0.2), (3, "Pinned Player", 0.2),
+    ])
+    op1a_full = _op1a(116166, [
+        (1, "Leader Person", 0.5), (2, "Xavier Other", 0.2), (3, "Pinned Player", 0.2),
+        *[(10 + i, f"Field Person {chr(65 + i)}", round(0.3 - 0.01 * i, 2)) for i in range(6)],
+    ])
+    op1a_truncated = _op1a(116167, [
+        (1, "Leader Person", 0.5),
+        *[(10 + i, f"Field Person {chr(65 + i)}", round(0.4 - 0.01 * i, 2)) for i in range(6)],
+        (3, "Pinned Player", 0.05),
+    ])
+
     return {
         "r1_open_default_false": {
             "fresh_search": r1_open_fresh_search,
@@ -2383,7 +2464,18 @@ def build_backend_to_web_fixtures_11616() -> dict:
             "fresh_detail": r3_poly_fresh_detail,
             "adapted_search": r3_poly_adapted_search,
             "adapted_typeahead": r3_poly_adapted_ta,
+        },        "b1_open_independent_raw_flag_beside_supported_winner": {
+            "fresh_search": b1_fresh_search,
+            "fresh_typeahead_top_outcomes": b1_fresh_typeahead,
+            "fresh_detail": b1_fresh_detail,
         },
+        "t2_open_field_winner": {
+            "fresh_search": t2_fresh_search,
+            "fresh_detail": t2_fresh_detail,
+        },
+        "op1a_tied_pin": op1a_tied,
+        "op1a_full_field_pin": op1a_full,
+        "op1a_truncated_pin": op1a_truncated,
     }
 
 

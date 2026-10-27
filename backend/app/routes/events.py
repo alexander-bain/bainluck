@@ -37534,7 +37534,10 @@ def _futures_card_has_no_answer(
         or _futures_market_is_wholly_unpriced(market)
         or _futures_market_prices_only_empty_books(market)
         or _futures_board_is_mostly_unserved(market)
-        or _futures_market_prices_all_withheld(market, withheld)
+        # #11616 R-O2: the same division labels as every other result read here.
+        or _futures_market_prices_all_withheld(
+            market, withheld, out_division_labels=out_division_labels
+        )
         or _search_market_is_past_and_frozen(market, out_division_labels=out_division_labels)
     )
 
@@ -38132,6 +38135,11 @@ def _search_keep_settled_winners(real: list, limit: int, headline_tier) -> tuple
     are rank 1), and a tie left to load order is what made the card show the
     Dodgers in one read and the Brewers in the next.
 
+    #11616 R-multi: price comes first, the order detail serves its rows in
+    (`represent_futures_outcomes` sorts on `current_probability`), so a board
+    whose winners are priced differently leads with the winner both detail
+    heroes name. A stored rank that disagreed led search with the other one.
+
     One row stays with the best live leg while any exists: #8640's point is
     that a result must not headline an open board, and a board with more
     winners than rows would otherwise be all results. Everything else keeps its
@@ -38142,6 +38150,7 @@ def _search_keep_settled_winners(real: list, limit: int, headline_tier) -> tuple
     winners = sorted(
         (o for o in real if headline_tier(o) == 1 and getattr(o, "is_winner", None) is True),
         key=lambda o: (
+            -(o.current_probability or 0),
             getattr(o, "rank", None) is None,
             getattr(o, "rank", None) or 0,
             o.name or "",
@@ -38307,6 +38316,13 @@ def _build_search_top_outcomes(
     # different wrong headline). A graded LOSER (`False` + a source) prints its
     # live number on every surface (#6082), so it leads like any live row —
     # Root's L2 ruling, which reverses #8640's graded-loss control on purpose.
+    #
+    # #11616 B1: a raw `is_winner` true that is NOT a supported result goes to
+    # tier 0, not the result tier. In tier 1 it joined #9675's kept winners,
+    # which order by STORED rank, so "A 60%" (true, null source, rank 1) led
+    # over "B Won" (api_settlement, rank 2) while both detail heroes led with
+    # B. In tier 0 it sorts by price below every supported result, which is
+    # detail's own fallback order: live, then supported winner, then price.
     def _headline_tier(o) -> int:
         if not _demote_graded:
             return 1 if o.id in _result_ids else 0
@@ -38316,10 +38332,9 @@ def _build_search_top_outcomes(
             o.id in _withheld_ids
             or o.current_probability is None
             or not (by_id[o.id]["probability"] or 0) > 0
+            or getattr(o, "is_winner", None) is True
         ):
             return 0
-        if getattr(o, "is_winner", None) is True:
-            return 1
         return 2
 
     # #8834: a cumulative ladder is drawn as the rungs around its crossing, in

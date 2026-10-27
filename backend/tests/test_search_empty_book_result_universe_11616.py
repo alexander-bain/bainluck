@@ -152,3 +152,25 @@ def test_o2_a_result_the_grid_put_out_does_not_keep_a_frozen_board():
     assert not events._search_market_is_past_and_frozen(market, now=NOW)
     assert events._search_market_is_past_and_frozen(market, now=NOW, out_division_labels=labels)
     assert events._futures_card_has_no_answer(market, set(), out_division_labels=labels)
+
+
+def test_r_o2_a_result_the_grid_put_out_does_not_keep_a_wholly_refused_board():
+    # lane1b R-O2: `_futures_card_has_no_answer` judged results with the labels,
+    # but its #8661 arm re-asked WITHOUT them, so a board whose only supported
+    # result sits on a leg the grid put out kept a ladder of refused prices.
+    market = _board(
+        [
+            _leg(1, "AL East", 0.60, bid=0.59, ask=0.61, is_winner=True, src="api_settlement"),
+            _leg(2, "AL Central", 0.25, bid=0.24, ask=0.26),
+            _leg(3, "AL West", 0.15, bid=0.14, ask=0.16),
+        ],
+        status="open",
+    )
+    labels = frozenset({"al east"})
+    withheld = {1, 2, 3}
+    assert events._futures_market_prices_all_withheld(market, withheld, out_division_labels=labels)
+    assert events._futures_card_has_no_answer(market, withheld, out_division_labels=labels)
+    # Control: with no division verdict the supported result keeps the card.
+    assert not events._futures_card_has_no_answer(market, withheld)
+    # Control: a refusal that leaves one priced leg withdraws nothing.
+    assert not events._futures_card_has_no_answer(market, {1, 2}, out_division_labels=labels)
