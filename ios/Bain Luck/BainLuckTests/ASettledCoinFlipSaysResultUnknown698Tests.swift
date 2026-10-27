@@ -118,6 +118,7 @@ final class ASettledCoinFlipSaysResultUnknown698Tests: XCTestCase {
             let hero = try XCTUnwrap(futuresDetailHeroOutcome(m))
             XCTAssertTrue(SettledResultDisplay698.isUnknown(hero, in: m))
             XCTAssertFalse(SettledResultDisplay698.heroWearsWinnerBadge(hero, in: m))
+            XCTAssertEqual(heroValue(m), .resultUnknown(lastRecorded: 0.5), "\(mode)")
             XCTAssertEqual(futuresDetailShareMessage(m), "\(m.name) on Bain Luck",
                            "a settled unknown is never quoted as a live chance")
         }
@@ -218,7 +219,32 @@ final class ASettledCoinFlipSaysResultUnknown698Tests: XCTestCase {
             XCTAssertEqual(hero.id, 234738381)
             XCTAssertTrue(SettledResultDisplay698.isUnknown(hero, in: m), "\(mode)")
             XCTAssertFalse(SettledResultDisplay698.heroWearsWinnerBadge(hero, in: m), "\(mode)")
+            // The decision the hero actually prints: unknown, never Won.
+            XCTAssertEqual(heroValue(m), .resultUnknown(lastRecorded: 0.55), "\(mode)")
+            XCTAssertEqual(futuresDetailShareMessage(m), "\(m.name) on Bain Luck", "\(mode)")
         }
+    }
+
+    /// The hero's own decision for a market, as `heroSection` computes it.
+    private func heroValue(_ m: FuturesMarketDetail) -> FuturesDetailRowValue? {
+        futuresDetailHeroOutcome(m).map {
+            FuturesDetailRowValue.of($0, marketStatus: m.status, marketSource: m.source)
+        }
+    }
+
+    /// An unsupported `is_winner = true` (open, no resolution source) is not a
+    /// result anywhere the hero reads: it is a price, and the hero never crowns it.
+    func testAnUnsupportedWinnerFlagIsNeverCrownedByTheHero() throws {
+        let m = try market("113360", .served, edit: [:])
+        let first = try XCTUnwrap(m.outcomes.first)
+        let edited = try market("113360", .served, edit: [
+            first.id: ["is_winner": true, "resolution_source": NSNull(), "probability": 0.55],
+        ])
+        let row = try XCTUnwrap(edited.outcomes.first { $0.id == first.id })
+        XCTAssertEqual(FuturesDetailRowValue.of(row, marketStatus: edited.status, marketSource: edited.source),
+                       .price(0.55))
+        XCTAssertNotEqual(heroValue(edited), .verdict(.won))
+        XCTAssertFalse(futuresDetailShareMessage(edited).contains("Won"))
     }
 
     /// Lane1's N1: the My Stuff saved-market card reads the same body and named
@@ -281,9 +307,16 @@ final class ASettledCoinFlipSaysResultUnknown698Tests: XCTestCase {
         let end = try XCTUnwrap(source.range(of: "private func heroBackground(",
                                              range: start.upperBound..<source.endIndex))
         let hero = String(source[start.upperBound..<end.lowerBound])
-        XCTAssertTrue(hero.contains("SettledResultDisplay698.isUnknown("))
-        XCTAssertTrue(hero.contains("if heroResultUnknown {"))
-        XCTAssertTrue(hero.contains("SettledResultDisplay698.heroWearsWinnerBadge(leader, in: market)"))
+        // #11616 replaced the separate unknown flag and Winner capsule with the
+        // row's own decision; the runtime half is in the specimen tests above.
+        XCTAssertTrue(hero.contains(
+            "FuturesDetailRowValue.of($0, marketStatus: market.status, marketSource: market.source)"))
+        XCTAssertTrue(hero.contains("case .resultUnknown:"))
+        XCTAssertTrue(hero.contains("Text(\"Result unknown\")"))
+        XCTAssertTrue(hero.contains("case .verdict(let verdict):"))
         XCTAssertFalse(hero.contains("leader.isWinner == true"), "`is_winner` alone does not crown")
+        XCTAssertFalse(hero.contains(".isWinner"), "the hero reads no raw grade at all")
+        XCTAssertFalse(hero.contains("heroWearsWinnerBadge"),
+                       "its untargeted branch is the raw `is_winner == true` fallback")
     }
 }

@@ -43,10 +43,12 @@ private enum FuturesSortField: String, CaseIterable {
 nonisolated func futuresDetailRenderedPercents(_ outcomes: [FuturesOutcome]) -> [Int: Int] {
     // A served field decision survives row ordering and partial selections.
     // Legacy payloads with no integers retain the existing local pair rule.
+    // A repeated outcome id keeps its FIRST served integer: `uniqueKeysWithValues`
+    // traps on a repeat, and recomputing would reprice a selected subset.
     if outcomes.contains(where: { $0.renderedPercent != nil }) {
-        return Dictionary(uniqueKeysWithValues: outcomes.compactMap { outcome in
+        return Dictionary(outcomes.compactMap { outcome in
             outcome.renderedPercent.map { (outcome.id, $0) }
-        })
+        }, uniquingKeysWith: { first, _ in first })
     }
     let headlineOrder = outcomes.sorted { a, b in
         let lhs = a.probability ?? -1
@@ -57,13 +59,15 @@ nonisolated func futuresDetailRenderedPercents(_ outcomes: [FuturesOutcome]) -> 
     let printed = renderedCardPercents(headlineOrder.map(\.probability))
     var byOutcomeId: [Int: Int] = [:]
     for (index, outcome) in headlineOrder.enumerated() {
-        guard printed.indices.contains(index), let percent = printed[index] else { continue }
+        guard printed.indices.contains(index), let percent = printed[index],
+              byOutcomeId[outcome.id] == nil else { continue }
         byOutcomeId[outcome.id] = percent
     }
     return byOutcomeId
 }
 
-/// The outcome the hero and the share sentence lead with.
+/// The outcome the hero and the share sentence lead with, or nil when the page
+/// names nobody.
 ///
 /// #8892. Production `/futures/61778284`, 2026-09-26 — *LoL: Cloud9 vs Team
 /// Liquid (BO5)*, `mutually_exclusive: false` — heroed **71% "Over — O/U 3.5
@@ -73,22 +77,55 @@ nonisolated func futuresDetailRenderedPercents(_ outcomes: [FuturesOutcome]) -> 
 ///
 /// The server names the match-winner leg as `lead_outcome_id`. It leads while
 /// it is on the board with a supported price/result and the market is not resolved.
-/// Otherwise a supported winner leads, in served order; when no winner is
-/// supported the highest-priced fallback remains unchanged.
+///
+/// #11616 N1: on an OPEN board with `mutually_exclusive == false` a graded rung
+/// is a result, not the answer — web (`pickHeroOutcome`/`pickLiveLeader`) and
+/// search (#8640 `_demote_graded`) both lead with the best live, priced,
+/// ungraded row, so this does too. With no such row (every rung graded, or
+/// every live rung at 0%) the board falls through to the rule below, which is
+/// what keeps an open single-row authoritative result leading.
+///
+/// Otherwise a supported winner leads, in served order. When none is supported
+/// the highest-priced row leads (first in served order on a tie, as web's sort),
+/// except — #11616 N2 — a resolved board of several rows never heroes a row it
+/// graded LOST: when every row lost, the page names nobody, as web's
+/// `heroNamesNobody`. A one-row board keeps its Lost: that row IS the question.
 nonisolated func futuresDetailHeroOutcome(_ market: FuturesMarketDetail) -> FuturesOutcome? {
-    if let leadId = market.leadOutcomeId, market.status != "resolved",
+    let value = { (outcome: FuturesOutcome) in
+        FuturesDetailRowValue.of(outcome, marketStatus: market.status, marketSource: market.source)
+    }
+    let isResolved = market.status == "resolved"
+    if let leadId = market.leadOutcomeId, !isResolved,
        let lead = market.outcomes.first(where: { $0.id == leadId }),
-       FuturesDetailRowValue.of(lead, marketStatus: market.status, marketSource: market.source) != .none {
+       value(lead) != .none {
         return lead
+    }
+    if !isResolved, market.mutuallyExclusive == false,
+       let live = futuresDetailPriceLeader(market.outcomes.filter({ outcome in
+           guard outcome.isWinner != true, case .price(let p) = value(outcome) else { return false }
+           return p > 0
+       })) {
+        return live
     }
     // #11616: a supported winner remains the answer after its price is withheld.
     // Keep served order when several outcomes won; do not imply exclusivity.
-    if let winner = market.outcomes.first(where: {
-        FuturesDetailRowValue.of($0, marketStatus: market.status, marketSource: market.source) == .verdict(.won)
-    }) {
+    if let winner = market.outcomes.first(where: { value($0) == .verdict(.won) }) {
         return winner
     }
-    return market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
+    if isResolved, market.outcomes.count > 1 {
+        return futuresDetailPriceLeader(market.outcomes.filter { value($0) != .verdict(.lost) })
+    }
+    return futuresDetailPriceLeader(market.outcomes)
+}
+
+/// The highest-priced outcome, a missing price reading as 0, and the FIRST in
+/// served order on a tie (`max(by:)` returns the last).
+nonisolated func futuresDetailPriceLeader(_ outcomes: [FuturesOutcome]) -> FuturesOutcome? {
+    var best: FuturesOutcome?
+    for outcome in outcomes where best == nil || (outcome.probability ?? 0) > (best?.probability ?? 0) {
+        best = outcome
+    }
+    return best
 }
 
 /// The share sentence for this page.

@@ -182,21 +182,40 @@ extension FeedEventData {
 }
 
 extension FeedFuturesData {
-    /// #10011 — the market card for a pin outside the team feed. Leaders are the
-    /// highest-priced outcomes; a graded winner leads and is named, so
-    /// `FeedLifecycle.futuresIsSettled` treats the card as settled.
-    /// #698: "graded winner" is the hero's own rule — a settled row whose
-    /// result is unknown (a midrange `is_winner true`) is never named.
+    /// #10011 — the market card for a pin outside the team feed.
+    ///
+    /// #11616: every choice here is the market page's own, so the card a reader
+    /// saved and the page it opens agree. The hero row leads (#8892's lead leg, the
+    /// live rung of an open independent board, a supported winner — or nobody on a
+    /// resolved field of losers); then supported winners; then price. Each row
+    /// carries the page's decision (`FuturesDetailRowValue`) and its full-field
+    /// integer (`futuresDetailRenderedPercents`), so a selected top three is never
+    /// re-rounded on its own. A winner is named — which makes
+    /// `FeedLifecycle.futuresIsSettled` read the card as settled — only when the
+    /// page heroes that row as Won. #698 and the raw-grade rule: `OutcomeVerdict`
+    /// decides, so an open `is_winner = true` with no supported source, or a
+    /// settled row whose result is unknown, is never crowned.
     nonisolated init(savedPinDetail d: FuturesMarketDetail) {
-        let crowned = { (o: FuturesOutcome) in SettledResultDisplay698.heroWearsWinnerBadge(o, in: d) }
-        let winner = d.outcomes.first(where: crowned)
-        let ordered = d.outcomes.sorted { a, b in
-            if crowned(a) != crowned(b) { return crowned(a) }
-            return (a.probability ?? -1) > (b.probability ?? -1)
+        let value = { (o: FuturesOutcome) in
+            FuturesDetailRowValue.of(o, marketStatus: d.status, marketSource: d.source)
         }
+        let won = { (o: FuturesOutcome) in value(o) == .verdict(.won) }
+        let hero = futuresDetailHeroOutcome(d)
+        let winner = hero.flatMap { won($0) ? $0 : nil }
+        let percents = futuresDetailRenderedPercents(d.outcomes)
+        let ordered = d.outcomes.enumerated().sorted { lhs, rhs in
+            let (a, b) = (lhs.element, rhs.element)
+            let aLeads = a.id == hero?.id, bLeads = b.id == hero?.id
+            if aLeads != bLeads { return aLeads }
+            if won(a) != won(b) { return won(a) }
+            let (pa, pb) = (a.probability ?? -1, b.probability ?? -1)
+            if pa != pb { return pa > pb }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
         let leaders = ordered.prefix(3).enumerated().map { index, o in
             FeedFuturesOutcome(id: o.id, name: o.name, probability: o.probability,
-                               rank: index + 1, movement: o.probabilityChange24h)
+                               rank: index + 1, movement: o.probabilityChange24h,
+                               detailValue: value(o), detailRenderedPercent: percents[o.id])
         }
         self.init(
             id: d.id, externalId: d.externalId, name: d.name, sport: d.sport, sportName: d.sportName,
