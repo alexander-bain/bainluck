@@ -126,11 +126,9 @@ def test_every_search_surface_asks_the_predicate():
         "or _search_market_is_past_and_frozen(market, out_division_labels=out_division_labels)"
         in union
     )
-    assert (
-        "and not _search_market_is_past_and_frozen(\n"
-        "            m, out_division_labels=_out_divisions_by_market.get(m.id)\n"
-        "        )\n"
-    ) in src
+    # #11616 O1: the headline asks the result-blind form — a closed board never
+    # headlines, even one kept elsewhere for its result.
+    assert "and not _search_market_is_closed_and_frozen(m)\n" in src
     typeahead = src[src.index("for market in ta_futures_ranked:"):]
     head = typeahead[: typeahead.index("if not _admit_search_future(")]  # #9404
     assert (
@@ -138,4 +136,6 @@ def test_every_search_surface_asks_the_predicate():
         "            market, out_division_labels=_ta_out_divisions.get(market.id)\n"
         "        ):\n            continue"
     ) in head
-    assert src.count("_search_market_is_past_and_frozen(") == 4  # def + 3 call sites
+    assert src.count("_search_market_is_past_and_frozen(") == 3  # def + 2 call sites
+    # def + the headline + the builder's results-only draw + the result-aware form
+    assert src.count("_search_market_is_closed_and_frozen(") == 4

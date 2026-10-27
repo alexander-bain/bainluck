@@ -1301,6 +1301,24 @@ def _search_market_is_past_and_frozen(
 
     A row with no dated ticker, no printable price stamp, or not from Kalshi is
     "cannot say" and stays.
+
+    #11616 O1: a board that carries a supported result is kept — settled means
+    settled — but only for that result: the builder draws nothing else from a
+    closed, frozen board (:func:`_search_market_is_closed_and_frozen`), and the
+    promoted headline never takes one, results or not.
+    """
+    return _search_market_is_closed_and_frozen(market, now) and not _search_card_result_ids(
+        market, out_division_labels=out_division_labels
+    )
+
+
+def _search_market_is_closed_and_frozen(market, now: Optional[datetime] = None) -> bool:
+    """#8852's two clauses alone: ticker date passed AND prices stopped.
+
+    #11616 O1. Whatever results it carries, such a board answers a question that
+    already closed: its frozen prices are never drawn as live, and it is never
+    the promoted headline — a truthful result does not make a closed question
+    the most relevant answer to a search.
     """
     if getattr(market, "source", None) != "kalshi":
         return False
@@ -1311,10 +1329,7 @@ def _search_market_is_past_and_frozen(
     if ticker_date >= now.astimezone(ZoneInfo(_EASTERN_TZ_NAME)).date():
         return False
     stamp = _newest_price_stamp(market)
-    return (
-        stamp is not None and stamp < now - _SEARCH_TWIN_FROZEN_AFTER
-        and not _search_card_result_ids(market, out_division_labels=out_division_labels)
-    )
+    return stamp is not None and stamp < now - _SEARCH_TWIN_FROZEN_AFTER
 
 
 # Common sport abbreviation mapping — short queries like "NBA", "NFL"
@@ -13270,10 +13285,9 @@ async def search_events(
             m, _withheld_by_market[m.id],
             out_division_labels=_out_divisions_by_market.get(m.id),
         )
-        # #8852: a promoted contender that closed in April is not the headline.
-        and not _search_market_is_past_and_frozen(
-            m, out_division_labels=_out_divisions_by_market.get(m.id)
-        )
+        # #8852: a promoted contender that closed in April is not the headline —
+        # #11616 O1: not even when it carries a result (relevance, not truth).
+        and not _search_market_is_closed_and_frozen(m)
         # #8734: a promoted headline contender is asked too.
         and not _answers_a_served_game_card(m, _served_event_ids)
     ]
@@ -38179,6 +38193,11 @@ def _build_search_top_outcomes(
     _candidates = [o for o in _search_surviving_legs(market, drop_empty_book=False) if o.id in by_id]
     _result_ids = _search_supported_result_ids(market, _candidates)
     real, _empty_book_results = _search_card_legs(market, _candidates, _result_ids)
+    # #11616 O1: a closed, frozen board is kept only for its results (#8852
+    # withdraws it otherwise), so it draws only them — its other legs' frozen
+    # prices would read as live answers to a question that already closed.
+    if _result_ids and _search_market_is_closed_and_frozen(market, _search_now()):
+        real = [o for o in real if o.id in _result_ids]
     # #5516: an exclusive board whose whole served ladder sums far under 100% is
     # incoherent as a SET even when every rung in it is honest — `Cubs 24% ·
     # Reds 18%` on a three-way inning market whose tie leg was never stored.
