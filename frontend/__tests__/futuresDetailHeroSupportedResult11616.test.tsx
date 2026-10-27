@@ -278,6 +278,14 @@ describe("the helpers the unfurl and picture share", () => {
     expect(servedLeadHeroOutcome(legs, 2, "resolved")).toBeNull();
     expect(servedLeadHeroOutcome(legs, null, "open")).toBeNull();
   });
+  it("an open board keeps served order among several supported winners (iOS R1 parity)", () => {
+    const legs = [
+      { name: "O/U 5.5", probability: 0.99, is_winner: true, resolution_source: "api_settlement" },
+      { name: "Kings", probability: 0.98, is_winner: true, resolution_source: "api_settlement" },
+    ];
+    expect(pickHeroOutcome(legs, legs[0], false, true)).toBe(legs[0]);
+    expect(pickHeroOutcome(legs, legs[0], true, true)).toBe(legs[1]); // settled: side first
+  });
   it("pickHeroOutcome on an open exclusive board without a supported winner keeps the leader", () => {
     const legs = [
       { name: "A", probability: 0.97, is_winner: false, resolution_source: null },

@@ -107,8 +107,10 @@ export function pickHeroOutcome<
   // and is the answer on an exclusive/unstated board, as on iOS and search —
   // "a verified result is not replaced by a near-100% prediction". An
   // independent board keeps its live leader and falls back to that winner.
+  // #8280's side-first preference is a SETTLED-board rule (iOS R1 twin); an
+  // open board keeps served order among several winners, as iOS and search do.
   const winners = outcomes.filter((o) => outcomeRowVerdict(o, resolved) === "won");
-  const winner = winners.find((o) => !isLineOrPropLeg(o.name)) ?? winners[0] ?? null;
+  const winner = (resolved ? winners.find((o) => !isLineOrPropLeg(o.name)) : undefined) ?? winners[0] ?? null;
   if (!resolved) {
     if (mutuallyExclusive !== false) return winner ?? leader;
     return pickLiveLeader(outcomes) ?? winner ?? leader;
