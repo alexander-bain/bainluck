@@ -1388,6 +1388,19 @@ final class EventDetailViewModel: ObservableObject {
         BlendPreview.chartFrames(liveBlend, history: history, state: blendPreview, held: event, now: previewNow())
     }
 
+    /// What the hero and chart print, for the timing seam's view marks
+    /// (`LiveTimingSeam.presented`); `.idle` while nothing records.
+    @MainActor
+    func timingPresented(_ event: EventDetail) -> LiveTimingSeam.Presented {
+        guard LiveTimingSeam.isRecording else { return .idle }
+        let shows = BlendPreview.displayed(blendPreview, held: event, now: previewNow()) != nil
+        return LiveTimingSeam.presented(
+            committed: event, headline: headline(event), observed: displayedProbabilityObservedAt(event),
+            chart: chartFrames(event), committedChart: liveBlend,
+            preview: blendPreview.map { LiveTimingSeam.previewBasis(of: $0, in: blendPreviewReader) },
+            showsPreview: shows)
+    }
+
     /// #11564 — a `preview_open_v3`: the domain and session this stream's
     /// previews belong to (`BlendPreview.readerOpenedV3`). Shows nothing itself.
     @MainActor
@@ -1406,12 +1419,15 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor
     private func receivePreviewV3(_ raw: String, receivedAt: TimeInterval?) {
         guard let envelope = PreviewEnvelopeV3.decode(raw, kind: .preview, eventId: eventId) else { return }
+        LiveTimingSeam.previewReceived(envelope, eventId: eventId)
         let current = previewNow()
         let waited = receivedAt.map { max(0, ProcessInfo.processInfo.systemUptime - $0) } ?? 0
         let next = BlendPreview.readerAfterV3(blendPreviewReader, envelope, eventId: eventId, now: current - waited)
         guard next != blendPreviewReader else { return }
+        let shown = blendPreview
         blendPreviewReader = next
         publishPreview(next.held, at: current)
+        if let held = next.held, held != shown { LiveTimingSeam.modelPreviewAdopted(held, reader: next) }
     }
 
     @MainActor

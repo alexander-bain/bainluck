@@ -928,7 +928,7 @@ struct EventDetailView: View {
             .modifier(PageScrollPhase9483(signals: nbaStreamSignals))
             // #10090 — the timing seam's view mark: this update handed the hero
             // and chart the value it names. Not a paint (`LiveTimingSeam`).
-            .onChange(of: LiveTimingSeam.presented(event, liveBlend: vm.liveBlend)) { old, new in
+            .onChange(of: vm.timingPresented(event)) { old, new in
                 LiveTimingSeam.viewUpdated(from: old, to: new)
             }
             // #9483 — a card opened full size: the page stays mounted beneath,

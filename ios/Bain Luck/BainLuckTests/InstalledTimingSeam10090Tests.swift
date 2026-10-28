@@ -111,8 +111,10 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
         LiveTimingSeam.modelChartAppended(eventId: 4242, path: "stream", basis: "rev:4242=21", at: a)
         LiveTimingSeam.modelChartAppended(eventId: 4242, path: "stream", basis: "rev:4242=22", at: b)
         LiveTimingSeam.viewUpdated(
-            from: .init(eventId: 4242, revision: nil, clock: nil, chartEdge: nil),
-            to: .init(eventId: 4242, revision: nil, clock: nil, chartEdge: b)
+            from: .init(eventId: 4242, headlineBasis: "none", probability: nil, observed: nil,
+                        chartBasis: "-", chartEdge: nil, chartProbability: nil),
+            to: .init(eventId: 4242, headlineBasis: "none", probability: nil, observed: nil,
+                      chartBasis: "-", chartEdge: b, chartProbability: nil)
         )
         XCTAssertEqual(names(marks), [.modelChartAppended, .modelChartAppended, .viewChartUpdated])
         XCTAssertEqual(marks[0].stamp, "4740106905103354771")
@@ -126,7 +128,7 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
     func testAValidChangedFrameMarksReceiptThenModelHeadlineAndChartOnItsOwnRevision() async throws {
         let (_, handle, vm) = await loaded(try page())
         defer { vm.stopRefresh() }
-        let before = LiveTimingSeam.presented(try XCTUnwrap(vm.event), liveBlend: vm.liveBlend)
+        let before = vm.timingPresented(try XCTUnwrap(vm.event))
 
         handle.fire("probability", Self.raw())
         await drain()
@@ -143,11 +145,13 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
 
         // The view mark names the same revision and the same chart point.
         marks = []
-        let after = LiveTimingSeam.presented(try XCTUnwrap(vm.event), liveBlend: vm.liveBlend)
+        let after = vm.timingPresented(try XCTUnwrap(vm.event))
         LiveTimingSeam.viewUpdated(from: before, to: after)
         XCTAssertEqual(marks, [
-            .init(name: .viewHeadlineUpdated, eventId: 4242, path: "view", basis: "rev:4242=21", stamp: "-"),
-            .init(name: .viewChartUpdated, eventId: 4242, path: "view", basis: "-", stamp: stamp),
+            .init(name: .viewHeadlineUpdated, eventId: 4242, path: "view", basis: "rev:4242=21", stamp: "-",
+                  probability: "0.55", observed: stamp),
+            .init(name: .viewChartUpdated, eventId: 4242, path: "view", basis: "-", stamp: stamp,
+                  probability: "0.55"),
         ])
         marks = []
         LiveTimingSeam.viewUpdated(from: after, to: after)
@@ -242,5 +246,118 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.48)
         XCTAssertEqual(marks, [.init(name: .modelHeadlineAdopted, eventId: 4242, path: "read",
                                      basis: "rev:4242=22", stamp: "-")])
+    }
+
+    // MARK: - Preview v3 (#10090 preview seam)
+
+    private static let namespace = V3PageWire.namespace
+
+    /// A singleton v3 preview frame for this page: `p` observed at `at`, on
+    /// committed base `base`.
+    private static func previewFrame(seq: Int, p: Double, at: String, base: Int = 20, ttl: Int = 60_000) -> String {
+        #"{"event_id":4242,"p":\#(p),"p_away":\#(1 - p),"sport":"basketball_nba","status":"live","display_observed_at":"\#(at)","preview":{"kind":"blend","epoch":2,"seq":\#(seq),"base_rev":\#(base),"ttl_ms":\#(ttl)}}"#
+    }
+
+    private func basis(_ session: String, seq: Int, base: Int = 20) -> String {
+        "v3:1/\(Self.namespace)/\(session)/e2/s\(seq)/b\(base)"
+    }
+
+    /// A page holding a v3 domain on a fresh session.
+    private func openV3(_ handle: Handle) -> String {
+        let session = V3PageWire.nextSession()
+        handle.fire("preview_open_v3", V3PageWire.open(4242, members: [4242], session: session))
+        return session
+    }
+
+    /// Receipt, then adoption, each on the preview's own identity, value and
+    /// observation clock; a repeated value under a new sequence is a new
+    /// identity; a preview from another session and a replay are received and
+    /// never adopted; the hero and chart print the preview with that identity,
+    /// and give way to a newer committed revision under its own basis.
+    func testAV3PreviewMarksReceiptThenAdoptionAndTheViewPrintsItsIdentityUntilACommitOutranksIt() async throws {
+        let (_, handle, vm) = await loaded(try page())
+        defer { vm.stopRefresh() }
+        let session = openV3(handle)
+        var shown = vm.timingPresented(try XCTUnwrap(vm.event))
+        XCTAssertEqual(marks, [], "an open shows nothing")
+        let t1 = "2026-09-25T17:00:05Z", t1Stamp = LiveTimingSeam.stamp(try XCTUnwrap(t1.asDate))
+
+        handle.fire("preview_v3", V3PageWire.preview(Self.previewFrame(seq: 1, p: 0.7, at: t1), eventId: 4242, session: session))
+        XCTAssertEqual(marks, [
+            .init(name: .previewReceived, eventId: 4242, path: "preview", basis: basis(session, seq: 1), stamp: "-",
+                  probability: "0.7", observed: t1Stamp),
+            .init(name: .modelPreviewAdopted, eventId: 4242, path: "preview", basis: basis(session, seq: 1), stamp: "-",
+                  probability: "0.7", observed: t1Stamp),
+        ], "offered, then adopted, on its own identity")
+        marks = []
+        var next = vm.timingPresented(try XCTUnwrap(vm.event))
+        LiveTimingSeam.viewUpdated(from: shown, to: next)
+        XCTAssertEqual(marks, [
+            .init(name: .viewHeadlineUpdated, eventId: 4242, path: "view", basis: basis(session, seq: 1), stamp: "-",
+                  probability: "0.7", observed: t1Stamp),
+            .init(name: .viewChartUpdated, eventId: 4242, path: "view", basis: basis(session, seq: 1), stamp: t1Stamp,
+                  probability: "0.7"),
+        ], "the hero and chart print the preview, named as the preview")
+
+        // The same value under a new sequence: a new identity at every depth.
+        marks = []
+        shown = next
+        handle.fire("preview_v3", V3PageWire.preview(Self.previewFrame(seq: 2, p: 0.7, at: t1), eventId: 4242, session: session))
+        next = vm.timingPresented(try XCTUnwrap(vm.event))
+        LiveTimingSeam.viewUpdated(from: shown, to: next)
+        XCTAssertEqual(names(marks), [.previewReceived, .modelPreviewAdopted, .viewHeadlineUpdated, .viewChartUpdated])
+        XCTAssertEqual(Set(marks.map(\.basis)), [basis(session, seq: 2)])
+        XCTAssertEqual(Set(marks.map(\.probability)), ["0.7"], "the repeated value keeps its own identity")
+
+        // Another session's preview and a replay: receipts only, nothing printed moves.
+        marks = []
+        shown = next
+        let other = V3PageWire.nextSession()
+        handle.fire("preview_v3", V3PageWire.preview(Self.previewFrame(seq: 3, p: 0.8, at: t1), eventId: 4242, session: other))
+        handle.fire("preview_v3", V3PageWire.preview(Self.previewFrame(seq: 1, p: 0.9, at: t1), eventId: 4242, session: session))
+        next = vm.timingPresented(try XCTUnwrap(vm.event))
+        LiveTimingSeam.viewUpdated(from: shown, to: next)
+        XCTAssertEqual(names(marks), [.previewReceived, .previewReceived])
+        XCTAssertEqual(marks.map(\.basis), [basis(other, seq: 3), basis(session, seq: 1)])
+        XCTAssertEqual(next, shown, "a refused preview changes nothing the page prints")
+
+        // A newer committed revision outranks the held preview: the hero and
+        // chart fall back to committed truth under its own basis.
+        marks = []
+        shown = next
+        handle.fire("probability", Self.raw())
+        await drain()
+        next = vm.timingPresented(try XCTUnwrap(vm.event))
+        LiveTimingSeam.viewUpdated(from: shown, to: next)
+        let committed = LiveTimingSeam.stamp(try XCTUnwrap("2026-09-25T17:10:00Z".asDate))
+        XCTAssertEqual(names(marks), [.frameReceived, .modelChartAppended, .modelHeadlineAdopted,
+                                      .viewHeadlineUpdated, .viewChartUpdated])
+        XCTAssertEqual(marks[3], .init(name: .viewHeadlineUpdated, eventId: 4242, path: "view", basis: "rev:4242=21",
+                                       stamp: "-", probability: "0.55", observed: committed))
+        XCTAssertEqual(marks[4], .init(name: .viewChartUpdated, eventId: 4242, path: "view", basis: "-",
+                                       stamp: committed, probability: "0.55"))
+    }
+
+    /// An expired preview gives way to the committed headline without a frame;
+    /// the view names the committed basis again.
+    func testAnExpiredPreviewHandsTheHeroBackToItsCommittedBasis() async throws {
+        let (_, handle, vm) = await loaded(try page())
+        defer { vm.stopRefresh() }
+        let session = openV3(handle)
+        handle.fire("preview_v3", V3PageWire.preview(
+            Self.previewFrame(seq: 1, p: 0.7, at: "2026-09-25T17:00:05Z", ttl: 150), eventId: 4242, session: session))
+        let shown = vm.timingPresented(try XCTUnwrap(vm.event))
+        XCTAssertEqual(shown.headlineBasis, basis(session, seq: 1))
+        let deadline = Date().addingTimeInterval(3)
+        while vm.blendPreview != nil, Date() < deadline { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertNil(vm.blendPreview, "the preview expired")
+        marks = []
+        let next = vm.timingPresented(try XCTUnwrap(vm.event))
+        LiveTimingSeam.viewUpdated(from: shown, to: next)
+        XCTAssertEqual(marks.first, .init(name: .viewHeadlineUpdated, eventId: 4242, path: "view", basis: "rev:4242=20",
+                                          stamp: "-", probability: "0.6",
+                                          observed: LiveTimingSeam.stamp(try XCTUnwrap("2026-09-25T17:00:00Z".asDate))))
+        XCTAssertEqual(names(marks).filter { $0 != .viewHeadlineUpdated }, [],
+                       "the chart had no pushed point to fall back to, so it names none")
     }
 }

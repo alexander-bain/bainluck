@@ -14,31 +14,47 @@ import os
 /// WHAT EACH MARK PROVES — and what it does not:
 /// - `frame.received`: a frame decoded off the stream. The owner may still
 ///   refuse it, so it proves receipt only.
+/// - `preview.received`: a `preview_v3` whose envelope decoded for this page.
+///   The reader may still refuse it (wrong session, replay, older epoch), so
+///   it too proves receipt only. OFFERED is not adopted.
+/// - `model.preview.adopted`: the page's reader now holds that preview
+///   (`publishPreview`). Whether the hero prints it is the view mark's to say:
+///   a held preview can still be outranked by a newer committed revision.
 /// - `model.headline.adopted` / `model.chart.appended`: the view model
 ///   published the value. MODEL adoption, not pixels.
 /// - `view.headline.updated` / `view.chart.updated`: SwiftUI evaluated the
 ///   event page with that value in hand (an `onChange` in the same update
-///   that gives the hero and chart their inputs). Still not a paint: the frame
-///   is committed at the end of that main run-loop turn and reaches the glass
-///   at a later display refresh, after any number transition.
+///   that gives the hero and chart their inputs). They read what the hero and
+///   chart actually print — `headline(event)` and `chartFrames(event)` — so a
+///   displayed preview, its expiry and the committed fallback each show, with
+///   the preview's own identity. Still not a paint: the frame is committed at
+///   the end of that main run-loop turn and reaches the glass at a later
+///   display refresh, after any number transition.
 ///
 /// A refused, stale, equal or invalid frame emits `frame.received` and nothing
 /// else. An adopted value carries its OWN basis — read off the adopted event or
 /// frame, never the newest revision the stream has seen.
 ///
-/// IDs, revisions and source clocks only; no user data. Not a framework: five
-/// event names, no export, no collector.
+/// IDs, revisions, printed probabilities and source clocks only; no user data.
+/// Not a framework: seven event names, no export, no collector.
 @MainActor
 enum LiveTimingSeam {
     /// One emitted mark. `basis` is `rev:<row>=<n>;…` (rows sorted), else
     /// `clock:<source updated_at>`, else `none`; `null` for an explicit null
-    /// folded result. `stamp` is the exact reference-date Double bit pattern or `-`.
+    /// folded result; a preview's `v3:<incarnation>/<namespace>/<session>/e<epoch>/s<seq>/b<base_rev>`.
+    /// `stamp` is the exact reference-date Double bit pattern or `-`: the chart
+    /// edge on chart marks. `probability` is the home probability the mark
+    /// speaks for, or `-`; `observed` is its source observation clock as a
+    /// stamp, or `-`. Receipt (the observer's own clock), observation and
+    /// chart edge stay three separate clocks.
     nonisolated struct Mark: Equatable, Sendable {
         let name: Name
         let eventId: Int
         let path: String
         let basis: String
         let stamp: String
+        var probability: String = "-"
+        var observed: String = "-"
     }
 
     nonisolated enum Name: String, Sendable {
@@ -47,12 +63,22 @@ enum LiveTimingSeam {
         case modelChartAppended = "model.chart.appended"
         case viewHeadlineUpdated = "view.headline.updated"
         case viewChartUpdated = "view.chart.updated"
+        case previewReceived = "preview.received"
+        case modelPreviewAdopted = "model.preview.adopted"
     }
 
     /// Test seam only: sees exactly what is signposted.
     static var observer: ((Mark) -> Void)?
 
     private static let signposter = OSSignposter(subsystem: "com.bainluck", category: "liveTiming")
+
+    /// Whether any mark would be seen. Work done only to build a mark (a
+    /// preview's second decode, the view's comparison input) waits on this.
+    /// The `liveTiming` signposter is ENABLED by default (it is not a
+    /// `.dynamicTracing` category), so on an ordinary build this is true and
+    /// that work runs on every update; only a log configuration that disables
+    /// the category, with no observer, turns it off.
+    static var isRecording: Bool { observer != nil || signposter.isEnabled }
 
     // MARK: - Basis
 
@@ -75,6 +101,24 @@ enum LiveTimingSeam {
         String(date.timeIntervalSinceReferenceDate.bitPattern)
     }
 
+    nonisolated static func stamp(_ date: Date?) -> String { date.map { stamp($0) } ?? "-" }
+
+    nonisolated static func probability(_ p: Double?) -> String { p.map { String($0) } ?? "-" }
+
+    /// A v3 preview's authority identity: domain, session, then the frame's
+    /// own epoch, sequence and committed base. A part the message lacks is `-`.
+    nonisolated static func previewBasis(authority: PreviewAuthorityV3?, session: String?,
+                                         epoch: Int, seq: Int, baseRev: Int?) -> String {
+        "v3:\(authority.map { String($0.incarnation) } ?? "-")/\(authority?.namespace ?? "-")/\(session ?? "-")"
+            + "/e\(epoch)/s\(seq)/b\(baseRev.map(String.init) ?? "-")"
+    }
+
+    /// The identity of the preview `reader` holds.
+    nonisolated static func previewBasis(of held: BlendPreviewState, in reader: BlendPreviewReader) -> String {
+        previewBasis(authority: reader.v3Authority, session: reader.v3Session,
+                     epoch: held.epoch, seq: held.seq, baseRev: held.baseRev)
+    }
+
     // MARK: - Marks
 
     static func frameReceived(_ frame: LiveStreamFrame) {
@@ -83,6 +127,23 @@ enum LiveTimingSeam {
             : Self.basis(revision: frame.rev?.revision, clock: frame.updatedAt)
         emit(Mark(name: .frameReceived, eventId: frame.eventId,
                   path: frame.foldedResult ? "folded" : "raw", basis: basis, stamp: "-"))
+    }
+
+    /// A `preview_v3` this page's envelope check accepted, before its reader
+    /// decides. Its frame is decoded a second time for the mark (`isRecording`).
+    static func previewReceived(_ envelope: PreviewEnvelopeV3, eventId: Int) {
+        guard isRecording else { return }
+        let frame = envelope.frame()
+        emit(Mark(name: .previewReceived, eventId: eventId, path: "preview",
+                  basis: frame.map { previewBasis(authority: envelope.authority, session: envelope.session,
+                                                  epoch: $0.epoch, seq: $0.seq, baseRev: $0.baseRev) } ?? "none",
+                  stamp: "-", probability: probability(frame?.p), observed: stamp(frame?.displayObservedAt)))
+    }
+
+    static func modelPreviewAdopted(_ held: BlendPreviewState, reader: BlendPreviewReader) {
+        emit(Mark(name: .modelPreviewAdopted, eventId: held.eventId, path: "preview",
+                  basis: previewBasis(of: held, in: reader), stamp: "-",
+                  probability: probability(held.p), observed: stamp(held.observedAt)))
     }
 
     static func modelHeadlineAdopted(_ event: EventDetail, path: String) {
@@ -105,27 +166,53 @@ enum LiveTimingSeam {
 
     // MARK: - View
 
-    /// What the event page hands its hero and chart, compared across updates.
+    /// What the event page's hero and chart print, compared across updates.
+    /// Headline and chart are separate: each carries its own identity (the
+    /// displayed preview's, else the committed basis for the headline and `-`
+    /// for a committed chart point), value and clock.
     nonisolated struct Presented: Equatable, Sendable {
         let eventId: Int
-        let revision: FoldRevision?
-        let clock: String?
+        let headlineBasis: String
+        let probability: Double?
+        let observed: Date?
+        let chartBasis: String
         let chartEdge: Date?
+        let chartProbability: Double?
+
+        /// Compares equal to itself, so a page whose marks nobody can see
+        /// never fires its `onChange`.
+        static let idle = Presented(eventId: 0, headlineBasis: "-", probability: nil, observed: nil,
+                                    chartBasis: "-", chartEdge: nil, chartProbability: nil)
     }
 
-    nonisolated static func presented(_ event: EventDetail, liveBlend: [LiveBlendPoint]) -> Presented {
-        Presented(eventId: event.id, revision: event.blendFoldRevision?.revision,
-                  clock: event.heroProbabilityObservedAt, chartEdge: liveBlend.last?.date)
+    /// `committed` is the page's event; `headline` and `observed` what its hero
+    /// prints (`headline(event)`, `displayedProbabilityObservedAt(event)`);
+    /// `chart` what its chart draws (`chartFrames(event)`). `preview` is the
+    /// identity of the preview the reader holds; it names the headline only
+    /// when the hero prints it, and the chart only when the chart's end is
+    /// its projection.
+    nonisolated static func presented(committed: EventDetail, headline: EventDetail, observed: Date?,
+                                      chart: [LiveBlendPoint], committedChart: [LiveBlendPoint],
+                                      preview: String?, showsPreview: Bool) -> Presented {
+        let projected = showsPreview && chart.count > committedChart.count
+        return Presented(eventId: committed.id,
+                         headlineBasis: showsPreview ? preview ?? "none" : headlineBasis(of: committed),
+                         probability: headline.currentOdds?.homeProbability, observed: observed,
+                         chartBasis: projected ? preview ?? "none" : "-",
+                         chartEdge: chart.last?.date, chartProbability: chart.last?.homeProbability)
     }
 
     static func viewUpdated(from old: Presented, to new: Presented) {
         guard old.eventId == new.eventId else { return }
-        if old.revision != new.revision || old.clock != new.clock {
+        if old.headlineBasis != new.headlineBasis || old.probability != new.probability || old.observed != new.observed {
             emit(Mark(name: .viewHeadlineUpdated, eventId: new.eventId, path: "view",
-                      basis: basis(revision: new.revision, clock: new.clock), stamp: "-"))
+                      basis: new.headlineBasis, stamp: "-",
+                      probability: probability(new.probability), observed: stamp(new.observed)))
         }
-        if let edge = new.chartEdge, edge != old.chartEdge {
-            emit(Mark(name: .viewChartUpdated, eventId: new.eventId, path: "view", basis: "-", stamp: stamp(edge)))
+        if let edge = new.chartEdge,
+           edge != old.chartEdge || new.chartBasis != old.chartBasis || new.chartProbability != old.chartProbability {
+            emit(Mark(name: .viewChartUpdated, eventId: new.eventId, path: "view", basis: new.chartBasis,
+                      stamp: stamp(edge), probability: probability(new.chartProbability)))
         }
     }
 
@@ -147,10 +234,15 @@ enum LiveTimingSeam {
             signposter.emitEvent("view.headline.updated", id: id, "\(message(mark), privacy: .public)")
         case .viewChartUpdated:
             signposter.emitEvent("view.chart.updated", id: id, "\(message(mark), privacy: .public)")
+        case .previewReceived:
+            signposter.emitEvent("preview.received", id: id, "\(message(mark), privacy: .public)")
+        case .modelPreviewAdopted:
+            signposter.emitEvent("model.preview.adopted", id: id, "\(message(mark), privacy: .public)")
         }
     }
 
     private static func message(_ mark: Mark) -> String {
         "event=\(mark.eventId) path=\(mark.path) basis=\(mark.basis) stamp=\(mark.stamp)"
+            + " p=\(mark.probability) observed=\(mark.observed)"
     }
 }
