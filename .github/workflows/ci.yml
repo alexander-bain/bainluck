@@ -7813,8 +7813,8 @@ jobs:
             echo "::error::#10090 per-game commit gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]3 passed[,[:space:]]" /tmp/pergame10090.txt || {
-            echo "::error::#10090 per-game commit gate did not run all three cases"
+          grep -qE "[^0-9]5 passed[,[:space:]]" /tmp/pergame10090.txt || {
+            echo "::error::#10090 per-game commit gate did not run all five cases"
             exit 1
           }
 

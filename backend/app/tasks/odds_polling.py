@@ -9,6 +9,7 @@ from typing import Optional
 from sqlalchemy import select, func, case, or_, and_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import DBAPIError
 
 from app.models import Sport, Event, OddsSnapshot, ScoreSnapshot
 from app.services.event_registry import ODDS_LISTING_IS_NOT_A_DEREFERENCE
@@ -2026,7 +2027,16 @@ async def _poll_all_odds():
                         for _se in _score_result.scalars().all():
                             _score_events_by_ext[_se.external_id] = _se
 
-                    for score_event in scores_data:
+                    for score_index, score_event in enumerate(scores_data):
+                        # Release the previous game's score/model writes before
+                        # another game's database work can hold them (#10090).
+                        # The task session keeps rows on commit. Commit failures
+                        # escape to the sport rollback below, before an expired
+                        # batch-loaded sibling can be read.
+                        if score_index:
+                            await session.commit()
+                            from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
+                            await publish_committed_nonvenue_frames(session)
                         try:
                             external_id = score_event.get("id")
                             is_completed = score_event.get("completed", False)
@@ -2576,18 +2586,23 @@ async def _poll_all_odds():
                                         stat_model_from_poll += 1
                                 except Exception as e:
                                     logger.warning(f"stat_model in odds poll failed for event {event_obj.id}: {e}")
+                                    if isinstance(e, DBAPIError):
+                                        raise
 
                         except Exception as e:
                             logger.warning("Error updating score for event %s: %s", score_event.get('id'), e)
+                            # PostgreSQL can answer COMMIT on an aborted
+                            # transaction with ROLLBACK without a driver error.
+                            # Do not let after_commit publish its queued model.
+                            # Roll back at the sport boundary before reading
+                            # any batch-loaded ORM sibling (gotcha #6).
+                            if isinstance(e, DBAPIError):
+                                raise
                             continue
 
-                    # #837 — this sport's score rows are released before the
-                    # next sport's `get_scores` HTTP call, as the odds loop
-                    # releases per sport. A rollback INSIDE the per-game loop is
-                    # deliberately absent: it would expire the batch-loaded
-                    # `event_obj` rows its siblings still read (gotcha #6). A
-                    # commit refused after a game aborted the transaction lands
-                    # in the `except` below.
+                    # Release the last game before the next sport's HTTP call.
+                    # Earlier games were committed before each successor began.
+                    # Rollback remains outside the batch-loaded game loop.
                     await session.commit()
                     from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
                     await publish_committed_nonvenue_frames(session)
