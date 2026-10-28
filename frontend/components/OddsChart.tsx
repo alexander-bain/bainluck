@@ -89,6 +89,7 @@ import {
 } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import { chartEndpointAttributes, type ChartEndpointIdentity } from "@/lib/displayIdentity";
+import { tenthsSideLabel } from "@/lib/tenthsOptIn";
 import {
   bucketSupport,
   classifySeriesSupport,
@@ -524,6 +525,13 @@ interface OddsChartProps {
    * today's chart.
    */
   publications?: EventPublicationsResponse | null;
+  /**
+   * #10090 — the end label prints one decimal, from the same derived pair the
+   * hero prints (`lib/tenthsOptIn.ts`). The page's one opt-in decision; a
+   * closed/completed chart ignores it and keeps its whole-number ending.
+   * Absent means today's label.
+   */
+  tenths?: boolean;
 }
 
 type TimeRange = "all" | "live";
@@ -1040,6 +1048,7 @@ export default function OddsChart({
   awayWithheld = false,
   defaultSourcesExpanded = false,
   publications,
+  tenths = false,
 }: OddsChartProps) {
   // #3419: the axis is categorical on this label, so it must be spelled the
   // same way the parent spelled its ticks. Absent a parent domain the window is
@@ -2551,6 +2560,7 @@ export default function OddsChart({
 
   // ── Current probability callout (last non-null data point) ──
   // Stamp `calloutDelta` directly onto the chartData point (same reason as above).
+  const tenthsLabel = tenths && !isClosed;
   const currentCallout = useMemo(() => {
     if (chartData.length === 0) return null;
     const key = primarySeriesKey;
@@ -2634,15 +2644,18 @@ export default function OddsChart({
           // (`teamAxisTick`). Both ends come from the one resolved pair, so it
           // is still the hero's number for that side. A draw-priced market has
           // no away side to name (#10318) and keeps the home side's.
-          label:
-            awayWithheld || delta >= 50 || percents.awayLabel === null
+          // #10090 — an opted-in reader's label is the same side, in tenths
+          // from the pair the hero derives (`tenthsSideLabel`).
+          label: tenthsLabel
+            ? tenthsSideLabel(chartAxisToHomeProb(delta), !(awayWithheld || delta >= 50 || percents.awayLabel === null))
+            : awayWithheld || delta >= 50 || percents.awayLabel === null
               ? percents.homeLabel
               : percents.awayLabel,
         };
       }
     }
     return null;
-  }, [chartData, primarySeriesKey, drawableCheckpoints, rowStartMs, awayWithheld]);
+  }, [chartData, primarySeriesKey, drawableCheckpoints, rowStartMs, awayWithheld, tenthsLabel]);
 
   // #8392 — the axis gutter gives each team name the room the other does not
   // need. A hook, so it sits above the empty-chart return below; the raw names
