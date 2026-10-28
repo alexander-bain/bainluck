@@ -1120,13 +1120,16 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             ? undefined
             : boardOutcomeLabel(heroOutcome.name, market.name)
         }
-        movement={!isResolved && !heroCrownWithheld && leader?.probability_change_24h != null ? leader.probability_change_24h * 100 : null}
+        // #11616 HM — the pill and its date are the HERO row's, the outcome named
+        // beside them. They read `leader`, so a live row promoted past a settled
+        // 1.0 printed "42% Tommy Fleetwood ↑ 12.0 pts" — Aberg's move.
+        movement={!isResolved && !heroCrownWithheld && heroOutcome?.probability_change_24h != null ? heroOutcome.probability_change_24h * 100 : null}
         // UX-P233 (board item 11): the pill used to render a bare "↓ 71.5 pts"
         // with no window at all, directly above a caption reading "Amazon up 13.5
         // pts from opening" — two true numbers about one outcome, reading as a
         // contradiction. It now says which window it covers. NOT "24h": see
         // `movementWindowLabel` for why the payload disproves that word.
-        movementLabel={movementWindowLabel(leader?.last_updated)}
+        movementLabel={movementWindowLabel(heroOutcome?.last_updated)}
         sourceCount={market.source_count ?? undefined}
         // #10224 — on a verified title page, the shown outcome's own contributors
         // (never the market's union; bookmakers stay provenance). Undefined in
