@@ -569,8 +569,9 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
     /// 320pt/AX5, so its Projected finish card had the 216pt the ordinary deck
     /// no longer gives and read "Timberwo…" ("Timberwolves" needs 0.70 of its
     /// size there; the floor is 0.8). Through the real stream route, at 393,
-    /// 375 (which keep the peek) and 320, the finish card reads both whole
-    /// names, its numbers, labels and legend.
+    /// 375 and 320 (#11666: at accessibility sizes each card takes the whole
+    /// shelf at every width), the finish card reads both whole names, its
+    /// numbers, labels and legend.
     func testTheNBAStreamsProjectedFinishReadsWholeNames() throws {
         let finish = try liveNBAFinishCard()
         let (away, home) = nbaNames()
