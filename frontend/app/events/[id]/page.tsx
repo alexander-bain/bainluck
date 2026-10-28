@@ -214,6 +214,7 @@ import TeamNameLink from "@/components/TeamNameLink";
 import { PinIcon } from "@/components/PinButton";
 import { teamShortNames, shippableCrestBadge } from "@/lib/teamShortName";
 import EventHeroProbabilityPair from "@/components/EventHeroProbabilityPair";
+import { useTenthsOptIn } from "@/lib/tenthsOptIn";
 import SlashBreakableName from "@/components/SlashBreakableName";
 import { SignalBars } from "@/components/discover/shared";
 import { confidenceFromSources, countProbabilitySources } from "@/lib/confidence";
@@ -280,6 +281,10 @@ export default function EventPage({ params }: EventPageProps) {
   const sharedMedium = searchParams.get("utm_medium") || undefined;
   const sharedCampaign = searchParams.get("utm_campaign") || undefined;
   const isSharedLink = sharedSource === "share";
+  // #10090 — one-decimal headlines for a reader who opened `?tenths=fit`; OFF
+  // (today's page, unchanged) for everyone else. One decision for the hero and
+  // both charts' end labels, so the three can never print different digits.
+  const tenthsOptIn = useTenthsOptIn();
   const [countdown, setCountdown] = useState<number>(0);
   const [gameCountdown, setGameCountdown] = useState<string>("");
   const [lastRefresh, setLastRefresh] = useState<number>(Date.now());
@@ -3172,6 +3177,7 @@ export default function EventPage({ params }: EventPageProps) {
                 // between the crests reads as a live call on a match nobody
                 // is playing. The slot goes empty, as it does for #6438.
                 stopped={stoppageLabel !== null}
+                tenths={tenthsOptIn}
               />
               )}
 
@@ -3639,6 +3645,7 @@ export default function EventPage({ params }: EventPageProps) {
               homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
               awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
               awayWithheld={awaySlotWithheld}
+              tenths={tenthsOptIn}
               /* #9483 — NFL and NBA: both teams' lines (design freeze v328). */
               pairedAwayLine={storyCardsOn}
               onActivePointChange={setActiveChartPoint}
@@ -4288,6 +4295,7 @@ export default function EventPage({ params }: EventPageProps) {
               /* #6238 — the fullscreen chart is the same chart. A reader who
                  taps expand must not get the withheld number back. */
               awayWithheld={awaySlotWithheld}
+              tenths={tenthsOptIn}
               pairedAwayLine={storyCardsOn}
               /* #10362 — and it opens on the range the card shows. Without these the
                  expanded chart fell back to its own default window: a reader on "All"
