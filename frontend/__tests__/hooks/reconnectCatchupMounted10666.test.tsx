@@ -184,7 +184,7 @@ function HeldPage({ net, eventId, candidate, enabled }: { net: Net; eventId: num
   const refreshHistoryRef = useRef(refreshHistory);
   refreshHistoryRef.current = refreshHistory;
   pairedQuoteReadRef.current = PAIR.runInNewContext({
-    sourceAddedHistoryRef,
+    recoveryRef, recoveryGeneration, sourceAddedHistoryRef,
     createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef: { current: null }, pairJournalRef, reconcileLedger,
     eventId, fullHistoryRequested, fetchEvent, fetchEventHistory, EVENT_BOOT_HISTORY_HOURS, historyRangeParam,
     quotePairCoversTrigger, keepNewerHeldHeadline, carryNewerHeldState, setLastRefresh, Date, storedEventRef,
@@ -561,4 +561,60 @@ describe("#10090 G2: a result that lands while a live pair is in flight", () => 
     await settle(); expect(p.read()).toBe(`${A}|100|blend|100`);
     await p.unmount();
   });
+});
+
+
+it("accepted same-generation pair cancels the redundant pending recovery pair", async () => {
+  const p = await mount();
+  await p.recover(1); await p.push(frame(A, 12));
+  expect(p.freshPairs()).toBe(1);
+  p.lastPair().detail.resolve(blend(A, 12));
+  p.lastPair().history.resolve(history(A, 12, .52));
+  await settle();
+  expect(p.read()).toBe(`${A}|52|blend|52`);
+  await p.advance(1500);
+  expect(p.freshPairs()).toBe(1);
+  await p.unmount();
+});
+
+it("older accepted pair cannot cancel a newer pending recovery generation", async () => {
+  const p = await mount();
+  await p.recover(1); await p.push(frame(A, 12));
+  const old = p.lastPair();
+  await p.recover(2);
+  old.detail.resolve(blend(A, 12)); old.history.resolve(history(A, 12, .52));
+  await settle(); await p.advance(1500);
+  expect(p.freshPairs()).toBe(2);
+  await p.unmount();
+});
+
+it("incomplete pair leaves the pending recovery timer available", async () => {
+  const p = await mount();
+  await p.recover(1); await p.push(frame(A, 12));
+  p.lastPair().detail.resolve(blend(A, 12));
+  p.lastPair().history.resolve(history(A, 11, .47));
+  await settle();
+  expect(p.read()).toBe(`${A}|40|opening|40`);
+  await p.advance(1500);
+  expect(p.freshPairs()).toBe(2);
+  await p.unmount();
+});
+
+it("helper completion refuses stale/invalid generations and retains later recovery", async () => {
+  const requests: number[] = [];
+  const helper = createReconnectCatchup(g => requests.push(g), () => 250);
+  helper.recover(2);
+  for (const value of [0, -1, 1, 3, NaN, 2.5]) expect(helper.complete(value)).toBe(false);
+  expect(helper.complete(2)).toBe(true);
+  expect(helper.complete(2)).toBe(false);
+  await jest.advanceTimersByTimeAsync(250);
+  expect(requests).toEqual([]);
+  helper.recover(2); await jest.advanceTimersByTimeAsync(250);
+  expect(requests).toEqual([]);
+  helper.recover(3); await jest.advanceTimersByTimeAsync(250);
+  expect(requests).toEqual([3]);
+  helper.recover(4); helper.cancel();
+  expect(helper.complete(4)).toBe(false);
+  await jest.advanceTimersByTimeAsync(250);
+  expect(requests).toEqual([3]);
 });

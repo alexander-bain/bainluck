@@ -88,6 +88,7 @@ function setup(detailRevisions: Array<() => Promise<number>>) {
     reconcileLedger: createReconcileLedger(), reconcileRetryDelayMs: () => 1000,
     createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef: { current: null },
     pairJournalRef: { current: null },
+    recoveryRef: { current: null }, recoveryGeneration: 0,
     recoveryIntentRef: { current: 0 }, quoteReadLifetimeRef: { current: 0 },
     reconcileIntentRef: { current: false },
     eventId: EVENT_ID, fullHistoryRequested: false,
