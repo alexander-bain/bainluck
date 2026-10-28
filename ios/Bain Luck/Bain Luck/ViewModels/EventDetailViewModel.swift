@@ -1388,6 +1388,50 @@ final class EventDetailViewModel: ObservableObject {
         BlendPreview.chartFrames(liveBlend, history: history, state: blendPreview, held: event, now: previewNow())
     }
 
+    /// What the hero and chart print, for the timing seam's view marks
+    /// (`LiveTimingSeam.presented`); `.idle` while nothing records.
+    ///
+    /// Evaluated with every body. With no preview displayed, `headline`,
+    /// `displayedProbabilityObservedAt` and `chartFrames` each return the
+    /// committed value at their first guard, so it reads those directly: no
+    /// copy, no projection. While one shows, the chart's end is projected once
+    /// per change of its inputs (`timingChartEnd`), not once per body.
+    @MainActor
+    func timingPresented(_ event: EventDetail) -> LiveTimingSeam.Presented {
+        guard LiveTimingSeam.isRecording else { return .idle }
+        guard let shown = BlendPreview.displayed(blendPreview, held: event, now: previewNow()),
+              let state = blendPreview else {
+            return LiveTimingSeam.presented(
+                committed: event, headline: event, observed: event.heroProbabilityObservedAt?.asDate,
+                chartEnd: liveBlend.last, projected: false, preview: nil)
+        }
+        let key = TimingChartKey(state: state, shown: shown, committedEnd: liveBlend.last,
+                                 committedCount: liveBlend.count, history: historyGeneration)
+        if timingChartEnd?.key != key {
+            let chart = chartFrames(event)
+            timingChartEnd = (key, chart.last, chart.count > liveBlend.count)
+        }
+        return LiveTimingSeam.presented(
+            committed: event, headline: headline(event), observed: state.observedAt,
+            chartEnd: timingChartEnd?.end, projected: timingChartEnd?.projected ?? false,
+            preview: LiveTimingSeam.previewBasis(of: state, in: blendPreviewReader))
+    }
+
+    /// Everything `chartFrames` reads while a preview shows: the displayed
+    /// preview and value (which carry the page and clock), the committed
+    /// line's end and the history read.
+    private struct TimingChartKey: Equatable {
+        let state: BlendPreviewState
+        let shown: Double
+        let committedEnd: LiveBlendPoint?
+        let committedCount: Int
+        let history: Int
+    }
+
+    /// The timing seam's last projected chart end, and whether it was the
+    /// preview's. Diagnostic only: the chart itself always calls `chartFrames`.
+    private var timingChartEnd: (key: TimingChartKey, end: LiveBlendPoint?, projected: Bool)?
+
     /// #11564 — a `preview_open_v3`: the domain and session this stream's
     /// previews belong to (`BlendPreview.readerOpenedV3`). Shows nothing itself.
     @MainActor
@@ -1406,12 +1450,18 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor
     private func receivePreviewV3(_ raw: String, receivedAt: TimeInterval?) {
         guard let envelope = PreviewEnvelopeV3.decode(raw, kind: .preview, eventId: eventId) else { return }
+        // Decoded once: the receipt mark names it and the reader decides on it.
+        let frame = envelope.frame()
+        LiveTimingSeam.previewReceived(envelope, frame: frame, eventId: eventId)
         let current = previewNow()
         let waited = receivedAt.map { max(0, ProcessInfo.processInfo.systemUptime - $0) } ?? 0
-        let next = BlendPreview.readerAfterV3(blendPreviewReader, envelope, eventId: eventId, now: current - waited)
+        let next = BlendPreview.readerAfterV3(blendPreviewReader, envelope, frame: frame,
+                                              eventId: eventId, now: current - waited)
         guard next != blendPreviewReader else { return }
+        let shown = blendPreview
         blendPreviewReader = next
         publishPreview(next.held, at: current)
+        if let held = next.held, held != shown { LiveTimingSeam.modelPreviewAdopted(held, reader: next) }
     }
 
     @MainActor

@@ -40,7 +40,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     /// well before the 2.1 s poll, so the burst case is an UNLOADED control; the
     /// paced cases carry the poll and resync workload.
     nonisolated private static let burstAfter: TimeInterval = 1.5
-    nonisolated private static let events: Set<Int> = [4242, burstEvent]
+    nonisolated private static let events: Set<Int> = [4242, burstEvent, labEvent]
 
     private var marks: [(mark: LiveTimingSeam.Mark, at: UInt64)] = []
 
@@ -152,13 +152,32 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         /// Diagnostics only: when the resync frame's bytes were handed to
         /// URLSession. Kept out of `emitted`, which the lags and the burst read.
         nonisolated(unsafe) private static var resyncEmitted: UInt64?
+        /// #10090 preview seam: a recorded schedule (`ScheduledRow`), sent in
+        /// its own order at its own offsets after the open; nil for the scripted
+        /// cases. `scheduleSent[i]` is when row i's bytes were handed to URLSession.
+        nonisolated(unsafe) private static var schedule: [ScheduledRow]?
+        nonisolated(unsafe) private static var scheduleEvent = 4242
+        nonisolated(unsafe) private static var scheduleSent: [UInt64?] = []
         private let queue = DispatchQueue(label: "paced-stream")
         private var stopped = false
+        /// The schedule loop's own stop: it holds `queue`, so `stopped` cannot reach it.
+        private let haltLock = NSLock()
+        private var halted = false
+        private var isHalted: Bool { haltLock.lock(); defer { haltLock.unlock() }; return halted }
 
         static func reset(quarter: Bool, base: TimeInterval, burst: Bool = false, burstFinal: String? = nil) {
             lock.lock(); emitted = [:]; finished = false; Self.quarter = quarter; Self.burst = burst
             Self.burstFinal = burstFinal; baseEpoch = base; lock.unlock()
-            lock.lock(); resyncEmitted = nil; lock.unlock()
+            lock.lock(); resyncEmitted = nil; schedule = nil; scheduleSent = []; lock.unlock()
+        }
+        /// Arms a recorded schedule for the next opening, after `reset`.
+        static func arm(_ rows: [ScheduledRow], event: Int) {
+            lock.lock(); schedule = rows; scheduleEvent = event; scheduleSent = Array(repeating: nil, count: rows.count)
+            lock.unlock()
+        }
+        static var sentAt: [UInt64?] { lock.lock(); defer { lock.unlock() }; return scheduleSent }
+        private static var armed: (rows: [ScheduledRow], event: Int)? {
+            lock.lock(); defer { lock.unlock() }; return schedule.map { ($0, scheduleEvent) }
         }
         static var resyncEmittedAt: UInt64? { lock.lock(); defer { lock.unlock() }; return resyncEmitted }
         static var base: TimeInterval { lock.lock(); defer { lock.unlock() }; return baseEpoch }
@@ -178,9 +197,27 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
                                            headerFields: ["Content-Type": "text/event-stream"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            let id = Self.isBurst ? SubsecondHeldDelivery10090Tests.burstEvent : 4242
+            let armed = Self.armed
+            let id = Self.isBurst ? SubsecondHeldDelivery10090Tests.burstEvent : armed?.event ?? 4242
             client?.urlProtocol(self, didLoad: SubsecondHeldDelivery10090Tests.frame("open", #"{"event_id":\#(id)}"#))
             let start = DispatchTime.now()
+            if let rows = armed?.rows {
+                // One loop on one queue: row order is the schedule's order, and
+                // each row waits for its own offset from the open.
+                queue.async { [self] in
+                    for (i, row) in rows.enumerated() {
+                        let due = start.uptimeNanoseconds + UInt64(max(0, row.offsetMs) * 1_000_000)
+                        let now = DispatchTime.now().uptimeNanoseconds
+                        if due > now { Thread.sleep(forTimeInterval: Double(due - now) / 1e9) }
+                        guard !isHalted else { return }
+                        let at = DispatchTime.now().uptimeNanoseconds
+                        Self.lock.lock(); Self.scheduleSent[i] = at; Self.lock.unlock()
+                        client?.urlProtocol(self, didLoad: SubsecondHeldDelivery10090Tests.frame(row.event, row.data))
+                    }
+                    Self.lock.lock(); Self.finished = true; Self.lock.unlock()
+                }
+                return
+            }
             if Self.isBurst {
                 let chunk = SubsecondHeldDelivery10090Tests.burstChunk(final: Self.finalValue)
                 queue.asyncAfter(deadline: start + SubsecondHeldDelivery10090Tests.burstAfter) { [self] in
@@ -223,7 +260,283 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             // stream. The test closes it.
         }
 
-        override func stopLoading() { queue.async { [self] in stopped = true } }
+        override func stopLoading() {
+            haltLock.lock(); halted = true; haltLock.unlock()
+            queue.async { [self] in stopped = true }
+        }
+    }
+
+    // MARK: - Recorded schedule (#10090 preview seam)
+
+    /// One recorded SSE row: its offset after the open, its event name and
+    /// data, and the identity it was recorded under (the input id, else the
+    /// row's own revision or preview tuple). `verbatim` says the data is the
+    /// recorded bytes; false when it had to be re-encoded.
+    nonisolated struct ScheduledRow: Sendable {
+        let offsetMs: Double
+        let event: String
+        let data: String
+        let id: String
+        var verbatim = true
+    }
+
+    /// The lab's reader capture (`reader.jsonl`): its `frame` rows, in FILE
+    /// order, each offset from the first frame's `mono` (ms, the capture's
+    /// own monotonic clock). The payload is sent as the recorded bytes when it
+    /// is the row's last key, else re-encoded and marked. A row whose `mono`
+    /// runs backward keeps its file position and is counted; DOM samples and
+    /// unreadable lines are counted and skipped. `lead` puts the first row
+    /// that long after the open.
+    nonisolated static func labRows(_ text: String, lead: Double)
+        -> (rows: [ScheduledRow], skipped: Int, backward: Int) {
+        var rows: [ScheduledRow] = [], skipped = 0, backward = 0
+        var first: Double?, last: Double?
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  object["kind"] as? String == "frame", let type = object["type"] as? String,
+                  let mono = (object["mono"] as? NSNumber)?.doubleValue,
+                  let payload = object["payload"] as? [String: Any] else { skipped += 1; continue }
+            var data = "", verbatim = false
+            if let range = line.range(of: #""payload":"#), line.hasSuffix("}") {
+                let raw = String(line[range.upperBound..<line.index(before: line.endIndex)])
+                if let parsed = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? NSDictionary,
+                   parsed.isEqual(to: payload) { data = raw; verbatim = true }
+            }
+            if !verbatim {
+                guard let encoded = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+                    skipped += 1; continue
+                }
+                data = String(decoding: encoded, as: UTF8.self)
+            }
+            if let last, mono < last { backward += 1 }
+            last = mono
+            let origin = first ?? mono
+            first = origin
+            let rev = (payload["rev"] as? [String: Any])?.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ";")
+            rows.append(ScheduledRow(offsetMs: lead + mono - origin, event: type, data: data,
+                                     id: (payload["input_id"] as? String) ?? rev.map { "rev:" + $0 } ?? "row:\(rows.count)",
+                                     verbatim: verbatim))
+        }
+        return (rows, skipped, backward)
+    }
+
+    /// Four consecutive frames (revs 3–6) of the lab's admission parent arm,
+    /// byte for byte: `runs/20261027T214911-admission-parent-r1/reader.jsonl`
+    /// (sha256 469d9d63…8e90) lines 113, 114, 116 and 122, a 516 ms run with
+    /// 6.7 ms and 15.8 ms gaps. The page holds rev 3, so the first is a receipt.
+    nonisolated static let labEvent = 1
+    nonisolated private static let labExcerpt = #"""
+{"kind":"frame","type":"probability","mono":11663.40000000596,"wall":1793162982129,"payload":{"event_id":1,"p":0.64,"source":"kalshi","source_value":0.62,"updated_at":"2026-10-27T21:49:41.640219-07:00","status":"live","rev":{"1":3},"source_snapshot":{"event_id":1,"rev":{"1":3},"win_probability_sources":{"kalshi":{"value":0.62,"display_name":"Kalshi","type":"market","color":"#22c55e","updated_at":"2026-10-27T21:49:41.640219-07:00","evidence_status":"verified","verified_scope":"full_event_winner","contract_version":"live_blend.admissible_as_blend_speaker@5031"},"polymarket":{"value":0.66,"display_name":"Polymarket","type":"market","color":"#3b82f6","updated_at":"2026-10-27T21:49:32.164831-07:00","evidence_status":"verified","verified_scope":"full_event_winner","contract_version":"live_blend.admissible_as_blend_speaker@5031","price_evidence":"not_evaluated"}}}}}
+{"kind":"frame","type":"probability","mono":11670.09999999404,"wall":1793162982135,"payload":{"event_id":1,"p":0.72,"source":"polymarket","source_value":0.82,"updated_at":"2026-10-27T21:49:42.124406-07:00","status":"live","rev":{"1":4},"source_snapshot":{"event_id":1,"rev":{"1":4},"win_probability_sources":{"kalshi":{"value":0.62,"display_name":"Kalshi","type":"market","color":"#22c55e","updated_at":"2026-10-27T21:49:41.640219-07:00","evidence_status":"verified","verified_scope":"full_event_winner","contract_version":"live_blend.admissible_as_blend_speaker@5031"},"polymarket":{"value":0.82,"display_name":"Polymarket","type":"market","color":"#3b82f6","updated_at":"2026-10-27T21:49:42.124406-07:00","evidence_status":"verified","verified_scope":"full_event_winner","contract_version":"live_blend.admissible_as_blend_speaker@5031","price_evidence":"not_evaluated"}}}}}
+{"kind":"frame","type":"probability","mono":11685.90000000596,"wall":1793162982151,"payload":{"event_id":1,"p":0.66,"source":"polymarket","source_value":0.7,"updated_at":"2026-10-27T21:49:42.147617-07:00","status":"live","rev":{"1":5},"source_snapshot":{"event_id":1,"rev":{"1":5},"win_probability_sources":{"kalshi":{"value":0.62,"display_name":"Kalshi","type":"market","color":"#22c55e","updated_at":"2026-10-27T21:49:41.640219-07:00","evidence_status":"verified","verified_scope":"full_event_winner","contract_version":"live_blend.admissible_as_blend_speaker@5031"},"polymarket":{"value":0.7,"display_name":"Polymarket","type":"market","color":"#3b82f6","updated_at":"2026-10-27T21:49:42.147617-07:00","evidence_status":"verified","verified_scope":"full_event_winner","contract_version":"live_blend.admissible_as_blend_speaker@5031","price_evidence":"not_evaluated"}}}}}
+{"kind":"frame","type":"probability","mono":12179.20000000298,"wall":1793162982645,"payload":{"event_id":1,"p":0.6605,"source":"polymarket","source_value":0.701,"updated_at":"2026-10-27T21:49:42.639229-07:00","status":"live","rev":{"1":6},"source_snapshot":{"event_id":1,"rev":{"1":6},"win_probability_sources":{"kalshi":{"value":0.62,"display_name":"Kalshi","type":"market","color":"#22c55e","updated_at":"2026-10-27T21:49:41.640219-07:00","evidence_status":"verified","verified_scope":"full_event_winner","contract_version":"live_blend.admissible_as_blend_speaker@5031"},"polymarket":{"value":0.701,"display_name":"Polymarket","type":"market","color":"#3b82f6","updated_at":"2026-10-27T21:49:42.639229-07:00","evidence_status":"verified","verified_scope":"full_event_winner","contract_version":"live_blend.admissible_as_blend_speaker@5031","price_evidence":"not_evaluated"}}}}}
+"""#
+
+    /// The held page for a lab capture: its first frame's value, clock, source
+    /// and revision; tip-off an hour earlier.
+    private func labHeld(_ first: ScheduledRow) throws -> (EventDetail, EventHistoryResponse, TimeInterval) {
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(first.data.utf8)) as? [String: Any])
+        let id = try XCTUnwrap((payload["event_id"] as? NSNumber)?.intValue)
+        let p = try XCTUnwrap((payload["p"] as? NSNumber)?.doubleValue)
+        let clock = try XCTUnwrap(payload["updated_at"] as? String)
+        let at = try XCTUnwrap(clock.asDate)
+        let rev = String(decoding: try JSONSerialization.data(withJSONObject: try XCTUnwrap(payload["rev"]), options: [.sortedKeys]),
+                         as: UTF8.self)
+        let source = payload["source"] as? String ?? "kalshi"
+        let value = (payload["source_value"] as? NSNumber)?.doubleValue ?? p
+        let tip = ISO8601DateFormatter().string(from: at.addingTimeInterval(-3600))
+        let detail = try Self.decoder().decode(EventDetail.self, from: Data("""
+        {"id":\(id),"sport":"basketball_nba","home_team":"Home","away_team":"Away","status":"\(payload["status"] as? String ?? "live")",
+         "commence_time":"\(tip)","home_score":0,"away_score":0,
+         "current_odds":{"home_probability":\(p),"away_probability":\(1 - p)},
+         "hero_probability":\(p),"hero_probability_source":"blend","hero_probability_observed_at":"\(clock)",
+         "blend_fold_revision":\(rev),
+         "win_probability_sources":{"\(source)":{"value":\(value),"updated_at":"\(clock)"}}}
+        """.utf8))
+        let points = #"{"timestamp":"\#(tip)","home_probability":0.5},{"timestamp":"\#(clock)","home_probability":\#(p)}"#
+        let history = try Self.decoder().decode(EventHistoryResponse.self, from: Data("""
+        {"event_id":\(id),"home_team":"Home","away_team":"Away","status":"live",
+         "history":[\(points)],"aggregate_line":[\(points)],"win_prob_history":{"\(source)":[\(points)]}}
+        """.utf8))
+        return (detail, history, at.timeIntervalSince1970 + 1)
+    }
+
+    private struct Replay {
+        let rows: [ScheduledRow]
+        let sent: [UInt64?]
+        let marks: [(mark: LiveTimingSeam.Mark, at: UInt64)]
+        let vm: EventDetailViewModel
+    }
+
+    /// Mounts the real page on `held`, then sends `rows` through the real
+    /// transport on their recorded schedule (`PacedStream.arm`), and waits
+    /// `settle` after the last. `PacedStream.reset` must already have set the base.
+    private func replay(_ rows: [ScheduledRow], held: EventDetail, history: EventHistoryResponse,
+                        now: TimeInterval, settle: TimeInterval) async throws -> Replay {
+        PacedStream.arm(rows, event: held.id)
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [PacedStream.self]
+        let session = URLSession(configuration: config)
+        let vm = EventDetailViewModel(
+            eventId: held.id, client: Client(held, history: history),
+            makeStreamHandle: { id in
+                let t = try LiveEventStreamTransport(eventId: id, baseURL: "https://stub.invalid", session: session)
+                t.connect()
+                return t
+            },
+            now: { now },
+            sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) }
+        )
+        let page = try await MountedPage(vm, eventId: held.id)
+        defer { page.close(); vm.stopRefresh() }
+        await waitUntil(10) { vm.event != nil }
+        XCTAssertNotNil(vm.event, "the mounted page ran its own load")
+        await waitUntil((rows.last?.offsetMs ?? 0) / 1000 + 10) { PacedStream.done }
+        XCTAssertTrue(PacedStream.done, "every scheduled row was sent")
+        try await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000))
+        let sent = PacedStream.sentAt
+        let from = sent.compactMap { $0 }.min() ?? 0
+        return Replay(rows: rows, sent: sent, marks: marks.filter { $0.at >= from && $0.mark.eventId == held.id }, vm: vm)
+    }
+
+    /// One JSONL row per input sent and per mark, on the process clock:
+    /// `{t_ns, kind, event, path, id, p, observed, edge}` plus `offset_ms` and
+    /// `late_ms` on inputs. `kind` is the mark's own name; `id` its basis;
+    /// `observed` and `edge` are reference-date bit-pattern stamps or `-`.
+    /// Receipt (`t_ns`), observation and chart edge stay separate.
+    private func writeTrace(_ name: String, _ r: Replay) throws -> (url: URL, coverage: String) {
+        var rows: [(UInt64, [String: Any])] = []
+        let start = r.sent.compactMap { $0 }.min().map { $0 - UInt64(max(0, r.rows.first?.offsetMs ?? 0) * 1_000_000) } ?? 0
+        var lateness: [Double] = []
+        for (i, row) in r.rows.enumerated() {
+            guard let at = r.sent[i] else { continue }
+            let late = (Double(at) - Double(start)) / 1e6 - row.offsetMs
+            lateness.append(late)
+            rows.append((at, ["t_ns": at, "kind": "input.sent", "event": row.event, "path": row.event, "id": row.id,
+                              "offset_ms": row.offsetMs, "late_ms": late, "verbatim": row.verbatim]))
+        }
+        for (mark, at) in r.marks {
+            let chart = mark.name == .viewChartUpdated || mark.name == .modelChartAppended
+            rows.append((at, ["t_ns": at, "kind": mark.name.rawValue, "event": mark.eventId, "path": mark.path,
+                              "id": mark.basis, "p": mark.probability, "observed": mark.observed,
+                              "edge": chart ? mark.stamp : "-"]))
+        }
+        let lines = try rows.sorted { $0.0 < $1.0 }.map {
+            String(decoding: try JSONSerialization.data(withJSONObject: $0.1, options: [.sortedKeys]), as: UTF8.self)
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("10090-trace-\(name).jsonl")
+        try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: url)
+        let sentCount = r.sent.compactMap { $0 }.count
+        let ordered = zip(r.sent.compactMap { $0 }, r.sent.compactMap { $0 }.dropFirst()).allSatisfy { $0 <= $1 }
+        let coverage = String(format: "rows=%d sent=%d verbatim=%d in_order=%@ max_late_ms=%.2f load=%@ trace=%@",
+                              r.rows.count, sentCount, r.rows.filter(\.verbatim).count, ordered ? "yes" : "no",
+                              lateness.max() ?? -1,
+                              Self.loadAverage().map { String(format: "%.2f", $0) }.joined(separator: "/"), url.path)
+        return (url, coverage)
+    }
+
+    /// The v3 preview path on the mounted page, from a recorded-format
+    /// schedule: each preview is received, then adopted, then printed by the
+    /// hero and chart under its own identity — a repeated value under a new
+    /// sequence included. Another session's preview and a replay are received
+    /// and never adopted. A newer commit outranks the held preview, and an
+    /// expired one hands both surfaces back to committed truth. View marks
+    /// are SwiftUI evaluations of what the hero and chart print, not paint.
+    func testHostedPageMarksEachV3PreviewReceivedAdoptedAndPrintedUnderItsOwnIdentity() async throws {
+        PacedStream.reset(quarter: false, base: Self.recentBase())
+        let session = V3PageWire.nextSession(), other = V3PageWire.nextSession()
+        func preview(_ seq: Int, _ p: Double, at: TimeInterval, base: Int = 20, ttl: Int = 60_000,
+                     in s: String? = nil) -> String {
+            let frame = #"{"event_id":4242,"p":\#(p),"p_away":\#(1 - p),"sport":"basketball_nba","status":"live","display_observed_at":"\#(Self.stamp(at, fractional: true))","preview":{"kind":"blend","epoch":2,"seq":\#(seq),"base_rev":\#(base),"ttl_ms":\#(ttl)}}"#
+            return V3PageWire.preview(frame, eventId: 4242, session: s ?? session)
+        }
+        func id(_ s: String, _ seq: Int, _ base: Int = 20) -> String { "v3:1/\(V3PageWire.namespace)/\(s)/e2/s\(seq)/b\(base)" }
+        let commit = #"{"event_id":4242,"p":0.62,"source":"polymarket","source_value":0.62,"updated_at":"\#(Self.stamp(1.5, fractional: true))","status":"live","rev":{"4242":21}}"#
+        let rows = [
+            ScheduledRow(offsetMs: 300, event: "preview_open_v3",
+                         data: V3PageWire.open(4242, members: [4242], session: session), id: "open:\(session)"),
+            ScheduledRow(offsetMs: 600, event: "preview_v3", data: preview(1, 0.70, at: 1.0), id: id(session, 1)),
+            ScheduledRow(offsetMs: 900, event: "preview_v3", data: preview(2, 0.70, at: 1.25), id: id(session, 2)),
+            ScheduledRow(offsetMs: 1200, event: "preview_v3", data: preview(3, 0.80, at: 1.3, in: other), id: id(other, 3)),
+            ScheduledRow(offsetMs: 1500, event: "preview_v3", data: preview(1, 0.90, at: 1.4), id: id(session, 1)),
+            ScheduledRow(offsetMs: 1800, event: "probability", data: commit, id: "rev:4242=21"),
+            ScheduledRow(offsetMs: 2100, event: "preview_v3", data: preview(3, 0.75, at: 2.0, base: 21, ttl: 700),
+                         id: id(session, 3, 21)),
+        ]
+        let r = try await replay(rows, held: try held(hosted: true, revision: #"{"4242":20}"#),
+                                 history: try heldHistory(), now: PacedStream.base - 595, settle: 1.5)
+        let (url, coverage) = try writeTrace("preview-v3", r)
+        func of(_ name: LiveTimingSeam.Name) -> [(mark: LiveTimingSeam.Mark, at: UInt64)] {
+            r.marks.filter { $0.mark.name == name }
+        }
+        func changes(_ marks: [(mark: LiveTimingSeam.Mark, at: UInt64)]) -> [String] {
+            marks.map(\.mark.basis).reduce(into: []) { if $0.last != $1 { $0.append($1) } }
+        }
+        let s1 = id(session, 1), s2 = id(session, 2), s3 = id(session, 3, 21)
+        XCTAssertEqual(of(.previewReceived).map(\.mark.basis), [s1, s2, id(other, 3), s1, s3],
+                       "every decodable preview is received once, in order — refused ones too")
+        XCTAssertEqual(of(.modelPreviewAdopted).map(\.mark.basis), [s1, s2, s3], "only the reader's own previews are adopted")
+        XCTAssertEqual(of(.modelPreviewAdopted).map(\.mark.probability), ["0.7", "0.7", "0.75"])
+        XCTAssertEqual(changes(of(.viewHeadlineUpdated)), [s1, s2, "rev:4242=21", s3, "rev:4242=21"],
+                       "the hero prints each adopted preview, the outranking commit, and the commit again after expiry")
+        XCTAssertEqual(changes(of(.viewChartUpdated)), [s1, s2, "-", s3, "-"],
+                       "the chart ends on each preview's projection, then on the committed point")
+        // Ordering: each preview's receipt, adoption and printing, in that order.
+        var line = "SUBSECOND-10090 depth=view-input case=preview-v3 \(coverage)"
+        for preview in [s1, s2, s3] {
+            let row = try XCTUnwrap(rows.firstIndex { $0.id == preview }.flatMap { r.sent[$0] })
+            let received = try XCTUnwrap(of(.previewReceived).first { $0.mark.basis == preview }?.at)
+            let adopted = try XCTUnwrap(of(.modelPreviewAdopted).first { $0.mark.basis == preview }?.at)
+            let headline = try XCTUnwrap(of(.viewHeadlineUpdated).first { $0.mark.basis == preview }?.at)
+            let chart = try XCTUnwrap(of(.viewChartUpdated).first { $0.mark.basis == preview }?.at)
+            XCTAssertTrue(row <= received && received <= adopted && adopted <= headline && adopted <= chart,
+                          "\(preview): sent, received, adopted, then printed")
+            line += String(format: " %@:sent_to_received_ms=%.2f,to_adopted_ms=%.2f,to_view_headline_ms=%.2f,to_view_chart_ms=%.2f",
+                           String(preview.split(separator: "/").suffix(3).joined(separator: "/")),
+                           (Double(received) - Double(row)) / 1e6, (Double(adopted) - Double(row)) / 1e6,
+                           (Double(headline) - Double(row)) / 1e6, (Double(chart) - Double(row)) / 1e6)
+        }
+        print(line)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    /// The lab's recorded frames replayed through the mounted page in their
+    /// recorded order and spacing. The embedded excerpt always runs; set
+    /// `BL_10090_LAB_ROWS` (xcodebuild: `TEST_RUNNER_BL_10090_LAB_ROWS`) to a
+    /// `reader.jsonl` to replay a whole arm through this same build, one arm
+    /// per run (A/B alternated on one simulator). Every probability frame is
+    /// received in file order and every newer revision is adopted once, in
+    /// order; the hero's input reaches the last. The held page is the first
+    /// probability frame's. View marks between frames closer than a display
+    /// refresh may coalesce, so only the last is required.
+    func testHostedPageReplaysTheLabsRecordedFramesInTheirRecordedOrderAndSpacing() async throws {
+        let path = ProcessInfo.processInfo.environment["BL_10090_LAB_ROWS"]
+        let text = try path.map { try String(contentsOfFile: $0, encoding: .utf8) } ?? Self.labExcerpt
+        let parsed = Self.labRows(text, lead: 500)
+        let first = try XCTUnwrap(parsed.rows.first { $0.event == "probability" }, "the capture has probability frames")
+        if path == nil {
+            XCTAssertEqual(parsed.rows.count, 4)
+            XCTAssertEqual(parsed.rows.map(\.verbatim), [true, true, true, true], "the excerpt is sent byte for byte")
+            for (row, offset) in zip(parsed.rows, [500, 500 + 6.69999998808, 500 + 22.5, 500 + 515.79999999702]) {
+                XCTAssertEqual(row.offsetMs, offset, accuracy: 1e-6, "the recorded spacing is kept")
+            }
+        }
+        PacedStream.reset(quarter: false, base: Self.recentBase())
+        let (detail, history, now) = try labHeld(first)
+        let r = try await replay(parsed.rows, held: detail, history: history, now: now, settle: 1)
+        let (_, coverage) = try writeTrace(path == nil ? "lab-excerpt" : "lab-arm", r)
+        let held = LiveTimingSeam.headlineBasis(of: detail)
+        let received = r.marks.filter { $0.mark.name == .frameReceived }.map(\.mark.basis)
+        let adopted = r.marks.filter { $0.mark.name == .modelHeadlineAdopted }.map(\.mark.basis)
+        let headline = r.marks.filter { $0.mark.name == .viewHeadlineUpdated }.map(\.mark.basis)
+        let probabilityRows = parsed.rows.filter { $0.event == "probability" }.map(\.id)
+        XCTAssertEqual(received, probabilityRows, "every probability frame is received once, in file order")
+        let newer = probabilityRows.filter { $0 != held }
+        if path == nil { XCTAssertEqual(adopted, newer, "each newer revision is adopted once, in order") }
+        XCTAssertEqual(headline.last, adopted.last, "the hero's input reaches the last adopted frame")
+        print("SUBSECOND-10090 depth=view-input case=\(path == nil ? "lab-excerpt" : "lab-arm") source=\(path ?? "embedded")"
+              + " skipped=\(parsed.skipped) backward=\(parsed.backward) received=\(received.count) adopted=\(adopted.count)"
+              + " view_headline_marks=\(headline.count) \(coverage)")
     }
 
     // MARK: - Page
@@ -261,7 +574,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
 
     /// The held page: a folded blend hero at revision 20, older than every quote.
     /// The hosted page also carries a tip-off, so its chart has a start.
-    private func held(hosted: Bool = false) throws -> EventDetail {
+    private func held(hosted: Bool = false, revision: String = #"{"4242":20,"999":5}"#) throws -> EventDetail {
         let tip = hosted ? #""commence_time":"\#(Self.stamp(-4200))","# : ""
         return try Self.decoder().decode(EventDetail.self, from: Data("""
         {"id":4242,"sport":"basketball_nba","home_team":"Celtics","away_team":"Knicks","status":"live",\(tip)
@@ -269,7 +582,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
          "current_odds":{"home_probability":0.6,"away_probability":0.4},
          "hero_probability":0.6,"hero_probability_source":"blend",
          "hero_probability_observed_at":"\(Self.stamp(0))",
-         "blend_fold_revision":{"4242":20,"999":5},
+         "blend_fold_revision":\(revision),
          "win_probability_sources":{"polymarket":{"value":0.6,"updated_at":"\(Self.stamp(0))"}}}
         """.utf8))
     }
