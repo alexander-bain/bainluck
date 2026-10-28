@@ -7,8 +7,10 @@ reading changed, not only a venue's.
 The commit/rollback/publication path is exercised on real PostgreSQL in
 integration/test_nonvenue_trace_pg_10090.py. These pin what needs no database:
 enablement bounds, the warm arm, the line and byte budgets, pending overflow,
-the complete-bag fields, evidence sanitising, line ordinals, and that a
-disarmed process builds nothing.
+the complete-bag fields, evidence sanitising, line ordinals, that a disarmed
+process builds nothing, and how the final read decides FINAL_STATE_ESTABLISHED
+(one read per traced COMMIT; any moved blend input, pending ORM write, vanished
+row or failed read keeps it NOT_ESTABLISHED).
 """
 
 import json
@@ -467,3 +469,145 @@ def test_a_transaction_not_yet_begun_is_bound_when_the_update_returns():
                   status="live", espn=None, opening=None, prior_txn_row_write=None)
     (_frame, record), = trace.pending.values()
     assert record["txn"] == 1 and record["obs"] == sel["obs"]
+
+
+# ── the final read (FINAL_STATE_ESTABLISHED) ─────────────────────────────────
+
+
+def row(f, **changes):
+    """The committing row exactly as `write` left it, then ``changes``."""
+    base = dict(rev=f["rev"][str(f["event_id"])], sources=BAG, status=f["status"],
+                espn_win_prob_home=None, opening_home_probability=None, orm_pending=False)
+    base.update(changes)
+    return base
+
+
+def commit(trace, frames, read):
+    pending = [entry(f) for f in frames]
+    trace.commit_started(pending, sent, read=read)
+    trace.committed(pending, {f["event_id"]: f for f in frames}, sent)
+    for f in frames:
+        trace.published(trace.publish_started(f), True)
+
+
+def finals(lines):
+    return {x["event"]: x["final"] for x in lines if x["stage"] == "PUBLICATION"}
+
+
+def test_one_read_per_commit_establishes_every_unmoved_traced_event():
+    trace, lines = make()
+    a, b = frame(event=7, rev=11), frame(event=8, rev=4)
+    write(trace, a)
+    write(trace, b)
+    calls = []
+
+    def read(ids):
+        calls.append(ids)
+        return {7: row(a), 8: row(b)}
+
+    commit(trace, [a, b], read)
+    assert calls == [[7, 8]] and trace.final_reads == 1
+    for event, final in finals(lines).items():
+        assert (final["final_state"], final["check"], final["differs"]) == (
+            "FINAL_STATE_ESTABLISHED", "ROW_MATCHES_LAST_TRACED_RETURNING", [])
+        assert final["observed_rev"] == {7: 11, 8: 4}[event]
+        assert final["observed_bag_hash"] == nt._hash(BAG) and final["read_ms"] >= 0
+        assert final["as_of"] == "LAST_TRACED_RETURNING"
+        assert final["blend_probability"] == 0.6  # still built from the RETURNING
+    trace._stop("EXPIRED")
+    assert lines[-1]["final_reads"] == 1
+
+
+@pytest.mark.parametrize("field,moved", [
+    ("rev", 12),
+    ("sources", {"espn": {"value": 0.2, "updated_at": "2026-10-28T18:01:00+00:00"}}),
+    ("status", "final"),  # moves no rev: the trigger counts the bag only
+    ("espn_win_prob_home", 0.4),
+    ("opening_home_probability", 0.55),
+])
+def test_any_blend_input_moved_after_the_last_traced_returning_is_not_established(
+    field, moved
+):
+    trace, lines = make()
+    f = frame()
+    write(trace, f)
+    commit(trace, [f], lambda ids: {7: row(f, **{field: moved})})
+    final = finals(lines)[7]
+    assert (final["final_state"], final["check"], final["differs"]) == (
+        "FINAL_STATE_NOT_ESTABLISHED", "ROW_DIFFERS", [field])
+    assert final["observed_rev"] == (12 if field == "rev" else 11)
+
+
+def test_a_pending_orm_write_to_the_row_is_not_established_even_when_it_matches():
+    trace, lines = make()
+    f = frame()
+    write(trace, f)
+    commit(trace, [f], lambda ids: {7: row(f, orm_pending=True)})
+    final = finals(lines)[7]
+    assert (final["final_state"], final["check"], final["orm_write_pending"]) == (
+        "FINAL_STATE_NOT_ESTABLISHED", "ORM_WRITE_PENDING", True)
+
+
+def test_a_vanished_row_or_a_failed_read_is_not_established_and_never_raises():
+    trace, lines = make()
+    f, g = frame(rev=11), frame(rev=12)
+    write(trace, f)
+    commit(trace, [f], lambda ids: {})
+    write(trace, g)
+
+    def broken(ids):
+        raise ConnectionError("read failed")
+
+    commit(trace, [g], broken)
+    first, second = [x["final"] for x in lines if x["stage"] == "PUBLICATION"]
+    assert (first["final_state"], first["check"]) == ("FINAL_STATE_NOT_ESTABLISHED",
+                                                      "ROW_MISSING")
+    assert (second["final_state"], second["check"], second["error"]) == (
+        "FINAL_STATE_NOT_ESTABLISHED", "READ_ERROR", "ConnectionError")
+    assert trace.hook_errors == 1 and trace.final_reads == 2
+    assert trace.n_published == 2  # both terminals printed
+
+
+def test_no_read_without_a_traced_event_an_active_trace_or_a_built_final(monkeypatch):
+    calls = []
+
+    def read(ids):
+        calls.append(ids)
+        return {}
+
+    trace, lines = make()
+    untraced = frame(event=9)
+    commit(trace, [untraced], read)  # an untraced commit
+    f = frame()
+    write(trace, f)
+    trace.commit_started([entry(f)], sent)  # no reader: NOT_READ
+    assert trace.pending[id(f)][1]["final"]["check"] == "NOT_READ"
+    from app.utils import probability_publication
+
+    monkeypatch.setattr(probability_publication, "build_publication",
+                        lambda **_kw: 1 / 0)
+    g = frame(rev=12)
+    write(trace, g)
+    trace.commit_started([entry(g)], sent, read=read)  # final not built
+    assert trace.pending[id(g)][1]["final"]["error"] == "ZeroDivisionError"
+    trace._stop("EXPIRED")
+    h = frame(rev=13)
+    trace.commit_started([entry(h)], sent, read=read)  # stopped
+    assert calls == [] and trace.final_reads == 0
+
+
+def test_the_final_read_is_the_last_before_commit_hook_in_the_app():
+    """The final read can only miss a write made AFTER it inside the same
+    transaction: pending ORM state (named ORM_WRITE_PENDING) or a later
+    ``before_commit`` listener. This pins that `nonvenue_live_push` registers
+    the only one in ``app/``; a second must answer whether it writes events."""
+    import pathlib
+    import re as _re
+
+    app = pathlib.Path(nt.__file__).resolve().parents[1]
+    hooks = sorted(
+        str(path.relative_to(app))
+        for path in app.rglob("*.py")
+        if _re.search(r"""listen(?:s_for)?\([^)]*["']before_commit["']""", path.read_text())
+    )
+    assert hooks == ["utils/nonvenue_live_push.py"]
