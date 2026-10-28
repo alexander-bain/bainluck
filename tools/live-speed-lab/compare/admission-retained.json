@@ -1,0 +1,21 @@
+{
+  "mode": "controlled-admission",
+  "hypothesis": "A held publication lock needlessly prevents an already-claimed source reading an admission ticket; unlock that read without weakening Redis validation.",
+  "baseline_release_evidence": "Integrator retained main v5931 / Heavy v229 efe320d0 source receipt; historical comparison, not a new deployment read",
+  "baseline_sha": "efe320d0ac04c18c7ec6142d16dc0f0981bcb64b",
+  "candidate_sha": "1c7551777bb7a08ff01b7dbdef5ced1c86370d39",
+  "baseline": "/Users/bain/.codex-personal/private-artifacts/live-10090/pm-observation-drain-20261022/authority-admission-20261027/runs/20261027T214911-admission-parent-r1",
+  "candidate": "/Users/bain/.codex-personal/private-artifacts/live-10090/pm-observation-drain-20261022/authority-admission-20261027/runs/20261027T215157-admission-candidate",
+  "helper": "/Users/bain/.codex-personal/private-artifacts/live-10090/pm-observation-drain-20261022/authority-admission-20261027/warm_helper.py",
+  "helper_sha256": "51ae9304fc7e187a53b1618aa8fed2c5dc7a17704248066fa598b7c1532159ba",
+  "transition_scorer": "/Users/bain/.codex-personal/private-artifacts/live-10090/pm-observation-drain-20261022/finite-pressure-11430/score_transitions.py",
+  "baseline_prepared": "/Users/bain/.codex-personal/private-artifacts/live-10090/pm-observation-drain-20261022/prepared/efe320d0ac04c18c7ec6142d16dc0f0981bcb64b",
+  "candidate_prepared": "/Users/bain/.codex-personal/private-artifacts/live-10090/pm-observation-drain-20261022/prepared/1c7551777bb7a08ff01b7dbdef5ced1c86370d39-admission",
+  "transition_scorer_sha256": "3c30c8b9dc9b2a3a32ae20d99698af2fa104ad4c03ab5fd04dd15758c3b01b18",
+  "lab_files": {
+    "backend_lab.py": "6b14aac5c097e30c6d3ba706fcd4fbeb76795a0c54aa644e51b09083bc245a34",
+    "proxy.py": "504d09e57f227dbd6963739b31850a5944410e67e8f3cf343697c7c4f57c1f2e",
+    "observe.cjs": "c6278f2a020e870a10753db62bebf97a253f858036c328f971289c1ff06df579",
+    "FIXTURE-INPUT.json": "f2b4967a798d8146f0bf52d6cb88e290849d496f4df6270639461a6e1816588d"
+  }
+}
