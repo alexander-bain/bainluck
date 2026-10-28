@@ -92,4 +92,85 @@ final class NBAScoringPresentation9483Tests: XCTestCase {
         XCTAssertEqual(NBAScoringChanceComparison9483.accessibilitySummary(for: reordered.points[next]),
                        NBAScoringChanceComparison9483.accessibilitySummary(for: point))
     }
+
+    // MARK: Second increment — actual vs pregame figures, line controls
+
+    private func withForecast(_ card: NBALadderCard9483, family: NBALadderCard9483.Family? = nil,
+                              actual: Double?, forecast: Double?) -> NBALadderCard9483 {
+        NBALadderCard9483(family: family ?? card.family, phase: card.phase, points: card.points,
+                          actual: actual, forecast: forecast,
+                          awayShort: card.awayShort, homeShort: card.homeShort)
+    }
+
+    func testFiguresNameActualAndPregameProjectionSeparately() throws {
+        let card = try liveCard()
+        XCTAssertEqual(card.actual, 38, "Retained matrix with the test's live score 20–18")
+        // Presentation control: the fixture's page passes no pregame pair.
+        let spoken = NBAScoringFigures9483.accessibilitySummary(
+            for: withForecast(card, actual: card.actual, forecast: 210.5))
+        XCTAssertEqual(spoken, "Actual so far: 38 points. Pregame projection: 210.5 points.")
+        XCTAssertFalse(spoken.localizedCaseInsensitiveContains("current"))
+        XCTAssertFalse(spoken.contains("Projected final"))
+    }
+
+    func testMissingPregameProjectionIsNotFilled() throws {
+        let card = try liveCard()
+        XCTAssertNil(card.forecast)
+        let spoken = NBAScoringFigures9483.accessibilitySummary(for: card)
+        XCTAssertEqual(spoken, "Actual so far: 38 points.")
+        XCTAssertFalse(spoken.contains("projection"))
+    }
+
+    func testMarginFiguresNameTheSideAndKeepATie() throws {
+        let card = try liveCard()
+        // Presentation control on the margin axis: words, not a provider specimen.
+        let behind = withForecast(card, family: .margin, actual: -4, forecast: 2.5)
+        XCTAssertEqual(NBAScoringFigures9483.accessibilitySummary(for: behind),
+                       "Actual so far: Raptors by 4. Pregame projection: Knicks by 2.5.")
+        let level = withForecast(card, family: .margin, actual: 0, forecast: nil)
+        XCTAssertEqual(NBAScoringFigures9483.accessibilitySummary(for: level), "Actual so far: Tie.")
+    }
+
+    func testLineStepsNameTheAdjacentLine() throws {
+        let card = try liveCard()
+        let state = NFLCardDeckState9483()
+        let selected = try XCTUnwrap(state.selectedIndex(in: card))
+        let previous = NBAScoringLineControls9483.stepLabel(card, selected: selected, by: -1)
+        let next = NBAScoringLineControls9483.stepLabel(card, selected: selected, by: 1)
+        XCTAssertEqual(previous, selected > 0 ? "Previous line: \(card.points[selected - 1].label)" : "Previous line")
+        XCTAssertEqual(next, selected < card.points.count - 1
+                       ? "Next line: \(card.points[selected + 1].label)" : "Next line")
+        XCTAssertEqual(NBAScoringLineControls9483.stepLabel(card, selected: 0, by: -1), "Previous line")
+        XCTAssertEqual(NBAScoringLineControls9483.stepLabel(card, selected: card.points.count - 1, by: 1),
+                       "Next line")
+        // Labels describe; they never move the selection.
+        XCTAssertEqual(state.selectedIndex(in: card), selected)
+    }
+
+    func testWithdrawnSelectionNamesNoNeighbourInControls() throws {
+        let card = try liveCard()
+        let state = NFLCardDeckState9483()
+        let chosen = try XCTUnwrap(state.selectedIndex(in: card))
+        state.move(in: card, by: chosen == 0 ? 1 : -1)
+        let moved = try XCTUnwrap(state.selectedIndex(in: card))
+        let key = card.points[moved].optionKey
+        let withdrawn = NBALadderCard9483(
+            family: card.family, phase: card.phase,
+            points: card.points.filter { $0.optionKey != key }, actual: card.actual,
+            forecast: card.forecast, awayShort: card.awayShort, homeShort: card.homeShort)
+        let index = state.selectedIndex(in: withdrawn)
+        XCTAssertNil(index)
+        XCTAssertEqual(NBAScoringLineControls9483.stepLabel(withdrawn, selected: index, by: -1), "Previous line")
+        XCTAssertEqual(NBAScoringLineControls9483.stepLabel(withdrawn, selected: index, by: 1), "Next line")
+        XCTAssertEqual(NBAScoringLineControls9483.detailsLabel(index.map { withdrawn.points[$0] }),
+                       "Selected market unavailable")
+    }
+
+    func testDetailsActionNamesTheSelectedLine() throws {
+        let card = try liveCard()
+        let state = NFLCardDeckState9483()
+        let selected = try XCTUnwrap(state.selectedIndex(in: card))
+        let point = card.points[selected]
+        XCTAssertEqual(NBAScoringLineControls9483.detailsLabel(point), "Details and timing for \(point.label)")
+    }
 }

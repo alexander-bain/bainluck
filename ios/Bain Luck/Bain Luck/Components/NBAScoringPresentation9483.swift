@@ -11,6 +11,10 @@ struct NBAScoringChanceComparison9483: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let point {
+                // Names the prop these chances describe.
+                Text("Selected line")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 Text(point.label)
                     .font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
@@ -29,7 +33,8 @@ struct NBAScoringChanceComparison9483: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Self.accessibilitySummary(for: point))
+        .accessibilityLabel(point == nil ? Self.accessibilitySummary(for: point)
+                            : "Selected line. " + Self.accessibilitySummary(for: point))
     }
 
     @ViewBuilder private func readings(_ point: NBALadderCard9483.Point) -> some View {
@@ -66,5 +71,112 @@ struct NBAScoringChanceComparison9483: View {
         let before = point.chance.map { formatProbability($0) } ?? "Unavailable"
         let current = point.now.map { formatProbability($0) } ?? "Unavailable"
         return "\(point.label). Pregame chance: \(before). Current chance: \(current)."
+    }
+}
+
+/// The actual and the pregame projection as one comparison, each keyed to its
+/// chart mark (solid = actual, dashed = pregame projection). The projection is
+/// the pregame value only — never a current projection. A missing value is not
+/// drawn and not filled.
+struct NBAScoringFigures9483: View {
+    let card: NBALadderCard9483
+    let awayColor: Color
+    let homeColor: Color
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .title2) private var figureSize: CGFloat = 28
+
+    /// The chart draws its actual and projection rules with these, so the key
+    /// can never disagree with the marks.
+    static let actualStroke = StrokeStyle(lineWidth: 2)
+    static let forecastStroke = StrokeStyle(lineWidth: 1.5, dash: [4, 3])
+
+    var body: some View {
+        Group {
+            if typeSize >= .xxxLarge {
+                VStack(alignment: .leading, spacing: 12) { figures }
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 24) { figures }
+                    VStack(alignment: .leading, spacing: 12) { figures }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.accessibilitySummary(for: card))
+    }
+
+    @ViewBuilder private var figures: some View {
+        if let actual = card.actual {
+            figure(Self.actualLabel(card.phase), value: actual, stroke: Self.actualStroke, key: .primary)
+        }
+        if let forecast = card.forecast {
+            figure("Pregame projection", value: forecast, stroke: Self.forecastStroke, key: .secondary)
+        }
+    }
+
+    private func figure(_ label: String, value: Double, stroke: StrokeStyle, key: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                NBAStatMarkKey9483()
+                    .stroke(key, style: stroke)
+                    .frame(width: 6, height: 14)
+                    .accessibilityHidden(true)
+                Text(label)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(Self.text(card, value))
+                .font(.system(size: figureSize, weight: .bold).monospacedDigit())
+                .foregroundStyle(tint(value))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// A margin is coloured by the side it favours; a tie and a total stay neutral.
+    private func tint(_ value: Double) -> Color {
+        guard card.family == .margin, value != 0 else { return .primary }
+        return value > 0 ? homeColor : awayColor
+    }
+
+    static func actualLabel(_ phase: NBALadderCard9483.Phase) -> String {
+        phase == .after ? "Actual final" : "Actual so far"
+    }
+
+    static func text(_ card: NBALadderCard9483, _ value: Double) -> String {
+        card.words(value) + (card.family == .margin ? "" : " points")
+    }
+
+    static func accessibilitySummary(for card: NBALadderCard9483) -> String {
+        var parts: [String] = []
+        if let actual = card.actual { parts.append("\(actualLabel(card.phase)): \(text(card, actual)).") }
+        if let forecast = card.forecast { parts.append("Pregame projection: \(text(card, forecast)).") }
+        return parts.joined(separator: " ")
+    }
+}
+
+/// A short vertical rule in the chart's own stroke: the figure's visual key.
+struct NBAStatMarkKey9483: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        return path
+    }
+}
+
+/// Spoken names for the selected-line controls. They read the card's existing
+/// selection only; a selection that is no longer served names no neighbour.
+enum NBAScoringLineControls9483 {
+    static func stepLabel(_ card: NBALadderCard9483, selected: Int?, by delta: Int) -> String {
+        let name = delta < 0 ? "Previous line" : "Next line"
+        guard let selected, card.points.indices.contains(selected + delta) else { return name }
+        return "\(name): \(card.points[selected + delta].label)"
+    }
+
+    static func detailsLabel(_ point: NBALadderCard9483.Point?) -> String {
+        guard let point else { return "Selected market unavailable" }
+        return "Details and timing for \(point.label)"
     }
 }

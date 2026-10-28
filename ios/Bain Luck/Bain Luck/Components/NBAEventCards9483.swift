@@ -17,6 +17,7 @@ struct NBALadderCardView9483: View {
     let homeColor: Color
     @ObservedObject var state: NFLCardDeckState9483
     var expanded = false
+    @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .caption2) private var scaledAxisFont: CGFloat = 12
     private var axisFontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledAxisFont) }
 
@@ -29,7 +30,11 @@ struct NBALadderCardView9483: View {
             Text(card.title.uppercased())
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)
-            if card.actual != nil || card.forecast != nil {
+            if card.phase == .during && (card.actual != nil || card.forecast != nil) {
+                // Large, keyed actual-vs-pregame comparison; the key replaces
+                // the caption line below the controls.
+                NBAScoringFigures9483(card: card, awayColor: awayColor, homeColor: homeColor)
+            } else if card.actual != nil || card.forecast != nil {
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: 24) { figures }
                     VStack(alignment: .leading, spacing: 6) { figures }
@@ -65,32 +70,8 @@ struct NBALadderCardView9483: View {
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             }
-            HStack(spacing: 4) {
-                Button { state.move(in: card, by: -1) } label: {
-                    Image(systemName: "chevron.left").frame(width: 44, height: 44)
-                }
-                .disabled(selected.map { $0 == 0 } ?? true)
-                .accessibilityLabel("Previous line")
-                if expanded {
-                    Button {
-                        if let point { state.detailsRowID = point.optionKey }
-                    } label: {
-                        readout(point)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(point == nil)
-                    .accessibilityHint("Shows this line's recorded probability and timing")
-                } else {
-                    readout(point)
-                        .accessibilityElement(children: .combine)
-                }
-                Button { state.move(in: card, by: 1) } label: {
-                    Image(systemName: "chevron.right").frame(width: 44, height: 44)
-                }
-                .disabled(selected.map { $0 >= card.points.count - 1 } ?? true)
-                .accessibilityLabel("Next line")
-            }
-            if card.forecast != nil {
+            lineControls(selected: selected, point: point)
+            if card.phase != .during, card.forecast != nil {
                 Text(card.actual != nil ? "Solid line = actual · dashed = pregame projection"
                      : "Dashed line = pregame projection")
                     .font(.caption2)
@@ -124,6 +105,65 @@ struct NBALadderCardView9483: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// Previous / selected line / next. During play the steps name the
+    /// adjacent line and stack under the selection at accessibility sizes.
+    @ViewBuilder private func lineControls(selected: Int?, point: NBALadderCard9483.Point?) -> some View {
+        let previous = stepButton(-1, selected: selected)
+        let next = stepButton(1, selected: selected)
+        if card.phase == .during && typeSize.isAccessibilitySize {
+            VStack(spacing: 4) {
+                selection(point)
+                HStack {
+                    previous
+                    Spacer(minLength: 16)
+                    next
+                }
+            }
+        } else {
+            HStack(spacing: 4) {
+                previous
+                selection(point)
+                next
+            }
+        }
+    }
+
+    private func stepButton(_ delta: Int, selected: Int?) -> some View {
+        Button { state.move(in: card, by: delta) } label: {
+            Image(systemName: delta < 0 ? "chevron.left" : "chevron.right")
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .disabled(delta < 0 ? (selected.map { $0 == 0 } ?? true)
+                  : (selected.map { $0 >= card.points.count - 1 } ?? true))
+        .accessibilityLabel(card.phase == .during
+                            ? NBAScoringLineControls9483.stepLabel(card, selected: selected, by: delta)
+                            : (delta < 0 ? "Previous line" : "Next line"))
+    }
+
+    @ViewBuilder private func selection(_ point: NBALadderCard9483.Point?) -> some View {
+        if expanded && card.phase == .during {
+            detailsButton(point)
+                .accessibilityLabel(NBAScoringLineControls9483.detailsLabel(point))
+        } else if expanded {
+            detailsButton(point)
+        } else {
+            readout(point)
+                .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func detailsButton(_ point: NBALadderCard9483.Point?) -> some View {
+        Button {
+            if let point { state.detailsRowID = point.optionKey }
+        } label: {
+            readout(point)
+        }
+        .buttonStyle(.plain)
+        .disabled(point == nil)
+        .accessibilityHint("Shows this line's recorded probability and timing")
+    }
+
     private func color(_ point: NBALadderCard9483.Point) -> Color {
         point.side == .away ? awayColor : homeColor
     }
@@ -139,7 +179,13 @@ struct NBALadderCardView9483: View {
                     .foregroundStyle(point.chance == nil ? Color.secondary : color(point))
                 let more = expanded ? (text.sub.isEmpty ? "Details" : " · details") : ""
                 if card.phase == .during {
-                    if expanded { Text("Details & timing").font(.subheadline) }
+                    if expanded {
+                        HStack(spacing: 4) {
+                            Text("Details & timing")
+                            Image(systemName: "chevron.right").imageScale(.small)
+                        }
+                        .font(.subheadline)
+                    }
                 } else if !text.sub.isEmpty || !more.isEmpty {
                     Text(text.sub + more)
                         .font(.caption2)
@@ -216,12 +262,12 @@ struct NBALadderCardView9483: View {
             if let forecast = card.forecast {
                 RuleMark(x: .value("Projection", forecast))
                     .foregroundStyle(Color.secondary)
-                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                    .lineStyle(NBAScoringFigures9483.forecastStroke)
             }
             if let actual = card.actual {
                 RuleMark(x: .value("Actual", actual))
                     .foregroundStyle(Color.primary)
-                    .lineStyle(StrokeStyle(lineWidth: 2))
+                    .lineStyle(NBAScoringFigures9483.actualStroke)
             }
             ForEach(card.points) { point in
                 let isSelected = point.optionKey == selected?.optionKey
