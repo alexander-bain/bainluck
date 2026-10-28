@@ -580,8 +580,11 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
                                                names: (away, home))
             defer { window.isHidden = true }
             // The last card ends at the shelf's trailing edge; the margin
-            // ladder before it is left of its leading edge.
-            let cardLeft = width - 16 - NFLEventCardDeckView9483.cardWidth(width - 32, count: 2, accessibility: true)
+            // ladder before it is left of its leading edge. #11666: at
+            // accessibility sizes the shelf gives each card its whole width
+            // at 393 and 375 too, so no width keeps the peek.
+            let shelf = width - 32
+            let cardLeft = width - 16 - shelf
             let read = try tiledLines(host, name: name).filter { $0.box.minX >= cardLeft - 1 }
                 .sorted { $0.box.minY < $1.box.minY }
             assertFinishCardReadsWhole(read, rows: [(away, "108.5", "101"), (home, "112.5", "118")], name)

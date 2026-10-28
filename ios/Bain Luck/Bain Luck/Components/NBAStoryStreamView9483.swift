@@ -195,11 +195,13 @@ struct NBAStoryStreamView9483: View {
                                                     refresh: refreshOrder)
                             }
                         }
-                        // #11285 — the deck's width rule: at accessibility sizes
-                        // on a 320pt screen each card takes the whole width.
+                        // #11666 — the shelf's width rule: at accessibility sizes
+                        // each card takes the whole shelf width at every screen
+                        // width (no next-card peek; the count carries position);
+                        // otherwise the deck's peek.
                         .containerRelativeFrame(.horizontal) { width, _ in
-                            NFLEventCardDeckView9483.cardWidth(width, count: slots.count,
-                                                               accessibility: dynamicTypeSize.isAccessibilitySize)
+                            dynamicTypeSize.isAccessibilitySize ? width
+                                : NFLEventCardDeckView9483.cardWidth(width, count: slots.count, accessibility: false)
                         }
                         .accessibilityFocused($focused, equals: slot.id)
                         .id(slot.id)
