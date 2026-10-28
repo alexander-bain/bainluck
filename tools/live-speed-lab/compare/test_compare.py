@@ -161,7 +161,7 @@ class EntryControls(unittest.TestCase):
             with patch.object(compare, "load_module") as loader:
                 loader.return_value.arm.return_value = run
                 with self.assertRaisesRegex(ValueError, "did not complete"):
-                    compare.run_existing(spec, root/"out")
+                    compare.run_existing(spec, root/"out", stable_backend_clock=True)
                 self.assertEqual(loader.return_value.arm.call_count, 1)
                 self.assertEqual(loader.return_value.arm.call_args.kwargs["dnpl_sources"], "kalshi,polymarket")
                 self.assertEqual(loader.return_value.arm.call_args.kwargs["fixture"], "singleton")
@@ -181,10 +181,20 @@ class EntryControls(unittest.TestCase):
             with patch.object(compare, "load_module") as loader:
                 loader.return_value.arm.side_effect = failed_cleanup
                 with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
-                    compare.run_existing(spec, root/"out")
+                    compare.run_existing(spec, root/"out", stable_backend_clock=True)
             failure = compare.read(root/"out/INVALID.json")
             self.assertEqual(failure["completed_arms"], [])
             self.assertIn("run-with-cleanup-error", Path(failure["failed_arm"]["stdout"]).read_text())
+
+    def test_run_refuses_clock_pair_before_reserving_output_or_any_arm(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            spec = self.prepared_pair(root)
+            with patch.object(compare, "load_module") as loader:
+                with self.assertRaisesRegex(ValueError, "timing_unknown"):
+                    compare.run_existing(spec, root/"out")
+                loader.assert_not_called()
+            self.assertFalse((root/"out").exists())
 
     def test_recorder_extension_is_passive_and_preserves_original(self):
         with tempfile.TemporaryDirectory() as d:
@@ -258,6 +268,19 @@ super(...args); const frame={payload:JSON.parse(e.data)};
                     compare.consume({"baseline": "b", "candidate": "c", "baseline_sha": "x", "candidate_sha": "x"}, out)
             self.assertFalse((out/"comparison.json").exists())
             self.assertEqual(compare.read(out/"INVALID.json")["reason"], "render failed")
+
+    def test_consume_forwards_and_records_the_clock_opt_in(self):
+        arm = {"source": {"backend_ref": "x", "frontend_build_source_sha": "x"},
+               "input_identity": [], "initial_values": {}, "score": score(fixture()),
+               "raw_input_hash": "x", "input_relative_ms": [0], "compute": None}
+        spec = {"baseline": "b", "candidate": "c", "baseline_sha": "x", "candidate_sha": "x"}
+        for opt_in in (False, True):
+            with tempfile.TemporaryDirectory() as d:
+                with patch.object(compare, "admission_arm", return_value=arm) as adapter, patch("view.render"):
+                    result = compare.consume(spec, Path(d)/"report", stable_backend_clock=opt_in)
+                self.assertEqual({c.kwargs["stable_backend_clock"] for c in adapter.call_args_list}, {opt_in})
+                self.assertIs(result["backend_clock_opt_in"], opt_in)
+                self.assertIs(compare.read(Path(d)/"report/comparison.json")["backend_clock_opt_in"], opt_in)
 
     def test_never_overwrite_earned_result(self):
         with tempfile.TemporaryDirectory() as out:

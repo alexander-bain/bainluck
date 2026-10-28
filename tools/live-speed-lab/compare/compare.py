@@ -170,11 +170,12 @@ def admission_arm(path, *, stable_backend_clock=False):
             "hashes": {name: digest(path/name) for name in tracked}}
 
 
-def consume(spec, out):
+def consume(spec, out, *, stable_backend_clock=False):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=False)  # never silently replace a result
     try:
-        b, c = [admission_arm(spec[k]) for k in ("baseline", "candidate")]
+        b, c = [admission_arm(spec[k], stable_backend_clock=stable_backend_clock)
+                for k in ("baseline", "candidate")]
         if b["source"]["backend_ref"] != spec["baseline_sha"] or c["source"]["backend_ref"] != spec["candidate_sha"]:
             raise ValueError("source differs from predeclared comparison")
         if b["input_identity"] != c["input_identity"] or b["initial_values"] != c["initial_values"]:
@@ -184,6 +185,7 @@ def consume(spec, out):
         decision = decide(b["score"], c["score"])
         result = {"schema": "dnpl-comparison/1", "decision": decision,
                   "decision_scope": "retained admission controlled witness only",
+                  "backend_clock_opt_in": stable_backend_clock,
                   "spec": spec, "baseline": b, "candidate": c,
                   "comparability": {
                       "same_ordered_input_identity": True, "same_starting_source_values": True,
@@ -202,11 +204,12 @@ def consume(spec, out):
         write(out/"SHA256SUMS.json", {p.name: digest(p) for p in out.iterdir() if p.is_file()})
         return result
     except Exception as e:
-        write(out/"INVALID.json", {"decision": "experiment_invalid", "reason": str(e), "spec": spec})
+        write(out/"INVALID.json", {"decision": "experiment_invalid", "reason": str(e), "spec": spec,
+                                   "backend_clock_opt_in": stable_backend_clock})
         raise
 
 
-def run_existing(spec, out):
+def run_existing(spec, out, *, stable_backend_clock=False):
     """Use the existing helper: fresh disposable state and its existing lock.
 
     New modes are not aliases for the admission fixture. Refuse rather than
@@ -238,6 +241,10 @@ def run_existing(spec, out):
             raise ValueError("prepared source drift")
     if digest(spec["transition_scorer"]) != spec["transition_scorer_sha256"]:
         raise ValueError("primary scorer drift")
+    # consume() refuses this hook's clock pair without the explicit assumption;
+    # refuse before reserving output so no arm is spent on a result it cannot score.
+    if stable_backend_clock is not True:
+        raise ValueError("timing_unknown: explicit stable backend clock assumption required (--stable-backend-clock)")
     helper = load_module(helper_path, "existing_10669")
     # Reserve output before execution, and retain completed arm paths on failure.
     # The helper owns process cleanup; never stop a process owned by another run.
@@ -266,7 +273,7 @@ def run_existing(spec, out):
             runs.append(arm)
             active = None
             write(out/"RUNS.json", {"completed": runs, "failed_arm": None, "spec": result_spec})
-        return consume(result_spec, out/"report")
+        return consume(result_spec, out/"report", stable_backend_clock=stable_backend_clock)
     except BaseException as exc:
         write(out/"RUNS.json", {"completed": runs, "failed_arm": active, "spec": result_spec})
         write(out/"INVALID.json", {"decision": "experiment_invalid", "reason": str(exc),
@@ -327,6 +334,9 @@ def main():
     parser.add_argument("command", choices=["consume", "run", "score", "stage-recorder", "stage-display-recorder"])
     parser.add_argument("spec", type=Path)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--stable-backend-clock", action="store_true",
+                        help="consume/run: assume no backend wall-clock step over the used interval; "
+                             "recorded in the result (default: refuse with timing_unknown)")
     args = parser.parse_args()
     spec = read(args.spec)
     if args.command in ("stage-recorder", "stage-display-recorder"):
@@ -335,7 +345,8 @@ def main():
     if args.command == "score":
         write(args.out, score(spec))
         return
-    result = consume(spec, args.out) if args.command == "consume" else run_existing(spec, args.out)
+    run = consume if args.command == "consume" else run_existing
+    result = run(spec, args.out, stable_backend_clock=args.stable_backend_clock)
     print(json.dumps({"decision": result["decision"], "scope": result["decision_scope"],
                       "view": str(args.out.resolve()/("report" if args.command == "run" else "")/"index.html")}, indent=2))
 
