@@ -417,7 +417,7 @@ async def test_completed_observation_survives_only_readonly_cleanup_deadline(mon
     await asyncio.sleep(0)
     assert not r._detached_reads and r._session_slots._value == 3
     assert r.observation_read_stats == {
-        "detached": 1, "finished": 0, "capped": 0, "ceiling_cancelled": 1,
+        "detached": 1, "finished": 0, "capped": 0, "ceiling_cancelled": 1, "served_late": 0,
     }
     if dedicated:
         [frame] = _blends(frames)

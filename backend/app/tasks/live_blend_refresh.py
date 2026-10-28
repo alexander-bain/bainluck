@@ -203,6 +203,12 @@ FRESH_STAMP_WORKERS = 3
 # left is cancelled the old way too.
 OBSERVATION_READ_DETACHED_MAX = 1
 OBSERVATION_READ_DETACHED_S = 2.0
+# A left read whose statement had already started finishes its graph and keeps
+# it, with its caller's frozen inputs, for that consumer's next observation
+# call, which serves it first (inside its own scope and validate). Otherwise a
+# read that keeps missing the budget freezes the page's "observed" clock until
+# a changed price commits (hill-climb lab M3: 8.3 s against a 0.63 s control).
+# Served only within OBSERVATION_READ_DETACHED_S of the read's start.
 
 # #10090 — admitted cohorts are stamped live-first, as a call's own population
 # is. Stage trace 02:14Z 2026-10-15: a live game's admitted stamp started
@@ -303,13 +309,17 @@ class _ObservationReadAbandoned(Exception):
 class _ObservationRead:
     """One optional preview graph read, shared by its caller and its task."""
 
-    __slots__ = ("timing", "waiting", "graph", "ceiling")
+    __slots__ = ("timing", "waiting", "graph", "ceiling", "late", "finished")
 
     def __init__(self, timing: dict) -> None:
         self.timing = timing
         self.waiting = True  # cleared, never set again, when the caller stops
         self.graph = None
         self.ceiling = False
+        # (observations, validate, wall when the read started), set when the
+        # caller stops waiting: the graph is then kept for a later serve.
+        self.late = None
+        self.finished = False  # the read scope exited normally
 
 
 def _observation_read_summary(timing):
@@ -2210,7 +2220,10 @@ class LiveBlendRefresher:
         self._detached_reads: set[asyncio.Task] = set()
         self.observation_read_stats: dict[str, int] = {
             "detached": 0, "finished": 0, "capped": 0, "ceiling_cancelled": 0,
+            "served_late": 0,
         }
+        #: #10090 — the newest left read kept for a later serve (`_ObservationRead.late`).
+        self._late_observation: Optional[_ObservationRead] = None
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -3363,7 +3376,8 @@ class LiveBlendRefresher:
             raise interrupted
 
     async def _read_groups(self, session, event_ids: list[int], *, overlay_held=True,
-                           clock_sample=None, stopped_waiting=None) -> dict[int, tuple]:
+                           clock_sample=None, stopped_waiting=None,
+                           finish_unwaited=None) -> dict[int, tuple]:
         from copy import deepcopy
         from types import SimpleNamespace
         from sqlalchemy import ARRAY, Integer, and_, any_, bindparam, cast, func, literal, null, or_, select
@@ -3490,7 +3504,9 @@ class LiveBlendRefresher:
                     )
                 )
             ).all()
-        if stopped_waiting is not None and stopped_waiting():
+        # Unless its caller kept it for a later serve (`finish_unwaited`).
+        if (stopped_waiting is not None and stopped_waiting()
+                and not (finish_unwaited is not None and finish_unwaited())):
             raise _ObservationReadAbandoned
         if clock_sample is not None and rows:
             # Read DB time in the existing statement, without another pool
@@ -3571,7 +3587,12 @@ class LiveBlendRefresher:
                 for entry in group:
                     for row in entry.outcomes:
                         row._primary_quote_overlaid = id(row) not in original_rows
-        if preview_ticket is not None:
+        if preview_ticket is not None and stopped_waiting is not None and stopped_waiting():
+            # A graph kept after its caller left never writes: one that needs a
+            # retirement is dropped, and a later read in a waited scope retires.
+            if self._preview_retirement_due(grouped):
+                raise _ObservationReadAbandoned
+        elif preview_ticket is not None:
             # Marked so a caller whose deadline lands here cancels it as before:
             # a retirement writes Redis and the row, never after its caller left.
             with _observation_read_step("retire"):
@@ -3781,6 +3802,7 @@ class LiveBlendRefresher:
         interrupted = None
         # Before any await: a read its caller left ends the old way now, and
         # the run's bounded reap joins it before the engine is disposed.
+        self._late_observation = None
         for task in list(getattr(self, "_detached_reads", ())):
             task.cancel()
             _park_closing_sampler(getattr(self, "source", None), task)
@@ -4965,7 +4987,8 @@ class LiveBlendRefresher:
             }
         return proof_kwargs
 
-    async def preview_accepted_observations(self, observations, validate) -> bool | None:
+    async def preview_accepted_observations(self, observations, validate, *,
+                                            _late=None) -> bool | None:
         """Preview acknowledged unchanged venue observations without owning writes.
 
         The consumer excludes same-event price/stamp ownership and holds its
@@ -4976,9 +4999,20 @@ class LiveBlendRefresher:
         read scope completes; the frozen clocks in this batch never change.
         `validate` rechecks immutable input identity and the flush's ownership
         under its buffer lock, including at the final Redis send boundary.
+
+        First, inside this call's scope, it serves the graph of a read an
+        earlier call left (`OBSERVATION_READ_DETACHED_MAX`) to that call's
+        own frozen inputs and `validate` (``_late``), counting no input newer
+        than the read's start as observed.
         """
         if self.source not in ("polymarket", "kalshi") or not self.preview:
             return
+        late = getattr(self, "_late_observation", None)
+        if _late is None and late is not None and late.finished:
+            self._late_observation = None
+            if _mono() - late.timing["started_s"] <= OBSERVATION_READ_DETACHED_S:
+                self.observation_read_stats["served_late"] += 1
+                await self.preview_accepted_observations(*late.late[:2], _late=late)
         from app.tasks.base import get_task_session
         from app.utils.aggregation import _coerce_timestamp
         from app.utils.blend_preview import PREVIEW_STATUSES, registry
@@ -4992,59 +5026,67 @@ class LiveBlendRefresher:
             event_ids.intersection_update(await validate(event_ids))
             if not event_ids:
                 return
-            factory = (self._observation_read_factory
-                       or self._session_factory or get_task_session)
-            # Optional display work must not queue the game loop behind a
-            # contended pool/read. The caller may retain the SAME frozen input.
-            if self._session_slots.locked():
-                return False
-            if len(self._detached_reads) >= OBSERVATION_READ_DETACHED_MAX:
-                # A read its caller left still holds a slot: no second read
-                # starts beside it, so 2 of the 3 slots stay the stamps'.
-                self.observation_read_stats["capped"] += 1
-                return False
-            read_timing = {"started_s": _mono()}
-            clock_owner = self.held_quotes if self._observation_read_factory is not None else None
-            clock = None
-            if isinstance(clock_owner, HeldRowQuotes) and not clock_owner._closed:
-                clock_owner._sample_started += 1
-                clock_owner._sampling += 1
-                clock_owner._last_sample_started = clock_owner._now()
-                clock = (clock_owner, clock_owner._sample_started, {})
-            read = _ObservationRead(read_timing)
-            task = asyncio.create_task(
-                self._observation_graph_read(read, factory, sorted(event_ids), clock),
-                name=f"observation-read-{self.source}",
-            )
-            try:
-                await asyncio.wait({task}, timeout=.25)
-            except CancelledError:
-                # External cancellation stops the read the old way, as the
-                # scope it replaces did, and still ends with the caller.
-                read.waiting = False
-                task.cancel()
-                self._track_observation_read(task, read, None)
-                await asyncio.wait({task})
-                raise
-            if task.done():
-                task.result()
-                grouped = read.graph
+            if _late is not None:
+                grouped = {eid: value for eid, value in _late.graph.items() if eid in event_ids}
             else:
-                read.waiting = False
-                read_timing["scope_ms"] = (_mono() - read_timing["started_s"]) * 1000
-                await self._release_observation_read(task, read)
-                # A completed autocommit SELECT needs no commit acknowledgement.
-                # Its detached graph remains usable if only connection cleanup
-                # exhausts our budget; that cleanup still finishes on its own.
-                # Kalshi's ORM session has not committed: it does not qualify.
-                # All input/freshness/send-boundary checks below remain.
-                if self._observation_read_factory is None or read.graph is None:
-                    raise TimeoutError("observation read exceeded its preview budget")
-                grouped = read.graph
-                logger.warning(
-                    "live_blend_refresh[%s]: observation read completed; cleanup exceeded budget read_timing=%s",
-                    self.source, _observation_read_summary(read_timing),
+                factory = (self._observation_read_factory
+                           or self._session_factory or get_task_session)
+                # Optional display work must not queue the game loop behind a
+                # contended pool/read. The caller may retain the SAME frozen input.
+                if self._session_slots.locked():
+                    return False
+                if len(self._detached_reads) >= OBSERVATION_READ_DETACHED_MAX:
+                    # A read its caller left still holds a slot: no second read
+                    # starts beside it, so 2 of the 3 slots stay the stamps'.
+                    self.observation_read_stats["capped"] += 1
+                    return False
+                read_timing = {"started_s": _mono()}
+                started_wall = datetime.now(timezone.utc).timestamp()
+                clock_owner = self.held_quotes if self._observation_read_factory is not None else None
+                clock = None
+                if isinstance(clock_owner, HeldRowQuotes) and not clock_owner._closed:
+                    clock_owner._sample_started += 1
+                    clock_owner._sampling += 1
+                    clock_owner._last_sample_started = clock_owner._now()
+                    clock = (clock_owner, clock_owner._sample_started, {})
+                read = _ObservationRead(read_timing)
+                task = asyncio.create_task(
+                    self._observation_graph_read(read, factory, sorted(event_ids), clock),
+                    name=f"observation-read-{self.source}",
                 )
+                try:
+                    await asyncio.wait({task}, timeout=.25)
+                except CancelledError:
+                    # External cancellation stops the read the old way, as the
+                    # scope it replaces did, and still ends with the caller.
+                    read.waiting = False
+                    task.cancel()
+                    self._track_observation_read(task, read, None)
+                    await asyncio.wait({task})
+                    raise
+                if task.done():
+                    task.result()
+                    grouped = read.graph
+                else:
+                    read.waiting = False
+                    read.late = (observations, validate, started_wall)
+                    self._late_observation = read
+                    read_timing["scope_ms"] = (_mono() - read_timing["started_s"]) * 1000
+                    await self._release_observation_read(task, read)
+                    # A completed autocommit SELECT needs no commit acknowledgement.
+                    # Its detached graph remains usable if only connection cleanup
+                    # exhausts our budget; that cleanup still finishes on its own.
+                    # Kalshi's ORM session has not committed: it does not qualify.
+                    # All input/freshness/send-boundary checks below remain.
+                    if self._observation_read_factory is None or read.graph is None:
+                        raise TimeoutError("observation read exceeded its preview budget")
+                    grouped = read.graph
+                    # Served now; the caller samples its own clock afterwards.
+                    read.late = self._late_observation = None
+                    logger.warning(
+                        "live_blend_refresh[%s]: observation read completed; cleanup exceeded budget read_timing=%s",
+                        self.source, _observation_read_summary(read_timing),
+                    )
             plans = {}
             refusals = {}
             # #10090: selection receipts, only while a stage trace is attached.
@@ -5096,6 +5138,8 @@ class LiveBlendRefresher:
                     continue
                 valid = True
                 read_wall = datetime.now(timezone.utc).timestamp()
+                if _late is not None:
+                    read_wall = min(read_wall, _late.late[2])  # what the graph can have seen
                 for oid, (value, bound, mark) in snapshot.items():
                     entry, row = rows[oid]
                     stored_at = _coerce_timestamp(row.last_updated)
@@ -5187,7 +5231,8 @@ class LiveBlendRefresher:
 
         The graph and copied input clocks are disposable. A separately selected
         DB clock may advance held_quotes only for inputs received AFTER this
-        read scope completes, and only while its caller still waits.
+        read scope completes, and only while its caller still waits or keeps
+        the read for a later serve.
         """
         token = _observation_read_timing.set(read.timing)
         try:
@@ -5195,14 +5240,19 @@ class LiveBlendRefresher:
                 read.graph = await self._read_groups(
                     session, event_ids, overlay_held=False,
                     stopped_waiting=lambda: not read.waiting,
+                    finish_unwaited=lambda: read.late is not None,
                     **({"clock_sample": clock[2]} if clock is not None else {}),
                 )
                 read.timing["graph_ready_ms"] = (_mono() - read.timing["started_s"]) * 1000
+            read.finished = True
             # Only normal context completion qualifies, never query or
-            # cleanup timeout/cancellation, nor a read its caller left. A late
-            # older read cannot replace a newer sample or clear its failure
-            # episode.
-            if clock is not None and read.waiting:
+            # cleanup timeout/cancellation, nor a read its caller left unkept.
+            # A kept read ran its statement to the end: its DB time bounds
+            # inputs that arrive from now on, as a waited read's does. Without
+            # it nothing samples while prices stay unchanged and every input
+            # carries the same frozen bound. A late older read cannot replace a
+            # newer sample or clear its failure episode.
+            if clock is not None and (read.waiting or read.late is not None):
                 clock_owner, clock_ordinal, clock_sample = clock
                 if (clock_sample and self.held_quotes is clock_owner
                         and not clock_owner._closed
@@ -5264,6 +5314,8 @@ class LiveBlendRefresher:
         if ceiling is not None:
             ceiling.cancel()
         self._detached_reads.discard(task)
+        if getattr(self, "_late_observation", None) is read and not read.finished:
+            self._late_observation = None  # nothing to serve
         if task.cancelled():
             if read.ceiling:
                 self.observation_read_stats["ceiling_cancelled"] += 1
@@ -5824,6 +5876,16 @@ class LiveBlendRefresher:
             logger.warning("live_blend_refresh[%s]: preview admission read unavailable", self.source,
                            exc_info=True)
             return None
+
+    def _preview_retirement_due(self, grouped) -> bool:
+        """Whether `_retire_terminal_preview_read` would retire an event here."""
+        from app.utils.blend_preview import PREVIEW_STATUSES
+
+        return any(
+            event_id in self.preview_events
+            and (event.status not in PREVIEW_STATUSES or event.completed_at is not None)
+            for event_id, (event, _group) in grouped.items()
+        )
 
     async def _retire_terminal_preview_read(self, grouped, ticket: int) -> None:
         from app.utils.blend_preview import PREVIEW_STATUSES, registry

@@ -77,19 +77,22 @@ async def test_deadline_skips_as_before_and_the_statement_ends_by_itself(monkeyp
     assert len(records) == 1 and isinstance(records[0].exc_info[1], TimeoutError)
     assert records[0].args[1]["query_completed"] is False
     assert records[0].args[2] == {"detached": 1, "finished": 0, "capped": 0,
-                                  "ceiling_cancelled": 0, "running": 1}
+                                  "ceiling_cancelled": 0, "served_late": 0,
+                                  "running": 1}
     assert r.preview_stats["publish_errors"] == 1
     assert len(r._detached_reads) == 1 and r._session_slots._value == 2
     release.set()
     await join_detached(r)
     # The statement finished and the scope exited normally: no cancellation
-    # reached the connection, and nothing after the statement ran.
-    assert state["exits"] == ["_ObservationReadAbandoned"]
+    # reached the connection. Its graph is kept for the next call, which
+    # serves it (test_observation_late_serve_10090.py); a live event needs no
+    # retirement, and none runs after its caller left.
+    assert state["exits"] == [None]
     assert state["executed"] == 1 and state["retired"] == 0
     assert not frames and not session.updates
     assert r._session_slots._value == 3 and not r._detached_reads
     assert r.observation_read_stats == {
-        "detached": 1, "finished": 1, "capped": 0, "ceiling_cancelled": 0,
+        "detached": 1, "finished": 1, "capped": 0, "ceiling_cancelled": 0, "served_late": 0,
     }
 
 
@@ -111,7 +114,7 @@ async def test_past_the_cap_no_second_read_starts(monkeypatch):
     assert state["executed"] == 1 and state["exits"] == []
     assert r._session_slots._value == 2
     assert r.observation_read_stats == {
-        "detached": 1, "finished": 0, "capped": 1, "ceiling_cancelled": 0,
+        "detached": 1, "finished": 0, "capped": 1, "ceiling_cancelled": 0, "served_late": 0,
     }
     release.set()
     await join_detached(r)
@@ -169,7 +172,7 @@ async def test_a_read_still_running_at_the_ceiling_is_cancelled(monkeypatch):
     assert state["exits"] == ["CancelledError"]
     assert r._session_slots._value == 3 and not r._detached_reads and not frames
     assert r.observation_read_stats == {
-        "detached": 1, "finished": 0, "capped": 0, "ceiling_cancelled": 1,
+        "detached": 1, "finished": 0, "capped": 0, "ceiling_cancelled": 1, "served_late": 0,
     }
 
 
@@ -192,7 +195,7 @@ async def test_a_retirement_in_flight_at_the_deadline_is_cancelled(monkeypatch):
     assert state["retired"] == 1 and state["exits"] == ["CancelledError"]
     assert not r._detached_reads and r._session_slots._value == 3 and not frames
     assert r.observation_read_stats == {
-        "detached": 0, "finished": 0, "capped": 0, "ceiling_cancelled": 0,
+        "detached": 0, "finished": 0, "capped": 0, "ceiling_cancelled": 0, "served_late": 0,
     }
 
 
