@@ -75,7 +75,13 @@ def score(trace):
                 for prior in closure[identity]:
                     if hi < by_id[prior]["at_ms"][0]:
                         raise ValueError("display precedes eligible input")
-                    seen.setdefault(prior, (lo, hi, identity))
+                    if prior in seen:
+                        first_lo, first_hi, via = seen[prior]
+                        # Sorted by hi: retain the earliest proven upper bound
+                        # and its witness, but overlapping records can widen lo.
+                        seen[prior] = (min(lo, first_lo), first_hi, via)
+                    else:
+                        seen[prior] = (lo, hi, identity)
         lower, upper, delays = [], [], []
         missing, coalesced = [], []
         within, over, uncertain = 0, 0, 0

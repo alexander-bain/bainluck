@@ -100,6 +100,17 @@ class ScoreControls(unittest.TestCase):
     def test_overlapping_uncertainty_does_not_claim_gain(self):
         self.assertEqual(decide(score(fixture()), score(fixture())), "no_improvement_demonstrated")
 
+    def test_first_display_uses_all_overlapping_bounds(self):
+        baseline, candidate = fixture(), fixture()
+        baseline["displays"] = [
+            {"surface": surface, "covers": ["a"], "at_ms": bounds}
+            for surface in ("headline", "chart") for bounds in ([100, 500], [200, 400])]
+        for d in candidate["displays"]:
+            d["at_ms"] = [120, 180]
+        result = score(baseline)
+        self.assertEqual(result["surfaces"]["headline"]["worst_delay_ms"], [100, 400])
+        self.assertEqual(decide(result, score(candidate)), "no_improvement_demonstrated")
+
     def test_truncated_capture_cannot_win(self):
         b, c = fixture(), fixture()
         c.update(window_ms=[0, 500], displays=[])
@@ -138,7 +149,7 @@ class EntryControls(unittest.TestCase):
             with patch.object(compare, "load_module") as loader:
                 with self.assertRaisesRegex(ValueError, "source drift"):
                     compare.run_existing(spec, root/"out")
-                loader.return_value.arm.assert_not_called()
+                loader.assert_not_called()
 
     def test_failed_arm_stops_pair_and_retains_pointer(self):
         with tempfile.TemporaryDirectory() as d:
@@ -153,8 +164,27 @@ class EntryControls(unittest.TestCase):
                     compare.run_existing(spec, root/"out")
                 self.assertEqual(loader.return_value.arm.call_count, 1)
                 self.assertEqual(loader.return_value.arm.call_args.kwargs["dnpl_sources"], "kalshi,polymarket")
+                self.assertEqual(loader.return_value.arm.call_args.kwargs["fixture"], "singleton")
             failure = compare.read(root/"out/INVALID.json")
             self.assertEqual(failure["spec"]["baseline"], str(run))
+            self.assertEqual(failure["completed_arms"], [])
+            self.assertEqual(failure["failed_arm"]["path"], str(run))
+            self.assertEqual(compare.read(root/"out/RUNS.json")["completed"], [])
+
+    def test_cleanup_exception_preserves_helpers_printed_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            spec = self.prepared_pair(root)
+            def failed_cleanup(*args, **kwargs):
+                print(root/"run-with-cleanup-error")
+                raise RuntimeError("cleanup failed")
+            with patch.object(compare, "load_module") as loader:
+                loader.return_value.arm.side_effect = failed_cleanup
+                with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+                    compare.run_existing(spec, root/"out")
+            failure = compare.read(root/"out/INVALID.json")
+            self.assertEqual(failure["completed_arms"], [])
+            self.assertIn("run-with-cleanup-error", Path(failure["failed_arm"]["stdout"]).read_text())
 
     def test_recorder_extension_is_passive_and_preserves_original(self):
         with tempfile.TemporaryDirectory() as d:
@@ -164,11 +194,39 @@ class EntryControls(unittest.TestCase):
             original = "for (const t of ['probability','folded_probability','preview']) listen(t);"
             (root/"observe.cjs").write_text(original)
             spec = {"helper": str(root/"warm_helper.py"), "helper_sha256": compare.digest(root/"warm_helper.py"),
-                    "lab_files": {"observe.cjs": compare.digest(root/"observe.cjs")}}
+                    "lab_files": {name: compare.digest(root/name) for name in
+                                  ("backend_lab.py", "proxy.py", "observe.cjs", "FIXTURE-INPUT.json")}}
             compare.stage_recorder(spec, root/"staged")
             self.assertEqual((root/"observe.cjs").read_text(), original)
             self.assertIn("'preview_v3'", (root/"staged/observe.cjs").read_text())
             self.assertEqual((root/"staged/backend_lab.py").read_text(), "retained")
+
+    def test_recorder_refuses_each_drifted_dependency_before_output(self):
+        for drift in ("backend_lab.py", "proxy.py", "observe.cjs", "FIXTURE-INPUT.json"):
+            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                names = ("backend_lab.py", "proxy.py", "observe.cjs", "FIXTURE-INPUT.json")
+                for name in ("warm_helper.py", *names):
+                    (root/name).write_text("['probability','folded_probability','preview']")
+                spec = {"helper": str(root/"warm_helper.py"), "helper_sha256": compare.digest(root/"warm_helper.py"),
+                        "lab_files": {name: compare.digest(root/name) for name in names}}
+                with (root/drift).open("a") as f:
+                    f.write("\n// unreviewed drift")
+                with self.assertRaisesRegex(ValueError, "dependency drift"):
+                    compare.stage_recorder(spec, root/"out")
+                self.assertFalse((root/"out").exists())
+
+    def test_render_failure_never_leaves_success_decision(self):
+        arm = {"source": {"backend_ref": "x", "frontend_build_source_sha": "x"},
+               "input_identity": [], "initial_values": {}, "score": score(fixture()),
+               "raw_input_hash": "x", "input_relative_ms": [0], "compute": None}
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)/"report"
+            with patch.object(compare, "admission_arm", return_value=arm), patch("view.render", side_effect=RuntimeError("render failed")):
+                with self.assertRaisesRegex(RuntimeError, "render failed"):
+                    compare.consume({"baseline": "b", "candidate": "c", "baseline_sha": "x", "candidate_sha": "x"}, out)
+            self.assertFalse((out/"comparison.json").exists())
+            self.assertEqual(compare.read(out/"INVALID.json")["reason"], "render failed")
 
     def test_never_overwrite_earned_result(self):
         with tempfile.TemporaryDirectory() as out:

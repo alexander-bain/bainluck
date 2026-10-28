@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Consume retained evidence or run the existing isolated #10669 arm helper."""
 import argparse
+from contextlib import redirect_stdout
 import hashlib
 import importlib.util
 import json
@@ -52,6 +53,8 @@ def admission_arm(path):
         raise ValueError("incomplete, failed, drifting or unclean arm: "+str(path))
     if config["requested"]["preview_sources"] != ["kalshi", "polymarket"]:
         raise ValueError("both DNPL sources must be ON")
+    if config["requested"]["fixture"] != "singleton":
+        raise ValueError("admission adapter requires the executed singleton fixture")
     rr, = receipt["runs"]
     if rr["kind"] != "admission-publication-stall" or rr["status"] != "inputs-complete":
         raise ValueError("this retained adapter requires the completed admission control")
@@ -144,7 +147,12 @@ def admission_arm(path):
     scorecard["target_stages"] = stages
     tracked = ["backend-receipt.json", "reader.jsonl", "SOURCE.json", "CONFIG.json", "RUN.json",
                "SOURCE-AFTER.json", "CLEANUP.json", "OBSERVATION-SCORE.json", "sample-boundaries.json"]
+    compute = None
+    if (path/"COMPARE-COMPUTE.json").exists():
+        compute = read(path/"COMPARE-COMPUTE.json")
+        tracked.append("COMPARE-COMPUTE.json")
     return {"path": str(path), "source": source, "trace": trace, "score": scorecard,
+            "compute": compute,
             "timeline": [{"t": x["wall"]-start, "hero": x["hero"], "paths": x.get("paths", []),
                           "headline": x.get("headline"), "observation": x.get("observedText")}
                          for x in dom if start-200 <= x["wall"] <= end+200],
@@ -175,14 +183,16 @@ def consume(spec, out):
                       "same_ordered_input_identity": True, "same_starting_source_values": True,
                       "literal_wire_timestamp_equality": b["raw_input_hash"] == c["raw_input_hash"],
                       "max_input_schedule_difference_ms": max(abs(x-y) for x, y in zip(b["input_relative_ms"], c["input_relative_ms"])),
-                      "compute": "sequential arms, same host and process layout; contemporaneous host-load samples absent",
+                      "compute": ("sequential arms, same host and process layout; per-arm load/CPU snapshots retained"
+                                  if b["compute"] and c["compute"] else
+                                  "sequential arms, same host and process layout; contemporaneous host-load samples absent"),
                       "limits": ["Historical arms rebased timestamps separately; NOT strict identical timestamped input proof.",
                                  "No rerun purchased to retrofit telemetry. Earned targeted comparison retained.",
                                  "Only one witness scored; whole-sample eligibility and cumulative debt remain unknown.",
                                  "Unrecorded stages are null, never zero. No production or installed-iPhone claim."]}}
-        write(out/"comparison.json", result)
         from view import render
         render(result, out)
+        write(out/"comparison.json", result)
         write(out/"SHA256SUMS.json", {p.name: digest(p) for p in out.iterdir() if p.is_file()})
         return result
     except Exception as e:
@@ -211,7 +221,6 @@ def run_existing(spec, out):
     for name, expected in spec["lab_files"].items():
         if digest(helper_path.parent/name) != expected:
             raise ValueError("lab dependency drift: "+name)
-    helper = load_module(helper_path, "existing_10669")
     result_spec = dict(spec)
     runs = []
     for arm in order:
@@ -223,19 +232,24 @@ def run_existing(spec, out):
             raise ValueError("prepared source drift")
     if digest(spec["transition_scorer"]) != spec["transition_scorer_sha256"]:
         raise ValueError("primary scorer drift")
+    helper = load_module(helper_path, "existing_10669")
     # Reserve output before execution, and retain completed arm paths on failure.
     # The helper owns process cleanup; never stop a process owned by another run.
     out = Path(out)
     out.mkdir(parents=True, exist_ok=False)
+    active = None
     try:
         for arm in order:
             prepared = Path(spec[arm+"_prepared"]).resolve()
             before = {"load": os.getloadavg(), "time": time.time(), "cpu_count": os.cpu_count()}
-            run = helper.arm(prepared, "compare-"+arm, "admission-publication-stall", 60,
-                             fixture="folded", dnpl="kalshi", dnpl_sources="kalshi,polymarket")
+            active = {"arm": arm, "path": None, "stdout": str(out/(arm+"-helper.log"))}
+            # The existing helper prints its run path even when cleanup raises.
+            # Preserve that output without changing the helper or its lifecycle.
+            with Path(active["stdout"]).open("w") as log, redirect_stdout(log):
+                run = helper.arm(prepared, "compare-"+arm, "admission-publication-stall", 60,
+                                 fixture="singleton", dnpl="kalshi", dnpl_sources="kalshi,polymarket")
+            active["path"] = str(run)
             result_spec[arm] = str(run)
-            runs.append(arm)
-            write(out/"RUNS.json", {"completed": runs, "spec": result_spec})
             write(Path(run)/"COMPARE-COMPUTE.json", {"before": before, "after_load": os.getloadavg()})
             if read(Path(run)/"RUN.json")["status"] != "READER_COMPLETE":
                 raise ValueError("arm did not complete: "+str(run))
@@ -243,10 +257,14 @@ def run_existing(spec, out):
             snapshots = [json.loads(line) for line in (Path(run)/"reader.jsonl").read_text().splitlines()
                          if json.loads(line).get("kind") == "dom"]
             write(Path(run)/"OBSERVATION-SCORE.json", scorer.score_run(Path(run), snapshots))
+            runs.append(arm)
+            active = None
+            write(out/"RUNS.json", {"completed": runs, "failed_arm": None, "spec": result_spec})
         return consume(result_spec, out/"report")
     except BaseException as exc:
+        write(out/"RUNS.json", {"completed": runs, "failed_arm": active, "spec": result_spec})
         write(out/"INVALID.json", {"decision": "experiment_invalid", "reason": str(exc),
-                                  "completed_arms": runs, "spec": result_spec})
+                                  "completed_arms": runs, "failed_arm": active, "spec": result_spec})
         raise
 
 
@@ -256,6 +274,12 @@ def stage_recorder(spec, out):
     out = Path(out).resolve()
     if digest(source/"warm_helper.py") != spec["helper_sha256"]:
         raise ValueError("helper drift")
+    required = {"backend_lab.py", "proxy.py", "observe.cjs", "FIXTURE-INPUT.json"}
+    if set(spec["lab_files"]) != required:
+        raise ValueError("recorder staging requires all four lab pins")
+    for name, expected in spec["lab_files"].items():
+        if digest(source/name) != expected:
+            raise ValueError("lab dependency drift: "+name)
     observer = (source/"observe.cjs").read_text()
     old = "['probability','folded_probability','preview']"
     new = "['probability','folded_probability','preview','preview_open_v3','preview_v3','reconcile','reconnect','heartbeat']"
