@@ -208,4 +208,22 @@ final class NBAScoringPresentation9483Tests: XCTestCase {
         XCTAssertEqual(tie.figure, "Tie")
         XCTAssertEqual(tie.unit, "")
     }
+
+    /// The compared values align on the line that carries the number: the last
+    /// line when a side leads it (nothing may follow it there), else the first.
+    func testTheAlignedLineIsTheOneCarryingTheNumber() throws {
+        let card = try liveCard()
+        let margin = withForecast(card, family: .margin, actual: -2, forecast: 2.5)
+        for value in [-2.0, 2.5] {
+            let parts = NBAScoringFigures9483.parts(margin, value)
+            XCTAssertTrue(NBAScoringFigures9483.numberEndsText(parts))
+            XCTAssertEqual(parts.unit, "")
+            XCTAssertFalse(parts.figure.contains(" "))
+        }
+        for (sample, value) in [(card, 210.5), (margin, 0)] {
+            let parts = NBAScoringFigures9483.parts(sample, value)
+            XCTAssertFalse(NBAScoringFigures9483.numberEndsText(parts))
+            XCTAssertEqual(parts.lead, "")
+        }
+    }
 }
