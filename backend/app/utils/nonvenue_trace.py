@@ -119,7 +119,9 @@ environment read per process, and every hook in `nonvenue_live_push` is a
 log lines. Armed, the only added SQL is the final read: one SAVEPOINT-wrapped
 SELECT per outer COMMIT that carries a traced observation (so at most one per
 SELECTED line, inside the line budget), none after STOP or for untraced
-events; ``final_reads`` in STOP counts them. Every method catches its own exceptions: evidence must never cost a
+events; ``final_reads`` in STOP counts them. A cancellation that lands inside
+that read prevents a COMMIT that would otherwise have been sent: the armed
+trace's one effect on the write path, counted as ``final_reads_interrupted``. Every method catches its own exceptions: evidence must never cost a
 price, a commit or a publication. No payloads beyond the probability bag,
 SQL parameters or credentials are recorded. Activation is owner-controlled
 (Root with the Integrator); this code performs none.
@@ -380,6 +382,7 @@ class NonvenueTrace(BoundedLogTrace):
         super().__init__(events, expiry, limit, run, wall, mono, emit)
         self.obs_seq = self.txn_seq = 0
         self.n_published = self.n_unsent = self.hook_errors = self.final_reads = 0
+        self.final_reads_interrupted = 0
         self.txns = {}  # id(outer transaction) -> (transaction, txn id)
         self.selected = {}  # obs -> identity: selected, its UPDATE not yet returned
         self.pending = {}  # id(frame) -> (frame, record): awaiting COMMIT/ROLLBACK
@@ -391,7 +394,8 @@ class NonvenueTrace(BoundedLogTrace):
                     awaiting_commit=len(self.pending),
                     awaiting_publication=len(self.ready),
                     send_errors=self.send_errors, hook_errors=self.hook_errors,
-                    final_reads=self.final_reads)
+                    final_reads=self.final_reads,
+                    final_reads_interrupted=self.final_reads_interrupted)
 
     def _discard(self):
         self.selected.clear()
@@ -577,7 +581,9 @@ class NonvenueTrace(BoundedLogTrace):
             self.hook_errors += 1
 
     def _establish(self, built, read):
-        """One read for every traced event of this COMMIT; never raises."""
+        """One read for every traced event of this COMMIT. An Exception costs
+        only the receipt; a cancellation inside the read is counted and
+        re-raised, and the COMMIT it precedes is never sent."""
         started = self.mono()
         try:
             self.final_reads += 1
@@ -586,6 +592,9 @@ class NonvenueTrace(BoundedLogTrace):
         except Exception as exc:
             self.hook_errors += 1  # the receipt says so; the COMMIT goes on
             rows, error = {}, _text(type(exc).__name__)
+        except BaseException:
+            self.final_reads_interrupted += 1  # its observation stays awaiting_commit
+            raise
         read_ms = round((self.mono() - started) * 1000, 3)
         for event, (final, expected) in built.items():
             final.update(_check(rows.get(event), expected, error), read_ms=read_ms,

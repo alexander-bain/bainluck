@@ -571,3 +571,38 @@ async def test_a_failed_final_read_costs_the_receipt_never_the_commit(
     assert final["error"] and "observed_rev" not in final
     (stop,) = stage(lines, "STOP")
     assert (stop["hook_errors"], stop["final_reads"]) == (1, 1)
+
+
+@pytest.mark.parametrize("armed", [False, True])
+async def test_a_cancel_inside_the_final_read_prevents_a_commit_and_is_counted(
+    pg_engine, sink, monkeypatch, armed
+):
+    """The read stands in as slow so a 0.2 s cancel lands inside it. Disarmed,
+    the same cancel arrives after COMMIT returned and the price is stored;
+    armed, the COMMIT is never sent, and STOP says why."""
+    import asyncio
+
+    from sqlalchemy import text
+
+    from app.utils import nonvenue_live_push as push
+
+    monkeypatch.setattr(push, "_committing_rows_query",
+                        lambda _ids: text("SELECT pg_sleep(0.5)"))
+    event_id = await _seed_event(pg_engine)
+    lines = arm([event_id]) if armed else None
+    timed_out = False
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        await write_nonvenue_probability(session, await session.get(Event, event_id),
+                                         "espn", 0.7)
+        try:
+            async with asyncio.timeout(0.2):
+                await session.commit()
+        except TimeoutError:
+            timed_out = True
+    stored = (await _stored(pg_engine, event_id)).get("espn", {}).get("value")
+    assert (timed_out, stored) == ((True, None) if armed else (False, 0.7))
+    if armed:
+        nt.nonvenue_trace()._stop("EXPIRED")
+        (stop,) = stage(lines, "STOP")
+        assert (stop["final_reads_interrupted"], stop["awaiting_commit"],
+                stop["hook_errors"]) == (1, 1, 0)

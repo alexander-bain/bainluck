@@ -598,9 +598,12 @@ def test_no_read_without_a_traced_event_an_active_trace_or_a_built_final(monkeyp
 
 def test_the_final_read_is_the_last_before_commit_hook_in_the_app():
     """The final read can only miss a write made AFTER it inside the same
-    transaction: pending ORM state (named ORM_WRITE_PENDING) or a later
-    ``before_commit`` listener. This pins that `nonvenue_live_push` registers
-    the only one in ``app/``; a second must answer whether it writes events."""
+    transaction: pending ORM state of that Event (named ORM_WRITE_PENDING), a
+    later ``before_commit`` listener, or a flush-time listener (session
+    ``before_flush``/``after_flush*`` or a mapper ``before_/after_`` insert,
+    update or delete) fired by ANY pending row's flush after the read. This
+    pins that `nonvenue_live_push`'s ``before_commit`` is the only one of
+    those in ``app/``; a new one must answer whether it writes events."""
     import pathlib
     import re as _re
 
@@ -608,6 +611,27 @@ def test_the_final_read_is_the_last_before_commit_hook_in_the_app():
     hooks = sorted(
         str(path.relative_to(app))
         for path in app.rglob("*.py")
-        if _re.search(r"""listen(?:s_for)?\([^)]*["']before_commit["']""", path.read_text())
+        if _re.search(r"""["'](before_commit|before_flush|after_flush|after_flush_postexec"""
+                      r"""|before_insert|after_insert|before_update|after_update"""
+                      r"""|before_delete|after_delete)["']""", path.read_text())
     )
     assert hooks == ["utils/nonvenue_live_push.py"]
+
+
+def test_a_cancelled_final_read_is_counted_and_reraised():
+    """A cancellation inside the read means the COMMIT is never sent: the one
+    armed effect on the write path. It is counted and never swallowed."""
+    import asyncio
+
+    trace, lines = make()
+    f = frame()
+    write(trace, f)
+
+    def cancelled(ids):
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        trace.commit_started([entry(f)], sent, read=cancelled)
+    assert (trace.final_reads, trace.final_reads_interrupted, trace.hook_errors) == (1, 1, 0)
+    trace._stop("EXPIRED")
+    assert (lines[-1]["final_reads_interrupted"], lines[-1]["awaiting_commit"]) == (1, 1)
