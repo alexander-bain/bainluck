@@ -358,10 +358,19 @@ extension BlendPreview {
     /// and the existing singleton/folded rules decide (`readerAfter`).
     static func readerAfterV3(_ reader: BlendPreviewReader, _ envelope: PreviewEnvelopeV3,
                               eventId: Int, now: TimeInterval) -> BlendPreviewReader {
+        readerAfterV3(reader, envelope, frame: envelope.frame(), eventId: eventId, now: now)
+    }
+
+    /// The same, for a caller that already decoded `envelope.frame()` (the
+    /// page, which names it in its receipt mark): the frame is decoded once,
+    /// and still read only after the domain and session match.
+    static func readerAfterV3(_ reader: BlendPreviewReader, _ envelope: PreviewEnvelopeV3,
+                              frame decoded: @autoclosure () -> BlendPreviewFrame?,
+                              eventId: Int, now: TimeInterval) -> BlendPreviewReader {
         guard envelope.members == nil, !reader.evidenceSaturated,
               let authority = reader.v3Authority, authority == envelope.authority,
               let session = reader.v3Session, session == envelope.session,
-              let members = reader.v3Members, let frame = envelope.frame(), frame.eventId == eventId else {
+              let members = reader.v3Members, let frame = decoded(), frame.eventId == eventId else {
             return reader
         }
         if members.count == 1 {

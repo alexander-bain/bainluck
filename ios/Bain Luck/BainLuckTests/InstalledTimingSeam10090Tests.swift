@@ -360,4 +360,67 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
         XCTAssertEqual(names(marks).filter { $0 != .viewHeadlineUpdated }, [],
                        "the chart had no pushed point to fall back to, so it names none")
     }
+
+    /// A folded v2 preview for this page on `session`: `p` observed at `at`,
+    /// the page and its sibling at the fold's committed base.
+    private static func foldedPreviewFrame(session: String, seq: Int, p: Double, at: String) -> String {
+        #"{"event_id":4242,"p":\#(p),"p_away":\#(1 - p),"sport":"basketball_nba","status":"live","display_observed_at":"\#(at)","preview":{"kind":"blend","folded_version":2,"fold_session":"\#(session)","fold_seq":\#(seq),"ttl_ms":60000,"base_fold_revision":\#(folded),"origin_authority":{"4242":{"epoch":2,"seq":\#(seq),"state":"pending","ttl_ms":60000}}}}"#
+    }
+
+    /// The identity a folded v2 preview holds: no epoch of its own, its
+    /// `fold_seq`, the page row's revision, its fold session and complete base.
+    private func foldedBasis(_ session: String, seq: Int) -> String {
+        "v3:1/\(Self.namespace)/\(session)/e0/s\(seq)/b20/f\(session)/m4242=20;999=5"
+    }
+
+    /// Folded v2 frames carry no epoch or sequence of their own: receipt,
+    /// adoption and both view marks must still name each one by its
+    /// `fold_seq` and complete base, so two sequences printing the SAME value
+    /// stay two identities that join stage to stage — and a replay or another
+    /// session's frame is a receipt that joins nothing.
+    func testTwoFoldedV2PreviewsOfOneValueKeepTheirOwnIdentityFromReceiptToHeroAndChart() async throws {
+        let (_, handle, vm) = await loaded(try page(revision: Self.folded))
+        defer { vm.stopRefresh() }
+        let session = V3PageWire.nextSession()
+        handle.fire("preview_open_v3", V3PageWire.open(4242, members: [4242, 999], session: session))
+        var shown = vm.timingPresented(try XCTUnwrap(vm.event))
+        XCTAssertEqual(marks, [], "an open shows nothing")
+        let at = "2026-09-25T17:00:05Z", atStamp = LiveTimingSeam.stamp(try XCTUnwrap(at.asDate))
+
+        for seq in [1, 2] {
+            marks = []
+            handle.fire("preview_v3", V3PageWire.preview(
+                Self.foldedPreviewFrame(session: session, seq: seq, p: 0.7, at: at), eventId: 4242, session: session))
+            let next = vm.timingPresented(try XCTUnwrap(vm.event))
+            LiveTimingSeam.viewUpdated(from: shown, to: next)
+            shown = next
+            let id = foldedBasis(session, seq: seq)
+            XCTAssertEqual(marks, [
+                .init(name: .previewReceived, eventId: 4242, path: "preview", basis: id, stamp: "-",
+                      probability: "0.7", observed: atStamp),
+                .init(name: .modelPreviewAdopted, eventId: 4242, path: "preview", basis: id, stamp: "-",
+                      probability: "0.7", observed: atStamp),
+                .init(name: .viewHeadlineUpdated, eventId: 4242, path: "view", basis: id, stamp: "-",
+                      probability: "0.7", observed: atStamp),
+                .init(name: .viewChartUpdated, eventId: 4242, path: "view", basis: id, stamp: atStamp,
+                      probability: "0.7"),
+            ], "fold_seq \(seq): one identity from receipt to the hero and the chart")
+        }
+        XCTAssertNotEqual(foldedBasis(session, seq: 1), foldedBasis(session, seq: 2))
+
+        // A replay of fold_seq 1 and another session's frame: receipts under
+        // their own names, nothing adopted, nothing printed moves.
+        marks = []
+        let other = V3PageWire.nextSession()
+        handle.fire("preview_v3", V3PageWire.preview(
+            Self.foldedPreviewFrame(session: session, seq: 1, p: 0.9, at: at), eventId: 4242, session: session))
+        handle.fire("preview_v3", V3PageWire.preview(
+            Self.foldedPreviewFrame(session: other, seq: 3, p: 0.8, at: at), eventId: 4242, session: other))
+        let next = vm.timingPresented(try XCTUnwrap(vm.event))
+        LiveTimingSeam.viewUpdated(from: shown, to: next)
+        XCTAssertEqual(names(marks), [.previewReceived, .previewReceived])
+        XCTAssertEqual(marks.map(\.basis), [foldedBasis(session, seq: 1), foldedBasis(other, seq: 3)])
+        XCTAssertEqual(next, shown, "a refused preview changes nothing the page prints")
+        XCTAssertEqual(next.headlineBasis, foldedBasis(session, seq: 2))
+    }
 }

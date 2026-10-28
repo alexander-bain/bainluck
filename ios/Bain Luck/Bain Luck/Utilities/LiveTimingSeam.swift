@@ -41,7 +41,9 @@ import os
 enum LiveTimingSeam {
     /// One emitted mark. `basis` is `rev:<row>=<n>;…` (rows sorted), else
     /// `clock:<source updated_at>`, else `none`; `null` for an explicit null
-    /// folded result; a preview's `v3:<incarnation>/<namespace>/<session>/e<epoch>/s<seq>/b<base_rev>`.
+    /// folded result; a preview's `v3:<incarnation>/<namespace>/<session>/e<epoch>/s<seq>/b<base_rev>`,
+    /// which a folded preview extends with `/o<origin>`, `/f<fold_session>` and
+    /// `/m<row>=<rev>;…` (`previewBasis`).
     /// `stamp` is the exact reference-date Double bit pattern or `-`: the chart
     /// edge on chart marks. `probability` is the home probability the mark
     /// speaks for, or `-`; `observed` is its source observation clock as a
@@ -72,8 +74,8 @@ enum LiveTimingSeam {
 
     private static let signposter = OSSignposter(subsystem: "com.bainluck", category: "liveTiming")
 
-    /// Whether any mark would be seen. Work done only to build a mark (a
-    /// preview's second decode, the view's comparison input) waits on this.
+    /// Whether any mark would be seen. Work done only to build a mark (the
+    /// view's comparison input) waits on this.
     /// The `liveTiming` signposter is ENABLED by default (it is not a
     /// `.dynamicTracing` category), so on an ordinary build this is true and
     /// that work runs on every update; only a log configuration that disables
@@ -105,18 +107,47 @@ enum LiveTimingSeam {
 
     nonisolated static func probability(_ p: Double?) -> String { p.map { String($0) } ?? "-" }
 
-    /// A v3 preview's authority identity: domain, session, then the frame's
-    /// own epoch, sequence and committed base. A part the message lacks is `-`.
+    /// A v3 preview's identity: domain and session, then the epoch, sequence
+    /// and page-row base the reader holds it under. A folded preview adds its
+    /// ledger origin (v1), its `fold_session` (v2) and its COMPLETE base, so
+    /// two folds that differ only in a sibling row never share a name. A part
+    /// the message lacks is `-`; a singleton's name has no folded parts.
     nonisolated static func previewBasis(authority: PreviewAuthorityV3?, session: String?,
-                                         epoch: Int, seq: Int, baseRev: Int?) -> String {
-        "v3:\(authority.map { String($0.incarnation) } ?? "-")/\(authority?.namespace ?? "-")/\(session ?? "-")"
+                                         epoch: Int, seq: Int, baseRev: Int?, origin: Int? = nil,
+                                         foldSession: String? = nil, base: FoldRevision? = nil) -> String {
+        var name = "v3:\(authority.map { String($0.incarnation) } ?? "-")/\(authority?.namespace ?? "-")/\(session ?? "-")"
             + "/e\(epoch)/s\(seq)/b\(baseRev.map(String.init) ?? "-")"
+        if let origin { name += "/o\(origin)" }
+        if let foldSession { name += "/f\(foldSession)" }
+        if let base {
+            name += "/m" + base.rows.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ";")
+        }
+        return name
     }
 
-    /// The identity of the preview `reader` holds.
+    /// The identity of a received frame: the one the reader would hold it
+    /// under. Folded v2 has no epoch or sequence of its own (`BlendPreviewFrame`
+    /// sets both to 0); `readerAfterV2` holds it at epoch 0, sequence
+    /// `fold_seq`, on the page row's revision in its base — so its receipt is
+    /// named the same way, and the adoption and view marks join it exactly.
+    nonisolated static func previewBasis(of frame: BlendPreviewFrame, authority: PreviewAuthorityV3?,
+                                         session: String?) -> String {
+        let v2 = frame.foldedVersion == 2
+        return previewBasis(authority: authority, session: session, epoch: v2 ? 0 : frame.epoch,
+                            seq: v2 ? frame.foldSeq ?? frame.seq : frame.seq,
+                            baseRev: v2 ? frame.baseFoldRevision?.rows[String(frame.eventId)] : frame.baseRev,
+                            origin: frame.originEventId, foldSession: frame.foldSession, base: frame.baseFoldRevision)
+    }
+
+    /// The identity of the preview `reader` holds. A held fold with no origin
+    /// is v2's: its session is the reader's `foldSession`, which every frame
+    /// it accepted carried (`readerAfterV2`) and which no session change
+    /// outlives (`readerReset`).
     nonisolated static func previewBasis(of held: BlendPreviewState, in reader: BlendPreviewReader) -> String {
         previewBasis(authority: reader.v3Authority, session: reader.v3Session,
-                     epoch: held.epoch, seq: held.seq, baseRev: held.baseRev)
+                     epoch: held.epoch, seq: held.seq, baseRev: held.baseRev, origin: held.originEventId,
+                     foldSession: held.baseFoldRevision != nil && held.originEventId == nil ? reader.foldSession : nil,
+                     base: held.baseFoldRevision)
     }
 
     // MARK: - Marks
@@ -130,13 +161,13 @@ enum LiveTimingSeam {
     }
 
     /// A `preview_v3` this page's envelope check accepted, before its reader
-    /// decides. Its frame is decoded a second time for the mark (`isRecording`).
-    static func previewReceived(_ envelope: PreviewEnvelopeV3, eventId: Int) {
+    /// decides. `frame` is the envelope's frame as decoded once for the
+    /// reader too (`receivePreviewV3`), never a second decode.
+    static func previewReceived(_ envelope: PreviewEnvelopeV3, frame: BlendPreviewFrame?, eventId: Int) {
         guard isRecording else { return }
-        let frame = envelope.frame()
         emit(Mark(name: .previewReceived, eventId: eventId, path: "preview",
-                  basis: frame.map { previewBasis(authority: envelope.authority, session: envelope.session,
-                                                  epoch: $0.epoch, seq: $0.seq, baseRev: $0.baseRev) } ?? "none",
+                  basis: frame.map { previewBasis(of: $0, authority: envelope.authority, session: envelope.session) }
+                    ?? "none",
                   stamp: "-", probability: probability(frame?.p), observed: stamp(frame?.displayObservedAt)))
     }
 
@@ -187,19 +218,18 @@ enum LiveTimingSeam {
 
     /// `committed` is the page's event; `headline` and `observed` what its hero
     /// prints (`headline(event)`, `displayedProbabilityObservedAt(event)`);
-    /// `chart` what its chart draws (`chartFrames(event)`). `preview` is the
-    /// identity of the preview the reader holds; it names the headline only
-    /// when the hero prints it, and the chart only when the chart's end is
-    /// its projection.
+    /// `chartEnd` the last point its chart draws (`chartFrames(event)`), and
+    /// `projected` whether that point is the preview's projection. `preview`
+    /// is the identity of the displayed preview, nil when the hero prints
+    /// committed truth; it names the chart only when the chart's end is its
+    /// projection.
     nonisolated static func presented(committed: EventDetail, headline: EventDetail, observed: Date?,
-                                      chart: [LiveBlendPoint], committedChart: [LiveBlendPoint],
-                                      preview: String?, showsPreview: Bool) -> Presented {
-        let projected = showsPreview && chart.count > committedChart.count
-        return Presented(eventId: committed.id,
-                         headlineBasis: showsPreview ? preview ?? "none" : headlineBasis(of: committed),
-                         probability: headline.currentOdds?.homeProbability, observed: observed,
-                         chartBasis: projected ? preview ?? "none" : "-",
-                         chartEdge: chart.last?.date, chartProbability: chart.last?.homeProbability)
+                                      chartEnd: LiveBlendPoint?, projected: Bool, preview: String?) -> Presented {
+        Presented(eventId: committed.id,
+                  headlineBasis: preview ?? headlineBasis(of: committed),
+                  probability: headline.currentOdds?.homeProbability, observed: observed,
+                  chartBasis: projected ? preview ?? "none" : "-",
+                  chartEdge: chartEnd?.date, chartProbability: chartEnd?.homeProbability)
     }
 
     static func viewUpdated(from old: Presented, to new: Presented) {
