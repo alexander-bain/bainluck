@@ -163,7 +163,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
                                      "\(name): \(all)")
         XCTAssertTrue(sameRow(away, awayName), "\(name): 17 left its name's row — \(all)")
         XCTAssertTrue(sameRow(home, homeName), "\(name): 23 left its name's row — \(all)")
-        let league = try XCTUnwrap(read.first { tokens($0.text).contains("NFL") }, "\(name): \(all)")
+        let league = try XCTUnwrap(read.first { badgeTokens($0).contains("NFL") }, "\(name): \(all)")
         let status = try XCTUnwrap(read.first { badgeTokens($0).contains("FINAL") }, "\(name): \(all)")
         XCTAssertTrue(sameRow(league, status), "\(name): league and FINAL no longer share the top row — \(all)")
         XCTAssertTrue(read.contains { $0.text.contains("Projection") }, "\(name): forecast line gone — \(all)")
@@ -197,7 +197,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         let name = "sports-nfl-393-large-hosted-pill-edge"
         let read = try sportsLines(try served(14780563), width: 393, size: .large, name: name)
         let all = describe(read)
-        let league = try XCTUnwrap(read.first { tokens($0.text).contains("NFL") }, "\(name): \(all)")
+        let league = try XCTUnwrap(read.first { badgeTokens($0).contains("NFL") }, "\(name): \(all)")
         let row = leagueAndBadgeBox(league, in: read)
         let hosted = Line(text: hostedText, box: row, frame: league.frame)
         print("Finished card 11325 pill edge: local top row \(describe(read.filter { sameRow($0, league) })), "
@@ -349,7 +349,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             let name = "discover-nfl-\(Int(width))-ax5"
             let read = try discoverLines(try served(14780563), width: width, size: .accessibility5, name: name)
             let all = describe(read)
-            let label = try XCTUnwrap(read.first { $0.text.contains("Projection") },
+            let label = try XCTUnwrap(read.first(where: isProjection),
                                       "\(name): the forecast line is gone — \(all)")
             // Walk up from the forecast label: the lines directly above it must
             // read the whole title, with nothing elided, and nothing else.
@@ -639,22 +639,39 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         return String(parts[1])
     }
 
+    /// At AX5 the lowercase "j" of "Projection" curves under the "o" before it,
+    /// and Vision can read the pair as "oi" ("Proiection"). The line counts as
+    /// "Projection" only when its ink shows the "j" descender after "Pr" and
+    /// before "ection", dropping well below the baseline of the letters after
+    /// it; a real "i" ("Proiection") has no descender and stays rejected.
+    private func isProjection(_ line: Line) -> Bool {
+        if line.text.contains("Projection") { return true }
+        guard line.text.contains("Proiection") else { return false }
+        let ink = line.frame.inkClusters(in: line.box)
+        guard ink.count >= 8 else { return false }
+        let baseline = ink.suffix(5).map(\.maxY).max() ?? line.box.maxY
+        let jBottom = ink.dropFirst(2).dropLast(5).map(\.maxY).max() ?? baseline
+        return jBottom - baseline >= line.box.height * 0.12
+    }
+
     /// Marks a pill's rounded or straight edge can be read as.
     private static let pillEdgeMarks: Set<Character> = ["(", "[", "{", "|"]
 
     /// `tokens`, with FINAL's pill edge settled from the frame. Hosted Xcode 27
     /// (Watch MVP run 39990600534, iPhone compatibility) read the Large card's
-    /// top row as "NFL (FINAL": nothing is drawn between "NFL" and "FINAL" —
-    /// the "(" is the left edge of FINAL's capsule, whose fill (≈240) is not
-    /// ink. A token that is ONE edge mark glued to a whole "FINAL" counts as
-    /// "FINAL" only when the line, read again from its ink alone, has exactly
-    /// the line's own tokens with that mark gone. A bracket actually drawn is
-    /// ink, survives the re-read, and the token stays as read; so does any
-    /// fragment ("(FIN"), and a row with no FINAL ink.
+    /// top row as "NFL (FINAL", and iOS 26.5 read it fused across the pill edge
+    /// as "NFLFINAL": nothing is drawn between "NFL" and "FINAL" — the pill's
+    /// fill (≈240) is not ink. A token that is ONE edge mark glued to a whole
+    /// "FINAL", or "NFL" fused with "FINAL", settles only when the line, read
+    /// again from its ink alone, has those exact separate tokens. A bracket
+    /// actually drawn is ink, survives the re-read, and the token stays as
+    /// read; so does any fragment ("(FIN"), and a row with no FINAL ink.
     private func badgeTokens(_ line: Line) -> [String] {
         let read = tokens(line.text)
-        let settled = read.map { t in
-            Self.pillEdgeMarks.contains(t.first ?? " ") && t.dropFirst() == "FINAL" ? "FINAL" : t
+        let settled = read.flatMap { t -> [String] in
+            if t == "NFLFINAL" { return ["NFL", "FINAL"] }
+            if Self.pillEdgeMarks.contains(t.first ?? " ") && t.dropFirst() == "FINAL" { return ["FINAL"] }
+            return [t]
         }
         guard settled != read, let ink = inkText(line), tokens(ink) == settled else { return read }
         return settled
@@ -662,12 +679,25 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
 
     /// `line` read again from its ink alone: Vision's lines inside its box,
     /// left to right, joined — the pill gone, its 12pt of padding and spacing
-    /// can read as two lines on one row. Nil if none, or one sits off the row.
+    /// can read as two lines on one row, or if Vision still fuses "NFLFINAL"
+    /// across the blank gap (`>= crestGap` between 3 league clusters and 5
+    /// badge clusters), read on either side of that blank gap. Nil if none,
+    /// or one sits off the row.
     private func inkText(_ line: Line) -> String? {
         let b = line.box, pad = b.height * 0.15
-        guard let reread = try? line.frame.recognizeInk(in: b.insetBy(dx: -pad, dy: -pad)), !reread.isEmpty,
+        let box = b.insetBy(dx: -pad, dy: -pad)
+        guard let reread = try? line.frame.recognizeInk(in: box), !reread.isEmpty,
               reread.allSatisfy({ $0.box.midY >= b.minY && $0.box.midY <= b.maxY }) else { return nil }
-        return reread.sorted { $0.box.minX < $1.box.minX }.map(\.text).joined(separator: " ")
+        let joined = reread.sorted { $0.box.minX < $1.box.minX }.map(\.text).joined(separator: " ")
+        guard joined == "NFLFINAL" else { return joined }
+        let ink = line.frame.inkClusters(in: b)
+        guard let gap = ink.indices.dropFirst().first(where: { ink[$0].minX - ink[$0 - 1].maxX >= Self.crestGap }),
+              gap == 3, ink.count - gap == 5 else { return joined }
+        let cut = (ink[gap - 1].maxX + ink[gap].minX) / 2
+        guard let left = try? line.frame.recognizeInk(in: CGRect(x: box.minX, y: box.minY, width: cut - box.minX, height: box.height)),
+              let right = try? line.frame.recognizeInk(in: CGRect(x: cut, y: box.minY, width: box.maxX - cut, height: box.height)),
+              left.count == 1, right.count == 1 else { return joined }
+        return "\(left[0].text) \(right[0].text)"
     }
 
     // MARK: - Fixture

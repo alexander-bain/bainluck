@@ -177,7 +177,7 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
         } while Date() < until
     }
 
-    private struct Line { let text: String; let box: CGRect }
+    private struct Line { let text: String; let box: CGRect; var frame: CGImage? = nil; var bounds: CGRect = .zero }
 
     /// The window's pixels, read by Vision; boxes in points, origin top-left.
     private func lines(_ host: UIViewController, name: String) throws -> [Line] {
@@ -622,7 +622,8 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
                 let b = o.boundingBox
                 return Line(text: c.string, box: CGRect(x: band.minX + b.minX * band.width,
                                                         y: band.minY + (1 - b.maxY) * band.height,
-                                                        width: b.width * band.width, height: b.height * band.height))
+                                                        width: b.width * band.width, height: b.height * band.height),
+                            frame: cg, bounds: bounds)
             }
         }
     }
@@ -970,7 +971,7 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             let all = read.map { "\($0.text)@\(Int($0.box.minX)),\(Int($0.box.minY))" }.joined(separator: " | ")
             XCTAssertEqual(state.openCardID, deck[0].id, "\(name): the reader left the card it was opened on")
             // No line ends in a break: "Comman-", "PROJECT-".
-            XCTAssertFalse(read.contains { $0.text.trimmingCharacters(in: .whitespaces).hasSuffix("-") },
+            XCTAssertFalse(read.contains { endsInWordBreak($0, in: read) },
                            "\(name): a word broke at a line end — \(all)")
             // The match line starts on the whole name, at the margin the rule gives.
             let match = try XCTUnwrap(read.first { $0.text.contains("Comman") }, "\(name): no match line — \(all)")
@@ -1086,13 +1087,89 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             // the digits and the count are still the open card's "1 of 2".
             // After the band's asserts, so an unrelated footer read cannot
             // hide a band failure.
-            let count = try XCTUnwrap(read.last { $0.text.range(of: #"(?<![0-9])1\s*of\s*2(?![0-9])"#,
-                                                                options: .regularExpression) != nil },
+            let count = try XCTUnwrap(read.last(where: isFooterOneOfTwo),
                                       "\(name): no footer count — \(all)")
             XCTAssertGreaterThanOrEqual(count.box.minY - read[kicker].box.minY, 160,
                                         "\(name): the card has no room to read — \(all)")
             XCTAssertEqual(state.openCardID, deck[0].id, "\(name): the reader left the card it was opened on")
         }
+    }
+
+    /// Whether `line` is a word broken with a trailing hyphen ("Comman-",
+    /// "PROJECT-"), including a hyphen Vision split into a box of its own at
+    /// the end of a word's row. A lone "-" with no letters on its row (the
+    /// footer's 4pt page-indicator capsule at 320/Large) is not a broken word.
+    private func endsInWordBreak(_ line: Line, in read: [Line]) -> Bool {
+        let trimmed = line.text.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasSuffix("-") else { return false }
+        if trimmed.contains(where: \.isLetter) { return true }
+        return read.contains { other in
+            other.text.contains(where: \.isLetter)
+                && abs(other.box.midY - line.box.midY) <= max(other.box.height, line.box.height) * 0.75
+                && other.box.maxX >= line.box.minX - 16 && other.box.maxX <= line.box.minX + 12
+        }
+    }
+
+    /// Whether `line` is the reader's "1 of 2" footer count. Vision may drop
+    /// the spaces ("1of2"), or at 320/AX5 fuse the left chevron and read the
+    /// lowercase "o" as "0" ("< 10f2"). The "0" reading counts only when the
+    /// centred footer ink between the chevrons is four complete glyphs ("1",
+    /// "o", "f", "2") separated by word spaces on either side of "of", with
+    /// the second glyph at lowercase x-height rather than digit height.
+    private func isFooterOneOfTwo(_ line: Line) -> Bool {
+        if line.text.range(of: #"(?<![0-9])1\s*of\s*2(?![0-9])"#, options: .regularExpression) != nil {
+            return true
+        }
+        guard line.text.range(of: #"(?<![0-9])1\s*0\s*f\s*2(?![0-9])"#, options: .regularExpression) != nil,
+              let cg = line.frame, line.bounds.width > 0 else { return false }
+        let span = CGRect(x: max(line.box.minX, line.bounds.width * 0.2), y: line.box.minY,
+                          width: min(line.box.maxX, line.bounds.width * 0.8) - max(line.box.minX, line.bounds.width * 0.2),
+                          height: line.box.height)
+        let ink = Self.inkClusters(in: span, cg: cg, bounds: line.bounds)
+        guard ink.count == 4 else { return false }
+        let gap01 = ink[1].minX - ink[0].maxX, gap12 = ink[2].minX - ink[1].maxX, gap23 = ink[3].minX - ink[2].maxX
+        let baselineSpread = (ink.map(\.maxY).max() ?? 0) - (ink.map(\.maxY).min() ?? 0)
+        return gap01 >= max(8, gap12 * 3) && gap23 >= max(8, gap12 * 3)
+            && ink[0].height >= line.box.height * 0.75 && ink[2].height >= line.box.height * 0.75
+            && ink[3].height >= line.box.height * 0.75 && ink[0].width < ink[3].width * 0.8
+            && (0.65...0.85).contains(ink[1].height / ink[0].height)
+            && ink[1].minY - ink[0].minY >= ink[0].height * 0.15
+            && baselineSpread <= 2.5
+    }
+
+    private static func inkClusters(in rect: CGRect, cg: CGImage, bounds: CGRect) -> [CGRect] {
+        let w = cg.width, h = cg.height, s = CGFloat(w) / bounds.width
+        var rgba = [UInt8](repeating: 0, count: w * h * 4)
+        let ok = rgba.withUnsafeMutableBytes { buf -> Bool in
+            guard let ctx = CGContext(data: buf.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                                      bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard ok else { return [] }
+        let luma = (0..<(w * h)).map { i in
+            UInt8((299 * Int(rgba[4 * i]) + 587 * Int(rgba[4 * i + 1]) + 114 * Int(rgba[4 * i + 2])) / 1000)
+        }
+        let x0 = max(0, Int((rect.minX * s).rounded(.down))), x1 = min(w, Int((rect.maxX * s).rounded(.up)))
+        let y0 = max(0, Int((rect.minY * s).rounded(.down))), y1 = min(h, Int((rect.maxY * s).rounded(.up)))
+        guard x0 < x1, y0 < y1 else { return [] }
+        var clusters: [CGRect] = [], start: Int?, top = Int.max, bottom = Int.min
+        for x in x0...x1 {
+            var inked = false
+            if x < x1 {
+                for y in y0..<y1 where luma[y * w + x] < 200 { inked = true; top = min(top, y); bottom = max(bottom, y) }
+            }
+            if inked, start == nil { start = x }
+            if !inked, let from = start {
+                clusters.append(CGRect(x: CGFloat(from) / s, y: CGFloat(top) / s,
+                                       width: CGFloat(x - from) / s, height: CGFloat(bottom - top + 1) / s))
+                start = nil; top = .max; bottom = .min
+            }
+        }
+        return clusters
     }
 
     /// The chances band: a vertical scroller with more to show that sits

@@ -63,11 +63,114 @@ final class AForecastFigureIsReadWhole9483Tests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("figure-read-whole-\(name).png")
         try XCTUnwrap(image.pngData()).write(to: url)
         print("Figure read whole rendered evidence: \(url.path)")
+        let cg = try XCTUnwrap(image.cgImage)
+        let bounds = host.view.bounds
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([request])
-        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        try VNImageRequestHandler(cgImage: cg).perform([request])
+        return (request.results ?? []).compactMap { o in
+            o.topCandidates(1).first.map { c in
+                let b = o.boundingBox
+                let box = CGRect(x: b.minX * bounds.width, y: (1 - b.maxY) * bounds.height,
+                                 width: b.width * bounds.width, height: b.height * bounds.height)
+                return settledTileLine(c.string, box: box, in: cg, bounds: bounds)
+            }
+        }
+    }
+
+    /// In SF Pro `.black` with `usesLanguageCorrection = false`, iOS 26.5 Vision
+    /// can emit Cyrillic homoglyphs for the summary tiles' uppercase "O"/"C"
+    /// ("\u{041E}KC" / "\u{041E}K\u{0421}") and digit "3" ("DEN by \u{0417}").
+    /// Each is settled only when the rendered ink inside `box` confirms the
+    /// complete Latin/digit glyph geometry on screen.
+    private func settledTileLine(_ text: String, box: CGRect, in cg: CGImage, bounds: CGRect) -> String {
+        if text == "DEN by \u{0417}" {
+            let ink = Self.inkClusters(in: box, cg: cg, bounds: bounds)
+            guard let first = ink.first, let last = ink.last, ink.count >= 5,
+                  last.height >= first.height * 0.85,
+                  (0.70...0.90).contains(last.width / last.height),
+                  Self.isDigitThreeInk(in: last, cg: cg, bounds: bounds) else { return text }
+            return "DEN by 3"
+        }
+        if text == "\u{041E}KC by about 2" || text == "\u{041E}K\u{0421} by about 2" {
+            let ink = Self.inkClusters(in: box, cg: cg, bounds: bounds)
+            guard let first = ink.first, let last = ink.last,
+                  let wordGap = ink.indices.dropFirst().first(where: { ink[$0].minX - ink[$0 - 1].maxX >= 2.5 }),
+                  first.width / first.height >= 0.92,
+                  (2.70...3.10).contains((ink[wordGap - 1].maxX - first.minX) / first.height),
+                  last.height >= first.height * 0.85,
+                  (0.70...0.90).contains(last.width / last.height) else { return text }
+            return "OKC by about 2"
+        }
+        return text
+    }
+
+    private static func inkClusters(in rect: CGRect, cg: CGImage, bounds: CGRect) -> [CGRect] {
+        let w = cg.width, h = cg.height, s = CGFloat(w) / bounds.width
+        let luma = lumaBytes(cg)
+        guard luma.count == w * h else { return [] }
+        let x0 = max(0, Int((rect.minX * s).rounded(.down))), x1 = min(w, Int((rect.maxX * s).rounded(.up)))
+        let y0 = max(0, Int((rect.minY * s).rounded(.down))), y1 = min(h, Int((rect.maxY * s).rounded(.up)))
+        guard x0 < x1, y0 < y1 else { return [] }
+        var clusters: [CGRect] = [], start: Int?, top = Int.max, bottom = Int.min
+        for x in x0...x1 {
+            var inked = false
+            if x < x1 {
+                for y in y0..<y1 where luma[y * w + x] < 120 { inked = true; top = min(top, y); bottom = max(bottom, y) }
+            }
+            if inked, start == nil { start = x }
+            if !inked, let from = start {
+                clusters.append(CGRect(x: CGFloat(from) / s, y: CGFloat(top) / s,
+                                       width: CGFloat(x - from) / s, height: CGFloat(bottom - top + 1) / s))
+                start = nil; top = .max; bottom = .min
+            }
+        }
+        return clusters
+    }
+
+    /// Digit "3" in SF Pro `.black`: solid right bowls across all 5 vertical
+    /// bands, top and bottom left terminals, and a left opening with the inner
+    /// middle waist bar (`L[2]` in 0.20...0.40, `L[3] < 0.50`).
+    private static func isDigitThreeInk(in cluster: CGRect, cg: CGImage, bounds: CGRect) -> Bool {
+        let w = cg.width, h = cg.height, s = CGFloat(w) / bounds.width
+        let luma = lumaBytes(cg)
+        let x0 = max(0, Int((cluster.minX * s).rounded())), x1 = min(w, Int((cluster.maxX * s).rounded()))
+        let y0 = max(0, Int((cluster.minY * s).rounded())), y1 = min(h, Int((cluster.maxY * s).rounded()))
+        let cw = x1 - x0, ch = y1 - y0
+        guard cw > 1, ch > 4, luma.count == w * h else { return false }
+        var left = [Double](repeating: 0, count: 5), right = [Double](repeating: 0, count: 5)
+        for b in 0..<5 {
+            let by0 = y0 + (b * ch) / 5, by1 = max(by0 + 1, y0 + ((b + 1) * ch) / 5), mx = x0 + cw / 2
+            var lHit = 0, lAll = 0, rHit = 0, rAll = 0
+            for y in by0..<by1 {
+                for x in x0..<mx { lAll += 1; if luma[y * w + x] < 120 { lHit += 1 } }
+                for x in mx..<x1 { rAll += 1; if luma[y * w + x] < 120 { rHit += 1 } }
+            }
+            left[b] = Double(lHit) / Double(max(1, lAll))
+            right[b] = Double(rHit) / Double(max(1, rAll))
+        }
+        return right.allSatisfy { $0 >= 0.55 }
+            && left[0] >= 0.55 && left[4] >= 0.55
+            && (0.20...0.40).contains(left[2]) && left[3] < 0.50
+    }
+
+    private static func lumaBytes(_ cg: CGImage) -> [UInt8] {
+        let w = cg.width, h = cg.height
+        var rgba = [UInt8](repeating: 0, count: w * h * 4)
+        let ok = rgba.withUnsafeMutableBytes { buf -> Bool in
+            guard let ctx = CGContext(data: buf.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                                      bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard ok else { return [] }
+        return (0..<(w * h)).map { i in
+            UInt8((299 * Int(rgba[4 * i]) + 587 * Int(rgba[4 * i + 1]) + 114 * Int(rgba[4 * i + 2])) / 1000)
+        }
     }
 
     private func isCut(_ line: String) -> Bool {
