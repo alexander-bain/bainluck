@@ -190,17 +190,17 @@ describe("#10090 tenths on — the hero", () => {
   });
 
   it("a venue-settled hero is byte-identical to OFF", () => {
-    const settled = { homeProb: 1, awayProb: 0, homePct: 100, awayPct: 0, venueSettled: true };
+    const settled = { homeProb: 0.6234, awayProb: 0.3766, homePct: 62, awayPct: 38, venueSettled: true };
     expect(hero({ ...settled, tenths: true })).toBe(hero(settled));
   });
 
   it("a completed chart is byte-identical to OFF", () => {
-    expect(normalise(chart(100, "completed", true))).toBe(normalise(chart(100, "completed", false)));
+    expect(normalise(chart(36.75, "completed", true))).toBe(normalise(chart(36.75, "completed", false)));
   });
 
   it("a two-sided pair takes the fit size; one named number keeps 48px", () => {
     const two = hero({ tenths: true });
-    expect(two).toContain("min-[390px]:text-[38px]");
+    expect(two).toContain("min-[390px]:text-[35px]");
     expect(two).not.toContain("min-[390px]:text-[48px]");
     const one = hero({ homeProb: 0.4175, awayProb: 0.5825, awayWithheld: true, tenths: true });
     expect(heroSides(one)).toEqual(["41.8%"]);

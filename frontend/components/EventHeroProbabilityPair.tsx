@@ -346,14 +346,19 @@ export default function EventHeroProbabilityPair({
   const homeDigitsStyle = homeParts.decimal ? reserve : {};
   const awayDigitsStyle = awayParts.decimal ? reserve : {};
   // A two-sided tenths pair at today's 48px is ~242px and runs into the crests
-  // and player photos at 390px; 38px numerals with a small decimal are ~214px
-  // and clear them (4px each side, measured). One named number (#6238) has the
-  // room and keeps 48px, and a band pair (`<1` / `>99`) prints no decimal, so
-  // it keeps today's markup exactly.
+  // and player photos at 390px. The space between the two 56px photo boxes is
+  // ~214px at 390, and the boxes can shrink: a 38px pair (214.3px) squeezed
+  // them to 51.8px ovals rather than overflowing (PR #11697 review). So the
+  // pair is sized to fit that space with room to spare and never moves the
+  // photos — 35px numerals and a 24px decimal at 390, 32px / 20px at 375,
+  // 28px / 18px at 360 (each side's gap >= 4px, photos loaded or failed;
+  // below 360 the pair has its own row, #11301). One named number
+  // (#6238) has the room and keeps 48px, and a band pair (`<1` / `>99`)
+  // prints no decimal, so it keeps today's markup exactly.
   const fitTenths = !awayWithheld && (homeParts.decimal !== '' || awayParts.decimal !== '');
   const fitDigitsClass =
-    'text-[28px] min-[360px]:text-[34px] min-[390px]:text-[38px] sm:text-[44px] font-black tracking-tight leading-none tabular-nums';
-  const decimalClass = 'text-[22px] min-[390px]:text-[26px] font-black tracking-tight leading-none tabular-nums';
+    'text-[28px] min-[375px]:text-[32px] min-[390px]:text-[35px] sm:text-[44px] font-black tracking-tight leading-none tabular-nums';
+  const decimalClass = 'text-[18px] min-[375px]:text-[20px] min-[390px]:text-[24px] font-black tracking-tight leading-none tabular-nums';
 
   // #3459 — NEITHER side has a number. Drawing the chrome anyway produced
   // `—%–—%`: at `text-[48px] font-black` an em-dash is a 41px solid rectangle,
