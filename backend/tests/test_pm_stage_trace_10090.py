@@ -30,7 +30,8 @@ WALL = 1_000_000.0
 
 
 def trace_rig(monkeypatch, *, slow_write=0.0, slow_stamp=0.0, block=False,
-              env=None, emit=None, wall=None, during_write=None):
+              env=None, emit=None, wall=None, during_write=None, mapping=None,
+              contributing=(1,)):
     clock = [500.0]
     monkeypatch.setattr(blend, "_mono", lambda: clock[0])
     monkeypatch.setattr(blend, "_wall", lambda: WALL)
@@ -43,7 +44,9 @@ def trace_rig(monkeypatch, *, slow_write=0.0, slow_stamp=0.0, block=False,
         lambda group, home, away: SimpleNamespace(
             home_probability=reading[0], away_probability=None, draw_probability=None,
             eligibility=None,
-            contributing_outcomes=(SimpleNamespace(id=1, last_updated=STORED),),
+            contributing_outcomes=tuple(
+                SimpleNamespace(id=oid, last_updated=STORED) for oid in contributing
+            ),
         ),
     )
     session_cls = x.Session
@@ -59,7 +62,7 @@ def trace_rig(monkeypatch, *, slow_write=0.0, slow_stamp=0.0, block=False,
 
     monkeypatch.setattr(session_cls, "execute", stamp_execute)
 
-    p = pm_rig(batch={1: 0.6, 2: 0.4}, mapping={1: 1, 2: 1}, books={})
+    p = pm_rig(batch={1: 0.6, 2: 0.4}, mapping=mapping or {1: 1, 2: 1}, books={})
     p.release.set()
 
     class PriceSession:
