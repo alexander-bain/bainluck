@@ -33,7 +33,7 @@ rows join either pass and the ESPN schedule branch never makes a network call.
 """
 
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -247,8 +247,13 @@ def _wire(monkeypatch, engine, module, service):
     maker = async_sessionmaker(engine, expire_on_commit=False)
 
     @asynccontextmanager
-    async def _session():
-        async with maker() as session:
+    async def _session(*, reuse_publication_client=False):
+        from app.utils.nonvenue_live_push import nonvenue_publication_scope
+
+        async with maker() as session, (
+            nonvenue_publication_scope(session)
+            if reuse_publication_client else nullcontext()
+        ):
             try:
                 yield session
                 await session.commit()

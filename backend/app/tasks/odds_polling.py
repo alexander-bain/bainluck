@@ -1345,7 +1345,8 @@ async def _poll_all_odds():
         except Exception:
             r = None
 
-        async with get_task_session() as session:
+        # Per-game commits publish immediately through one pass-owned client.
+        async with get_task_session(reuse_publication_client=True) as session:
             now = datetime.now(timezone.utc)
 
             # Get all sports with upcoming/live games in the next 6 hours

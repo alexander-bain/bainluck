@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 from sqlalchemy import (
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 _PENDING = "nonvenue_probability_pending"
 _READY = "nonvenue_probability_committed"
 _HOOKS = "nonvenue_probability_hooks"
+_CLIENT_SCOPE = "nonvenue_probability_client_scope"
 NONVENUE_SOURCES = frozenset({"betting", "stat_model", "mlb", "espn"})
 
 
@@ -282,6 +284,34 @@ async def write_nonvenue_probability(
     return sources
 
 
+async def _close_publication_client(client):
+    if client is not None:
+        try:
+            await client.aclose()
+        except Exception:
+            logger.debug("nonvenue Redis close failed", exc_info=True)
+
+
+@asynccontextmanager
+async def nonvenue_publication_scope(session):
+    """Own one lazy Redis client until this task session has finished draining.
+
+    Per-game commits keep immediate publication but reuse the connection.
+    Nothing is shared across task sessions or their event loops. Sessions
+    that never publish allocate no client.
+    """
+    info = session.info
+    if _CLIENT_SCOPE in info:
+        raise RuntimeError("nonvenue publication scope already owned")
+    holder = {"client": None}
+    info[_CLIENT_SCOPE] = holder
+    try:
+        yield
+    finally:
+        info.pop(_CLIENT_SCOPE, None)
+        await _close_publication_client(holder["client"])
+
+
 async def publish_committed_nonvenue_frames(session):
     """Drain only outer-commit-confirmed frames. Fanout cannot undo a DB write."""
     info = getattr(session, "info", None)
@@ -291,10 +321,16 @@ async def publish_committed_nonvenue_frames(session):
     if not frames:
         return
     redis = None
+    holder = info.get(_CLIENT_SCOPE)
     try:
         from app.tasks.redis_state import get_async_redis_client
 
-        redis = get_async_redis_client()
+        if holder is None:
+            redis = get_async_redis_client()
+        else:
+            if holder["client"] is None:
+                holder["client"] = get_async_redis_client()
+            redis = holder["client"]
         async with asyncio.timeout(5):
             for frame in frames:
                 if not await publish_frame(redis, frame):
@@ -310,8 +346,5 @@ async def publish_committed_nonvenue_frames(session):
             exc_info=True,
         )
     finally:
-        if redis is not None:
-            try:
-                await redis.aclose()
-            except Exception:
-                logger.debug("nonvenue Redis close failed", exc_info=True)
+        if holder is None:
+            await _close_publication_client(redis)
