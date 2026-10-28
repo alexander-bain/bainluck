@@ -173,4 +173,39 @@ final class NBAScoringPresentation9483Tests: XCTestCase {
         let point = card.points[selected]
         XCTAssertEqual(NBAScoringLineControls9483.detailsLabel(point), "Details and timing for \(point.label)")
     }
+
+    // MARK: Density correction — side/unit beside the number
+
+    private func joined(_ parts: (lead: String, figure: String, unit: String)) -> String {
+        [parts.lead, parts.figure, parts.unit].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    func testFigurePartsRebuildTheSpokenTextExactly() throws {
+        let card = try liveCard()
+        // Presentation controls on both axes, not provider specimens.
+        let margin = withForecast(card, family: .margin, actual: -4, forecast: 2.5)
+        for (sample, value) in [(card, 38.0), (card, 210.5), (margin, -4), (margin, 2.5), (margin, 0)] {
+            XCTAssertEqual(joined(NBAScoringFigures9483.parts(sample, value)),
+                           NBAScoringFigures9483.text(sample, value))
+        }
+    }
+
+    func testFigurePartsKeepTheSideAndUnitApartFromTheNumber() throws {
+        let card = try liveCard()
+        let total = NBAScoringFigures9483.parts(card, 210.5)
+        XCTAssertEqual(total.lead, "")
+        XCTAssertEqual(total.figure, "210.5")
+        XCTAssertEqual(total.unit, "points")
+        let margin = withForecast(card, family: .margin, actual: -4, forecast: 2.5)
+        let away = NBAScoringFigures9483.parts(margin, -4)
+        XCTAssertEqual(away.lead, "Raptors by")
+        XCTAssertEqual(away.figure, "4")
+        let home = NBAScoringFigures9483.parts(margin, 2.5)
+        XCTAssertEqual(home.lead, "Knicks by")
+        XCTAssertEqual(home.figure, "2.5")
+        let tie = NBAScoringFigures9483.parts(margin, 0)
+        XCTAssertEqual(tie.lead, "")
+        XCTAssertEqual(tie.figure, "Tie")
+        XCTAssertEqual(tie.unit, "")
+    }
 }
