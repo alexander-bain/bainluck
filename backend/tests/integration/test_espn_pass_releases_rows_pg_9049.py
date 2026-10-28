@@ -47,8 +47,100 @@ from tests.integration.test_espn_pass_survives_one_failed_statement_pg_8796 impo
     db,
     needs_postgres,
 )
+from tests.integration.test_nonvenue_live_push_pg_8761 import sink  # noqa: F401
 
 pytestmark = [pytest.mark.asyncio]
+
+
+@needs_postgres
+@pytest.mark.parametrize("failure", [None, "creation", "known"])
+async def test_known_game_publishes_before_unmatched_creation(
+    db, monkeypatch, sink, failure  # noqa: F811 — imported pytest fixtures
+):
+    """#10090: a delayed/new-game writer cannot pin an already-read live price.
+
+    Actual PG writes, savepoints, commit hooks and publication drain; the Redis
+    sink records the real EVAL payload. Hold at creator entry, without a sleep.
+    """
+    import inspect
+
+    import app.tasks.espn_sync as task
+    import app.utils.espn_helpers as helpers
+    from app.models.models import Event
+    from app.utils.nonvenue_live_push import write_nonvenue_probability
+
+    engine, maker, ids = db
+    target = ids["the_failing_sports_row"]
+    sibling = ids["the_next_sports_row"]
+    signature = inspect.signature(task._process_live_sport)
+    seen = []
+
+    async def noop(*a, **k):
+        pass
+
+    _wire(monkeypatch, maker, ids, noop)
+
+    async def known(*args, **kwargs):
+        bound = signature.bind(*args, **kwargs).arguments
+        if bound["sport_key"] != MLB:
+            return
+        session = bound["session"]
+        event = await session.get(Event, target)
+        await write_nonvenue_probability(session, event, "espn", 0.72)
+        assert not await _is_free(engine, target)  # positive lock control
+        assert sink == []  # never publish before commit
+        await bound["create_unmatched_fn"](
+            session, [event], bound["espn_events"], MLB, bound["stats"]
+        )
+        if failure == "known":
+            await session.execute(text("SELECT 1 / 0"))
+
+    async def create(session, rows, board, sport_key, stats):
+        async with maker() as reader:
+            sources = await reader.scalar(
+                select(Event.win_probability_sources).where(Event.id == target)
+            )
+        seen.append({
+            "free": await _is_free(engine, target),
+            "committed": sources.get("espn", {}).get("value"),
+            "frames": [frame for _, frame in sink],
+            "ids": tuple(row.espn_id for row in rows),
+            "orm": any(inspect.isclass(type(row)) and hasattr(row, "_sa_instance_state") for row in rows),
+            "board": tuple(board),
+        })
+        await session.execute(
+            update(Event).where(Event.id == sibling).values(period="created")
+        )
+        if failure == "creation":
+            await session.execute(text("SELECT 1 / 0"))
+
+    monkeypatch.setattr(task, "_process_live_sport", known)
+    monkeypatch.setattr(helpers, "create_events_from_unmatched_espn", create)
+    stats = await task._sync_espn_live_events()
+    async with maker() as reader:
+        sources = await reader.scalar(
+            select(Event.win_probability_sources).where(Event.id == target)
+        )
+        period = await reader.scalar(select(Event.period).where(Event.id == sibling))
+    if failure == "known":
+        assert seen == []  # rolled-back matching context must never create
+        assert sink == []
+        assert "espn" not in sources
+        assert period is None
+    else:
+        assert len(seen) == 1
+        assert seen[0]["free"] is True, seen
+        assert seen[0]["committed"] == 0.72, seen
+        assert len(seen[0]["frames"]) == 1, seen
+        frame = seen[0]["frames"][0]
+        assert frame["event_id"] == target and frame["source_value"] == 0.72
+        assert seen[0]["ids"] == ("8796-3",)
+        assert seen[0]["orm"] is False
+        assert seen[0]["board"]  # full supplied board survives the boundary
+        assert sources["espn"]["value"] == 0.72
+        assert period == (None if failure else "created")
+        assert len(sink) == 1  # no duplicate commit publication
+    assert len(stats["errors"]) == (1 if failure else 0), stats
 
 
 async def _is_free(engine, event_id) -> bool:

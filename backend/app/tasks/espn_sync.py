@@ -8,6 +8,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Optional
 
 from sqlalchemy import select, distinct, and_, or_, func, literal, text
@@ -988,6 +989,17 @@ async def _sync_espn_live_events():
 
                     # Each sport in its own savepoint, so one sport's failed
                     # statement cannot discard the pass (#8796).
+                    deferred_creation = None
+
+                    async def _defer_creation(_session, rows, board, key, _stats):
+                        nonlocal deferred_creation
+                        # The creator needs only these IDs from ORM rows. Copy
+                        # before commit/rollback can expire them (#10090).
+                        deferred_creation = (
+                            tuple(SimpleNamespace(espn_id=row.espn_id) for row in rows),
+                            tuple(board), key,
+                        )
+
                     try:
                         async with _step_savepoint(session):
                             await _process_live_sport(
@@ -998,15 +1010,28 @@ async def _sync_espn_live_events():
                                 match_event_to_espn, update_event_fields_from_espn,
                                 write_espn_win_probability,
                                 compute_and_write_stat_model,
-                                create_events_from_unmatched_espn,
+                                _defer_creation,
                                 dated_board_fetcher=_fetch_dated_board,
                                 observed_at=espn_read_at.get(sport_key),
                             )
                     except Exception as e:
+                        deferred_creation = None
                         stats["errors"].append(f"{sport_key}: {str(e)}")
                     # #9049: this sport's rows are free before the next sport
                     # (whose processing can ask ESPN for a dated board) runs.
                     await _release_rows(session)
+                    # #10090: unrelated new-game creation must not hold known
+                    # live games' row locks or their committed probability push.
+                    if deferred_creation is not None:
+                        try:
+                            async with _step_savepoint(session):
+                                rows, board, key = deferred_creation
+                                await create_events_from_unmatched_espn(
+                                    session, rows, board, key, stats
+                                )
+                        except Exception as e:
+                            stats["errors"].append(f"{sport_key} creation: {str(e)}")
+                        await _release_rows(session)
             finally:
                 await widen_espn.close()
 
