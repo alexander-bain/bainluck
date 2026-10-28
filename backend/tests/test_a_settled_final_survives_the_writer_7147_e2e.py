@@ -258,7 +258,12 @@ async def _run_pass(*, specimen, payload):
             session.commit()
             return False
 
-    with patch.object(odds_polling, "check_quota_guard", return_value=(True, "ok")), \
+    # This shared SQLite rail tests score/stamp writes, not the PostgreSQL
+    # JSONB model writer. Explicitly supply no model reading instead of relying
+    # on a swallowed "no such function: jsonb_typeof" error. Model formula,
+    # persistence and rollback have real-PG coverage in the #10090 per-game gate.
+    with patch("app.utils.win_probability.compute_statistical_win_prob", return_value=None), \
+            patch.object(odds_polling, "check_quota_guard", return_value=(True, "ok")), \
             patch.object(odds_polling, "OddsAPIService", return_value=service), \
             patch.object(
                 odds_polling,
