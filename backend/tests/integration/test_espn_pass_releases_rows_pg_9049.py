@@ -53,6 +53,79 @@ pytestmark = [pytest.mark.asyncio]
 
 
 @needs_postgres
+@pytest.mark.parametrize("failure", [None, "standby", "known"])
+async def test_healthy_live_probability_publishes_before_dark_sport_check(
+    db, monkeypatch, sink, failure  # noqa: F811 — imported pytest fixtures
+):
+    """An unrelated failover check cannot hold an already-read healthy blend.
+
+    Inspect the real committed row and publication payload at the boundary
+    where the real task enters the standby decision. No sleep or timing proxy.
+    """
+    import app.services.espn_api as espn_api
+    import app.tasks.espn_sync as task
+    from app.models.models import Event
+    from app.utils.nonvenue_live_push import write_nonvenue_probability
+
+    engine, maker, ids = db
+    target = ids["the_failing_sports_row"]
+    seen, acted = [], []
+    board = [object()]
+    decisions = {NHL: object()}
+
+    async def known(session, event_id):
+        event = await session.get(Event, event_id)
+        await write_nonvenue_probability(session, event, "espn", 0.72)
+        assert not await _is_free(engine, target)
+        assert not sink  # never publish before commit
+        if failure == "known":
+            await session.execute(text("SELECT 1 / 0"))
+
+    _wire(monkeypatch, maker, ids, known)
+
+    class Scoreboards:
+        async def get_scoreboard(self, sport_key, **kwargs):
+            return board if sport_key == MLB else None
+
+        async def close(self):
+            pass
+
+    async def decide(data, keys, stats):
+        assert data == {MLB: board}  # dark is absent, never an empty slate
+        assert set(keys) == {MLB, NHL}
+        async with maker() as reader:
+            sources = await reader.scalar(
+                select(Event.win_probability_sources).where(Event.id == target)
+            )
+        seen.append((sources.get("espn", {}).get("value"), list(sink)))
+        assert await _is_free(engine, target)
+        if failure == "standby":
+            raise RuntimeError("standby unavailable")
+        return decisions
+
+    async def act(value, stats):
+        assert value is decisions
+        acted.append(value)
+
+    monkeypatch.setattr(espn_api, "ESPNAPIService", Scoreboards)
+    monkeypatch.setattr(task, "_decide_failovers", decide)
+    monkeypatch.setattr(task, "_act_on_failovers", act)
+    stats = await task._sync_espn_live_events()
+    assert len(seen) == 1
+    if failure == "known":
+        assert seen == [(None, [])]
+        assert sink == []
+    else:
+        assert seen[0][0] == 0.72, seen
+        assert len(seen[0][1]) == len(sink) == 1, seen
+        frame = seen[0][1][0][1]
+        assert frame["event_id"] == target and frame["source_value"] == 0.72
+    assert len(acted) == (0 if failure == "standby" else 1)
+    assert len(stats["errors"]) == (0 if failure is None else 1), stats
+    assert stats["authority_dark_sports"] == 1
+
+
+@needs_postgres
 @pytest.mark.parametrize("failure", [None, "creation", "known"])
 async def test_known_game_publishes_before_unmatched_creation(
     db, monkeypatch, sink, failure  # noqa: F811 — imported pytest fixtures
