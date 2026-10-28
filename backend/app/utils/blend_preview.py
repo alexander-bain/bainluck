@@ -1947,6 +1947,9 @@ class LedgerRegistry(PreviewRegistry):
             return []
         common = (source, op.get("owner", claim), event_id, " ".join(self.sources))
         started = self._clock()
+        # #10090: present only on a traced selection's proposal.
+        trace = op.get("_trace")
+        receipt = None if trace is None else _readset_started(trace, op)
         retiring_state = self._events.get(event_id)
         retiring = ({name: (entry, entry.seq, self._chains.get((event_id, name)))
                      for name, entry in retiring_state.pending.items()}
@@ -1996,6 +1999,10 @@ class LedgerRegistry(PreviewRegistry):
             reply = await self._eval(call, "terminal", *common, op["ctx_rev"],
                                      LEDGER_MAX_EVENTS, op.get("read_ticket"))
         status = reply[0]
+        if trace is not None:
+            _readset_replied(trace, receipt, op, reply)
+            if status not in ("ok", "expired"):
+                observe_readset(trace, receipt, status)  # the refusal is the outcome
         if kind == "propose" and op["mode"] == "open" and status == "chain_exists":
             state = self._events.get(event_id)
             entry = None if state is None else state.pending.get(source)
@@ -2085,8 +2092,18 @@ class LedgerRegistry(PreviewRegistry):
         if kind == "propose" and status == "ok" and source in excluded:
             # The chosen committed base already supersedes this value.
             self._forget(event_id, source)
-            return await self._mutate(
-                self._settle_op(event_id, source, op["local_seq"], "stale"), call, stats)
+            settle = self._settle_op(event_id, source, op["local_seq"], "stale")
+            if trace is not None:
+                observe_readset(trace, receipt, "EXCLUDED_BY_CHOSEN_BASE")
+                settle["_trace"] = trace
+            return await self._mutate(settle, call, stats)
+        if trace is not None:
+            if frame is None:
+                observe_readset(trace, receipt, "NO_FRAME")
+            else:
+                # Popped with ``_ledger`` before the wire, like ``base``.
+                frame["_ledger"]["selection"] = (trace[0], receipt)
+                observe_readset(trace, receipt, "COMPOSED")
         return [] if frame is None else [frame]
 
     def _refusal(self, stats: dict, status: str, phase: str, source: str,
@@ -2193,6 +2210,45 @@ class LedgerRegistry(PreviewRegistry):
             for item in items:
                 for frame in await self.prepare([item], call, stats):
                     await self._publish(frame, call, channel, stats, observe=observe)
+
+
+def _readset_started(trace: tuple, op: dict) -> Optional[dict]:
+    """#10090: open the receipt of a traced proposal's ledger call.
+
+    ``trace`` is ``(sel, clock, observe)`` from the refresher's stage trace:
+    the selection's correlation id, the trace's ``(wall, mono)`` clock and its
+    `readset` method. Reads only; a failure leaves the receipt absent.
+    """
+    try:
+        wall, mono = trace[1]()
+        receipt = {"event": op.get("event_id"), "op": op.get("ledger_op"),
+                   "local_seq": op.get("local_seq"), "chain": op.get("chain"),
+                   "started_wall": wall, "started_mono": mono}
+    except Exception:
+        return None
+    observe_readset(trace, receipt, "STARTED")  # so an unanswered call is named
+    return receipt
+
+
+def _readset_replied(trace: tuple, receipt: Optional[dict], op: dict, reply: list) -> None:
+    """Close the bracket at the reply; ``reply[3]`` is the read-set's Redis clock."""
+    if receipt is None:
+        return
+    try:
+        wall, mono = trace[1]()
+        receipt.update(mode=op.get("mode"), reply=reply, ended_wall=wall, ended_mono=mono)
+    except Exception:
+        pass
+
+
+def observe_readset(trace: Optional[tuple], receipt: Optional[dict], outcome: str) -> None:
+    """Hand a traced ledger call's outcome to the stage trace; never raises."""
+    if trace is None or receipt is None:
+        return
+    try:
+        trace[2](trace[0], receipt, outcome)
+    except Exception:
+        pass
 
 
 def observe_publication(observe, frame: dict, meta: Any, reply: Any) -> None:

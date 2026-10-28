@@ -200,7 +200,11 @@ async def test_slow_write_and_slow_stamp_are_distinguishable_on_the_exact_mark(
     t.accept(2, 0.45, 10)
     assert await flush(t, started=502.0)
     assert t.x.published == [1, 1]
-    assert len(t.lines) == before
+    # #10090: the moved blend is a new selected state, so it alone is receipted
+    # (SELECTED, then this rig's registry proposes nothing: SELECTION_UNSENT).
+    added = t.lines[before:]
+    assert [line["stage"] for line in added] == ["SELECTED", "SELECTION_UNSENT"]
+    assert added[0]["value"] == 0.85 and added[1]["sel"] == added[0]["sel"]
 
 
 @pytest.mark.asyncio

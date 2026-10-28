@@ -23,6 +23,10 @@ write, fence or stamp. This trace follows the exact selected input (same
                    (`ExactKalshiTrace.preview`). Changed-only: a re-commit of
                    an unchanged value opens no chain, so its observation reads
                    TRACKED_OUTCOME_NO_RETAINED_COMMIT_AT_THIS_OBSERVATION
+  SELECTED         the refresher's selection decision for the event, written at
+                   it (`ExactKalshiTrace.selection`); its PREVIEW, READSET or
+                   SELECTION_UNSENT repeats ``sel``. A changed blend over an
+                   unchanged traced input is a new selected state and is written
   ATTEMPT          one stamp attempt: start, session, commit, disposition,
                    revision and the actual `window.release`
 

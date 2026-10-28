@@ -2805,6 +2805,51 @@ class LiveBlendRefresher:
             with contextlib.suppress(Exception):
                 hook(*args, **kwargs)
 
+    def _trace_selection(self, selections, event_id, token, disposition, *, route,
+                         reading=None, value=None, contributing=None, basis=None,
+                         reason=None, then="NONE"):
+        """#10090: SELECTED for a traced event's decision. Never raises.
+
+        A PROPOSE decision's ``sel`` is kept in ``selections`` so its proposal
+        carries it (`_trace_proposal`).
+        """
+        hook = self._stage_hook("selection")
+        if hook is None:
+            return
+        try:
+            if basis is None and contributing is not None:
+                from app.utils.aggregation import observation_basis
+
+                basis = observation_basis(contributing)
+            sel = hook(token, self.source, disposition, route=route, reading=reading,
+                       value=value, basis=basis, reason=reason, then=then)
+            if sel is not None and selections is not None:
+                selections[event_id] = sel
+        except Exception:
+            pass
+
+    def _trace_proposal(self, sel, ops, event_id, ledger) -> None:
+        """#10090: a traced selection rides its proposal into the ledger call.
+
+        The op gains ``_trace`` (never sent: `_mutate` builds its argv from
+        named keys). No proposal op means the selection ends here, named.
+        """
+        hook, clock = self._stage_hook("readset"), self._stage_hook("clock")
+        if hook is None or clock is None:
+            return
+        try:
+            for op in ops:
+                if (isinstance(op, dict) and op.get("ledger_op") == "propose"
+                        and op.get("event_id") == event_id and op.get("source") == self.source):
+                    op["_trace"] = (sel, clock, hook)
+                    return
+            self._stage_trace(
+                "selection_unsent", sel, "NOT_PROPOSED" if ledger else "NOT_LEDGER",
+                [op.get("ledger_op") or "frame" for op in ops if isinstance(op, dict)],
+            )
+        except Exception:
+            pass
+
     def _receipt_call(self, fn, *args):
         """Receipts are evidence about the price path, never part of it."""
         try:
@@ -3854,6 +3899,10 @@ class LiveBlendRefresher:
             preview_only: set[int] = set()
             preview_seq: dict[int, int] = {}
             preview_failed: set[int] = set()
+            # #10090: a stage trace's selection receipts, only while one is
+            # attached (None otherwise: no receipt work in this loop).
+            select_open = self._stage_hook("selection_open")
+            selections: Optional[dict[int, int]] = None if select_open is None else {}
             # #10090: compute and publish eligible previews before any event's
             # UPDATE so one row-lock wait cannot hold back a sibling display.
             # Persistence retains the same sorted lock order (#837).
@@ -3869,6 +3918,7 @@ class LiveBlendRefresher:
                 if phase == "preview":
                     await self._preview_before_stamp(
                         grouped, preview_plans, preview_seq, observation_only=preview_only,
+                        **({"selections": selections} if selections else {}),
                     )
                     continue
                 if phase == "stamp" and (event_id not in preview_plans or event_id in preview_only):
@@ -3878,6 +3928,8 @@ class LiveBlendRefresher:
                     if phase == "stamp":
                         refused, proof_kwargs, reading, value, contributing = preview_plans[event_id]
                     else:
+                        token = None if select_open is None else select_open(event_id)
+                        route = "refresh" if phase == "compute" else "refresh_no_preview"
                         refused = []
                         proof_kwargs = self._current_reading_proof(event_id, group, refused)
                         reading = compute_source_home_probability(
@@ -3889,6 +3941,12 @@ class LiveBlendRefresher:
                             if refused:
                                 self.stats["bundled_refused"] += 1
                             self._dispositions[event_id] = ("no_reading",)
+                            if token is not None:
+                                self._trace_selection(
+                                    None, event_id, token,
+                                    "refusal" if refused else "no_reading", route=route,
+                                    reason="current_book_refused" if refused else None,
+                                )
                             continue
 
                         home_prob = await self._oriented(
@@ -3922,6 +3980,12 @@ class LiveBlendRefresher:
                                     refused, proof_kwargs, reading, value, contributing,
                                 )
                                 preview_only.add(event_id)
+                            if token is not None:
+                                self._trace_selection(
+                                    selections, event_id, token, "unobserved", route=route,
+                                    reading=reading, value=value, contributing=contributing,
+                                    then="PROPOSE" if phase == "compute" else "NONE",
+                                )
                             continue
 
                         if not self._should_write(event_id, value, now):
@@ -3938,13 +4002,33 @@ class LiveBlendRefresher:
                                 )
                                 preview_only.add(event_id)
                                 self._dispositions[event_id] = ("preview_only", value)
+                            if token is not None:
+                                self._trace_selection(
+                                    selections, event_id, token,
+                                    self._dispositions[event_id][0], route=route,
+                                    reading=reading, value=value, contributing=contributing,
+                                    then=("PROPOSE" if self._dispositions[event_id][0]
+                                          == "preview_only" else "NONE"),
+                                )
                             continue
 
                         if phase == "compute":
                             preview_plans[event_id] = (
                                 refused, proof_kwargs, reading, value, contributing,
                             )
+                            if token is not None:
+                                self._trace_selection(
+                                    selections, event_id, token, "proposal", route=route,
+                                    reading=reading, value=value, contributing=contributing,
+                                    then="PROPOSE",
+                                )
                             continue
+                        if token is not None:
+                            self._trace_selection(
+                                None, event_id, token, "stamp", route=route,
+                                reading=reading, value=value, contributing=contributing,
+                                then="PERSIST",
+                            )
 
                     # The database assigns the write clock; RETURNING below
                     # supplies that exact clock to the frame and tail receipt.
@@ -4825,6 +4909,7 @@ class LiveBlendRefresher:
         from app.utils.live_blend import compute_source_home_probability, has_proven_home_orientation
 
         read_timing = None
+        selections = None
         try:
             event_ids = {eid for eid in observations if eid in self.preview_events}
             event_ids.intersection_update(await validate(event_ids))
@@ -4890,9 +4975,16 @@ class LiveBlendRefresher:
                 )
             plans = {}
             refusals = {}
+            # #10090: selection receipts, only while a stage trace is attached.
+            select_open = self._stage_hook("selection_open")
+            selections = None if select_open is None else {}
             for eid, (event, group) in grouped.items():
+                token = None if select_open is None else select_open(eid)
                 if event.status not in PREVIEW_STATUSES or event.completed_at is not None:
                     refusals[eid] = "ineligible"
+                    if token is not None:
+                        self._trace_selection(None, eid, token, "refusal", route="observation",
+                                              reason="ineligible")
                     continue
                 rows = {row.id: (entry, row) for entry in group for row in entry.outcomes}
                 snapshot = observations[eid]
@@ -4903,18 +4995,32 @@ class LiveBlendRefresher:
                        or any(row.resolution_source is not None for row in entry.outcomes)
                        for entry in relevant):
                     refusals[eid] = "settled"
+                    if token is not None:
+                        self._trace_selection(None, eid, token, "refusal", route="observation",
+                                              reason="settled")
                     continue
                 proof_kwargs = self._current_reading_proof(eid, group, [], park_refused=False)
                 reading = compute_source_home_probability(
                     group, event.home_team_name, event.away_team_name, **proof_kwargs,
                 )
                 if reading is None or not has_proven_home_orientation(reading):
+                    if token is not None:
+                        self._trace_selection(
+                            None, eid, token, "no_reading", route="observation", reading=reading,
+                            reason=None if reading is None else "unproven_orientation",
+                        )
                     continue  # optional path never invokes repairing inversion fallback
                 contributors = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
                 ids = {getattr(row, "id", None) for row in contributors}
                 if not ids or not ids.issubset(snapshot):
+                    if token is not None:
+                        self._trace_selection(None, eid, token, "unobserved", route="observation",
+                                              reading=reading, reason="contributor_not_observed")
                     continue
                 if any(oid not in rows for oid in snapshot):
+                    if token is not None:
+                        self._trace_selection(None, eid, token, "unobserved", route="observation",
+                                              reading=reading, reason="observation_not_read")
                     continue
                 valid = True
                 read_wall = datetime.now(timezone.utc).timestamp()
@@ -4931,6 +5037,9 @@ class LiveBlendRefresher:
                         valid = False
                         break
                 if not valid:
+                    if token is not None:
+                        self._trace_selection(None, eid, token, "unobserved", route="observation",
+                                              reading=reading, reason="observation_invalid")
                     continue
                 # Keep the immutable DB-clock bounds exactly; the generic
                 # observation helper clamps future clocks to app-now. Such
@@ -4938,11 +5047,20 @@ class LiveBlendRefresher:
                 basis = {str(row.id): float(snapshot[row.id][1]) for row in contributors}
                 if basis:
                     plans[eid] = (event, reading, basis, group, proof_kwargs)
+                    if token is not None:
+                        self._trace_selection(
+                            selections, eid, token, "preview_only", route="observation",
+                            reading=reading, value=round(reading.home_probability, 4),
+                            basis=basis, then="PROPOSE",
+                        )
             if not plans and not refusals:
                 return
 
             async def prepare_frames():
                 allowed = await validate(set(plans) | set(refusals))
+                if selections:
+                    for eid in set(selections).difference(allowed or ()):
+                        self._stage_trace("selection_unsent", selections[eid], "NOT_ALLOWED")
                 if not allowed:
                     return []  # rejection/cancellation must not mutate the registry
                 preview = registry()
@@ -4961,17 +5079,26 @@ class LiveBlendRefresher:
                                 or round(current.home_probability, 4) != round(reading.home_probability, 4)
                                 or {str(row.id) for row in (getattr(current, "contributing_outcomes", None)
                                                             or (current.outcome,))} != set(basis)):
+                            if selections and eid in selections:
+                                self._stage_trace("selection_unsent", selections[eid], "RECHECK_CHANGED")
                             continue
-                    frames.extend(preview.propose(
+                    ops = preview.propose(
                         eid, self.source, value=round(reading.home_probability, 4), event=event,
                         row_sources=event.preview_sources, row_rev=event.preview_rev,
                         eligibility=getattr(reading, "eligibility", None), observed_basis=basis,
                         observation_only=True,
-                    ))
+                    )
+                    frames.extend(ops)
+                    if selections and eid in selections:
+                        self._trace_proposal(selections[eid], ops, eid, preview.ledger)
                 return frames
 
             await self._publish_previews([], prepare_frames=prepare_frames)
+            if selections:
+                self._stage_trace("selections_closed", selections.values())
         except Exception:
+            if selections:
+                self._stage_trace("selections_closed", selections.values())
             self.preview_stats["publish_errors"] += 1
             logger.warning(
                 "live_blend_refresh[%s]: optional observation preview unavailable read_timing=%s",
@@ -4979,12 +5106,15 @@ class LiveBlendRefresher:
             )
             return False
 
-    async def _preview_before_stamp(self, grouped, plans, published_seq, *, observation_only=()) -> None:
+    async def _preview_before_stamp(self, grouped, plans, published_seq, *, observation_only=(),
+                                    selections=None) -> None:
         """Publish every planned reading's preview, then let the UPDATEs run.
 
         Called once per attempt after all readings were computed and before
         any event's UPDATE, so no event's row-lock wait delays another event's
         preview. A failure here costs only the preview; the stamp proceeds.
+        ``selections`` (#10090, only with a stage trace) maps a traced event to
+        its SELECTED ``sel``; that proposal carries it into the ledger call.
         """
         from app.utils.aggregation import observation_basis
         from app.utils.blend_preview import registry
@@ -4993,26 +5123,34 @@ class LiveBlendRefresher:
         frames = preview.expire()
         for event_id, (_refused, _proof, reading, value, contributing) in plans.items():
             event, _group = grouped[event_id]
+            sel = selections.get(event_id) if selections else None
             try:
-                frames.extend(preview.propose(
+                ops = preview.propose(
                     event_id, self.source, value=value, event=event,
                     row_sources=getattr(event, "preview_sources", None),
                     row_rev=getattr(event, "preview_rev", None),
                     eligibility=getattr(reading, "eligibility", None),
                     observed_basis=observation_basis(contributing),
                     observation_only=event_id in observation_only,
-                ))
+                )
+                frames.extend(ops)
             except Exception:
                 self.preview_stats["publish_errors"] += 1
                 logger.warning(
                     "live_blend_refresh[%s]: preview for event %s not composed",
                     self.source, event_id, exc_info=True,
                 )
+                if sel is not None:
+                    self._stage_trace("selection_unsent", sel, "COMPOSE_ERROR")
                 continue
+            if sel is not None:
+                self._trace_proposal(sel, ops, event_id, preview.ledger)
             seq = preview.pending_seq(event_id, self.source)
             if seq is not None:
                 published_seq[event_id] = seq
         await self._publish_previews(frames)
+        if selections:
+            self._stage_trace("selections_closed", selections.values())
 
     def _preview_settlement(self, event_ids, grouped, published_seq, failed,
                             committed) -> list[dict]:
