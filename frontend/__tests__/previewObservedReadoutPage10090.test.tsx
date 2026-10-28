@@ -11,7 +11,8 @@ const SCORE = new Date(NOW - 60_000).toISOString();
 let eventPayload: ReturnType<typeof event>;
 let blendPreview: BlendPreviewState | null;
 let blendPreviewNow: number;
-let historyPayload: { aggregate_line: { timestamp: string; home_probability: number }[] } | undefined;
+let historyPayload: { aggregate_line: { timestamp: string; home_probability: number }[] } & Record<string, unknown> | undefined;
+let chartPoints: { timestamp: string; home_probability: number; rev?: Record<string, number> }[];
 function event() {
   return {
     id: ID, sport: "americanfootball_nfl", sport_key: "americanfootball_nfl",
@@ -48,7 +49,17 @@ jest.mock("@/hooks", () => ({
   usePinnedEvents: () => ({ isPinned: () => false, togglePin: () => undefined, isMaxReached: false }),
 }));
 jest.mock("@/hooks/useLiveEventStream", () => ({
-  useLiveEventStream: () => ({ frame: null, connected: true, status: "open", blendPreview, blendPreviewNow }),
+  useLiveEventStream: () => ({ frame: null, connected: true, status: "open", blendPreview, blendPreviewNow, chartPoints }),
+}));
+// #10090: the real chart, so its own endpoint attributes are observable; every
+// other client-only module stays unmounted exactly as in a server render.
+jest.mock("next/dynamic", () => ({
+  __esModule: true,
+  default: (loader: () => unknown) => {
+    if (!/["/]OddsChart"/.test(loader.toString())) return () => null;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require("@/components/OddsChart").default;
+  },
 }));
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: () => {}, replace: () => {}, prefetch: () => {} }),
@@ -73,9 +84,18 @@ function scoreDetails(html: string) {
 }
 beforeEach(() => {
   jest.spyOn(Date, "now").mockReturnValue(NOW);
-  eventPayload = event(); blendPreview = null; blendPreviewNow = NOW; historyPayload = undefined;
+  eventPayload = event(); blendPreview = null; blendPreviewNow = NOW; historyPayload = undefined; chartPoints = [];
 });
 afterEach(() => jest.restoreAllMocks());
+// The real chart's layout hooks warn in a server render; nothing else is muted.
+const realConsoleError = console.error;
+beforeAll(() => {
+  console.error = (...args: unknown[]) => {
+    if (typeof args[0] === "string" && args[0].includes("useLayoutEffect does nothing on the server")) return;
+    realConsoleError(...args);
+  };
+});
+afterAll(() => { console.error = realConsoleError; });
 
 test("the real page reports the displayed preview observation before any commit, even when rounded percent is unchanged", () => {
   const before = draw();
@@ -206,4 +226,117 @@ test("the counter row says its count covers this visit, beside the unchanged cou
   for (const html of [committed, unknownClock]) {
     expect(html).not.toMatch(/Observations shown|first \+ newer times/);
   }
+});
+
+// ── #10090: which state each surface ADOPTED, headline and chart separately ──
+const attr = (html: string, name: string) => html.match(new RegExp(`${name}="([^"]*)"`))?.[1];
+const hero = (html: string) => html.match(/<div[^>]*data-testid="event-hero-probability"[^>]*>/)![0];
+const chartRoot = (html: string) => html.match(/<div[^>]*data-callout-at="[^"]*"[^>]*>/)?.[0] ?? "";
+const AUTH = { incarnation: "7", namespace: "0b6c3d8e-4b5f-4a51-9b55-2b1e8f6b0c11" };
+const SESSION = "5d1f9b52-6a4e-4f0e-8c33-9c2a1b7e4d10";
+const T1 = new Date(NOW - 100_000).toISOString();
+const T2 = new Date(NOW - 50_000).toISOString();
+function blendHistory() {
+  const sourcePoints = (p: number) => [{ timestamp: new Date(NOW - 300_000).toISOString(), home_probability: p },
+    { timestamp: COMMITTED, home_probability: p }];
+  return {
+    event_id: ID, aggregate_line: [{ timestamp: COMMITTED, home_probability: .6 }],
+    history_fold_revision: { [ID]: 10 }, blend_edge_fold_revision: { [ID]: 10 },
+    win_prob_history: { kalshi: sourcePoints(.6), polymarket: sourcePoints(.6) },
+    win_prob_sources: ["kalshi", "polymarket"],
+  };
+}
+function v3Preview(seq: number, p: number) {
+  const held = preview(OBSERVED, p)!;
+  return { ...held, seq, receivedAt: 1234.5, authority: { ...AUTH, session: SESSION, fold: false } };
+}
+
+test("repeated equal values: the headline names each committed revision while data-probability cannot", () => {
+  const first = draw();
+  eventPayload.blend_fold_revision = { [ID]: 11 };
+  const second = draw();
+  expect(attr(hero(first), "data-probability")).toBe(attr(hero(second), "data-probability"));
+  expect(attr(hero(first), "data-display-basis")).toBe("committed");
+  expect(attr(hero(first), "data-display-state")).toBe(`fold:${ID}=10`);
+  expect(attr(hero(second), "data-display-state")).toBe(`fold:${ID}=11`);
+  expect(attr(hero(second), "data-display-observed-at")).toBe(COMMITTED);
+  expect(attr(hero(second), "data-display-received")).toBe("");
+});
+
+test("an admitted equal-valued v3 preview is named by its authority, session and sequence; refused or expired previews are not", () => {
+  const committed = draw();
+  blendPreview = v3Preview(1, .6);
+  const shown = draw();
+  expect(attr(hero(shown), "data-probability")).toBe(attr(hero(committed), "data-probability"));
+  expect(attr(hero(shown), "data-display-basis")).toBe("preview");
+  expect(attr(hero(shown), "data-display-state")).toBe(`v3:7:${AUTH.namespace}:${SESSION}:e1.s1:fold:${ID}=10`);
+  expect(attr(hero(shown), "data-display-received")).toBe("1234.5");
+  expect(attr(hero(shown), "data-display-observed-at")).toBe(OBSERVED);
+  blendPreview = v3Preview(2, .6);
+  expect(attr(hero(draw()), "data-display-state")).toBe(`v3:7:${AUTH.namespace}:${SESSION}:e1.s2:fold:${ID}=10`);
+  // Expired, superseded by a newer commit, wrong status: committed truth with
+  // ITS revision, never the preview's borrowed identity.
+  for (const refuse of ["expired", "newer commit", "wrong status"]) {
+    eventPayload = event(); blendPreview = v3Preview(2, .6); blendPreviewNow = NOW;
+    if (refuse === "expired") blendPreviewNow = NOW + 1000;
+    if (refuse === "newer commit") eventPayload.blend_fold_revision = { [ID]: 11 };
+    if (refuse === "wrong status") blendPreview.status = "scheduled";
+    const html = hero(draw());
+    expect([refuse, attr(html, "data-display-basis")]).toEqual([refuse, "committed"]);
+    expect(attr(html, "data-display-state")).toBe(`fold:${ID}=${refuse === "newer commit" ? 11 : 10}`);
+    expect(attr(html, "data-display-received")).toBe("");
+  }
+});
+
+test("a fallback headline has no adopted blend identity", () => {
+  eventPayload.hero_probability_source = "opening";
+  historyPayload = { aggregate_line: [{ timestamp: COMMITTED, home_probability: .6 }] };
+  const html = hero(draw());
+  expect(attr(html, "data-display-basis")).toBe("unavailable");
+  expect(attr(html, "data-display-state")).toBe("");
+});
+
+test("the chart names its own endpoint: repeated equal pushes by revision, separately from the headline", () => {
+  historyPayload = blendHistory();
+  eventPayload.blend_fold_revision = { [ID]: 11 };
+  eventPayload.hero_probability_observed_at = T1;
+  chartPoints = [{ timestamp: T1, home_probability: .6, rev: { [ID]: 11 } }];
+  const first = draw();
+  eventPayload.blend_fold_revision = { [ID]: 12 };
+  eventPayload.hero_probability_observed_at = T2;
+  chartPoints = [...chartPoints, { timestamp: T2, home_probability: .6, rev: { [ID]: 12 } }];
+  const second = draw();
+  expect(attr(chartRoot(first), "data-callout-label")).toBe(attr(chartRoot(second), "data-callout-label"));
+  expect(attr(chartRoot(first), "data-chart-endpoint-at")).toBe(T1);
+  expect(attr(chartRoot(first), "data-chart-endpoint-basis")).toBe("push");
+  expect(attr(chartRoot(first), "data-chart-endpoint-state")).toBe(`fold:${ID}=11`);
+  expect(attr(chartRoot(second), "data-chart-endpoint-at")).toBe(T2);
+  expect(attr(chartRoot(second), "data-chart-endpoint-state")).toBe(`fold:${ID}=12`);
+  expect(attr(chartRoot(second), "data-chart-history")).toBe(`rev=fold:${ID}=10;through=${COMMITTED}`);
+  expect(attr(hero(second), "data-display-state")).toBe(`fold:${ID}=12`);
+});
+
+test("a preview on the chart is the preview; once it expires the chart reports the committed point it actually draws", () => {
+  historyPayload = blendHistory();
+  blendPreview = v3Preview(3, .6);
+  const shown = draw();
+  expect(attr(chartRoot(shown), "data-chart-endpoint-at")).toBe(OBSERVED);
+  expect(attr(chartRoot(shown), "data-chart-endpoint-basis")).toBe("preview");
+  expect(attr(chartRoot(shown), "data-chart-endpoint-state")).toBe(attr(hero(shown), "data-display-state"));
+  blendPreviewNow = NOW + 1000;
+  const expired = draw();
+  expect(attr(chartRoot(expired), "data-chart-endpoint-at")).toBe(COMMITTED);
+  expect(attr(chartRoot(expired), "data-chart-endpoint-basis")).toBe("history");
+  expect(attr(chartRoot(expired), "data-chart-endpoint-state")).toBe(`fold:${ID}=10`);
+  expect(attr(hero(expired), "data-display-basis")).toBe("committed");
+});
+
+test("a pushed point the chart refuses is not its endpoint; the chart reports what it still draws", () => {
+  historyPayload = blendHistory();
+  // A different row's revision is incomparable with the held one-row fold.
+  chartPoints = [{ timestamp: T2, home_probability: .7, rev: { [ID + 1]: 99 } }];
+  const html = chartRoot(draw());
+  expect(attr(html, "data-chart-endpoint-at")).toBe(COMMITTED);
+  expect(attr(html, "data-chart-endpoint-basis")).toBe("history");
+  expect(attr(html, "data-chart-endpoint-state")).toBe(`fold:${ID}=10`);
 });

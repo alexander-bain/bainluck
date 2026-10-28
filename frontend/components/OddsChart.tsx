@@ -87,6 +87,7 @@ import {
   type PeriodStripBand,
 } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import { chartEndpointAttributes, type ChartEndpointIdentity } from "@/lib/displayIdentity";
 import {
   bucketSupport,
   classifySeriesSupport,
@@ -423,6 +424,8 @@ interface OddsChartProps {
   scoreHistory?: ScoreHistoryPoint[];
   /** Backend-computed aggregate line (weighted median with staleness decay) */
   aggregateLine?: Array<{ timestamp: string; home_probability: number }>;
+  /** #10090 — the page's identity for `aggregateLine`'s last point (`lib/displayIdentity.ts`). */
+  aggregateEndpointIdentity?: ChartEndpointIdentity | null;
   /**
    * #8066: whether the BACKEND served a blend for this event, as opposed to
    * `aggregateLine` merely holding points the page accumulated from the live
@@ -541,6 +544,12 @@ interface ChartDataPoint {
   espnDelta: number | null;
   /** Bain Luck aggregated win probability, 0–100 (multi-source mode) */
   bainLuckDelta: number | null;
+  /**
+   * #10090 — the exact `aggregateLine` timestamp whose value `bainLuckDelta`
+   * holds on this row, written with it and carried with it, so the callout can
+   * name the point it draws (`aggregateEndpointIdentity`). Never plotted.
+   */
+  bainLuckAt?: string;
   /** Game state carried through for interactive play-by-play card */
   _homeScore?: number | null;
   _awayScore?: number | null;
@@ -1005,6 +1014,7 @@ export default function OddsChart({
   scoringPlays,
   scoreHistory,
   aggregateLine,
+  aggregateEndpointIdentity = null,
   backendBlendServed = true,
   eventId,
   eventStatus,
@@ -1877,7 +1887,10 @@ export default function OddsChart({
       for (const point of filteredAggregateLine) {
         const delta = homeProbToChartAxis(point.home_probability);
         const dp = ensurePoint(point.timestamp);
-        if (!insideRecordedWindow(parseISO(dp.timestamp).getTime(), checkpointWindow)) dp.bainLuckDelta = delta;
+        if (!insideRecordedWindow(parseISO(dp.timestamp).getTime(), checkpointWindow)) {
+          dp.bainLuckDelta = delta;
+          dp.bainLuckAt = point.timestamp;
+        }
       }
     }
 
@@ -1957,6 +1970,8 @@ export default function OddsChart({
       lastKnown[key] = null;
     }
     let prevRowMs: number | null = null;
+    // #10090: the point a carried blend value came from travels with it.
+    let lastBlendAt: string | undefined;
     for (const pt of sorted) {
       // #4974 slice 1 — inside the recorded window the legacy blend is not
       // drawn: the checkpoints are. The writer above already skips the window;
@@ -1980,8 +1995,10 @@ export default function OddsChart({
         }
         if (typeof val === "number") {
           lastKnown[key] = val;
+          if (key === "bainLuckDelta") lastBlendAt = pt.bainLuckAt;
         } else if (lastKnown[key] !== null) {
           pt[key] = lastKnown[key];
+          if (key === "bainLuckDelta") pt.bainLuckAt = lastBlendAt;
         }
       }
     }
@@ -2600,6 +2617,8 @@ export default function OddsChart({
           rowIndex: i,
           // #4974 — and the checkpoint's own instant inside that row's minute.
           atMs: checkpointEnds ? lastCheckpoint.tMs : undefined,
+          // #10090 — the exact aggregate point this dot draws, when it draws one.
+          blendAt: !checkpointEnds && key === "bainLuckDelta" ? chartData[i].bainLuckAt : undefined,
           delta,
           homeProb: percents.home,
           awayProb: percents.away,
@@ -3253,6 +3272,12 @@ export default function OddsChart({
          minutes apart — so a guard needs to see WHICH point, not only what it
          printed. */
       data-callout-at={currentCallout?.timestamp ?? ""}
+      /* #10090: WHICH ADOPTED STATE the end dot draws. `data-callout-at` is its
+         minute; this is the exact aggregate point behind it, and the page's
+         identity for the line's endpoint is printed only when it is that same
+         point — otherwise `unavailable`, never the line's identity borrowed for
+         an older dot. `data-chart-history` is the committed coverage behind it. */
+      {...chartEndpointAttributes(currentCallout?.blendAt, aggregateEndpointIdentity)}
       /* #6987: the first and last instant this chart puts INK on, in epoch ms —
          `drawnExtent`, the same bound the period chips and the Start flag are
          judged against, not `chartData`'s extent. The callout above is one

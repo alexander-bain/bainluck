@@ -78,6 +78,15 @@ export interface BlendPreviewState {
   originEventId?: number;
   pAway?: number | null;
   sport?: string | null;
+  /**
+   * #10090: the v3 authority domain and stream session that admitted this
+   * preview, stamped at adoption (`authorityPreviewFrame`); `fold` when it is a
+   * several-row fold ordered by `fold_seq`. Identity only — never an ordering
+   * input. Absent on the legacy reader.
+   */
+  authority?: { incarnation: string; namespace: string; session: string; fold: boolean };
+  /** #10090: monotonic receipt of the admitting frame. Identity only. */
+  receivedAt?: number;
 }
 
 const safeInt = (value: unknown): value is number =>
