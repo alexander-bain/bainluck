@@ -250,7 +250,7 @@ async def test_a_failed_fanout_names_attempted_and_never_handed_over(
             await asyncio.wait_for(entered.wait(), 5)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await task
+                await asyncio.wait_for(task, 5)
         else:
             await publish_committed_nonvenue_frames(session)
     results = [(line["event"], line["result"]) for line in stage(lines, "PUBLICATION")]
@@ -378,33 +378,91 @@ async def test_a_selection_whose_update_fails_or_finds_no_row_is_closed(pg_engin
     assert sink == []
 
 
-async def test_the_real_betting_ingest_receipts_per_book_versions(pg_engine, sink, monkeypatch):
-    from datetime import datetime, timezone
-
-    from app.tasks.odds_polling import _ingest_event_odds
-    from tests.test_discovery_advances_betting_consensus_5426 import _FakeSnapshot
-
-    async def snapshot(*args, **kwargs):
-        return _FakeSnapshot(0.6, None, None), False
-
-    monkeypatch.setattr("app.tasks.odds_polling._create_or_update_snapshot", snapshot)
+async def test_a_failing_witness_keeps_its_receipt_through_commit_and_publication(
+    pg_engine, sink
+):
+    """lane1b P1: a raising witness must not orphan a write that committed and
+    was published (STOP once read ``awaiting_write 1`` for it)."""
     event_id = await _seed_event(pg_engine)
     lines = arm([event_id])
     async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
-        event = await session.get(Event, event_id)
-        await _ingest_event_odds(
-            session, event,
-            {"bookmakers": [{"key": f"b{i}", "last_update": f"2026-10-28T18:0{i}:00Z"}
-                            for i in range(3)]},
-            datetime.now(timezone.utc), {}, update_opening=False,
-        )
+        await write_nonvenue_probability(
+            session, await session.get(Event, event_id), "espn", 0.7,
+            trace_inputs=lambda: 1 / 0)
         await session.commit()
         await publish_committed_nonvenue_frames(session)
+    nt.nonvenue_trace()._stop("EXPIRED")
+    assert (await _stored(pg_engine, event_id))["espn"]["value"] == 0.7
+    assert [frame["event_id"] for _channel, frame in sink] == [event_id]
+    (sel,) = stage(lines, "SELECTED")
+    (pub,) = stage(lines, "PUBLICATION")
+    assert sel["inputs"] == "WITNESS_ERROR" and pub["obs"] == sel["obs"]
+    assert pub["result"] == "SENT"
+    (stop,) = stage(lines, "STOP")
+    assert (stop["observations"], stop["published"], stop["awaiting_write"],
+            stop["awaiting_publication"], stop["hook_errors"]) == (1, 1, 0, 0, 1)
+
+
+async def test_the_real_betting_ingest_receipts_per_book_versions(pg_engine, sink):
+    """Real `OddsSnapshot` rows through the real producer: an unchanged book
+    names its stored row and ``captured_at`` (a datetime, printed as ISO text,
+    never "NESTED"); a NEW book's ``snapshot_id`` is null (unflushed at
+    selection)."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import delete, select
+
+    from app.models.models import OddsSnapshot
+    from app.tasks.odds_polling import _ingest_event_odds
+
+    async with pg_engine.begin() as conn:
+        await conn.run_sync(lambda c: OddsSnapshot.__table__.create(c, checkfirst=True))
+
+    def book(key, home, away, minute):
+        return {"key": key, "last_update": f"2026-10-28T18:0{minute}:00Z", "markets": [
+            {"key": "h2h", "outcomes": [{"name": "Twins", "price": home},
+                                        {"name": "Yankees", "price": away}]}]}
+
+    def odds(changed_price, minute):
+        return {"home_team": "Twins", "away_team": "Yankees", "bookmakers": [
+            book("b0", -150, 130, minute), book("b1", changed_price, 135, minute),
+            book("b2", -145, 125, minute)]}
+
+    event_id = await _seed_event(pg_engine)
+    try:
+        session_maker = async_sessionmaker(pg_engine, expire_on_commit=False)
+        async with session_maker() as session:  # untraced first pass: the stored rows
+            await _ingest_event_odds(session, await session.get(Event, event_id),
+                                     odds(-160, 0), datetime.now(timezone.utc), {},
+                                     update_opening=False)
+            await session.commit()
+        async with pg_engine.connect() as conn:
+            stored = {row.bookmaker: row for row in (await conn.execute(
+                select(OddsSnapshot.id, OddsSnapshot.bookmaker, OddsSnapshot.captured_at)
+                .where(OddsSnapshot.event_id == event_id))).all()}
+        lines = arm([event_id])
+        async with session_maker() as session:  # b1 reprices; b0 and b2 do not
+            await _ingest_event_odds(session, await session.get(Event, event_id),
+                                     odds(-170, 1), datetime.now(timezone.utc), {},
+                                     update_opening=False)
+            await session.commit()
+            await publish_committed_nonvenue_frames(session)
+    finally:
+        async with pg_engine.begin() as conn:
+            await conn.execute(delete(OddsSnapshot).where(OddsSnapshot.event_id == event_id))
     (sel,) = stage(lines, "SELECTED")
     inputs = sel["inputs"]
     assert inputs["upstream_clock_domain"] == "ODDS_API_BOOKMAKER_LAST_UPDATE"
-    assert [b["book"] for b in inputs["books"]] == ["b0", "b1", "b2"]
-    assert inputs["books"][1]["bookmaker_last_update"] == "2026-10-28T18:01:00Z"
+    books = {b["book"]: b for b in inputs["books"]}
+    assert list(books) == ["b0", "b1", "b2"]
+    for key in ("b0", "b2"):  # unchanged: the stored row and how old its price is
+        assert books[key]["new_snapshot"] is False
+        assert books[key]["snapshot_id"] == stored[key].id
+        assert books[key]["captured_at"] == stored[key].captured_at.isoformat()
+    assert books["b1"]["new_snapshot"] is True and books["b1"]["snapshot_id"] is None
+    repriced = datetime.fromisoformat(books["b1"]["captured_at"])
+    assert repriced > stored["b1"].captured_at
+    assert books["b1"]["bookmaker_last_update"] == "2026-10-28T18:01:00Z"
     assert inputs["select_start"]["mono"] <= inputs["select_end"]["mono"] <= sel["seam_mono"]
     (pub,) = stage(lines, "PUBLICATION")
     assert pub["obs"] == sel["obs"] and pub["final"]["queued_frame_matches"] is True

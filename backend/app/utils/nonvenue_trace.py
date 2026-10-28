@@ -52,8 +52,26 @@ Lines:
   START / ARMED / STOP   START: schema, events, expiry, budgets, ``pid``,
                  ``dyno``, ``release``/``slug_commit`` when the dyno exposes
                  them. STOP: reason and counters (``observations``,
-                 ``published``, ``unsent``, ``awaiting_commit``,
-                 ``awaiting_publication``, ``bytes``)
+                 ``published``, ``unsent``, ``awaiting_write``,
+                 ``awaiting_commit``, ``awaiting_publication``, ``bytes``).
+                 An ``awaiting_*`` count means "terminal not printed": at a
+                 budget STOP it can include a frame whose COMMIT or send had
+                 already happened when the budget ran out.
+
+When STOP prints. While any observation is owed (selected, uncommitted or
+undrained), every seam entry, outer COMMIT and publication in the process,
+traced or not, runs the expiry check, so an expired trace STOPs within one
+pass of the producers even after its own events go quiet. With nothing owed it
+prints at the traced events' next activity, possibly never. A run whose log
+has no STOP (the process exited, or nothing reached the seam again) establishes
+nothing about the obligations it held: NOT_ESTABLISHED, never "delivered".
+
+``inputs`` is the producer's own version witness (`trace_inputs`). A witness
+that raises prints ``inputs: "WITNESS_ERROR"`` and counts a ``hook_errors``;
+the write keeps its SELECTED and its terminal. Datetimes print as ISO text.
+In betting's witness a book whose snapshot is NEW has ``snapshot_id: null``
+(the row is not flushed at selection time); an unchanged book names its
+stored row and ``captured_at`` (how old that book's price is).
 
 Every line carries ``line`` (its ordinal in this run, from 1), so a missing or
 truncated line is detectable rather than a quiet source.
@@ -67,7 +85,9 @@ between them or to the DB clock.
 Enable only with NONVENUE_TRACE_EVENTS (1-4 comma-separated event ids) and an
 absolute epoch-second NONVENUE_TRACE_EXPIRES_AT no more than 600 s away.
 NONVENUE_TRACE_MAX_LINES defaults to 128 (4..256, including STOP); the emitted
-JSON is also capped at MAX_BYTES. Optional NONVENUE_TRACE_ARM_AT (absolute, at
+JSON is also capped at MAX_BYTES, checked before each line with a BYTE_RESERVE
+sized to the largest line measured, so the total can exceed MAX_BYTES only by
+an oversized last line plus STOP (``bytes`` in STOP is always the true total). Optional NONVENUE_TRACE_ARM_AT (absolute, at
 most 1800 s away; EXPIRES_AT then at most 600 s after it) keeps collection off
 until that instant, so the window can sit inside a warm worker instead of on the
 restart a config change causes; until then nothing is kept or written but
@@ -99,6 +119,7 @@ import math
 import os
 import re
 import time
+from datetime import date
 from types import SimpleNamespace
 
 logger = logging.getLogger(__name__)
@@ -110,6 +131,9 @@ MAX_WINDOW_S = 600
 MAX_ARM_WAIT_S = 1800
 MAX_ITEMS = 16  # list/dict entries kept per field; the rest are counted
 MAX_BYTES = 262_144  # emitted JSON per process run, including STOP
+# Checked before each line: the largest line measured is 5,221 B (an 18-book
+# betting SELECTED), so this reserve normally keeps the total under MAX_BYTES.
+BYTE_RESERVE = 8_192
 UPSTREAM = "NOT_SUPPLIED_AT_SEAM"
 
 _UNSET = object()
@@ -139,7 +163,7 @@ def _number(value):
 
 
 def _text(value):
-    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:@#/+ -]{1,96}", value):
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:@#/+,'&() -]{1,96}", value):
         return value
     return None if value is None else "UNPRINTABLE"
 
@@ -152,6 +176,8 @@ def _clean(value, depth=0):
         return _number(value)
     if isinstance(value, str):
         return _text(value)
+    if isinstance(value, date):  # datetime too: a snapshot's captured_at is a clock
+        return _text(value.isoformat())
     if depth >= 3:
         return "NESTED"
     if isinstance(value, dict):
@@ -311,7 +337,7 @@ class BoundedLogTrace:
         if self.lines >= self.limit - 1:
             self._stop("BUDGET_STOP")
             return False
-        if self.bytes >= MAX_BYTES - 4096:  # room for STOP
+        if self.bytes >= MAX_BYTES - BYTE_RESERVE:  # room for STOP
             self._stop("BYTE_BUDGET_STOP")
             return False
         return True
@@ -360,7 +386,10 @@ class NonvenueTrace(BoundedLogTrace):
         """SELECTED, at the seam before its first await: the obligation exists
         before the write can hang or fail. Returns the observation id or None."""
         try:
-            if event_id not in self.events or not self.active():
+            if event_id not in self.events:
+                self._expire_if_holding()
+                return None
+            if not self.active():
                 return None
             if len(self.selected) >= MAX_PENDING:
                 self._stop("PENDING_OVERFLOW")
@@ -371,20 +400,18 @@ class NonvenueTrace(BoundedLogTrace):
             txn = None if transaction is None else self._txn(transaction)
             if txn is None and (transaction is not None or self.stopped):
                 return None
-            self.obs_seq += 1
-            obs = self.obs_seq
+            # Everything that can raise runs BEFORE the observation is
+            # registered: a registered observation always reaches a terminal.
+            if callable(inputs):
+                try:
+                    inputs = inputs()
+                except Exception:
+                    self.hook_errors += 1
+                    inputs = "WITNESS_ERROR"  # the write keeps its receipt
             removed = value is None
             prior_value, prior_updated = _entry_value((prior or {}).get(source)
                                                       if isinstance(prior, dict) else None)
-            identity = dict(txn=txn, obs=obs, event=event_id, source=_text(source))
-            self.selected[obs] = identity
-            pending_txn = {"txn_pending": True} if txn is None else {}
-            if callable(inputs):
-                inputs = inputs()
-            self._send(dict(
-                stage="SELECTED",
-                **identity,
-                **pending_txn,
+            fields = dict(
                 value=_number(value),
                 removed=removed,
                 changed_sources=[] if removed else [_text(source)],
@@ -399,11 +426,23 @@ class NonvenueTrace(BoundedLogTrace):
                 select_clock="SEAM_ENTRY_BEFORE_AWAITED_PROBE_AND_UPDATE",
                 upstream_clock=UPSTREAM,
                 **self._clock("seam"),
-            ))
+            )
+            self.obs_seq += 1
+            obs = self.obs_seq
+            identity = dict(txn=txn, obs=obs, event=event_id, source=_text(source))
+            self.selected[obs] = identity
+            pending_txn = {"txn_pending": True} if txn is None else {}
+            self._send(dict(stage="SELECTED", **identity, **pending_txn, **fields))
             return obs
         except Exception:
             self.hook_errors += 1
             return None
+
+    def _expire_if_holding(self):
+        """Untraced traffic runs the expiry check while an obligation is held,
+        so an expired trace STOPs within one pass even if its events go quiet."""
+        if self.selected or self.pending or self.ready:
+            self.active()
 
     def written(self, obs, frame, *, transaction, rev, stamped_at, sources, status, espn,
                 opening, prior_txn_row_write):
@@ -488,7 +527,10 @@ class NonvenueTrace(BoundedLogTrace):
         write in the same transaction is not seen: FINAL_STATE_NOT_ESTABLISHED).
         """
         try:
-            if not self.pending or not self.active():
+            if not self.pending:
+                self._expire_if_holding()
+                return
+            if not self.active():
                 return
             clock = self._clock("commit_start")
             traced = self._traced(pending)
@@ -575,7 +617,10 @@ class NonvenueTrace(BoundedLogTrace):
         """Returns a token for `published`, or None when the frame is not traced."""
         try:
             held = self.ready.get(id(frame))
-            if held is None or held[0] is not frame or not self.active():
+            if held is None or held[0] is not frame:
+                self._expire_if_holding()
+                return None
+            if not self.active():
                 return None
             held[1].update(self._clock("publish_start"),
                            frame_unchanged=_hash(frame) == held[1].get("frame_hash"))

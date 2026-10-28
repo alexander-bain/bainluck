@@ -249,7 +249,7 @@ def test_the_line_budget_stops_and_names_its_counters():
 
 
 def test_the_byte_budget_stops(monkeypatch):
-    monkeypatch.setattr(nt, "MAX_BYTES", 4096 + 1500)
+    monkeypatch.setattr(nt, "MAX_BYTES", nt.BYTE_RESERVE + 1500)
     trace, lines = make()
     for i in range(10):
         f = frame(rev=i)
@@ -286,7 +286,8 @@ def test_warm_arm_keeps_nothing_before_the_instant():
     trace, lines = make(now=now, NONVENUE_TRACE_ARM_AT=str(WALL + 60),
                         NONVENUE_TRACE_EXPIRES_AT=str(WALL + 300))
     assert lines[0]["collection"] == "WAITING_FOR_ARM"
-    assert write(trace, frame(rev=1)) is None
+    obs = write(trace, frame(rev=1))
+    assert obs is None
     assert not trace.pending and len(lines) == 1
     now[0] = WALL + 61.5
     write(trace, frame(rev=2))
@@ -302,8 +303,6 @@ def test_every_entry_point_swallows_its_own_failure():
     bad = object()
     assert trace.seam_entered(bad, transaction=bad, source=bad, value=None, evidence=None,
                               metadata_keys=None, prior=bad, inputs=None) is None
-    obs = select(trace, frame(), inputs=lambda: 1 / 0)  # a failing witness
-    assert obs is None and trace.hook_errors >= 1
     trace.written(1, bad, transaction=bad, rev=None, stamped_at=None, sources=bad,
                   status=None, espn=None, opening=None, prior_txn_row_write=None)
     trace.write_failed(bad, bad)
@@ -317,6 +316,79 @@ def test_every_entry_point_swallows_its_own_failure():
     trace.pending[1] = (bad, {})  # corrupt state: still no raise
     trace.commit_started([(None, bad)], None)
     trace.committed([(None, bad)], {}, None)
+
+
+def test_a_failing_witness_keeps_its_receipt_through_commit_and_publication():
+    trace, lines = make()
+    f = frame()
+    obs = write(trace, f, inputs=lambda: 1 / 0)  # the producer's witness raises
+    assert obs is not None and trace.hook_errors == 1
+    trace.commit_started([entry(f)], sent)
+    trace.committed([entry(f)], {7: f}, sent)
+    trace.published(trace.publish_started(f), True)
+    trace._stop("EXPIRED")
+    (sel,) = [x for x in lines if x["stage"] == "SELECTED"]
+    (pub,) = [x for x in lines if x["stage"] == "PUBLICATION"]
+    assert sel["inputs"] == "WITNESS_ERROR" and pub["obs"] == sel["obs"] == obs
+    assert pub["result"] == "SENT"
+    stop = lines[-1]
+    assert (stop["observations"], stop["published"], stop["awaiting_write"],
+            stop["hook_errors"]) == (1, 1, 0, 1)
+
+
+def test_a_witness_datetime_prints_as_iso_text_at_any_depth():
+    from datetime import datetime, timezone
+
+    at = datetime(2026, 10, 28, 18, 5, 3, 120000, tzinfo=timezone.utc)
+    trace, lines = make()
+    write(trace, frame(source="betting"),
+          inputs=lambda: {"captured_at": at, "books": [{"captured_at": at}]})
+    (sel,) = [x for x in lines if x["stage"] == "SELECTED"]
+    assert sel["inputs"]["captured_at"] == "2026-10-28T18:05:03.120000+00:00"
+    assert sel["inputs"]["books"][0]["captured_at"] == "2026-10-28T18:05:03.120000+00:00"
+    assert nt._text("1st & 10, Smith's ball (OT)") == "1st & 10, Smith's ball (OT)"
+
+
+@pytest.mark.parametrize("held", ["selected", "pending", "ready"])
+@pytest.mark.parametrize("traffic", ["seam", "commit", "publish"])
+def test_untraced_traffic_stops_an_expired_trace_that_still_owes_something(held, traffic):
+    """lane1b P3: a traced event goes quiet while an obligation is held; the
+    next untraced write, COMMIT or publication after expiry prints STOP."""
+    now = [WALL]
+    trace, lines = make(now=now)
+    f = frame()
+    if held == "selected":
+        select(trace, f)  # its UPDATE never returns
+    else:
+        write(trace, f)
+        if held == "ready":
+            trace.commit_started([entry(f)], sent)
+            trace.committed([entry(f)], {7: f}, sent)  # committed, never drained
+    now[0] = WALL + 301
+    other = frame(event=9)
+    if traffic == "seam":
+        assert select(trace, other) is None
+    elif traffic == "commit":
+        trace.commit_started([entry(other)], sent)
+    else:
+        assert trace.publish_started(other) is None
+    stop = lines[-1]
+    assert (stop["stage"], stop["reason"]) == ("STOP", "EXPIRED")
+    owed = {"selected": "awaiting_write", "pending": "awaiting_commit",
+            "ready": "awaiting_publication"}[held]
+    assert stop[owed] == 1
+    assert not (trace.selected or trace.pending or trace.ready)
+
+
+def test_untraced_traffic_with_nothing_owed_prints_nothing_even_after_expiry():
+    now = [WALL]
+    trace, lines = make(now=now)
+    now[0] = WALL + 301
+    other = frame(event=9)
+    select(trace, other)
+    trace.commit_started([entry(other)], sent)
+    trace.publish_started(other)
+    assert [x["stage"] for x in lines] == ["START"]
 
 
 def test_a_selection_whose_write_never_returns_is_closed_or_counted():

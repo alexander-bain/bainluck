@@ -6,7 +6,8 @@ recomputed from the base it was composed on.
 
 * FOLD_BASE carries the base's revision vector, owners/election, hero context
   and complete source bag, and the fold's own committed composition, once per
-  distinct base; identical bases on other streams are counted, not written;
+  change of base for the event; further updates on an unchanged base are
+  counted (``repeat_uses``), not written, and an alternation is not deduplicated;
 * a base becoming unavailable is one FOLD_BASE_UNAVAILABLE per transition;
 * on the actual stream route, the base line joins the emitted fold frames by
   (event, base_fold_revision), and disarmed / armed-elsewhere / armed streams
@@ -64,14 +65,37 @@ def test_a_base_is_written_once_with_its_vector_bag_and_committed_hero():
     assert "tier" not in line and "recomputed_p" not in line
     committed = base.compose({}, {})
     assert line["committed"]["p"] == committed["p"]
-    # A changed bag is a new base; the hidden identical uses are counted.
+    # A changed bag is a new base; the repeat uses of the previous one are counted.
     base.sources["kalshi"] = {**base.sources["kalshi"], "value": 0.55}
     trace.base(1, base, fold_session="s3")
     second = stage(lines, "FOLD_BASE")[-1]
-    assert second["sessions_hidden"] == 2 and second["bag_hash"] != line["bag_hash"]
+    assert second["repeat_uses"] == 2 and second["bag_hash"] != line["bag_hash"]
+    assert second["fold_session"] == "s3"
     # Untraced event: nothing.
     trace.base(9, base)
     assert len(stage(lines, "FOLD_BASE")) == 2
+
+
+def test_repeat_uses_counts_updates_not_streams_and_an_alternation_is_written_each_time():
+    _session, base, *_ = setup()
+    trace, lines = armed([1])
+    kalshi = base.sources["kalshi"]
+    for _ in range(10):  # ONE stream, ten updates on one base, then a change
+        trace.base(1, base, fold_session="s1")
+    base.sources["kalshi"] = {**kalshi, "value": 0.55}
+    trace.base(1, base, fold_session="s1")
+    first, second = stage(lines, "FOLD_BASE")
+    assert (first["repeat_uses"], second["repeat_uses"]) == (0, 9)
+    assert {first["fold_session"], second["fold_session"]} == {"s1"}  # no other stream
+    # Two streams on different bases alternating A,B,A,B,A,B: once per CHANGE.
+    lines.clear()
+    for step in range(6):
+        base.sources["kalshi"] = {**kalshi, "value": 0.55 if step % 2 else 0.5}
+        trace.base(1, base, fold_session="sB" if step % 2 else "sA")
+    alternation = stage(lines, "FOLD_BASE")
+    assert len(alternation) == 6  # two distinct bases, six lines
+    assert len({line["bag_hash"] for line in alternation}) == 2
+    assert all(line["repeat_uses"] == 0 for line in alternation)
 
 
 def test_an_unavailable_base_is_one_line_per_transition():

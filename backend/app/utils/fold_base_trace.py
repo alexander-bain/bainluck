@@ -8,8 +8,10 @@ one exact revision vector). The fold frame names that vector
 composed target cannot be recomputed from the frame. This receipt writes, in
 the web process's log, the base each traced fold composed on:
 
-  FOLD_BASE             once per distinct base (event, revision vector, owners,
-                        bag hash, context) per process: ``revision``,
+  FOLD_BASE             once per CHANGE of base for that event (revision
+                        vector, owners, bag hash, context) per process, not
+                        once per distinct base: two streams alternating bases
+                        A,B,A,B write four lines. Fields: ``revision``,
                         ``members``, ``owners`` (source -> origin event),
                         ``election`` (the preview sources' owners), the hero
                         ``context`` (status, scores, completed_at, ESPN and
@@ -18,9 +20,11 @@ the web process's log, the base each traced fold composed on:
                         weight, refusal, observed basis; ``bag_hash`` over the
                         whole bag) and ``committed`` (the base alone composed by
                         the fold's own `compose`: p, p_away, display clock).
-                        ``fold_session`` is the stream that first used it;
-                        ``sessions_hidden`` on the next distinct line counts the
-                        other streams that used an identical base.
+                        ``fold_session`` is the stream whose update wrote the
+                        line; ``repeat_uses`` counts the further updates (from
+                        any stream, the writer included) that composed on the
+                        event's PREVIOUS base after its line, so a base still in
+                        use at STOP has its repeats uncounted.
   FOLD_BASE_UNAVAILABLE a traced fold whose base became unavailable (eviction,
                         recovery, a cold hub): once per transition.
   START / ARMED / STOP  as `nonvenue_trace.BoundedLogTrace`.
@@ -82,7 +86,7 @@ class FoldBaseTrace(BoundedLogTrace):
 
     def __init__(self, events, expiry, limit, run, wall, mono, emit):
         super().__init__(events, expiry, limit, run, wall, mono, emit)
-        self.last = {}  # event -> (signature, hidden sessions)
+        self.last = {}  # event -> (signature, repeat uses since its line)
         self.n_bases = 0
 
     def _counters(self):
@@ -103,9 +107,9 @@ class FoldBaseTrace(BoundedLogTrace):
                 signature = (tuple(sorted(base.revision.items())),
                              tuple(sorted(base.owners.items())),
                              _hash(base.sources), _hash(context))
-            last, hidden = self.last.get(event_id, (_UNSET, 0))
+            last, repeats = self.last.get(event_id, (_UNSET, 0))
             if last == signature:
-                self.last[event_id] = (last, hidden + (0 if signature is None else 1))
+                self.last[event_id] = (last, repeats + (0 if signature is None else 1))
                 return
             if event_id not in self.last and len(self.last) >= MAX_PENDING:
                 self._stop("PENDING_OVERFLOW")
@@ -118,7 +122,7 @@ class FoldBaseTrace(BoundedLogTrace):
                 return
             self.n_bases += 1
             self._record("FOLD_BASE", **self._fields(event_id, base, context),
-                         fold_session=_text(fold_session), sessions_hidden=hidden)
+                         fold_session=_text(fold_session), repeat_uses=repeats)
         except Exception:
             pass  # evidence must never cost a frame
 
