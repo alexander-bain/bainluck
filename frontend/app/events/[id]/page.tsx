@@ -3629,6 +3629,7 @@ export default function EventPage({ params }: EventPageProps) {
               aggregateEndpointIdentity={chartEndpoint}
               backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
+              servedStatus={historyData?.status ?? undefined}
               eventId={eventId}
               eventStatus={event.status}
               periodBoundaries={periodBoundaries}
@@ -4275,6 +4276,7 @@ export default function EventPage({ params }: EventPageProps) {
               aggregateEndpointIdentity={chartEndpoint}
               backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
+              servedStatus={historyData?.status ?? undefined}
               eventId={eventId}
               eventStatus={event.status}
               fillContainer

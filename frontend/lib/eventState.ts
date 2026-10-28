@@ -35,6 +35,25 @@ export function isSuspendedStatus(status: string | null | undefined): boolean {
 }
 
 /**
+ * #10751 — a served body built while the event was still in play: its own
+ * status is live/scheduled/suspended and it carries no `completed_at`.
+ *
+ * The detail and the history are separate reads, so a page can hold a Final
+ * detail over a body that predates the finish. Such a body holds no evidence of
+ * where the game ended — its score series stops at the last goal, its
+ * sportsbooks at the last quote they made — so a finished-game end cut applied
+ * to it deletes play that really happened (15333459: the ink ended at 19:27,
+ * the line it had just drawn ran to 19:57). A body with no status (an older
+ * payload) is not this case and keeps today's behaviour.
+ */
+export function servedBeforeFinish(
+  served: { status?: string | null; completed_at?: string | null } | null | undefined,
+): boolean {
+  if (!served || served.completed_at) return false;
+  return served.status === "live" || served.status === "scheduled" || isSuspendedStatus(served.status);
+}
+
+/**
  * How long past its own kickoff a `scheduled` row is still plausibly about to
  * start.
  *
