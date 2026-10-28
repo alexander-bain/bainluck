@@ -576,6 +576,9 @@ class OwedChartPoint(Base):
     __table_args__ = (
         # Source-scoped custody reads and persistent-owner lookup.
         Index("ix_owed_chart_points_source_id", "source", "id"),
+        # #11676: per-event ACK settlement (source, event_id). Built by hand with
+        # CREATE INDEX CONCURRENTLY (attended, gotcha #31); no migration builds it.
+        Index("ix_owed_chart_points_source_event", "source", "event_id"),
     )
 
 
