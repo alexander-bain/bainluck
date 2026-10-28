@@ -114,6 +114,11 @@ const FIXTURE_CONTROLS = [
     [r.code === 0 && r.summary?.status === 'COMPLETE', `status ${r.summary?.status} holes ${r.summary?.holes} faults ${r.summary?.fault_kinds}`],
     [r.stop?.counters.eventsource_constructions === 1 && r.stop?.counters.other_eventsource_constructions === 1, `case ${r.stop?.counters.eventsource_constructions} other ${r.stop?.counters.other_eventsource_constructions}`],
     [r.stop?.counters.other_frames > 0 && r.recs.some(x => x.rec?.kind === 'es-construct' && x.rec.url.includes('/api/markets/stream')), 'the other subscription is recorded raw, not treated as the case']]},
+  // The exact production-scope code path (no qualification fault is possible there) against a
+  // loopback fixture the grant names. Production scope binds origins to the grant alone.
+  {name: 'C1-production-scope-loopback-fixture', scope: 'production', page: 'market-stream', stream: 'normal', kind: full, expect: r => [
+    [r.code === 0 && r.summary?.status === 'COMPLETE' && r.summary?.scope === 'production', `scope ${r.summary?.scope} status ${r.summary?.status} holes ${r.summary?.holes} faults ${r.summary?.fault_kinds}`],
+    [r.stop?.counters.eventsource_constructions === 1 && r.stop?.counters.other_eventsource_constructions === 1 && Object.keys(r.stop?.counters.methods || {}).join() === 'GET', `case ${r.stop?.counters.eventsource_constructions} other ${r.stop?.counters.other_eventsource_constructions} methods ${JSON.stringify(r.stop?.counters.methods)}`]]},
   {name: 'C2-malformed-json', page: 'normal', stream: 'malformed', kind: full, expect: r => [
     [r.code === 1 && r.summary?.status === 'UNRESOLVED' && has(r.summary?.fault_kinds, 'frame-malformed-json'), `status ${r.summary?.status} ${r.summary?.fault_kinds}`],
     [r.recs.some(x => x.rec?.type === 'preview_v3' && x.rec?.data === '{"protocol":3,"event_id":1,'), 'raw malformed frame retained verbatim']]},
@@ -136,9 +141,14 @@ const FIXTURE_CONTROLS = [
     [r.code === 1 && ['cap:max_response_bytes', 'cap:max_stream_bytes'].includes(r.stop?.reason), `reason ${r.stop?.reason}`],
     [r.stop?.counters.transport.response_bytes <= 3_000_000, `forwarded ${r.stop?.counters.transport.response_bytes} <= cap`],
     [r.stop?.counters.transport.max_received_chunk <= 65_536, `largest received chunk ${r.stop?.counters.transport.max_received_chunk}`]]},
-  {name: 'C3-sse-endless-stream-cap', page: 'normal', stream: 'endless', limits: {max_stream_bytes: 500_000}, expect: r => [
-    [r.code === 1 && r.stop?.reason === 'cap:max_stream_bytes', `reason ${r.stop?.reason}`],
-    [r.stop?.counters.cdp_stream_bytes > 500_000, `cdp stream bytes ${r.stop?.counters.cdp_stream_bytes} (soft cap overshoot recorded)`]]},
+  // Characterization: the per-stream sub-ceiling is counted from CDP Network.dataReceived, which
+  // lags (a fast stream can starve the recorder's loop so CDP counts nothing before the transport
+  // trips). It is NOT a hard boundary; the aggregate transport ceiling is. This control passes when
+  // the hard ceiling holds whichever counter trips, and retains how far CDP lagged.
+  {name: 'C3-stream-subcap-is-soft', page: 'normal', stream: 'endless', limits: {max_stream_bytes: 500_000}, expect: r => [
+    [r.code === 1 && ['cap:max_stream_bytes', 'cap:max_response_bytes'].includes(r.stop?.reason), `reason ${r.stop?.reason}`],
+    [r.stop?.counters.transport.response_bytes <= 50_000_000, `hard ceiling held: forwarded ${r.stop?.counters.transport.response_bytes} <= 50000000`],
+    [true, `soft sub-ceiling 500000: CDP counted ${r.stop?.counters.cdp_stream_bytes} stream bytes when the run stopped (forwarded ${r.stop?.counters.transport.response_bytes})`]]},
   {name: 'C3-http-finite-body-cap', page: 'big-fetch', stream: 'normal', limits: {max_response_bytes: 1_500_000, max_stream_bytes: 1_000_000}, expect: r => [
     [r.code === 1 && r.stop?.reason === 'cap:max_response_bytes', `reason ${r.stop?.reason}`],
     [r.stop?.counters.transport.response_bytes <= 1_500_000 && r.stop?.counters.transport.refused_chunks >= 1, `forwarded ${r.stop?.counters.transport.response_bytes}, refused ${r.stop?.counters.transport.refused_chunks}`]]},
@@ -238,7 +248,7 @@ async function runControl(c, base) {
   const fault = c.fault || (c.faultFn && c.faultFn(dir));
   const env = fault ? {PASSIVE_RECORDER_QUAL_FAULT: JSON.stringify(fault)} : {};
   const recOut = path.join(dir, 'recording');
-  const a = {scope: 'local', manifest: kase.mPath, 'manifest-sha256': kase.mSha, grant: kase.gPath, 'grant-sha256': kase.gSha, out: recOut, 'playwright-module': args['playwright-module'], 'browser-channel': args['browser-channel'], 'browser-mode': args['browser-mode']};
+  const a = {scope: c.scope || 'local', manifest: kase.mPath, 'manifest-sha256': kase.mSha, grant: kase.gPath, 'grant-sha256': kase.gSha, out: recOut, 'playwright-module': args['playwright-module'], 'browser-channel': args['browser-channel'], 'browser-mode': args['browser-mode']};
   if (base.lab && base.lab.trigger) setTimeout(() => base.trigger(kase.t0), Math.max(0, kase.t0 - Date.now()));
   const started = Date.now();
   const res = await run('node', [RECORDER, ...argvOf(a)], {env, logFile: path.join(dir, 'recorder.log'), timeoutMs: base.leadMs + 300000});
