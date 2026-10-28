@@ -19,6 +19,9 @@ struct NBALadderCardView9483: View {
     var expanded = false
     @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .caption2) private var scaledAxisFont: CGFloat = 12
+    /// Half the height of the chance axis's top label, which is centred on
+    /// the plot's top edge and grows with Dynamic Type.
+    @ScaledMetric(relativeTo: .caption2) private var chanceLabelReach: CGFloat = 8
     private var axisFontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledAxisFont) }
 
     private var isMargin: Bool { card.family == .margin }
@@ -387,6 +390,10 @@ struct NBALadderCardView9483: View {
             }
         }
         .frame(height: hasDots ? (expanded ? 220 : 150) : (expanded ? 96 : 64))
+        // The stack's spacing clears the "100%" label at the default size; this
+        // adds only what the label has grown since, so the caption above never
+        // touches it. The plot's height and domain are unchanged.
+        .padding(.top, hasDots ? max(0, chanceLabelReach - 8) : 0)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(spokenSummary(drawn))
     }

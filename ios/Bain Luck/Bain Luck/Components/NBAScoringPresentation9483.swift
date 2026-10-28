@@ -13,12 +13,11 @@ struct NBAScoringChanceComparison9483: View {
             if let point {
                 // Names the prop these chances describe — the one place the
                 // selected line is printed during play.
-                Text("\(Text("Selected line · ").font(.subheadline).foregroundStyle(.secondary))\(Text(point.label).font(.headline))")
-                    .fixedSize(horizontal: false, vertical: true)
+                selectedLine(point)
                 if typeSize >= .xxxLarge {
                     VStack(alignment: .leading, spacing: 16) { readings(point) }
                 } else {
-                    HStack(alignment: .top, spacing: 20) { readings(point) }
+                    HStack(alignment: .nbaComparedValue9483, spacing: 20) { readings(point) }
                 }
             } else {
                 Text("Selected market unavailable")
@@ -34,6 +33,25 @@ struct NBAScoringChanceComparison9483: View {
                             : "Selected line. " + Self.accessibilitySummary(for: point))
     }
 
+    /// At accessibility sizes the name takes its own full-width line in the
+    /// semibold subheadline the figures' side words use, which keeps a long
+    /// team name ("Timberwolves") whole where the headline split it.
+    @ViewBuilder private func selectedLine(_ point: NBALadderCard9483.Point) -> some View {
+        if typeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Selected line")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text(point.label)
+                    .font(.subheadline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            Text("\(Text("Selected line · ").font(.subheadline).foregroundStyle(.secondary))\(Text(point.label).font(.headline))")
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     @ViewBuilder private func readings(_ point: NBALadderCard9483.Point) -> some View {
         reading("Pregame chance", symbol: "circle", value: point.chance)
         reading("Current chance", symbol: "circle.fill", value: point.now)
@@ -44,17 +62,21 @@ struct NBAScoringChanceComparison9483: View {
             Label(label, systemImage: symbol)
                 .font(.subheadline)
                 .fixedSize(horizontal: false, vertical: true)
-            if let value {
-                Text(formatProbability(value))
-                    .font(.system(size: chanceSize, weight: .bold).monospacedDigit())
-                    .foregroundStyle(tint)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("Unavailable")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            Group {
+                if let value {
+                    Text(formatProbability(value))
+                        .font(.system(size: chanceSize, weight: .bold).monospacedDigit())
+                        .foregroundStyle(tint)
+                } else {
+                    // Same step down as the selected line, so the word stays
+                    // whole in a deck column at accessibility sizes.
+                    Text("Unavailable")
+                        .font(typeSize.isAccessibilitySize ? .subheadline.weight(.semibold) : .body.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
             }
+            .fixedSize(horizontal: false, vertical: true)
+            .alignmentGuide(.nbaComparedValue9483) { $0[.firstTextBaseline] }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -81,6 +103,10 @@ struct NBAScoringFigures9483: View {
     let homeColor: Color
     @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .title2) private var figureSize: CGFloat = 28
+    /// The key grows with its label, and so does the gap between them, so at
+    /// large text it reads as a mark rather than punctuation on "Actual".
+    @ScaledMetric(relativeTo: .subheadline) private var keyHeight: CGFloat = 14
+    @ScaledMetric(relativeTo: .subheadline) private var keyGap: CGFloat = 6
 
     /// The chart draws its actual and projection rules with these, so the key
     /// can never disagree with the marks.
@@ -93,10 +119,12 @@ struct NBAScoringFigures9483: View {
             // inside its own column rather than pushing the pair into rows.
             // From XXXL, as the chance pair below, a ~120pt column on a 375
             // deck card could split "projection" mid-word, so they stack.
+            // Side by side, the numbers share a baseline even when one label
+            // wraps to two lines and the other does not.
             if typeSize >= .xxxLarge {
                 VStack(alignment: .leading, spacing: 12) { figures }
             } else {
-                HStack(alignment: .top, spacing: 16) { figures }
+                HStack(alignment: .nbaComparedValue9483, spacing: 16) { figures }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -115,10 +143,10 @@ struct NBAScoringFigures9483: View {
 
     private func figure(_ label: String, value: Double, stroke: StrokeStyle, key: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+            HStack(spacing: keyGap) {
                 NBAStatMarkKey9483()
                     .stroke(key, style: stroke)
-                    .frame(width: 6, height: 14)
+                    .frame(width: 6, height: keyHeight)
                     .accessibilityHidden(true)
                 Text(label)
                     .font(.subheadline)
@@ -127,6 +155,7 @@ struct NBAScoringFigures9483: View {
             }
             figureText(value)
                 .fixedSize(horizontal: false, vertical: true)
+                .alignmentGuide(.nbaComparedValue9483) { $0[.firstTextBaseline] }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -177,6 +206,16 @@ struct NBAScoringFigures9483: View {
         if let forecast = card.forecast { parts.append("Pregame projection: \(text(card, forecast)).") }
         return parts.joined(separator: " ")
     }
+}
+
+extension VerticalAlignment {
+    /// Lines up the values of a side-by-side comparison on their first
+    /// baseline, whatever height the labels above them wrap to.
+    private enum NBAComparedValue9483: AlignmentID {
+        static func defaultValue(in context: ViewDimensions) -> CGFloat { context[.top] }
+    }
+
+    fileprivate static let nbaComparedValue9483 = VerticalAlignment(NBAComparedValue9483.self)
 }
 
 /// A short vertical rule in the chart's own stroke: the figure's visual key.
