@@ -5230,8 +5230,74 @@ jobs:
             exit 1
           }
 
+      # ── #11681 DIAGNOSTIC ONLY, DO NOT MERGE: read-only observation around the held-row step ──
+      - name: "diag #11681: environment manifest"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/l1obs"
+          {
+            echo "head=$(git rev-parse HEAD) tree=$(git rev-parse HEAD^{tree})"
+            python -c "import sys, sqlalchemy, asyncpg, greenlet, gc; print(sys.version); print('sqlalchemy', sqlalchemy.__version__, 'asyncpg', asyncpg.__version__, 'greenlet', greenlet.__version__, 'gc_threshold', gc.get_threshold())"
+            nproc; lscpu | grep -E 'Model name|^CPU\(s\)|Thread|MHz|Hypervisor' || true
+            cat /proc/pressure/cpu || true
+            python - <<'PY'
+          import asyncio, os
+          from sqlalchemy import text
+          from sqlalchemy.ext.asyncio import create_async_engine
+          async def main():
+              e = create_async_engine(os.environ["SEARCH_TEST_DATABASE_URL"])
+              try:
+                  async with e.connect() as c:
+                      for q in ("select version()", "show synchronous_commit", "show fsync", "show wal_sync_method", "show shared_buffers", "select count(*) from pg_namespace"):
+                          print(q, "=", (await c.execute(text(q))).scalar())
+              finally:
+                  await e.dispose()
+          asyncio.run(main())
+          PY
+          } > "$RUNNER_TEMP/l1obs/manifest.txt" 2>&1 || true
+          cat "$RUNNER_TEMP/l1obs/manifest.txt"
+
+      - name: "diag #11681: per-database statement durations on (no parameters), held-row step only"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          python - <<'PY'
+          import asyncio, os
+          from sqlalchemy import text
+          from sqlalchemy.ext.asyncio import create_async_engine
+          async def main():
+              e = create_async_engine(os.environ["SEARCH_TEST_DATABASE_URL"], isolation_level="AUTOCOMMIT")
+              try:
+                  async with e.connect() as c:
+                      await c.execute(text("ALTER DATABASE bl_searchtest SET log_parameter_max_length = 0"))
+                      await c.execute(text("ALTER DATABASE bl_searchtest SET log_min_duration_statement = 0"))
+              finally:
+                  await e.dispose()
+              e = create_async_engine(os.environ["SEARCH_TEST_DATABASE_URL"])
+              try:
+                  async with e.connect() as c:
+                      for q in ("show log_min_duration_statement", "show log_parameter_max_length", "show log_line_prefix"):
+                          print(q, "=", (await c.execute(text(q))).scalar())
+              finally:
+                  await e.dispose()
+          asyncio.run(main())
+          PY
+
+      - name: "diag #11681: start host sampler"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          cid=$(docker ps --filter "ancestor=postgres:15" -q | head -1)
+          full=$(docker inspect -f '{{.Id}}' "$cid")
+          stat=$(ls /sys/fs/cgroup/system.slice/docker-"$full".scope/cpu.stat 2>/dev/null || echo -)
+          echo "$cid" > "$RUNNER_TEMP/l1obs/pg-container.txt"; echo "$stat" >> "$RUNNER_TEMP/l1obs/pg-container.txt"
+          date -u +%Y-%m-%dT%H:%M:%S.%3NZ > "$RUNNER_TEMP/l1obs/held-row-step-start.txt"
+          nohup python "$GITHUB_WORKSPACE/.github/diagnostics/l1sampler.py" "$RUNNER_TEMP/l1obs/host-100ms.csv" "$stat" 1200 > /dev/null 2>&1 &
+          echo $! > "$RUNNER_TEMP/l1obs/sampler.pid"
+
       - name: "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        env:
+          PYTHONPATH: ${{ github.workspace }}/.github/diagnostics
+          L1OBS_OUT: ${{ runner.temp }}/l1obs/observer.json
         run: |
           set -euo pipefail
           dir="$RUNNER_TEMP/held-row-redis"
@@ -5242,7 +5308,7 @@ jobs:
           chmod +x "$dir/redislite/bin/redis-server"
           "$dir/redislite/bin/redis-server" --version
           export EVENT_FRAME_REDIS_SERVER="$dir/redislite/bin/redis-server" EVENT_FRAME_REDIS_REQUIRED=1
-          if python -m pytest tests/integration/test_pm_held_price_row_stamps_received_quote_11138_pg.py \
+          if python -m pytest -p l1observe tests/integration/test_pm_held_price_row_stamps_received_quote_11138_pg.py \
             tests/integration/test_live_blend_source_projection_10090_pg.py \
             tests/integration/test_live_blend_metadata_projection_10090_pg.py \
             tests/integration/test_pm_price_returned_clock_10090_pg.py \
@@ -5272,6 +5338,52 @@ jobs:
             echo "::error::#11138 held-row/default-DNPL/reservations/returned-clock gate did not run all 246 cases"
             exit 1
           }
+
+      - name: "diag #11681: logging off, stop sampler, collect redacted server timings"
+        if: always() && matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/l1obs"
+          date -u +%Y-%m-%dT%H:%M:%S.%3NZ > "$RUNNER_TEMP/l1obs/held-row-step-end.txt"
+          kill "$(cat "$RUNNER_TEMP/l1obs/sampler.pid")" 2>/dev/null || true
+          python - <<'PY' || true
+          import asyncio, os
+          from sqlalchemy import text
+          from sqlalchemy.ext.asyncio import create_async_engine
+          async def main():
+              e = create_async_engine(os.environ["SEARCH_TEST_DATABASE_URL"], isolation_level="AUTOCOMMIT")
+              try:
+                  async with e.connect() as c:
+                      await c.execute(text("ALTER DATABASE bl_searchtest RESET log_min_duration_statement"))
+                      await c.execute(text("ALTER DATABASE bl_searchtest RESET log_parameter_max_length"))
+              finally:
+                  await e.dispose()
+          asyncio.run(main())
+          PY
+          cp /tmp/held-row11138.txt "$RUNNER_TEMP/l1obs/" 2>/dev/null || true
+          cid=$(head -1 "$RUNNER_TEMP/l1obs/pg-container.txt" 2>/dev/null || true)
+          if [ -n "$cid" ]; then
+            docker logs "$cid" 2>&1 | python -I "$GITHUB_WORKSPACE/.github/diagnostics/l1pglog.py" | gzip > "$RUNNER_TEMP/l1obs/pg-timings.csv.gz"
+          fi
+          # Redaction control: no parameters, passwords or connection strings in anything uploaded.
+          # (held-row11138.txt is the gate's own output, already printed in this job's log.)
+          for f in "$RUNNER_TEMP"/l1obs/*; do
+            case "$f" in */held-row11138.txt) continue ;; esac
+            if zcat -f "$f" | /usr/bin/grep -aqE 'postgres:postgres|parameters:|postgresql\+asyncpg'; then
+              echo "::error::#11681 redaction control failed for $(basename "$f"); withheld"
+              rm -f "$f"; echo withheld > "$f.WITHHELD"
+            fi
+          done
+          ls -la "$RUNNER_TEMP/l1obs"
+
+      - name: "diag #11681: upload observation"
+        if: always() && matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: l1-11681-hosted-timing-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/l1obs
+          retention-days: 7
+          if-no-files-found: warn
+      # ── end #11681 DIAGNOSTIC ONLY ──
 
       - name: "#10090 a held PM quote returning to its stored price is published, held or just released (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
