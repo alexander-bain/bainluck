@@ -217,8 +217,18 @@ class FakeAPI:
         self.suite_branch = BRANCH
         self.reread_move = False
         self.reads = 0
+        self.check_jobs = {}
+        self.annotations = {}
 
     def get(self, path):
+        if path.startswith("actions/jobs/"):
+            return copy.deepcopy(
+                self.check_jobs[int(path.removeprefix("actions/jobs/"))]
+            )
+        if path.startswith("check-runs/") and path.endswith(
+            "/annotations?per_page=100"
+        ):
+            return copy.deepcopy(self.annotations[int(path.split("/")[1])])
         if path == "actions/runs/110":
             return copy.deepcopy(self.security_run)
         if path == "actions/runs/200":
@@ -1280,10 +1290,20 @@ def test_security_cli_failure_is_visible_nonzero_and_removes_stale_pass(
         if outcome == "new-finding"
         else "SECURITY EVIDENCE INCOMPLETE" in text
     )
+    # The titled annotation is how a failed check-run names its class (10/28).
+    lines = text.splitlines()
+    if outcome == "new-finding":
+        assert (
+            "::error title=SECURITY NEW-FINDING::new qualifying CodeQL finding" in lines
+        )
+        assert not any("title=SECURITY EVIDENCE INCOMPLETE" in line for line in lines)
+    else:
+        assert "::error title=SECURITY EVIDENCE INCOMPLETE::ValueError" in lines
+        assert not any("title=SECURITY NEW-FINDING" in line for line in lines)
     if outcome == "unknown":
         assert "fresh full attempt" in text
         assert "Re-run ALL jobs" in text
-        assert "historical failed checks still force full master CI" in text
+        assert "failed tests, gitleaks or findings still force full master CI" in text
         assert "Never re-stamp the same tree" in text
         assert "UNKNOWN again, do not land" in text
         assert "reviewed fix or revert" in text
@@ -1674,11 +1694,8 @@ def test_producer_context_and_native_findings_cannot_become_passing_receipts(mut
         api.qualify()
 
 
-def test_successful_unknown_recovery_still_takes_full_master_tests_on_historical_failure(
-    monkeypatch, tmp_path
-):
-    # Fresh successful security attempt earns receipts, while the conservative
-    # historical-check policy still disallows test reuse for this same head.
+def recovered_fixture():
+    """Attempt 2 of the compose CodeQL run paid both languages with receipts."""
     api = fixture()
     for language in evidence.SECURITY_LANGUAGES:
         recovered = ComposeSecurityAPI(language, attempt=2).qualify()
@@ -1690,9 +1707,24 @@ def test_successful_unknown_recovery_still_takes_full_master_tests_on_historical
     for artifact in api.security_artifacts:
         artifact["name"] = artifact["name"].replace("-1-", "-2-")
     evidence.validate_security_receipts(api, api.rows, HEAD, TREE, BASE, 12, BRANCH)
+    return api
+
+
+def test_successful_recovery_of_an_unclassified_failure_still_takes_full_master_tests(
+    monkeypatch, tmp_path, capsys
+):
+    # Fresh successful security attempt earns receipts, but a failed attempt
+    # that does not prove the evidence-incomplete class (the pre-10/28 producer
+    # wrote no titled annotation) still disallows test reuse for this head.
+    api = recovered_fixture()
     failed = copy.deepcopy(api.checks[1])
     failed.update({"id": 9999, "conclusion": "failure"})
     api.checks.append(failed)
+    api.check_jobs[9999] = codeql_job(9999, "python", 1, "failure")
+    api.check_jobs[api.checks[1]["id"]] = codeql_job(
+        api.checks[1]["id"], "python", 2, "success"
+    )
+    api.annotations[9999] = [GENERIC_EXIT]
     event = tmp_path / "event.json"
     event.write_text(json.dumps({"before": BASE}))
     output = tmp_path / "outputs"
@@ -1710,6 +1742,9 @@ def test_successful_unknown_recovery_still_takes_full_master_tests_on_historical
     monkeypatch.setattr(sys, "argv", [str(SCRIPT)])
     assert evidence.main() is None
     assert output.read_text() == "reuse=false\n"
+    assert "Prior evidence unavailable (ValueError)" in capsys.readouterr().out
+    with pytest.raises(ValueError, match="not the evidence-incomplete class"):
+        decide(api)
 
 
 def test_historical_failed_check_refusal_stays_byte_identical():
@@ -2890,3 +2925,313 @@ def test_transition_master_failure_stops_without_second_transition(
 
 def test_missing_master_recovery_context_never_advises_unapproved_retry():
     assert evidence._security_recovery(ENV).startswith("STOP:")
+
+
+# Alex 10/28 (#10090), narrow: a later receipted pass of the same CodeQL run
+# clears an evidence-incomplete attempt; every other failure still refuses.
+GENERIC_EXIT = {
+    "annotation_level": "failure",
+    "title": "",
+    "message": "Process completed with exit code 1.",
+}
+EVIDENCE_NOTE = {
+    "annotation_level": "failure",
+    "title": evidence.EVIDENCE_INCOMPLETE,
+    "message": "ValueError",
+}
+FINDING_NOTE = {
+    "annotation_level": "failure",
+    "title": evidence.NEW_FINDING,
+    "message": "new qualifying CodeQL finding",
+}
+JOB_STEPS = (
+    "Set up job",
+    "Checkout",
+    SECURITY_STEPS[0],
+    "Initialize CodeQL",
+    "Autobuild",
+    "Perform CodeQL Analysis",
+    READINESS_STEP,
+    SECURITY_STEPS[1],
+    SECURITY_STEPS[2],
+    "Post Perform CodeQL Analysis",
+    "Complete job",
+)
+JS = "Analyze (javascript-typescript)"
+
+
+def codeql_job(job_id, language, attempt, conclusion, *, name=None, run_id=110):
+    """The actions/jobs read of a CodeQL check-run (check-run id == job id).
+
+    A failed attempt has the real 8fadf94a attempt-1 shape: analysis paid, the
+    qualifier failed and the receipt publisher was skipped.
+    """
+    steps = []
+    for step in JOB_STEPS:
+        result = "success"
+        if conclusion == "failure" and step == SECURITY_STEPS[1]:
+            result = "failure"
+        elif conclusion == "failure" and step == SECURITY_STEPS[2]:
+            result = "skipped"
+        steps.append({"name": step, "status": "completed", "conclusion": result})
+    return {
+        "id": job_id,
+        "name": name or f"Analyze ({language})",
+        "run_id": run_id,
+        "run_attempt": attempt,
+        "head_sha": HEAD,
+        "head_branch": BRANCH,
+        "status": "completed",
+        "conclusion": conclusion,
+        "steps": steps,
+    }
+
+
+def check_named(api, name, app=15368):
+    return next(c for c in api.checks if (c["name"], c["app"]["id"]) == (name, app))
+
+
+def add_failure(api, name, *, job_id=7001, app=15368, suite=500, note=EVIDENCE_NOTE):
+    """A completed failed check whose job claims attempt 1 of the receipted run,
+    with its green rerun bound to attempt 2. Only `name`/`app` vary the clause."""
+    passing = check_named(api, name, app)
+    api.checks.append(
+        {
+            **copy.deepcopy(passing),
+            "id": job_id,
+            "conclusion": "failure",
+            "check_suite": {"id": suite},
+        }
+    )
+    api.check_jobs[job_id] = codeql_job(job_id, None, 1, "failure", name=name)
+    api.check_jobs[passing["id"]] = codeql_job(
+        passing["id"], None, 2, "success", name=name
+    )
+    api.annotations[job_id] = [GENERIC_EXIT] + ([note] if note else [])
+    return api
+
+
+def clearable():
+    return add_failure(recovered_fixture(), JS)
+
+
+def scenario(name):
+    """Each refusal scenario violates exactly one clause; all others hold."""
+    api = clearable()
+    failed = api.check_jobs[7001]
+    if name == "receipt-invalid":
+        api.security_receipts["javascript-typescript"]["qualified"] = False
+    elif name == "receipt-missing":
+        api.security_artifacts.pop()
+    elif name == "class-finding":
+        # NewFinding also fails the qualifier with the publisher skipped.
+        api.annotations[7001] = [GENERIC_EXIT, FINDING_NOTE]
+    elif name == "class-finding-beside-evidence":
+        api.annotations[7001] = [GENERIC_EXIT, EVIDENCE_NOTE, FINDING_NOTE]
+    elif name == "class-unannotated":
+        # The real 8fadf94a attempt 1: the pre-10/28 producer titled nothing.
+        api.annotations[7001] = [GENERIC_EXIT]
+    elif name == "class-warning-level":
+        api.annotations[7001] = [
+            GENERIC_EXIT,
+            {**EVIDENCE_NOTE, "annotation_level": "warning"},
+        ]
+    elif name == "class-analysis-failed":
+        for step in failed["steps"]:
+            if step["name"] == "Perform CodeQL Analysis":
+                step["conclusion"] = "failure"
+            if step["name"] == SECURITY_STEPS[1]:
+                step["conclusion"] = "skipped"
+    elif name == "class-publish-ran":
+        failed["steps"][JOB_STEPS.index(SECURITY_STEPS[2])]["conclusion"] = "failure"
+    elif name == "test-job":
+        # The #11681 guard: a flaky CI test job and its green rerun, with every
+        # other clause forged to hold, still refuses.
+        api.checks.pop()
+        api.checks.append(
+            {
+                **copy.deepcopy(check_named(api, JS)),
+                "id": 7100,
+                "name": "backend-tests (3)",
+            }
+        )
+        add_failure(api, "backend-tests (3)", job_id=7101)
+    elif name == "gitleaks":
+        api.checks.pop()
+        add_failure(api, "gitleaks secret scan", job_id=7101)
+    elif name == "code-scanning-alert":
+        api.checks.pop()
+        add_failure(api, "CodeQL", job_id=7101, app=57789)
+    elif name == "other-branch":
+        api.checks[-1]["check_suite"] = {"id": 502}
+    elif name == "rerun-cancelled":
+        api.security_run["conclusion"] = "cancelled"
+        check_named(api, JS)["conclusion"] = "cancelled"
+    elif name == "rerun-unpaid":
+        api.check_jobs[check_named(api, JS)["id"]]["run_attempt"] = 1
+    elif name == "rerun-other-run":
+        api.check_jobs[check_named(api, JS)["id"]]["run_id"] = 111
+    elif name == "failure-not-earlier":
+        failed["run_attempt"] = 2
+    elif name == "failure-other-run":
+        failed["run_id"] = 111
+    elif name == "failure-other-head":
+        failed["head_sha"] = BASE
+    else:
+        raise AssertionError(name)
+    return api
+
+
+def suite_branches(api):
+    """Suite 502 belongs to another compose branch on the same head."""
+    original = api.get
+
+    def get(path):
+        if path == "check-suites/502":
+            return {"head_sha": HEAD, "head_branch": "integrator/compose-other"}
+        return original(path)
+
+    api.get = get
+    return api
+
+
+REFUSALS = {
+    "receipt-invalid": "compose security is not qualified",
+    "receipt-missing": "missing/ambiguous security receipt",
+    "class-finding": "not the evidence-incomplete class",
+    "class-finding-beside-evidence": "not the evidence-incomplete class",
+    "class-unannotated": "not the evidence-incomplete class",
+    "class-warning-level": "not the evidence-incomplete class",
+    "class-analysis-failed": "steps are not the evidence-incomplete class",
+    "class-publish-ran": "steps are not the evidence-incomplete class",
+    "test-job": "security/check refusal",
+    "gitleaks": "security/check refusal",
+    "code-scanning-alert": "security/check refusal",
+    "other-branch": "security/check refusal",
+    "rerun-cancelled": "unpaid compose security check",
+    "rerun-unpaid": "no receipted later pass",
+    "rerun-other-run": "no receipted later pass",
+    "failure-not-earlier": "not an earlier attempt",
+    "failure-other-run": "not the receipted run",
+    "failure-other-head": "failed CodeQL check identity",
+}
+
+
+def test_evidence_incomplete_attempt_cleared_by_receipted_rerun_of_same_run():
+    api = clearable()
+    assert decide(api) == {
+        "reuse": "true",
+        "reuse_run": "100",
+        "reuse_attempt": "1",
+        "reuse_head": HEAD,
+        "reuse_base": BASE,
+    }
+
+
+def test_the_same_failure_without_the_narrow_clearance_would_refuse():
+    """Control: the failed check is really in the decision's input."""
+    api = clearable()
+    api.annotations[7001] = []
+    with pytest.raises(ValueError, match="not the evidence-incomplete class"):
+        decide(api)
+
+
+@pytest.mark.parametrize("name", sorted(REFUSALS))
+def test_every_other_failure_with_a_green_rerun_still_refuses(name):
+    api = suite_branches(scenario(name))
+    with pytest.raises(ValueError, match=REFUSALS[name]):
+        decide(api)
+
+
+def mutant(old, new):
+    source = SCRIPT.read_text()
+    assert source.count(old) == 1, old
+    module = SimpleNamespace()
+    namespace = {"__file__": str(SCRIPT), "__name__": "ci_prior_evidence_mutant"}
+    exec(compile(source.replace(old, new), str(SCRIPT), "exec"), namespace)
+    module.decide = namespace["decide"]
+    return module
+
+
+CLAUSE_MUTANTS = {
+    "a-codeql-analysis-identity": (
+        'and (check["name"], check["app"]["id"]) in CODEQL_ANALYSIS_CHECKS\n',
+        "\n",
+        ["test-job", "gitleaks", "code-scanning-alert"],
+    ),
+    "b-step-class": (
+        '        "Perform CodeQL Analysis" in names[:qualifier]\n',
+        '        True or "Perform CodeQL Analysis" in names[:qualifier]\n',
+        ["class-analysis-failed", "class-publish-ran"],
+    ),
+    "b-annotation-class": (
+        'titles.count(("failure", EVIDENCE_INCOMPLETE)) == 1\n',
+        'True or titles.count(("failure", EVIDENCE_INCOMPLETE)) == 1\n',
+        ["class-finding", "class-unannotated", "class-warning-level"],
+    ),
+    "b-no-finding-beside-evidence": (
+        "and not any(title == NEW_FINDING for _, title in titles)",
+        "and True",
+        ["class-finding-beside-evidence"],
+    ),
+    "c-same-run": (
+        'require(job["run_id"] == codeql["id"], "failed check is not the receipted run")',
+        'require(True, "failed check is not the receipted run")',
+        ["failure-other-run"],
+    ),
+    "c-earlier-attempt": (
+        'and 1 <= job["run_attempt"] < codeql["run_attempt"],',
+        "and True,",
+        ["failure-not-earlier"],
+    ),
+    "c-same-head": (
+        'and job["head_sha"] == codeql["head_sha"]\n        and job["status"]',
+        'and job["status"]',
+        ["failure-other-head"],
+    ),
+    "c-later-pass": (
+        'require(any(passes), "no receipted later pass for the failed CodeQL check")',
+        'require(True, "no receipted later pass for the failed CodeQL check")',
+        ["rerun-unpaid", "rerun-other-run"],
+    ),
+    "d-receipt-validates": (
+        "    codeql = validate_security_receipts(\n        api,\n        runs,",
+        '    codeql = (lambda api, runs, *a, **k: api.get("actions/runs/" + str(next(\n'
+        "        r['id'] for r in runs if r.get('path') == CODEQL_WORKFLOW))))(\n"
+        "        api,\n        runs,",
+        ["receipt-invalid", "receipt-missing"],
+    ),
+    "same-branch-only": (
+        'and suite["head_branch"] == run["head_branch"]\n            and (check["name"]',
+        'and (check["name"]',
+        ["other-branch"],
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "clause,name",
+    [
+        (clause, name)
+        for clause, (_, _, names) in CLAUSE_MUTANTS.items()
+        for name in names
+    ],
+)
+def test_each_clause_is_load_bearing_its_mutant_wrongly_reuses(clause, name):
+    old, new, _ = CLAUSE_MUTANTS[clause]
+    with pytest.raises(ValueError):
+        decide(suite_branches(scenario(name)))
+    killed = mutant(old, new)
+    assert (
+        killed.decide(suite_branches(scenario(name)), ENV, TEXT, TREE, BASE)["reuse"]
+        == "true"
+    )
+
+
+def test_mutants_leave_the_clearing_case_unchanged():
+    """Each mutant only loosens; it never breaks the accepted case it guards."""
+    for old, new, _ in CLAUSE_MUTANTS.values():
+        assert (
+            mutant(old, new).decide(clearable(), ENV, TEXT, TREE, BASE)["reuse"]
+            == "true"
+        )
