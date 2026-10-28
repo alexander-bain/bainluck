@@ -2727,6 +2727,10 @@ struct OddsChartView: View {
                 frames.removeLast()
             }
         }
+        if !frames.isEmpty {
+            rendered = servedBlendAtEvidenceTime(
+                rendered, history: history, previewAt: replacedPin ? frames.last?.date : nil)
+        }
         let publishedEdge = rendered
             .filter { $0.source == "aggregate" }
             .map(\.date)
@@ -2761,6 +2765,45 @@ struct OddsChartView: View {
         return inserting(
             held.map { ChartDataPoint(date: $0.date, probability: $0.value, source: "aggregate") },
             into: extended)
+    }
+
+    /// #10090 / #11105 — a served blend minute moves to the END of its minute
+    /// before it is joined with exact-time frames.
+    ///
+    /// The backend stamps each `aggregate_line` bucket at the minute's START
+    /// but fills it with each source's latest reading before the minute's END
+    /// (`compute_aggregated_probability`, `bucket_seconds=60`). Drawn at M:00,
+    /// a bucket shows a value from up to 59 s later than the frames drawn after
+    /// it, so any change inside the minute drew as an out-and-back spike that
+    /// never happened. The body carries no per-bucket evidence time; the end of
+    /// the minute is the bound the bucket's own rule gives.
+    ///
+    /// The end is capped by the read itself, which the payload proves only when
+    /// it pinned its edge (`blend_edge_pinned`, stamped at the read time on a
+    /// live row): no bucket's evidence is later than that. The bucket that
+    /// contains the read moves to the pin, so the pin still ends the line and
+    /// the published edge does not move. When a preview replaced the pin,
+    /// `previewAt` is the cap and that bucket stays where it was, because the
+    /// preview must stay strictly newer than every committed point. An
+    /// unpinned payload proves no read time, so it is returned unchanged: a
+    /// minute's end could sit past the live edge.
+    ///
+    /// A relabelling in time only: the same values, the same order, no point
+    /// added or removed. A chart with no frames never reaches this.
+    static func servedBlendAtEvidenceTime(
+        _ points: [ChartDataPoint],
+        history: EventHistoryResponse,
+        previewAt: Date?
+    ) -> [ChartDataPoint] {
+        guard history.blendEdgePinned == true,
+              let pinAt = history.aggregateLine?.last?.timestamp.asDate else { return points }
+        let cap = previewAt.map { min($0, pinAt) } ?? pinAt
+        return points.map { point in
+            guard point.source == "aggregate", point.date < cap else { return point }
+            let end = point.date.addingTimeInterval(60)
+            let date = end < cap ? end : (previewAt == nil ? cap : point.date)
+            return ChartDataPoint(date: date, probability: point.probability, source: point.source)
+        }
     }
 
     /// Where the backend blended NOTHING, carry each served venue series forward
