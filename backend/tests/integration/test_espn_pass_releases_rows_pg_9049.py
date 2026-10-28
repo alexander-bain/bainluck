@@ -143,6 +143,104 @@ async def test_known_game_publishes_before_unmatched_creation(
     assert len(stats["errors"]) == (1 if failure else 0), stats
 
 
+# Retained independent #11671 P1/P4 controls: release and rollback are both
+# load-bearing when moving known-game publication ahead of new-game creation.
+@needs_postgres
+async def test_creation_commits_and_publishes_before_next_sport(db, monkeypatch, sink):  # noqa: F811
+    """Creation's own writes/frames are released before the NEXT sport runs."""
+    import inspect
+
+    import app.tasks.espn_sync as task
+    import app.utils.espn_helpers as helpers
+    from app.models.models import Event
+    from app.utils.nonvenue_live_push import write_nonvenue_probability
+
+    engine, maker, ids = db
+    target, sibling = ids["the_failing_sports_row"], ids["the_next_sports_row"]
+    sig = inspect.signature(task._process_live_sport)
+    seen = {}
+    async def noop(*a, **k):
+        pass
+
+    _wire(monkeypatch, maker, ids, noop)
+
+    async def known(*args, **kwargs):
+        b = sig.bind(*args, **kwargs).arguments
+        s = b["session"]
+        if b["sport_key"] == MLB:
+            ev = await s.get(Event, target)
+            await write_nonvenue_probability(s, ev, "espn", 0.72)
+            await b["create_unmatched_fn"](s, [ev], b["espn_events"], MLB, b["stats"])
+        else:
+            async with maker() as r:
+                seen["period"] = await r.scalar(select(Event.period).where(Event.id == sibling))
+            seen["free"] = await _is_free(engine, sibling)
+            seen["frames"] = [(f["event_id"], f["source_value"]) for _, f in sink]
+
+    async def create(session, rows, board, key, stats):
+        if key != MLB:
+            return
+        await session.execute(update(Event).where(Event.id == sibling).values(period="created"))
+        ev = await session.get(Event, sibling)
+        await write_nonvenue_probability(session, ev, "espn", 0.61)
+
+    monkeypatch.setattr(task, "_process_live_sport", known)
+    monkeypatch.setattr(helpers, "create_events_from_unmatched_espn", create)
+    stats = await task._sync_espn_live_events()
+    assert stats["errors"] == [], stats["errors"]
+    assert seen["period"] == "created", seen
+    assert seen["free"] is True, seen
+    assert (target, 0.72) in seen["frames"] and (sibling, 0.61) in seen["frames"], seen
+    assert len(sink) == 2
+
+
+@needs_postgres
+async def test_swallowed_creation_failure_publishes_nothing_it_wrote(db, monkeypatch, sink):  # noqa: F811
+    """The real creator's shape: per-item failure caught and logged AFTER a
+    queued probability frame. The creation savepoint must roll it back, publish
+    no frame for it, and receipt one creation error; known MLB stays."""
+    import inspect
+
+    import app.tasks.espn_sync as task
+    import app.utils.espn_helpers as helpers
+    from app.models.models import Event
+    from app.utils.nonvenue_live_push import write_nonvenue_probability
+
+    engine, maker, ids = db
+    target, sibling = ids["the_failing_sports_row"], ids["the_next_sports_row"]
+    sig = inspect.signature(task._process_live_sport)
+    async def noop(*a, **k):
+        pass
+
+    _wire(monkeypatch, maker, ids, noop)
+
+    async def known(*args, **kwargs):
+        b = sig.bind(*args, **kwargs).arguments
+        s = b["session"]
+        if b["sport_key"] == MLB:
+            ev = await s.get(Event, target)
+            await write_nonvenue_probability(s, ev, "espn", 0.72)
+            await b["create_unmatched_fn"](s, [ev], b["espn_events"], MLB, b["stats"])
+
+    async def create(session, rows, board, key, stats):
+        ev = await session.get(Event, sibling)
+        await write_nonvenue_probability(session, ev, "espn", 0.33)
+        try:
+            await session.execute(text("SELECT 1 / 0"))
+        except Exception:
+            pass  # create_events_from_unmatched_espn's per-item swallow
+
+    monkeypatch.setattr(task, "_process_live_sport", known)
+    monkeypatch.setattr(helpers, "create_events_from_unmatched_espn", create)
+    stats = await task._sync_espn_live_events()
+    async with maker() as r:
+        t = await r.scalar(select(Event.win_probability_sources).where(Event.id == target))
+        s = await r.scalar(select(Event.win_probability_sources).where(Event.id == sibling))
+    assert t["espn"]["value"] == 0.72
+    assert "espn" not in (s or {}), s
+    assert [(f["event_id"], f["source_value"]) for _, f in sink] == [(target, 0.72)], sink
+    assert len(stats["errors"]) == 1 and stats["errors"][0].startswith(f"{MLB} creation:"), stats["errors"]
+
 async def _is_free(engine, event_id) -> bool:
     """Can another writer take this row right now?"""
     async with engine.connect() as conn:
