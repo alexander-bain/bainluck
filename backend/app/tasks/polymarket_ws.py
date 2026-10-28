@@ -3456,6 +3456,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         tail_receipts.exact_trace = PMStageTrace.from_env(
             os.environ, run=tail_receipts.run, event_of=event_id_by_outcome,
         )
+    # #10090 (Root attempt58): who holds the rows a re-rank waits on. OFF unless
+    # WS_PM_LOCK_HOLDER_EXPIRES_AT is <=1 h away; one probe per minute per
+    # process, stops at the first holder (`app/utils/pm_lock_holder_trace.py`).
+    tail_receipts.lock_holder = None
+    with contextlib.suppress(Exception):
+        from app.utils.pm_lock_holder_trace import for_process
+
+        tail_receipts.lock_holder = for_process(os.environ, run=tail_receipts.run)
     # #9462 review: stamps the previous run still owed when it recycled. Its
     # prices are already stored; the first flush below stamps them.
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
@@ -3675,11 +3683,31 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     row.market_id for row in written_rows
                 }
                 if reranked_markets:
-                    stats["ranks_rederived"] += (
-                        await session.execute(
+                    # #10090 (Root attempt58): v5775's 31 rank lock timeouts
+                    # named no holder. Off by default; when on, the sampler
+                    # probes once if this statement is still running 150 ms
+                    # in. The writer only tells it start and end; it never
+                    # waits on the probe.
+                    lock_holder = getattr(
+                        getattr(blend_refresher, "receipts", None), "lock_holder", None
+                    )
+                    holder_token = None
+                    if lock_holder is not None and not final and lock_holder.ready():
+                        holder_token = lock_holder.rank_started(
+                            await lock_holder.writer_pid(session), chunk,
+                            reranked_markets,
+                        )
+                    try:
+                        rank_result = await session.execute(
                             rerank_market_fields_stmt(sorted(reranked_markets))
                         )
-                    ).rowcount
+                    except BaseException as rank_exc:
+                        if holder_token is not None:
+                            lock_holder.rank_finished(holder_token, rank_exc)
+                        raise
+                    if holder_token is not None:
+                        lock_holder.rank_finished(holder_token, None)
+                    stats["ranks_rederived"] += rank_result.rowcount
             stats["price_updates"] += len(written_rows)
             stats["open_contract_prices_written"] += sum(
                 1 for row in written_rows if row.id in open_outcome_ids
