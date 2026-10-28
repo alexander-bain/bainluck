@@ -115,7 +115,7 @@ def _after_rollback(session, transaction):
     session.info[_PENDING] = [entry for entry in pending if not belongs_to(entry[0])]
     trace = nonvenue_trace()
     if trace is not None:
-        trace.rolled_back(rolled_back)
+        trace.rolled_back(transaction, rolled_back)
 
 
 _PRIOR_WRITE_PROBE_SQL = (
@@ -211,6 +211,8 @@ async def write_nonvenue_probability(
     """
     if source not in NONVENUE_SOURCES:
         raise ValueError(f"not a nonvenue probability source: {source}")
+    trace = nonvenue_trace()
+    seam = None if trace is None else trace.seam_entered(event.id)
     prior_txn_row_write = await _probe_prior_txn_row_write(session, event.id)
     # Literal source dispatch keeps the existing writer/eligibility scanner
     # able to verify every mint. This entry point never accepts venue sources.
@@ -294,11 +296,13 @@ async def write_nonvenue_probability(
             "evidence": evidence,
         },
     )
-    trace = nonvenue_trace()
-    if trace is not None:
+    if seam is not None:
         trace.written(
-            frame, value=value, removed=value is None, rev=rev, stamped_at=at,
-            entry=sources.get(source), evidence=evidence, metadata_keys=sorted(metadata or {}),
+            seam, frame, transaction=session.sync_session.get_transaction(), value=value,
+            removed=value is None, rev=rev, stamped_at=at, sources=sources, status=status,
+            espn=espn, opening=opening, evidence=evidence,
+            metadata_keys=sorted(metadata or {}), prior=previous,
+            prior_txn_row_write=prior_txn_row_write,
         )
     return sources
 

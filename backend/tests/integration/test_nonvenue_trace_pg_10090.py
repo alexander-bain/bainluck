@@ -62,7 +62,7 @@ def arm(events):
         {"NONVENUE_TRACE_EVENTS": ",".join(str(e) for e in events),
          "NONVENUE_TRACE_EXPIRES_AT": str(time.time() + 300),
          "NONVENUE_TRACE_MAX_LINES": "256"},
-        emit=lambda record: lines.append(json.loads(json.dumps(record))), run="t",
+        emit=lambda text: lines.append(json.loads(text)), run="t",
     )
     assert trace is not None
     nt.reset_for_tests(trace)
@@ -109,8 +109,18 @@ async def test_committed_write_publication_carries_the_kept_rev_and_stamp(pg_eng
     assert pub["metadata_keys"] == ["betting_book_count"]
     assert pub["evidence"]["decision"] == "admitted"
     assert pub["evidence"]["population"] == [{"book": "a", "home_probability": 0.6}]
-    assert ordered(pub, "returned", "commit_start", "commit_end", "publish_start", "publish_end")
+    # The complete committed bag, recomputed with the hero's own helpers.
+    stored = await _stored(pg_engine, event_id)
+    assert pub["bag_hash"] == nt._hash(stored) == nt._hash(sources)
+    assert {row["source"] for row in pub["bag"]} == {"betting"}
+    assert pub["bag_other_keys"] == ["betting_book_count"]
+    assert pub["recomputed_p"] == frame["p"] and pub["p_matches"] is True
+    assert (pub["txn"], pub["obs"], pub["commit_result"]) == (1, 1, "COMMITTED")
+    assert pub["frame_unchanged"] is True
+    assert ordered(pub, "seam", "returned", "commit_start", "commit_end", "publish_start",
+                   "publish_end")
     assert [x["stage"] for x in lines] == ["START", "PUBLICATION"]
+    assert [x["line"] for x in lines] == [1, 2]
 
 
 async def test_two_writes_in_one_transaction_name_the_rev_that_carried_the_first(
@@ -128,7 +138,8 @@ async def test_two_writes_in_one_transaction_name_the_rev_that_carried_the_first
     (unsent,) = stage(lines, "WRITE_UNSENT")
     (pub,) = stage(lines, "PUBLICATION")
     assert (unsent["source"], unsent["reason"]) == ("espn", "SUPERSEDED_IN_TRANSACTION")
-    assert unsent["carried_by_source"] == "stat_model"
+    assert unsent["carried_by_obs"] == pub["obs"] == unsent["obs"] + 1
+    assert unsent["txn"] == pub["txn"]
     assert unsent["carried_by_rev"] == pub["rev"] == sink[0][1]["rev"][str(event_id)]
     assert unsent["rev"] < pub["rev"]
     assert ordered(unsent, "returned", "commit_start", "commit_end")
@@ -161,6 +172,8 @@ async def test_rolled_back_writes_are_named_never_published(pg_engine, sink, how
     (rolled,) = stage(lines, "WRITE_UNSENT")
     assert (rolled["source"], rolled["reason"]) == ("stat_model", "ROLLED_BACK")
     assert ("commit_start_mono" in rolled) == (how == "failed_commit")
+    assert rolled["commit_result"] == {"outer": "ROLLED_BACK", "savepoint": "SAVEPOINT_ROLLED_BACK",
+                                       "failed_commit": "COMMIT_FAILED_ROLLED_BACK"}[how]
     assert "stat_model" not in await _stored(pg_engine, event_id)
     if how == "savepoint":
         (pub,) = stage(lines, "PUBLICATION")
@@ -301,3 +314,19 @@ async def test_disarmed_and_armed_issue_the_same_sql_frames_and_app_logs(
     assert sql_off == sql_other == sql_on
     assert frames_off == frames_other == frames_on and len(frames_off) == 1
     assert logs_off == logs_other == logs_on
+
+
+async def test_a_no_op_rewrite_is_its_own_observation_never_coalesced(pg_engine, sink):
+    event_id = await _seed_event(pg_engine)
+    lines = arm([event_id])
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        event = await session.get(Event, event_id)
+        for _ in range(2):
+            await write_nonvenue_probability(session, event, "espn", 0.7)
+            await session.commit()
+            await publish_committed_nonvenue_frames(session)
+    first, second = stage(lines, "PUBLICATION")
+    assert (first["obs"], second["obs"]) == (1, 2) and first["txn"] != second["txn"]
+    assert (first["value_unchanged"], second["value_unchanged"]) == (False, True)
+    assert second["prior_value"] == 0.7 and second["rev"] > first["rev"]
+    assert len(sink) == 2
