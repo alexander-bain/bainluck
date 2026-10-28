@@ -32080,6 +32080,15 @@ def _blend_outlives_edge(event, last_ts: datetime, *, event_status=None) -> bool
     return blend_ts >= last_ts
 
 
+def _terminal_point_owns_the_edge(is_finished: bool, status: str | None) -> bool:
+    """A finished, settled or suspended row: its right edge is the terminal point's.
+
+    One definition for `_sportsbook_withdrawal` (#9081) and the per-minute book
+    floor (#11105), so the two cannot disagree about whose edge it is.
+    """
+    return bool(is_finished) or status in SETTLED_STATUSES or status == EVENT_SUSPENDED
+
+
 def _sportsbook_withdrawal(
     snapshots: list,
     history: list,
@@ -32122,7 +32131,7 @@ def _sportsbook_withdrawal(
     """
     if hero_sources is None or "betting" in hero_sources:
         return None
-    if is_finished or status in SETTLED_STATUSES or status == EVENT_SUSPENDED:
+    if _terminal_point_owns_the_edge(is_finished, status):
         return None
     if not history:
         return None
@@ -32147,6 +32156,232 @@ def _sportsbook_withdrawal(
     if latest is None or last_point > latest:
         return last_point
     return latest
+
+
+#: How far apart the stamps of ONE poll can land (#11105). `_create_or_update_snapshot`
+#: reads its own `datetime.now()` per sportsbook, so the books of a single poll
+#: carry stamps a few milliseconds apart, and a book first seen by that poll would
+#: otherwise not cover the instant its sibling was stamped at. Widening every row
+#: by this much only ever ADDS coverage, so the count below stays an upper bound;
+#: a larger value costs resolution, never soundness.
+_BOOK_FLOOR_POLL_TOLERANCE = timedelta(seconds=30)
+
+
+def _snapshot_read_complete_until(rows: list, *, split_at) -> datetime | None:
+    """The instant the odds read stops being complete, or ``None`` if nothing was cut.
+
+    `_snapshots_with_split_budget` reads each half ascending under a LIMIT, so a
+    half that came back full may have lost its NEWEST rows. A lost row can stand
+    at any later instant, so no count past the first possibly-lost ``captured_at``
+    can be trusted: that is the stamp returned. Measured on the rows actually read,
+    before any series filtering.
+    """
+    def _cut_at(half: list) -> datetime:
+        return max(r.captured_at for r in half)
+
+    if split_at is None:
+        if len(rows) >= (
+            EVENT_HISTORY_PRE_WINDOW_SNAPSHOT_CAP + EVENT_HISTORY_IN_WINDOW_SNAPSHOT_CAP
+        ):
+            return _cut_at(rows)
+        return None
+    pre = [r for r in rows if r.captured_at < split_at]
+    if len(pre) >= EVENT_HISTORY_PRE_WINDOW_SNAPSHOT_CAP:
+        return _cut_at(pre)
+    if len(rows) - len(pre) >= EVENT_HISTORY_IN_WINDOW_SNAPSHOT_CAP:
+        return _cut_at(rows)
+    return None
+
+
+def _sportsbook_floor_spans(
+    snapshots: list,
+    *,
+    trusted_from: datetime | None,
+    trusted_until: datetime | None,
+    tail: str,
+) -> list[tuple[datetime, datetime | None]]:
+    """The spans in which ruling 051 had certainly refused the sportsbooks (#11105).
+
+    `_sportsbook_withdrawal` ends the books' say at the right edge only, so a held
+    page joined two different numbers on one line: the live frames carry the
+    headline blend, which ruling 051 had emptied of the books, while every earlier
+    minute of the served line still weighed them at 3.0. Specimen 15336073 (JYP v
+    Tappara, live 2026-10-28): two books all game, so the headline was Polymarket
+    alone, and the minutes that received a frame drew 0.16 beside served minutes
+    drawing 0.1744 — the zigzag on a held page that a fresh load never shows.
+
+    WHY THIS IS SOUND WHERE #9081 DECLINED. #9081 is right that a row's
+    ``valid_until`` can overstate a book's presence: a book that went dark and
+    came back has its old row stretched across the gap. But that error only ever
+    runs one way. Every poll that saw a book either opened a row at that instant
+    or moved a row's ``valid_until`` to it or later, so the books whose rows cover
+    a poll instant are a SUPERSET of the books that poll saw. A count under
+    `BETTING_BOOK_FLOOR` at such an instant is therefore a certain refusal, and it
+    holds until the next stamp: an unrecorded poll in between could only have seen
+    books whose rows already cover the stamp before it. A count at or over the
+    floor proves nothing and leaves the minute as it was — a book that went dark
+    and came back is still counted. Every ``captured_at`` and ``valid_until`` is
+    the instant of a real poll, which is what makes them the instants to count at.
+
+    THE EXACT CLAIM: a span opens only at a stamp whose own poll saw fewer than
+    `BETTING_BOOK_FLOOR` books, on the rows of ONE event as read — except where
+    that stamp was not a full poll. Two such routes are known: (a) the narrow
+    caller (#5426, discovery's us/h2h fetch, which does reach live games) stamps
+    only the books it asked for, so its stamp can open a span up to one full
+    poll interval early, and only when the books it missed are absent from the
+    next full poll too — if they reappear there, their extended rows cover its
+    stamp; (b) book churn, a book leaving as another arrives, for which no bound
+    is claimed here. Rows folded in from a second event are
+    not this claim (#6399 keeps each book's richest row, and a stale twin's
+    pre-match history can end a book's coverage before the game): the caller
+    passes none.
+
+    ``tail`` decides the span still open at the last stamp, which is the line's
+    right edge, so the caller passes what already rules on that edge:
+
+    * ``"withdrawn"`` — `_sportsbook_withdrawal` stops the books at the edge, so
+      the span stays open to it and the two cannot disagree.
+    * ``"terminal"`` — a finished, settled or suspended row, whose edge is the
+      terminal point's (#8951, #9081). A refusal standing before the last stamp
+      is held through it with no point re-admitting the books, so the line does
+      not change its blend at the final and gains no reading the play end
+      (#1833) would count. A refusal first counted AT the last stamp is a claim
+      about that edge alone and is the terminal point's, so it is not a span.
+    * ``"counted"`` — the hero still counts the books, so the span is dropped: a
+      narrow caller (#5426) leaves `betting` in place while touching only the
+      books it asked for, so a thin pre-match tail can be that caller rather
+      than the market.
+
+    Stamps outside ``[trusted_from, trusted_until)`` are where a row the read did
+    not return could cover the instant (the live window's cutoff, a truncated
+    read, a settled game's end cap); counting there could undercount, so a span
+    reaching one closes on it.
+
+    The SPLIT refusal (#7523) is not modelled: it needs each book's price at the
+    poll, and the superset above can hold a price that poll never saw.
+    """
+    from bisect import bisect_left, bisect_right
+
+    from app.tasks.odds_polling import BETTING_BOOK_FLOOR
+
+    if tail not in ("withdrawn", "terminal", "counted"):
+        raise ValueError(f"unknown tail {tail!r}")
+    tolerance = _BOOK_FLOOR_POLL_TOLERANCE
+
+    def _utc(stamp: datetime) -> datetime:
+        return stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=timezone.utc)
+
+    by_book: dict[str, list[tuple[datetime, datetime]]] = {}
+    stamps: set[datetime] = set()
+    for snap in snapshots:
+        if snap.captured_at is None:
+            continue
+        start = _utc(snap.captured_at)
+        end = _utc(snap.valid_until) if snap.valid_until is not None else start
+        stamps.add(start)
+        stamps.add(end)
+        # The headline counts a book only when it quotes a home probability.
+        if not snap.home_win_probability:
+            continue
+        by_book.setdefault(snap.bookmaker, []).append(
+            (start - tolerance, max(start, end) + tolerance)
+        )
+
+    # One interval per stretch a book was standing, so a book is counted once
+    # however many reprices it made inside that stretch.
+    starts: list[datetime] = []
+    ends: list[datetime] = []
+    for intervals in by_book.values():
+        intervals.sort()
+        lo, hi = intervals[0]
+        for a, b in intervals[1:]:
+            if a <= hi:
+                hi = max(hi, b)
+            else:
+                starts.append(lo)
+                ends.append(hi)
+                lo, hi = a, b
+        starts.append(lo)
+        ends.append(hi)
+    starts.sort()
+    ends.sort()
+
+    spans: list[tuple[datetime, datetime | None]] = []
+    opened: datetime | None = None
+    last_stamp = max(stamps, default=None)
+    for stamp in sorted(stamps):
+        if trusted_from is not None and stamp < trusted_from:
+            continue
+        if trusted_until is not None and stamp + tolerance >= trusted_until:
+            # Unknown from here on, so the books return as they were — never
+            # later than the bound, which would add a bucket past a settled
+            # game's end cap.
+            if opened is not None:
+                spans.append((opened, min(stamp, trusted_until)))
+            return spans
+        standing = bisect_right(starts, stamp) - bisect_left(ends, stamp)
+        refused = standing < BETTING_BOOK_FLOOR
+        if refused and opened is None:
+            opened = stamp
+        elif not refused and opened is not None:
+            spans.append((opened, stamp))
+            opened = None
+    if opened is not None and (
+        tail == "withdrawn" or (tail == "terminal" and opened < last_stamp)
+    ):
+        spans.append((opened, None))
+    return spans
+
+
+def _withhold_refused_sportsbook_minutes(
+    points: list, spans: list[tuple[datetime, datetime | None]]
+) -> list:
+    """The betting series with the books absent inside each refused span (#11105).
+
+    A span opens with the engine's withdrawal marker (``None``, #9081) and every
+    consensus point inside it is withheld the same way, so no later point in the
+    span can re-admit the books. Where the floor is met again the books return
+    with the consensus they stood on at that instant — the newest point at or
+    before it, exactly the value the line carried there before this change.
+    Outside the spans the series is untouched.
+    """
+    if not spans:
+        return points
+    from bisect import bisect_right
+
+    from app.utils.aggregation import TimestampedProb
+
+    ordered = sorted(points, key=lambda p: p.timestamp)
+    stamps = [p.timestamp for p in ordered]
+    # Spans arrive ascending and disjoint, so the only one that can hold a stamp
+    # is the last to open at or before it.
+    opens = [start for start, _end in spans]
+
+    def _inside(stamp: datetime) -> bool:
+        index = bisect_right(opens, stamp)
+        if not index:
+            return False
+        end = spans[index - 1][1]
+        return end is None or stamp < end
+
+    out = [
+        TimestampedProb(timestamp=p.timestamp, home_probability=None)
+        if _inside(p.timestamp)
+        else p
+        for p in ordered
+    ]
+    for start, end in spans:
+        out.append(TimestampedProb(timestamp=start, home_probability=None))
+        if end is None:
+            continue
+        index = bisect_right(stamps, end)
+        if index and ordered[index - 1].home_probability is not None:
+            out.append(
+                TimestampedProb(
+                    timestamp=end, home_probability=ordered[index - 1].home_probability
+                )
+            )
+    return sorted(out, key=lambda p: p.timestamp)
 
 
 def _pin_blend_edge(
@@ -32842,6 +33077,11 @@ async def get_event_odds_history(
             ),
         )
     snapshots = snapshots_override if snapshots_override is not None else []
+    # #11105: where the read above may have lost rows, a per-minute book count
+    # cannot be trusted. Asked of the rows as read, before the series filter.
+    snapshot_read_complete_until = _snapshot_read_complete_until(
+        snapshots, split_at=cutoff if cutoff is not None else event.commence_time
+    )
 
     # ── One row per sportsbook, never a union (#6399) ────────────────────────
     #
@@ -33939,6 +34179,53 @@ async def get_event_odds_history(
                 is_finished=is_finished,
                 status=getattr(event, "status", None),
             )
+            # #11105: and in every earlier minute the headline had stopped
+            # counting them, not only at the edge, so a held page's frames and
+            # the served line are the same blend. See `_sportsbook_floor_spans`.
+            # The span still open at the last stamp is the edge: open exactly
+            # where #9081 withdraws, held through a terminal row's last stamp
+            # (the terminal point owns what follows), dropped where the hero
+            # still counts the books — at the final as while live, so a #5426
+            # narrow tail the hero counted is not refused at the final. A folded event fails open, as
+            # `_hero_sources` does: `snapshots` is by now each book's richest
+            # row across the series (#6399), and a stale twin's history can end
+            # a book's coverage early and invent a refusal. A failure here fails
+            # OPEN to the line as it was, loudly, rather than taking the whole
+            # blend line down inside the try below.
+            if len(series_event_ids) <= 1:
+                try:
+                    _trusted_until = snapshot_read_complete_until
+                    if end_cap is not None and (
+                        _trusted_until is None or end_cap < _trusted_until
+                    ):
+                        _trusted_until = end_cap
+                    if _withdrawal is not None:
+                        _tail = "withdrawn"
+                    elif _terminal_point_owns_the_edge(
+                        is_finished, getattr(event, "status", None)
+                    ) and "betting" not in (_hero_sources or ()):
+                        _tail = "terminal"
+                    else:
+                        _tail = "counted"
+                    agg_sources["betting"] = _withhold_refused_sportsbook_minutes(
+                        agg_sources["betting"],
+                        _sportsbook_floor_spans(
+                            snapshots,
+                            trusted_from=(
+                                cutoff + _BOOK_FLOOR_POLL_TOLERANCE
+                                if cutoff is not None
+                                else None
+                            ),
+                            trusted_until=_trusted_until,
+                            tail=_tail,
+                        ),
+                    )
+                except Exception:
+                    logger.warning(
+                        "per-minute book floor skipped for event %d (#11105)",
+                        event_id,
+                        exc_info=True,
+                    )
             if _withdrawal is not None and agg_sources["betting"]:
                 agg_sources["betting"].append(
                     TimestampedProb(timestamp=_withdrawal, home_probability=None)
