@@ -1,5 +1,6 @@
 """Shared test fixtures for the Bain Luck backend test suite."""
 
+import gc
 import json
 import sys
 
@@ -8,6 +9,12 @@ import pytest
 from datetime import datetime, timezone, timedelta
 
 from app.utils.pulse import PulseDataPoint
+
+
+def pytest_collection_finish(session):
+    # #11681: keep the import-time heap out of every later full collection. On hosted CI a
+    # gen2 pass over it paused ~150 ms, inside 150 ms authority windows. Collection stays on.
+    gc.freeze()
 
 
 @pytest.fixture

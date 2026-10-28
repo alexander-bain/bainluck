@@ -40,6 +40,12 @@ SECURITY_QUALIFY_STEP = "Qualify compose security or record master baseline"
 SECURITY_PUBLISH_STEP = "Publish CodeQL security receipt"
 UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 REFUSAL = re.compile(r"high|critical|medium|security vulnerabilit", re.I)
+# The producer titles its two exit classes so a failed check names its class.
+EVIDENCE_INCOMPLETE = "SECURITY EVIDENCE INCOMPLETE"
+NEW_FINDING = "SECURITY NEW-FINDING"
+CODEQL_ANALYSIS_CHECKS = {
+    (f"Analyze ({language})", 15368) for language in SECURITY_LANGUAGES
+}
 # Integrator 2135Z ruling, explicitly approved by Alex: repair-only transition.
 # These remain COMPOSE receipts; the failed master is never called paid.
 TRANSITION_BASE = "d714d4a62318175bc750201ad42514eeee595f73"
@@ -572,6 +578,7 @@ def decide(api, env, text, tree, before):
     checks = api.pages(f"commits/{head}/check-runs?filter=all", "check_runs")
     suites = {}
     security_paid = set()
+    evidence_failures = []
     security_required = {
         ("Analyze (python)", 15368),
         ("Analyze (javascript-typescript)", 15368),
@@ -586,12 +593,22 @@ def decide(api, env, text, tree, before):
         # Master's own CodeQL/CI is still running during this decision. Its
         # branch is authoritative, not newest-check order. Completed failures
         # from ANY branch still refuse; older failed/security evidence is never
-        # hidden by a later green.
+        # hidden by a later green, except the one narrow CodeQL class below.
         if check["status"] != "completed":
             require(
                 suite["head_branch"] == "master",
                 "unfinished pre-push security/check evidence",
             )
+            continue
+        if (
+            check["conclusion"] == "failure"
+            and suite["head_branch"] == run["head_branch"]
+            and (check["name"], check["app"]["id"]) in CODEQL_ANALYSIS_CHECKS
+            and not REFUSAL.search((check.get("output") or {}).get("title") or "")
+        ):
+            # Alex 10/28, narrow: a later receipted pass of this CodeQL run clears an
+            # evidence-only failure; tests stay strict so reruns never hide a flake.
+            evidence_failures.append(check)
             continue
         require(
             check["conclusion"] != "failure"
@@ -611,7 +628,7 @@ def decide(api, env, text, tree, before):
         security_required <= security_paid,
         "missing complete compose security checks",
     )
-    validate_security_receipts(
+    codeql = validate_security_receipts(
         api,
         runs,
         head,
@@ -621,6 +638,8 @@ def decide(api, env, text, tree, before):
         run["head_branch"],
         master_created_at=current["created_at"],
     )
+    for failed in evidence_failures:
+        clear_evidence_failure(api, failed, checks, suites, codeql)
     reread = api.get(f"actions/runs/{run['id']}")
     require(
         reread["run_attempt"] == run["run_attempt"]
@@ -635,6 +654,69 @@ def decide(api, env, text, tree, before):
         "reuse_head": head,
         "reuse_base": before,
     }
+
+
+def clear_evidence_failure(api, failed, checks, suites, codeql):
+    """Only an earlier evidence-incomplete attempt of the receipted run clears."""
+    job = api.get(f"actions/jobs/{failed['id']}")
+    require(
+        job["id"] == failed["id"]
+        and job["name"] == failed["name"]
+        and job["head_sha"] == codeql["head_sha"]
+        and job["status"] == "completed"
+        and job["conclusion"] == "failure",
+        "failed CodeQL check identity",
+    )
+    require(job["run_id"] == codeql["id"], "failed check is not the receipted run")
+    require(
+        type(job["run_attempt"]) is int
+        and 1 <= job["run_attempt"] < codeql["run_attempt"],
+        "failed check is not an earlier attempt",
+    )
+    # Class, from the job: analysis paid, then only the qualifier failed...
+    steps = job["steps"]
+    names = [step["name"] for step in steps]
+    require(names.count(SECURITY_QUALIFY_STEP) == 1, "no single CodeQL qualifier")
+    qualifier = names.index(SECURITY_QUALIFY_STEP)
+    require(
+        "Perform CodeQL Analysis" in names[:qualifier]
+        and all(
+            (step["status"], step["conclusion"]) == ("completed", "success")
+            for step in steps[:qualifier]
+        )
+        and steps[qualifier]["conclusion"] == "failure"
+        and names[qualifier + 1 : qualifier + 2] == [SECURITY_PUBLISH_STEP]
+        and steps[qualifier + 1]["conclusion"] == "skipped",
+        "failed CodeQL steps are not the evidence-incomplete class",
+    )
+    # ...and the qualifier's own titled annotation says it was evidence, not a finding.
+    notes = api.get(f"check-runs/{failed['id']}/annotations?per_page=100")
+    require(isinstance(notes, list) and len(notes) < 100, "unbounded annotations")
+    titles = [(note.get("annotation_level"), note.get("title")) for note in notes]
+    require(
+        titles.count(("failure", EVIDENCE_INCOMPLETE)) == 1
+        and not any(title == NEW_FINDING for _, title in titles),
+        "failed CodeQL check is not the evidence-incomplete class",
+    )
+    passes = []
+    for check in checks:
+        if (
+            (check["name"], check["app"]["id"]) == (failed["name"], failed["app"]["id"])
+            and check["status"] == "completed"
+            and check["conclusion"] == "success"
+            and suites[check["check_suite"]["id"]]["head_branch"]
+            == codeql["head_branch"]
+        ):
+            rerun = api.get(f"actions/jobs/{check['id']}")
+            passes.append(
+                rerun["id"] == check["id"]
+                and rerun["name"] == failed["name"]
+                and rerun["run_id"] == codeql["id"]
+                and rerun["run_attempt"] == codeql["run_attempt"]
+                and rerun["head_sha"] == codeql["head_sha"]
+                and (rerun["status"], rerun["conclusion"]) == ("completed", "success")
+            )
+    require(any(passes), "no receipted later pass for the failed CodeQL check")
 
 
 class NewFinding(ValueError):
@@ -806,6 +888,7 @@ def _security_diagnostic(checkpoint, **fields):
         "upload-lookup",
         "upload-count",
         "upload-identity",
+        "upload-processing",
         "upload-window",
         "candidate-snapshot",
         "baseline",
@@ -828,6 +911,8 @@ def _security_diagnostic(checkpoint, **fields):
         "analysis_id",
         "read_count",
         "wait_seconds",
+        "rules_count",
+        "results_count",
     }
     enums = {
         "status": {
@@ -850,6 +935,8 @@ def _security_diagnostic(checkpoint, **fields):
             "startup_failure",
         },
         "language": set(SECURITY_LANGUAGES),
+        "processing_error": {"none", "present"},
+        "processing_warning": {"none", "present"},
     }
     label = checkpoint if checkpoint in checkpoints else "untrusted"
     values = []
@@ -1658,6 +1745,17 @@ def qualify_security(api, env, provenance, sarif_id, language):
     require(len(rows) == 1, "missing or ambiguous actual SARIF upload")
     metadata = rows[0]
     _security_diagnostic("upload-identity", analysis_id=metadata.get("id"))
+    # GitHub can finish an upload yet record the analysis as failed: 2cd03b03
+    # attempt 1 python read error "Unknown Error" with 0 rules, unchanged an
+    # hour later, while its rerun read 172 rules. That is not a race a wait can
+    # fix; name it here so the log says "rerun" without exposing the string.
+    _security_diagnostic(
+        "upload-processing",
+        processing_error="none" if metadata.get("error") == "" else "present",
+        processing_warning="none" if metadata.get("warning") == "" else "present",
+        rules_count=metadata.get("rules_count"),
+        results_count=metadata.get("results_count"),
+    )
     _validate_analysis(
         metadata, expected["head"], expected["ref"], language, sarif_id=sarif_id
     )
@@ -1797,6 +1895,7 @@ def validate_security_receipts(
         "CodeQL source updated during decision",
     )
     require(not transition, "transition requires full master tests; no evidence reuse")
+    return latest
 
 
 def _security_recovery(env):
@@ -1873,12 +1972,14 @@ def main():
                     else "SECURITY BASELINE RECORDED"
                 )
         except NewFinding as exc:
+            print(f"::error title={NEW_FINDING}::new qualifying CodeQL finding")
             print("SECURITY NEW-FINDING: " + str(exc))
             print(
                 "Repair the finding on a new exact candidate and pay its full compose CodeQL run before offering; no override or test-run waiver."
             )
             raise SystemExit(1)
         except Exception as exc:
+            print(f"::error title={EVIDENCE_INCOMPLETE}::{type(exc).__name__}")
             print(f"SECURITY EVIDENCE INCOMPLETE ({type(exc).__name__})")
             if isinstance(exc, SecurityIncomplete):
                 print(exc.recovery)
@@ -1887,8 +1988,9 @@ def main():
             if recovery.startswith("STOP:"):
                 raise SystemExit(1)
             print(
-                "Re-run ALL jobs, not only failed jobs. Successful security recovery "
-                "does not grant test reuse: historical failed checks still force "
+                "Re-run ALL jobs, not only failed jobs. On a compose run, a later "
+                "full attempt that passes with valid receipts clears this failure "
+                "for test reuse; failed tests, gitleaks or findings still force "
                 "full master CI on this head. Never re-stamp the same tree to shed "
                 "a failure. If a fresh full attempt is UNKNOWN again, do not land; "
                 "return the printed reason to Root and the owner. Only a normal "

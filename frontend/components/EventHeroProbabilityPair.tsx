@@ -9,6 +9,7 @@ import {
 } from '../lib/probabilityDisplay';
 import { teamTextColor } from '../lib/teamColors';
 import { headlineDisplayAttributes, type HeadlineDisplayIdentity } from '../lib/displayIdentity';
+import { tenthsPair, type TenthsParts } from '../lib/tenthsOptIn';
 
 /**
  * What one side prints this frame — the marker and the digits, separately.
@@ -168,6 +169,13 @@ interface EventHeroProbabilityPairProps {
    * is drawn. A slot with no reading reports `unavailable` whatever is passed.
    */
   displayIdentity?: HeadlineDisplayIdentity | null;
+  /**
+   * #10090 — print one decimal (`lib/tenthsOptIn.ts`). Only a reader who opted
+   * in gets it; the page passes its one decision to this hero and the chart's
+   * end label together. Ignored on a venue-settled contest, which keeps the
+   * whole-number pair. Defaults false, so every caller renders exactly as before.
+   */
+  tenths?: boolean;
 }
 
 /**
@@ -285,6 +293,7 @@ export default function EventHeroProbabilityPair({
   venueSettled = false,
   stopped = false,
   displayIdentity = null,
+  tenths: tenthsOn = false,
 }: EventHeroProbabilityPairProps) {
   // #5696 — THE BIGGEST NUMBER ON THE SITE, PAINTED WHITE ON A WHITE CARD.
   //
@@ -315,8 +324,41 @@ export default function EventHeroProbabilityPair({
   );
 
   // #6064 — the clamp the whole rest of the site applies, finally applied here.
-  const homeParts = sideParts(homeProb, shownHome);
-  const awayParts = sideParts(awayProb, shownAway);
+  const homeWhole = sideParts(homeProb, shownHome);
+  const awayWhole = sideParts(awayProb, shownAway);
+  // #10090 — tenths from the adopted probability, for an opted-in reader only.
+  // Off, every value below is today's: the whole parts, no decimal span, no
+  // added style and the numeral class unchanged.
+  const tenths =
+    tenthsOn && !venueSettled ? tenthsPair(homeProb, awayWithheld ? null : awayProb) : null;
+  // A side today's pair prints as no reading stays no reading: tenths add a
+  // digit to a number, they never supply one.
+  const toParts = (t: TenthsParts | null, fallback: ProbabilityParts) =>
+    t && fallback.digits !== NO_READING
+      ? { marker: t.marker, digits: t.whole, decimal: t.decimal }
+      : { ...fallback, decimal: '' };
+  const homeParts = toParts(tenths?.home ?? null, homeWhole);
+  const awayParts = toParts(tenths?.away ?? null, awayWhole);
+  // Two numeral widths are reserved while a decimal prints, so 9.8 -> 10.2
+  // does not shift the pair. A band (`<1`) prints no decimal and reserves
+  // nothing, so no gap opens after its marker.
+  const reserve = { minWidth: '2ch', textAlign: 'right' as const, display: 'inline-block' };
+  const homeDigitsStyle = homeParts.decimal ? reserve : {};
+  const awayDigitsStyle = awayParts.decimal ? reserve : {};
+  // A two-sided tenths pair at today's 48px is ~242px and runs into the crests
+  // and player photos at 390px. The space between the two 56px photo boxes is
+  // ~214px at 390, and the boxes can shrink: a 38px pair (214.3px) squeezed
+  // them to 51.8px ovals rather than overflowing (PR #11697 review). So the
+  // pair is sized to fit that space with room to spare and never moves the
+  // photos — 35px numerals and a 24px decimal at 390, 32px / 20px at 375,
+  // 28px / 18px at 360 (each side's gap >= 4px, photos loaded or failed;
+  // below 360 the pair has its own row, #11301). One named number
+  // (#6238) has the room and keeps 48px, and a band pair (`<1` / `>99`)
+  // prints no decimal, so it keeps today's markup exactly.
+  const fitTenths = !awayWithheld && (homeParts.decimal !== '' || awayParts.decimal !== '');
+  const fitDigitsClass =
+    'text-[28px] min-[375px]:text-[32px] min-[390px]:text-[35px] sm:text-[44px] font-black tracking-tight leading-none tabular-nums';
+  const decimalClass = 'text-[18px] min-[375px]:text-[20px] min-[390px]:text-[24px] font-black tracking-tight leading-none tabular-nums';
 
   // #3459 — NEITHER side has a number. Drawing the chrome anyway produced
   // `—%–—%`: at `text-[48px] font-black` an em-dash is a 41px solid rectangle,
@@ -414,12 +456,21 @@ export default function EventHeroProbabilityPair({
         </span>
       )}
       <span
-        className="text-[34px] min-[360px]:text-[42px] min-[390px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
-        style={{ color: home }}
+        className={
+          fitTenths
+            ? fitDigitsClass
+            : "text-[34px] min-[360px]:text-[42px] min-[390px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
+        }
+        style={{ color: home, ...homeDigitsStyle }}
         data-hero-digits=""
       >
         {homeParts.digits}
       </span>
+      {homeParts.decimal && (
+        <span className={decimalClass} style={{ color: home }} data-hero-decimal="">
+          {homeParts.decimal}
+        </span>
+      )}
       <span
         className="text-lg font-bold leading-none ml-0.5"
         style={{ color: home }}
@@ -444,12 +495,21 @@ export default function EventHeroProbabilityPair({
       )}
       {!awayWithheld && (
       <span
-        className="text-[34px] min-[360px]:text-[42px] min-[390px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
-        style={{ color: away }}
+        className={
+          fitTenths
+            ? fitDigitsClass
+            : "text-[34px] min-[360px]:text-[42px] min-[390px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
+        }
+        style={{ color: away, ...awayDigitsStyle }}
         data-hero-digits=""
       >
         {awayParts.digits}
       </span>
+      )}
+      {!awayWithheld && awayParts.decimal && (
+        <span className={decimalClass} style={{ color: away }} data-hero-decimal="">
+          {awayParts.decimal}
+        </span>
       )}
       {!awayWithheld && (
       <span

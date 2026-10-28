@@ -1,4 +1,4 @@
-"""#10090: optional stage trace for ONE live event's selected Polymarket outcomes.
+"""#10090: optional stage trace for 1-4 live events' selected Polymarket outcomes.
 
 Purpose. The per-minute delivery receipt carries an event's newest and oldest
 input marks and its stamp. Those marks are AGGREGATE: they can belong to a
@@ -23,6 +23,10 @@ write, fence or stamp. This trace follows the exact selected input (same
                    (`ExactKalshiTrace.preview`). Changed-only: a re-commit of
                    an unchanged value opens no chain, so its observation reads
                    TRACKED_OUTCOME_NO_RETAINED_COMMIT_AT_THIS_OBSERVATION
+  SELECTED         the refresher's selection decision for the event, written at
+                   it (`ExactKalshiTrace.selection`); its PREVIEW, READSET or
+                   SELECTION_UNSENT repeats ``sel``. A changed blend over an
+                   unchanged traced input is a new selected state and is written
   ATTEMPT          one stamp attempt: start, session, commit, disposition,
                    revision and the actual `window.release`
 
@@ -38,6 +42,18 @@ WS_PM_TRACE_EXPIRES_AT no more than 600 s away. WS_PM_TRACE_MAX_LINES defaults t
 `ExactKalshiTrace`'s. An outcome not mapped to the event at START is dropped and
 named. No mapped outcome, pending overflow, expiry or budget emits STOP and
 discards all state. No payloads, SQL parameters or credentials are recorded.
+
+A fold's members (#10090 R1). A display fold of two-rows-for-one-game members
+can take its PM origin from either member, so WS_PM_TRACE_EVENT may list 1-4
+comma-separated event ids, with 1-8 outcomes mapped to any of them. One setting,
+one window, one shared WS_PM_TRACE_MAX_LINES budget: the cap bounds the
+worker's log volume, which more events do not make cheaper. Each event keeps its
+own attempt, open chains and admission lines, and every per-event line names
+its event. START/ARMED carry ``events`` (sorted) and ``outcome_event`` instead
+of ``event`` (plus ``events_without_outcome``); a CHUNK whose selected outcomes span two of them reads
+``event: "MULTIPLE"`` with ``events``, and a chunk fenced on two reads
+``fenced_by`` as ``{event: attempt}``. With ONE event id every line is exactly
+the single-event line, and the 4-outcome cap is unchanged.
 
 Warm arming (optional). WS_PM_TRACE_ARM_AT, an absolute epoch second at most
 1800 s away, delays collection so the window can sit inside a warm worker rather
@@ -86,6 +102,7 @@ from app.utils.kalshi_exact_trace import MAX_PENDING, ExactKalshiTrace
 logger = logging.getLogger(__name__)
 ACCEPT_CLOCK = "HANDLER_CALLBACK_UNDER_BUFFER_LOCK_NOT_WIRE_INGRESS"
 MAX_COVERS = 8
+MAX_EVENTS = 4  # a fold's members
 MAX_ARM_WAIT_S = 1800
 MAX_WINDOW_S = 600
 
@@ -114,12 +131,16 @@ class PMStageTrace(ExactKalshiTrace):
         try:
             raw_event = env.get("WS_PM_TRACE_EVENT", "")
             raw = env.get("WS_PM_TRACE_OUTCOMES", "")
-            if not raw_event or not raw or len(raw) > 64:
+            if not raw_event or not raw or len(raw_event) > 64:
                 return None
-            if not re.fullmatch(r"\d{1,12}", raw_event.strip()):
+            events = _ids(raw_event, MAX_EVENTS)
+            if events is None:
                 return None
-            event = int(raw_event.strip())
-            outcomes = _ids(raw, 4)
+            # One event keeps its four outcomes; a fold may name two per member.
+            cap = 4 if len(events) == 1 else 2 * MAX_EVENTS
+            if len(raw) > 16 * cap:
+                return None
+            outcomes = _ids(raw, cap)
             expiry = float(env.get("WS_PM_TRACE_EXPIRES_AT", "0"))
             limit = int(env.get("WS_PM_TRACE_MAX_LINES", "128"))
             raw_arm = env.get("WS_PM_TRACE_ARM_AT")
@@ -144,18 +165,12 @@ class PMStageTrace(ExactKalshiTrace):
 
                 run = uuid.uuid4().hex[:8]
             trace = cls(outcomes, expiry, limit, run, wall, mono, emit)
-            trace.event = event
+            trace.events = events
+            trace.event = next(iter(events)) if len(events) == 1 else None
             trace.event_of = event_of
-            mapping = {}
-            for oid in sorted(outcomes):
-                mapped = event_of.get(oid)
-                mapping[str(oid)] = (
-                    "MAPPED" if mapped == event
-                    else "UNMAPPED" if mapped is None
-                    else "OTHER_EVENT"
-                )
+            mapping = trace._map(outcomes)
             start = dict(
-                event=event,
+                **trace._event_fields(),
                 outcomes=sorted(outcomes),
                 mapping=mapping,
                 expires_at=expiry,
@@ -185,11 +200,15 @@ class PMStageTrace(ExactKalshiTrace):
                 )
             ),
         )
-        self.event = None
+        self.event = None  # the event id when exactly one is traced
+        self.events = frozenset()
         self.event_of = {}
+        self.outcome_event = {}  # traced outcome -> its event, as last mapped/seen
         self.arm_mono = None  # set only while a warm arm is still waiting
         self.warm = False
-        self.untracked_attempt = "QUEUED_NOT_STARTED"
+        # Per traced event: what an attempt not seen starting is named.
+        self.untracked_default = "QUEUED_NOT_STARTED"
+        self.untracked = {}
         self.last_value = {}
         self.waiting = {}  # changed seq -> (outcome, value), until a stamp joins it
         self.written = set()  # waiting seqs a PRICE_COMMITTED already carried
@@ -197,14 +216,64 @@ class PMStageTrace(ExactKalshiTrace):
         self.flush = None
         self.flush_seq = self.chunk_seq = self.attempt_seq = 0
         self.chunk = None
-        self.attempt = None
+        self.attempts = {}  # traced event -> its current attempt
         self.fenced_attempts = set()
+
+    # The single-event view (one traced event), as the earlier trace held it.
+    @property
+    def attempt(self):
+        return self.attempts.get(self.event)
+
+    @property
+    def untracked_attempt(self):
+        return self._untracked(self.event)
+
+    def _untracked(self, event):
+        return self.untracked.get(event, self.untracked_default)
+
+    def _map(self, outcomes):
+        mapping = {}
+        for oid in sorted(outcomes):
+            mapped = self.event_of.get(oid)
+            mapping[str(oid)] = (
+                "MAPPED" if mapped in self.events
+                else "UNMAPPED" if mapped is None
+                else "OTHER_EVENT"
+            )
+            if mapped in self.events:
+                self.outcome_event[oid] = mapped
+        return mapping
+
+    def _event_fields(self):
+        """START/ARMED: ``event`` for one traced event, else the fold's set."""
+        if self.event is not None:
+            return dict(event=self.event)
+        return dict(
+            events=sorted(self.events),
+            outcome_event={str(o): e for o, e in sorted(self.outcome_event.items())},
+            # Event capacity is not outcome coverage: a member with no mapped
+            # outcome is named, never read as covered.
+            events_without_outcome=sorted(self.events - set(self.outcome_event.values())),
+        )
+
+    def _ours(self, event_ids):
+        """The traced events among ``event_ids``, in id order."""
+        try:
+            return sorted(self.events.intersection(event_ids))
+        except TypeError:
+            return [e for e in sorted(self.events) if e in event_ids]
+
+    def _waiting_of(self, event):
+        return sorted(
+            s for s, (o, _v) in self.waiting.items() if self.outcome_event.get(o) == event
+        )
 
     def _clear(self):
         super()._clear()
         for state in (self.last_value, self.waiting, self.joined, self.written):
             state.clear()
-        self.flush = self.chunk = self.attempt = None
+        self.flush = self.chunk = None
+        self.attempts = {}
         self.fenced_attempts = set()
 
     def _stop(self, reason):
@@ -227,20 +296,15 @@ class PMStageTrace(ExactKalshiTrace):
         if now >= self.deadline or self.wall() >= self.expiry:
             self._stop("EXPIRED_BEFORE_ARMED")
             return
-        mapping = {}
-        for oid in sorted(self.targets):
-            mapped = self.event_of.get(oid)
-            mapping[str(oid)] = (
-                "MAPPED" if mapped == self.event
-                else "UNMAPPED" if mapped is None
-                else "OTHER_EVENT"
-            )
+        self.outcome_event = {}
+        mapping = self._map(self.targets)
         self.targets = frozenset(int(k) for k, v in mapping.items() if v == "MAPPED")
         # An attempt already running when collection began was never seen.
-        self.untracked_attempt = "UNTRACKED_MAY_PREDATE_ARMED"
+        self.untracked_default = "UNTRACKED_MAY_PREDATE_ARMED"
+        self.untracked = {}
         self._send(dict(
             stage="ARMED",
-            event=self.event,
+            **self._event_fields(),
             mapping=mapping,
             arm_mono=arm_mono,
             armed_mono=now,
@@ -270,7 +334,7 @@ class PMStageTrace(ExactKalshiTrace):
     def _mine(self, mark):
         return (
             mark is not None
-            and mark.event_id == self.event
+            and mark.event_id in self.events
             and mark.outcome_id in self.targets
         )
 
@@ -281,6 +345,7 @@ class PMStageTrace(ExactKalshiTrace):
         if not self.active() or not self._mine(mark):
             return
         oid = mark.outcome_id
+        self.outcome_event[oid] = mark.event_id
         changed = self.last_value.get(oid) != mark.probability
         first = oid not in self.last_value
         self.last_value[oid] = mark.probability
@@ -353,8 +418,12 @@ class PMStageTrace(ExactKalshiTrace):
         if not selected:
             return None
         self.chunk_seq += 1
+        spans = sorted({self.outcome_event.get(oid) for oid in selected} - {None})
         self.chunk = dict(
             self.flush,
+            # One event (always, with one traced): the earlier line's field.
+            **(dict(event=spans[0]) if len(spans) == 1
+               else dict(event="MULTIPLE" if spans else "UNAVAILABLE", events=spans)),
             chunk=self.chunk_seq,
             index=index,
             size=len(chunk_ids),
@@ -375,20 +444,27 @@ class PMStageTrace(ExactKalshiTrace):
             return
         token["path"] = "FENCE_CHECK"
         token["held_events"] = len(held) if held is not None else "UNAVAILABLE"
-        if self.event not in fenced_events:
-            return
-        attempt = self.attempt
-        ident = attempt["attempt"] if attempt is not None else self.untracked_attempt
-        token["fenced_by"] = ident
+        ours = self._ours(fenced_events)
+        by = {}
+        for event in ours:
+            by[event] = self._fenced(token, event)
+        if len(by) == 1:
+            token["fenced_by"] = by[ours[0]]
+        elif by:
+            token["fenced_by"] = {str(e): ident for e, ident in by.items()}
+
+    def _fenced(self, token, event):
+        attempt = self.attempts.get(event)
+        ident = attempt["attempt"] if attempt is not None else self._untracked(event)
         if ident in self.fenced_attempts:
             token["fenced_repeat"] = True
-            return
+            return ident
         if attempt is not None:
             self.fenced_attempts.add(ident)
             attempt["fenced_ours"] = True
         self._record(
             "FENCED",
-            event=self.event,
+            event=event,
             flush=token["flush"],
             chunk=token["chunk"],
             held_attempt=ident,
@@ -400,6 +476,7 @@ class PMStageTrace(ExactKalshiTrace):
             ),
             fence_mono=self.mono(),
         )
+        return ident
 
     @_guarded
     def chunk_write(self, token, chunk, marks):
@@ -473,7 +550,7 @@ class PMStageTrace(ExactKalshiTrace):
             if self._open(oid):
                 self._record(
                     "PRICE_COMMITTED_IDENTITY_UNAVAILABLE",
-                    event=self.event,
+                    event=self.outcome_event.get(oid),
                     outcome=oid,
                     input_seq=mark.seq if mark is not None else "UNAVAILABLE",
                     identity_reason=(
@@ -505,7 +582,7 @@ class PMStageTrace(ExactKalshiTrace):
         if identity is None:
             if self._open(oid):
                 self._record(
-                    "PRICE_NOT_COMMITTED", event=self.event, outcome=oid,
+                    "PRICE_NOT_COMMITTED", event=self.outcome_event.get(oid), outcome=oid,
                     input_seq=mark.seq if mark is not None else "UNAVAILABLE",
                     identity="UNAVAILABLE", write_reason=reason,
                 )
@@ -531,7 +608,6 @@ class PMStageTrace(ExactKalshiTrace):
 
         self._record(
             "CHUNK",
-            event=self.event,
             **{k: v for k, v in token.items() if not k.startswith("_")},
             result=result,
             end_mono=self.mono(),
@@ -558,102 +634,118 @@ class PMStageTrace(ExactKalshiTrace):
     @_guarded
     def stage_admission(self, kind, reason, event_ids, *, due=None, excluded=None,
                         fresh=None, flush_started=None):
-        if not self.active() or not self.waiting or self.event not in set(event_ids):
+        if not self.active() or not self.waiting:
             return
-        fields = dict(flush_started=flush_started)
-        if due is not None:
-            fields.update(
-                due=self.event in due,
-                excluded=self.event in excluded,
-                fresh=self.event in fresh,
-            )
-            if reason is None:
-                reason = (
-                    "DUE" if fields["due"]
-                    else "DEFERRED_UNFINISHED" if fields["excluded"]
-                    else "NOT_DUE_THROTTLED_OR_BUDGET"
+        for event in self._ours(set(event_ids)):
+            open_seqs = self._waiting_of(event)
+            if not open_seqs:
+                continue
+            fields = dict(flush_started=flush_started)
+            why = reason
+            if due is not None:
+                fields.update(
+                    due=event in due,
+                    excluded=event in excluded,
+                    fresh=event in fresh,
                 )
-        attempt = self.attempt
-        self._record(
-            "ADMISSION",
-            event=self.event,
-            path=kind,
-            reason=reason,
-            open_seqs=sorted(self.waiting)[-MAX_COVERS:],
-            current_attempt=attempt["attempt"] if attempt is not None else None,
-            admission_mono=self.mono(),
-            **fields,
-        )
+                if why is None:
+                    why = (
+                        "DUE" if fields["due"]
+                        else "DEFERRED_UNFINISHED" if fields["excluded"]
+                        else "NOT_DUE_THROTTLED_OR_BUDGET"
+                    )
+            attempt = self.attempts.get(event)
+            self._record(
+                "ADMISSION",
+                event=event,
+                path=kind,
+                reason=why,
+                open_seqs=open_seqs[-MAX_COVERS:],
+                current_attempt=attempt["attempt"] if attempt is not None else None,
+                admission_mono=self.mono(),
+                **fields,
+            )
 
     @_guarded
     def attempt_start(self, event_ids, clock):
-        if not self.active() or self.event not in event_ids:
+        if not self.active():
             return
-        self.attempt_seq += 1
-        self.untracked_attempt = "QUEUED_NOT_STARTED"
-        previous = self.attempt
-        self.attempt = dict(
-            attempt=self.attempt_seq,
-            start_mono=self.mono(),
-            flush_clock=clock,
-            group=len(event_ids),
-            open_at_start=sorted(self.waiting)[-MAX_COVERS:],
-            overlapped=previous["attempt"] if previous is not None else None,
-        )
+        for event in self._ours(event_ids):
+            self.attempt_seq += 1
+            self.untracked[event] = "QUEUED_NOT_STARTED"
+            previous = self.attempts.get(event)
+            self.attempts[event] = dict(
+                attempt=self.attempt_seq,
+                start_mono=self.mono(),
+                flush_clock=clock,
+                group=len(event_ids),
+                open_at_start=self._waiting_of(event)[-MAX_COVERS:],
+                overlapped=previous["attempt"] if previous is not None else None,
+            )
 
     @_guarded
     def attempt_session(self, event_ids):
-        if self.attempt is not None and self.event in event_ids:
-            self.attempt.setdefault("session_mono", self.mono())
+        for event in self._ours(event_ids):
+            attempt = self.attempts.get(event)
+            if attempt is not None:
+                attempt.setdefault("session_mono", self.mono())
 
     @_guarded
     def attempt_committed(self, event_ids, dispositions):
-        if self.attempt is None or self.event not in event_ids:
-            return
-        disposition = dispositions.get(self.event, ())
-        self.attempt["committed_mono"] = self.mono()
-        self.attempt["kind"] = disposition[0] if disposition else "UNAVAILABLE"
-        if disposition[:1] == ("stamped",) and len(disposition) > 4:
-            self.attempt["revision"] = disposition[4]
-            self.attempt["event_updated_at"] = disposition[2]
+        for event in self._ours(event_ids):
+            attempt = self.attempts.get(event)
+            if attempt is None:
+                continue
+            disposition = dispositions.get(event, ())
+            attempt["committed_mono"] = self.mono()
+            attempt["kind"] = disposition[0] if disposition else "UNAVAILABLE"
+            if disposition[:1] == ("stamped",) and len(disposition) > 4:
+                attempt["revision"] = disposition[4]
+                attempt["event_updated_at"] = disposition[2]
 
     @_guarded
     def attempt_released(self, event_ids):
-        if self.event not in event_ids or not self.active():
+        ours = self._ours(event_ids)
+        if not ours or not self.active():
             return
-        attempt, self.attempt = self.attempt, None
-        if attempt is None:
-            return
-        self.fenced_attempts.discard(attempt["attempt"])
-        if not (attempt["open_at_start"] or attempt.get("fenced_ours") or self.waiting
-                or attempt.get("joined")):
-            return
-        attempt.setdefault("kind", "NOT_COMMITTED_OR_UNAVAILABLE")
-        self._record(
-            "ATTEMPT",
-            event=self.event,
-            **{k: v for k, v in attempt.items() if k != "fenced_ours"},
-            fenced_ours=bool(attempt.get("fenced_ours")),
-            released_mono=self.mono(),
-        )
+        for event in ours:
+            attempt = self.attempts.pop(event, None)
+            if attempt is None:
+                continue
+            self.fenced_attempts.discard(attempt["attempt"])
+            if not (attempt["open_at_start"] or attempt.get("fenced_ours")
+                    or self._waiting_of(event) or attempt.get("joined")):
+                continue
+            attempt.setdefault("kind", "NOT_COMMITTED_OR_UNAVAILABLE")
+            self._record(
+                "ATTEMPT",
+                event=event,
+                **{k: v for k, v in attempt.items() if k != "fenced_ours"},
+                fenced_ours=bool(attempt.get("fenced_ours")),
+                released_mono=self.mono(),
+            )
 
     def tracks_event(self, event):
-        return self.active() and event == self.event and bool(self.commits)
+        return self.active() and event in self.events and any(
+            v.get("event") == event for v in self.commits.values()
+        )
 
     @_guarded
     def stamp(self, event, basis, revision, updated_at):
-        if not self.active() or event != self.event:
+        if not self.active() or event not in self.events:
             return
         matched = [
             v for oid, v in self.commits.items()
-            if (basis or {}).get(str(oid)) == v["stored_epoch"]
+            if v.get("event") == event
+            and (basis or {}).get(str(oid)) == v["stored_epoch"]
             and self.joined.get(oid, -1) < v["input_seq"]
         ]
         if not matched:
             return
         self._put(self.stamps, (event, revision), matched)
-        if self.attempt is not None:
-            self.attempt["joined"] = True
+        attempt = self.attempts.get(event)
+        if attempt is not None:
+            attempt["joined"] = True
         for identity in matched:
             oid = identity["outcome"]
             self.joined[oid] = identity["input_seq"]
@@ -667,6 +759,6 @@ class PMStageTrace(ExactKalshiTrace):
                 revision=revision,
                 event_updated_at=updated_at,
                 event_clock="DB_CLOCK_TIMESTAMP",
-                attempt=self.attempt["attempt"] if self.attempt is not None else "UNAVAILABLE",
+                attempt=attempt["attempt"] if attempt is not None else "UNAVAILABLE",
                 linkage="EXACT_OUTCOME_OBSERVATION_BASIS",
             )

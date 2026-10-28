@@ -863,6 +863,13 @@ async def _ingest_event_odds(
     # only in the publication record (never re-derived from history later).
     book_population: list[dict] = []
     snapshots_processed = 0
+    # #10090: per-book version witnesses for a traced event only (None otherwise).
+    from app.utils.nonvenue_trace import nonvenue_trace
+
+    _trace_books = (
+        {"select_start": nonvenue_trace().clock(), "books": []}
+        if nonvenue_trace() is not None and event_id in nonvenue_trace().events else None
+    )
 
     for bookmaker in event_data.get("bookmakers", []):
         snapshot, is_new = await _create_or_update_snapshot(
@@ -883,6 +890,16 @@ async def _ingest_event_odds(
                     "home_probability": float(snapshot.home_win_probability),
                 }
             )
+            if _trace_books is not None:
+                _trace_books["books"].append({
+                    "book": bookmaker.get("key"),
+                    "home_probability": float(snapshot.home_win_probability),
+                    "snapshot_id": getattr(snapshot, "id", None),
+                    "captured_at": getattr(snapshot, "captured_at", None),
+                    "reading_count": getattr(snapshot, "reading_count", None),
+                    "new_snapshot": bool(is_new),
+                    "bookmaker_last_update": bookmaker.get("last_update"),
+                })
             if snapshot.away_win_probability:
                 all_away_probs.append(float(snapshot.away_win_probability))
             if snapshot.home_spread is not None:
@@ -1071,6 +1088,9 @@ async def _ingest_event_odds(
                     ),
                     "population": book_population,
                 },
+                trace_inputs=None if _trace_books is None else (
+                    lambda: {**_trace_books, "select_end": nonvenue_trace().clock(),
+                             "upstream_clock_domain": "ODDS_API_BOOKMAKER_LAST_UPDATE"}),
             )
     elif snapshots_processed:
         # gotcha #53, in the odds pipeline: "no book quotes a moneyline" (a FACT
@@ -2561,6 +2581,14 @@ async def _poll_all_odds():
                                         from app.utils.nonvenue_live_push import write_nonvenue_probability
                                         await write_nonvenue_probability(
                                             session, event_obj, "stat_model", round(stat_wp, 4),
+                                            trace_inputs=lambda: {
+                                                "model_inputs": "odds_poll",
+                                                "home_score": home_score,
+                                                "away_score": away_score,
+                                                "clock": event_obj.game_clock,
+                                                "period": event_obj.period,
+                                                "pregame_spread": pregame_spread,
+                                            },
                                         )
 
                                         stat_snap, is_new = await _create_or_update_win_prob_snapshot(

@@ -1947,6 +1947,9 @@ class LedgerRegistry(PreviewRegistry):
             return []
         common = (source, op.get("owner", claim), event_id, " ".join(self.sources))
         started = self._clock()
+        # #10090: present only on a traced selection's proposal.
+        trace = op.get("_trace")
+        receipt = None if trace is None else _readset_started(trace, op)
         retiring_state = self._events.get(event_id)
         retiring = ({name: (entry, entry.seq, self._chains.get((event_id, name)))
                      for name, entry in retiring_state.pending.items()}
@@ -1996,6 +1999,10 @@ class LedgerRegistry(PreviewRegistry):
             reply = await self._eval(call, "terminal", *common, op["ctx_rev"],
                                      LEDGER_MAX_EVENTS, op.get("read_ticket"))
         status = reply[0]
+        if trace is not None:
+            _readset_replied(trace, receipt, op, reply)
+            if status not in ("ok", "expired"):
+                observe_readset(trace, receipt, status)  # the refusal is the outcome
         if kind == "propose" and op["mode"] == "open" and status == "chain_exists":
             state = self._events.get(event_id)
             entry = None if state is None else state.pending.get(source)
@@ -2085,8 +2092,19 @@ class LedgerRegistry(PreviewRegistry):
         if kind == "propose" and status == "ok" and source in excluded:
             # The chosen committed base already supersedes this value.
             self._forget(event_id, source)
-            return await self._mutate(
-                self._settle_op(event_id, source, op["local_seq"], "stale"), call, stats)
+            settle = self._settle_op(event_id, source, op["local_seq"], "stale")
+            if trace is not None:
+                # The selection ends here. The settle's frame is composed
+                # WITHOUT the selected value, so it never carries the trace.
+                observe_readset(trace, receipt, "EXCLUDED_BY_CHOSEN_BASE")
+            return await self._mutate(settle, call, stats)
+        if trace is not None:
+            if frame is None:
+                observe_readset(trace, receipt, "NO_FRAME")
+            else:
+                # Popped with ``_ledger`` before the wire, like ``base``.
+                frame["_ledger"]["selection"] = (trace[0], receipt)
+                observe_readset(trace, receipt, "COMPOSED")
         return [] if frame is None else [frame]
 
     def _refusal(self, stats: dict, status: str, phase: str, source: str,
@@ -2160,10 +2178,11 @@ class LedgerRegistry(PreviewRegistry):
             # A contributor lost its owner or deadline after this read-set:
             # recompose from a fresh one, never send the old composition.
             stats["ledger_recomposed"] = stats.get("ledger_recomposed", 0) + 1
-            sync = {"ledger_op": "settle", "mode": "sync", "event_id": frame["event_id"],
-                    "source": source, "through": None, "reason": "expired",
-                    "base_rev": None, "base": None}
-            for fresh in await self._mutate(sync, call, stats):
+            sync = recompose_traced(meta, {
+                "ledger_op": "settle", "mode": "sync", "event_id": frame["event_id"],
+                "source": source, "through": None, "reason": "expired",
+                "base_rev": None, "base": None})
+            for fresh in carry_selection(meta, await self._mutate(sync, call, stats)):
                 await self._publish(fresh, call, channel, stats, retries - 1, observe)
         elif status in ("stale", "terminal"):
             # A newer ledger write (its own frame carries every entry) or a
@@ -2193,6 +2212,111 @@ class LedgerRegistry(PreviewRegistry):
             for item in items:
                 for frame in await self.prepare([item], call, stats):
                     await self._publish(frame, call, channel, stats, observe=observe)
+
+
+def _readset_started(trace: tuple, op: dict) -> Optional[dict]:
+    """#10090: open the receipt of a traced proposal's ledger call.
+
+    ``trace`` is ``(sel, clock, observe)`` from the refresher's stage trace:
+    the selection's correlation id, the trace's ``(wall, mono)`` clock and its
+    `readset` method. Reads only; a failure leaves the receipt absent.
+    """
+    try:
+        wall, mono = trace[1]()
+        receipt = {"event": op.get("event_id"), "op": op.get("ledger_op"),
+                   "local_seq": op.get("local_seq"), "chain": op.get("chain"),
+                   "started_wall": wall, "started_mono": mono}
+        if op.get("ledger_op") == "propose" and isinstance(op.get("payload"), str):
+            # The exact entry this selection proposed: a recomposed frame
+            # carries the selection only while it still holds this entry.
+            entry = json.loads(op["payload"])
+            receipt["_proposed"] = (op.get("source"), entry.get("value"), entry.get("stamped_at"))
+        receipt["_trace"] = trace  # a contributor recompose re-reads under the same trace
+    except Exception:
+        return None
+    observe_readset(trace, receipt, "STARTED")  # so an unanswered call is named
+    return receipt
+
+
+def _readset_replied(trace: tuple, receipt: Optional[dict], op: dict, reply: list) -> None:
+    """Close the bracket at the reply; ``reply[3]`` is the read-set's Redis clock."""
+    if receipt is None:
+        return
+    try:
+        wall, mono = trace[1]()
+        receipt.update(mode=op.get("mode"), reply=reply, ended_wall=wall, ended_mono=mono)
+    except Exception:
+        pass
+
+
+def recompose_traced(meta: Any, sync: dict) -> dict:
+    """#10090: a contributor recompose of a traced selection's frame re-reads
+    under the same trace, so the recomposed frame names the read-set it was
+    composed on. Untraced (no selection in ``meta``): ``sync`` unchanged."""
+    selection = meta.get("selection") if isinstance(meta, dict) else None
+    try:
+        trace = selection[1].get("_trace")
+    except Exception:
+        return sync
+    return sync if trace is None else {**sync, "_trace": trace}
+
+
+def carry_selection(meta: Any, frames: list) -> list:
+    """#10090: a contributor recompose keeps the traced selection's provenance.
+
+    ``meta`` is the refused frame's popped ``_ledger``. Each recomposed blend
+    frame still holding the selection's exact proposed entry (source, value and
+    stamp) carries the selection with its own read-set, naming the frame it
+    replaces; any other frame names the selection as dropped, so it is never
+    joined to a frame that lacks the selected value. Untraced: ``frames``
+    unchanged.
+    """
+    selection = meta.get("selection") if isinstance(meta, dict) else None
+    if not (isinstance(selection, tuple) and len(selection) == 2):
+        return frames
+    try:
+        key, receipt = selection
+        for frame in frames:
+            ledger = frame.get("_ledger") if isinstance(frame, dict) else None
+            if not isinstance(ledger, dict):
+                continue
+            own = ledger.pop("selection", None)  # the sync read-set's, if composed
+            reread = own[1] if isinstance(own, tuple) and len(own) == 2 else receipt
+            if _carries_entry(frame, (receipt or {}).get("_proposed")):
+                ledger["selection"] = (key, {
+                    **(reread or {}), "recomposed_from": (meta.get("gen"), meta.get("seq"))})
+            else:
+                ledger["selection_dropped"] = (key, reread)
+    except Exception:
+        pass
+    return frames
+
+
+def _carries_entry(frame: dict, proposed: Any) -> bool:
+    if not (isinstance(proposed, tuple) and len(proposed) == 3):
+        return False
+    source, value, stamped_at = proposed
+    preview = frame.get("preview") if isinstance(frame.get("preview"), dict) else {}
+    if preview.get("kind") != "blend":
+        return False
+    entry = (preview.get("pending_entries") or {}).get(source)
+    if not isinstance(entry, dict) or entry.get("value") != value:
+        return False
+    try:
+        return (datetime.fromisoformat(entry.get("updated_at"))
+                == datetime.fromisoformat(stamped_at))
+    except (TypeError, ValueError):
+        return False
+
+
+def observe_readset(trace: Optional[tuple], receipt: Optional[dict], outcome: str) -> None:
+    """Hand a traced ledger call's outcome to the stage trace; never raises."""
+    if trace is None or receipt is None:
+        return
+    try:
+        trace[2](trace[0], receipt, outcome)
+    except Exception:
+        pass
 
 
 def observe_publication(observe, frame: dict, meta: Any, reply: Any) -> None:

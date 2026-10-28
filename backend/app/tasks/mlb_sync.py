@@ -189,6 +189,8 @@ async def _sync_mlb_win_probability():
                     from app.utils.nonvenue_live_push import write_nonvenue_probability
                     await write_nonvenue_probability(
                         session, event, WIN_PROB_SOURCE_KEY, home_wp,
+                        trace_inputs=lambda: {"mlb_game_pk": mlb_game.game_pk,
+                                              "game_state": game_state or None},
                     )
 
                     # Update Event.period for feed scoring (late-game bonus)

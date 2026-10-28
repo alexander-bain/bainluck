@@ -583,7 +583,9 @@ async def test_trace_predicate_failure_never_costs_actual_event_stamp(monkeypatc
 
     trace.tracks_event = failed
     await r.refresh([1])
-    assert calls == [1] and r.stats["stamped"] == 1 and r.stats["errors"] == 0
+    # Two consumers ask the predicate: the selection receipt (#10090) and the
+    # stamp's join. Both failures are swallowed; the stamp is untouched.
+    assert calls == [1, 1] and r.stats["stamped"] == 1 and r.stats["errors"] == 0
     assert len(session.updates) == 1 and [f["event_id"] for f in published] == [1]
 
 

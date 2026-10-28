@@ -7,6 +7,10 @@ savepoint releases are not commits and Redis never sees rolled-back prices.
 #4971: with ``PROBABILITY_PUBLICATION_RECORDING`` on, ``before_commit`` also
 records each event's final committed bag inside the same transaction
 (``probability_publication``). Pending entries carry the write's observation.
+
+#10090: with ``NONVENUE_TRACE_EVENTS`` armed, a traced event's writes are
+receipted in this process's log from RETURNING through COMMIT to the Redis
+reply (`app.utils.nonvenue_trace`). Disarmed, each hook is a ``None`` check.
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ from app.models.models import Event
 from app.tasks.live_blend_refresh import atomic_stamp_expression
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.live_push import build_frame, publish_frame
+from app.utils.nonvenue_trace import nonvenue_trace
 
 logger = logging.getLogger(__name__)
 _PENDING = "nonvenue_probability_pending"
@@ -50,6 +55,9 @@ def _before_commit(session):
     # Savepoint releases fire before_commit too; only the outer COMMIT counts.
     if session.in_nested_transaction():
         return
+    trace = nonvenue_trace()
+    if trace is not None:
+        trace.commit_started(session.info.get(_PENDING, ()), _frame_is_sent)
     from app.utils.probability_publication import (
         record_committing_publications,
         recording_enabled,
@@ -88,6 +96,9 @@ def _after_commit(session):
     session.info.setdefault(_READY, []).extend(
         frame for frame in latest.values() if _frame_is_sent(frame)
     )
+    trace = nonvenue_trace()
+    if trace is not None:
+        trace.committed(pending, latest, _frame_is_sent)
 
 
 def _after_rollback(session, transaction):
@@ -104,6 +115,9 @@ def _after_rollback(session, transaction):
         if event is not None:
             set_committed_value(event, "win_probability_sources", previous)
     session.info[_PENDING] = [entry for entry in pending if not belongs_to(entry[0])]
+    trace = nonvenue_trace()
+    if trace is not None:
+        trace.rolled_back(transaction, rolled_back)
 
 
 _PRIOR_WRITE_PROBE_SQL = (
@@ -186,6 +200,7 @@ async def write_nonvenue_probability(
     metadata=None,
     values=None,
     evidence=None,
+    trace_inputs=None,
 ):
     """Atomically replace/remove one allowed source and queue its returned blend.
 
@@ -196,9 +211,30 @@ async def write_nonvenue_probability(
     retain the ESPN writer's own id/fallback columns. ``evidence`` is the
     producer's own eligibility record for this write (#4971); it is kept only
     in the publication row, never in the bag. No commit happens here.
+    ``trace_inputs`` (#10090) is the producer's own input/version witness, a
+    dict or a zero-argument callable; it is read only for a traced event and
+    reaches nothing but `nonvenue_trace`.
     """
     if source not in NONVENUE_SOURCES:
         raise ValueError(f"not a nonvenue probability source: {source}")
+    trace = nonvenue_trace()
+    seam = None if trace is None else trace.seam_entered(
+        event.id, transaction=session.sync_session.get_transaction(), source=source,
+        value=value, evidence=evidence, metadata_keys=sorted(metadata or {}),
+        prior=(event.__dict__.get("win_probability_sources")
+               if inspect(event, raiseerr=False) is not None else None),
+        inputs=trace_inputs,
+    )
+    try:
+        return await _write(session, event, source, value, metadata, values, evidence,
+                            trace, seam)
+    except BaseException as exc:
+        if seam is not None:
+            trace.write_failed(seam, exc)
+        raise
+
+
+async def _write(session, event, source, value, metadata, values, evidence, trace, seam):
     prior_txn_row_write = await _probe_prior_txn_row_write(session, event.id)
     # Literal source dispatch keeps the existing writer/eligibility scanner
     # able to verify every mint. This entry point never accepts venue sources.
@@ -239,6 +275,8 @@ async def write_nonvenue_probability(
         )
     ).first()
     if row is None:
+        if seam is not None:
+            trace.missing_row(seam)
         return None
     sources, status, espn, opening, removed_at, rev = row
     # Mirror a Core update without marking the JSONB dirty: a later autoflush
@@ -256,17 +294,18 @@ async def write_nonvenue_probability(
         espn_win_prob_home=espn,
         opening_home_probability=opening,
     )
+    frame = build_frame(
+        event_id=event.id,
+        probability=compute_aggregate_probability(shim, status),
+        source=source,
+        source_value=value,
+        updated_at=at,
+        status=status,
+        rev=rev,
+    )
     _queue(
         session,
-        build_frame(
-            event_id=event.id,
-            probability=compute_aggregate_probability(shim, status),
-            source=source,
-            source_value=value,
-            updated_at=at,
-            status=status,
-            rev=rev,
-        ),
+        frame,
         mapped,
         previous,
         {
@@ -281,6 +320,12 @@ async def write_nonvenue_probability(
             "evidence": evidence,
         },
     )
+    if seam is not None:
+        trace.written(
+            seam, frame, transaction=session.sync_session.get_transaction(), rev=rev,
+            stamped_at=at, sources=sources, status=status, espn=espn, opening=opening,
+            prior_txn_row_write=prior_txn_row_write,
+        )
     return sources
 
 
@@ -322,6 +367,8 @@ async def publish_committed_nonvenue_frames(session):
         return
     redis = None
     holder = info.get(_CLIENT_SCOPE)
+    trace = nonvenue_trace()
+    aborted = "CANCELLED"  # what an unfinished traced frame reads if no except ran
     try:
         from app.tasks.redis_state import get_async_redis_client
 
@@ -333,18 +380,26 @@ async def publish_committed_nonvenue_frames(session):
             redis = holder["client"]
         async with asyncio.timeout(5):
             for frame in frames:
-                if not await publish_frame(redis, frame):
+                token = None if trace is None else trace.publish_started(frame)
+                sent = await publish_frame(redis, frame)
+                if token is not None:
+                    trace.published(token, sent)
+                if not sent:
                     logger.warning(
                         "nonvenue live frame not sent: event=%s source=%s",
                         frame["event_id"],
                         frame["source"],
                     )
-    except Exception:
+        aborted = None
+    except Exception as exc:
+        aborted = "TIMEOUT" if isinstance(exc, TimeoutError) else "ERROR"
         logger.warning(
             "nonvenue live fanout failed for %s committed frames",
             len(frames),
             exc_info=True,
         )
     finally:
+        if trace is not None and aborted is not None:
+            trace.publish_closed(frames, aborted)
         if holder is None:
             await _close_publication_client(redis)

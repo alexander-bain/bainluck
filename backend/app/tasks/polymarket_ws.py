@@ -3446,8 +3446,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # entry per subscribed outcome) and holds the mark of the buffered value.
     tail_receipts = TailReceipts("polymarket")
     blend_refresher.receipts = tail_receipts
-    # #10090 stage trace: OFF unless ONE event, its explicit outcomes and an
-    # absolute expiry <=600 s away are configured (`app/utils/pm_stage_trace.py`).
+    # #10090 stage trace: OFF unless 1-4 events (a fold's members), their
+    # explicit outcomes and an absolute expiry <=600 s away are configured
+    # (`app/utils/pm_stage_trace.py`).
     # Evidence only; it never changes a price, a schedule or a retry.
     tail_receipts.exact_trace = None
     with contextlib.suppress(Exception):
@@ -4736,14 +4737,17 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         stage_trace.chunk_end(traced, wrote)
                     # A proven returned clock already bounds future inputs.
                     # Otherwise start a completed cohort's display work before
-                    # the optional sample; failed/held writes keep their order.
+                    # the optional sample. So does a lock-held chunk (None):
+                    # a held quote already carries its frozen input bound, and
+                    # the sample is only for FUTURE inputs; it still finishes
+                    # in this chunk (#11525). Failed writes keep their order.
                     write_clock_ready = (
                         held_quotes is not None
                         and getattr(wrote, "clock_owner", None) is held_quotes
                         and getattr(blend_refresher, "held_quotes", None) is held_quotes
                     )
                     clock_needed = held_quotes is not None and not final and not write_clock_ready
-                    clock_after_delivery = clock_needed and bool(wrote)
+                    clock_after_delivery = clock_needed and (bool(wrote) or wrote is None)
                     if clock_needed and not clock_after_delivery:
                         await held_quotes.sample_database_clock(get_task_session)
                     # Only a completed unchanged acknowledgement establishes

@@ -4978,6 +4978,7 @@ jobs:
           set -o pipefail
           python -m pytest tests/integration/test_live_blend_concurrent_stamp_pg.py \
             tests/integration/test_nonvenue_live_push_pg_8761.py \
+            tests/integration/test_nonvenue_trace_pg_10090.py \
             tests/integration/test_probability_publication_pg_4971.py \
             -v -rs 2>&1 | tee /tmp/liveblendrace.txt
           if grep -qiE "[0-9]+ skipped" /tmp/liveblendrace.txt; then
@@ -5248,6 +5249,7 @@ jobs:
             tests/integration/test_observation_read_deadline_keeps_connection_10090_pg.py \
             tests/integration/test_live_blend_metadata_projection_10090_pg.py \
             tests/integration/test_pm_price_returned_clock_10090_pg.py \
+            tests/integration/test_pm_held_before_future_clock_10090_pg.py \
             tests/integration/test_pm_price_statement_deadline_10090_pg.py \
             tests/integration/test_dnpl_default_committed_fallback_10090_pg.py \
             tests/integration/test_dnpl_capacity_lifecycle_10090_pg.py \
@@ -5270,8 +5272,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]252 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row/default-DNPL/reservations/returned-clock gate did not run all 252 cases"
+          grep -qE "[^0-9]253 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row/default-DNPL/reservations/returned-clock gate did not run all 253 cases"
             exit 1
           }
 

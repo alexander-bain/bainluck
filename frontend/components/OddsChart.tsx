@@ -41,6 +41,7 @@ import { teamShortNames } from "@/lib/teamShortName";
 import { useAxisPoleFit } from "@/hooks/useAxisPoleFit";
 import { axisPoleStyle, axisLabelStyle } from "@/lib/axisPoleFit";
 import { teamTextColor } from "@/lib/teamColors";
+import { createChartTimestampMs } from "@/lib/chartTimestampMs";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
   OddsHistoryPoint,
@@ -88,6 +89,7 @@ import {
 } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import { chartEndpointAttributes, type ChartEndpointIdentity } from "@/lib/displayIdentity";
+import { tenthsSideLabel } from "@/lib/tenthsOptIn";
 import {
   bucketSupport,
   classifySeriesSupport,
@@ -523,6 +525,13 @@ interface OddsChartProps {
    * today's chart.
    */
   publications?: EventPublicationsResponse | null;
+  /**
+   * #10090 — the end label prints one decimal, from the same derived pair the
+   * hero prints (`lib/tenthsOptIn.ts`). The page's one opt-in decision; a
+   * closed/completed chart ignores it and keeps its whole-number ending.
+   * Absent means today's label.
+   */
+  tenths?: boolean;
 }
 
 type TimeRange = "all" | "live";
@@ -1039,6 +1048,7 @@ export default function OddsChart({
   awayWithheld = false,
   defaultSourcesExpanded = false,
   publications,
+  tenths = false,
 }: OddsChartProps) {
   // #3419: the axis is categorical on this label, so it must be spelled the
   // same way the parent spelled its ticks. Absent a parent domain the window is
@@ -1757,6 +1767,8 @@ export default function OddsChart({
   // #3419) — required for
   // Recharts ReferenceLine (period markers) to match categorical XAxis values.
   const chartData: ChartDataPoint[] = useMemo(() => {
+    // #10090 — this transform's own timestamp→ms reuse; see the helper.
+    const chartTimestampMs = createChartTimestampMs();
     const dataMap = new Map<string, ChartDataPoint>();
     // Explicit source withdrawal ends carry; seeded empty minutes do not.
     const withdrawn = new Map<string, Set<string>>();
@@ -1887,7 +1899,7 @@ export default function OddsChart({
       for (const point of filteredAggregateLine) {
         const delta = homeProbToChartAxis(point.home_probability);
         const dp = ensurePoint(point.timestamp);
-        if (!insideRecordedWindow(parseISO(dp.timestamp).getTime(), checkpointWindow)) {
+        if (!insideRecordedWindow(chartTimestampMs(dp.timestamp), checkpointWindow)) {
           dp.bainLuckDelta = delta;
           dp.bainLuckAt = point.timestamp;
         }
@@ -1910,7 +1922,7 @@ export default function OddsChart({
     // a point still carrying 17–27.
     if (scoringPlays && scoringPlays.length > 0) {
       const sortedPoints = Array.from(dataMap.values()).sort(
-        (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
+        (a, b) => chartTimestampMs(a.timestamp) - chartTimestampMs(b.timestamp)
       );
       attachScoringPlays(sortedPoints, scoringPlays);
     }
@@ -1959,7 +1971,7 @@ export default function OddsChart({
     // Forward-filling is semantically correct: the probability IS the last
     // known value until a new data point arrives.
     const sorted = Array.from(dataMap.values()).sort(
-      (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
+      (a, b) => chartTimestampMs(a.timestamp) - chartTimestampMs(b.timestamp)
     );
 
     // Every key this chart draws (see `plottedProbKeys`) gets forward-filled.
@@ -1979,7 +1991,7 @@ export default function OddsChart({
       // the previous row to this one, not this row alone: a window inside one
       // minute has no row of its own, and a value carried from the row before
       // it into the row after it would bridge it all the same.
-      const rowMs = parseISO(pt.timestamp).getTime();
+      const rowMs = chartTimestampMs(pt.timestamp);
       const touchesCheckpointWindow = spanTouchesRecordedWindow(prevRowMs ?? rowMs, rowMs, checkpointWindow);
       const inCheckpointWindow = insideRecordedWindow(rowMs, checkpointWindow);
       prevRowMs = rowMs;
@@ -2034,7 +2046,7 @@ export default function OddsChart({
         const fromValue = valueAtMinute(iv.fromMs);
         const toValue = iv.kind === "interior" ? valueAtMinute(iv.toMs) : null;
         for (const pt of sorted) {
-          const ms = parseISO(pt.timestamp).getTime();
+          const ms = chartTimestampMs(pt.timestamp);
           if (ms < fromMinute) continue;
           // An interior hole ends at the next observation's minute; a
           // trailing one runs to the end of the drawn domain, live edge
@@ -2548,6 +2560,7 @@ export default function OddsChart({
 
   // ── Current probability callout (last non-null data point) ──
   // Stamp `calloutDelta` directly onto the chartData point (same reason as above).
+  const tenthsLabel = tenths && !isClosed;
   const currentCallout = useMemo(() => {
     if (chartData.length === 0) return null;
     const key = primarySeriesKey;
@@ -2631,15 +2644,18 @@ export default function OddsChart({
           // (`teamAxisTick`). Both ends come from the one resolved pair, so it
           // is still the hero's number for that side. A draw-priced market has
           // no away side to name (#10318) and keeps the home side's.
-          label:
-            awayWithheld || delta >= 50 || percents.awayLabel === null
+          // #10090 — an opted-in reader's label is the same side, in tenths
+          // from the pair the hero derives (`tenthsSideLabel`).
+          label: tenthsLabel
+            ? tenthsSideLabel(chartAxisToHomeProb(delta), !(awayWithheld || delta >= 50 || percents.awayLabel === null))
+            : awayWithheld || delta >= 50 || percents.awayLabel === null
               ? percents.homeLabel
               : percents.awayLabel,
         };
       }
     }
     return null;
-  }, [chartData, primarySeriesKey, drawableCheckpoints, rowStartMs, awayWithheld]);
+  }, [chartData, primarySeriesKey, drawableCheckpoints, rowStartMs, awayWithheld, tenthsLabel]);
 
   // #8392 — the axis gutter gives each team name the room the other does not
   // need. A hook, so it sits above the empty-chart return below; the raw names

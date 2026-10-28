@@ -74,8 +74,11 @@ describe("#11301 the event hero reflows below 360px instead of squeezing its cen
   });
 
   it("keeps the numeral sizes — the reflow buys room, it does not shrink the chances", () => {
+    // #10090 — each numeral's class is a ternary since the tenths opt-in: the
+    // full-size list below is the branch every reader without the opt-in gets
+    // (`tenthsOptInOffIsMaster10090` pins that markup byte for byte).
     const numeral =
-      'className="text-[34px] min-[360px]:text-[42px] min-[390px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"';
+      '"text-[34px] min-[360px]:text-[42px] min-[390px]:text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"';
     expect(pair.split(numeral)).toHaveLength(3);
   });
 

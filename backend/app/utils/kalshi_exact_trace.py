@@ -45,6 +45,24 @@ Redis-computed lifetime; a reader's own expiry is receipt-relative. Limits: a
 process sees only frames it sends, so the other venue's frames for the same
 event appear as ``seq`` gaps here and in its own trace; the line describes the
 send, never browser delivery.
+
+SELECTED (#10090) is the producer's decision about a traced event's reading,
+written AT that decision, so a state lost before any send still has a receipt:
+``sel`` (this run's correlation id), route (``refresh``, ``refresh_no_preview``,
+``observation``), the wall+monotonic bracket around the selection, the selected
+market, speaker and contributing outcomes, the raw and oriented value, whether
+home orientation is proven, the eligibility record, the exact observed basis
+joined to ``input_seq`` like PREVIEW, the disposition and ``then`` (PROPOSE,
+PERSIST, NONE). An identical decision (disposition, value, basis) is the same
+state: counted in the next line's ``repeats_hidden``, not written. A PROPOSE's
+outcome repeats its ``sel``: the PREVIEW of the frame it composed, with
+``readset`` (the ledger call's Redis status, ``redis_ms`` = the Lua read-set's
+own Redis ``TIME`` in ms, its gen/seq = the frame's epoch/seq, base_rev and the
+read contributors, and the worker bracket around the awaited EVAL); or READSET
+(the call composed nothing: its Redis status is the outcome); or
+SELECTION_UNSENT (NOT_PROPOSED, NOT_ALLOWED, RECHECK_CHANGED, COMPOSE_ERROR,
+NO_LEDGER_OUTCOME, LEDGER_CALL_UNANSWERED, COMPOSED_SEND_UNOBSERVED). Selection
+receipts begin once the trace tracks the event (its first retained commit).
 """
 
 import json
@@ -153,6 +171,12 @@ class ExactKalshiTrace:
         self.receive_seq = 0
         self.pinned = {}
         self.last_quotes, self.last_decisions, self.last_writes = {}, {}, {}
+        # #10090 selection receipts: the run's correlation counter, the
+        # selections still owed an outcome line, and per (event, route) the
+        # last non-proposing selection with how many identical ones it hid.
+        self.selection_seq = 0
+        self.open_selections, self.last_selections = {}, {}
+        self.selection_attempts = {}  # sel -> its latest attempt ordinal
 
     def _clear(self):
         for state in (
@@ -165,6 +189,9 @@ class ExactKalshiTrace:
             self.last_quotes,
             self.last_decisions,
             self.last_writes,
+            self.open_selections,
+            self.last_selections,
+            self.selection_attempts,
         ):
             state.clear()
 
@@ -599,9 +626,41 @@ class ExactKalshiTrace:
                     fields.update(self._preview_state(frame, meta, ledger, reply))
                 except Exception:
                     fields["composition"] = "COMPOSITION_ERROR"  # a line, not silence
+            selection = ledger.get("selection") if isinstance(ledger, dict) else None
+            dropped = ledger.get("selection_dropped") if isinstance(ledger, dict) else None
+            if isinstance(selection, tuple) and len(selection) == 2:
+                # A traced proposal's frame: its SELECTED ``sel``/``attempt``
+                # and the read-set it was composed on (`readset`). A
+                # ``contributor`` reply sent nothing: the registry recomposes,
+                # so the selection stays open for the recomposed frame (or the
+                # closer) and this line says it is not the outcome.
+                key, receipt = selection
+                held = self.open_selections.get(key)
+                terminal = not (reply and reply[0] == "contributor")
+                if terminal:
+                    self.open_selections.pop(key, None)
+                else:
+                    self._held_contributor(key)
+                try:
+                    fields.update(_selection_ids(key, held), selection_terminal=terminal,
+                                  readset=_readset_fields(receipt))
+                    if isinstance(receipt, dict) and "recomposed_from" in receipt:
+                        fields["recomposed_from"] = _recomposed(receipt["recomposed_from"])
+                except Exception:
+                    fields["readset"] = "READSET_ERROR"
             self._record("PREVIEW", **fields)
+            if isinstance(dropped, tuple) and len(dropped) == 2:
+                # A recompose whose frame no longer carries the selected entry:
+                # that frame is not this selection's delivery.
+                self.selection_unsent(dropped[0], "RECOMPOSED_WITHOUT_SELECTED_ENTRY")
         except Exception:
             pass  # evidence must never cost a quote
+
+    def _held_contributor(self, key):
+        held = self.open_selections.get(key)
+        if held is not None:
+            receipt = dict(held[1] or {}, contributor_refused=True)
+            self._put(self.open_selections, key, (held[0], receipt, *held[2:]))
 
     def _preview_state(self, frame, meta, ledger, reply):
         from types import SimpleNamespace
@@ -696,8 +755,13 @@ class ExactKalshiTrace:
         )
         return fields
 
-    def _preview_inputs(self, basis, ids):
-        """Exact input identities behind one source's observation basis."""
+    def _preview_inputs(self, basis, ids, name_untraced=False):
+        """Exact input identities behind one source's observation basis.
+
+        ``name_untraced`` (a selection's own basis): an outcome this trace has
+        no identity for is named, so event capacity is never read as outcome
+        coverage.
+        """
         inputs = []
         for key in ids:
             oid = int(key)
@@ -717,4 +781,353 @@ class ExactKalshiTrace:
                     input_seq="UNAVAILABLE",
                     linkage="TRACKED_OUTCOME_NO_RETAINED_COMMIT_AT_THIS_OBSERVATION",
                 ))
+            elif name_untraced:
+                inputs.append(dict(outcome=oid, input_seq="UNAVAILABLE",
+                                   linkage="OUTCOME_NOT_TRACED"))
         return inputs
+
+    # ── #10090 selection receipts ─────────────────────────────────────────
+
+    def clock(self):
+        """``(wall, mono)`` on this trace's clocks, for a bracket taken elsewhere."""
+        return self.wall(), self.mono()
+
+    def selection_open(self, event):
+        """Start one selection bracket, only while this event is traced.
+
+        Returns the token `selection` closes, or None: then no line follows and
+        the caller does nothing more.
+        """
+        try:
+            if type(event) is int and self.tracks_event(event):
+                return (event, self.wall(), self.mono())
+        except Exception:
+            pass
+        return None
+
+    def selection(self, token, source, disposition, *, route, reading=None,
+                  value=None, basis=None, reason=None, then="NONE"):
+        """SELECTED: the refresher's decision about one traced event's reading.
+
+        ``then`` is what the decision leads to: PROPOSE (a preview proposal,
+        whose outcome line repeats the returned ``sel``), PERSIST (the stamp
+        only) or NONE. A decision identical to the previous one of the same
+        event and route (disposition, value, observed basis) is the same state:
+        it is counted, not written, and a PROPOSE repeat returns the original
+        ``sel`` so its outcome still joins. Returns ``sel`` or None. Never raises.
+        """
+        try:
+            if token is None or not self.active():
+                return None
+            event, start_wall, start_mono = token
+            end_wall, end_mono = self.wall(), self.mono()
+            shown, observed = self._selection_basis(basis)
+            key = (event, route)
+            reading_fields = None
+            if reading is not None:
+                try:
+                    reading_fields = self._selection_reading(reading, value)
+                except Exception:
+                    reading_fields = {"reading": "READING_ERROR"}  # a line, not silence
+            # The complete semantic witness: reading identity, orientation,
+            # eligibility (full record) and the WHOLE basis, not the shown
+            # slice. A changed witness is a new selected state, never hidden.
+            witness = _witness(reading, value, basis)
+            signature = (disposition, reason, then, _scalar(value), tuple(observed.items()),
+                         witness)
+            last, hidden, last_sel = self.last_selections.get(key, (None, 0, None))
+            if last == signature:
+                self._put(self.last_selections, key, (last, hidden + 1, last_sel))
+                if then != "PROPOSE" or last_sel is None:
+                    return None
+                # A proposing repeat is a new ATTEMPT of the same state: its
+                # outcome joins (sel, attempt), so outcomes stay an ordered set.
+                attempt = self.selection_attempts.get(last_sel, 1) + 1
+                self._put(self.selection_attempts, last_sel, attempt)
+                again = (last_sel, attempt)
+                self._put(self.open_selections, again, (event, None, end_mono))
+                return again
+            self.selection_seq += 1
+            sel = self.selection_seq
+            fields = dict(
+                sel=sel,
+                attempt=1,
+                witness=witness,
+                event=event,
+                source=_word(source),
+                route=_word(route),
+                disposition=_word(disposition),
+                reason=None if reason is None else _word(reason),
+                then=_word(then),
+                select_start_wall=start_wall,
+                select_start_mono=start_mono,
+                select_end_wall=end_wall,
+                select_end_mono=end_mono,
+                repeats_hidden=hidden,
+                value=_scalar(value),
+            )
+            if reading_fields is not None:
+                fields.update(reading_fields)
+            if basis is not None:
+                fields.update(
+                    observed_basis=observed,
+                    observed_basis_omitted=len(basis) - len(shown),
+                    inputs=self._preview_inputs(basis, shown, name_untraced=True),
+                )
+            self._record("SELECTED", **fields)
+            if self.stopped:
+                return None
+            self._put(self.last_selections, key, (signature, 0, sel))
+            self._put(self.selection_attempts, sel, 1)
+            if then == "PROPOSE":
+                self._put(self.open_selections, (sel, 1), (event, None, end_mono))
+                return (sel, 1)
+            return (sel, 1)
+        except Exception:
+            return None  # evidence must never cost a quote
+
+    @staticmethod
+    def _selection_basis(basis):
+        if not isinstance(basis, dict):
+            return [], {}
+        shown = sorted(k for k in basis if re.fullmatch(r"\d{1,12}", str(k)))[:PREVIEW_BASIS]
+        return shown, {k: number(basis[k]) for k in shown}
+
+    @staticmethod
+    def _selection_reading(reading, value):
+        from app.utils.live_blend import has_proven_home_orientation
+
+        market = getattr(reading, "market", None)
+        speaker = getattr(reading, "outcome", None)
+        rows = tuple(getattr(reading, "contributing_outcomes", None) or (speaker,))
+        home = getattr(reading, "home_probability", None)
+        orientation = "UNAVAILABLE"
+        if isinstance(home, float) and isinstance(value, float):
+            orientation = (
+                "AS_READ" if round(home, 4) == value
+                else "INVERTED" if round(1 - home, 4) == value
+                else "OTHER"
+            )
+        return dict(
+            market=_opt_int(getattr(market, "id", None)),
+            market_ticker=_label(getattr(market, "external_id", None)),
+            speaker_outcome=_opt_int(getattr(speaker, "id", None)),
+            contributing=[
+                dict(outcome=_opt_int(getattr(row, "id", None)),
+                     probability=_prob(getattr(row, "current_probability", None)))
+                for row in rows[:PREVIEW_BASIS]
+            ],
+            contributing_omitted=max(0, len(rows) - PREVIEW_BASIS),
+            yes_probability=_prob(getattr(reading, "yes_probability", None)),
+            source_home_probability=_prob(home),
+            devigged=bool(getattr(reading, "devigged", False)),
+            proven_home_orientation=bool(has_proven_home_orientation(reading)),
+            orientation=orientation,
+            eligibility=_eligibility(getattr(reading, "eligibility", None)),
+        )
+
+    def readset(self, sel, receipt, outcome):
+        """A traced proposal's ledger mutation (`blend_preview._mutate`).
+
+        STARTED (the call is about to be sent) and COMPOSED (a frame carries the
+        receipt to its PREVIEW line) write nothing now; they only let the closer
+        name an unanswered call or an unobserved send. Any other outcome is the
+        READSET line: the Redis reply status, the read-set's own clock and the
+        call's bracket. Never raises.
+        """
+        try:
+            if not self.active():
+                return
+            held = self.open_selections.get(sel)
+            selected_mono = held[2] if held is not None and len(held) > 2 else None
+            if outcome in ("STARTED", "COMPOSED"):
+                self._put(self.open_selections, sel, (receipt.get("event"), receipt, selected_mono))
+                return
+            self.open_selections.pop(sel, None)
+            self._record(
+                "READSET",
+                **_selection_ids(sel, held),
+                event=_int(receipt.get("event")),
+                outcome=_word(outcome),
+                **_readset_fields(receipt),
+            )
+        except Exception:
+            pass
+
+    def selection_unsent(self, sel, reason, ops=None):
+        """SELECTION_UNSENT: a PROPOSE selection that reached no ledger outcome."""
+        try:
+            if not self.active():
+                return
+            held = self.open_selections.pop(sel, None)
+            if held is None:
+                return  # resolved already, or never opened here
+            event, receipt = held[0], held[1]
+            fields = dict(**_selection_ids(sel, held), event=_int(event), reason=_word(reason))
+            if ops is not None:
+                fields["ops"] = [_word(kind) for kind in list(ops)[:PREVIEW_BASIS]]
+            if receipt is not None:
+                fields.update(_readset_fields(receipt))
+            self._record("SELECTION_UNSENT", **fields)
+        except Exception:
+            pass
+
+    def selections_closed(self, sels):
+        """The caller's publication returned: any of ``sels`` still open is unsent."""
+        for sel in list(sels):
+            held = self.open_selections.get(sel)
+            if held is not None:
+                receipt = held[1]
+                self.selection_unsent(
+                    sel,
+                    "NO_LEDGER_OUTCOME" if receipt is None
+                    else "LEDGER_CALL_UNANSWERED" if "reply" not in receipt
+                    else "CONTRIBUTOR_NOT_RECOMPOSED" if receipt.get("contributor_refused")
+                    else "COMPOSED_SEND_UNOBSERVED",
+                )
+
+
+def _label(value):
+    """Rule names and venue market ids: printable, short, no spaces."""
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:@#/-]{1,96}", value):
+        return value
+    return None if value is None else "INVALID"
+
+
+def _opt_int(value):
+    return None if value is None else _int(value)
+
+
+def _prob(value):
+    if value is None or isinstance(value, bool):
+        return None if value is None else "INVALID"
+    try:
+        return number(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return "INVALID"
+
+
+def _decimal(value):
+    """A Redis decimal reply field: int, None when empty, else INVALID."""
+    if value in ("", None):
+        return None
+    return int(value) if isinstance(value, str) and re.fullmatch(r"-?\d{1,19}", value) else "INVALID"
+
+
+def _eligibility(record):
+    if record is None:
+        return None
+    refs = getattr(record, "contributors", None) or ()
+    return dict(
+        status=_label(getattr(record, "status", None)),
+        scope=_label(getattr(record, "scope", None)),
+        rule=_label(getattr(record, "rule", None)),
+        market_id=_opt_int(getattr(record, "market_id", None)),
+        source_market_id=_label(getattr(record, "source_market_id", None)),
+        semantic_type=_label(getattr(record, "semantic_type", None)),
+        version=_opt_int(getattr(record, "version", None)),
+        contributors=[
+            dict(market_id=_opt_int(getattr(ref, "market_id", None)),
+                 source_market_id=_label(getattr(ref, "source_market_id", None)))
+            for ref in list(refs)[:PREVIEW_BASIS]
+        ],
+        contributors_omitted=max(0, len(refs) - PREVIEW_BASIS),
+    )
+
+
+READSET_REPLIES = ("ok", "expired", "current")
+
+
+def _readset_fields(receipt):
+    """One ledger call: its Redis reply's read-set clock and the local bracket.
+
+    ``redis_ms`` is the Lua script's ``now`` (Redis ``TIME``, ms), the same
+    instant the read-set was taken; it is returned only by read-set replies.
+    ``call_*`` are this worker's clocks around the awaited EVAL.
+    """
+    reply = list(receipt.get("reply") or ())
+    status = reply[0] if reply else None
+    fields = dict(
+        op=_word(receipt.get("op")),
+        mode=None if receipt.get("mode") is None else _word(receipt.get("mode")),
+        local_seq=receipt.get("local_seq") if type(receipt.get("local_seq")) is int else None,
+        chain=receipt.get("chain") if type(receipt.get("chain")) is int else None,
+        status=_word(status) if status is not None else "NO_REPLY",
+        readset_clock="REDIS_TIME_MS",
+        call_started_wall=receipt.get("started_wall"),
+        call_started_mono=receipt.get("started_mono"),
+        call_ended_wall=receipt.get("ended_wall", "UNAVAILABLE"),
+        call_ended_mono=receipt.get("ended_mono", "UNAVAILABLE"),
+    )
+    if status in READSET_REPLIES and len(reply) >= 7:
+        read = [
+            dict(source=_word(reply[i]), owner=_decimal(reply[i + 1]),
+                 deadline_ms=_decimal(reply[i + 2]))
+            for i in range(7, len(reply) - 3, 4)
+        ]
+        fields.update(
+            gen=_decimal(reply[1]),
+            seq=_decimal(reply[2]),
+            redis_ms=_decimal(reply[3]),
+            base_rev=_decimal(reply[4]),
+            read_contributors=read[:PREVIEW_SOURCES],
+            read_contributors_omitted=max(0, len(read) - PREVIEW_SOURCES),
+        )
+    else:
+        fields.update(redis_ms="UNAVAILABLE", read="NOT_A_READSET_REPLY")
+    return fields
+
+
+def _selection_ids(key, held=None):
+    """``sel`` and ``attempt`` of a selection key ``(sel, attempt)``; a repeat
+    attempt also names its own decision clock (attempt 1's is SELECTED's)."""
+    if not (isinstance(key, tuple) and len(key) == 2):
+        return dict(sel=_int(key), attempt="UNAVAILABLE")
+    fields = dict(sel=_int(key[0]), attempt=_int(key[1]))
+    if key[1] != 1 and held is not None and len(held) > 2 and held[2] is not None:
+        fields["attempt_selected_mono"] = held[2]
+    return fields
+
+
+def _recomposed(origin):
+    if isinstance(origin, (tuple, list)) and len(origin) == 2:
+        return dict(epoch=_int(origin[0]), seq=_int(origin[1]))
+    return "UNAVAILABLE"
+
+
+def _witness(reading, value, basis):
+    """A bounded hash of the complete selected witness (16 hex chars).
+
+    Reading identity and orientation, every contributing outcome and its
+    probability, the full eligibility record (version, semantic type and every
+    contributor) and the whole observed basis. Never raises.
+    """
+    import hashlib
+
+    try:
+        rows = ()
+        record = None
+        if reading is not None:
+            speaker = getattr(reading, "outcome", None)
+            rows = tuple(getattr(reading, "contributing_outcomes", None) or (speaker,))
+            record = getattr(reading, "eligibility", None)
+        market = getattr(reading, "market", None)
+        doc = dict(
+            value=repr(value),
+            market=repr(getattr(market, "id", None)),
+            market_ticker=repr(getattr(market, "external_id", None)),
+            speaker=repr(getattr(getattr(reading, "outcome", None), "id", None)),
+            rows=[(repr(getattr(r, "id", None)), repr(getattr(r, "current_probability", None)))
+                  for r in rows],
+            home=repr(getattr(reading, "home_probability", None)),
+            yes=repr(getattr(reading, "yes_probability", None)),
+            devigged=repr(getattr(reading, "devigged", None)),
+            named_home=repr(getattr(reading, "named_home_quote", None)),
+            eligibility=None if record is None else repr(
+                record.to_entry() if hasattr(record, "to_entry") else record),
+            basis=sorted((repr(k), repr(v)) for k, v in (basis or {}).items())
+            if isinstance(basis, dict) else repr(basis),
+        )
+        return hashlib.sha1(json.dumps(doc, sort_keys=True).encode()).hexdigest()[:16]
+    except Exception:
+        return "UNAVAILABLE"

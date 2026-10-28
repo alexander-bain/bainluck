@@ -109,6 +109,15 @@ struct FeedView: View {
         // behind; deleting it removes the last live `UIScreen.main.bounds` read
         // on a layout path here — gotcha #27, the Stage Manager trap, which
         // measures the SCREEN and not the window.
+        // #10090 — a pushed page covers the list without making this stack
+        // disappear, so the live refresh pauses here and catches up on return.
+        .onChange(of: path.isEmpty) { _, visible in
+            if visible {
+                Task { await vm.feedUncovered() }
+            } else {
+                vm.feedCovered()
+            }
+        }
         .onChange(of: vm.liveCount) { _, count in
             navCoordinator.liveGameCount = count
         }
