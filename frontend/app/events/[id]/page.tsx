@@ -63,6 +63,7 @@ import {
 } from "@/lib/eventLivePush";
 import { frameFoldOrder } from "@/lib/foldRevision";
 import { displayedPreview, displayedProbabilityObservedAt, overlayBlendPreview, overlayBlendPreviewLine } from "@/lib/blendPreview";
+import { chartEndpointIdentity, headlineDisplayIdentity } from "@/lib/displayIdentity";
 import { frameCarriesUnpricedSnapshot, snapshotRailPaysPricelessTrigger } from "@/lib/sourceSnapshot";
 import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
@@ -1400,6 +1401,15 @@ export default function EventPage({ params }: EventPageProps) {
   [historyData, previewChartLine]);
   const previewChartAt = previewChartHistory !== historyData
     ? previewChartLine?.[previewChartLine.length - 1]?.timestamp : undefined;
+  // #10090: the chart's own adopted endpoint identity, separate from the
+  // headline's. OddsChart prints it only when its drawn endpoint is this point.
+  // Frames are looked up in the admitted bank `historyData`'s memo just set: the
+  // live arm merged exactly these, and the finished arm a subset of them.
+  const chartEndpoint = useMemo(() => chartEndpointIdentity({
+    served: servedHistory, final: historyData, line: previewChartLine,
+    frames: admittedChartRef.current?.points ?? [],
+    heroRevision: event?.blend_fold_revision, preview: blendPreview,
+  }), [servedHistory, historyData, previewChartLine, event?.blend_fold_revision, blendPreview]);
 
   // Both charts read the same served + received publication history (#920).
   const sparklinePoints = useMemo(() =>
@@ -2432,6 +2442,15 @@ export default function EventPage({ params }: EventPageProps) {
   const observationDelivery = resolvedProbability?.selectedProbabilitySource === "hero-blend"
     ? admittedPreviewProbability !== null ? "dnpl" as const : "committed" as const
     : "unknown" as const;
+  // #10090: the headline's adopted state, from the same answers as above.
+  const headlineIdentity = headlineDisplayIdentity({
+    heroBlend: resolvedProbability?.selectedProbabilitySource === "hero-blend"
+      && typeof resolvedProbability.homeProb === "number" && Number.isFinite(resolvedProbability.homeProb),
+    previewShown: admittedPreviewProbability !== null,
+    preview: blendPreview,
+    committedRevision: event?.blend_fold_revision,
+    observedAt: acceptedPriceClock,
+  });
   const connectionStatus = (announces: boolean) => (
     <LiveConnectionStatus
       presentation={connectionPresentation}
@@ -3101,6 +3120,7 @@ export default function EventPage({ params }: EventPageProps) {
               // a half-percent (8.2% of scheduled/live events, measured).
               <EventHeroProbabilityPair
                 homeProb={homeProb}
+                displayIdentity={headlineIdentity}
                 awayProb={awayProb}
                 homePct={homePct}
                 awayPct={awayPct}
@@ -3589,6 +3609,7 @@ export default function EventPage({ params }: EventPageProps) {
               scoringPlays={historyData?.scoring_plays}
               scoreHistory={historyData?.score_history}
               aggregateLine={previewChartLine}
+              aggregateEndpointIdentity={chartEndpoint}
               backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
               eventId={eventId}
@@ -4234,6 +4255,7 @@ export default function EventPage({ params }: EventPageProps) {
               scoringPlays={historyData?.scoring_plays}
               scoreHistory={historyData?.score_history}
               aggregateLine={previewChartLine}
+              aggregateEndpointIdentity={chartEndpoint}
               backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
               eventId={eventId}

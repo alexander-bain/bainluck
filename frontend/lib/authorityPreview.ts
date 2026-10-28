@@ -1,6 +1,6 @@
 /** #10090: bounded v3 visit state. Committed history stays outside this reader. */
 import { parseFoldRevision } from './foldRevision';
-import { parseBlendPreview, previewAfter, type BlendPreviewReader } from './blendPreview';
+import { parseBlendPreview, previewAfter, type BlendPreviewReader, type BlendPreviewState } from './blendPreview';
 import { advanceMultiOrigin, parseMultiOriginPreview, resetMultiOrigin, type MultiOriginReader } from './multiOriginPreview';
 
 type Domain = { incarnation: string; namespace: string };
@@ -180,6 +180,14 @@ export function authorityPreviewFrame(r: AuthorityPreviewReader, raw: unknown, e
   if (!v || !sameDomain(r.domain, v.authority) || v.stream_session !== r.session) return r;
   const frame = parseBlendPreview(v.frame);
   if (!frame || frame.event_id !== eventId) return r;
+  // #10090: the admitted domain/session travel with the held preview as its
+  // display identity. The held value is reset on every open, so this is never
+  // a borrowed identity from an earlier session.
+  const adopt = (held: BlendPreviewState | null) => held && {
+    ...held, receivedAt: receipt,
+    authority: { incarnation: v.authority.incarnation, namespace: v.authority.namespace,
+      session: v.stream_session, fold: r.members.length > 1 },
+  };
   const p = frame.preview;
   const covers = (base: Record<string, number>) => sameKeys(Object.keys(base), r.members)
     && r.members.every(key => base[key] >= (r.preview.floors?.[key] ?? 0));
@@ -191,7 +199,7 @@ export function authorityPreviewFrame(r: AuthorityPreviewReader, raw: unknown, e
     const advance = advanceMultiOrigin(r.preview.multiOrigin, packet, receipt, 32);
     if (!advance) return r;
     const held = packet.kind === 'blend' && covers(packet.base_fold_revision) && advance.expiresAt > now
-      ? previewAfter(null, frame, eventId, receipt) : null;
+      ? adopt(previewAfter(null, frame, eventId, receipt)) : null;
     return { ...r, preview: { ...r.preview, multiOrigin: advance.reader,
       held: held ? { ...held, expiresAt: advance.expiresAt } : null } };
   }
@@ -209,7 +217,7 @@ export function authorityPreviewFrame(r: AuthorityPreviewReader, raw: unknown, e
   const fence: Fence = { epoch: p.epoch, seq, state: p.kind === 'blend' ? (deadline! > now ? 'pending' : 'expired') : 'revoked',
     ...(deadline !== undefined ? { expiresAt: deadline } : {}) };
   const held = p.kind === 'blend' && covers({ [key]: p.base_rev! }) && deadline! > now
-    ? (same ? r.preview.held : previewAfter(null, frame, eventId, receipt))
+    ? (same ? r.preview.held : adopt(previewAfter(null, frame, eventId, receipt)))
     : p.kind === 'revoke' && r.preview.held?.epoch === p.epoch && r.preview.held.seq > p.through_seq!
       ? r.preview.held : null;
   return { ...r, preview: { ...r.preview, epoch: p.epoch,

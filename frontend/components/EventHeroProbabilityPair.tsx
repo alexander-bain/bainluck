@@ -8,6 +8,7 @@ import {
   type ProbabilityParts,
 } from '../lib/probabilityDisplay';
 import { teamTextColor } from '../lib/teamColors';
+import { headlineDisplayAttributes, type HeadlineDisplayIdentity } from '../lib/displayIdentity';
 
 /**
  * What one side prints this frame — the marker and the digits, separately.
@@ -161,6 +162,12 @@ interface EventHeroProbabilityPairProps {
    * Defaults false, so every existing caller renders exactly as before.
    */
   stopped?: boolean;
+  /**
+   * #10090 — which state this headline adopted (`lib/displayIdentity.ts`),
+   * printed as `data-display-*` for samplers. Passive: it never changes what
+   * is drawn. A slot with no reading reports `unavailable` whatever is passed.
+   */
+  displayIdentity?: HeadlineDisplayIdentity | null;
 }
 
 /**
@@ -277,6 +284,7 @@ export default function EventHeroProbabilityPair({
   started = false,
   venueSettled = false,
   stopped = false,
+  displayIdentity = null,
 }: EventHeroProbabilityPairProps) {
   // #5696 — THE BIGGEST NUMBER ON THE SITE, PAINTED WHITE ON A WHITE CARD.
   //
@@ -343,6 +351,7 @@ export default function EventHeroProbabilityPair({
         data-probability=""
         data-probability-source={probSourceLabel ?? ""}
         data-stopped="true"
+        {...headlineDisplayAttributes(null)}
       />
     );
   }
@@ -354,6 +363,7 @@ export default function EventHeroProbabilityPair({
         data-testid="event-hero-probability"
         data-probability=""
         data-probability-source={probSourceLabel ?? ""}
+        {...headlineDisplayAttributes(null)}
       >
         {/* #6438 — a graded contest says nothing here; the settled pill in this
             same card already carries the result. See the `venueSettled` prop. */}
@@ -385,6 +395,7 @@ export default function EventHeroProbabilityPair({
       data-testid="event-hero-probability"
       data-probability={homeProb ?? ""}
       data-probability-source={probSourceLabel ?? ""}
+      {...headlineDisplayAttributes(homeProb === null ? null : displayIdentity)}
     >
       {/* #6064 — THE MARKER RIDES WITH THE `%`, NOT WITH THE NUMERAL.
           `>` at `text-[48px] font-black` is a ~30px glyph, and the centre
