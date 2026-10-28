@@ -22,6 +22,7 @@ import {
   unresolvedPath,
   type ResolutionFailure,
 } from "@/lib/unresolvedShareMeta";
+import { outcomeRowVerdict } from "@/lib/futuresOutcomeVerdict";
 import { withSettledResultCertainty } from "@/lib/settledResultDisplay";
 
 type FuturesMarketMetadata = FuturesMarketDetailResponse & {
@@ -95,7 +96,10 @@ function boardSentence(
 ): string {
   const chasers = [...outcomes]
     .sort((a, b) => (b.probability ?? -1) - (a.probability ?? -1))
-    .filter((o) => o !== leader)
+    // #11616 LS-1 — a supported `Won` row's last price is a result, not a
+    // forecast: "Tommy Fleetwood 42%, Ludvig Aberg 100%" read the winners as odds.
+    // Only open boards reach this sentence; the row keeps its `Won` on the page.
+    .filter((o) => o !== leader && outcomeRowVerdict(o, false) !== "won")
     .map((o) => ({ name: o.name, label: formatShareProbability(o.probability) }))
     .filter((o): o is { name: string; label: string } => Boolean(o.label))
     .slice(0, BOARD_NAMES - 1);
@@ -140,10 +144,10 @@ export async function generateMetadata({
   const market = withSettledResultCertainty(lookup.market);
   const outcomes = market.outcomes ?? market.top_outcomes ?? [];
   const boardLeader = topOutcome(market);
-  // #11616 B2 — on an open board with several peer winners, the top-priced
-  // winner's last price is a result, not a forecast: the link states the board.
+  // #11616 B2 + LS-1 — on an open board the link prices the row the page hero
+  // features, never a winner's last price; a withheld crown states the board.
   const leader = sharePriceLeader(
-    outcomes, boardLeader, market.status, market.market_type, market.mutually_exclusive,
+    outcomes, boardLeader, market.status, market.lead_outcome_id, market.mutually_exclusive,
   );
   // #6127 — the same call, now made through the shared name. The condition below
   // (`leader && probability`, else the market name alone) is unchanged and is the

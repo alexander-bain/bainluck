@@ -235,7 +235,109 @@ describe("B2: an exclusivity claim contradicted by two supported winners", () =>
   });
 });
 
+/* ──────────────────── LS-1: the share states the page's live hero ──────────────────── */
+
+// lane1b DELTA-REVIEW-000adca5 §2 (LR1/LR4) and Root's LR3 ruling: an open board
+// whose page leads with a priced live row shares that row, never the board alone
+// and never a known winner's last price as a forecast. Inputs are the review's
+// `zzLane1bProbeLiveRowShare000a` cases.
+const LIVE = { is_winner: null, resolution_source: null };
+const PEER_LIVE = [
+  { id: 1, name: "Ludvig Aberg", probability: 1.0, rank: 1, ...W },
+  { id: 3, name: "Rory McIlroy", probability: 1.0, rank: 2, ...W },
+  { id: 2, name: "Tommy Fleetwood", probability: 0.42, rank: 3, ...LIVE },
+  { id: 4, name: "Jon Rahm", probability: 0.0, rank: 4, ...L },
+];
+const LIVE_HERO: Record<string, [Record<string, unknown>, string]> = {
+  "LR1 peer board, two winners and a live row": [makeTheCut(PEER_LIVE), MAKE_THE_CUT],
+  "LR4 the same board, the server naming the live row its lead": [
+    makeTheCut(PEER_LIVE, { lead_outcome_id: 2 }),
+    MAKE_THE_CUT,
+  ],
+  // Discriminates LR4: the named lead is NOT the board's top live row, so only
+  // the served lead (#8892), never the live-leader fallback, can share Fleetwood.
+  "LR4b the server's live lead is below another live row": [
+    makeTheCut(
+      [...PEER_LIVE, { id: 5, name: "Shane Lowry", probability: 0.6, rank: 5, ...LIVE }],
+      { lead_outcome_id: 2 },
+    ),
+    MAKE_THE_CUT,
+  ],
+  "LR3 independent board, one winner and a live row": [
+    makeTheCut(
+      [
+        { id: 1, name: "Ludvig Aberg", probability: 1.0, rank: 1, ...W },
+        { id: 2, name: "Tommy Fleetwood", probability: 0.42, rank: 2, ...LIVE },
+        { id: 4, name: "Jon Rahm", probability: 0.0, rank: 3, ...L },
+      ],
+      { market_type: null, name: "Independent board" },
+    ),
+    "Independent board",
+  ],
+};
+
+describe.each(Object.keys(LIVE_HERO))("LS-1: %s", (name) => {
+  const [body, board] = LIVE_HERO[name];
+
+  it("the page leads with Tommy Fleetwood 42% and every winner keeps its own Won", () => {
+    const h = page(body);
+    expect(h.percent).toEqual(["42"]);
+    expect(h.openWon).toEqual([]);
+    expect(h.openWonChip).toEqual([]);
+    expect(h.rowVerdicts["Ludvig Aberg"]).toBe("Won");
+  });
+
+  it("the title, og:title, description and picture share that hero", async () => {
+    const s = await share(body);
+    expect(s.title).toBe(`Tommy Fleetwood 42% - ${board}`);
+    expect(s.ogTitle).toBe(`Tommy Fleetwood 42% - ${board} | Bain Luck`);
+    expect(s.description).toMatch(/^Tommy Fleetwood 42%[.,]/);
+    expect(s.picture).toContain("42% Tommy Fleetwood");
+    // No known winner's last price is offered as a forecast, anywhere.
+    for (const text of [s.title, s.description, s.picture]) {
+      expect(text).not.toMatch(/Aberg|McIlroy|100%|\bwon\b|\bWON\b/);
+    }
+  });
+});
+
 /* ─────────────────────────────── controls ─────────────────────────────── */
+
+describe("controls: what LS-1 must not move", () => {
+  it("LR2: the same board with exclusivity unstated still names nobody, as Native", async () => {
+    const body = makeTheCut(PEER_LIVE, { mutually_exclusive: null });
+    const h = page(body);
+    expect(h.percent).toEqual([]);
+    expect(h.openWon).toEqual([]);
+    const s = await share(body);
+    expect(s.title).toBe(MAKE_THE_CUT);
+    for (const text of [s.title, s.description, s.picture]) {
+      expect(text).not.toMatch(/Aberg|McIlroy|Fleetwood|42%|100%|\bwon\b|\bWON\b/);
+    }
+  });
+
+  it("LR5: a served Won lead on the peer board is shared as that result", async () => {
+    const body = makeTheCut(PEER_LIVE, { lead_outcome_id: 3 });
+    expect(page(body).openWon).toEqual(["Rory McIlroy"]);
+    const s = await share(body);
+    expect(s.title).toBe(`Rory McIlroy won - ${MAKE_THE_CUT}`);
+    expect(s.picture).toContain("Rory McIlroy WON");
+    expect(s.title).not.toMatch(/%/);
+  });
+
+  it("a live board with no winner keeps its price leader and its priced chasers", async () => {
+    const body = makeTheCut(
+      [
+        { id: 1, name: "Ludvig Aberg", probability: 0.8, rank: 1, ...LIVE },
+        { id: 2, name: "Tommy Fleetwood", probability: 0.42, rank: 2, ...LIVE },
+        { id: 3, name: "Rory McIlroy", probability: 0.3, rank: 3, ...LIVE },
+      ],
+    );
+    const s = await share(body);
+    expect(s.title).toBe(`Ludvig Aberg 80% - ${MAKE_THE_CUT}`);
+    expect(s.description).toMatch(/^Ludvig Aberg 80%, Tommy Fleetwood 42%, Rory McIlroy 30%\./);
+  });
+});
+
 
 describe("controls: what B2 must not move", () => {
   it("one supported participant winner keeps its crown on page and share", async () => {
@@ -272,22 +374,6 @@ describe("controls: what B2 must not move", () => {
     expect(s.title).toBe("Shai Gilgeous-Alexander won - NBA MVP Winner 2027");
   });
 
-  it("a genuine live row still leads the page of a peer board with several winners", async () => {
-    const body = makeTheCut([
-      { id: 1, name: "Ludvig Aberg", probability: 1.0, rank: 1, ...W },
-      { id: 3, name: "Rory McIlroy", probability: 1.0, rank: 2, ...W },
-      { id: 2, name: "Tommy Fleetwood", probability: 0.42, rank: 3, is_winner: null, resolution_source: null },
-      { id: 4, name: "Jon Rahm", probability: 0.0, rank: 4, ...L },
-    ]);
-    const h = page(body);
-    expect(h.percent).toEqual(["42"]);
-    expect(h.openWonChip).toEqual([]);
-    // The link no longer prices a winner as a forecast ("Ludvig Aberg 100%" at
-    // 6430a461): it states the board, and names no crown either.
-    const s = await share(body);
-    expect(s.title).toBe(MAKE_THE_CUT);
-    expect(s.picture).not.toMatch(/Aberg|McIlroy|100%|\bWON\b/);
-  });
 
   // The shape door is keyed positively (Native's `…KeepServedOrder` loop): a
   // ladder, a grouped independent board or no shape keeps its first winner.

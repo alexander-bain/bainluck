@@ -136,10 +136,10 @@ export default async function Image({ params }: { params: { id: string } }) {
   const market = withSettledResultCertainty(lookup.market);
   const outcomes = market.outcomes ?? market.top_outcomes ?? [];
   const boardLeader = topOutcome(market);
-  // #11616 B2 — the leader the title may price (`sharePriceLeader`): on an open
-  // board with several peer winners, a winner's last price is not a forecast.
+  // #11616 B2 + LS-1 — the leader the title may price (`sharePriceLeader`): on
+  // an open board, the row the page hero features, never a winner's last price.
   const leader = sharePriceLeader(
-    outcomes, boardLeader, market.status, market.market_type, market.mutually_exclusive,
+    outcomes, boardLeader, market.status, market.lead_outcome_id, market.mutually_exclusive,
   );
 
   // ═══ #6127 — A MARKET NOBODY HAS PRICED DOES NOT GET A NUMBER, A LEADER OR A

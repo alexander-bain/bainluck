@@ -287,9 +287,7 @@ export function openHeroResult<
   marketType?: string | null,
 ): T | null {
   if (status === "resolved") return null;
-  const hero =
-    servedLeadHeroOutcome(outcomes, leadOutcomeId, status) ??
-    pickHeroOutcome(outcomes, leader, false, mutuallyExclusive);
+  const hero = openPageHero(outcomes, leader, status, leadOutcomeId, mutuallyExclusive);
   if (!hero || outcomeRowVerdict(hero, false) !== "won") return null;
   return openHeroCrownWithheld(outcomes, hero, status, leadOutcomeId, marketType, mutuallyExclusive)
     ? null
@@ -329,26 +327,50 @@ export function openHeroCrownWithheld<
   return severalPeerWinners(outcomes, false, marketType, mutuallyExclusive);
 }
 
-/**
- * #11616 B2 — the leader a shared link may price, or null. On an open board
- * whose winners are several peers (`openHeroCrownWithheld`'s doors and count)
- * the link states the board alone, as Native's share does ("<board> on Bain
- * Luck"). The price sort's top row there is a winner whose last price is a
- * result, not a forecast — arm (a) of the B2 specimen would share "Ludvig Aberg
- * 100% - …" — or a row the page hero does not name. Every other board's leader
- * is returned as is.
- */
-export function sharePriceLeader<T extends GradedRow>(
+/** The row an open board's page hero features: the page's own two-step pick. */
+function openPageHero<
+  T extends GradedRow & { id: number; probability?: number | null; name?: string | null },
+>(
   outcomes: readonly T[],
   leader: T | null,
   status: string | null | undefined,
-  marketType?: string | null,
+  leadOutcomeId: number | null | undefined,
   mutuallyExclusive?: boolean | null,
 ): T | null {
-  if (status !== "resolved" && severalPeerWinners(outcomes, false, marketType, mutuallyExclusive)) {
-    return null;
-  }
-  return leader;
+  return (
+    servedLeadHeroOutcome(outcomes, leadOutcomeId, status) ??
+    pickHeroOutcome(outcomes, leader, false, mutuallyExclusive)
+  );
+}
+
+/**
+ * #11616 B2 + LS-1 — the leader a shared link may price, or null: on an open
+ * board, the row the page hero features (U1/O-L3-1, "the share names the hero",
+ * as Native's `futuresDetailShareMessage` does).
+ *
+ * lane1b DELTA-REVIEW-000adca5 §2: the price sort's top row on an open board can
+ * be a supported winner at 1.0 while the page leads with a live row. "Make the
+ * Cut" with Aberg and McIlroy `Won` and Fleetwood live at 0.42 heroes "Tommy
+ * Fleetwood 42%"; the link shared "Ludvig Aberg 100% - …" (master), then the
+ * board alone (000adca5, which also dropped a server-named live lead). An
+ * independent board with ONE winner beside a live row (LR3) is the same rule.
+ *
+ * A hero that prints `Won` is never priced: `openHeroResult` shares it as a
+ * result, or on a B2 board (crown withheld) the link states the board alone.
+ * A resolved board's leader is returned as is.
+ */
+export function sharePriceLeader<
+  T extends GradedRow & { id: number; probability?: number | null; name?: string | null },
+>(
+  outcomes: readonly T[],
+  leader: T | null,
+  status: string | null | undefined,
+  leadOutcomeId: number | null | undefined,
+  mutuallyExclusive?: boolean | null,
+): T | null {
+  if (status === "resolved") return leader;
+  const hero = openPageHero(outcomes, leader, status, leadOutcomeId, mutuallyExclusive);
+  return hero && outcomeRowVerdict(hero, false) === "won" ? null : hero;
 }
 
 /**
