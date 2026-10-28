@@ -4980,6 +4980,7 @@ jobs:
             tests/integration/test_nonvenue_live_push_pg_8761.py \
             tests/integration/test_nonvenue_trace_pg_10090.py \
             tests/integration/test_probability_publication_pg_4971.py \
+            tests/integration/test_optional_db_abandon_pg_10090.py \
             -v -rs 2>&1 | tee /tmp/liveblendrace.txt
           if grep -qiE "[0-9]+ skipped" /tmp/liveblendrace.txt; then
             echo "::error::live blend concurrent stamp gate SKIPPED — the gate did not run"
@@ -5226,8 +5227,8 @@ jobs:
             echo "::error::#10090 normal-publication recovery gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]109 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
-            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 109 cases"
+          grep -qE "[^0-9]110 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
+            echo "::error::#10090 normal-publication recovery gate (+TSP-1 ledger) did not run all 110 cases"
             exit 1
           }
 
