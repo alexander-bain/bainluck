@@ -24,6 +24,7 @@ Sport-specific parameters:
 """
 
 import math
+import re
 from typing import Optional
 
 from app.utils.sport_keys import (
@@ -364,16 +365,22 @@ def parse_game_clock(clock_str: str | None, period: str | None, sport_key: str) 
 
     _, total_seconds = params
 
-    # Parse clock string "MM:SS" or "M:SS"
+    # ESPN uses seconds with tenths below one minute (e.g. "20.5").
+    # Accept the equivalent minute-prefixed form too, without accepting
+    # signs, exponents, non-finite values or seconds overflowing a minute.
     try:
         parts = clock_str.strip().split(":")
-        if len(parts) == 2:
+        if re.fullmatch(r"(?:[0-9]+:)?[0-5]?[0-9]\.[0-9]+", clock_str.strip()):
+            minutes = int(parts[0]) if len(parts) == 2 else 0
+            clock_seconds = minutes * 60 + float(parts[-1])
+        elif len(parts) == 2:
+            # Preserve the existing whole-second clock interpretation.
             minutes = int(parts[0])
             seconds = int(parts[1])
             clock_seconds = minutes * 60 + seconds
         else:
             return None
-    except (ValueError, IndexError):
+    except (ValueError, IndexError, OverflowError):
         return None
 
     # Parse period to determine how many periods are left
