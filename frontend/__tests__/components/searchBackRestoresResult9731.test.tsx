@@ -89,6 +89,11 @@ async function frames() { await act(async () => { await jest.advanceTimersByTime
 function interrupt(type: string, key?: string) {
   act(() => listeners.get(type)?.forEach(fn => fn({ type, key } as unknown as Event)));
 }
+function touch(type: string, x?: number, y?: number) {
+  const touches = x === undefined ? [] : [{ clientX: x, clientY: y }];
+  act(() => listeners.get(type)?.forEach(fn => fn({ type, touches } as unknown as Event)));
+}
+const anchoring = () => document.body.style.overflowAnchor;
 beforeEach(() => {
   jest.useFakeTimers();
   mockParams = new URLSearchParams('q=Lakers');
@@ -108,6 +113,7 @@ beforeEach(() => {
     getBoundingClientRect: () => ({ top: cardAbsoluteTop - window.scrollY }),
   }))) as unknown as typeof document.querySelectorAll;
   Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: 6472 });
+  document.body.style.overflowAnchor = '';
   fetcher.mockReset().mockResolvedValue(response());
   (fetchSearchSuggestions as jest.Mock).mockReset().mockResolvedValue({ suggestions: [] });
   scrollTo.mockClear(); mockTrack.mockClear();
@@ -162,12 +168,65 @@ it('a fresh search for the same text does not inherit an older history entry', a
   expect(scrollTo).not.toHaveBeenCalled();
 });
 
-it.each(['wheel', 'touchstart', 'keydown'])('does not snap the reader back after intentional %s input during loading', async type => {
+it.each<[string, () => void]>([
+  ['wheel', () => interrupt('wheel')],
+  ['keyboard', () => interrupt('keydown', 'PageDown')],
+  ['touch swipe', () => { touch('touchstart', 300, 300); touch('touchmove', 300, 260); }],
+])('does not snap the reader back after intentional %s input during loading', async (_name, input) => {
   await mount(); captureResult(); unmount();
   const back = deferred<SearchResponse>(); fetcher.mockReturnValueOnce(back.promise);
-  await mount(); interrupt(type, 'PageDown');
+  await mount(); input();
   await act(async () => { back.resolve(response()); }); await frames();
   expect(scrollTo).not.toHaveBeenCalled();
+});
+
+it('a tap during loading is not a scroll: the landing still happens', async () => {
+  await mount(); captureResult(); unmount();
+  const back = deferred<SearchResponse>(); fetcher.mockReturnValueOnce(back.promise);
+  window.scrollY = 702; await mount();
+  touch('touchstart', 370, 240); touch('touchmove', 373, 244); touch('touchend');
+  await act(async () => { back.resolve(response()); }); await frames();
+  expect(scrollTo).toHaveBeenLastCalledWith(0, expect.closeTo(968.8, 3));
+});
+
+// F1: the short loading page leaves Chromium's restored scroll on the footer, and
+// scroll anchoring then carries a reader who declined the landing to the page
+// bottom as the list grows above it (local Chromium run 20261028T044557Z: y 4009).
+// Anchoring is held off from the pending return until a frame AFTER the landing
+// frame, whether the landing ran or was declined.
+it.each<[string, () => void]>([
+  ['landed', () => {}],
+  ['declined by touch', () => { touch('touchstart', 300, 300); touch('touchmove', 300, 260); }],
+  ['declined by wheel', () => interrupt('wheel')],
+])('holds scroll anchoring off until the returned list is laid out (%s)', async (name, input) => {
+  await mount(); captureResult(); unmount();
+  const back = deferred<SearchResponse>(); fetcher.mockReturnValueOnce(back.promise);
+  window.scrollY = 702; await mount();
+  expect(anchoring()).toBe('none');
+  input();
+  expect(anchoring()).toBe('none');
+  await act(async () => { back.resolve(response()); });
+  expect(anchoring()).toBe('none');
+  await act(async () => { await jest.advanceTimersByTimeAsync(16); }); // landing frame
+  expect(anchoring()).toBe('none');
+  await act(async () => { await jest.advanceTimersByTimeAsync(16); }); // next frame
+  expect(anchoring()).toBe('');
+  if (name === 'landed') expect(window.scrollY).toBeCloseTo(968.8);
+  else { expect(scrollTo).not.toHaveBeenCalled(); expect(window.scrollY).toBe(702); }
+});
+
+it('leaves scroll anchoring alone without a return mark, and restores it when leaving mid-load', async () => {
+  await mount(); await frames();
+  expect(anchoring()).toBe('');
+  captureResult(); unmount();
+  fetcher.mockReturnValueOnce(deferred<SearchResponse>().promise);
+  await mount();
+  expect(anchoring()).toBe('none');
+  unmount();
+  expect(anchoring()).toBe('');
+  fetcher.mockReturnValueOnce(deferred<SearchResponse>().promise);
+  await mount(); await rerender('q=Celtics');
+  expect(anchoring()).toBe('');
 });
 
 it('keeps #1469 stale-response protection when a newer query wins and when the field is cleared', async () => {

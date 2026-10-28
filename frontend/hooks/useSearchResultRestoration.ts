@@ -2,6 +2,8 @@ import { useEffect, useRef, type MouseEvent } from 'react';
 
 const HISTORY_KEY = '__blSearchReturn';
 const MAX_AGE_MS = 30 * 60 * 1000;
+// A finger that moves less than this is a tap, not a scroll.
+const TOUCH_SLOP_PX = 10;
 interface ReturnMark {
   key: string;
   href: string;
@@ -15,6 +17,7 @@ interface ReturnMark {
  * the landing waits for the matching response to be committed to the DOM. */
 export function useSearchResultRestoration(key: string, resultsReady: boolean) {
   const pending = useRef<ReturnMark | null>(null);
+  const releaseAnchoring = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     pending.current = null;
@@ -27,6 +30,18 @@ export function useSearchResultRestoration(key: string, resultsReady: boolean) {
         pending.current = mark;
       }
     } catch { /* Unavailable history state must not break Search. */ }
+
+    // The short loading page leaves the browser's restored scroll on the footer.
+    // With scroll anchoring on, the refetched list then grows above that footer
+    // and carries the reader to the page bottom (the original #9731 symptom)
+    // whenever the landing below does not run. Hold anchoring off until the list
+    // is laid out, so a declined landing keeps the reader where they were.
+    if (pending.current) {
+      const body = document.body;
+      const prior = body.style.overflowAnchor;
+      body.style.overflowAnchor = 'none';
+      releaseAnchoring.current = () => { body.style.overflowAnchor = prior; };
+    }
 
     // A reader who starts scrolling while the request is pending has chosen a
     // new position. Do not yank them back when the response finally arrives.
@@ -46,20 +61,35 @@ export function useSearchResultRestoration(key: string, resultsReady: boolean) {
     const onKey = (event: KeyboardEvent) => {
       if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) cancel();
     };
+    // A tap is not a scroll: only a finger that moves declines the landing.
+    let touchOrigin: { x: number; y: number } | null = null;
+    const onTouchStart = (event: TouchEvent) => {
+      const touch = event.touches?.[0];
+      touchOrigin = touch ? { x: touch.clientX, y: touch.clientY } : null;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      const touch = event.touches?.[0];
+      if (!touchOrigin || !touch ||
+          Math.hypot(touch.clientX - touchOrigin.x, touch.clientY - touchOrigin.y) >= TOUCH_SLOP_PX) cancel();
+    };
     window.addEventListener('wheel', cancel, { passive: true });
-    window.addEventListener('touchstart', cancel, { passive: true });
+    window.addEventListener('touchstart', onTouchStart, { passive: true });
+    window.addEventListener('touchmove', onTouchMove, { passive: true });
     window.addEventListener('keydown', onKey);
     return () => {
       pending.current = null;
+      releaseAnchoring.current?.();
+      releaseAnchoring.current = null;
       window.removeEventListener('wheel', cancel);
-      window.removeEventListener('touchstart', cancel);
+      window.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchmove', onTouchMove);
       window.removeEventListener('keydown', onKey);
     };
   }, [key]);
 
   useEffect(() => {
-    if (!resultsReady || !pending.current) return;
-    const frame = requestAnimationFrame(() => {
+    if (!resultsReady || (!pending.current && !releaseAnchoring.current)) return;
+    const land = () => {
       const mark = pending.current;
       if (!mark || mark.key !== key || new URL(window.location.href).pathname !== '/search') return;
       // A same-text re-search can reuse this mounted component while replacing
@@ -74,6 +104,16 @@ export function useSearchResultRestoration(key: string, resultsReady: boolean) {
       const maximum = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
       pending.current = null;
       window.scrollTo(0, Math.max(0, Math.min(target, maximum)));
+    };
+    let frame = requestAnimationFrame(() => {
+      land();
+      // Give scroll anchoring back only after a frame has laid the list out
+      // without it. A declined landing reads no layout here, so releasing in
+      // this callback would let the next layout anchor on the footer again.
+      frame = requestAnimationFrame(() => {
+        releaseAnchoring.current?.();
+        releaseAnchoring.current = null;
+      });
     });
     return () => cancelAnimationFrame(frame);
   }, [key, resultsReady]);
