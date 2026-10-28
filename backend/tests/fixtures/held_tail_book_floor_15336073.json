@@ -1,0 +1,1000 @@
+{
+"_source": "history-after-run1.json = GET /api/events/15336073/history read 2026-10-28 ~17:52:45Z (artifacts/latency-10090-held-tail-20261028, SHA256SUMS). odds_rows: bookmaker_history recorded rows (observed_at, valid_until, home_probability); polymarket_rows: win_prob_history.polymarket; served_held_window: production aggregate_line from 17:40Z",
+"event_id": 15336073,
+"commence_time": "2026-10-28T16:30:00+00:00",
+"status": "live",
+"odds_rows": [
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T16:30:53.957926+00:00",
+"valid_until": "2026-10-28T16:35:00+00:00",
+"home_probability": 0.5796
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T16:35:24.544881+00:00",
+"valid_until": "2026-10-28T16:36:00+00:00",
+"home_probability": 0.5715
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T16:36:28.964301+00:00",
+"valid_until": "2026-10-28T16:37:00+00:00",
+"home_probability": 0.3847
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T16:37:53.877312+00:00",
+"valid_until": "2026-10-28T16:38:00+00:00",
+"home_probability": 0.4494
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T16:38:54.514625+00:00",
+"valid_until": "2026-10-28T16:40:00+00:00",
+"home_probability": 0.4592
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T16:40:52.797958+00:00",
+"valid_until": "2026-10-28T16:43:00+00:00",
+"home_probability": 0.4285
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T16:43:02.650860+00:00",
+"valid_until": "2026-10-28T16:43:00+00:00",
+"home_probability": 0.4204
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T16:43:49.183985+00:00",
+"valid_until": "2026-10-28T16:52:00+00:00",
+"home_probability": 0.4285
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T16:52:43.318972+00:00",
+"valid_until": "2026-10-28T16:53:00+00:00",
+"home_probability": 0.4106
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T16:53:24.662220+00:00",
+"valid_until": "2026-10-28T16:55:00+00:00",
+"home_probability": 0.4204
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T16:55:41.998359+00:00",
+"valid_until": "2026-10-28T16:56:00+00:00",
+"home_probability": 0.4106
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T16:56:54.342480+00:00",
+"valid_until": "2026-10-28T16:59:00+00:00",
+"home_probability": 0.4007
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T16:59:47.728761+00:00",
+"valid_until": "2026-10-28T17:00:00+00:00",
+"home_probability": 0.4106
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:00:41.645488+00:00",
+"valid_until": "2026-10-28T17:01:00+00:00",
+"home_probability": 0.4007
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:01:53.943966+00:00",
+"valid_until": "2026-10-28T17:02:00+00:00",
+"home_probability": 0.3933
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:02:54.195250+00:00",
+"valid_until": "2026-10-28T17:04:00+00:00",
+"home_probability": 0.255
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:04:47.756024+00:00",
+"valid_until": "2026-10-28T17:08:00+00:00",
+"home_probability": 0.2418
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:08:22.834007+00:00",
+"valid_until": "2026-10-28T17:08:00+00:00",
+"home_probability": 0.2418
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:08:32.148114+00:00",
+"valid_until": "2026-10-28T17:27:00+00:00",
+"home_probability": 0.2418
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:27:44.599470+00:00",
+"valid_until": "2026-10-28T17:28:00+00:00",
+"home_probability": 0.4494
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:28:45.494605+00:00",
+"valid_until": "2026-10-28T17:29:00+00:00",
+"home_probability": 0.4007
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:29:53.960825+00:00",
+"valid_until": "2026-10-28T17:31:00+00:00",
+"home_probability": 0.4106
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:31:31.526883+00:00",
+"valid_until": "2026-10-28T17:32:00+00:00",
+"home_probability": 0.4204
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:32:43.398721+00:00",
+"valid_until": "2026-10-28T17:34:00+00:00",
+"home_probability": 0.3933
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:34:56.528366+00:00",
+"valid_until": "2026-10-28T17:36:00+00:00",
+"home_probability": 0.255
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:36:34.235844+00:00",
+"valid_until": "2026-10-28T17:37:00+00:00",
+"home_probability": 0.2143
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:37:36.128866+00:00",
+"valid_until": "2026-10-28T17:39:00+00:00",
+"home_probability": 0.2049
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:39:50.110278+00:00",
+"valid_until": "2026-10-28T17:43:00+00:00",
+"home_probability": 0.2049
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:43:01.662148+00:00",
+"valid_until": "2026-10-28T17:43:00+00:00",
+"home_probability": 0.1885
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:43:28.058456+00:00",
+"valid_until": "2026-10-28T17:45:00+00:00",
+"home_probability": 0.1813
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:45:27.945718+00:00",
+"valid_until": "2026-10-28T17:49:00+00:00",
+"home_probability": 0.1715
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:49:33.281276+00:00",
+"valid_until": "2026-10-28T17:50:00+00:00",
+"home_probability": 0.1527
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:50:33.999469+00:00",
+"valid_until": "2026-10-28T17:52:00+00:00",
+"home_probability": 0.1457
+},
+{
+"bookmaker": "draftkings",
+"captured_at": "2026-10-28T17:52:37.833309+00:00",
+"valid_until": null,
+"home_probability": 0.1407
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:33:32.130368+00:00",
+"valid_until": "2026-10-28T16:34:00+00:00",
+"home_probability": 0.5779
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:34:47.716239+00:00",
+"valid_until": "2026-10-28T16:35:00+00:00",
+"home_probability": 0.5813
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:35:24.546483+00:00",
+"valid_until": "2026-10-28T16:37:00+00:00",
+"home_probability": 0.5658
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:37:33.571439+00:00",
+"valid_until": "2026-10-28T16:38:00+00:00",
+"home_probability": 0.4122
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:38:54.516741+00:00",
+"valid_until": "2026-10-28T16:40:00+00:00",
+"home_probability": 0.4449
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:40:52.805878+00:00",
+"valid_until": "2026-10-28T16:41:00+00:00",
+"home_probability": 0.4204
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:41:34.248753+00:00",
+"valid_until": "2026-10-28T16:43:00+00:00",
+"home_probability": 0.4101
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:43:02.652713+00:00",
+"valid_until": "2026-10-28T16:44:00+00:00",
+"home_probability": 0.4028
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:44:51.668945+00:00",
+"valid_until": "2026-10-28T16:46:00+00:00",
+"home_probability": 0.4018
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:46:54.186654+00:00",
+"valid_until": "2026-10-28T16:49:00+00:00",
+"home_probability": 0.3997
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:49:54.286948+00:00",
+"valid_until": "2026-10-28T16:50:00+00:00",
+"home_probability": 0.3943
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:50:53.985527+00:00",
+"valid_until": "2026-10-28T16:51:00+00:00",
+"home_probability": 0.4018
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:51:38.387943+00:00",
+"valid_until": "2026-10-28T16:52:00+00:00",
+"home_probability": 0.3943
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:52:43.320845+00:00",
+"valid_until": "2026-10-28T16:53:00+00:00",
+"home_probability": 0.3875
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:53:24.664230+00:00",
+"valid_until": "2026-10-28T16:54:00+00:00",
+"home_probability": 0.3943
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:54:36.390259+00:00",
+"valid_until": "2026-10-28T16:55:00+00:00",
+"home_probability": 0.3923
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:55:42.000368+00:00",
+"valid_until": "2026-10-28T16:56:00+00:00",
+"home_probability": 0.3875
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:56:30.696673+00:00",
+"valid_until": "2026-10-28T16:56:00+00:00",
+"home_probability": 0.3943
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:56:54.344246+00:00",
+"valid_until": "2026-10-28T16:58:00+00:00",
+"home_probability": 0.3875
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:58:54.290028+00:00",
+"valid_until": "2026-10-28T16:59:00+00:00",
+"home_probability": 0.3858
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T16:59:47.730564+00:00",
+"valid_until": "2026-10-28T17:00:00+00:00",
+"home_probability": 0.3818
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:00:41.647342+00:00",
+"valid_until": "2026-10-28T17:01:00+00:00",
+"home_probability": 0.377
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:01:25.765026+00:00",
+"valid_until": "2026-10-28T17:01:00+00:00",
+"home_probability": 0.3858
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:01:53.946218+00:00",
+"valid_until": "2026-10-28T17:04:00+00:00",
+"home_probability": 0.377
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:04:47.757953+00:00",
+"valid_until": "2026-10-28T17:05:00+00:00",
+"home_probability": 0.2214
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:05:24.511992+00:00",
+"valid_until": "2026-10-28T17:06:00+00:00",
+"home_probability": 0.2194
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:06:38.907892+00:00",
+"valid_until": "2026-10-28T17:08:00+00:00",
+"home_probability": 0.2214
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:08:22.837593+00:00",
+"valid_until": "2026-10-28T17:08:00+00:00",
+"home_probability": 0.2214
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:08:32.149717+00:00",
+"valid_until": "2026-10-28T17:25:00+00:00",
+"home_probability": 0.2214
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:25:54.023748+00:00",
+"valid_until": "2026-10-28T17:26:00+00:00",
+"home_probability": 0.2182
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:26:33.666400+00:00",
+"valid_until": "2026-10-28T17:28:00+00:00",
+"home_probability": 0.2214
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:28:45.496827+00:00",
+"valid_until": "2026-10-28T17:29:00+00:00",
+"home_probability": 0.3604
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:29:25.265982+00:00",
+"valid_until": "2026-10-28T17:31:00+00:00",
+"home_probability": 0.3666
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:31:31.528650+00:00",
+"valid_until": "2026-10-28T17:32:00+00:00",
+"home_probability": 0.3307
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:32:43.400767+00:00",
+"valid_until": "2026-10-28T17:33:00+00:00",
+"home_probability": 0.3256
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:33:28.430178+00:00",
+"valid_until": "2026-10-28T17:35:00+00:00",
+"home_probability": 0.347
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:35:47.138359+00:00",
+"valid_until": "2026-10-28T17:36:00+00:00",
+"home_probability": 0.1946
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:36:34.238048+00:00",
+"valid_until": "2026-10-28T17:37:00+00:00",
+"home_probability": 0.1869
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:37:36.130655+00:00",
+"valid_until": "2026-10-28T17:38:00+00:00",
+"home_probability": 0.1946
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:38:53.430649+00:00",
+"valid_until": "2026-10-28T17:40:00+00:00",
+"home_probability": 0.1883
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:40:26.711563+00:00",
+"valid_until": "2026-10-28T17:41:00+00:00",
+"home_probability": 0.1839
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:41:09.133602+00:00",
+"valid_until": "2026-10-28T17:43:00+00:00",
+"home_probability": 0.1782
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:43:01.663813+00:00",
+"valid_until": "2026-10-28T17:44:00+00:00",
+"home_probability": 0.177
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:44:33.026869+00:00",
+"valid_until": "2026-10-28T17:45:00+00:00",
+"home_probability": 0.1743
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:45:27.947563+00:00",
+"valid_until": "2026-10-28T17:46:00+00:00",
+"home_probability": 0.1679
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:46:29.541847+00:00",
+"valid_until": "2026-10-28T17:47:00+00:00",
+"home_probability": 0.163
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:47:54.744023+00:00",
+"valid_until": "2026-10-28T17:49:00+00:00",
+"home_probability": 0.163
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:49:33.283251+00:00",
+"valid_until": "2026-10-28T17:50:00+00:00",
+"home_probability": 0.1573
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:50:34.001531+00:00",
+"valid_until": "2026-10-28T17:51:00+00:00",
+"home_probability": 0.1478
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:51:32.538897+00:00",
+"valid_until": "2026-10-28T17:52:00+00:00",
+"home_probability": 0.1539
+},
+{
+"bookmaker": "betrivers",
+"captured_at": "2026-10-28T17:52:37.835225+00:00",
+"valid_until": null,
+"home_probability": 0.1447
+}
+],
+"polymarket_rows": [
+{
+"captured_at": "2026-10-28T16:30:04.060190+00:00",
+"home_probability": 0.56,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:30:40.349966+00:00",
+"home_probability": 0.56,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:31:16.503359+00:00",
+"home_probability": 0.565,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:31:59.818283+00:00",
+"home_probability": 0.57,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:32:45.377606+00:00",
+"home_probability": 0.59,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:33:18.068966+00:00",
+"home_probability": 0.585,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:34:08.453114+00:00",
+"home_probability": 0.565,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:34:47.487131+00:00",
+"home_probability": 0.575,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:36:02.773390+00:00",
+"home_probability": 0.49,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:36:27.635334+00:00",
+"home_probability": 0.425,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:36:57.796452+00:00",
+"home_probability": 0.415,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:37:50.975615+00:00",
+"home_probability": 0.41,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:38:32.867220+00:00",
+"home_probability": 0.47,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:39:27.267462+00:00",
+"home_probability": 0.44,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:39:59.593706+00:00",
+"home_probability": 0.43,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:40:54.882727+00:00",
+"home_probability": 0.425,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:42:03.914262+00:00",
+"home_probability": 0.42,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:43:00.596983+00:00",
+"home_probability": 0.425,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:44:03.325576+00:00",
+"home_probability": 0.42,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:44:58.397877+00:00",
+"home_probability": 0.42,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:47:45.793803+00:00",
+"home_probability": 0.41,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:48:22.369791+00:00",
+"home_probability": 0.435,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:48:56.128115+00:00",
+"home_probability": 0.415,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:49:54.414535+00:00",
+"home_probability": 0.415,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:50:50.110875+00:00",
+"home_probability": 0.425,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:51:30.229541+00:00",
+"home_probability": 0.415,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:51:59.287898+00:00",
+"home_probability": 0.405,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:53:13.303407+00:00",
+"home_probability": 0.385,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:55:10.248266+00:00",
+"home_probability": 0.385,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:55:59.926881+00:00",
+"home_probability": 0.38,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:57:14.578593+00:00",
+"home_probability": 0.38,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T16:58:32.204817+00:00",
+"home_probability": 0.38,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:00:27.784408+00:00",
+"home_probability": 0.375,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:01:26.679646+00:00",
+"home_probability": 0.37,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:01:57.051156+00:00",
+"home_probability": 0.34,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:02:24.354385+00:00",
+"home_probability": null,
+"game_state": {
+"live_source_withdrawal": true
+}
+},
+{
+"captured_at": "2026-10-28T17:02:27.582349+00:00",
+"home_probability": 0.195,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:03:36.309519+00:00",
+"home_probability": 0.225,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:04:49.841198+00:00",
+"home_probability": 0.225,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:05:35.299323+00:00",
+"home_probability": 0.225,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:06:11.869178+00:00",
+"home_probability": 0.205,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:07:21.071984+00:00",
+"home_probability": 0.205,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:07:51.478777+00:00",
+"home_probability": 0.2,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:09:03.491729+00:00",
+"home_probability": 0.2,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:10:09.488683+00:00",
+"home_probability": 0.2,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:11:43.789545+00:00",
+"home_probability": 0.2,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:12:25.277985+00:00",
+"home_probability": 0.2,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:14:22.803222+00:00",
+"home_probability": 0.195,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:15:12.346911+00:00",
+"home_probability": 0.2,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:16:10.242541+00:00",
+"home_probability": 0.2,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:17:35.749471+00:00",
+"home_probability": 0.22,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:18:39.137256+00:00",
+"home_probability": 0.22,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:19:38.559531+00:00",
+"home_probability": 0.22,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:20:27.751955+00:00",
+"home_probability": 0.22,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:21:33.866894+00:00",
+"home_probability": 0.22,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:22:23.151338+00:00",
+"home_probability": 0.22,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:23:17.945525+00:00",
+"home_probability": 0.22,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:25:03.800640+00:00",
+"home_probability": 0.22,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:25:10.540015+00:00",
+"home_probability": 0.21,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:25:56.364417+00:00",
+"home_probability": 0.215,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:26:34.871277+00:00",
+"home_probability": 0.215,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:27:36.277014+00:00",
+"home_probability": 0.36,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:28:37.281547+00:00",
+"home_probability": 0.37,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:31:03.147814+00:00",
+"home_probability": 0.405,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:31:50.672504+00:00",
+"home_probability": 0.375,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:32:27.724742+00:00",
+"home_probability": 0.365,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:34:02.630466+00:00",
+"home_probability": 0.365,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:34:33.398448+00:00",
+"home_probability": 0.17,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:34:59.161898+00:00",
+"home_probability": 0.18,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:36:10.456100+00:00",
+"home_probability": 0.16,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:36:28.358111+00:00",
+"home_probability": 0.205,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:38:01.858126+00:00",
+"home_probability": 0.18,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:38:33.043291+00:00",
+"home_probability": 0.175,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:41:26.692153+00:00",
+"home_probability": 0.16,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:42:14.975382+00:00",
+"home_probability": 0.17,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:42:46.655027+00:00",
+"home_probability": 0.16,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:44:52.073315+00:00",
+"home_probability": 0.16,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:46:45.365395+00:00",
+"home_probability": 0.145,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:47:58.067808+00:00",
+"home_probability": 0.14,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:48:54.998963+00:00",
+"home_probability": 0.14,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:50:09.508006+00:00",
+"home_probability": 0.14,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:51:08.158514+00:00",
+"home_probability": 0.135,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:52:08.890929+00:00",
+"home_probability": 0.12,
+"game_state": null
+},
+{
+"captured_at": "2026-10-28T17:52:43+00:00",
+"home_probability": 0.12,
+"game_state": null
+}
+],
+"served_held_window": [
+{
+"timestamp": "2026-10-28T17:40:00+00:00",
+"home_probability": 0.182026
+},
+{
+"timestamp": "2026-10-28T17:41:00+00:00",
+"home_probability": 0.174368
+},
+{
+"timestamp": "2026-10-28T17:42:00+00:00",
+"home_probability": 0.174368
+},
+{
+"timestamp": "2026-10-28T17:43:00+00:00",
+"home_probability": 0.175079
+},
+{
+"timestamp": "2026-10-28T17:44:00+00:00",
+"home_probability": 0.171289
+},
+{
+"timestamp": "2026-10-28T17:45:00+00:00",
+"home_probability": 0.167658
+},
+{
+"timestamp": "2026-10-28T17:46:00+00:00",
+"home_probability": 0.159211
+},
+{
+"timestamp": "2026-10-28T17:47:00+00:00",
+"home_probability": 0.158158
+},
+{
+"timestamp": "2026-10-28T17:48:00+00:00",
+"home_probability": 0.158158
+},
+{
+"timestamp": "2026-10-28T17:49:00+00:00",
+"home_probability": 0.151842
+},
+{
+"timestamp": "2026-10-28T17:50:00+00:00",
+"home_probability": 0.145289
+},
+{
+"timestamp": "2026-10-28T17:51:00+00:00",
+"home_probability": 0.149921
+},
+{
+"timestamp": "2026-10-28T17:52:00+00:00",
+"home_probability": 0.12
+},
+{
+"timestamp": "2026-10-28T17:52:43.152128+00:00",
+"home_probability": 0.115
+}
+]
+}
