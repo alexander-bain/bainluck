@@ -71,6 +71,8 @@ enum LadderOriginalProbabilityDetails9483 {
     }
 
     struct Content: Equatable {
+        /// The selected original's own `Detail.marketName`, exactly as supplied;
+        /// the card's generic family title only when that name is empty.
         let title: String
         let selected: String
         let readings: [Reading]
@@ -116,8 +118,16 @@ enum LadderOriginalProbabilityDetails9483 {
                                 .hollow, missing: unavailable)]
             result = point.result.map { $0 ? .hit : .miss } ?? .unavailable
         }
-        return Content(title: card.title, selected: point.label, readings: readings,
+        return Content(title: title(point.detail, card), selected: point.label, readings: readings,
                        result: result, about: about(card.phase, point.detail))
+    }
+
+    /// The visible and spoken title is the selected original's own market name,
+    /// never the generic family title ("Scoring expectations" / "Winning
+    /// margin") and never a name taken from another row. Only an empty name
+    /// falls back to the family title, as a presentation default.
+    static func title(_ detail: NBALadderCard9483.Detail, _ card: NBALadderCard9483) -> String {
+        detail.marketName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? card.title : detail.marketName
     }
 
     private static func reading(_ label: String, _ value: Double?, at iso: String?,
@@ -134,8 +144,9 @@ enum LadderOriginalProbabilityDetails9483 {
     }
 
     /// The original's provenance. The admitted pregame baseline appears only
-    /// once play has started; the last recorded value is historical and
-    /// secondary — never "current", never on the rail. `Detail.result` is never
+    /// once play has started; the last recorded value (`Detail.quoted`) is
+    /// historical and secondary — it may appear here, explicitly dated, but
+    /// never as "current", never in the summary and never on the rail. `Detail.result` is never
     /// printed: the result is `Point.result`, after the final.
     static func about(_ phase: NBALadderCard9483.Phase, _ detail: NBALadderCard9483.Detail) -> [Row] {
         var rows = [Row(label: "Market", value: detail.marketName),

@@ -57,9 +57,10 @@ final class LadderOriginalProbabilityDetails9483Tests: XCTestCase {
     private let t1 = "2026-10-15T23:20:00Z"
     private let t2 = "2026-10-16T01:05:00Z"
 
-    private func detail(quoted: Double? = nil, observedAt: String? = nil, baseline: Double? = nil,
+    private func detail(marketName: String = "Toronto vs New York: Total Points",
+                        quoted: Double? = nil, observedAt: String? = nil, baseline: Double? = nil,
                         baselineAt: String? = nil, result: Bool? = nil) -> Detail {
-        Detail(label: "Over 210.5 points", marketName: "Toronto vs New York: Total Points",
+        Detail(label: "Over 210.5 points", marketName: marketName,
                source: "kalshi", quoted: quoted, observedAt: observedAt,
                baseline: baseline, baselineObservedAt: baselineAt, result: result)
     }
@@ -80,6 +81,8 @@ final class LadderOriginalProbabilityDetails9483Tests: XCTestCase {
     func testTheRealFinalPrintsTheProducersResultAndNoFabricatedBaseline() throws {
         let final = try finalTotal()
         let lost = try XCTUnwrap(Model.content(card: final, optionKey: "o:240505185"))
+        let lostPoint = try XCTUnwrap(final.points.first { $0.optionKey == "o:240505185" })
+        XCTAssertEqual(lost.title, lostPoint.detail.marketName, "the title is the selected original's own market name")
         XCTAssertEqual(lost.selected, "Over 206.5")
         XCTAssertEqual(lost.readings.map(\.label), ["Pregame chance"], "no Current chance after the final")
         XCTAssertNil(lost.readings[0].value, "the capture serves no pin; none is fabricated")
@@ -91,6 +94,8 @@ final class LadderOriginalProbabilityDetails9483Tests: XCTestCase {
         XCTAssertFalse(lost.about.contains { $0.label == "Last recorded probability" }, "a result is not a recorded value")
 
         let won = try XCTUnwrap(Model.content(card: final, optionKey: "o:240505186"))
+        let wonPoint = try XCTUnwrap(final.points.first { $0.optionKey == "o:240505186" })
+        XCTAssertEqual(won.title, wonPoint.detail.marketName)
         XCTAssertEqual(won.selected, "Over 204.5")
         XCTAssertEqual(won.result, .hit)
         XCTAssertFalse(Model.spoken(won).contains("%"), "a result never becomes 100%")
@@ -103,6 +108,7 @@ final class LadderOriginalProbabilityDetails9483Tests: XCTestCase {
         let selected = try XCTUnwrap(card.points.first { $0.side == .away && $0.chance != nil })
         let content = try XCTUnwrap(Model.content(card: card, optionKey: selected.optionKey))
         let chance = try XCTUnwrap(selected.chance)
+        XCTAssertEqual(content.title, selected.detail.marketName, "the title is the selected original's own market name")
         XCTAssertEqual(content.selected, selected.label)
         XCTAssertEqual(content.readings.count, 1)
         XCTAssertEqual(content.readings[0].text, formatProbability(chance))
@@ -232,13 +238,44 @@ final class LadderOriginalProbabilityDetails9483Tests: XCTestCase {
         XCTAssertFalse(spoken.contains("%"))
     }
 
+    // MARK: - Title
+
+    func testTwoOriginalsOnTheSameLineKeepTheirOwnMarketNames() {
+        // Constructed: same family, same line, same label — only the market name differs.
+        let full = point("o:1", chance: 0.48, observedAt: t1,
+                         detail: detail(marketName: "Toronto vs New York: Total Points"))
+        let firstHalf = point("o:2", chance: 0.52, observedAt: t1,
+                              detail: detail(marketName: "Toronto vs New York: 1st Half Total Points"))
+        let both = card(.before, [full, firstHalf])
+        let a = Model.content(card: both, optionKey: "o:1")!
+        let b = Model.content(card: both, optionKey: "o:2")!
+        XCTAssertEqual(a.title, "Toronto vs New York: Total Points")
+        XCTAssertEqual(b.title, "Toronto vs New York: 1st Half Total Points")
+        XCTAssertEqual(a.selected, b.selected, "the line is shared; only the market name tells them apart")
+        XCTAssertTrue(Model.spoken(a).hasPrefix("Toronto vs New York: Total Points. Selected line: Over 210.5."))
+        XCTAssertTrue(Model.spoken(b).hasPrefix("Toronto vs New York: 1st Half Total Points. Selected line: Over 210.5."))
+        for content in [a, b] {
+            XCTAssertNotEqual(content.title, both.title, "the family title never replaces the market name")
+            XCTAssertFalse(Model.spoken(content).contains(both.title))
+        }
+
+        // An empty name falls back to the family title as a presentation default.
+        for empty in ["", "  "] {
+            let unnamed = Model.content(card: card(.before, [point(chance: 0.48, observedAt: t1,
+                                                                   detail: detail(marketName: empty))]),
+                                        optionKey: "o:1")!
+            XCTAssertEqual(unnamed.title, "Scoring expectations")
+            XCTAssertTrue(Model.spoken(unnamed).hasPrefix("Scoring expectations. Selected line: Over 210.5."))
+        }
+    }
+
     // MARK: - Spoken
 
     func testTheSpokenSummaryNamesEachMeaningValueAndDate() {
         let p = point(chance: 0.48, now: 0.61, observedAt: t2, detail: detail(baselineAt: t1))
         let content = Model.content(card: card(.during, [p]), optionKey: "o:1")!
         XCTAssertEqual(Model.spoken(content),
-                       "Scoring expectations. Selected line: Over 210.5. "
+                       "Toronto vs New York: Total Points. Selected line: Over 210.5. "
                        + "Pregame chance \(formatProbability(0.48)), recorded \(SourceAge.preciseStamp(t1)!). "
                        + "Current chance \(formatProbability(0.61)), recorded \(SourceAge.preciseStamp(t2)!).")
         for word in ["price", "odds", "quote", "question"] {
