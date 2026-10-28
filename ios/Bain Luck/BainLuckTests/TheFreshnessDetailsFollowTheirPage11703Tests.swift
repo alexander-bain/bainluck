@@ -32,10 +32,20 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
     /// page's real control, the way VoiceOver would.
     override class func setUp() {
         super.setUp()
+        setAutomation(true)
+    }
+
+    /// Off again, so no later suite in the process renders under it.
+    override class func tearDown() {
+        setAutomation(false)
+        super.tearDown()
+    }
+
+    private static func setAutomation(_ enabled: Bool) {
         guard let lib = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW),
               let symbol = dlsym(lib, "_AXSSetAutomationEnabled") else { return }
         typealias SetEnabled = @convention(c) (Int32) -> Void
-        unsafeBitCast(symbol, to: SetEnabled.self)(1)
+        unsafeBitCast(symbol, to: SetEnabled.self)(enabled ? 1 : 0)
     }
 
     private final class PageClient: EventDetailProviding, @unchecked Sendable {
