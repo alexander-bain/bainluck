@@ -249,6 +249,18 @@ async def default_preview_redis(monkeypatch, real_redis, consumer, rig):
 
     async with rig.engine.begin() as conn:
         await conn.run_sync(upgrade)
+    # These cases exercise publication faults with a running authority. The
+    # consumer fixture opens five rig connections; hold all five so each gets
+    # its own driver statement preparation before the timed authority calls.
+    # Rollback keeps these setup settings transaction-local. Production's
+    # 150 ms deadline and every fault/assertion below remain unchanged.
+    async with contextlib.AsyncExitStack() as stack:
+        for _ in range(5):
+            conn = await stack.enter_async_context(rig.engine.connect())
+            tx = await conn.begin()
+            await conn.execute(text("SET LOCAL lock_timeout = '100ms'"))
+            await conn.execute(text("SET LOCAL statement_timeout = '100ms'"))
+            await tx.rollback()
     store = AuthorityStore(rig.maker)
     server, repl = await client.info('server'), await client.info('replication')
     old = await store.read()
