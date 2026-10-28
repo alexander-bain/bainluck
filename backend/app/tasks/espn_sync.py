@@ -707,7 +707,7 @@ _board_admission_clock = time.monotonic
 _board_admission_sleep = asyncio.sleep
 
 
-async def _fetch_featured_boards(espn, fetch_keys) -> list:
+async def _fetch_featured_boards(espn, fetch_keys, *, last_start=None) -> list:
     """``[(key, events, read_at, error), ...]`` — one featured read per key (#10617).
 
     Plain data, in ``fetch_keys`` order, for the caller to merge exactly as the
@@ -736,7 +736,8 @@ async def _fetch_featured_boards(espn, fetch_keys) -> list:
     # The service's own setting; 0.5 is its constructor default, for a stand-in
     # service that does not carry one.
     spacing = getattr(espn, "rate_limit_delay", 0.5)
-    last_start: list = []
+    if last_start is None:
+        last_start = []
 
     async def _read(key):
         async with slots:
@@ -909,47 +910,43 @@ async def _sync_espn_live_events():
             if not all_fetch_keys:
                 return {"status": "no_espn_mapped_sports", **stats}
 
-            # ── Fetch all ESPN scoreboards ────────────────────────
-            espn = ESPNAPIService()
+            # Live boards publish before scheduled-only network reads (#10090).
+            # A sport needed by both passes is still fetched exactly once.
+            live_fetch_keys = all_fetch_keys.intersection(live_sport_keys)
+            scheduled_fetch_keys = all_fetch_keys - live_fetch_keys
             espn_data = {}
-            # #4571: when each sport's board was READ — the clock its scores
-            # are stamped with. Per sport and taken at the read, because every
-            # board is fetched before any is processed; a clock taken at
-            # processing time would date the last sport's scores as fresher
-            # than the payload they came off.
             espn_read_at: dict = {}
-            try:
-                # #10617: two reads in flight, so boards' waits overlap instead
-                # of adding up. The clocks are taken inside, per board.
-                reads = await _fetch_featured_boards(espn, all_fetch_keys)
-            finally:
-                await espn.close()
-            for key, events, read_at, error in reads:
-                if error is not None:
-                    stats["errors"].append(f"espn_fetch_{key}: {str(error)}")
-                    continue
-                if events is None:
-                    # AUTHORITY DARK — ESPN did not answer. The key is
-                    # left ABSENT rather than set to [], so no pass can
-                    # read this sport's silence as an empty slate.
-                    stats["authority_dark_sports"] += 1
-                    logger.warning(
-                        "ESPN scoreboard authority dark for %s — sport "
-                        "skipped, last known state kept", key,
-                    )
-                    continue
-                espn_data[key] = events
-                espn_read_at[key] = read_at
+            # Carry admission spacing across both phases, including fast errors.
+            board_starts: list = []
 
-            # ── Who serves a sport ESPN did not answer for? (#3473) ─
-            #
-            # BEFORE the passes, because both of them consume the same silence
-            # and neither may read it as an empty slate. This is the step-7
-            # question, and it is answered here rather than inside the loops so
-            # that a sport is decided once per pass and receipted once.
-            failover_decisions = await _decide_failovers(
-                espn_data, all_fetch_keys, stats
-            )
+            async def _fetch_and_retain_boards(keys):
+                if not keys:
+                    return
+                espn = ESPNAPIService()
+                try:
+                    reads = await _fetch_featured_boards(
+                        espn, keys, last_start=board_starts,
+                    )
+                finally:
+                    await espn.close()
+                for key, events, read_at, error in reads:
+                    if error is not None:
+                        stats["errors"].append(f"espn_fetch_{key}: {str(error)}")
+                        continue
+                    if events is None:
+                        # AUTHORITY DARK — ESPN did not answer. The key is
+                        # left ABSENT rather than set to [], so no pass can
+                        # read this sport's silence as an empty slate.
+                        stats["authority_dark_sports"] += 1
+                        logger.warning(
+                            "ESPN scoreboard authority dark for %s — sport "
+                            "skipped, last known state kept", key,
+                        )
+                        continue
+                    espn_data[key] = events
+                    espn_read_at[key] = read_at
+
+            await _fetch_and_retain_boards(live_fetch_keys)
 
             # ── First pass: live + recently-completed events ─────
             recently_completed_cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
@@ -1035,6 +1032,19 @@ async def _sync_espn_live_events():
             finally:
                 await widen_espn.close()
 
+            # Already-read live contributions no longer await a scoreboard
+            # needed only by the upcoming pass. Keep its reads and failover
+            # evidence before the scheduled pass, with unchanged clocks/counts.
+            await _fetch_and_retain_boards(scheduled_fetch_keys)
+
+            # #10090: healthy sports have committed/published before any
+            # unrelated dark sport's ledger or standby-provider check waits.
+            # Both passes still use the same ESPN reading to skip dark sports;
+            # the decision is consumed only by _act_on_failovers after them.
+            failover_decisions = await _decide_failovers(
+                espn_data, all_fetch_keys, stats
+            )
+
             # ── Second pass: scheduled events (team pre-population) ─
             # #9143: today's dated board for any sport whose undated board has
             # not rolled for one of its own id-anchored rows. Rows are free here
@@ -1072,7 +1082,7 @@ async def _sync_espn_live_events():
                 if sport_key not in ESPN_SPORT_MAPPING:
                     continue
                 # Same reading, same reason as the pass above (#3473). The
-                # decision was taken once, before either loop.
+                # decision is taken once, after healthy live rows publish.
                 if _failover.espn_reading(espn_data, sport_key) != _failover.FIXTURES:
                     continue
                 espn_events = scheduled_dated_boards.get(sport_key) or scheduled_board_for(

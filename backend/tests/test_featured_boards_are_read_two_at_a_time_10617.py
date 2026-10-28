@@ -293,10 +293,13 @@ async def test_a_second_board_is_asked_while_the_first_is_held_and_a_third_waits
 
 
 @pytest.mark.parametrize("delay", [0.5, 0.75])
-async def test_each_new_board_starts_at_least_rate_limit_delay_after_the_last(monkeypatch, delay):
+@pytest.mark.parametrize("split", [False, True])
+async def test_each_new_board_starts_at_least_rate_limit_delay_after_the_last(monkeypatch, delay, split):
     """Two may be in flight, but they never start in the same instant: the
     service's own `rate_limit_delay` (0.5 s by default) spaces admissions."""
-    rig = _Rig(live=(MLB, NFL, NHL, NBA), hold=False, rate_limit_delay=delay)
+    rig = _Rig(live=(MLB, NFL) if split else (MLB, NFL, NHL, NBA),
+               scheduled=(NHL, NBA) if split else (),
+               hold=False, rate_limit_delay=delay)
     rig.wire(monkeypatch)
 
     await asyncio.wait_for(rig.start(), timeout=2)
