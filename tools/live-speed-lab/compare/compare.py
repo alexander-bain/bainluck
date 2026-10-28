@@ -13,6 +13,7 @@ import sys
 import time
 
 from score import decide, score
+from clock_bracket import eligible_interval
 
 
 def read(path):
@@ -34,7 +35,7 @@ def load_module(path, name):
     return module
 
 
-def admission_arm(path):
+def admission_arm(path, *, stable_backend_clock=False):
     """Adapter for the already executed, predeclared admission bottleneck.
 
     It certifies no unrecorded stage and invents no full-sample eligibility.
@@ -86,7 +87,11 @@ def admission_arm(path):
     # uncertainty. No claim that wall stamps are exact physical paint times.
     uncertainty = max(1, clock["clock_mapping"]["edge_uncertainty_ms"])
     received_at = target_wall+(accepted["mono"]-target_mono)*1000-start
-    eligible_at = [max(0, received_at-uncertainty), received_at+uncertainty]
+    anchor = eligible_interval(target, rr, received_at, uncertainty,
+                               stable_backend_clock=stable_backend_clock)
+    if anchor["status"] != "conditional_interval":
+        raise ValueError("timing_unknown: "+anchor["reason"])
+    eligible_at = anchor["at_ms"]
     displays, surface_witness = [], {}
     identity = "pm:250776126:target-0.82+kalshi-0.62"
     def matches(row, surface):
@@ -133,6 +138,7 @@ def admission_arm(path):
         "coverage": {"scope": "one predeclared eligible blend state, NOT all venue ticks",
                      "eligible_states_scored": 1, "wire_input_groups": len(inputs),
                      "full_sample_eligibility": False, "clock_uncertainty_ms": uncertainty,
+                     "backend_anchor": anchor,
                      "display_resolution": "100ms DOM sampling; not physical paint",
                      "upstream_wait": "not measured; controlled local input",
                      "missing_stages": ["exact admission", "blend computation", "preview_v3 client receipt"]},
