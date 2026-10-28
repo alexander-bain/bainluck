@@ -1400,6 +1400,12 @@ class TestLeaseDeclineReaderMatchesTheWriter:
         assert row["lease_declines_window_s"] is None
 
 
+def _celery_conf():
+    from app.tasks import celery_app
+
+    return celery_app.conf
+
+
 def _adherence_request():
     """A Request carrying the admin bearer token the route actually requires."""
     from starlette.requests import Request
@@ -1438,17 +1444,32 @@ class TestEndpointToReaderWiring:
 
     TASK = "app.tasks.foo"
 
+    def _patch_schedule(self, monkeypatch):
+        # `setitem`, never `setattr`: celery's Settings keeps every key in its
+        # ChainMap, not the instance `__dict__`. Since pytest 9.2 `setattr`
+        # reads the value to restore from `__dict__`, finds nothing, and undoes
+        # with `delattr` — which raises at teardown and leaves this fake
+        # schedule in place for every later beat test (CI run 40602200624).
+        monkeypatch.setitem(
+            _celery_conf(), "beat_schedule",
+            {"b": {"task": self.TASK, "schedule": 60.0}},
+        )
+
+    def test_the_schedule_patch_is_undone_onto_the_real_schedule(self):
+        conf = _celery_conf()
+        real = conf.beat_schedule
+        with pytest.MonkeyPatch.context() as mp:
+            self._patch_schedule(mp)
+            assert conf.beat_schedule == {"b": {"task": self.TASK, "schedule": 60.0}}
+        assert conf.beat_schedule is real
+
     def _run(self, monkeypatch, *, lease_declines=None, matched=None):
         import asyncio
 
         from app.routes import admin_celery
-        from app.tasks import celery_app
 
         monkeypatch.setenv("ADMIN_TOKEN", "test-admin-token")
-        monkeypatch.setattr(
-            celery_app.conf, "beat_schedule",
-            {"b": {"task": self.TASK, "schedule": 60.0}}, raising=False,
-        )
+        self._patch_schedule(monkeypatch)
         monkeypatch.setattr(
             redis_state, "get_all_task_metrics",
             lambda: [_metrics("foo", starts=10, window_s=3600)],
