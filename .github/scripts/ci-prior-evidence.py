@@ -888,6 +888,7 @@ def _security_diagnostic(checkpoint, **fields):
         "upload-lookup",
         "upload-count",
         "upload-identity",
+        "upload-processing",
         "upload-window",
         "candidate-snapshot",
         "baseline",
@@ -910,6 +911,8 @@ def _security_diagnostic(checkpoint, **fields):
         "analysis_id",
         "read_count",
         "wait_seconds",
+        "rules_count",
+        "results_count",
     }
     enums = {
         "status": {
@@ -932,6 +935,8 @@ def _security_diagnostic(checkpoint, **fields):
             "startup_failure",
         },
         "language": set(SECURITY_LANGUAGES),
+        "processing_error": {"none", "present"},
+        "processing_warning": {"none", "present"},
     }
     label = checkpoint if checkpoint in checkpoints else "untrusted"
     values = []
@@ -1740,6 +1745,17 @@ def qualify_security(api, env, provenance, sarif_id, language):
     require(len(rows) == 1, "missing or ambiguous actual SARIF upload")
     metadata = rows[0]
     _security_diagnostic("upload-identity", analysis_id=metadata.get("id"))
+    # GitHub can finish an upload yet record the analysis as failed: 2cd03b03
+    # attempt 1 python read error "Unknown Error" with 0 rules, unchanged an
+    # hour later, while its rerun read 172 rules. That is not a race a wait can
+    # fix; name it here so the log says "rerun" without exposing the string.
+    _security_diagnostic(
+        "upload-processing",
+        processing_error="none" if metadata.get("error") == "" else "present",
+        processing_warning="none" if metadata.get("warning") == "" else "present",
+        rules_count=metadata.get("rules_count"),
+        results_count=metadata.get("results_count"),
+    )
     _validate_analysis(
         metadata, expected["head"], expected["ref"], language, sarif_id=sarif_id
     )

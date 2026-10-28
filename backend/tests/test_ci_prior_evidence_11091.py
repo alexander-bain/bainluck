@@ -3235,3 +3235,206 @@ def test_mutants_leave_the_clearing_case_unchanged():
             mutant(old, new).decide(clearable(), ENV, TEXT, TREE, BASE)["reuse"]
             == "true"
         )
+
+
+# --- #10090 specimens: GitHub-side processing failures, not races ----------
+# 2cd03b03 run 40749021845 attempt 1, Analyze (python): the SARIF endpoint
+# read `complete, errors: null` while analysis 2048093103 read error
+# "Unknown Error", 0 rules, 0 results — unchanged 38 minutes later; attempt 2
+# read 172 rules. 8fadf94a run 40737042952 attempt 1, Analyze (js): its SARIF
+# still read `pending` two hours later and no analysis ever existed. Both
+# refusals are correct; a bounded wait would have paid neither. The rerun
+# (#11694) is the remedy, so the log only has to say which class it was.
+
+
+def qualify_cli(monkeypatch, tmp_path, api):
+    monkeypatch.setattr(evidence.API, "__new__", staticmethod(lambda cls, *args: api))
+    for key, value in api.env.items():
+        monkeypatch.setenv(key, value)
+    proof = tmp_path / "provenance.json"
+    proof.write_text(json.dumps(api.proof))
+    output = tmp_path / "codeql-security.json"
+    output.write_text('{"qualified":true}')
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(SCRIPT),
+            "--security-qualify",
+            str(proof),
+            "--security-output",
+            str(output),
+            "--sarif-id",
+            api.candidate["sarif_id"],
+            "--language",
+            api.language,
+        ],
+    )
+    with pytest.raises(SystemExit) as result:
+        evidence.main()
+    return result.value.code, output
+
+
+def checkpoint_lines(text):
+    return [x for x in text.splitlines() if x.startswith("SECURITY CHECKPOINT ")]
+
+
+@pytest.mark.parametrize(
+    "error,warning,rules,results,line",
+    [
+        # The exact 2cd03b03 attempt-1 shape.
+        (
+            "Unknown Error",
+            "",
+            0,
+            0,
+            "processing_error=present processing_warning=none results_count=0 rules_count=0",
+        ),
+        # Same class with counts left intact: the error alone refuses.
+        (
+            "Unknown Error",
+            "",
+            172,
+            2916,
+            "processing_error=present processing_warning=none results_count=2916 rules_count=172",
+        ),
+        # No error string but no rules: coverage is unproven, still refuses.
+        (
+            "",
+            "",
+            0,
+            0,
+            "processing_error=none processing_warning=none results_count=0 rules_count=0",
+        ),
+        # A warning alone refuses too.
+        (
+            "",
+            "partial extraction",
+            172,
+            2916,
+            "processing_error=none processing_warning=present results_count=2916 rules_count=172",
+        ),
+        (
+            None,
+            "",
+            0,
+            0,
+            "processing_error=present processing_warning=none results_count=0 rules_count=0",
+        ),
+    ],
+)
+def test_2cd03b03_github_processing_failure_refuses_and_names_its_class(
+    monkeypatch, tmp_path, capsys, error, warning, rules, results, line
+):
+    api = ComposeSecurityAPI()
+    api.candidate.update(
+        {
+            "error": error,
+            "warning": warning,
+            "rules_count": rules,
+            "results_count": results,
+        }
+    )
+    # Persistent upstream failure: no wait or reread is added for it.
+    monkeypatch.setattr(
+        evidence.time,
+        "sleep",
+        lambda seconds: pytest.fail("no wait on a failed analysis"),
+    )
+    code, output = qualify_cli(monkeypatch, tmp_path, api)
+    assert code == 1 and not output.exists()
+    text = capsys.readouterr().out
+    lines = checkpoint_lines(text)
+    assert lines[-2].startswith("SECURITY CHECKPOINT upload-identity ")
+    assert lines[-1] == "SECURITY CHECKPOINT upload-processing " + line
+    assert "upload-window" not in text
+    # The titled class #11694's rerun rule reads, and never the API string.
+    assert "::error title=SECURITY EVIDENCE INCOMPLETE::ValueError" in text
+    assert "SECURITY NEW-FINDING" not in text and "SECURITY PASS" not in text
+    assert "Unknown Error" not in text
+
+
+def test_8fadf94a_upload_never_processed_refuses_on_one_read_without_waiting(
+    monkeypatch, tmp_path, capsys
+):
+    api = ComposeSecurityAPI(language="javascript-typescript")
+    reads = []
+
+    def no_upload(path, *, older_than=None):
+        reads.append(path)
+        return []
+
+    monkeypatch.setattr(api, "array_pages", no_upload)
+    monkeypatch.setattr(
+        evidence.time, "sleep", lambda seconds: pytest.fail("no wait for an upload")
+    )
+    code, output = qualify_cli(monkeypatch, tmp_path, api)
+    assert code == 1 and not output.exists()
+    assert len([x for x in reads if "sarif_id=" in x]) == 1
+    text = capsys.readouterr().out
+    assert (
+        checkpoint_lines(text)[-1] == "SECURITY CHECKPOINT upload-count upload_count=0"
+    )
+    assert "upload-processing" not in text
+    assert "::error title=SECURITY EVIDENCE INCOMPLETE::ValueError" in text
+
+
+def test_clean_upload_prints_processing_line_and_still_qualifies(capsys):
+    api = ComposeSecurityAPI()
+    receipt = api.qualify()
+    assert receipt["qualified"] is True and receipt["qualification"] == "PASS"
+    lines = checkpoint_lines(capsys.readouterr().out)
+    names = [x.split()[2] for x in lines]
+    at = names.index("upload-processing")
+    assert names[at - 1 : at + 2] == [
+        "upload-identity",
+        "upload-processing",
+        "upload-window",
+    ]
+    assert lines[at] == (
+        "SECURITY CHECKPOINT upload-processing processing_error=none "
+        f"processing_warning=none results_count={api.candidate['results_count']} "
+        f"rules_count={api.candidate['rules_count']}"
+    )
+
+
+@pytest.mark.parametrize("mutant", ["late-upload", "foreign-run-upload", "wrong-head"])
+def test_processing_line_never_softens_identity_or_window_refusals(capsys, mutant):
+    api = ComposeSecurityAPI()
+    if mutant == "late-upload":
+        api.candidate["created_at"] = "2099-01-01T00:00:00Z"
+        match = "outside the current official analysis attempt"
+    elif mutant == "foreign-run-upload":
+        api.candidate["created_at"] = "2000-01-01T00:00:00Z"
+        match = "outside the current official analysis attempt"
+    else:
+        api.candidate["commit_sha"] = BASE
+        match = "wrong analysis revision/ref"
+    with pytest.raises(ValueError, match=match):
+        api.qualify()
+    assert "processing_error=none" in capsys.readouterr().out
+
+
+def test_processing_fields_are_sanitized(capsys):
+    unsafe = "https://evil.invalid/?token=SECRET\n::error::INJECT"
+    evidence._security_diagnostic(
+        "upload-processing",
+        processing_error=unsafe,
+        processing_warning=None,
+        rules_count=unsafe,
+        results_count=-1,
+    )
+    evidence._security_diagnostic(
+        "upload-processing",
+        processing_error="Unknown Error",
+        processing_warning="partial extraction",
+    )
+    text = capsys.readouterr().out
+    assert "SECRET" not in text and "INJECT" not in text
+    assert "Unknown Error" not in text and "partial extraction" not in text
+    assert text == (
+        "SECURITY CHECKPOINT upload-processing processing_error=untrusted "
+        "processing_warning=null results_count=untrusted rules_count=untrusted\n"
+        "SECURITY CHECKPOINT upload-processing processing_error=untrusted "
+        "processing_warning=untrusted\n"
+    )
