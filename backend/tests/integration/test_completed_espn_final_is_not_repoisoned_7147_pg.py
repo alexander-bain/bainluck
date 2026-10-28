@@ -485,8 +485,15 @@ async def _run_one_pass(engine, monkeypatch, anchor):
     maker = async_sessionmaker(engine, expire_on_commit=False)
 
     @asynccontextmanager
-    async def _session():
-        async with maker() as session:
+    async def _session(*, reuse_publication_client=False):
+        from contextlib import nullcontext
+
+        from app.utils.nonvenue_live_push import nonvenue_publication_scope
+
+        async with maker() as session, (
+            nonvenue_publication_scope(session)
+            if reuse_publication_client else nullcontext()
+        ):
             yield session
 
     service = _FakeOddsAPIService(_score_payload(anchor), SPORT_KEY)

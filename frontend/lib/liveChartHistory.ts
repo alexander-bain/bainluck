@@ -560,6 +560,28 @@ export type FinishedServed = ChartHistory & {
 };
 
 /**
+ * #11588 — the served body already carries the settled result.
+ *
+ * The backend appends the result to every source series (`evidence.kind:
+ * "final"`; `game_state.final` before the #7878 contract) and as the LAST
+ * element of the blend line, out of time order, at the minute play ended
+ * floored. A fresh load draws that body as served: the result wins its minute
+ * and the readout (`latestBlendPoint`) reads the last element. Merging any
+ * retained observation into it re-sorts the line, so a reading later in that
+ * minute takes the result's place, a source reading after it carries the
+ * chart's game-end cut past it, and the readout lands on a post-final market
+ * point. Production 15334266, held through the final: line 82%, readout 71%,
+ * under a Final hero; a fresh load ended on 100%.
+ *
+ * Such a body is the history having caught up with the finish, so it is the
+ * whole answer and nothing retained is merged into it.
+ */
+function servedCarriesResult(served: ChartHistory): boolean {
+  return Object.values(served.win_prob_history ?? {}).some(series =>
+    (series ?? []).some(point => point.evidence?.kind === "final" || point.game_state?.final === true));
+}
+
+/**
  * #10751 — a finished game keeps the movement it already drew while its
  * history read catches up.
  *
@@ -575,8 +597,10 @@ export type FinishedServed = ChartHistory & {
  *
  *   1. SAME EVENT, EXPLICITLY FINISHED. The admission, the detail and the
  *      served body all name this event, and the detail says completed/closed.
- *   2. A SERVED BLEND. The current body carries the backend's own aggregate
- *      line (#8066); nothing here mints one for a source-only response.
+ *   2. A SERVED BLEND, NOT YET SETTLED. The current body carries the backend's
+ *      own aggregate line (#8066); nothing here mints one for a source-only
+ *      response. A body that already carries the result is the history caught
+ *      up, drawn as served (`servedCarriesResult`, #11588).
  *   3. COMPARABLE, AND NOT BEHIND. The terminal detail's one-row vector is at
  *      least as new as the vector the frames were admitted against, and at
  *      least as new as each frame's own. Missing, malformed, folded or
@@ -601,7 +625,7 @@ export function finishedChartFrames(
 ): LiveChartFrame[] {
   if (!admitted || admitted.eventId !== eventId || admitted.points.length === 0) return [];
   if (!hero || (hero.id !== undefined && hero.id !== eventId) || !isFinishedStatus(hero.status)) return [];
-  if (!served || served.event_id !== eventId || !served.aggregate_line?.length) return [];
+  if (!served || served.event_id !== eventId || !served.aggregate_line?.length || servedCarriesResult(served)) return [];
 
   const completed = Date.parse(hero.completed_at ?? "");
   if (!Number.isFinite(completed)) return [];
@@ -726,7 +750,8 @@ export function admitRecoveredSourceObservations(
 }
 
 /** Render only the source bank already admitted while eligible. A completed
- * detail may retain pre-finish observations, never admit a new one. */
+ * detail may retain pre-finish observations, never admit a new one, and none
+ * once the served body carries the result (#11588). */
 export function appendAdmittedSourceObservations<T extends SourceObservationHistory>(
   history: T | undefined, admitted: AdmittedChartFrames | null, detail: FinishedHero | undefined,
 ): T | undefined {
@@ -739,6 +764,7 @@ export function appendAdmittedSourceObservations<T extends SourceObservationHist
   if (order !== "same" && order !== "newer") return history;
   let bound = Infinity;
   if (isFinishedStatus(detail.status)) {
+    if (servedCarriesResult(history)) return history;
     bound = Date.parse(detail.completed_at ?? "");
     if (!Number.isFinite(bound)) return history;
     if (history.completed_at != null) {
