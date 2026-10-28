@@ -26,6 +26,63 @@ pg_engine = _pg_engine
 pytestmark = needs_postgres
 
 
+@pytest.mark.parametrize("clock", ["20.5", "0:20.5", "NaN"])
+async def test_fractional_espn_model_reaches_committed_blend_and_chart(pg_engine, sink, clock):
+    """#10090: a valid final-minute reading reaches the existing committed path."""
+    from sqlalchemy import delete, select
+
+    from app.models.models import Base, WinProbSnapshot
+    from app.utils.espn_helpers import compute_and_write_stat_model
+    from app.utils.win_probability import compute_statistical_win_prob
+    from tests.test_stat_model_prices_the_break_9521 import _board_row
+
+    async with pg_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=[WinProbSnapshot.__table__])
+    event_id = await _seed_event(pg_engine, {"kalshi": 0.55, "stat_model": 0.51})
+    try:
+        async with pg_engine.begin() as conn:
+            await conn.execute(update(Event).where(Event.id == event_id).values(
+                home_team_name="Chicago Bears", away_team_name="Philadelphia Eagles",
+                opening_home_probability=0.6, period="4", game_clock=clock,
+                home_score=100, away_score=98,
+            ))
+        async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+            event = await session.get(Event, event_id)
+            reading = _board_row("4th Quarter", home=100, away=98, clock=clock, period=4)
+            wrote = await compute_and_write_stat_model(
+                session, event, reading, "basketball_nba", {},
+            )
+            assert wrote == (clock != "NaN")
+            await publish_committed_nonvenue_frames(session)
+            assert sink == []
+            assert (await _stored(pg_engine, event_id))["stat_model"] == 0.51
+            await session.commit()
+            await publish_committed_nonvenue_frames(session)
+            sources = await _stored(pg_engine, event_id)
+            assert sources["kalshi"] == 0.55
+            points = (await session.execute(select(WinProbSnapshot).where(
+                WinProbSnapshot.event_id == event_id,
+            ))).scalars().all()
+            if clock == "NaN":
+                assert sources["stat_model"] == 0.51
+                assert not sink and not points
+                return
+            expected = round(compute_statistical_win_prob(
+                home_score=100, away_score=98, clock="0:20.5", period="4",
+                sport_key="basketball_nba", opening_home_probability=0.6,
+            ), 4)
+            assert sources["stat_model"]["value"] == expected
+            assert len(sink) == 1
+            assert sink[0][1]["source_value"] == expected
+            assert sink[0][1]["p"] == compute_aggregate_probability(event, "live")
+            assert len(points) == 1
+            assert float(points[0].home_win_probability) == expected
+            assert points[0].game_state["clock"] == clock
+    finally:
+        async with pg_engine.begin() as conn:
+            await conn.execute(delete(WinProbSnapshot).where(WinProbSnapshot.event_id == event_id))
+
+
 @pytest.fixture
 def sink(monkeypatch):
     class Redis:
