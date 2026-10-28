@@ -122,7 +122,7 @@ async def pg_engine():
             "event_provider_anchors", "team_identity_mapping",
             "futures_markets", "futures_outcomes", "win_prob_snapshots",
             # #10090 attempt151: a stamp commits its publication intent here.
-            "owed_chart_points",
+            "owed_chart_points", "score_snapshots",
         )
     ]
     engine = create_async_engine(DB_URL)
@@ -136,6 +136,7 @@ async def pg_engine():
 
 
 async def _clear(conn):
+    await conn.execute(text("DELETE FROM score_snapshots WHERE event_id = ANY(:ids)"), {"ids": EVENT_IDS})
     await conn.execute(
         text("DELETE FROM owed_chart_points WHERE event_id = ANY(:ids)"), {"ids": EVENT_IDS}
     )
@@ -552,3 +553,69 @@ async def test_a_failed_game_rolls_back_alone_and_publishes_nothing(pg_engine, m
     # was dropped with its rollback. A later publish in the pass would have sent
     # it if it were still queued.
     assert [f["event_id"] for f in published] == [GAME_A], published
+
+
+@pytest.mark.parametrize("fail_second", [False, True])
+async def test_model_is_published_before_the_next_score_write(pg_engine, monkeypatch, fail_second):
+    """Real model/score/snapshot writes; the next game cannot retain game A."""
+    from app.utils import nonvenue_live_push
+
+    anchor = datetime.now(timezone.utc)
+    async with pg_engine.begin() as conn:
+        await _seed(conn, anchor)
+        await conn.execute(text(
+            "UPDATE events SET opening_home_probability=0.6, period='3', "
+            "game_clock='10:00' WHERE id = ANY(:ids)"
+        ), {"ids": EVENT_IDS})
+
+    class Scores(_OddsService):
+        async def get_odds(self, sport_key, **kwargs):
+            return []
+
+        async def get_scores(self, sport_key, **kwargs):
+            if sport_key != SPORT_KEY:
+                return []
+            return [dict(
+                id=_external_id(g["event_id"]), completed=False,
+                commence_time=(anchor - timedelta(minutes=30)).isoformat(),
+                home_team=g["home"], away_team=g["away"],
+                scores=[{"name": g["home"], "score": "21"},
+                        {"name": g["away"], "score": "14"}],
+            ) for g in GAMES]
+
+    published = _wire(monkeypatch, pg_engine)
+    original = nonvenue_live_push.write_nonvenue_probability
+    before_second = []
+
+    async def write(session, event, source, value, **kwargs):
+        if event.id == GAME_B:
+            before_second.append((
+                await _sources(pg_engine, GAME_A),
+                [f["event_id"] for f in published],
+            ))
+        result = await original(session, event, source, value, **kwargs)
+        if event.id == GAME_B and fail_second:
+            await session.execute(text("SELECT 1/0"))
+        return result
+
+    monkeypatch.setattr(nonvenue_live_push, "write_nonvenue_probability", write)
+    await _pass(monkeypatch, Scores(anchor))
+    assert len(before_second) == 1, before_second
+    sources, visible = before_second[0]
+    assert "stat_model" in sources and visible == [GAME_A], before_second
+    assert [f["event_id"] for f in published] == ([GAME_A] if fail_second else EVENT_IDS)
+    assert all(f["source"] == "stat_model" for f in published)
+    async with pg_engine.connect() as conn:
+        snapshots = (await conn.execute(text(
+            "SELECT event_id, home_win_probability FROM win_prob_snapshots "
+            "WHERE event_id = ANY(:ids) AND source='stat_model' ORDER BY event_id"
+        ), {"ids": EVENT_IDS})).all()
+        scores = (await conn.execute(text(
+            "SELECT id, home_score, away_score FROM events WHERE id = ANY(:ids) ORDER BY id"
+        ), {"ids": EVENT_IDS})).all()
+    expected = [GAME_A] if fail_second else EVENT_IDS
+    assert [s.event_id for s in snapshots] == expected
+    for snapshot, frame in zip(snapshots, published):
+        assert float(snapshot.home_win_probability) == pytest.approx(frame["source_value"])
+    assert scores[0][1:] == (21, 14)
+    assert scores[1][1:] == ((None, None) if fail_second else (21, 14))
