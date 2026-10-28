@@ -244,7 +244,7 @@ async def test_read_projects_one_event_context_and_omits_only_impossible_kalshi_
     assert isinstance(source_projection.clause, Null)
     assert isinstance(source_projection.type, JSONB)
     assert grouped[1][0].win_probability_sources == {"kalshi": None}
-    assert session.statements[0].compile().params["event_id_1"] == [1, 999]
+    assert session.statements[0].compile().params["event_ids"] == [1, 999]
 
 
 @pytest.mark.asyncio

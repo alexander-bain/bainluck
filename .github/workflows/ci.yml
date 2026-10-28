@@ -5245,6 +5245,8 @@ jobs:
           export EVENT_FRAME_REDIS_SERVER="$dir/redislite/bin/redis-server" EVENT_FRAME_REDIS_REQUIRED=1
           if python -m pytest tests/integration/test_pm_held_price_row_stamps_received_quote_11138_pg.py \
             tests/integration/test_live_blend_source_projection_10090_pg.py \
+            tests/integration/test_live_blend_read_event_array_10090_pg.py \
+            tests/integration/test_observation_read_deadline_keeps_connection_10090_pg.py \
             tests/integration/test_live_blend_metadata_projection_10090_pg.py \
             tests/integration/test_pm_price_returned_clock_10090_pg.py \
             tests/integration/test_pm_held_before_future_clock_10090_pg.py \
@@ -5270,8 +5272,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]247 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row/default-DNPL/reservations/returned-clock gate did not run all 247 cases"
+          grep -qE "[^0-9]253 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row/default-DNPL/reservations/returned-clock gate did not run all 253 cases"
             exit 1
           }
 

@@ -117,7 +117,7 @@ class Session:
             entry = dict(entry, updated_at=NEW.isoformat())
             return Result(stamp=({board.source: entry}, eid))
         # Every source read uses the actual projected SQL's event admission.
-        ids = params["event_id_1"]
+        ids = params["event_ids"]
         board.reads.append(tuple(sorted(ids)))
         rows = []
         columns = list(statement.selected_columns)

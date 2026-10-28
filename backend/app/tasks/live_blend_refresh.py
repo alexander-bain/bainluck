@@ -193,6 +193,17 @@ FRESH_FLUSH_PENDING_ATTEMPTS = 1
 # writer that is the lent engine's five connections (pool 3 + overflow 2).
 FRESH_STAMP_WORKERS = 3
 
+# #10090 — an observation-preview read whose caller stopped waiting at its
+# 0.25 s deadline is left to end by itself instead of being cancelled. A
+# cancelled SELECT invalidates its pooled connection and then holds its slot
+# through the graceful close (production 18:04–18:10Z 2026-10-28: a median
+# 443 ms past the deadline). It keeps its session slot and connection until it
+# actually ends, so at most this many run per refresher; past it a read is
+# cancelled the old way. One that is still running this long after its caller
+# left is cancelled the old way too.
+OBSERVATION_READ_DETACHED_MAX = 1
+OBSERVATION_READ_DETACHED_S = 2.0
+
 # #10090 — admitted cohorts are stamped live-first, as a call's own population
 # is. Stage trace 02:14Z 2026-10-15: a live game's admitted stamp started
 # 6.43 s after admission and then took 95 ms; 134 events were held by the call
@@ -283,6 +294,22 @@ def _observation_read_step(name):
         timing[name + "_completed"] = True
     finally:
         timing[name + "_ms"] = (_mono() - started) * 1000
+
+
+class _ObservationReadAbandoned(Exception):
+    """The preview caller stopped waiting: no statement or retirement follows."""
+
+
+class _ObservationRead:
+    """One optional preview graph read, shared by its caller and its task."""
+
+    __slots__ = ("timing", "waiting", "graph", "ceiling")
+
+    def __init__(self, timing: dict) -> None:
+        self.timing = timing
+        self.waiting = True  # cleared, never set again, when the caller stops
+        self.graph = None
+        self.ceiling = False
 
 
 def _observation_read_summary(timing):
@@ -1264,7 +1291,8 @@ async def run_flush_cadence(
 LOOP_REAP_TIMEOUT_S = 15.0
 
 #: #10090 idle bound: closed `HeldRowQuotes` samplers still unwinding their
-#: cancellation, by source, until that source's run reaps its loops.
+#: cancellation, by source, until that source's run reaps its loops. The final
+#: drain parks cancelled observation-preview reads here too.
 _closing_samplers: dict[Optional[str], set] = {}
 
 
@@ -2175,6 +2203,13 @@ class LiveBlendRefresher:
         self._preview_maintenance_closed = False
         self.preview_stats: dict[str, int] = {
             "published": 0, "revoked": 0, "fenced": 0, "publish_errors": 0,
+        }
+        #: #10090 — observation-preview reads still running after their caller
+        #: stopped waiting (`OBSERVATION_READ_DETACHED_MAX`), and what became of
+        #: them; reported on the read-unavailable line.
+        self._detached_reads: set[asyncio.Task] = set()
+        self.observation_read_stats: dict[str, int] = {
+            "detached": 0, "finished": 0, "capped": 0, "ceiling_cancelled": 0,
         }
 
     # ── throttling ───────────────────────────────────────────────────────────
@@ -3328,10 +3363,10 @@ class LiveBlendRefresher:
             raise interrupted
 
     async def _read_groups(self, session, event_ids: list[int], *, overlay_held=True,
-                           clock_sample=None) -> dict[int, tuple]:
+                           clock_sample=None, stopped_waiting=None) -> dict[int, tuple]:
         from copy import deepcopy
         from types import SimpleNamespace
-        from sqlalchemy import and_, cast, func, literal, null, or_, select
+        from sqlalchemy import ARRAY, Integer, and_, any_, bindparam, cast, func, literal, null, or_, select
         from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
         from app.utils.live_blend import MarketOutcomes
         from app.utils.content_understanding import CONTENT_UNDERSTANDING_KEY
@@ -3407,10 +3442,19 @@ class LiveBlendRefresher:
         )
         # Capture BEFORE the statement, not when a prepared plan is later
         # published. Retirement invalidates this proof without renewing it.
+        # A read its caller left while it waited for a slot or connection
+        # does no admission read either (#10090).
+        if stopped_waiting is not None and stopped_waiting():
+            raise _ObservationReadAbandoned
         with _observation_read_step("admission"):
             preview_ticket = (
                 await self._preview_admission_read() if preview_columns else None
             )
+        # An observation preview whose caller stopped waiting issues no
+        # statement, and stops once its statement returns: the connection goes
+        # back to the pool normally and nothing below runs (#10090).
+        if stopped_waiting is not None and stopped_waiting():
+            raise _ObservationReadAbandoned
         with _observation_read_step("query"):
             rows = (
                 await session.execute(
@@ -3437,10 +3481,17 @@ class LiveBlendRefresher:
                     .outerjoin(FuturesOutcome, outcome_join)
                     .where(
                         FuturesMarket.source == self.source,
-                        FuturesMarket.event_id.in_(event_ids),
+                        # One array parameter: one statement shape, so one
+                        # prepared statement per connection whatever the
+                        # batch size (an expanding IN made one per length).
+                        FuturesMarket.event_id == any_(bindparam(
+                            "event_ids", list(event_ids), type_=ARRAY(Integer),
+                        )),
                     )
                 )
             ).all()
+        if stopped_waiting is not None and stopped_waiting():
+            raise _ObservationReadAbandoned
         if clock_sample is not None and rows:
             # Read DB time in the existing statement, without another pool
             # checkout. The caller may adopt it only after its scope succeeds.
@@ -3521,7 +3572,10 @@ class LiveBlendRefresher:
                     for row in entry.outcomes:
                         row._primary_quote_overlaid = id(row) not in original_rows
         if preview_ticket is not None:
-            await self._retire_terminal_preview_read(grouped, preview_ticket)
+            # Marked so a caller whose deadline lands here cancels it as before:
+            # a retirement writes Redis and the row, never after its caller left.
+            with _observation_read_step("retire"):
+                await self._retire_terminal_preview_read(grouped, preview_ticket)
         return grouped
 
     async def _prepare_groups(self, event_ids: list[int]) -> dict[int, tuple]:
@@ -3725,6 +3779,11 @@ class LiveBlendRefresher:
         republishes frames or turns history-only debt into blend debt.
         """
         interrupted = None
+        # Before any await: a read its caller left ends the old way now, and
+        # the run's bounded reap joins it before the engine is disposed.
+        for task in list(getattr(self, "_detached_reads", ())):
+            task.cancel()
+            _park_closing_sampler(getattr(self, "source", None), task)
         try:
             await self._close_preview_maintenance()
         except asyncio.CancelledError as exc:
@@ -4939,54 +4998,49 @@ class LiveBlendRefresher:
             # contended pool/read. The caller may retain the SAME frozen input.
             if self._session_slots.locked():
                 return False
-            grouped = None
-            read_budget = asyncio.timeout(.25)
+            if len(self._detached_reads) >= OBSERVATION_READ_DETACHED_MAX:
+                # A read its caller left still holds a slot: no second read
+                # starts beside it, so 2 of the 3 slots stay the stamps'.
+                self.observation_read_stats["capped"] += 1
+                return False
             read_timing = {"started_s": _mono()}
             clock_owner = self.held_quotes if self._observation_read_factory is not None else None
-            clock_sample = None
+            clock = None
             if isinstance(clock_owner, HeldRowQuotes) and not clock_owner._closed:
                 clock_owner._sample_started += 1
-                clock_ordinal = clock_owner._sample_started
                 clock_owner._sampling += 1
                 clock_owner._last_sample_started = clock_owner._now()
-                clock_sample = {}
+                clock = (clock_owner, clock_owner._sample_started, {})
+            read = _ObservationRead(read_timing)
+            task = asyncio.create_task(
+                self._observation_graph_read(read, factory, sorted(event_ids), clock),
+                name=f"observation-read-{self.source}",
+            )
             try:
-                token = _observation_read_timing.set(read_timing)
-                try:
-                    async with read_budget, self._session_slot(), factory() as session:
-                        grouped = await self._read_groups(
-                            session, sorted(event_ids), overlay_held=False,
-                            **({"clock_sample": clock_sample} if clock_sample is not None else {}),
-                        )
-                        read_timing["graph_ready_ms"] = (_mono() - read_timing["started_s"]) * 1000
-                    # Only normal context completion qualifies, never query or
-                    # cleanup timeout/cancellation. A late older read cannot
-                    # replace a newer sample or clear its failure episode.
-                    if (clock_sample and self.held_quotes is clock_owner
-                            and not clock_owner._closed
-                            and clock_ordinal > clock_owner._sample_published):
-                        clock_owner._database_bound = clock_sample["value"].timestamp()
-                        clock_owner._sample_published = clock_ordinal
-                        clock_owner._graph_sample_ordinal = clock_ordinal
-                        # A graph read has a longer budget than the standalone
-                        # clock probe. Its success supplies future input bounds,
-                        # but cannot prove that shorter-budget path recovered.
-                        # Only a standalone success clears its failure backoff.
-                        clock_owner._last_sample_done = clock_owner._now()
-                finally:
-                    if clock_sample is not None:
-                        clock_owner._sampling -= 1
-                    read_timing["scope_ms"] = (_mono() - read_timing["started_s"]) * 1000
-                    _observation_read_timing.reset(token)
-            except TimeoutError:
+                await asyncio.wait({task}, timeout=.25)
+            except CancelledError:
+                # External cancellation stops the read the old way, as the
+                # scope it replaces did, and still ends with the caller.
+                read.waiting = False
+                task.cancel()
+                self._track_observation_read(task, read, None)
+                await asyncio.wait({task})
+                raise
+            if task.done():
+                task.result()
+                grouped = read.graph
+            else:
+                read.waiting = False
+                read_timing["scope_ms"] = (_mono() - read_timing["started_s"]) * 1000
+                await self._release_observation_read(task, read)
                 # A completed autocommit SELECT needs no commit acknowledgement.
                 # Its detached graph remains usable if only connection cleanup
-                # exhausts our budget. The existing context still owns cleanup;
-                # query failures, writer scopes and external cancellation do not
-                # qualify. All input/freshness/send-boundary checks below remain.
-                if (self._observation_read_factory is None or grouped is None
-                        or not read_budget.expired()):
-                    raise
+                # exhausts our budget; that cleanup still finishes on its own.
+                # Kalshi's ORM session has not committed: it does not qualify.
+                # All input/freshness/send-boundary checks below remain.
+                if self._observation_read_factory is None or read.graph is None:
+                    raise TimeoutError("observation read exceeded its preview budget")
+                grouped = read.graph
                 logger.warning(
                     "live_blend_refresh[%s]: observation read completed; cleanup exceeded budget read_timing=%s",
                     self.source, _observation_read_summary(read_timing),
@@ -5119,10 +5173,109 @@ class LiveBlendRefresher:
                 self._stage_trace("selections_closed", selections.values())
             self.preview_stats["publish_errors"] += 1
             logger.warning(
-                "live_blend_refresh[%s]: optional observation preview unavailable read_timing=%s",
-                self.source, _observation_read_summary(read_timing), exc_info=True,
+                "live_blend_refresh[%s]: optional observation preview unavailable read_timing=%s "
+                "detached_reads=%s",
+                self.source, _observation_read_summary(read_timing),
+                dict(self.observation_read_stats, running=len(self._detached_reads)),
+                exc_info=True,
             )
             return False
+
+    async def _observation_graph_read(self, read, factory, event_ids, clock) -> None:
+        """The preview's graph read, in its own task so its caller can stop
+        waiting without cancelling the statement (`OBSERVATION_READ_DETACHED_MAX`).
+
+        The graph and copied input clocks are disposable. A separately selected
+        DB clock may advance held_quotes only for inputs received AFTER this
+        read scope completes, and only while its caller still waits.
+        """
+        token = _observation_read_timing.set(read.timing)
+        try:
+            async with self._session_slot(), factory() as session:
+                read.graph = await self._read_groups(
+                    session, event_ids, overlay_held=False,
+                    stopped_waiting=lambda: not read.waiting,
+                    **({"clock_sample": clock[2]} if clock is not None else {}),
+                )
+                read.timing["graph_ready_ms"] = (_mono() - read.timing["started_s"]) * 1000
+            # Only normal context completion qualifies, never query or
+            # cleanup timeout/cancellation, nor a read its caller left. A late
+            # older read cannot replace a newer sample or clear its failure
+            # episode.
+            if clock is not None and read.waiting:
+                clock_owner, clock_ordinal, clock_sample = clock
+                if (clock_sample and self.held_quotes is clock_owner
+                        and not clock_owner._closed
+                        and clock_ordinal > clock_owner._sample_published):
+                    clock_owner._database_bound = clock_sample["value"].timestamp()
+                    clock_owner._sample_published = clock_ordinal
+                    clock_owner._graph_sample_ordinal = clock_ordinal
+                    # A graph read has a longer budget than the standalone
+                    # clock probe. Its success supplies future input bounds,
+                    # but cannot prove that shorter-budget path recovered.
+                    # Only a standalone success clears its failure backoff.
+                    clock_owner._last_sample_done = clock_owner._now()
+        finally:
+            if clock is not None:
+                clock[0]._sampling -= 1  # counted until the read actually ends
+            if read.waiting:
+                read.timing["scope_ms"] = (_mono() - read.timing["started_s"]) * 1000
+            _observation_read_timing.reset(token)
+
+    async def _release_observation_read(self, task, read) -> None:
+        """Its caller stopped waiting: leave the read to end by itself, or
+        cancel it and wait out its cleanup as before.
+
+        Cancelled: a retirement in flight (a Redis/row write never outlives its
+        caller), or when `OBSERVATION_READ_DETACHED_MAX` reads already run.
+        """
+        if read.timing.get("retire_completed") is False:
+            task.cancel()
+        elif len(self._detached_reads) >= OBSERVATION_READ_DETACHED_MAX:
+            self.observation_read_stats["capped"] += 1
+            task.cancel()
+        else:
+            self.observation_read_stats["detached"] += 1
+            ceiling = asyncio.get_running_loop().call_later(
+                OBSERVATION_READ_DETACHED_S, self._cancel_detached_read, task, read,
+            )
+            self._track_observation_read(task, read, ceiling)
+            return
+        self._track_observation_read(task, read, None)
+        await asyncio.wait({task})
+
+    @staticmethod
+    def _cancel_detached_read(task, read) -> None:
+        if not task.done():
+            read.ceiling = True
+            task.cancel()
+
+    def _track_observation_read(self, task, read, ceiling) -> None:
+        """Count an unfinished read its caller left until it actually ends."""
+        if task.done():
+            self._observation_read_ended(read, ceiling, task)
+            return
+        self._detached_reads.add(task)
+        task.add_done_callback(
+            lambda done: self._observation_read_ended(read, ceiling, done)
+        )
+
+    def _observation_read_ended(self, read, ceiling, task) -> None:
+        if ceiling is not None:
+            ceiling.cancel()
+        self._detached_reads.discard(task)
+        if task.cancelled():
+            if read.ceiling:
+                self.observation_read_stats["ceiling_cancelled"] += 1
+            return
+        error = task.exception()
+        if ceiling is not None:
+            self.observation_read_stats["finished"] += 1
+        if error is not None and not isinstance(error, _ObservationReadAbandoned):
+            logger.warning(
+                "live_blend_refresh[%s]: observation read failed after its caller stopped waiting",
+                self.source, exc_info=(type(error), error, error.__traceback__),
+            )
 
     async def _preview_before_stamp(self, grouped, plans, published_seq, *, observation_only=(),
                                     selections=None) -> None:

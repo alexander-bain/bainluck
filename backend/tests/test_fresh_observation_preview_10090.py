@@ -389,7 +389,9 @@ async def test_accepted_observation_skips_busy_slots_without_read_or_error(monke
 @pytest.mark.parametrize("dedicated", [True, False])
 async def test_completed_observation_survives_only_readonly_cleanup_deadline(monkeypatch, dedicated):
     from contextlib import asynccontextmanager
+    from app.tasks import live_blend_refresh as module
 
+    monkeypatch.setattr(module, "OBSERVATION_READ_DETACHED_S", .05)
     r, session, frames, committed, rows, _, observations, validate, now = acknowledged_rig(monkeypatch)
     cleanup_started, cleanup_cancelled = asyncio.Event(), asyncio.Event()
 
@@ -407,8 +409,16 @@ async def test_completed_observation_survives_only_readonly_cleanup_deadline(mon
     else:
         r._session_factory = scope
     result = await r.preview_accepted_observations(observations, validate)
-    assert cleanup_started.is_set() and cleanup_cancelled.is_set()
-    assert not r._session_slots.locked()
+    # #10090: the deadline no longer cancels the cleanup. It keeps its slot
+    # until it ends, here at the detached ceiling, which cancels it as before.
+    assert cleanup_started.is_set() and not cleanup_cancelled.is_set()
+    assert len(r._detached_reads) == 1 and r._session_slots._value == 2
+    await asyncio.wait_for(cleanup_cancelled.wait(), 1)
+    await asyncio.sleep(0)
+    assert not r._detached_reads and r._session_slots._value == 3
+    assert r.observation_read_stats == {
+        "detached": 1, "finished": 0, "capped": 0, "ceiling_cancelled": 1,
+    }
     if dedicated:
         [frame] = _blends(frames)
         assert frame["display_observed_at"] == (now - timedelta(seconds=1)).isoformat()

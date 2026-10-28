@@ -637,11 +637,11 @@ class _RecordingSession:
                 return deepcopy(raw.get(source)) if isinstance(raw, dict) else None
             return raw
 
-        # The read admits only the events it names (`event_id IN ...`), as the
+        # The read admits only the events it names (`event_id = ANY(...)`), as the
         # production statement does; fe0aa54fbf's fresh stamps each read their
         # own event, so an unscoped answer would hand every stamp its siblings.
         try:
-            wanted = statement.compile().params.get("event_id_1")
+            wanted = statement.compile().params.get("event_ids")
         except Exception:
             wanted = None
         return _Result(rows=[
