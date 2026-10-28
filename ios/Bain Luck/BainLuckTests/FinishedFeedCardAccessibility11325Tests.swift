@@ -644,10 +644,15 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     /// "Projection" only when its ink shows the "j" descender after "Pr" and
     /// before "ection", dropping well below the baseline of the letters after
     /// it; a real "i" ("Proiection") has no descender and stays rejected.
+    /// Vision's box can stop above the descender: on iOS 26.5 (r2v3g,
+    /// discover-nfl-320-ax5) a box from 869pt refused a frame whose "j" is
+    /// inked from its 899.7pt baseline down to 906.7pt, the next line 13pt
+    /// lower. So the ink is read down to the line's first blank pixel row
+    /// below its middle — never past it, into the next line.
     private func isProjection(_ line: Line) -> Bool {
         if line.text.contains("Projection") { return true }
         guard line.text.contains("Proiection") else { return false }
-        let ink = line.frame.inkClusters(in: line.box)
+        let ink = line.frame.inkClusters(in: line.frame.downToFirstBlankRow(line.box, limit: line.box.height / 2))
         guard ink.count >= 8 else { return false }
         let baseline = ink.suffix(5).map(\.maxY).max() ?? line.box.maxY
         let jBottom = ink.dropFirst(2).dropLast(5).map(\.maxY).max() ?? baseline
@@ -933,5 +938,20 @@ private final class RenderedFrame11325 {
             }
         }
         return clusters
+    }
+
+    /// `rect` (points) with its bottom at the first pixel row below its middle
+    /// that has no ink in its columns, at most `limit` below its bottom: the
+    /// line's own ink, a "j" descender Vision's box cut short included, and
+    /// nothing below a blank row (the next line). `rect` as given if its middle
+    /// row has no ink or no blank row comes within `limit`.
+    func downToFirstBlankRow(_ rect: CGRect, limit: CGFloat) -> CGRect {
+        let s = scale
+        let x0 = max(0, Int((rect.minX * s).rounded(.down))), x1 = min(width, Int((rect.maxX * s).rounded(.up)))
+        let y0 = max(0, Int((rect.midY * s).rounded(.down))), y1 = min(height, Int(((rect.maxY + limit) * s).rounded(.up)))
+        let inked = { (y: Int) in (x0..<x1).contains { self.luma[y * self.width + $0] < 200 } }
+        guard x0 < x1, y0 < y1, luma.count == width * height, inked(y0),
+              let blank = (y0..<y1).first(where: { !inked($0) }) else { return rect }
+        return CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: CGFloat(blank) / s - rect.minY)
     }
 }
