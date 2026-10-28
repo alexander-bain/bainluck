@@ -3446,8 +3446,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # entry per subscribed outcome) and holds the mark of the buffered value.
     tail_receipts = TailReceipts("polymarket")
     blend_refresher.receipts = tail_receipts
-    # #10090 stage trace: OFF unless ONE event, its explicit outcomes and an
-    # absolute expiry <=600 s away are configured (`app/utils/pm_stage_trace.py`).
+    # #10090 stage trace: OFF unless 1-4 events (a fold's members), their
+    # explicit outcomes and an absolute expiry <=600 s away are configured
+    # (`app/utils/pm_stage_trace.py`).
     # Evidence only; it never changes a price, a schedule or a retry.
     tail_receipts.exact_trace = None
     with contextlib.suppress(Exception):

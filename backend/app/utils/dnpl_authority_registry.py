@@ -16,7 +16,9 @@ from app.utils.blend_preview import (
     LEDGER_TTL_TOKEN,
     _basis_observation_time,
     _ledger_text,
+    carry_selection,
     observe_publication,
+    recompose_traced,
 )
 from app.utils.dnpl_authority_transport import encode_preview
 from app.utils.dnpl_redis_authority import (
@@ -300,7 +302,7 @@ class AuthorityLedgerRegistry(LedgerRegistry):
             stats["published"] = stats.get("published", 0) + 1
         elif result[0] == "contributor" and retries > 0:
             stats["ledger_recomposed"] = stats.get("ledger_recomposed", 0) + 1
-            sync = self._bind_op(
+            sync = self._bind_op(recompose_traced(meta,
                 {
                     "ledger_op": "settle",
                     "mode": "sync",
@@ -311,8 +313,8 @@ class AuthorityLedgerRegistry(LedgerRegistry):
                     "base_rev": None,
                     "base": None,
                 }
-            )
-            for fresh in await self._mutate(sync, call, stats):
+            ))
+            for fresh in carry_selection(meta, await self._mutate(sync, call, stats)):
                 await self._publish(fresh, call, channel, stats, retries - 1, observe)
         elif result[0] in ("stale", "terminal"):
             stats["ledger_superseded"] = stats.get("ledger_superseded", 0) + 1
