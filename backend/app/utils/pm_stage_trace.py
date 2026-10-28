@@ -50,7 +50,7 @@ one window, one shared WS_PM_TRACE_MAX_LINES budget: the cap bounds the
 worker's log volume, which more events do not make cheaper. Each event keeps its
 own attempt, open chains and admission lines, and every per-event line names
 its event. START/ARMED carry ``events`` (sorted) and ``outcome_event`` instead
-of ``event``; a CHUNK whose selected outcomes span two of them reads
+of ``event`` (plus ``events_without_outcome``); a CHUNK whose selected outcomes span two of them reads
 ``event: "MULTIPLE"`` with ``events``, and a chunk fenced on two reads
 ``fenced_by`` as ``{event: attempt}``. With ONE event id every line is exactly
 the single-event line, and the 4-outcome cap is unchanged.
@@ -251,6 +251,9 @@ class PMStageTrace(ExactKalshiTrace):
         return dict(
             events=sorted(self.events),
             outcome_event={str(o): e for o, e in sorted(self.outcome_event.items())},
+            # Event capacity is not outcome coverage: a member with no mapped
+            # outcome is named, never read as covered.
+            events_without_outcome=sorted(self.events - set(self.outcome_event.values())),
         )
 
     def _ours(self, event_ids):

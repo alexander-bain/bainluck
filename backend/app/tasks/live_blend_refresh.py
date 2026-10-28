@@ -2828,6 +2828,21 @@ class LiveBlendRefresher:
         except Exception:
             pass
 
+    def _selections_closer(self, selections):
+        """#10090: close ``selections`` on exit; a no-op context without a trace."""
+        if selections is None:
+            return contextlib.nullcontext()
+
+        @contextlib.asynccontextmanager
+        async def closer():
+            try:
+                yield
+            finally:
+                if selections:
+                    self._stage_trace("selections_closed", list(selections.values()))
+
+        return closer()
+
     def _trace_proposal(self, sel, ops, event_id, ledger) -> None:
         """#10090: a traced selection rides its proposal into the ledger call.
 
@@ -3809,10 +3824,17 @@ class LiveBlendRefresher:
 
         if self._session_factory is not None:
             get_task_session = self._session_factory  # #2471: the consumer's
+        # #10090: a stage trace's selection receipts, only while one is
+        # attached (None otherwise: no receipt work in this attempt). Every
+        # PROPOSE selection still open when the attempt exits, by any route
+        # (a lock-budget raise, a cancellation), is closed as unsent.
+        select_open = self._stage_hook("selection_open")
+        selections: Optional[dict[int, tuple]] = None if select_open is None else {}
         async with (
             self._normal_holds() as held,
             self._history_reservations(event_ids, now, owed_snapshots) as reservation,
             self._session_slot(), get_task_session() as session,
+            self._selections_closer(selections),
         ):
             reserved, history_ready = reservation
             self._stage_trace("attempt_session", event_ids)
@@ -3899,10 +3921,6 @@ class LiveBlendRefresher:
             preview_only: set[int] = set()
             preview_seq: dict[int, int] = {}
             preview_failed: set[int] = set()
-            # #10090: a stage trace's selection receipts, only while one is
-            # attached (None otherwise: no receipt work in this loop).
-            select_open = self._stage_hook("selection_open")
-            selections: Optional[dict[int, int]] = None if select_open is None else {}
             # #10090: compute and publish eligible previews before any event's
             # UPDATE so one row-lock wait cannot hold back a sibling display.
             # Persistence retains the same sorted lock order (#837).

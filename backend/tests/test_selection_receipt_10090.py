@@ -176,7 +176,7 @@ async def test_batch_selection_is_receipted_at_its_decision_and_rides_the_propos
         "linkage": "TRACKED_OUTCOME_NO_RETAINED_COMMIT_AT_THIS_OBSERVATION"}]
     # The proposal op carries the sel into the ledger call; nothing else changed.
     (op,) = [f for _, f in sent if isinstance(f, dict) and f.get("ledger_op") == "propose"]
-    assert op["_trace"][0] == selected["sel"]
+    assert op["_trace"][0] == (selected["sel"], 1) and selected["attempt"] == 1
     assert op["_trace"][1] == trace.clock and op["_trace"][2] == trace.readset
     # Captured, never executed: the publication returned with no ledger outcome.
     (unsent,) = stage(lines, "SELECTION_UNSENT")
@@ -221,16 +221,20 @@ async def test_hidden_repeat_count_is_reported_on_the_next_line(monkeypatch):
                     value=0.51, basis={"7": 2.0})
     first, second = stage(lines, "SELECTED")
     assert first["repeats_hidden"] == 0 and second["repeats_hidden"] == 2
-    # A proposing repeat writes nothing but returns the original sel (its
-    # outcome still joins), and re-opens it for the closer.
+    # A proposing repeat writes nothing but returns the original sel as its
+    # NEXT attempt (its outcome joins (sel, attempt)), opened for the closer.
     sel = trace.selection(trace.selection_open(1), "kalshi", "proposal", route="refresh",
                           value=0.6, basis={"7": 3.0}, then="PROPOSE")
     trace.readset(sel, {"event": 1, "reply": ["no_base"]}, "no_base")
     again = trace.selection(trace.selection_open(1), "kalshi", "proposal", route="refresh",
                             value=0.6, basis={"7": 3.0}, then="PROPOSE")
-    assert again == sel and len(stage(lines, "SELECTED")) == 3
+    assert again == (sel[0], 2) and len(stage(lines, "SELECTED")) == 3
+    readset = stage(lines, "READSET")[-1]
+    assert (readset["sel"], readset["attempt"]) == sel and "attempt_selected_mono" not in readset
     trace.selections_closed([again])
-    assert stage(lines, "SELECTION_UNSENT")[-1]["sel"] == sel
+    unsent = stage(lines, "SELECTION_UNSENT")[-1]
+    assert (unsent["sel"], unsent["attempt"]) == again
+    assert isinstance(unsent["attempt_selected_mono"], float)
 
 
 async def test_untracked_event_writes_no_selection():
@@ -255,7 +259,7 @@ async def test_unchanged_route_receipts_selection_and_tags_its_proposal(monkeypa
     assert selected["observed_basis"] == {str(row.id): bound for row in rows}
     assert selected["proven_home_orientation"] is True
     (op,) = [f for _, f in frames if f.get("ledger_op") == "propose"]
-    assert op["_trace"][0] == selected["sel"]
+    assert op["_trace"][0] == (selected["sel"], 1)
 
 
 async def test_unchanged_route_names_a_send_boundary_refusal(monkeypatch):
@@ -329,7 +333,7 @@ async def test_published_frame_repeats_sel_with_the_readset_redis_clock(rig):  #
         frame = await wire(listener)
         (selected,) = stage(lines, "SELECTED")
         (line,) = stage(lines, "PREVIEW")
-        assert selected["sel"] == sel == line["sel"]
+        assert (selected["sel"], 1) == sel == (line["sel"], line["attempt"])
         assert selected["inputs"] == [{"outcome": K_OUTCOME, "input_seq": 5, "receive_id": 1,
                                        "linkage": "EXACT_OUTCOME_OBSERVATION_BASIS"}]
         readset = line["readset"]
@@ -375,7 +379,8 @@ async def test_unchanged_observation_proposal_joins_its_preview(rig):  # noqa: F
         await k.execute(ops, call, event_channel, {}, observe=kt.preview)
         frame = await wire(listener)
         (line,) = stage(lines, "PREVIEW")
-        assert line["sel"] == sel and line["readset"]["seq"] == frame["preview"]["seq"]
+        assert (line["sel"], line["attempt"]) == sel
+        assert line["readset"]["seq"] == frame["preview"]["seq"]
     finally:
         await listener.aclose()
 
@@ -394,7 +399,7 @@ async def test_ledger_refusal_is_a_readset_line_with_the_redis_status(rig):  # n
         await k.execute(ops, call, event_channel, {}, observe=kt.preview)
         (line,) = stage(lines, "READSET")
         assert (line["sel"], line["event"], line["outcome"], line["status"]) == (
-            sel, EVENT, "no_base", "no_base")
+            sel[0], EVENT, "no_base", "no_base")
         assert line["redis_ms"] == "UNAVAILABLE" and line["read"] == "NOT_A_READSET_REPLY"
         assert line["call_started_mono"] <= line["call_ended_mono"]
         assert stage(lines, "PREVIEW") == []
@@ -426,7 +431,7 @@ async def test_composed_frame_lost_before_send_is_closed_with_its_readset(rig): 
         kt.selections_closed([sel])
         (unsent,) = stage(lines, "SELECTION_UNSENT")
         assert (unsent["sel"], unsent["reason"], unsent["status"]) == (
-            sel, "COMPOSED_SEND_UNOBSERVED", "ok")
+            sel[0], "COMPOSED_SEND_UNOBSERVED", "ok")
         assert isinstance(unsent["redis_ms"], int) and isinstance(unsent["seq"], int)
     finally:
         await listener.aclose()
@@ -453,7 +458,7 @@ async def test_an_unanswered_ledger_call_is_closed_as_such(rig):  # noqa: F811
         kt.selections_closed([sel])
         (unsent,) = stage(lines, "SELECTION_UNSENT")
         assert (unsent["sel"], unsent["reason"], unsent["status"]) == (
-            sel, "LEDGER_CALL_UNANSWERED", "NO_REPLY")
+            sel[0], "LEDGER_CALL_UNANSWERED", "NO_REPLY")
         assert unsent["call_ended_mono"] == "UNAVAILABLE" and unsent["op"] == "propose"
     finally:
         await listener.aclose()
@@ -477,7 +482,7 @@ async def test_a_stale_ticket_proposes_nothing_and_the_selection_says_so(rig):  
         assert ops == []
         refresher_for(kt)._trace_proposal(sel, ops, EVENT, True)
         (unsent,) = stage(lines, "SELECTION_UNSENT")
-        assert (unsent["sel"], unsent["reason"], unsent["ops"]) == (sel, "NOT_PROPOSED", [])
+        assert (unsent["sel"], unsent["reason"], unsent["ops"]) == (sel[0], "NOT_PROPOSED", [])
     finally:
         await listener.aclose()
 
@@ -573,6 +578,6 @@ async def test_disarmed_ledger_call_is_unchanged_and_runs_no_receipt_work(rig, m
         assert not any("_trace" in str(a) or "selection" in str(a) for a in sent)
         assert set(traced_frame) == set(untraced)
         assert set(traced_frame["preview"]) == set(untraced["preview"])
-        assert stage(lines, "PREVIEW")[-1]["sel"] == sel
+        assert stage(lines, "PREVIEW")[-1]["sel"] == sel[0]
     finally:
         await listener.aclose()

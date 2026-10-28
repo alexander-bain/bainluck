@@ -71,7 +71,11 @@ def test_one_setting_arms_up_to_four_members_with_their_mapping_named():
     assert start["mapping"] == {"70": "MAPPED", "80": "MAPPED", "90": "OTHER_EVENT",
                                 "99": "UNMAPPED"}
     assert start["outcome_event"] == {"70": 7, "80": 8}
+    assert start["events_without_outcome"] == []
     assert trace.targets == frozenset({70, 80}) and trace.event is None
+    # A member armed with no mapped outcome is named, not read as covered.
+    _, lines = make(WS_PM_TRACE_EVENT="7,8,9", WS_PM_TRACE_OUTCOMES="70,80")
+    assert lines[0]["events_without_outcome"] == [9]
     # Bounds: at most four events; a fold may name eight outcomes, one event four.
     assert make(WS_PM_TRACE_EVENT="7,8,9,10")[0] is not None
     assert make(WS_PM_TRACE_EVENT="7,8,9,10,11")[0] is None
@@ -177,7 +181,7 @@ def test_the_other_members_preview_and_selection_are_written():
             continue
         assert [(p["event"], p["kind"], p["seq"]) for p in previews] == [(8, "revoke", 4)]
         (s,) = selected
-        assert s["event"] == 8 and s["sel"] == sel
+        assert s["event"] == 8 and (s["sel"], s["attempt"]) == sel
         assert s["inputs"] == [{"outcome": 80, "input_seq": 2, "receive_id": "UNAVAILABLE",
                                 "linkage": "EXACT_OUTCOME_OBSERVATION_BASIS"}]
 
@@ -212,6 +216,7 @@ def test_warm_arm_re_reads_every_members_mapping():
     assert armed["events"] == [7, 8] and armed["mapping"] == {"70": "MAPPED",
                                                                "80": "OTHER_EVENT"}
     assert armed["outcome_event"] == {"70": 7} and trace.targets == frozenset({70})
+    assert armed["events_without_outcome"] == [8]
     assert [a["input_seq"] for a in stage(lines, "ACCEPTED")] == [2]
 
 

@@ -176,6 +176,7 @@ class ExactKalshiTrace:
         # last non-proposing selection with how many identical ones it hid.
         self.selection_seq = 0
         self.open_selections, self.last_selections = {}, {}
+        self.selection_attempts = {}  # sel -> its latest attempt ordinal
 
     def _clear(self):
         for state in (
@@ -190,6 +191,7 @@ class ExactKalshiTrace:
             self.last_writes,
             self.open_selections,
             self.last_selections,
+            self.selection_attempts,
         ):
             state.clear()
 
@@ -625,17 +627,40 @@ class ExactKalshiTrace:
                 except Exception:
                     fields["composition"] = "COMPOSITION_ERROR"  # a line, not silence
             selection = ledger.get("selection") if isinstance(ledger, dict) else None
+            dropped = ledger.get("selection_dropped") if isinstance(ledger, dict) else None
             if isinstance(selection, tuple) and len(selection) == 2:
-                # A traced proposal's frame: its SELECTED ``sel`` and the
-                # read-set it was composed on (`readset`).
-                self.open_selections.pop(selection[0], None)
+                # A traced proposal's frame: its SELECTED ``sel``/``attempt``
+                # and the read-set it was composed on (`readset`). A
+                # ``contributor`` reply sent nothing: the registry recomposes,
+                # so the selection stays open for the recomposed frame (or the
+                # closer) and this line says it is not the outcome.
+                key, receipt = selection
+                held = self.open_selections.get(key)
+                terminal = not (reply and reply[0] == "contributor")
+                if terminal:
+                    self.open_selections.pop(key, None)
+                else:
+                    self._held_contributor(key)
                 try:
-                    fields.update(sel=_int(selection[0]), readset=_readset_fields(selection[1]))
+                    fields.update(_selection_ids(key, held), selection_terminal=terminal,
+                                  readset=_readset_fields(receipt))
+                    if isinstance(receipt, dict) and "recomposed_from" in receipt:
+                        fields["recomposed_from"] = _recomposed(receipt["recomposed_from"])
                 except Exception:
                     fields["readset"] = "READSET_ERROR"
             self._record("PREVIEW", **fields)
+            if isinstance(dropped, tuple) and len(dropped) == 2:
+                # A recompose whose frame no longer carries the selected entry:
+                # that frame is not this selection's delivery.
+                self.selection_unsent(dropped[0], "RECOMPOSED_WITHOUT_SELECTED_ENTRY")
         except Exception:
             pass  # evidence must never cost a quote
+
+    def _held_contributor(self, key):
+        held = self.open_selections.get(key)
+        if held is not None:
+            receipt = dict(held[1] or {}, contributor_refused=True)
+            self._put(self.open_selections, key, (held[0], receipt, *held[2:]))
 
     def _preview_state(self, frame, meta, ledger, reply):
         from types import SimpleNamespace
@@ -730,8 +755,13 @@ class ExactKalshiTrace:
         )
         return fields
 
-    def _preview_inputs(self, basis, ids):
-        """Exact input identities behind one source's observation basis."""
+    def _preview_inputs(self, basis, ids, name_untraced=False):
+        """Exact input identities behind one source's observation basis.
+
+        ``name_untraced`` (a selection's own basis): an outcome this trace has
+        no identity for is named, so event capacity is never read as outcome
+        coverage.
+        """
         inputs = []
         for key in ids:
             oid = int(key)
@@ -751,6 +781,9 @@ class ExactKalshiTrace:
                     input_seq="UNAVAILABLE",
                     linkage="TRACKED_OUTCOME_NO_RETAINED_COMMIT_AT_THIS_OBSERVATION",
                 ))
+            elif name_untraced:
+                inputs.append(dict(outcome=oid, input_seq="UNAVAILABLE",
+                                   linkage="OUTCOME_NOT_TRACED"))
         return inputs
 
     # ── #10090 selection receipts ─────────────────────────────────────────
@@ -790,18 +823,36 @@ class ExactKalshiTrace:
             end_wall, end_mono = self.wall(), self.mono()
             shown, observed = self._selection_basis(basis)
             key = (event, route)
-            signature = (disposition, reason, then, _scalar(value), tuple(observed.items()))
+            reading_fields = None
+            if reading is not None:
+                try:
+                    reading_fields = self._selection_reading(reading, value)
+                except Exception:
+                    reading_fields = {"reading": "READING_ERROR"}  # a line, not silence
+            # The complete semantic witness: reading identity, orientation,
+            # eligibility (full record) and the WHOLE basis, not the shown
+            # slice. A changed witness is a new selected state, never hidden.
+            witness = _witness(reading, value, basis)
+            signature = (disposition, reason, then, _scalar(value), tuple(observed.items()),
+                         witness)
             last, hidden, last_sel = self.last_selections.get(key, (None, 0, None))
             if last == signature:
                 self._put(self.last_selections, key, (last, hidden + 1, last_sel))
                 if then != "PROPOSE" or last_sel is None:
                     return None
-                self._put(self.open_selections, last_sel, (event, None))
-                return last_sel
+                # A proposing repeat is a new ATTEMPT of the same state: its
+                # outcome joins (sel, attempt), so outcomes stay an ordered set.
+                attempt = self.selection_attempts.get(last_sel, 1) + 1
+                self._put(self.selection_attempts, last_sel, attempt)
+                again = (last_sel, attempt)
+                self._put(self.open_selections, again, (event, None, end_mono))
+                return again
             self.selection_seq += 1
             sel = self.selection_seq
             fields = dict(
                 sel=sel,
+                attempt=1,
+                witness=witness,
                 event=event,
                 source=_word(source),
                 route=_word(route),
@@ -815,24 +866,23 @@ class ExactKalshiTrace:
                 repeats_hidden=hidden,
                 value=_scalar(value),
             )
-            if reading is not None:
-                try:
-                    fields.update(self._selection_reading(reading, value))
-                except Exception:
-                    fields["reading"] = "READING_ERROR"  # a line, not silence
+            if reading_fields is not None:
+                fields.update(reading_fields)
             if basis is not None:
                 fields.update(
                     observed_basis=observed,
                     observed_basis_omitted=len(basis) - len(shown),
-                    inputs=self._preview_inputs(basis, shown),
+                    inputs=self._preview_inputs(basis, shown, name_untraced=True),
                 )
             self._record("SELECTED", **fields)
             if self.stopped:
                 return None
             self._put(self.last_selections, key, (signature, 0, sel))
+            self._put(self.selection_attempts, sel, 1)
             if then == "PROPOSE":
-                self._put(self.open_selections, sel, (event, None))
-            return sel
+                self._put(self.open_selections, (sel, 1), (event, None, end_mono))
+                return (sel, 1)
+            return (sel, 1)
         except Exception:
             return None  # evidence must never cost a quote
 
@@ -888,13 +938,15 @@ class ExactKalshiTrace:
         try:
             if not self.active():
                 return
+            held = self.open_selections.get(sel)
+            selected_mono = held[2] if held is not None and len(held) > 2 else None
             if outcome in ("STARTED", "COMPOSED"):
-                self._put(self.open_selections, sel, (receipt.get("event"), receipt))
+                self._put(self.open_selections, sel, (receipt.get("event"), receipt, selected_mono))
                 return
             self.open_selections.pop(sel, None)
             self._record(
                 "READSET",
-                sel=_int(sel),
+                **_selection_ids(sel, held),
                 event=_int(receipt.get("event")),
                 outcome=_word(outcome),
                 **_readset_fields(receipt),
@@ -910,8 +962,8 @@ class ExactKalshiTrace:
             held = self.open_selections.pop(sel, None)
             if held is None:
                 return  # resolved already, or never opened here
-            event, receipt = held
-            fields = dict(sel=sel, event=_int(event), reason=_word(reason))
+            event, receipt = held[0], held[1]
+            fields = dict(**_selection_ids(sel, held), event=_int(event), reason=_word(reason))
             if ops is not None:
                 fields["ops"] = [_word(kind) for kind in list(ops)[:PREVIEW_BASIS]]
             if receipt is not None:
@@ -930,6 +982,7 @@ class ExactKalshiTrace:
                     sel,
                     "NO_LEDGER_OUTCOME" if receipt is None
                     else "LEDGER_CALL_UNANSWERED" if "reply" not in receipt
+                    else "CONTRIBUTOR_NOT_RECOMPOSED" if receipt.get("contributor_refused")
                     else "COMPOSED_SEND_UNOBSERVED",
                 )
 
@@ -971,11 +1024,14 @@ def _eligibility(record):
         rule=_label(getattr(record, "rule", None)),
         market_id=_opt_int(getattr(record, "market_id", None)),
         source_market_id=_label(getattr(record, "source_market_id", None)),
+        semantic_type=_label(getattr(record, "semantic_type", None)),
+        version=_opt_int(getattr(record, "version", None)),
         contributors=[
             dict(market_id=_opt_int(getattr(ref, "market_id", None)),
                  source_market_id=_label(getattr(ref, "source_market_id", None)))
             for ref in list(refs)[:PREVIEW_BASIS]
         ],
+        contributors_omitted=max(0, len(refs) - PREVIEW_BASIS),
     )
 
 
@@ -1004,17 +1060,74 @@ def _readset_fields(receipt):
         call_ended_mono=receipt.get("ended_mono", "UNAVAILABLE"),
     )
     if status in READSET_REPLIES and len(reply) >= 7:
+        read = [
+            dict(source=_word(reply[i]), owner=_decimal(reply[i + 1]),
+                 deadline_ms=_decimal(reply[i + 2]))
+            for i in range(7, len(reply) - 3, 4)
+        ]
         fields.update(
             gen=_decimal(reply[1]),
             seq=_decimal(reply[2]),
             redis_ms=_decimal(reply[3]),
             base_rev=_decimal(reply[4]),
-            read_contributors=[
-                dict(source=_word(reply[i]), owner=_decimal(reply[i + 1]),
-                     deadline_ms=_decimal(reply[i + 2]))
-                for i in range(7, len(reply) - 3, 4)
-            ][:PREVIEW_SOURCES],
+            read_contributors=read[:PREVIEW_SOURCES],
+            read_contributors_omitted=max(0, len(read) - PREVIEW_SOURCES),
         )
     else:
         fields.update(redis_ms="UNAVAILABLE", read="NOT_A_READSET_REPLY")
     return fields
+
+
+def _selection_ids(key, held=None):
+    """``sel`` and ``attempt`` of a selection key ``(sel, attempt)``; a repeat
+    attempt also names its own decision clock (attempt 1's is SELECTED's)."""
+    if not (isinstance(key, tuple) and len(key) == 2):
+        return dict(sel=_int(key), attempt="UNAVAILABLE")
+    fields = dict(sel=_int(key[0]), attempt=_int(key[1]))
+    if key[1] != 1 and held is not None and len(held) > 2 and held[2] is not None:
+        fields["attempt_selected_mono"] = held[2]
+    return fields
+
+
+def _recomposed(origin):
+    if isinstance(origin, (tuple, list)) and len(origin) == 2:
+        return dict(epoch=_int(origin[0]), seq=_int(origin[1]))
+    return "UNAVAILABLE"
+
+
+def _witness(reading, value, basis):
+    """A bounded hash of the complete selected witness (16 hex chars).
+
+    Reading identity and orientation, every contributing outcome and its
+    probability, the full eligibility record (version, semantic type and every
+    contributor) and the whole observed basis. Never raises.
+    """
+    import hashlib
+
+    try:
+        rows = ()
+        record = None
+        if reading is not None:
+            speaker = getattr(reading, "outcome", None)
+            rows = tuple(getattr(reading, "contributing_outcomes", None) or (speaker,))
+            record = getattr(reading, "eligibility", None)
+        market = getattr(reading, "market", None)
+        doc = dict(
+            value=repr(value),
+            market=repr(getattr(market, "id", None)),
+            market_ticker=repr(getattr(market, "external_id", None)),
+            speaker=repr(getattr(getattr(reading, "outcome", None), "id", None)),
+            rows=[(repr(getattr(r, "id", None)), repr(getattr(r, "current_probability", None)))
+                  for r in rows],
+            home=repr(getattr(reading, "home_probability", None)),
+            yes=repr(getattr(reading, "yes_probability", None)),
+            devigged=repr(getattr(reading, "devigged", None)),
+            named_home=repr(getattr(reading, "named_home_quote", None)),
+            eligibility=None if record is None else repr(
+                record.to_entry() if hasattr(record, "to_entry") else record),
+            basis=sorted((repr(k), repr(v)) for k, v in (basis or {}).items())
+            if isinstance(basis, dict) else repr(basis),
+        )
+        return hashlib.sha1(json.dumps(doc, sort_keys=True).encode()).hexdigest()[:16]
+    except Exception:
+        return "UNAVAILABLE"
