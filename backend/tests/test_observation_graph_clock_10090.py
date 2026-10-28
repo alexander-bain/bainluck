@@ -105,6 +105,11 @@ async def test_incomplete_read_never_advances_clock(monkeypatch, failure):
                 await task
         else:
             await task
+            # The caller stopped waiting; its read is counted until it ends,
+            # and completing normally then still supplies no clock (#10090).
+            assert held._sampling == 1 and len(r._detached_reads) == 1
+            release.set()
+            await asyncio.wait(set(r._detached_reads))
     else:
         await task
     assert held._database_bound == before == held.bound_for(frozen)
