@@ -1067,6 +1067,8 @@ export default function EventPage({ params }: EventPageProps) {
     const readingEventId = eventId;
     const trigger = quoteTriggerRef.current;
     const recovery = recoveryIntentRef.current;
+    const completingRecovery = recoveryRef.current;
+    const completingGeneration = recoveryGeneration;
     const readingLifetime = quoteReadLifetimeRef.current;
     const sourceHistory = sourceAddedHistoryRef.current?.trigger === trigger
       ? sourceAddedHistoryRef.current : null;
@@ -1135,7 +1137,7 @@ export default function EventPage({ params }: EventPageProps) {
           setSourceObservationVersion((version) => version + 1);
         }
       }
-      const [adoptedHistory] = await Promise.all([
+      const [adoptedHistory, adoptedDetail] = await Promise.all([
         reconciling && servedHistoryIsNewer(latestBlendEdgeRef.current, history)
           ? undefined : refreshHistoryRef.current(history, { revalidate: false }),
         // #10090: against what the cache holds AT the write, not the rendered
@@ -1153,6 +1155,21 @@ export default function EventPage({ params }: EventPageProps) {
       }
       if (recoveryIntentRef.current === recovery) recoveryIntentRef.current = 0;
       if (quoteReadLifetimeRef.current === readingLifetime) reconcileLedger.settle((floor) => covering.includes(floor) && written(floor) === "paid");
+      // #10666: a fully written pair satisfies only the recovery generation and
+      // helper instance captured before this read began. Never infer completion
+      // from a price frame or a partially paid floor.
+      if (completingRecovery && recoveryRef.current === completingRecovery &&
+          quoteReadLifetimeRef.current === readingLifetime &&
+          quoteEventIdRef.current === readingEventId &&
+          quoteHistoryRangeRef.current === fullHistoryRequested &&
+          sourceHistoryPaid && quoteTriggerRef.current === null &&
+          !reconcileLedger.owed() && adoptedDetail && adoptedHistory &&
+          canSubscribeEventQuotes(heldEventRef.current) &&
+          canSubscribeEventQuotes(adoptedDetail) &&
+          !(storedEventRef.current?.id === readingEventId && !canSubscribeEventQuotes(storedEventRef.current)) &&
+          quotePairCoversTrigger(adoptedDetail, adoptedHistory, readingEventId, adopted.blend_fold_revision)) {
+        completingRecovery.complete(completingGeneration);
+      }
       setLastRefresh(Date.now());
     } finally {
       // EXPIRED, not paid: after the one automatic retry, ordinary polling

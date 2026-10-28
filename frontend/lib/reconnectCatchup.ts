@@ -35,6 +35,18 @@ export function createReconnectCatchup(
         if (!retired) requestPair(latest);
       }, wait);
     },
+    // #10666: the page already adopted a complete pair for this generation, so
+    // the queued catch-up would only repeat it. A newer generation keeps its
+    // timer. Caller proves same event/lifetime/range and captures the
+    // generation before its read starts.
+    complete(generation: number): boolean {
+      if (retired || !Number.isSafeInteger(generation) || generation <= 0 ||
+          generation !== latest || timer === null) return false;
+      clearTimeout(timer);
+      timer = null;
+      dueAt = 0;
+      return true;
+    },
     cancel() {
       retired = true;
       if (timer !== null) clearTimeout(timer);

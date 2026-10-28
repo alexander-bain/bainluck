@@ -210,7 +210,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
     reconcileCatchupRef, reconcileOrdinalRef,
   }), [eventId, reconcileLedger]);
   const quoteEligible = canSubscribeEventQuotes(event);
-  const { chartPoints } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame, applyReconcileControl);
+  const { chartPoints, recoveryGeneration } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame, applyReconcileControl);
   const [sourceObservationVersion, setSourceObservationVersion] = useState(0);
   const admittedChartRef = useRef<chart.AdmittedChartFrames | null>(null);
   const renderedHistory = useMemo(HISTORY_MEMO.runInNewContext({ ...chart, ...pin, eventId, event, servedHistory, quoteEligible, chartPoints, admittedChartRef }), HISTORY_DEPS.runInNewContext({servedHistory, event, quoteEligible, chartPoints, eventId, sourceObservationVersion}));
@@ -226,7 +226,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   const refreshHistoryRef = useRef(refreshHistory);
   refreshHistoryRef.current = refreshHistory;
   pairedQuoteReadRef.current = PAIR.runInNewContext({
-    ...chart, admittedChartRef, setSourceObservationVersion,
+    recoveryRef, recoveryGeneration, ...chart, admittedChartRef, setSourceObservationVersion,
     eventId, fullHistoryRequested, fetchEvent, fetchEventHistory, EVENT_BOOT_HISTORY_HOURS, historyRangeParam,
     createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef, pairJournalRef, reconcileLedger, storedEventRef,
     quotePairCoversTrigger, coversQuoteRevision, sourceAddedHistoryRef, keepNewerHeldHeadline, carryNewerHeldState, canSubscribeEventQuotes, setLastRefresh, Date,
