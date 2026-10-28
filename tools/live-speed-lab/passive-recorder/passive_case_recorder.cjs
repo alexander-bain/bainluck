@@ -318,10 +318,13 @@ async function record(opts) {
     finishPromise = (async () => {
       for (const t of timers) clearTimeout(t);
       const steps = [];
+      // A slow close after the window is custody, not an observation fault; it
+      // counts toward status only if the browser then survives the kill.
+      const teardownFaults = [];
       const bounded = async (label, fn, ms) => {
         let timer;
         try { await Promise.race([fn(), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), ms); })]); steps.push({label, ok: true}); }
-        catch (e) { steps.push({label, ok: false, error: String(e)}); fault('teardown-step-failed', {label, error: String(e)}); }
+        catch (e) { steps.push({label, ok: false, error: String(e)}); (label === 'browser-close' ? teardownFaults : faults).push({kind: 'teardown-step-failed', label, error: String(e)}); }
         finally { clearTimeout(timer); }
       };
       let queue = null;
@@ -337,7 +340,17 @@ async function record(opts) {
           if (!head.captureComplete || !seqOk) fault('primary-export-incomplete', {faults: head.faults, dropped: head.dropped, sequence_ok: seqOk});
         }, 10000);
       } else fault('primary-not-installed');
-      if (browser) await bounded('browser-close', () => browser.close(), 10000);
+      if (browser) await bounded('browser-close', () => browser.close(), 20000);
+      // Custody: a browser that did not close in time is killed, and the kill is checked.
+      const custody = {browser_closed: !steps.some(x => x.label === 'browser-close' && !x.ok), killed: [], remaining: []};
+      if (browser && !custody.browser_closed) {
+        const kids = () => require('child_process').execFileSync('ps', ['-Ao', 'pid=,ppid=,pgid=,command='], {encoding: 'utf8'})
+          .split('\n').map(l => l.trim().split(/\s+/)).filter(r => r.length > 3 && Number(r[1]) === process.pid && /chrom/i.test(r.slice(3).join(' ')));
+        for (const r of kids()) { try { process.kill(-Number(r[2]), 'SIGKILL'); } catch { try { process.kill(Number(r[0]), 'SIGKILL'); } catch { /* reported below */ } } custody.killed.push(Number(r[0])); }
+        await new Promise(r => setTimeout(r, 500));
+        custody.remaining = kids().map(r => Number(r[0]));
+        if (custody.remaining.length) fault('browser-survived-teardown', {pids: custody.remaining});
+      }
       await bounded('transport-close', () => transport.close(), 5000);
       clearTimeout(hardKill);
       const coverage = computeCoverage();
@@ -357,7 +370,8 @@ async function record(opts) {
       const allFaults = [...faults, ...clock.faults];
       const status = stopping.reason !== 'deadline' ? 'STOPPED' : (allFaults.length || holes.length) ? 'UNRESOLVED' : 'COMPLETE';
       const stop = {status, reason: stopping.reason, detail: stopping.detail || null, stopped_since_t0_ms: stopping.since_t0_ms,
-        counters: {...counters, transport: transport.counters, journal: journal.stats, page_queue: queue}, limits: L, steps};
+        counters: {...counters, transport: transport.counters, journal: journal.stats, page_queue: queue}, limits: L, steps,
+        custody: typeof custody === 'undefined' ? null : custody, teardown_faults: teardownFaults};
       const summary = {schema: 'bainluck.passive-case-summary/1', recorder: RECORDER_VERSION, scope, case_id: m.case_id, grant_id: g.grant_id,
         status, reason: stopping.reason, coverage, holes, faults: allFaults.slice(0, 200), fault_count: allFaults.length,
         fault_kinds: [...new Set(allFaults.map(f => f.kind))].sort(),
@@ -374,15 +388,21 @@ async function record(opts) {
   };
 
   for (const sig of ['SIGINT', 'SIGTERM']) process.once(sig, () => requestStop('cancelled', {signal: sig}));
-  const deadline = setTimeout(() => requestStop('deadline'), Math.max(0, contract.ACQUISITION.end_offset_ms - sinceT0()[0]));
-  timers.push(deadline);
+  // The watchdog never ends early: Node timers can fire a millisecond before
+  // their delay, so it re-arms until the collector clock has reached T0+185 s.
+  const watchdog = () => {
+    const left = contract.ACQUISITION.end_offset_ms - sinceT0()[0];
+    if (left > 0) { timers.push(setTimeout(watchdog, Math.ceil(left))); return; }
+    requestStop('deadline');
+  };
+  watchdog();
 
   try {
     // Setup may not begin before the manifest's earliest setup edge.
     const wait = W.setup_earliest_wall_ms - clock.wall();
     if (wait > 0) await new Promise(r => timers.push(setTimeout(r, wait)));
     if (stopping) return finish();
-    browser = await playwright.chromium.launch({headless: true, ...(opts['browser-channel'] === 'chrome' ? {channel: 'chrome'} : {}),
+    browser = await playwright.chromium.launch({headless: true, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false, ...(opts['browser-channel'] === 'chrome' ? {channel: 'chrome'} : {}),
       proxy: {server: `http://127.0.0.1:${proxyPort}`, bypass: '<-loopback>'},
       args: ['--disable-background-networking', '--disable-component-update', '--no-pings', '--disable-domain-reliability', '--disable-sync', '--disable-features=MediaRouter,OptimizationHints', ...BROWSER_MODES[opts['browser-mode']]]});
     journal.append('browser-launch', {mode: opts['browser-mode'], extra_args: BROWSER_MODES[opts['browser-mode']]});
@@ -477,16 +497,17 @@ async function record(opts) {
     const beforeCutoff = async (label, fn) => {
       const left = cutoffMs();
       if (left <= 0 || stopping) throw Object.assign(new Error(`setup cutoff before ${label}`), {setup: true});
-      return fn(left);
+      try { return await fn(left); } catch (e) { if (e && e.name === 'TimeoutError') e.setup = true; throw e; }
     };
     journal.append('setup', {step: 'navigate', since_t0_ms: sinceT0()});
     await beforeCutoff('navigate', left => page.goto(m.entry.page_url, {waitUntil: 'domcontentloaded', timeout: left}));
     await clock.exchange(page, 'after-navigation');
-    await beforeCutoff('hero', left => page.locator('[data-testid="event-hero-probability"]').first().waitFor({timeout: left}));
+    // Attached, not visible: a hidden or unsupported surface is a recorded hole, never a setup failure.
+    await beforeCutoff('hero', left => page.locator('[data-testid="event-hero-probability"]').first().waitFor({state: 'attached', timeout: left}));
     if (m.entry.readout_activation === 'click-live-connection-status') {
       await beforeCutoff('readout', left => page.locator('[data-testid="live-connection-status"] button').first().click({timeout: left}));
     }
-    await beforeCutoff('chart', left => page.locator('[data-testid="win-probability-card"]').first().waitFor({timeout: left}));
+    await beforeCutoff('chart', left => page.locator('[data-testid="win-probability-card"]').first().waitFor({state: 'attached', timeout: left}));
     const samplerSrc = fs.readFileSync(DISPLAY_SAMPLE, 'utf8');
     if (contract.sha256(samplerSrc) !== DISPLAY_SAMPLE_SHA256) throw new Error('display_sample.cjs changed during setup');
     await page.evaluate(`(() => { const module = {exports: {}}; ${samplerSrc}\n; window.__readDisplayIdentity10090 = module.exports.readDisplayIdentity10090; })()`);

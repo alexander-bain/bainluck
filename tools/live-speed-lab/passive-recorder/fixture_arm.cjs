@@ -18,6 +18,7 @@ const PORT = Number(args.port), PAGE = args.page, STREAM = args.stream, EVENT = 
 if (!PORT || !PAGE || !STREAM) { console.error('usage: --port N --page VARIANT --stream SCENARIO [--tls DIR]'); process.exit(2); }
 const AUTH = {incarnation: '7', namespace: '3b4f1a52-8d7e-4c1a-9f0e-2a6b5c4d3e21'};
 const log = [];
+let reconnectSent = false; // the product-style reopen is exercised once per arm
 const note = e => { log.push({at: Date.now(), ...e}); };
 
 function page() {
@@ -78,7 +79,7 @@ function sse(req, res) {
     else if (STREAM === 'missing-protocol-field' && i === 5) { const e = env('frame', {frame: {p}}); delete e.protocol; send('preview_v3', e); }
     else send('preview_v3', STREAM === 'wrong-session' && i === 5 ? {...env('frame', {frame: {p}}), stream_session: crypto.randomUUID()} : env('frame', {frame: {p, base_rev: rev}}));
     if (i % 2 === 0) send('heartbeat', '{}');
-    if (STREAM === 'reconnect-event' && i === 30) send('reconnect', '{}');
+    if (STREAM === 'reconnect-event' && i === 30 && !reconnectSent) { reconnectSent = true; send('reconnect', '{}'); }
   }, 1000);
   res.on('close', () => { clearInterval(timer); note({kind: 'stream-closed', session}); });
 }
