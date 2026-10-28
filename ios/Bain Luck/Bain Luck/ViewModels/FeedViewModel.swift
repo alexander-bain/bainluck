@@ -526,19 +526,28 @@ final class FeedViewModel: ObservableObject {
         stopRefresh()
     }
 
-    /// The list is visible again. If a refresh came due while it was covered, run
-    /// it once now; otherwise just re-arm, so freshness while visible is unchanged.
+    /// The list is visible again. Re-arm first, so a catch-up that fails still
+    /// leaves the visible list retrying on its usual cadence. If a refresh came due
+    /// while it was covered, run it once now; otherwise the next refresh fires 30 s
+    /// after the last load started, so the longest gap while visible stays 30 s.
     @MainActor
     func feedUncovered() async {
         guard isCovered else { return }
         isCovered = false
-        if hasLiveGames, let last = lastLoadStartedAt,
-           clock().timeIntervalSince(last) >= Self.autoRefreshInterval {
+        configureAutoRefresh()
+        guard hasLiveGames, let last = lastLoadStartedAt else { return }
+        let elapsed = clock().timeIntervalSince(last)
+        if elapsed >= Self.autoRefreshInterval {
             await startLoad()
         } else {
-            configureAutoRefresh()
+            let remaining = min(Self.autoRefreshInterval, Self.autoRefreshInterval - elapsed)
+            refreshTimer?.fireDate = Date().addingTimeInterval(remaining)
         }
     }
+
+    /// When the armed refresh timer fires next (nil when disarmed). Observable so a
+    /// test can prove a return keeps the visible 30 s cadence.
+    var nextRefreshFireDate: Date? { refreshArmed ? refreshTimer?.fireDate : nil }
 
     private func configureAutoRefresh() {
         guard autoRefreshEnabled else { return }
