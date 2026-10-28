@@ -35,11 +35,26 @@ struct NBALadderCardView9483: View {
                     VStack(alignment: .leading, spacing: 6) { figures }
                 }
             }
-            Text(card.caption)
-                .font(.caption)
+            if card.phase == .during {
+                NBAScoringChanceComparison9483(point: point,
+                                               tint: point.map { color($0) } ?? .secondary)
+            }
+            Text(card.phase == .during
+                 ? (isMargin ? "Chance to win by more than each margin" : "Chance to finish above each line")
+                 : card.caption)
+                .font(card.phase == .during ? .subheadline : .caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             chart(selected: point)
+            if card.phase == .during {
+                HStack(spacing: 16) {
+                    Label("Pregame", systemImage: "circle")
+                    Label("Current", systemImage: "circle.fill")
+                }
+                .font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("Hollow marks: pregame chance. Filled marks: current chance.")
+            }
             if isMargin {
                 HStack {
                     Text("← \(card.awayShort) by")
@@ -63,7 +78,8 @@ struct NBALadderCardView9483: View {
                         readout(point)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityHint("Shows this line's exact quote")
+                    .disabled(point == nil)
+                    .accessibilityHint("Shows this line's recorded probability and timing")
                 } else {
                     readout(point)
                         .accessibilityElement(children: .combine)
@@ -116,11 +132,15 @@ struct NBALadderCardView9483: View {
         VStack(spacing: 2) {
             if let point {
                 let text = Self.readout(card, point)
-                Text(text.main)
+                // Live comparisons are already prominent above the chart.
+                // Keep this existing source action without repeating tiny figures.
+                Text(card.phase == .during ? point.label : text.main)
                     .font(.subheadline.weight(.semibold).monospacedDigit())
                     .foregroundStyle(point.chance == nil ? Color.secondary : color(point))
                 let more = expanded ? (text.sub.isEmpty ? "Details" : " · details") : ""
-                if !text.sub.isEmpty || !more.isEmpty {
+                if card.phase == .during {
+                    if expanded { Text("Details & timing").font(.subheadline) }
+                } else if !text.sub.isEmpty || !more.isEmpty {
                     Text(text.sub + more)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -181,7 +201,7 @@ struct NBALadderCardView9483: View {
     private func chart(selected: NBALadderCard9483.Point?) -> some View {
         let domain = Self.domain(card)
         let ticks = Self.ticks(card, domain: domain)
-        let drawn = card.points.filter { $0.chance != nil }
+        let drawn = card.points.filter { $0.chance != nil || (card.phase == .during && $0.now != nil) }
         let hasDots = !drawn.isEmpty
         return Chart {
             if hasDots {
@@ -217,7 +237,17 @@ struct NBALadderCardView9483: View {
                                 .background(Circle().fill(Color.cardBackground))
                                 .frame(width: isSelected ? 13 : 8, height: isSelected ? 13 : 8)
                         }
-                } else if isSelected {
+                }
+                if card.phase == .during, let current = point.now {
+                    // Already admitted/expired by the existing production card.
+                    // A filled mark never substitutes for the hollow pregame pin.
+                    PointMark(x: .value("Line", point.x), y: .value("Current chance", current))
+                        .symbol {
+                            Circle().fill(color(point))
+                                .frame(width: isSelected ? 9 : 6, height: isSelected ? 9 : 6)
+                        }
+                }
+                if isSelected && point.chance == nil && (card.phase != .during || point.now == nil) {
                     // A selected line with no number still shows where it is.
                     RuleMark(x: .value("Line", point.x),
                              yStart: .value("Chance", 0), yEnd: .value("Chance", 0.12))
@@ -270,9 +300,16 @@ struct NBALadderCardView9483: View {
     }
 
     private func spokenSummary(_ drawn: [NBALadderCard9483.Point]) -> String {
-        var text = "\(card.title). \(card.caption): "
-        text += drawn.isEmpty ? "none recorded"
-            : drawn.map { "\($0.label) \(formatProbability($0.chance ?? 0))" }.joined(separator: ", ")
+        var text = "\(card.title). "
+        if card.phase == .during {
+            text += drawn.isEmpty ? "No recorded pregame or current probabilities."
+                : drawn.map { NBAScoringChanceComparison9483.accessibilitySummary(for: $0) }
+                    .joined(separator: "; ")
+        } else {
+            text += "\(card.caption): "
+            text += drawn.isEmpty ? "none recorded"
+                : drawn.map { "\($0.label) \(formatProbability($0.chance ?? 0))" }.joined(separator: ", ")
+        }
         if let actual = card.actual {
             text += ". \(card.phase == .after ? "Final" : "So far") \(card.words(actual))"
         }
