@@ -3306,7 +3306,7 @@ class LiveBlendRefresher:
                            clock_sample=None, stopped_waiting=None) -> dict[int, tuple]:
         from copy import deepcopy
         from types import SimpleNamespace
-        from sqlalchemy import and_, cast, func, literal, null, or_, select
+        from sqlalchemy import ARRAY, Integer, and_, any_, bindparam, cast, func, literal, null, or_, select
         from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
         from app.utils.live_blend import MarketOutcomes
         from app.utils.content_understanding import CONTENT_UNDERSTANDING_KEY
@@ -3417,7 +3417,12 @@ class LiveBlendRefresher:
                     .outerjoin(FuturesOutcome, outcome_join)
                     .where(
                         FuturesMarket.source == self.source,
-                        FuturesMarket.event_id.in_(event_ids),
+                        # One array parameter: one statement shape, so one
+                        # prepared statement per connection whatever the
+                        # batch size (an expanding IN made one per length).
+                        FuturesMarket.event_id == any_(bindparam(
+                            "event_ids", list(event_ids), type_=ARRAY(Integer),
+                        )),
                     )
                 )
             ).all()
