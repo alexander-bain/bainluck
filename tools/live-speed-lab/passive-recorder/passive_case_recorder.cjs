@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const contract = require('./contract.cjs');
 const {createTransport} = require('./transport.cjs');
-const {createJournal} = require('./journal.cjs');
+const {createJournal, minimalForms} = require('./journal.cjs');
 const {createClock} = require('./clock.cjs');
 const hooks = require('./page_hooks.cjs');
 const {installVisibleObservationRecorder} = require('./primary_recorder.cjs');
@@ -47,7 +47,9 @@ record    one held page for the manifest's case, T0-5 s .. T0+185 s, then STOP.
           --browser-mode single-process adds Chrome's --single-process --disable-crashpad (the only
           mode that launches inside a sandboxed lane shell); multi-process is Chrome's ordinary layout.
           --browser-channel chrome is the installed Google Chrome; chromium is the Playwright module's own build.
-          Channel, mode and browser version are recorded in BINDINGS.json; a qualification in one mode says nothing about the other.
+          The grant's \`browser\` names the qualified channel, mode, Playwright package.json sha256 and browser
+          version: a channel, mode or package it does not name refuses before launch; a version it does not
+          name STOPs before navigation (refused:browser-version). All four are copied into SUMMARY.json.
 
 Every option is required; none has a default. Exit: 0 complete case, 1 recorded but
 STOPPED/UNRESOLVED (a result), 2 recorder failure, 3 refused before any network.`;
@@ -100,9 +102,9 @@ async function record(opts) {
   if (scope === 'local' && process.env[QUAL_ENV]) {
     try { qualFault = JSON.parse(process.env[QUAL_ENV]); } catch { return refuse([`${QUAL_ENV}: invalid JSON`]); }
   }
-  const BROWSER_MODES = {'multi-process': [], 'single-process': ['--single-process', '--disable-crashpad', '--disable-gpu']};
-  if (!(opts['browser-mode'] in BROWSER_MODES)) return refuse(['--browser-mode: multi-process or single-process']);
-  if (!['chrome', 'chromium'].includes(opts['browser-channel'])) return refuse(['--browser-channel: chrome or chromium']);
+  const {BROWSER_MODES} = contract;
+  if (!Object.hasOwn(BROWSER_MODES, opts['browser-mode'])) return refuse(['--browser-mode: multi-process or single-process']);
+  if (!contract.BROWSER_CHANNELS.includes(opts['browser-channel'])) return refuse(['--browser-channel: chrome or chromium']);
   const pins = selfPins();
   if (!pins.display_sample.ok) return refuse([`display_sample.cjs drift (have ${pins.display_sample.sha256})`]);
   const v = contract.validateBundle({manifest: opts.manifest, manifestSha256: opts['manifest-sha256'], grant: opts.grant,
@@ -117,6 +119,12 @@ async function record(opts) {
     pwPackage = {path: pkgPath, sha256: contract.sha256File(pkgPath), version: JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version};
     playwright = require(path.resolve(opts['playwright-module']));
   } catch (e) { return refuse([`--playwright-module unusable: ${e.message}`]); }
+  const gb = v.grant.browser;
+  const notGranted = [];
+  if (opts['browser-channel'] !== gb.browser_channel) notGranted.push(`grant.browser: --browser-channel ${opts['browser-channel']} is not the granted ${gb.browser_channel}`);
+  if (opts['browser-mode'] !== gb.browser_mode) notGranted.push(`grant.browser: --browser-mode ${opts['browser-mode']} is not the granted ${gb.browser_mode}`);
+  if (pwPackage.sha256 !== gb.playwright_package_sha256) notGranted.push(`grant.browser: Playwright package.json sha256 ${pwPackage.sha256} is not the granted ${gb.playwright_package_sha256}`);
+  if (notGranted.length) return refuse(notGranted);
   fs.mkdirSync(out); // non-recursive; EEXIST here would mean a race, which throws
   // Qualification-only: change a pinned file after validation so the
   // pre-navigation re-hash must catch it (local scope only, see QUAL_ENV).
@@ -150,11 +158,12 @@ async function record(opts) {
   const journalFault = qualFault && qualFault.kind === 'export-fail' ? {beforeWrite: s => { if (s.records >= qualFault.after_records) throw Object.assign(new Error('injected export failure'), {code: 'EQUALFAULT'}); }} : null;
   const journal = createJournal({dir: out, limits: L, fault: journalFault,
     onExhausted: d => { fault(d.export_failure ? 'export-failure' : 'saved-budget-exhausted', d); requestStop(d.export_failure ? 'export-failure' : 'cap:max_saved_bytes', d); }});
-  if (!journal.writeSidecar('BINDINGS.json', {recorder: RECORDER_VERSION, scope, browser_mode: opts['browser-mode'], browser_channel: opts['browser-channel'], pins, playwright: pwPackage, node: process.version,
+  if (!journal.writeSidecar('BINDINGS.json', {recorder: RECORDER_VERSION, scope, browser_mode: opts['browser-mode'], browser_channel: opts['browser-channel'], granted_browser: gb, pins, playwright: pwPackage, node: process.version,
     manifest: {path: path.resolve(opts.manifest), sha256: v.manifestSha256}, grant: {path: path.resolve(opts.grant), sha256: v.grantSha256},
     case_id: m.case_id, grant_id: g.grant_id, window: W, clock_anchor: clock.anchor, qualification_fault: qualFault,
     byte_boundary: {where: 'loopback proxy write to the browser socket', counted: 'encoded wire bytes (HTTP body as received incl. Content-Encoding; CONNECT = TLS records)',
-      forwarded_overshoot_bytes: 0, received_overshoot_bound_bytes: contract.RECEIVED_OVERSHOOT_BOUND_BYTES, authorized_received_overshoot_bytes: L.received_overshoot_bytes},
+      forwarded_overshoot_bytes: 0, received_overshoot_bound_bytes: contract.RECEIVED_OVERSHOOT_BOUND_BYTES, authorized_received_overshoot_bytes: L.received_overshoot_bytes,
+      per_stream: 'not enforced (CDP, lagging): the case stream is charged to max_response_bytes; counters.cdp_stream_bytes is diagnostic only'},
     constants: {SAMPLE_INTERVAL_MS, SAMPLE_GAP_HOLE_MS, CHECKPOINT_EVERY_MS, TEARDOWN_BUDGET_MS, ...clock.constants}})) {
     fault('saved-budget-exhausted', {at: 'bindings'});
     stopping = {reason: 'cap:max_saved_bytes', since_t0_ms: sinceT0()};
@@ -172,11 +181,11 @@ async function record(opts) {
   const proxyPort = await transport.listen();
 
   const hardKill = setTimeout(() => {
-    try { journal.writeReserved('STOP.json', {status: 'STOPPED', reason: 'teardown-overrun'}, {status: 'STOPPED', reason: 'teardown-overrun'}); } catch { /* best effort */ }
+    try { journal.writeReserved('STOP.json', {status: 'STOPPED', reason: 'teardown-overrun'}, minimalForms({status: 'STOPPED', reason: 'teardown-overrun'}).stop); } catch { /* best effort */ }
     process.exit(2);
   }, Math.max(0, W.acquisition_end_wall_ms - clock.wall()) + TEARDOWN_BUDGET_MS * 3);
 
-  let browser = null, context = null, page = null, cdp = null;
+  let browser = null, context = null, page = null, cdp = null, browserVersion = null;
   const streamState = new Map(); // instance -> {session, opens}
   const seenTypes = new Set();
   const otherStreams = new Set();
@@ -394,13 +403,19 @@ async function record(opts) {
         status, reason: stopping.reason, coverage, holes, faults: allFaults.slice(0, 200), fault_count: allFaults.length,
         fault_kinds: [...new Set(allFaults.map(f => f.kind))].sort(),
         clock: {anchor: clock.anchor, exchanges: clock.exchanges, final_offset_ms: clock.offset},
+        browser: {browser_channel: opts['browser-channel'], browser_mode: opts['browser-mode'], playwright_package_sha256: pwPackage.sha256,
+          browser_version: browserVersion, granted: gb},
         setup_ready_since_t0_ms: setupReadyAt, streams: Object.fromEntries(streamState), other_eventsources: [...otherStreams], stream_event_types_seen: [...seenTypes].sort(),
         semantics: 'DOM observation, not physical paint. Collector/document mapping only; worker, Redis and DB clocks are not mapped by the page recorder. Unexecuted checks are absent, not passed.'};
-      journal.writeReserved('STOP.json', stop, {status, reason: stopping.reason});
-      journal.writeReserved('SUMMARY.json', summary, {status, reason: stopping.reason, holes, fault_kinds: summary.fault_kinds});
+      const minimal = minimalForms({status, reason: stopping.reason, holes, fault_kinds: summary.fault_kinds});
+      // A STOP or SUMMARY that could not be written is a recorder failure (exit 2), never a result.
+      const unwritten = [['STOP.json', stop, minimal.stop], ['SUMMARY.json', summary, minimal.summary]].filter(([name, value, min]) => {
+        try { return !journal.writeReserved(name, value, min).written; } catch { return true; }
+      }).map(([name]) => name);
       journal.close();
-      process.stdout.write(JSON.stringify({status, reason: stopping.reason, out, holes, fault_kinds: summary.fault_kinds}) + '\n');
-      process.exitCode = status === 'COMPLETE' ? 0 : 1;
+      process.stdout.write(JSON.stringify({status, reason: stopping.reason, out, holes, fault_kinds: summary.fault_kinds,
+        ...(unwritten.length ? {recorder_failure: 'reserve-unwritten', unwritten} : {})}) + '\n');
+      process.exitCode = unwritten.length ? 2 : status === 'COMPLETE' ? 0 : 1;
     })();
     return finishPromise;
   };
@@ -424,7 +439,14 @@ async function record(opts) {
       proxy: {server: `http://127.0.0.1:${proxyPort}`, bypass: '<-loopback>'},
       args: ['--disable-background-networking', '--disable-component-update', '--no-pings', '--disable-domain-reliability', '--disable-sync', '--disable-features=MediaRouter,OptimizationHints', ...BROWSER_MODES[opts['browser-mode']]]});
     journal.append('browser-launch', {mode: opts['browser-mode'], extra_args: BROWSER_MODES[opts['browser-mode']]});
-    journal.append('browser', {version: browser.version(), since_t0_ms: sinceT0()});
+    browserVersion = browser.version();
+    journal.append('browser', {version: browserVersion, granted_version: gb.browser_version, since_t0_ms: sinceT0()});
+    // A browser build the grant does not name STOPs before any page exists.
+    if (browserVersion !== gb.browser_version) {
+      fault('browser-version-not-granted', {version: browserVersion, granted: gb.browser_version});
+      requestStop('refused:browser-version', {version: browserVersion, granted: gb.browser_version});
+      return finish();
+    }
     context = await browser.newContext({viewport: m.page.viewport, serviceWorkers: 'block', ignoreHTTPSErrors: scope === 'local'});
     await context.route('**/*', async route => {
       const req = route.request();
@@ -492,10 +514,8 @@ async function record(opts) {
       const r = requestIds.get(e.requestId);
       const n = e.encodedDataLength || 0;
       counters.cdp_response_bytes += n;
-      if (r && r.url === streamUrl) {
-        counters.cdp_stream_bytes += n;
-        if (counters.cdp_stream_bytes > L.max_stream_bytes) requestStop('cap:max_stream_bytes', {cdp_stream_bytes: counters.cdp_stream_bytes});
-      }
+      // Diagnostic only: CDP lags the wire, so this count never stops a run.
+      if (r && r.url === streamUrl) counters.cdp_stream_bytes += n;
     });
     await cdp.send('Network.enable');
     await page.exposeFunction('__passiveRecord', onPageRecord);

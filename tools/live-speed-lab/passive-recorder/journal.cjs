@@ -10,6 +10,16 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const {MINIMAL_STRING_CHARS, MINIMAL_LIST_ITEMS} = require('./contract.cjs');
+
+// The fallback STOP and SUMMARY, clipped so their size has a fixed bound that
+// the contract's MIN_RESERVED_STOP_BYTES floor covers.
+function minimalForms({status, reason, holes, fault_kinds: kinds}) {
+  const clip = v => String(v).slice(0, MINIMAL_STRING_CHARS);
+  const list = xs => (Array.isArray(xs) ? xs : []).slice(0, MINIMAL_LIST_ITEMS).map(clip);
+  return {stop: {status: clip(status), reason: clip(reason)},
+    summary: {status: clip(status), reason: clip(reason), holes: list(holes), fault_kinds: list(kinds)}};
+}
 
 function createJournal({dir, limits, onExhausted, fault = null}) {
   const file = path.join(dir, 'records.jsonl');
@@ -69,8 +79,10 @@ function createJournal({dir, limits, onExhausted, fault = null}) {
     return true;
   }
 
-  // STOP and summary spend only the reserve. If a full summary would not fit,
-  // a minimal one is written instead; it always fits by construction of the grant.
+  // STOP and summary spend only the reserve. If a full form would not fit, the
+  // minimal one is written instead; the contract's reserve floor holds both
+  // minimal forms. {written:false} is still returned, never thrown away: the
+  // caller treats it as a recorder failure.
   function writeReserved(name, value, minimal) {
     const target = path.join(dir, name);
     let text = JSON.stringify(value, null, 1) + '\n';
@@ -90,4 +102,4 @@ function createJournal({dir, limits, onExhausted, fault = null}) {
   };
 }
 
-module.exports = {createJournal};
+module.exports = {createJournal, minimalForms};

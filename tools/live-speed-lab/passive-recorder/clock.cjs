@@ -74,9 +74,12 @@ function createClock({t0WallMs, wallSkewMs = () => 0}) {
         row.faults.push('offset-drift');
         fault('offset-drift', {label, running: offset, this: off, gap_ms: lo - hi});
         offset = [Math.min(offset[0], off[0]), Math.max(offset[1], off[1])];
-      } else offset = lo <= hi ? [lo, hi] : [hi, lo];
+      } else if (lo <= hi) offset = [lo, hi];
+      // Within tolerance but disjoint: keep the brackets' intersection widened
+      // by the tolerance, never the narrower gap between them.
+      else offset = [lo - DRIFT_TOLERANCE_MS, hi + DRIFT_TOLERANCE_MS];
     }
-    row.running_offset_ms = offset && [...offset];
+    row.running_offset_ms = [...offset];
     exchanges.push(row);
     return row;
   }

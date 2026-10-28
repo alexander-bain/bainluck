@@ -10,7 +10,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const contract = require('./contract.cjs');
-const {createJournal} = require('./journal.cjs');
+const {createJournal, minimalForms} = require('./journal.cjs');
 const {createTransport} = require('./transport.cjs');
 const {createClock} = require('./clock.cjs');
 
@@ -36,9 +36,9 @@ function bundle(dir, {mm, mg, origin = 'http://127.0.0.1:4633', t0 = Date.now() 
   const mSha = sha(fs.readFileSync(mPath));
   const g = {schema: contract.GRANT_SCHEMA, grant_id: 'g1', issued_by: 'test', issued_at: iso(Date.now() - 1000), expires_at: iso(t0 + 600000), case_id: 'c1', manifest_sha256: mSha,
     allowed_origins: [origin], allowed_routes: [{origin, methods: ['GET'], path_prefix: '/', resource_types: ['*']}],
-    limits: {max_request_attempts: 10, max_eventsource_constructions: 2, max_stream_attempts: 3, max_active_streams: 1, max_response_bytes: 1000000, max_stream_bytes: 500000,
+    limits: {max_request_attempts: 10, max_eventsource_constructions: 2, max_stream_attempts: 3, max_active_streams: 1, max_response_bytes: 1000000,
       max_request_bytes: 100000, max_record_bytes: 10000, max_saved_bytes: 1000000, reserved_stop_bytes: 100000, max_queue_records: 64, max_detail_requests: 0, received_overshoot_bytes: 65536},
-    detail_requests: []};
+    detail_requests: [], browser: {browser_channel: 'chromium', browser_mode: 'single-process', playwright_package_sha256: 'c'.repeat(64), browser_version: '140.0.7339.186'}};
   if (mg) mg(g);
   const gPath = path.join(dir, 'g.json');
   fs.writeFileSync(gPath, JSON.stringify(g));
@@ -74,6 +74,18 @@ for (const [name, mut, re] of [
   ['detail outside window', {mg: g => { g.limits.max_detail_requests = 1; g.detail_requests = [{method: 'GET', url: 'http://127.0.0.1:4633/api/x', at_offset_ms: 200000}]; }}, /inside the acquisition window/],
   ['grant does not cover entry', {mg: g => { g.allowed_origins = ['http://127.0.0.1:9']; g.allowed_routes[0].origin = 'http://127.0.0.1:9'; }}, /does not cover manifest.entry.page_url/],
   ['production host under local scope', {origin: 'https://api.bainluck.com'}, /local scope: non-loopback origin refused \(api.bainluck.com\)/],
+  // N1: the per-stream number could only be read from lagging CDP, so it is not a limit.
+  ['a per-stream byte limit', {mg: g => { g.limits.max_stream_bytes = 1; }}, /grant.limits: unknown max_stream_bytes/],
+  // N2: a reserve below the floor could leave a run with no STOP or SUMMARY.
+  ['reserve below the STOP floor', {mg: g => { g.limits.reserved_stop_bytes = 16; }}, /reserved_stop_bytes: must be at least 65536/],
+  ['reserve one byte below the floor', {mg: g => { g.limits.reserved_stop_bytes = contract.MIN_RESERVED_STOP_BYTES - 1; }}, /must be at least 65536/],
+  // N3: the grant names the qualified browser.
+  ['grant without a browser', {mg: g => { delete g.browser; }}, /grant: missing browser/],
+  ['grant browser mode unknown', {mg: g => { g.browser.browser_mode = 'toString'; }}, /grant.browser.browser_mode: one of/],
+  ['grant browser channel unknown', {mg: g => { g.browser.browser_channel = 'firefox'; }}, /grant.browser.browser_channel: one of/],
+  ['grant browser package not a sha', {mg: g => { g.browser.playwright_package_sha256 = '1.55.0'; }}, /playwright_package_sha256: lowercase sha256/],
+  ['grant browser version empty', {mg: g => { g.browser.browser_version = ''; }}, /browser_version: the exact browser.version\(\) string required/],
+  ['grant browser extra field', {mg: g => { g.browser.headless = true; }}, /grant.browser: unknown headless/],
 ]) {
   test(`refuses: ${name}`, () => {
     const v = contract.validateBundle(bundle(tmp(), mut));
@@ -81,6 +93,36 @@ for (const [name, mut, re] of [
     assert.match(v.refusals.join('\n'), re);
   });
 }
+
+test('the reserve floor is exactly accepted', () => {
+  const v = contract.validateBundle(bundle(tmp(), {mg: g => { g.limits.reserved_stop_bytes = contract.MIN_RESERVED_STOP_BYTES; }}));
+  assert.deepStrictEqual(v.refusals, []);
+});
+
+test('journal: at the floor, worst-case minimal STOP and SUMMARY both fit; a 16-byte reserve writes neither', () => {
+  // Every string escapes to 6 bytes per UTF-16 unit and every list is overfull: the largest the minimal forms can be.
+  const worst = '\u0000'.repeat(500);
+  const forms = minimalForms({status: worst, reason: worst, holes: Array(200).fill(worst), fault_kinds: Array(200).fill(worst)});
+  assert.strictEqual(forms.summary.holes.length, contract.MINIMAL_LIST_ITEMS);
+  assert.ok(forms.summary.holes.every(h => h.length === contract.MINIMAL_STRING_CHARS));
+  const big = {pad: 'p'.repeat(contract.MIN_RESERVED_STOP_BYTES * 2)};
+  const dir = tmp();
+  const j = createJournal({dir, limits: {max_record_bytes: 1000, max_saved_bytes: contract.MIN_RESERVED_STOP_BYTES + 1000, reserved_stop_bytes: contract.MIN_RESERVED_STOP_BYTES}, onExhausted: () => {}});
+  const stop = j.writeReserved('STOP.json', big, forms.stop);
+  const summary = j.writeReserved('SUMMARY.json', big, forms.summary);
+  j.close();
+  assert.deepStrictEqual([stop.written, stop.truncated, summary.written, summary.truncated], [true, true, true, true]);
+  assert.ok(j.stats.reserved_used_bytes <= 40000, `minimal forms used ${j.stats.reserved_used_bytes} bytes`);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'SUMMARY.json'), 'utf8')).reserve_truncated, true);
+
+  const dir2 = tmp();
+  const j2 = createJournal({dir: dir2, limits: {max_record_bytes: 1000, max_saved_bytes: 2000, reserved_stop_bytes: 16}, onExhausted: () => {}});
+  const typical = minimalForms({status: 'STOPPED', reason: 'cancelled', holes: [], fault_kinds: []});
+  assert.strictEqual(j2.writeReserved('STOP.json', big, typical.stop).written, false);
+  assert.strictEqual(j2.writeReserved('SUMMARY.json', big, typical.summary).written, false);
+  j2.close();
+  assert.deepStrictEqual(fs.readdirSync(dir2).sort(), ['records.jsonl']);
+});
 
 test('a pinned file that drifts after hashing refuses', () => {
   const dir = tmp();
@@ -210,6 +252,26 @@ test('clock: a document clock that drifts outside the running interval is a faul
   docNow -= 50; // the document clock went backwards relative to the collector
   await c.exchange(page, 'b');
   assert.ok(c.faults.some(f => f.kind === 'offset-drift'));
+});
+
+test('clock: brackets disjoint within tolerance keep their intersection widened by the tolerance', async () => {
+  const {performance} = require('perf_hooks');
+  const realNow = performance.now;
+  // Scripted collector monotonic reads: anchor (0, 0), exchange a (100, 104), exchange b (200, 204).
+  const reads = [0, 0, 100, 104, 200, 204];
+  let mono = 0;
+  performance.now = () => { mono = reads.shift(); return mono; };
+  try {
+    const docNow = [50, 145]; // offsets [50, 54] then [55, 59]: 1 ms apart, inside the 2 ms tolerance
+    const page = {evaluate: async () => { const now = docNow.shift(); return {now, timeOrigin: 1000, wall: 1000 + now, visibility: 'visible'}; }};
+    const base = Date.now();
+    const c = createClock({t0WallMs: base, wallSkewMs: () => mono - (Date.now() - base)});
+    await c.exchange(page, 'a');
+    const b = await c.exchange(page, 'b');
+    assert.deepStrictEqual(c.offset, [53, 56], 'the intersection of both brackets widened by 2 ms, not the 54..55 gap');
+    assert.deepStrictEqual(b.running_offset_ms, [53, 56]);
+    assert.deepStrictEqual(c.faults, []);
+  } finally { performance.now = realNow; }
 });
 
 test('primary recorder is the staged observer span, byte for byte', () => {

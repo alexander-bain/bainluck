@@ -19,10 +19,12 @@ Every option is required and none has a default. `validate` is offline: it hashe
 
 - `0`: the case window was recorded with complete coverage.
 - `1`: recorded, but STOPPED or UNRESOLVED. This is a result.
-- `2`: recorder failure.
+- `2`: recorder failure, including a STOP.json or SUMMARY.json that could not be written.
 - `3`: refused before any network.
 
 `--scope local` refuses every non-loopback origin, even one the manifest or grant names. `--scope production` refuses to start if the qualification fault variable is set. Otherwise both scopes run the same code.
+
+The grant's `browser` names the qualified browser: `browser_channel`, `browser_mode`, `playwright_package_sha256` (sha256 of the Playwright module's `package.json`) and `browser_version` (the exact `browser.version()` string). A channel, mode or package it does not name refuses before launch (exit 3). A browser version it does not name STOPs after launch and before navigation, with reason `refused:browser-version` (exit 1, no page, no request). SUMMARY.json carries all four fields as run, beside the granted ones.
 
 ## What a run does
 
@@ -37,10 +39,10 @@ Every option is required and none has a default. `validate` is offline: it hashe
 
 Output (`--out`):
 
-- `BINDINGS.json`: recorder/sampler/Playwright hashes, browser channel and mode, the byte boundary, constants and the clock anchor.
+- `BINDINGS.json`: recorder/sampler/Playwright hashes, browser channel and mode, the granted browser, the byte boundary, constants and the clock anchor.
 - `records.jsonl`: every receipt, written immediately with one sequential id.
 - `STOP.json`: the reason and all counters.
-- `SUMMARY.json`: coverage, holes, faults and the clock exchanges.
+- `SUMMARY.json`: coverage, holes, faults, the clock exchanges and the browser as run.
 
 ## Manifest (`bainluck.passive-case-manifest/1`) and grant (`bainluck.passive-case-grant/1`)
 
@@ -55,9 +57,11 @@ Unknown keys refuse, and so do duplicate JSON keys. Every referenced file is `{p
   - `clock`: t0_utc, scoring fixed at 0..180000 ms, acquisition fixed at −5000..185000 ms, setup earliest/cutoff ≤ −5000 ms.
 - **Grant:**
   - Identity, issue/expiry (it must outlive the acquisition end), and `manifest_sha256`/`case_id` binding.
+  - `browser`: `{browser_channel, browser_mode, playwright_package_sha256, browser_version}`, see above.
   - `allowed_origins` and `allowed_routes` (origin, methods, path prefix, resource types).
   - `detail_requests`: at most two, explicit, each at a declared offset inside the window.
-  - `limits`, all finite positive integers: `max_request_attempts`, `max_eventsource_constructions`, `max_stream_attempts` (case stream), `max_active_streams` (exactly 1 case stream), `max_response_bytes`, `max_stream_bytes`, `max_request_bytes`, `max_record_bytes`, `max_saved_bytes`, `reserved_stop_bytes`, `max_queue_records`, `max_detail_requests` (0..2), and `received_overshoot_bytes` (≥ 65536, see below).
+  - `limits`, all finite positive integers: `max_request_attempts`, `max_eventsource_constructions`, `max_stream_attempts` (case stream), `max_active_streams` (exactly 1 case stream), `max_response_bytes`, `max_request_bytes`, `max_record_bytes`, `max_saved_bytes`, `reserved_stop_bytes` (≥ 65536, below `max_saved_bytes`), `max_queue_records`, `max_detail_requests` (0..2), and `received_overshoot_bytes` (≥ 65536, see below).
+  - Only enforced boundaries are limits. A grant carrying `max_stream_bytes` is refused as an unknown limit: a per-stream number could only be read from CDP, which lags.
 
 ## Ceilings: where each is enforced
 
@@ -65,9 +69,10 @@ Unknown keys refuse, and so do duplicate JSON keys. Every referenced file is `{p
 |---|---|---|
 | request attempts | browser route layer, checked **before** `continue`. Refused-by-grant requests never leave. Redirect hops and any request the route never saw are counted when they settle. | 0 for routed requests. A redirect hop the route does not see is counted after the fact; qualification measures which applies. |
 | response bytes (all HTTP + the product stream) | loopback proxy, counted **before** each write to the browser socket. The chunk that would cross the cap is never forwarded. | forwarded: **0**. Received and discarded: ≤ one socket read (libuv 64 KiB), which the grant must authorize. |
-| product stream bytes (sub-ceiling) | CDP `Network.dataReceived` (encoded) for the case stream URL | **not enforceable; diagnostic only.** Measured against a 500,000-byte sub-cap: one run had counted 18.9 MB when it reacted; in another, a 50 MB loopback burst starved the recorder's loop, so CDP counted 0 before the hard ceiling tripped. The product stream's enforceable ceiling is `max_response_bytes`. A hard per-stream boundary under https would need TLS interception at the proxy (a local CA), which this recorder deliberately does not do. |
+| product stream bytes | **not a limit.** Charged to `max_response_bytes` at the proxy like every response. `counters.cdp_stream_bytes` (CDP `Network.dataReceived`, encoded) is kept as a diagnostic count and never stops a run; BINDINGS `byte_boundary.per_stream` says so. | CDP lags: against a former 500,000-byte sub-cap, one run had counted 18.9 MB when it reacted, another 14.7 MB, and in a third a 50 MB loopback burst starved the recorder's loop so CDP counted 0. A hard per-stream boundary under https would need TLS interception at the proxy (a local CA), which this recorder deliberately does not do. A grant naming `max_stream_bytes` is refused. |
+| active case streams | `max_active_streams` must be exactly 1 in the grant. A second concurrent case-path construction is **let through and flagged** (`concurrent-duplicate-stream`), not refused at the route. | The flag makes the run UNRESOLVED, so such a case can never be COMPLETE. |
 | request bytes | loopback proxy, before writing upstream | 0 |
-| saved bytes | journal; ordinary records stop before `reserved_stop_bytes` | 0. STOP/SUMMARY spend only the reserve; a minimal form is written if the full one does not fit. |
+| saved bytes | journal; ordinary records stop before `reserved_stop_bytes` | 0. STOP/SUMMARY spend only the reserve; a minimal form (clipped strings and lists, under 40,000 bytes) is written if the full one does not fit. The grant's reserve must be at least 65,536 bytes, so both minimal forms always fit; one that still could not be written exits 2. |
 | page queue | in-page outstanding-binding counter; drops are counted and reported | explicit loss, a coverage hole. |
 
 Counted bytes are **encoded wire bytes**. HTTP bodies pass through with their `Content-Encoding` untouched. An https origin is a CONNECT tunnel whose TLS records are counted, which is never less than the response bytes inside. Streams without `Content-Length` are counted chunk by chunk.

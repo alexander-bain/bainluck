@@ -33,9 +33,12 @@ if (fs.existsSync(OUT)) { console.error(`--out exists: ${OUT}`); process.exit(3)
 fs.mkdirSync(OUT);
 
 const LIMITS = {max_request_attempts: 400, max_eventsource_constructions: 4, max_stream_attempts: 6, max_active_streams: 1,
-  max_response_bytes: 50_000_000, max_stream_bytes: 20_000_000, max_request_bytes: 2_000_000, max_record_bytes: 262_144,
+  max_response_bytes: 50_000_000, max_request_bytes: 2_000_000, max_record_bytes: 262_144,
   max_saved_bytes: 200_000_000, reserved_stop_bytes: 4_000_000, max_queue_records: 512, max_detail_requests: 0,
   received_overshoot_bytes: 65_536};
+// The grant names the browser this run actually launches (read once by preflight()).
+let BROWSER = null;
+const OTHER_MODE = {'single-process': 'multi-process', 'multi-process': 'single-process'};
 const RESOURCE_TYPES = ['document', 'script', 'fetch', 'eventsource', 'xhr', 'stylesheet', 'image', 'font', 'manifest', 'other'];
 
 function freePort() {
@@ -78,7 +81,7 @@ function buildCase(dir, {origin, eventId, members, authority, leadMs, limits, mu
   const grant = {schema: 'bainluck.passive-case-grant/1', grant_id: `grant-${path.basename(dir)}`, issued_by: 'lane1 qualification',
     issued_at: iso(now - 1000), expires_at: iso(t0 + 600000), case_id: manifest.case_id, manifest_sha256: mSha,
     allowed_origins: [origin], allowed_routes: [{origin, methods: ['GET'], path_prefix: '/', resource_types: RESOURCE_TYPES}],
-    limits: {...LIMITS, ...limits}, detail_requests: detail || []};
+    limits: {...LIMITS, ...limits}, detail_requests: detail || [], browser: {...BROWSER}};
   if (mutateGrant) mutateGrant(grant, dir);
   const gPath = path.join(dir, 'grant.json');
   fs.writeFileSync(gPath, JSON.stringify(grant, null, 1));
@@ -137,23 +140,24 @@ const FIXTURE_CONTROLS = [
     [r.stop?.counters.request_attempts === 12, `attempts ${r.stop?.counters.request_attempts}`],
     [r.recs.some(x => x.kind === 'request' && x.decision === 'refused-cap'), 'the 13th attempt was refused before it left the browser'],
     [r.fixtureLog.filter(e => e.kind === 'request').length <= 12, `fixture saw ${r.fixtureLog.filter(e => e.kind === 'request').length} requests`]]},
-  {name: 'C3-sse-endless-response-cap', page: 'normal', stream: 'endless', limits: {max_response_bytes: 3_000_000, max_stream_bytes: 3_000_000}, expect: r => [
-    [r.code === 1 && ['cap:max_response_bytes', 'cap:max_stream_bytes'].includes(r.stop?.reason), `reason ${r.stop?.reason}`],
+  {name: 'C3-sse-endless-response-cap', page: 'normal', stream: 'endless', limits: {max_response_bytes: 3_000_000}, expect: r => [
+    [r.code === 1 && r.stop?.reason === 'cap:max_response_bytes', `reason ${r.stop?.reason}`],
     [r.stop?.counters.transport.response_bytes <= 3_000_000, `forwarded ${r.stop?.counters.transport.response_bytes} <= cap`],
     [r.stop?.counters.transport.max_received_chunk <= 65_536, `largest received chunk ${r.stop?.counters.transport.max_received_chunk}`]]},
-  // Characterization: the per-stream sub-ceiling is counted from CDP Network.dataReceived, which
-  // lags (a fast stream can starve the recorder's loop so CDP counts nothing before the transport
-  // trips). It is NOT a hard boundary; the aggregate transport ceiling is. This control passes when
-  // the hard ceiling holds whichever counter trips, and retains how far CDP lagged.
-  {name: 'C3-stream-subcap-is-soft', page: 'normal', stream: 'endless', limits: {max_stream_bytes: 500_000}, expect: r => [
-    [r.code === 1 && ['cap:max_stream_bytes', 'cap:max_response_bytes'].includes(r.stop?.reason), `reason ${r.stop?.reason}`],
+  // The case stream's bytes are counted from CDP Network.dataReceived, which lags (a fast stream
+  // can starve the recorder's loop). That count is diagnostic, never a limit: the endless stream
+  // is stopped by the aggregate transport ceiling alone, STOP.limits carries no per-stream number,
+  // and BINDINGS says the per-stream count is not enforced. CDP's count at the stop is retained.
+  {name: 'C3-stream-subcap-is-soft', page: 'normal', stream: 'endless', expect: r => [
+    [r.code === 1 && r.stop?.reason === 'cap:max_response_bytes', `reason ${r.stop?.reason}`],
     [r.stop?.counters.transport.response_bytes <= 50_000_000, `hard ceiling held: forwarded ${r.stop?.counters.transport.response_bytes} <= 50000000`],
-    [true, `soft sub-ceiling 500000: CDP counted ${r.stop?.counters.cdp_stream_bytes} stream bytes when the run stopped (forwarded ${r.stop?.counters.transport.response_bytes})`]]},
-  {name: 'C3-http-finite-body-cap', page: 'big-fetch', stream: 'normal', limits: {max_response_bytes: 1_500_000, max_stream_bytes: 1_000_000}, expect: r => [
+    [!!r.stop?.limits && !Object.hasOwn(r.stop.limits, 'max_stream_bytes') && /^not enforced \(CDP, lagging\)/.test(r.bindings?.byte_boundary?.per_stream || '') && Number.isSafeInteger(r.stop?.counters.cdp_stream_bytes),
+      `STOP.limits keys ${Object.keys(r.stop?.limits || {}).join(',')}; BINDINGS per_stream ${JSON.stringify(r.bindings?.byte_boundary?.per_stream)}; CDP counted ${r.stop?.counters.cdp_stream_bytes} stream bytes (diagnostic) vs ${r.stop?.counters.transport.response_bytes} forwarded`]]},
+  {name: 'C3-http-finite-body-cap', page: 'big-fetch', stream: 'normal', limits: {max_response_bytes: 1_500_000}, expect: r => [
     [r.code === 1 && r.stop?.reason === 'cap:max_response_bytes', `reason ${r.stop?.reason}`],
     [r.stop?.counters.transport.response_bytes <= 1_500_000 && r.stop?.counters.transport.refused_chunks >= 1, `forwarded ${r.stop?.counters.transport.response_bytes}, refused ${r.stop?.counters.transport.refused_chunks}`]]},
-  {name: 'C3-sse-endless-tls-connect-cap', page: 'normal', stream: 'endless', tls: true, limits: {max_response_bytes: 3_000_000, max_stream_bytes: 3_000_000}, expect: r => [
-    [r.code === 1 && ['cap:max_response_bytes', 'cap:max_stream_bytes'].includes(r.stop?.reason), `reason ${r.stop?.reason}`],
+  {name: 'C3-sse-endless-tls-connect-cap', page: 'normal', stream: 'endless', tls: true, limits: {max_response_bytes: 3_000_000}, expect: r => [
+    [r.code === 1 && r.stop?.reason === 'cap:max_response_bytes', `reason ${r.stop?.reason}`],
     [r.stop?.counters.transport.tunnels >= 1 && r.stop?.counters.transport.http_requests === 0, `tunnels ${r.stop?.counters.transport.tunnels} http ${r.stop?.counters.transport.http_requests}`],
     [r.stop?.counters.transport.response_bytes <= 3_000_000, `forwarded ${r.stop?.counters.transport.response_bytes}`]]},
   {name: 'C3-saved-bytes-cap', page: 'normal', stream: 'normal', limits: {max_saved_bytes: 600_000, reserved_stop_bytes: 200_000, max_record_bytes: 100_000}, expect: r => [
@@ -190,6 +194,13 @@ const FIXTURE_CONTROLS = [
   {name: 'C5-document-replaced', page: 'replace-document', stream: 'normal', kind: full, expect: r => [[has(r.summary?.fault_kinds, 'document-navigated-after-setup') && has(r.summary?.fault_kinds, 'document-replaced'), `${r.summary?.fault_kinds}`]]},
   {name: 'C5-export-failure', page: 'normal', stream: 'normal', fault: {kind: 'export-fail', after_records: 300}, expect: r => [[r.stop?.reason === 'export-failure' && has(r.summary?.fault_kinds, 'export-failure'), `reason ${r.stop?.reason}`]]},
   {name: 'C5-cancel-stops-with-receipt', page: 'normal', stream: 'normal', fault: {kind: 'cancel', at_offset_ms: 15000}, expect: r => [[r.stop?.reason === 'cancelled' && r.summary?.status === 'STOPPED' && r.recs.some(x => x.kind === 'primary-export'), `reason ${r.stop?.reason}, primary exported`]]},
+  // N3: a browser build the grant does not name STOPs after launch and before navigation, in production scope.
+  {name: 'C5-browser-version-drift-before-navigation', scope: 'production', page: 'normal', stream: 'normal', mutateGrant: g => { g.browser.browser_version = '0.0.0.0-not-this-build'; }, expect: r => [
+    [r.code === 1 && r.stop?.reason === 'refused:browser-version' && has(r.summary?.fault_kinds, 'browser-version-not-granted'), `exit ${r.code} reason ${r.stop?.reason} faults ${r.summary?.fault_kinds}`],
+    [r.summary?.browser?.browser_version === BROWSER.browser_version && r.summary?.browser?.granted?.browser_version === '0.0.0.0-not-this-build'
+      && r.summary?.browser?.browser_channel === BROWSER.browser_channel && r.summary?.browser?.browser_mode === BROWSER.browser_mode && r.summary?.browser?.playwright_package_sha256 === BROWSER.playwright_package_sha256,
+      `SUMMARY.browser ${JSON.stringify(r.summary?.browser)}`],
+    [r.fixtureLog.filter(e => e.kind === 'request').length === 0, `fixture saw ${r.fixtureLog.filter(e => e.kind === 'request').length} requests`]]},
   {name: 'C5-pin-drift-after-validation', page: 'normal', stream: 'normal', faultFn: dir => ({kind: 'drift-after-validation', path: path.join(dir, 'policy.json')}), expect: r => [
     [r.stop?.reason === 'refused:pin-drift', `reason ${r.stop?.reason}`],
     [r.fixtureLog.filter(e => e.kind === 'request').length === 0, `fixture saw ${r.fixtureLog.filter(e => e.kind === 'request').length} requests`]]},
@@ -213,6 +224,12 @@ const REFUSAL_CONTROLS = [
   ['R-late-start', {mutateManifest: m => { const t = Date.now() - 2000; m.clock.t0_utc = iso(Math.floor(t / 1000) * 1000); }}, /late start/],
   ['R-production-scope-with-qual-fault', {argv: a => ({...a, scope: 'production'}), env: {PASSIVE_RECORDER_QUAL_FAULT: '{"kind":"cancel","at_offset_ms":1}'}}, /production scope refuses qualification faults/],
   ['R-unknown-manifest-field', {mutateManifest: m => { m.extra = true; }}, /manifest: unknown extra/],
+  // N1 (calibration's X2): a per-stream number is not a limit the recorder can enforce, so a grant naming one refuses.
+  ['R-stream-subcap-refused', {mutateGrant: g => { g.limits.max_stream_bytes = 1; }}, /grant.limits: unknown max_stream_bytes/],
+  // N2 (calibration's X1): a reserve that cannot hold the minimal STOP and SUMMARY refuses (the cancel never gets to run).
+  ['R-reserve-below-floor', {mutateGrant: g => { g.limits.reserved_stop_bytes = 16; }, env: {PASSIVE_RECORDER_QUAL_FAULT: '{"kind":"cancel","at_offset_ms":1000}'}}, /reserved_stop_bytes: must be at least 65536/],
+  // N3: production scope refuses, before launch, a browser mode the grant does not name.
+  ['R-production-browser-mode-not-granted', {argv: a => ({...a, scope: 'production'}), mutateGrant: g => { g.browser.browser_mode = OTHER_MODE[args['browser-mode']]; }}, /grant.browser: --browser-mode \S+ is not the granted/],
 ];
 
 async function startFixture(dir, page, stream, tls) {
@@ -244,7 +261,7 @@ async function runControl(c, base) {
   }
   const origin = base.lab ? base.lab.origin : fixture.origin;
   const kase = buildCase(dir, {origin, eventId: base.lab ? base.lab.event_id : 1, members: base.lab ? base.lab.members : [1], authority: base.lab ? base.lab.authority : AUTH,
-    leadMs: base.leadMs, limits: c.limits, detail: c.detail && c.detail(origin), mutateManifest: base.lab ? m => { m.entry.expected_stream_events = base.lab.expected_stream_events; } : null});
+    leadMs: base.leadMs, limits: c.limits, detail: c.detail && c.detail(origin), mutateGrant: c.mutateGrant, mutateManifest: base.lab ? m => { m.entry.expected_stream_events = base.lab.expected_stream_events; } : null});
   const fault = c.fault || (c.faultFn && c.faultFn(dir));
   const env = fault ? {PASSIVE_RECORDER_QUAL_FAULT: JSON.stringify(fault)} : {};
   const recOut = path.join(dir, 'recording');
@@ -254,7 +271,7 @@ async function runControl(c, base) {
   const res = await run('node', [RECORDER, ...argvOf(a)], {env, logFile: path.join(dir, 'recorder.log'), timeoutMs: base.leadMs + 300000});
   const elapsedMs = Date.now() - started;
   if (fixture) await fixture.stop();
-  const r = {code: res.code, signal: res.signal, elapsedMs, stop: readJson(path.join(recOut, 'STOP.json')), summary: readJson(path.join(recOut, 'SUMMARY.json')),
+  const r = {code: res.code, signal: res.signal, elapsedMs, stop: readJson(path.join(recOut, 'STOP.json')), summary: readJson(path.join(recOut, 'SUMMARY.json')), bindings: readJson(path.join(recOut, 'BINDINGS.json')),
     recs: records(recOut), fixtureLog: fixture ? (readJson(fixture.logFile) || []) : []};
   const checks = c.expect(r).map(([ok, detail]) => ({ok: !!ok, detail}));
   return {name: c.name, arm: base.lab ? 'product-lab' : 'fixture', invocation: ['node', RECORDER, ...argvOf(a)], env, exit: res.code, signal: res.signal, elapsed_ms: elapsedMs,
@@ -283,6 +300,19 @@ async function runRefusal([name, spec, pattern]) {
   return {name, arm: 'fixture', invocation: ['node', RECORDER, ...argvOf(a)], env: spec.env || {}, exit: res.code, pass: checks.every(x => x.ok), checks, refusal: text.slice(0, 2000)};
 }
 
+// Launch the requested browser once, exactly as the recorder will, to read the
+// four fields every qualification grant names.
+async function preflight() {
+  const mod = path.resolve(args['playwright-module']);
+  const {BROWSER_MODES} = require('./contract.cjs');
+  const playwright = require(mod);
+  const b = await playwright.chromium.launch({headless: true, ...(args['browser-channel'] === 'chrome' ? {channel: 'chrome'} : {}), args: BROWSER_MODES[args['browser-mode']]});
+  const browserVersion = b.version();
+  await b.close();
+  return {browser_channel: args['browser-channel'], browser_mode: args['browser-mode'],
+    playwright_package_sha256: sha(fs.readFileSync(path.join(mod, 'package.json'))), browser_version: browserVersion};
+}
+
 async function pool(items, n, fn) {
   const results = [];
   let i = 0;
@@ -296,6 +326,8 @@ async function pool(items, n, fn) {
   const started = new Date().toISOString();
   const base = {leadMs: Number(args['lead-ms'] || 25000)};
   let results = [];
+  BROWSER = await preflight();
+  console.log(`browser ${JSON.stringify(BROWSER)}`);
   if (args.arm === 'fixture') {
     const refusals = REFUSAL_CONTROLS.filter(c => !only || only.has(c[0]));
     results.push(...await pool(refusals, parallel, runRefusal));
@@ -338,7 +370,7 @@ async function pool(items, n, fn) {
   const files = {};
   for (const f of fs.readdirSync(HERE).filter(f => f.endsWith('.cjs'))) files[f] = sha(fs.readFileSync(path.join(HERE, f)));
   const receipt = {schema: 'bainluck.passive-recorder-qualification/1', arm: args.arm, browser_mode: args['browser-mode'], browser_channel: args['browser-channel'], started, ended: new Date().toISOString(), node: process.version,
-    playwright_module: args['playwright-module'], recorder_files: files, passed: results.filter(r => r.pass).length, failed: results.filter(r => !r.pass).length,
+    playwright_module: args['playwright-module'], browser: BROWSER, recorder_files: files, passed: results.filter(r => r.pass).length, failed: results.filter(r => !r.pass).length,
     results, scope: 'local loopback only; fixture-clock, not production-clock; DOM observation, not paint'};
   fs.writeFileSync(path.join(OUT, 'QUALIFICATION.json'), JSON.stringify(receipt, null, 1));
   console.log(`QUALIFICATION ${args.arm} passed ${receipt.passed} failed ${receipt.failed} -> ${path.join(OUT, 'QUALIFICATION.json')}`);

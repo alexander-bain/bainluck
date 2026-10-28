@@ -17,10 +17,26 @@ const STREAM_PROTOCOL = 'authority-v3';
 const READOUT_ACTIVATIONS = ['click-live-connection-status', 'none'];
 const KNOWN_STREAM_EVENTS = ['open', 'error', 'probability', 'folded_probability', 'preview', 'preview_open_v3',
   'preview_v3', 'reconcile', 'resync', 'fold_preview_floor', 'reconnect', 'heartbeat', 'closed'];
+// Only boundaries the recorder enforces are limits. The case stream's own bytes
+// are charged to max_response_bytes at the transport; a per-stream number could
+// only come from CDP, which lags, so a grant that names one (max_stream_bytes)
+// is refused as an unknown limit rather than read as a boundary.
 const LIMIT_FIELDS = ['max_request_attempts', 'max_eventsource_constructions', 'max_stream_attempts',
-  'max_active_streams', 'max_response_bytes', 'max_stream_bytes', 'max_request_bytes', 'max_record_bytes',
+  'max_active_streams', 'max_response_bytes', 'max_request_bytes', 'max_record_bytes',
   'max_saved_bytes', 'reserved_stop_bytes', 'max_queue_records', 'max_detail_requests',
   'received_overshoot_bytes'];
+// STOP and SUMMARY fall back to minimal forms whose strings and lists are
+// clipped (journal.minimalForms). Each clipped string is at most 64 UTF-16
+// units, at most 6 bytes each once JSON-escaped; two lists of 48 such strings
+// plus two reasons and the fixed keys stay under 40,000 bytes. The floor holds
+// both minimal forms with that margin, so a valid grant always gets a STOP.
+const MINIMAL_STRING_CHARS = 64;
+const MINIMAL_LIST_ITEMS = 48;
+const MIN_RESERVED_STOP_BYTES = 65536;
+// The browser a grant names. Mode args are the only difference between modes.
+const BROWSER_CHANNELS = ['chrome', 'chromium'];
+const BROWSER_MODES = {'multi-process': [], 'single-process': ['--single-process', '--disable-crashpad', '--disable-gpu']};
+const BROWSER_FIELDS = ['browser_channel', 'browser_mode', 'playwright_package_sha256', 'browser_version'];
 // The transport proxy reads at most one socket chunk before it can refuse it.
 // libuv reads into 64 KiB buffers, so that is the received-side overshoot bound
 // a grant must authorize. Forwarded overshoot is zero.
@@ -245,7 +261,7 @@ function validateManifest(m, refuse) {
 
 function validateGrant(g, m, manifestSha, refuse) {
   if (!exactKeys(g, ['schema', 'grant_id', 'issued_by', 'issued_at', 'expires_at', 'case_id', 'manifest_sha256',
-    'allowed_origins', 'allowed_routes', 'limits', 'detail_requests'], 'grant', refuse)) return;
+    'allowed_origins', 'allowed_routes', 'limits', 'detail_requests', 'browser'], 'grant', refuse)) return;
   if (g.schema !== GRANT_SCHEMA) refuse(`grant.schema: ${GRANT_SCHEMA} required`);
   if (!nonEmpty(g.grant_id) || !nonEmpty(g.issued_by)) refuse('grant: grant_id and issued_by required');
   if (g.manifest_sha256 !== manifestSha) refuse('grant.manifest_sha256: does not bind this manifest');
@@ -272,11 +288,21 @@ function validateGrant(g, m, manifestSha, refuse) {
         refuse(`grant.limits.${k}: ${k === 'max_detail_requests' ? 'integer 0..2' : 'finite positive integer'} required`);
       }
     }
+    if (posInt(L.reserved_stop_bytes) && L.reserved_stop_bytes < MIN_RESERVED_STOP_BYTES) refuse(`grant.limits.reserved_stop_bytes: must be at least ${MIN_RESERVED_STOP_BYTES} (the recorder's floor for the minimal STOP and SUMMARY)`);
     if (posInt(L.reserved_stop_bytes) && posInt(L.max_saved_bytes) && L.reserved_stop_bytes >= L.max_saved_bytes) refuse('grant.limits.reserved_stop_bytes: must be below max_saved_bytes');
     if (posInt(L.max_record_bytes) && posInt(L.reserved_stop_bytes) && L.max_record_bytes > L.max_saved_bytes - L.reserved_stop_bytes) refuse('grant.limits.max_record_bytes: must fit below the STOP reserve');
-    if (posInt(L.max_stream_bytes) && posInt(L.max_response_bytes) && L.max_stream_bytes > L.max_response_bytes) refuse('grant.limits.max_stream_bytes: must not exceed max_response_bytes');
     if (posInt(L.max_active_streams) && L.max_active_streams !== 1) refuse('grant.limits.max_active_streams: exactly 1 (one held case-stream subscription)');
     if (posInt(L.received_overshoot_bytes) && L.received_overshoot_bytes < RECEIVED_OVERSHOOT_BOUND_BYTES) refuse(`grant.limits.received_overshoot_bytes: must authorize the transport's ${RECEIVED_OVERSHOOT_BOUND_BYTES}-byte received-chunk bound`);
+  }
+  // The qualified browser is part of the grant: record() refuses a channel,
+  // mode or Playwright package it does not name before launch, and STOPs on a
+  // browser version it does not name before navigation.
+  const b = g.browser;
+  if (exactKeys(b, BROWSER_FIELDS, 'grant.browser', refuse)) {
+    if (!BROWSER_CHANNELS.includes(b.browser_channel)) refuse(`grant.browser.browser_channel: one of ${BROWSER_CHANNELS.join('|')}`);
+    if (!Object.hasOwn(BROWSER_MODES, b.browser_mode)) refuse(`grant.browser.browser_mode: one of ${Object.keys(BROWSER_MODES).join('|')}`);
+    if (!SHA256.test(b.playwright_package_sha256 || '')) refuse('grant.browser.playwright_package_sha256: lowercase sha256 of the Playwright module package.json required');
+    if (!nonEmpty(b.browser_version)) refuse('grant.browser.browser_version: the exact browser.version() string required');
   }
   if (!Array.isArray(g.detail_requests)) refuse('grant.detail_requests: list required');
   else {
@@ -349,5 +375,6 @@ function validateBundle({manifest, manifestSha256, grant, grantSha256, scope, no
 
 module.exports = {
   MANIFEST_SCHEMA, GRANT_SCHEMA, SCORING, ACQUISITION, STREAM_PROTOCOL, KNOWN_STREAM_EVENTS, LIMIT_FIELDS,
+  MINIMAL_STRING_CHARS, MINIMAL_LIST_ITEMS, MIN_RESERVED_STOP_BYTES, BROWSER_CHANNELS, BROWSER_MODES, BROWSER_FIELDS,
   RECEIVED_OVERSHOOT_BOUND_BYTES, LOOPBACK, sha256, sha256File, parseStrictJson, validateBundle, isLoopbackUrl, isoMs,
 };
