@@ -365,8 +365,11 @@ final class FoldedBlendPreview10090Tests: XCTestCase {
         let points = served + [venue]
         let preview = BlendPreview.chartFrames([], history: h, state: r.held, held: event, now: 100)
         let shown = OddsChartView.extendingBlendToLiveEdge(points, with: preview, history: h)
+        // #11105: joined with a frame, the 19:59 minute is drawn at its end
+        // (20:00:00), still before the preview at 20:00:04.
         XCTAssertEqual(shown.filter { $0.source == "aggregate" }.map(\.date),
-                       [served[0].date, observed.asDate!])
+                       [served[0].date.addingTimeInterval(60), observed.asDate!])
+        XCTAssertEqual(shown.filter { $0.source == "aggregate" }.first?.probability, served[0].probability)
         XCTAssertEqual(shown.filter { $0.source == "aggregate" }.last?.probability, 0.6)
         XCTAssertEqual(shown.filter { $0.source == "polymarket" }.map(\.id), [venue.id])
         XCTAssertEqual(OddsChartView.extendingBlendToLiveEdge(points, with: [], history: h).map(\.id), points.map(\.id))

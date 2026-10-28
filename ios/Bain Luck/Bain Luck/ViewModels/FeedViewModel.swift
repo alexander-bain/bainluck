@@ -275,6 +275,7 @@ final class FeedViewModel: ObservableObject {
         let isInitial = items.isEmpty
         if isInitial { loading = true }
         let loadStart = clock()
+        lastLoadStartedAt = loadStart
         let client = self.client
         // Re-arm the immutable render-generation token for this load (L2-211 Item 2):
         // the next successful non-empty main stamps it once, frozen for this load.
@@ -506,16 +507,50 @@ final class FeedViewModel: ObservableObject {
     /// sibling is still loading (L2-209 Item 2 / C68).
     private(set) var refreshArmed = false
 
+    static let autoRefreshInterval: TimeInterval = 30
+
+    /// #10090 — true while a page is pushed over the Sports list. The tab is still
+    /// on screen to SwiftUI (`onDisappear` fires only for a tab switch), so without
+    /// this the 30 s refresh kept fetching and publishing 50 rows on the main actor
+    /// behind a live event page. Measured on a simulator with a recorded 50-item
+    /// feed: ~26 ms of main-thread time per refresh with a page on top — more than
+    /// a frame, competing with that page's headline and chart.
+    private(set) var isCovered = false
+    private var lastLoadStartedAt: Date?
+
+    /// A page was pushed over the list: stop the timer until it comes back.
+    @MainActor
+    func feedCovered() {
+        guard !isCovered else { return }
+        isCovered = true
+        stopRefresh()
+    }
+
+    /// The list is visible again. If a refresh came due while it was covered, run
+    /// it once now; otherwise just re-arm, so freshness while visible is unchanged.
+    @MainActor
+    func feedUncovered() async {
+        guard isCovered else { return }
+        isCovered = false
+        if hasLiveGames, let last = lastLoadStartedAt,
+           clock().timeIntervalSince(last) >= Self.autoRefreshInterval {
+            await startLoad()
+        } else {
+            configureAutoRefresh()
+        }
+    }
+
     private func configureAutoRefresh() {
         guard autoRefreshEnabled else { return }
         refreshTimer?.invalidate()
-        guard hasLiveGames else { refreshArmed = false; return }
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+        guard hasLiveGames, !isCovered else { refreshArmed = false; return }
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: Self.autoRefreshInterval, repeats: true) { [weak self] _ in
             guard let self else { return }
             // Route the timer through the single owned rail (L2-211 Item 1): the
             // refresh supersedes (cancels + joins) any prior owned load rather than
             // running as an overlapping concurrent load.
             Task { @MainActor in
+                guard !self.isCovered else { return }
                 await self.startLoad()
             }
         }
