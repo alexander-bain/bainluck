@@ -1,3 +1,4 @@
+import OSLog
 import XCTest
 @testable import Bain_Luck
 
@@ -121,6 +122,27 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
         XCTAssertEqual(marks[1].stamp, "4740106905103354772")
         XCTAssertNotEqual(marks[0].stamp, marks[1].stamp)
         XCTAssertEqual(marks[2].stamp, marks[1].stamp, "the coalesced view joins only the point it carries")
+    }
+
+    /// A phone Logging recording keeps signposts for only its last ~50 s but
+    /// Default rows for the whole hold, so every mark is also a `notice` line
+    /// carrying exactly the signpost's message, behind the mark's name.
+    func testEveryMarkIsAlsoAPersistedDefaultLineCarryingTheSignpostsMessage() throws {
+        let basis = "rev:4242=\(UInt32.random(in: 1...UInt32.max))"
+        let edge = Date(timeIntervalSinceReferenceDate: 1)
+        let since = Date().addingTimeInterval(-1)
+        LiveTimingSeam.modelChartAppended(eventId: 4242, path: "stream", basis: basis, at: edge)
+        let line = LiveTimingSeam.logLine(try XCTUnwrap(marks.last))
+        XCTAssertEqual(line, "model.chart.appended event=4242 path=stream basis=\(basis)"
+                       + " stamp=\(LiveTimingSeam.stamp(edge)) p=- observed=-")
+
+        let store = try OSLogStore(scope: .currentProcessIdentifier)
+        let logged = try store.getEntries(at: store.position(date: since),
+                                          matching: NSPredicate(format: "subsystem == %@ AND category == %@",
+                                                                "com.bainluck", "liveTiming"))
+            .compactMap { $0 as? OSLogEntryLog }
+            .filter { $0.composedMessage == line }
+        XCTAssertEqual(logged.map(\.level), [.notice], "one Default line, not Info or Debug, which a long hold loses")
     }
 
     // MARK: - Raw row

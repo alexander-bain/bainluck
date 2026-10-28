@@ -11,6 +11,13 @@ import os
 /// `com.bainluck` / `liveTiming` log; `xctrace --template Logging` (or `log
 /// collect --device`) records them on the phone's own clock.
 ///
+/// Each mark is ALSO written as a Default-level (`notice`) log line in the same
+/// subsystem and category, `<name> <message>`. A phone Logging recording keeps
+/// signposts and Info rows only for its last ~50 s (10/14: marks from 175.7 s of
+/// a 221 s run) but Default rows for the whole run (1.1–220.5 s), so a full
+/// 3–4 minute hold is scored from the Default lines; the signpost stays for the
+/// tools that read it, and the two agree wherever both were kept.
+///
 /// WHAT EACH MARK PROVES — and what it does not:
 /// - `frame.received`: a frame decoded off the stream. The owner may still
 ///   refuse it, so it proves receipt only.
@@ -73,6 +80,7 @@ enum LiveTimingSeam {
     static var observer: ((Mark) -> Void)?
 
     private static let signposter = OSSignposter(subsystem: "com.bainluck", category: "liveTiming")
+    private static let log = Logger(subsystem: "com.bainluck", category: "liveTiming")
 
     /// Whether any mark would be seen. Work done only to build a mark (the
     /// view's comparison input) waits on this.
@@ -250,6 +258,7 @@ enum LiveTimingSeam {
 
     private static func emit(_ mark: Mark) {
         observer?(mark)
+        log.notice("\(logLine(mark), privacy: .public)")
         guard signposter.isEnabled else { return }
         // `emitEvent` takes a static name, hence the switch.
         let id = signposter.makeSignpostID()
@@ -271,7 +280,10 @@ enum LiveTimingSeam {
         }
     }
 
-    private static func message(_ mark: Mark) -> String {
+    /// The persisted line: the mark's name, then exactly the signpost's message.
+    nonisolated static func logLine(_ mark: Mark) -> String { "\(mark.name.rawValue) \(message(mark))" }
+
+    nonisolated private static func message(_ mark: Mark) -> String {
         "event=\(mark.eventId) path=\(mark.path) basis=\(mark.basis) stamp=\(mark.stamp)"
             + " p=\(mark.probability) observed=\(mark.observed)"
     }
