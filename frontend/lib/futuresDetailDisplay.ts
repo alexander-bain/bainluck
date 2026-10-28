@@ -284,12 +284,71 @@ export function openHeroResult<
   status: string | null | undefined,
   leadOutcomeId: number | null | undefined,
   mutuallyExclusive?: boolean | null,
+  marketType?: string | null,
 ): T | null {
   if (status === "resolved") return null;
   const hero =
     servedLeadHeroOutcome(outcomes, leadOutcomeId, status) ??
     pickHeroOutcome(outcomes, leader, false, mutuallyExclusive);
-  return hero && outcomeRowVerdict(hero, false) === "won" ? hero : null;
+  if (!hero || outcomeRowVerdict(hero, false) !== "won") return null;
+  return openHeroCrownWithheld(outcomes, hero, status, leadOutcomeId, marketType, mutuallyExclusive)
+    ? null
+    : hero;
+}
+
+/**
+ * #11616 B2 — #7906's rule, asked of an OPEN board. lane1b DELTA-REVIEW-6430a461
+ * §3: "BMW PGA Championship - Make the Cut", still `open` after the cut (gotcha
+ * #33's window), Aberg and McIlroy both a supported `Won`. The page heroed
+ * "Ludvig Aberg · Won" and the share read "Ludvig Aberg won - …" — the claim
+ * `gradedWinner` refuses on the resolved twin of the same board. Aberg was
+ * crowned for being emitted first.
+ *
+ * True when the hero row prints `Won` and the board is one of #7906's two doors
+ * with more than one supported `Won` under the open row rule. The hero then
+ * names nobody, as the resolved twin does: every row keeps its own `Won`, and no
+ * winner's last price is offered as a forecast instead.
+ *
+ * Unchanged: a live row the hero promotes (it is not a `Won`), a single winner,
+ * a ladder or any shape the doors do not name, and a lead the server names
+ * (#8894 — the leg the venue corroborates, not a pick among peers). Native's
+ * `futuresDetailHeroOutcome` refuses the same boards at the same point.
+ */
+export function openHeroCrownWithheld<
+  T extends GradedRow & { id: number; probability?: number | null },
+>(
+  outcomes: readonly T[],
+  hero: T | null,
+  status: string | null | undefined,
+  leadOutcomeId: number | null | undefined,
+  marketType?: string | null,
+  mutuallyExclusive?: boolean | null,
+): boolean {
+  if (status === "resolved" || !hero || outcomeRowVerdict(hero, false) !== "won") return false;
+  if (hero === servedLeadHeroOutcome(outcomes, leadOutcomeId, status)) return false;
+  return severalPeerWinners(outcomes, false, marketType, mutuallyExclusive);
+}
+
+/**
+ * #11616 B2 — the leader a shared link may price, or null. On an open board
+ * whose winners are several peers (`openHeroCrownWithheld`'s doors and count)
+ * the link states the board alone, as Native's share does ("<board> on Bain
+ * Luck"). The price sort's top row there is a winner whose last price is a
+ * result, not a forecast — arm (a) of the B2 specimen would share "Ludvig Aberg
+ * 100% - …" — or a row the page hero does not name. Every other board's leader
+ * is returned as is.
+ */
+export function sharePriceLeader<T extends GradedRow>(
+  outcomes: readonly T[],
+  leader: T | null,
+  status: string | null | undefined,
+  marketType?: string | null,
+  mutuallyExclusive?: boolean | null,
+): T | null {
+  if (status !== "resolved" && severalPeerWinners(outcomes, false, marketType, mutuallyExclusive)) {
+    return null;
+  }
+  return leader;
 }
 
 /**
@@ -617,26 +676,40 @@ export function gradedWinner<
   mutuallyExclusive?: boolean | null,
 ): T | null {
   if (status !== "resolved") return null;
+  if (severalPeerWinners(outcomes, true, marketType, mutuallyExclusive)) return null;
+  const featured = pickHeroOutcome(outcomes, leader, true);
+  // #11616 — the crown is the row's supported `Won`, not a raw `is_winner`.
+  return featured && outcomeRowVerdict(featured, true) === "won" ? featured : null;
+}
+
+/**
+ * #7906's two doors and its count, at either state (#11616 B2 asks it of open
+ * boards too): the board AFFIRMS its winners are peers, or claims exclusivity,
+ * and more than one row prints a supported `Won` under that state's row rule.
+ */
+function severalPeerWinners(
+  outcomes: readonly GradedRow[],
+  resolved: boolean,
+  marketType?: string | null,
+  mutuallyExclusive?: boolean | null,
+): boolean {
   const peerShaped = PEER_WINNER_SHAPES.has(marketType ?? "");
   // 🔴 `=== true` and never a truthiness test: only an AFFIRMATIVE exclusivity
   // claim may withhold a crown. See the block comment — a `false` here is not
   // evidence of anything, so it must fall through rather than decide.
   const contradictory = mutuallyExclusive === true;
-  if (peerShaped || contradictory) {
-    // Counted rather than filtered: the answer is settled by the SECOND grade,
-    // and a participation board carries 163 rows.
-    let graded = 0;
-    for (const outcome of outcomes) {
-      // #11616 — counted on the row's own verdict, like the crown below.
-      if (outcome && outcomeRowVerdict(outcome, true) === "won") {
-        graded += 1;
-        if (graded > 1) return null;
-      }
+  if (!peerShaped && !contradictory) return false;
+  // Counted rather than filtered: the answer is settled by the SECOND grade,
+  // and a participation board carries 163 rows.
+  let graded = 0;
+  for (const outcome of outcomes) {
+    // #11616 — counted on the row's own verdict, like the crown.
+    if (outcome && outcomeRowVerdict(outcome, resolved) === "won") {
+      graded += 1;
+      if (graded > 1) return true;
     }
   }
-  const featured = pickHeroOutcome(outcomes, leader, true);
-  // #11616 — the crown is the row's supported `Won`, not a raw `is_winner`.
-  return featured && outcomeRowVerdict(featured, true) === "won" ? featured : null;
+  return false;
 }
 
 /** Generic binary-style outcome names that read better as "Yes" in a headline. */

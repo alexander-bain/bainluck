@@ -9,6 +9,7 @@ import {
   futuresUnfurlCopy,
   openHeroResult,
   servedLeadOutcome,
+  sharePriceLeader,
 } from "@/lib/futuresDetailDisplay";
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
@@ -133,7 +134,13 @@ export default async function Image({ params }: { params: { id: string } }) {
   // #698 — the same effective settled verdicts as the page, so a row whose
   // result is unknown cannot be named the winner in a shared link either.
   const market = withSettledResultCertainty(lookup.market);
-  const leader = topOutcome(market);
+  const outcomes = market.outcomes ?? market.top_outcomes ?? [];
+  const boardLeader = topOutcome(market);
+  // #11616 B2 — the leader the title may price (`sharePriceLeader`): on an open
+  // board with several peer winners, a winner's last price is not a forecast.
+  const leader = sharePriceLeader(
+    outcomes, boardLeader, market.status, market.market_type, market.mutually_exclusive,
+  );
 
   // ═══ #6127 — A MARKET NOBODY HAS PRICED DOES NOT GET A NUMBER, A LEADER OR A
   //     BAR DRAWN FOR IT ═══
@@ -185,7 +192,6 @@ export default async function Image({ params }: { params: { id: string } }) {
   // settled market the winner is the story and there is NO percentage.
   // #6061 — the count and the price are NOT passed in any more: the caption is
   // the hook or it is nothing, and every number on this card is drawn below.
-  const outcomes = market.outcomes ?? market.top_outcomes ?? [];
   const { featuredName, isResolved, settledWon, showsResult, subtitle } = futuresUnfurlCopy({
     outcomes,
     leader,
@@ -195,9 +201,11 @@ export default async function Image({ params }: { params: { id: string } }) {
     // crown on exactly the boards the page and the title decline one on.
     marketType: market.market_type,
     mutuallyExclusive: market.mutually_exclusive,
-    // #11616 O-L3-1 — the result the page hero prints on an open board.
+    // #11616 O-L3-1 — the result the page hero prints on an open board; none on
+    // an open peer board with several winners (B2), as the page.
     openResult: openHeroResult(
-      outcomes, leader, market.status, market.lead_outcome_id, market.mutually_exclusive,
+      outcomes, boardLeader, market.status, market.lead_outcome_id,
+      market.mutually_exclusive, market.market_type,
     ),
   });
 

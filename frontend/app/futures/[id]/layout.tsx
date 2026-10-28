@@ -15,6 +15,7 @@ import {
   futuresTitleText,
   gameContainerRedirectPath,
   servedLeadOutcome,
+  sharePriceLeader,
 } from "@/lib/futuresDetailDisplay";
 import {
   unresolvedMetadata,
@@ -137,7 +138,13 @@ export async function generateMetadata({
   // #698 — the same effective settled verdicts as the page, so a row whose
   // result is unknown cannot be named the winner in a shared link either.
   const market = withSettledResultCertainty(lookup.market);
-  const leader = topOutcome(market);
+  const outcomes = market.outcomes ?? market.top_outcomes ?? [];
+  const boardLeader = topOutcome(market);
+  // #11616 B2 — on an open board with several peer winners, the top-priced
+  // winner's last price is a result, not a forecast: the link states the board.
+  const leader = sharePriceLeader(
+    outcomes, boardLeader, market.status, market.market_type, market.mutually_exclusive,
+  );
   // #6127 — the same call, now made through the shared name. The condition below
   // (`leader && probability`, else the market name alone) is unchanged and is the
   // rule the PICTURE was missing; it lives in `futuresDetailDisplay` so the two
@@ -146,7 +153,6 @@ export async function generateMetadata({
   // #883 L2-55: a settled market's title must NOT carry the last-traded % — it's
   // "<winner> won", mirroring the L2-53 hero. Same winner selection as the page.
   const isResolved = market.status === "resolved";
-  const outcomes = market.outcomes ?? market.top_outcomes ?? [];
   // #6079 — the GRADE, not the hero. This line used to call `pickHeroOutcome`,
   // whose ungraded fallback is the price leader, so the title crowned whichever
   // row happened to be expensive when trading stopped: production 05:36Z,
@@ -156,10 +162,14 @@ export async function generateMetadata({
   // an og:title reading "Ludvig Aberg won - BMW PGA Championship - Make the Cut"
   // is the same false claim as the hero's, and it travels further.
   // #11616 O-L3-1 — an open board whose page hero prints `Won` shares that
-  // result, never the price leader's forecast beside it.
+  // result, never the price leader's forecast beside it. #11616 B2 — and on an
+  // open peer board with several winners it shares none of them, as the page.
   const winnerName = leaderLabel(
-    gradedWinner(outcomes, leader, market.status, market.market_type, market.mutually_exclusive) ??
-      openHeroResult(outcomes, leader, market.status, market.lead_outcome_id, market.mutually_exclusive),
+    gradedWinner(outcomes, boardLeader, market.status, market.market_type, market.mutually_exclusive) ??
+      openHeroResult(
+        outcomes, boardLeader, market.status, market.lead_outcome_id,
+        market.mutually_exclusive, market.market_type,
+      ),
   );
 
   const titleText = futuresTitleText({

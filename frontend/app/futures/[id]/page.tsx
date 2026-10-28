@@ -78,6 +78,7 @@ import {
   NO_CURRENT_PRICES_CHART_NOTE,
   movementWindowLabel,
   noPricedOutcomesNote,
+  openHeroCrownWithheld,
   partitionOutcomesByPrice,
   pickCaptionSubject,
   pickChartSeedOutcomes,
@@ -935,10 +936,24 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const heroOutcome =
     servedLeadHeroOutcome(market.outcomes, market.lead_outcome_id, market.status) ??
     pickHeroOutcome(market.outcomes, leader, isResolved, market.mutually_exclusive);
+  // #11616 B2 — on an open #7906 board with several supported winners (Make the
+  // Cut after the cut), the hero row is one of many peers: it names nobody, as
+  // the resolved twin does, and its last price is not a forecast either.
+  const heroCrownWithheld = openHeroCrownWithheld(
+    market.outcomes,
+    heroOutcome,
+    market.status,
+    market.lead_outcome_id,
+    market.market_type,
+    market.mutually_exclusive,
+  );
   // #11616 L3(d) — an open board whose hero row prints `Won` shows the result,
   // as the row, iOS and search do, never that row's last price as a forecast.
   const heroWonOpen =
-    !isResolved && heroOutcome != null && outcomeRowVerdict(heroOutcome, false) === "won";
+    !isResolved &&
+    !heroCrownWithheld &&
+    heroOutcome != null &&
+    outcomeRowVerdict(heroOutcome, false) === "won";
   // #6301 — the GRADE, asked for BY NAME through the one helper that owns the test.
   // `gradedWinner` returns the featured row only when `is_winner === true`, and null
   // on every settled field that never graded one. `layout.tsx` adopted it under #6079
@@ -987,7 +1002,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // Declined SILENTLY (notice 34): `FuturesHero` already guards its name on
   // `outcomeName &&`, so withholding it leaves the title and the grey chip and
   // no hole. The "Final Results" table below is honest and carries the page.
-  const heroNamesNobody = isResolved && gradedChampion === null;
+  const heroNamesNobody = (isResolved && gradedChampion === null) || heroCrownWithheld;
   // #698 — how much of this settled board has no result to state. `all` puts
   // "Result unknown" beside the RESOLVED chip and in the chart caption; `some`
   // keeps every definite row and says so in the caption. A field whose rows all
@@ -1105,7 +1120,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             ? undefined
             : boardOutcomeLabel(heroOutcome.name, market.name)
         }
-        movement={!isResolved && leader?.probability_change_24h != null ? leader.probability_change_24h * 100 : null}
+        movement={!isResolved && !heroCrownWithheld && leader?.probability_change_24h != null ? leader.probability_change_24h * 100 : null}
         // UX-P233 (board item 11): the pill used to render a bare "↓ 71.5 pts"
         // with no window at all, directly above a caption reading "Amazon up 13.5
         // pts from opening" — two true numbers about one outcome, reading as a
