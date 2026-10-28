@@ -5140,7 +5140,14 @@ class LiveBlendRefresher:
         if preview.claim_lock is None:
             preview.claim_lock = asyncio.Lock()
         pool = self._client().connection_pool
-        async with preview.claim_lock:
+        # An established claim/authority is stable for this registry. Reading
+        # its ticket uses a separate socket and Redis still checks the owner
+        # and retirement barrier atomically. Do not spend the 250ms admission
+        # budget waiting behind a publication batch. First claims and capacity
+        # sampling (which updates local policy state) remain serialized.
+        lock = (preview.claim_lock if include_candidates or preview.unclaimed(self.source)
+                else contextlib.nullcontext())
+        async with lock:
             connection = await _checkout(pool)
             try:
                 if preview.unclaimed(self.source):
