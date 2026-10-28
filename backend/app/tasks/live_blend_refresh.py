@@ -5091,11 +5091,29 @@ class LiveBlendRefresher:
 
     @staticmethod
     def _preview_call(connection, *, send_before: Optional[float] = None):
-        async def call(*args):
+        from hashlib import sha1
+        from redis.exceptions import NoScriptError
+        from app.utils.blend_preview import LEDGER_SCRIPT
+
+        # Redis identifies cached Lua by SHA-1. No security decision uses it.
+        ledger_sha = sha1(LEDGER_SCRIPT.encode(), usedforsecurity=False).hexdigest()
+
+        async def send(*args):
             if send_before is not None and asyncio.get_running_loop().time() >= send_before:
                 raise TimeoutError("idle retirement pass ended before transmission")
             await connection.send_command(*args)
             return await connection.read_response()
+
+        async def call(*args):
+            if len(args) >= 3 and args[0] == "EVAL" and args[1] == LEDGER_SCRIPT:
+                try:
+                    return await send("EVALSHA", ledger_sha, *args[2:])
+                except NoScriptError:
+                    # NOSCRIPT proves nothing ran. Load and execute the exact
+                    # program once; never replay a timeout or ambiguous write.
+                    # Recheck the retirement deadline before this second send.
+                    pass
+            return await send(*args)
         return call
 
     async def claim_preview_display(self) -> Optional[int]:
