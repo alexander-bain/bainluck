@@ -102,13 +102,13 @@ async def test_a_read_left_before_its_statement_issues_none(monkeypatch):
     assert not frames and r.observation_read_stats["finished"] == 1
 
 
-async def test_past_the_cap_a_read_is_cancelled_the_old_way(monkeypatch):
+async def test_past_the_cap_no_second_read_starts(monkeypatch):
     r, _, frames, obs, validate, state, entered, release = slow_rig(monkeypatch)
     assert await r.preview_accepted_observations(obs, validate) is False
     assert await r.preview_accepted_observations(obs, validate) is False
-    # Only one read outlives its caller; the second was cancelled and joined.
+    # The retry starts no read beside the detached one: one preview slot.
     assert len(r._detached_reads) == module.OBSERVATION_READ_DETACHED_MAX == 1
-    assert state["exits"] == ["CancelledError"]
+    assert state["executed"] == 1 and state["exits"] == []
     assert r._session_slots._value == 2
     assert r.observation_read_stats == {
         "detached": 1, "finished": 0, "capped": 1, "ceiling_cancelled": 0,
@@ -116,6 +116,49 @@ async def test_past_the_cap_a_read_is_cancelled_the_old_way(monkeypatch):
     release.set()
     await join_detached(r)
     assert r._session_slots._value == 3 and not frames
+
+
+async def test_retries_never_hold_a_second_slot(monkeypatch):
+    r, _, _, obs, validate, state, entered, release = slow_rig(monkeypatch)
+    fewest, stop = [3], asyncio.Event()
+
+    async def sample():
+        while not stop.is_set():
+            fewest[0] = min(fewest[0], r._session_slots._value)
+            await asyncio.sleep(.005)
+
+    sampler = asyncio.create_task(sample())
+    for _ in range(3):
+        assert await r.preview_accepted_observations(obs, validate) is False
+    stop.set()
+    await sampler
+    assert fewest[0] == 2
+    release.set()
+    await join_detached(r)
+
+
+async def test_a_read_left_while_opening_does_no_admission(monkeypatch):
+    r, session, frames, obs, validate, state, entered, release = slow_rig(monkeypatch, ticket=7)
+    admissions = []
+    opened = asyncio.Event()
+
+    @asynccontextmanager
+    async def slow_scope():
+        await opened.wait()
+        yield session
+
+    async def admission():
+        admissions.append(1)
+        return 7
+
+    r._observation_read_factory = slow_scope
+    monkeypatch.setattr(r, "_preview_admission_read", admission)
+    assert await r.preview_accepted_observations(obs, validate) is False
+    opened.set()
+    release.set()
+    await join_detached(r)
+    assert admissions == [] and state["executed"] == 0 and not frames
+    assert r.observation_read_stats["finished"] == 1
 
 
 async def test_a_read_still_running_at_the_ceiling_is_cancelled(monkeypatch):

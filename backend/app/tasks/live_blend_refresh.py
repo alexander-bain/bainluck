@@ -3382,6 +3382,10 @@ class LiveBlendRefresher:
         )
         # Capture BEFORE the statement, not when a prepared plan is later
         # published. Retirement invalidates this proof without renewing it.
+        # A read its caller left while it waited for a slot or connection
+        # does no admission read either (#10090).
+        if stopped_waiting is not None and stopped_waiting():
+            raise _ObservationReadAbandoned
         with _observation_read_step("admission"):
             preview_ticket = (
                 await self._preview_admission_read() if preview_columns else None
@@ -4890,6 +4894,11 @@ class LiveBlendRefresher:
             # Optional display work must not queue the game loop behind a
             # contended pool/read. The caller may retain the SAME frozen input.
             if self._session_slots.locked():
+                return False
+            if len(self._detached_reads) >= OBSERVATION_READ_DETACHED_MAX:
+                # A read its caller left still holds a slot: no second read
+                # starts beside it, so 2 of the 3 slots stay the stamps'.
+                self.observation_read_stats["capped"] += 1
                 return False
             read_timing = {"started_s": _mono()}
             clock_owner = self.held_quotes if self._observation_read_factory is not None else None
