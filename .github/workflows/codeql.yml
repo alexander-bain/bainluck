@@ -81,6 +81,10 @@ jobs:
           # Guarded by frontend/e2e/contract/codeqlLanguages.contract.test.js.
           languages: ${{ matrix.language }}
           queries: security-and-quality
+          # #10090 (Alex adopted 10/28): the Python leg skips backend/tests/**
+          # (paths-ignore in the config). Empty for javascript-typescript, which
+          # init treats as unset, so that leg's analysed files are unchanged.
+          config-file: ${{ matrix.language == 'python' && './.github/codeql/codeql-config.yml' || '' }}
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3
