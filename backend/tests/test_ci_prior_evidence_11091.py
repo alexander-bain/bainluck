@@ -706,6 +706,13 @@ def test_push_security_preserves_original_pr_and_scheduled_analysis_behavior():
             if old["name"] == "Perform CodeQL Analysis":
                 analysis_step_id = new.pop("id")
                 assert analysis_step_id == "codeql_analysis"
+            if old["name"] == "Initialize CodeQL":
+                # #10090: the one added scanner input, exact value only.
+                config_file = new["with"].pop("config-file")
+                assert config_file == (
+                    "${{ matrix.language == 'python' && "
+                    "'./.github/codeql/codeql-config.yml' || '' }}"
+                )
             assert new == old
 
     assert_original_steps(new_job["steps"])

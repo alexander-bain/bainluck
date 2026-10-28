@@ -1,0 +1,7 @@
+# Adopted by Alex on 10/28 after the trial (#10090). Passed to the Python leg
+# only (see codeql.yml): test code never runs in production, so the Python
+# security scan skips it. Tests only — backend/scripts, tools and frontend stay
+# analysed. Guarded by backend/tests/test_codeql_python_config_10090.py.
+name: "Bain Luck CodeQL (Python skips backend/tests)"
+paths-ignore:
+  - "backend/tests/**"
