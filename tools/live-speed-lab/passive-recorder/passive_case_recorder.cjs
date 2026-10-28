@@ -125,12 +125,18 @@ async function record(opts) {
   const m = v.manifest, g = v.grant, L = g.limits, W = v.window;
   const canonical = m.event.canonical_event_id;
   const streamUrl = m.entry.expected_stream_url;
+  // The case stream is the product EventSource on the event stream PATH; any
+  // query difference on that path is a fault. Other product EventSources (the
+  // page's market stream) are recorded raw and counted, never treated as the case.
+  const streamOrigin = new URL(streamUrl).origin, streamPath = new URL(streamUrl).pathname;
+  const isCaseStream = url => { try { const u = new URL(url); return u.origin === streamOrigin && u.pathname === streamPath; } catch { return false; } };
+  const caseInstances = new Set();
   const allowedOrigins = new Set(g.allowed_origins);
   const allowOrigin = origin => allowedOrigins.has(origin) && (scope !== 'local' || contract.isLoopbackUrl(origin));
   const faults = [];
   const fault = (kind, detail = {}) => { faults.push({...detail, kind}); };
   const counters = {request_attempts: 0, refused_requests: 0, stream_attempts: 0, redirect_hops: 0, unrouted_requests: 0,
-    eventsource_constructions: 0, eventsource_closes: 0, detail_requests: 0, cdp_stream_bytes: 0, cdp_response_bytes: 0,
+    eventsource_constructions: 0, eventsource_closes: 0, other_eventsource_constructions: 0, other_stream_attempts: 0, other_frames: 0, detail_requests: 0, cdp_stream_bytes: 0, cdp_response_bytes: 0,
     frames: 0, frame_parse_failures: 0, samples: 0, sample_errors: 0, max_sample_gap_ms: 0, teardown_refused: 0,
     methods: {}};
   let stopping = null;
@@ -173,6 +179,7 @@ async function record(opts) {
   let browser = null, context = null, page = null, cdp = null;
   const streamState = new Map(); // instance -> {session, opens}
   const seenTypes = new Set();
+  const otherStreams = new Set();
   // A stream outage runs from an error (native retry) or a close (product
   // reopen) to the next open. Reconnection keeps its hole; it is never bridged.
   const outages = [];
@@ -221,17 +228,28 @@ async function record(opts) {
     if (!rec || typeof rec !== 'object') { fault('page-record-invalid'); return; }
     const at = clock.docToT0(rec.mono);
     if (rec.kind === 'es-construct') {
-      counters.eventsource_constructions++;
-      const q = streamQuery(rec.url);
-      if (rec.url !== streamUrl) fault('stream-url-mismatch', {url: rec.url, expected: streamUrl, protocol_values: q && q.protocol_values, at: 'construct'});
-      if (q && q.protocol_values.length !== 1) fault(q.protocol_values.length ? 'stream-protocol-duplicated' : 'stream-protocol-missing', {url: rec.url});
-      if (rec.concurrent_open > 0) fault('concurrent-duplicate-stream', {instance: rec.instance, concurrent_open: rec.concurrent_open});
-      streamState.set(rec.instance, {});
-      if (counters.eventsource_constructions > L.max_eventsource_constructions) requestStop('cap:max_eventsource_constructions', {constructions: counters.eventsource_constructions});
-      if (outage) outage.reopened_by_instance = rec.instance;
+      if (!isCaseStream(rec.url)) {
+        counters.other_eventsource_constructions++;
+        otherStreams.add(rec.url);
+      } else {
+        caseInstances.add(rec.instance);
+        counters.eventsource_constructions++;
+        const q = streamQuery(rec.url);
+        if (rec.url !== streamUrl) fault('stream-url-mismatch', {url: rec.url, expected: streamUrl, protocol_values: q && q.protocol_values, at: 'construct'});
+        if (q && q.protocol_values.length !== 1) fault(q.protocol_values.length ? 'stream-protocol-duplicated' : 'stream-protocol-missing', {url: rec.url});
+        const dup = (rec.concurrent_urls || []).filter(isCaseStream);
+        if (dup.length) fault('concurrent-duplicate-stream', {instance: rec.instance, concurrent_case_streams: dup.length});
+        streamState.set(rec.instance, {});
+        if (counters.eventsource_constructions > L.max_eventsource_constructions) requestStop('cap:max_eventsource_constructions', {constructions: counters.eventsource_constructions});
+        if (outage) outage.reopened_by_instance = rec.instance;
+      }
     } else if (rec.kind === 'es-close') {
-      counters.eventsource_closes++;
-      if (!outage) outage = {from_mono: rec.mono, instance: rec.instance, cause: 'close'};
+      if (caseInstances.has(rec.instance)) {
+        counters.eventsource_closes++;
+        if (!outage) outage = {from_mono: rec.mono, instance: rec.instance, cause: 'close'};
+      }
+    } else if (rec.kind === 'es-event' && !caseInstances.has(rec.instance)) {
+      counters.other_frames++;
     } else if (rec.kind === 'es-event') {
       if (rec.type === 'error' && !outage) outage = {from_mono: rec.mono, instance: rec.instance, cause: 'error', ready_state: rec.ready_state};
       if (rec.type === 'open' && outage) { outages.push({...outage, to_mono: rec.mono, open_instance: rec.instance}); outage = null; }
@@ -376,7 +394,7 @@ async function record(opts) {
         status, reason: stopping.reason, coverage, holes, faults: allFaults.slice(0, 200), fault_count: allFaults.length,
         fault_kinds: [...new Set(allFaults.map(f => f.kind))].sort(),
         clock: {anchor: clock.anchor, exchanges: clock.exchanges, final_offset_ms: clock.offset},
-        setup_ready_since_t0_ms: setupReadyAt, streams: Object.fromEntries(streamState), stream_event_types_seen: [...seenTypes].sort(),
+        setup_ready_since_t0_ms: setupReadyAt, streams: Object.fromEntries(streamState), other_eventsources: [...otherStreams], stream_event_types_seen: [...seenTypes].sort(),
         semantics: 'DOM observation, not physical paint. Collector/document mapping only; worker, Redis and DB clocks are not mapped by the page recorder. Unexecuted checks are absent, not passed.'};
       journal.writeReserved('STOP.json', stop, {status, reason: stopping.reason});
       journal.writeReserved('SUMMARY.json', summary, {status, reason: stopping.reason, holes, fault_kinds: summary.fault_kinds});
@@ -429,7 +447,8 @@ async function record(opts) {
         requestStop('cap:max_request_attempts', {attempts: counters.request_attempts, url});
         return route.abort('blockedbyclient').catch(() => {});
       }
-      const isStream = u.pathname.endsWith('/stream') && origin === new URL(streamUrl).origin;
+      const isStream = isCaseStream(url);
+      if (!isStream && type === 'eventsource') counters.other_stream_attempts++;
       if (isStream && counters.stream_attempts >= L.max_stream_attempts) {
         journal.append('request', {...rec, decision: 'refused-cap', cap: 'max_stream_attempts'});
         requestStop('cap:max_stream_attempts', {stream_attempts: counters.stream_attempts});

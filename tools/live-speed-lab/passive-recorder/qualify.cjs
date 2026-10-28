@@ -110,6 +110,10 @@ const FIXTURE_CONTROLS = [
     [r.summary?.coverage.start_edge_covered && r.summary?.coverage.end_edge_covered, 'both 180 s edges covered'],
     [r.stop?.counters.samples >= 1850, `samples ${r.stop?.counters.samples}`],
     [r.stop?.stopped_since_t0_ms?.[0] >= 185000 && r.stop?.stopped_since_t0_ms?.[0] < 186000, `stopped at ${r.stop?.stopped_since_t0_ms}`]]},
+  {name: 'C1-fixture-with-market-stream', page: 'market-stream', stream: 'normal', kind: full, expect: r => [
+    [r.code === 0 && r.summary?.status === 'COMPLETE', `status ${r.summary?.status} holes ${r.summary?.holes} faults ${r.summary?.fault_kinds}`],
+    [r.stop?.counters.eventsource_constructions === 1 && r.stop?.counters.other_eventsource_constructions === 1, `case ${r.stop?.counters.eventsource_constructions} other ${r.stop?.counters.other_eventsource_constructions}`],
+    [r.stop?.counters.other_frames > 0 && r.recs.some(x => x.rec?.kind === 'es-construct' && x.rec.url.includes('/api/markets/stream')), 'the other subscription is recorded raw, not treated as the case']]},
   {name: 'C2-malformed-json', page: 'normal', stream: 'malformed', kind: full, expect: r => [
     [r.code === 1 && r.summary?.status === 'UNRESOLVED' && has(r.summary?.fault_kinds, 'frame-malformed-json'), `status ${r.summary?.status} ${r.summary?.fault_kinds}`],
     [r.recs.some(x => x.rec?.type === 'preview_v3' && x.rec?.data === '{"protocol":3,"event_id":1,'), 'raw malformed frame retained verbatim']]},
@@ -300,10 +304,11 @@ async function pool(items, n, fn) {
     const P = [
       {name: 'P1-product-held-page', expect: r => [
         [r.stop?.reason === 'deadline', `reason ${r.stop?.reason}`],
-        [r.stop?.counters.eventsource_constructions === 1 && r.stop?.counters.stream_attempts === 1 && !has(r.summary?.fault_kinds, 'concurrent-duplicate-stream'), `constructions ${r.stop?.counters.eventsource_constructions} attempts ${r.stop?.counters.stream_attempts}`],
+        [r.stop?.counters.eventsource_constructions === 1 && r.stop?.counters.stream_attempts === 1 && !has(r.summary?.fault_kinds, 'concurrent-duplicate-stream'), `case constructions ${r.stop?.counters.eventsource_constructions} attempts ${r.stop?.counters.stream_attempts}; other product EventSources ${JSON.stringify(r.summary?.other_eventsources)}`],
         [!has(r.summary?.fault_kinds, 'stream-url-mismatch') && r.recs.some(x => x.rec?.kind === 'es-construct' && x.rec.url === `${facts.origin}/api/events/${facts.event_id}/stream?preview_protocol=authority-v3`), 'exact authority-v3 URL from the product constructor'],
         [r.recs.some(x => x.rec?.type === 'preview_open_v3') && !has(r.summary?.fault_kinds, 'frame-wrong-members') && !has(r.summary?.fault_kinds, 'frame-wrong-domain'), 'complete open envelope matching the declared members/authority'],
-        [r.recs.some(x => x.rec?.type === 'folded_probability') && r.recs.some(x => x.rec?.type === 'preview_v3'), `frame types ${r.summary?.stream_event_types_seen}`],
+        [base.lab.expected_stream_events.every(t => has(r.summary?.stream_event_types_seen, t)), `declared ${base.lab.expected_stream_events}; seen ${r.summary?.stream_event_types_seen}`],
+        [r.summary?.status === 'COMPLETE', `status ${r.summary?.status} holes ${r.summary?.holes} faults ${r.summary?.fault_kinds}`],
         [Object.keys(r.stop?.counters.methods || {}).every(k => k === 'GET') && !r.recs.some(x => x.kind === 'request' && /\/lab\//.test(x.url || '')), `methods ${JSON.stringify(r.stop?.counters.methods)}; no /lab/ request from the recorder's page`],
         [r.summary?.coverage.start_edge_covered && r.summary?.coverage.end_edge_covered && r.stop?.counters.samples >= 1850, `edges ${r.summary?.coverage.start_edge_covered}/${r.summary?.coverage.end_edge_covered} samples ${r.stop?.counters.samples}`],
         [r.recs.some(x => x.kind === 'sample' && x.rec?.display_identity?.headline?.status === 'present' && x.rec?.display_identity?.chart?.status === 'present'), '#11673 headline and chart attributes present on the real page']]},

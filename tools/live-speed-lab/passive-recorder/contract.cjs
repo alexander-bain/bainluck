@@ -275,7 +275,7 @@ function validateGrant(g, m, manifestSha, refuse) {
     if (posInt(L.reserved_stop_bytes) && posInt(L.max_saved_bytes) && L.reserved_stop_bytes >= L.max_saved_bytes) refuse('grant.limits.reserved_stop_bytes: must be below max_saved_bytes');
     if (posInt(L.max_record_bytes) && posInt(L.reserved_stop_bytes) && L.max_record_bytes > L.max_saved_bytes - L.reserved_stop_bytes) refuse('grant.limits.max_record_bytes: must fit below the STOP reserve');
     if (posInt(L.max_stream_bytes) && posInt(L.max_response_bytes) && L.max_stream_bytes > L.max_response_bytes) refuse('grant.limits.max_stream_bytes: must not exceed max_response_bytes');
-    if (posInt(L.max_active_streams) && L.max_active_streams !== 1) refuse('grant.limits.max_active_streams: exactly 1 (one held subscription)');
+    if (posInt(L.max_active_streams) && L.max_active_streams !== 1) refuse('grant.limits.max_active_streams: exactly 1 (one held case-stream subscription)');
     if (posInt(L.received_overshoot_bytes) && L.received_overshoot_bytes < RECEIVED_OVERSHOOT_BOUND_BYTES) refuse(`grant.limits.received_overshoot_bytes: must authorize the transport's ${RECEIVED_OVERSHOOT_BOUND_BYTES}-byte received-chunk bound`);
   }
   if (!Array.isArray(g.detail_requests)) refuse('grant.detail_requests: list required');

@@ -29,11 +29,13 @@ function installPassiveEventSourceHook(cfg) {
     constructor(...args) {
       super(...args);
       const instance = ++instances;
-      const concurrent = [...live].filter(es => es.readyState !== Native.CLOSED).length;
+      // URLs of the other EventSources still open at construction; the recorder
+      // decides which one is the case stream (the page may hold others).
+      const concurrentUrls = [...live].filter(es => es.readyState !== Native.CLOSED).map(es => es.url);
       live.add(this);
       Object.defineProperty(this, '__passiveInstance', {value: instance});
       emit({kind: 'es-construct', instance, url: this.url, arg_count: args.length,
-        with_credentials: this.withCredentials, concurrent_open: concurrent, mono: performance.now(), wall: Date.now()});
+        with_credentials: this.withCredentials, concurrent_urls: concurrentUrls, mono: performance.now(), wall: Date.now()});
       for (const type of cfg.streamEvents) {
         this.addEventListener(type, e => {
           const rec = {kind: 'es-event', instance, type, mono: performance.now(), wall: Date.now(), url: this.url,

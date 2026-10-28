@@ -43,6 +43,7 @@ function open(){const es=new EventSource('/api/events/${EVENT}/stream${proto}');
  es.addEventListener('reconnect',()=>{es.close();setTimeout(open,50);});return es;}
 open();
 ${PAGE === 'second-subscription' ? "setTimeout(open,3000);" : ''}
+${PAGE === 'market-stream' ? "new EventSource('/api/markets/stream?ids=11,12');" : ''}
 ${PAGE === 'many-requests' ? "setInterval(()=>fetch('/api/ping').catch(()=>{}),200);" : ''}
 ${PAGE === 'big-fetch' ? "setTimeout(()=>fetch('/api/big').then(r=>r.arrayBuffer()).catch(()=>{}),2000);" : ''}
 ${PAGE === 'redirect' ? "setTimeout(()=>fetch('/api/redirect').catch(()=>{}),2000);" : ''}
@@ -89,6 +90,12 @@ function handler(req, res) {
   note({kind: 'request', method: req.method, url: req.url});
   if (u.pathname === `/events/${EVENT}`) { res.writeHead(200, {'content-type': 'text/html'}); return res.end(page()); }
   if (u.pathname === `/api/events/${EVENT}/stream`) return sse(req, res);
+  if (u.pathname === '/api/markets/stream') {
+    // A second product subscription that is not the case stream (the real page holds one).
+    res.writeHead(200, {'content-type': 'text/event-stream', 'cache-control': 'no-cache'});
+    const t = setInterval(() => res.write('event: heartbeat\ndata: {}\n\n'), 2000);
+    return res.on('close', () => clearInterval(t));
+  }
   if (u.pathname === '/api/ping') { res.writeHead(200, {'content-type': 'application/json'}); return res.end('{"ok":true}'); }
   if (u.pathname === '/api/redirect') { res.writeHead(302, {location: '/api/ping'}); return res.end(); }
   if (u.pathname === '/api/big') {

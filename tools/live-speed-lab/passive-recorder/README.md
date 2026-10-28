@@ -29,6 +29,7 @@ Every option is required and none has a default. `validate` is offline: it hashe
 1. Validates the manifest and grant, then waits for the manifest's earliest setup edge. It refuses if it is already past the setup cutoff. There is no rolling start and no later case.
 2. Starts a loopback transport proxy and launches one browser that routes only through it. Loopback traffic is not bypassed.
 3. Before navigation, installs a passive `EventSource` subclass. It keeps the product's constructor arguments unchanged and only adds listeners for every event type the product handles. Each listener forwards the raw `data` before anything parses it. There is no second subscription and no URL rewrite.
+   The case stream is the EventSource on the manifest's stream path. Other product EventSources, such as the page's market stream, are recorded raw and counted against requests and response bytes, but they are not subject to case-envelope or duplicate-stream checks.
 4. Opens the manifest's product page and, if the manifest names it, opens the "Probability observed" readout. It then installs the staged primary recorder (`primary_recorder.cjs`, byte-for-byte) and the 100 ms sampler. The sampler uses `../compare/display_sample.cjs`, unchanged and hash-pinned, and adds full chart geometry: path `d` (whole when it changes), bounding boxes, ticks, and endpoint/callout attributes. All of this must finish before the setup cutoff.
 5. Exchanges clocks at setup, T0−5 s, T0, every 15 s, T0+180 s and the end.
 6. A single watchdog ends acquisition at T0+185 s on the collector's monotonic clock. It fires even on a quiet or hung stream. A cap, error or cancellation ends it earlier with a STOP.
@@ -56,7 +57,7 @@ Unknown keys refuse, and so do duplicate JSON keys. Every referenced file is `{p
   - Identity, issue/expiry (it must outlive the acquisition end), and `manifest_sha256`/`case_id` binding.
   - `allowed_origins` and `allowed_routes` (origin, methods, path prefix, resource types).
   - `detail_requests`: at most two, explicit, each at a declared offset inside the window.
-  - `limits`, all finite positive integers: `max_request_attempts`, `max_eventsource_constructions`, `max_stream_attempts`, `max_active_streams` (exactly 1), `max_response_bytes`, `max_stream_bytes`, `max_request_bytes`, `max_record_bytes`, `max_saved_bytes`, `reserved_stop_bytes`, `max_queue_records`, `max_detail_requests` (0..2), and `received_overshoot_bytes` (≥ 65536, see below).
+  - `limits`, all finite positive integers: `max_request_attempts`, `max_eventsource_constructions`, `max_stream_attempts` (case stream), `max_active_streams` (exactly 1 case stream), `max_response_bytes`, `max_stream_bytes`, `max_request_bytes`, `max_record_bytes`, `max_saved_bytes`, `reserved_stop_bytes`, `max_queue_records`, `max_detail_requests` (0..2), and `received_overshoot_bytes` (≥ 65536, see below).
 
 ## Ceilings: where each is enforced
 
