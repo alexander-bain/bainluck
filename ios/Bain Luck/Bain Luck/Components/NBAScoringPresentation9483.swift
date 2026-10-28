@@ -142,7 +142,9 @@ struct NBAScoringFigures9483: View {
     }
 
     private func figure(_ label: String, value: Double, stroke: StrokeStyle, key: Color) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let parts = Self.parts(card, value)
+        let numberEndsText = Self.numberEndsText(parts)
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: keyGap) {
                 NBAStatMarkKey9483()
                     .stroke(key, style: stroke)
@@ -153,23 +155,27 @@ struct NBAScoringFigures9483: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            figureText(value)
+            figureText(parts, color: tint(value))
                 .fixedSize(horizontal: false, vertical: true)
-                .alignmentGuide(.nbaComparedValue9483) { $0[.firstTextBaseline] }
+                // The guide sits on the line that carries the number, so
+                // "Raptors by 2" lines up with the 2.5 of a wrapped
+                // "Timberwolves / by 2.5", not with "Timberwolves".
+                .alignmentGuide(.nbaComparedValue9483) {
+                    numberEndsText ? $0[.lastTextBaseline] : $0[.firstTextBaseline]
+                }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// One text, so the side ("Knicks by") and unit ("points") stay with
     /// their number and wrap at a space when the column is narrow.
-    private func figureText(_ value: Double) -> Text {
-        let parts = Self.parts(card, value)
+    private func figureText(_ parts: (lead: String, figure: String, unit: String), color: Color) -> Text {
         let lead = Text(parts.lead.isEmpty ? "" : parts.lead + " ")
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(tint(value))
+            .foregroundStyle(color)
         let figure = Text(parts.figure)
             .font(.system(size: figureSize, weight: .bold).monospacedDigit())
-            .foregroundStyle(tint(value))
+            .foregroundStyle(color)
         let unit = Text(parts.unit.isEmpty ? "" : " " + parts.unit)
             .font(.subheadline)
             .foregroundStyle(.secondary)
@@ -198,6 +204,15 @@ struct NBAScoringFigures9483: View {
         guard card.family == .margin else { return ("", NBALadderCard9483.number(value), "points") }
         guard value != 0 else { return ("", card.words(value), "") }
         return ("\(value > 0 ? card.homeShort : card.awayShort) by", NBALadderCard9483.number(abs(value)), "")
+    }
+
+    /// Whether the number is the last run of `figureText`. Text breaks only at
+    /// spaces and `number` has none, so with a side ("Timberwolves by 2.5")
+    /// the number is on the text's last line however the side wraps; with a
+    /// unit ("210.5 points") or alone ("Tie") it is on the first. `parts`
+    /// never carries both a side and a unit.
+    static func numberEndsText(_ parts: (lead: String, figure: String, unit: String)) -> Bool {
+        !parts.lead.isEmpty
     }
 
     static func accessibilitySummary(for card: NBALadderCard9483) -> String {
