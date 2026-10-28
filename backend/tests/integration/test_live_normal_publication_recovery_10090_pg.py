@@ -1474,10 +1474,21 @@ async def test_sustained_retention_refusal_cost_is_bounded_per_event_per_flush(
     )
 
 
+@pytest.mark.parametrize("abandon", [False, True], ids=["cancel", "abandon"])
 async def test_control_ack_commit_deadline_keeps_debt_for_fresh_owner(
-    rig, consumer, monkeypatch, real_redis, caplog,
+    rig, consumer, monkeypatch, real_redis, caplog, abandon,
 ):
-    """Expire the exact 250ms budget while a real PostgreSQL COMMIT is blocked."""
+    """Expire the exact 250ms budget while a real PostgreSQL COMMIT is blocked.
+
+    #10090 bucket 1: with `LIVE_BLEND_ABANDON_OPTIONAL_DB` on, everything up to
+    the holder's release is the same (no custody paid at the deadline, the same
+    TimeoutError retained). The settlement was abandoned, not cancelled, so its
+    COMMIT then finishes and pays the row with the ACK that was really received;
+    a fresh owner then has no debt and publishes nothing.
+    """
+    from app.tasks.live_blend_refresh import OPTIONAL_DB_ABANDON_ENV
+
+    monkeypatch.setenv(OPTIONAL_DB_ABANDON_ENV, "1" if abandon else "0")
     from tests.integration.test_live_blend_grouped_commit_8129_pg import seed
     from tests.test_blend_preview_ledger_tsp1_10090 import _VirtualTimeoutClock
 
@@ -1541,8 +1552,20 @@ async def test_control_ack_commit_deadline_keeps_debt_for_fresh_owner(
         errors = [record for record in caplog.records if record.getMessage() ==
                   "live_blend_refresh[polymarket]: durable normal recovery retained"]
         assert len(errors) == 1 and isinstance(errors[0].exc_info[1], TimeoutError)
+        abandoned = list(r._optional_db_running.values())
+        assert len(abandoned) == int(abandon) == r.optional_db_abandoned
         await holder.execute(text("SELECT pg_advisory_unlock(10090, :key)"), {"key": lock_id})
         await holder.commit()
+        if abandon:
+            await asyncio.wait_for(asyncio.gather(*abandoned), 3)
+            assert not await owed(rig), "the abandoned settlement's COMMIT paid the received ACK"
+            fresh = ref_for(consumer)
+            fresh._client = lambda: client
+            await fresh._recover_normal_prices()
+            assert await pubsub.get_message(ignore_subscribe_messages=True, timeout=.2) is None
+            assert not fresh.stats["published"]
+            assert deadlines.expired == 1 and not deadlines.active
+            return
         # A fresh owner has no remembered ACK; the durable row alone supplies
         # a truthful price-free control and only its positive ACK pays the row.
         fresh = ref_for(consumer)
