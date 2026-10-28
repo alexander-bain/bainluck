@@ -4439,11 +4439,18 @@ class LiveBlendRefresher:
         # Settling an older ACK cannot erase a newer committed intent.
         async with asyncio.timeout(.25):
             async with self._session_slot(), factory() as session:
-                for eid, rev in acknowledged:
-                    await session.execute(text(
-                        "DELETE FROM owed_chart_points WHERE source=:source "
-                        "AND event_id=:eid AND (reading->>'rev')::bigint<=:rev"
-                    ), {"source": self._normal_source, "eid": eid, "rev": rev})
+                # One roundtrip for the cohort: per-event DELETEs could spend
+                # the whole budget and roll back every already-paid intent,
+                # causing needless reader reconciliation on the next sweep.
+                event_ids, revisions = zip(*acknowledged)
+                await session.execute(text(
+                    "DELETE FROM owed_chart_points AS owed USING "
+                    "unnest(CAST(:event_ids AS integer[]), "
+                    "CAST(:revisions AS bigint[])) AS ack(event_id, revision) "
+                    "WHERE owed.source=:source AND owed.event_id=ack.event_id "
+                    "AND (owed.reading->>'rev')::bigint<=ack.revision"
+                ), {"source": self._normal_source,
+                    "event_ids": list(event_ids), "revisions": list(revisions)})
 
     def _note_normal_debt(self):
         self._normal_has_debt = True

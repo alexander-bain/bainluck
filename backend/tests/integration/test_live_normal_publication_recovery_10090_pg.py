@@ -39,9 +39,10 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import insert, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.models import OwedChartPoint
 from app.tasks.base import get_task_session
 from app.tasks.live_blend_refresh import LiveBlendRefresher, hand_off_pending
 from app.utils.blend_preview import is_preview_frame
@@ -118,6 +119,93 @@ def ref_for(consumer):
 
 def acknowledge_all(frames):
     return {(f["event_id"], f["rev"][str(f["event_id"])]) for f in frames}
+
+
+async def test_ack_cohort_settles_within_existing_roundtrip_budget(
+    rig, consumer, monkeypatch, default_preview_redis,  # noqa: F811
+):
+    """32 acknowledged games must not pay 32 database roundtrips before
+    the unchanged 250 ms deadline. Real PG; controlled 20 ms per DELETE,
+    using the existing virtual deadline clock, not a production latency claim.
+    """
+    from tests.test_blend_preview_ledger_tsp1_10090 import _VirtualTimeoutClock
+
+    async with rig.engine.begin() as db:
+        await add(db, 1, 32)
+    ref = ref_for(consumer)
+    assert ref.preview  # DNPL stays enabled in both source arms.
+    clock = _VirtualTimeoutClock(monkeypatch)
+    original = AsyncSession.execute
+    deletes = []
+
+    async def delayed(self, statement, *args, **kwargs):
+        result = await original(self, statement, *args, **kwargs)
+        if str(statement).lstrip().startswith("DELETE FROM owed_chart_points"):
+            deletes.append(str(statement))
+            clock.advance(.020)
+            await asyncio.sleep(0)  # deliver expiry through the real timeout
+            await asyncio.sleep(0)
+        return result
+
+    monkeypatch.setattr(AsyncSession, "execute", delayed)
+    timed_out = False
+    try:
+        await ref._settle_normal_recovery({(eid, 1) for eid in range(1, 33)})
+    except TimeoutError:
+        timed_out = True
+    remaining = await owed(rig)
+    print(json.dumps({"case": "ack-roundtrip-cohort", "deletes": len(deletes),
+                      "controlled_ms": clock.now * 1000, "timed_out": timed_out,
+                      "remaining": len(remaining), "dnpl": ref.preview}))
+    if timed_out:
+        assert len(remaining) == 32  # the entire attempt rolled back
+    assert not timed_out, "ACK cohort exhausts 250 ms and all intents remain owed"
+    assert not remaining
+    assert clock.durations == [.25]
+
+
+async def test_ack_cohort_keeps_newer_other_event_and_other_source(rig, consumer):  # noqa: F811
+    async with rig.engine.begin() as db:
+        await add(db, 1, 3)
+        await db.execute(insert(OwedChartPoint), [
+            {"source": NORMAL_SOURCE, "event_id": 1, "value": .8,
+             "reading": {"rev": 4}},
+            {"source": "kalshi_price_publish", "event_id": 1, "value": .8,
+             "reading": {"rev": 1}},
+        ])
+    ref = ref_for(consumer)
+    await ref._settle_normal_recovery({(1, 1), (1, 3), (2, 1)})
+    async with rig.engine.connect() as db:
+        remaining = (await db.execute(text(
+            "SELECT source,event_id,(reading->>'rev')::bigint "
+            "FROM owed_chart_points ORDER BY source,event_id"
+        ))).all()
+    assert remaining == [
+        ("kalshi_price_publish", 1, 1),
+        ("polymarket_price_publish", 1, 4),
+        ("polymarket_price_publish", 3, 1),
+    ]
+
+
+async def test_cancelled_ack_cohort_keeps_every_durable_intent(rig, consumer):  # noqa: F811
+    async with rig.engine.begin() as db:
+        await add(db, 1, 3)
+    ref = ref_for(consumer)
+    original_factory = ref._session_factory
+
+    @contextlib.asynccontextmanager
+    async def cancelled_commit():
+        async with original_factory() as session:
+            yield session
+            raise asyncio.CancelledError("controlled before outer COMMIT")
+
+    ref._session_factory = cancelled_commit
+    with pytest.raises(asyncio.CancelledError):
+        await ref._settle_normal_recovery({(1, 1), (2, 1), (3, 1)})
+    assert len(await owed(rig)) == 3
+    ref._session_factory = original_factory
+    await ref._settle_normal_recovery({(1, 1), (2, 1), (3, 1)})
+    assert not await owed(rig)
 
 
 async def failed_final(rig, consumer, monkeypatch):
