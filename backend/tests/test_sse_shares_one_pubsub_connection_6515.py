@@ -1151,7 +1151,14 @@ _RECORDED_ASYNC_POOL_SITES = {
     # SSE reader count. Fanout is bounded to five seconds and its own client is
     # explicitly closed in finally (success/failure/cancellation); empty drains
     # build nothing. No long-lived pool is added to the per-process envelope.
-    "utils/nonvenue_live_push.py": 1,
+    #
+    # 1 -> 2 (#10090, #11682). The second site is the pass-owned client: a task
+    # session that opts in (only `_poll_all_odds`) builds at most ONE pool for
+    # the whole pass, lazily at its first nonempty drain, and its scope closes
+    # it after the final drain (success/failure/cancellation). Every other
+    # caller keeps the one-per-batch site above, so pools per odds pass go
+    # down, not up. Comment read before the entry moved, as this census asks.
+    "utils/nonvenue_live_push.py": 2,
     "utils/rate_limit.py": 1,
     "utils/request_cache.py": 1,
 }
