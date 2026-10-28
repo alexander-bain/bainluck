@@ -53,6 +53,89 @@ pytestmark = [pytest.mark.asyncio]
 
 
 @needs_postgres
+@pytest.mark.parametrize("upcoming_result", ["empty", "error", "cancel"])
+async def test_live_probability_publishes_before_upcoming_only_board(
+    db, monkeypatch, sink, upcoming_result  # noqa: F811 — imported pytest fixtures
+):
+    """A scheduled-only network wait cannot retain a healthy live update."""
+    import asyncio
+    import app.services.espn_api as espn_api
+    import app.tasks.espn_sync as task
+    from app.models.models import Event
+    from app.utils.nonvenue_live_push import write_nonvenue_probability
+
+    engine, maker, ids = db
+    target = ids["the_failing_sports_row"]
+    seen, calls, services, decisions = [], [], [], []
+    board = [object()]
+
+    async def known(session, event_id):
+        event = await session.get(Event, event_id)
+        await write_nonvenue_probability(session, event, "espn", 0.72)
+        assert not await _is_free(engine, target)
+        assert not sink
+
+    _wire(monkeypatch, maker, ids, known)
+
+    async def keys(session):
+        # MLB appears in both sets but must be fetched only once.
+        return [MLB], [MLB, NHL]
+
+    class Scoreboards:
+        rate_limit_delay = 0
+
+        def __init__(self):
+            self.closed = False
+            services.append(self)
+
+        async def get_scoreboard(self, sport_key, **kwargs):
+            assert not self.closed
+            calls.append(sport_key)
+            if sport_key == MLB:
+                return board
+            async with maker() as reader:
+                sources = await reader.scalar(
+                    select(Event.win_probability_sources).where(Event.id == target)
+                )
+            seen.append((sources.get("espn", {}).get("value"), list(sink)))
+            assert await _is_free(engine, target)
+            if upcoming_result == "error":
+                raise RuntimeError("upcoming board unavailable")
+            if upcoming_result == "cancel":
+                raise asyncio.CancelledError()
+            return []
+
+        async def close(self):
+            self.closed = True
+
+    async def decide(data, fetch_keys, stats):
+        decisions.append((dict(data), set(fetch_keys)))
+        return {}
+
+    monkeypatch.setattr(task, "_find_sport_keys_to_sync", keys)
+    monkeypatch.setattr(task, "_decide_failovers", decide)
+    monkeypatch.setattr(espn_api, "ESPNAPIService", Scoreboards)
+    if upcoming_result == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            await task._sync_espn_live_events()
+        assert not decisions
+    else:
+        stats = await task._sync_espn_live_events()
+        assert decisions == [(
+            {MLB: board, **({NHL: []} if upcoming_result == "empty" else {})},
+            {MLB, NHL},
+        )]
+        assert len(stats["errors"]) == (1 if upcoming_result == "error" else 0)
+    assert sorted(calls) == sorted([MLB, NHL])
+    assert all(service.closed for service in services)
+    assert len(seen) == 1
+    assert seen[0][0] == 0.72, seen
+    assert len(seen[0][1]) == len(sink) == 1, seen
+    frame = seen[0][1][0][1]
+    assert frame["event_id"] == target and frame["source_value"] == 0.72
+
+
+@needs_postgres
 @pytest.mark.parametrize("failure", [None, "standby", "known"])
 async def test_healthy_live_probability_publishes_before_dark_sport_check(
     db, monkeypatch, sink, failure  # noqa: F811 — imported pytest fixtures

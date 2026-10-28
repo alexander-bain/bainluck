@@ -7472,8 +7472,8 @@ jobs:
             echo "::error::#9049 ESPN row-release gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]10 passed[,[:space:]]" /tmp/espnrelease9049.txt || {
-            echo "::error::#9049 ESPN row-release gate did not run all ten cases (including #10090 creation and failover boundaries)"
+          grep -qE "[^0-9]13 passed[,[:space:]]" /tmp/espnrelease9049.txt || {
+            echo "::error::#9049 ESPN row-release gate did not run all thirteen cases (including #10090 upcoming-board, creation and failover boundaries)"
             exit 1
           }
 
