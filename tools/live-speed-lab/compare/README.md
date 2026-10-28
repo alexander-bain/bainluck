@@ -36,6 +36,17 @@ The historical inputs have identical source/value/label order, **not byte-identi
 
 `stage-recorder SPEC --out NEW_DIR` copies the existing lab and changes only its passive EventSource listener list to include `preview_open_v3`, `preview_v3`, `reconcile`, `reconnect` and `heartbeat`. It verifies all four original lab-file hashes before staging and refuses drift. It leaves the product, reducer, primary DOM recorder and previous runs unchanged. The old pair cannot supply preview-v3 receipt times; those remain null. The staged observer is for the next needed run, not a reason to repeat this one.
 
+`stage-display-recorder SPEC --out NEW_DIR` additionally records the adopted-state DOM attributes from UX's #11673 seam, separately for headline and actual chart endpoint. It inserts `display_sample.cjs` into the existing 100 ms sample and retains the sampler's hash. Missing attributes on older source are `unsupported`, duplicate surfaces `ambiguous`, and unavailable identities stay empty. CSS visibility and viewport intersection are separate. The sample carries its own monotonic read interval; neither that interval nor the preview's receipt clock is physical paint timing. Identity is copied verbatim, never guessed from percentages or chart paths. This is a passive recording adapter, not eligibility or correctness certification.
+
+```sh
+python3 tools/live-speed-lab/compare/compare.py stage-display-recorder \
+  tools/live-speed-lab/compare/admission-retained.json --out /tmp/dnpl-display-recorder
+```
+
+Use the staged `comparison-spec.json` only after pinning the next experiment's prepared sources/context. Staging does not run either arm or overwrite old evidence. This full-page recorder wraps the product's existing `EventSource`: it records the actual URL on each frame and leaves constructor arguments untouched. Today's product requests `preview_protocol=authority-v3`; verify the recorded URL and envelope on a new run. Do not confuse it with Measurement's historical independent `/stream` recorder, whose negotiation needs its own update. There is no new subscription, transport change, primary observation-clock change or backend receipt-trigger change.
+
+Recorder controls: the ordinary Python comparison tests plus `node --test tools/live-speed-lab/compare/test_display_sample.cjs`, using the existing lab's Playwright dependency through `NODE_PATH` and installed Chrome. The latter uses local DOM fixtures with all network requests blocked. It proves passive extraction, not the product seam's attribution; UX's real-page controls and independent review own that proof. New records remain unscored until Live's input-to-published-state correspondence establishes eligibility. Do not treat absent joins as zero delay, silently map equal values, or rerun the completed admission pair just to populate these fields.
+
 `score TRACE.json --out score.json` handles the common eligible-state/display contract, including explicit supersession, intervals, missing updates and separate surfaces. It is reusable for web or Native adapters; it is not an oracle that determines eligibility from a price.
 
 Modes are added **when a concrete optimization needs them**, not as a new architecture program:

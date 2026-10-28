@@ -216,6 +216,37 @@ class EntryControls(unittest.TestCase):
                     compare.stage_recorder(spec, root/"out")
                 self.assertFalse((root/"out").exists())
 
+    def test_display_recorder_is_opt_in_and_does_not_change_stream_url(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            names = ("backend_lab.py", "proxy.py", "observe.cjs", "FIXTURE-INPUT.json")
+            for name in ("warm_helper.py", *names):
+                (root/name).write_text("retained")
+            original = """['probability','folded_probability','preview'];
+ let prior='',prev=performance.now();
+const r={visibility:document.visibilityState,gap:now-prev};
+super(...args); const frame={payload:JSON.parse(e.data)};
+"""
+            (root/"observe.cjs").write_text(original)
+            spec = {"helper": str(root/"warm_helper.py"), "helper_sha256": compare.digest(root/"warm_helper.py"),
+                    "lab_files": {name: compare.digest(root/name) for name in names}}
+            compare.stage_recorder(spec, root/"ordinary")
+            self.assertNotIn("displayIdentity:", (root/"ordinary/observe.cjs").read_text())
+            compare.stage_recorder(spec, root/"display", display_identity=True)
+            changed = (root/"display/observe.cjs").read_text()
+            self.assertIn("displayIdentity:readDisplayIdentity10090()", changed)
+            self.assertIn("super(...args);", changed)
+            self.assertIn("url:this.url,payload:", changed)
+            self.assertNotIn("searchParams", changed)
+            self.assertEqual((root/"observe.cjs").read_text(), original)
+            self.assertEqual(compare.read(root/"display/RECORDER-DELTA.json")["display_schema"],
+                             "display-identity-sample/1")
+            (root/"observe.cjs").write_text(original.replace("gap:now-prev}", "gap:0}"))
+            spec["lab_files"]["observe.cjs"] = compare.digest(root/"observe.cjs")
+            with self.assertRaisesRegex(ValueError, "display recorder source changed"):
+                compare.stage_recorder(spec, root/"refused", display_identity=True)
+            self.assertFalse((root/"refused").exists())
+
     def test_render_failure_never_leaves_success_decision(self):
         arm = {"source": {"backend_ref": "x", "frontend_build_source_sha": "x"},
                "input_identity": [], "initial_values": {}, "score": score(fixture()),
