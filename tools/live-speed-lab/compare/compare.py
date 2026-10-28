@@ -268,7 +268,7 @@ def run_existing(spec, out):
         raise
 
 
-def stage_recorder(spec, out):
+def stage_recorder(spec, out, *, display_identity=False):
     """One passive listener delta on a copy; preserve the old runs and runner."""
     source = Path(spec["helper"]).resolve().parent
     out = Path(out).resolve()
@@ -285,12 +285,30 @@ def stage_recorder(spec, out):
     new = "['probability','folded_probability','preview','preview_open_v3','preview_v3','reconcile','reconnect','heartbeat']"
     if observer.count(old) != 1:
         raise ValueError("observer source changed; review the listener delta")
+    observer = observer.replace(old, new)
+    sample_path = Path(__file__).with_name("display_sample.cjs")
+    if display_identity:
+        # Capture the product stream's actual URL; never change its negotiation
+        # or add a second subscription. All identity rows stay in reader.jsonl.
+        sample = sample_path.read_text().split("\nmodule.exports =", 1)[0]
+        changes = {
+            " let prior='',prev=performance.now();": sample+"\n let prior='',prev=performance.now();",
+            "visibility:document.visibilityState,gap:now-prev}":
+                "visibility:document.visibilityState,gap:now-prev,displayIdentity:readDisplayIdentity10090()}",
+            "payload:JSON.parse(e.data)": "url:this.url,payload:JSON.parse(e.data)",
+        }
+        for before, after in changes.items():
+            if observer.count(before) != 1:
+                raise ValueError("display recorder source changed: "+before)
+            observer = observer.replace(before, after)
     out.mkdir(parents=True, exist_ok=False)
     for name in ("warm_helper.py", "backend_lab.py", "proxy.py", "FIXTURE-INPUT.json"):
         shutil.copyfile(source/name, out/name)
-    (out/"observe.cjs").write_text(observer.replace(old, new))
+    (out/"observe.cjs").write_text(observer)
     write(out/"RECORDER-DELTA.json", {"source": str(source), "old_sha256": digest(source/"observe.cjs"),
                                      "new_sha256": digest(out/"observe.cjs"), "before": old, "after": new,
+                                     "display_sample_sha256": digest(sample_path) if display_identity else None,
+                                     "display_schema": "display-identity-sample/1" if display_identity else None,
                                      "effect": "passive receipt only; product reducers and primary DOM recorder unchanged"})
     staged = dict(spec, helper=str(out/"warm_helper.py"), helper_sha256=digest(out/"warm_helper.py"))
     staged["lab_files"] = {name: digest(out/name) for name in spec["lab_files"]}
@@ -300,13 +318,13 @@ def stage_recorder(spec, out):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["consume", "run", "score", "stage-recorder"])
+    parser.add_argument("command", choices=["consume", "run", "score", "stage-recorder", "stage-display-recorder"])
     parser.add_argument("spec", type=Path)
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
     spec = read(args.spec)
-    if args.command == "stage-recorder":
-        print(stage_recorder(spec, args.out))
+    if args.command in ("stage-recorder", "stage-display-recorder"):
+        print(stage_recorder(spec, args.out, display_identity=args.command == "stage-display-recorder"))
         return
     if args.command == "score":
         write(args.out, score(spec))
