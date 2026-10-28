@@ -206,6 +206,37 @@ def optional_db_abandons() -> bool:
     return os.getenv(OPTIONAL_DB_ABANDON_ENV, "").strip().lower() in ("1", "true", "on", "yes")
 
 
+#: Its runtime trial name (`app.tasks.speed_switches`): ``ab`` abandons the
+#: reads keyed to one event-id parity. A read is keyed to the lowest event id it
+#: is about; the normal recovery page read names no event until it returns, so
+#: it is keyed to its page cursor. The switch's effect is on the shared
+#: connection pool, so it reaches both halves' deliveries; the arm splits the
+#: reads, and a readout compares trial windows with off windows.
+OPTIONAL_DB_SWITCH = "abandon_optional_db"
+
+
+def _optional_db_key(event_ids) -> Optional[int]:
+    """The lowest event id a read is about, or None (the read then stays off)."""
+    try:
+        return min(int(event_id) for event_id in event_ids)
+    except (TypeError, ValueError):
+        return None
+
+
+def _switch_tags(event_id) -> str:
+    """`` sw=<name>:<on|off>`` for each running speed-switch trial, else empty."""
+    try:
+        return _optional_db_trial().tags(int(event_id))
+    except Exception:  # noqa: BLE001 — a receipt line never fails on its tag
+        return ""
+
+
+def _optional_db_trial():
+    from app.tasks.speed_switches import speed_switches
+
+    return speed_switches()
+
+
 class _CapacityReadGate:
     """Where a preview capacity read is, so its pass deadline abandons only the read.
 
@@ -672,13 +703,14 @@ class TailReceipts:
         logger.info(
             "live_blend_refresh[%s]: delivery-receipt run=%s event=%s "
             "window_start=%s window_s=%.3f raw=%d accepted=%d changed=%d "
-            "repeats=%d first=%d outcomes=%s stamps=%s stamps_dropped=%d",
+            "repeats=%d first=%d outcomes=%s stamps=%s stamps_dropped=%d%s",
             self.source, self.run, event_id, _iso(bucket["from"]),
             max(0.0, window_end - bucket["from"]),
             bucket["raw"], *totals,
             ",".join(f"{oid}:{v[0]}:{v[1]}:{v[2]}:{v[3]}" for oid, v in sorted(per.items()))
             or "-",
             ";".join(bucket["stamps"]) or "-", bucket["stamps_dropped"],
+            _switch_tags(event_id),
         )
 
     def stage(self, marks: Iterable[InputMark]) -> None:
@@ -845,7 +877,7 @@ class TailReceipts:
             "held_wall=%s stamp_rev_seq=%s stamped_at=%s value=%s previous=%s "
             "later_inputs=%d later_committed=%d last_input_seq=%s "
             "lock_retries=%d commit_failures=%d batch_failures=%d held_s=%.3f "
-            "recv_to_close_s=%.3f coalesced=%d error=%s",
+            "recv_to_close_s=%.3f coalesced=%d error=%s%s",
             self.source, self.run, event_id, result, quiet, moved, chain.origin,
             rev.seq, rev.outcome_id, rev.probability, rev.kind,
             _iso(rev.recv_wall), rev.venue_ts_ms, _iso(chain.stored_wall),
@@ -856,7 +888,7 @@ class TailReceipts:
             self._last_seq_by_event.get(event_id), chain.lock_retries,
             chain.commit_failures, chain.batch_failures,
             now - chain.opened_mono, now - rev.recv_mono,
-            self._coalesced.pop(event_id, 0), error,
+            self._coalesced.pop(event_id, 0), error, _switch_tags(event_id),
         )
 
 
@@ -4683,7 +4715,8 @@ class LiveBlendRefresher:
 
         # Settling an older ACK cannot erase a newer committed intent, so an
         # abandoned settlement that commits late settles the same rows.
-        await self._optional_db("normal_ack", .25, settle)
+        await self._optional_db("normal_ack", .25, settle,
+                                _optional_db_key(event_id for event_id, _ in acknowledged))
 
     def _note_normal_debt(self):
         self._normal_has_debt = True
@@ -4829,7 +4862,8 @@ class LiveBlendRefresher:
                     ), {"source": self._normal_source, "after": self._normal_after,
                         "horizon": self._normal_horizon})).all()
 
-            rows = await self._optional_db("normal_read", .25, read_page)
+            rows = await self._optional_db("normal_read", .25, read_page,
+                                           _optional_db_key([self._normal_after]))
             if rows is None:
                 return
             if not rows:
@@ -4906,12 +4940,19 @@ class LiveBlendRefresher:
     def _optional_db_busy(self) -> bool:
         """Abandoned optional work already holds its share of the slots; skip this turn."""
         held = sum(not task.done() for task in self._optional_db_running.values())
-        if optional_db_abandons():
+        if optional_db_abandons() or _optional_db_trial().state(OPTIONAL_DB_SWITCH).mode == "ab":
             # The detached observation reads (#11700) share the same slots.
             held += sum(not task.done() for task in self._detached_reads)
         return held >= OPTIONAL_DB_HELD_MAX
 
-    async def _optional_db(self, kind: str, budget_s: float, body):
+    @staticmethod
+    def _optional_db_on(key: Optional[int]) -> bool:
+        """The env switch, or the running trial's half for the read keyed ``key``."""
+        if optional_db_abandons():
+            return True
+        return key is not None and _optional_db_trial().arm(OPTIONAL_DB_SWITCH, key)
+
+    async def _optional_db(self, kind: str, budget_s: float, body, key: Optional[int] = None):
         """Await ``body()`` for at most ``budget_s``; TimeoutError past it.
 
         Off (the default), exactly ``asyncio.timeout(budget_s)`` around the
@@ -4921,7 +4962,7 @@ class LiveBlendRefresher:
         cancellation of the CALLER still cancels the body and waits for it, as
         the timeout's own cancellation did.
         """
-        if not optional_db_abandons():
+        if not self._optional_db_on(key):
             async with asyncio.timeout(budget_s):
                 return await body()
         if self._optional_db_busy():
@@ -4947,7 +4988,7 @@ class LiveBlendRefresher:
             await self._optional_db_cancel_and_join(task, exc)
             raise
 
-    async def _optional_db_in_pass(self, kind: str, body):
+    async def _optional_db_in_pass(self, kind: str, body, key: Optional[int] = None):
         """Await ``body(gate)`` under the enclosing pass's own deadline.
 
         For preview capacity maintenance, whose reads sit inside its 1 s pass
@@ -4958,7 +4999,7 @@ class LiveBlendRefresher:
         ``gate.read_done()``. A cancellation anywhere else, or at shutdown,
         still cancels the body and waits for it.
         """
-        if not optional_db_abandons():
+        if not self._optional_db_on(key):
             return await body(None)
         if self._optional_db_busy():
             raise TimeoutError(f"optional {kind} read skipped: abandoned reads hold their share")
@@ -5019,6 +5060,9 @@ class LiveBlendRefresher:
                 "live_blend_refresh[%s]: abandoned optional read failed",
                 self.source, exc_info=(type(error), error, error.__traceback__),
             )
+            if not optional_db_abandons():
+                # A trial's switched path failed: off here for the rest of it.
+                _optional_db_trial().trip(OPTIONAL_DB_SWITCH, error)
 
     async def _close_optional_db(self) -> None:
         """Cancel and join every abandoned read before the sessions close."""
@@ -5821,7 +5865,8 @@ class LiveBlendRefresher:
                             gate.read_done()
                         return found
 
-                rows = await self._optional_db_in_pass("preview_capacity", read_candidates)
+                rows = await self._optional_db_in_pass(
+                    "preview_capacity", read_candidates, _optional_db_key(candidates))
                 try:
                     counts = self._preview_capacity_counts(
                         candidates, rows, datetime.now(timezone.utc), idle)
@@ -5870,7 +5915,8 @@ class LiveBlendRefresher:
                                     gate.read_done()
                                 return found
 
-                        row = await self._optional_db_in_pass("preview_capacity", read_target)
+                        row = await self._optional_db_in_pass(
+                            "preview_capacity", read_target, _optional_db_key([eid]))
                     if row is None:
                         attempted += 1
                         await self._publish_previews([registry().retire_missing(eid, self.source, ticket)])
@@ -5947,7 +5993,8 @@ class LiveBlendRefresher:
                     # Keep fresh context locked until Redis has acknowledged accounting.
                     await self._prepare_ledger_previews(ops)
 
-        await self._optional_db_in_pass("preview_capacity", classify)
+        await self._optional_db_in_pass("preview_capacity", classify,
+                                        _optional_db_key(event_ids[:32]))
 
     async def _retire_policy_preview_event(
         self, event_id: int, ticket: int, deadline_ms: int, when: float,
@@ -5987,7 +6034,8 @@ class LiveBlendRefresher:
                     except BaseException as exc:
                         await self._hold_idle_proof_until(when, exc)
 
-        frames = await self._optional_db_in_pass("preview_capacity", retire)
+        frames = await self._optional_db_in_pass("preview_capacity", retire,
+                                                 _optional_db_key([event_id]))
         if frames is not None:
             await self._publish_previews(frames)
 
@@ -6036,7 +6084,8 @@ class LiveBlendRefresher:
                         # the outer timeout.
                         await self._hold_idle_proof_until(when, exc)
 
-        frames = await self._optional_db_in_pass("preview_capacity", retire)
+        frames = await self._optional_db_in_pass("preview_capacity", retire,
+                                                 _optional_db_key([event_id]))
         if frames is not None:
             await self._publish_previews(frames)
 
