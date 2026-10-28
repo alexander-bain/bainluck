@@ -26,6 +26,55 @@ pg_engine = _pg_engine
 pytestmark = needs_postgres
 
 
+@pytest.mark.parametrize("fail_last", [False, True])
+async def test_task_client_reuse_preserves_commits_final_drain_and_rollback(
+    pg_engine, sink, monkeypatch, fail_last,
+):
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+    from app.tasks.base import get_task_session
+    from app.tasks import redis_state
+
+    event_id = await _seed_event(pg_engine, {"kalshi": 0.55})
+    factory = redis_state.get_async_redis_client
+    clients = []
+
+    def counted():
+        client = factory()
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(redis_state, "get_async_redis_client", counted)
+
+    async def run():
+        async with get_task_session(engine=pg_engine, reuse_publication_client=True) as session:
+            event = await session.get(Event, event_id)
+            for value in (0.60, 0.65):
+                await write_nonvenue_probability(session, event, "betting", value)
+                before = len(sink)
+                await publish_committed_nonvenue_frames(session)
+                assert len(sink) == before  # no uncommitted frame
+                await session.commit()
+                await publish_committed_nonvenue_frames(session)
+                assert len(sink) == before + 1  # no waiting for task exit
+            await write_nonvenue_probability(session, event, "betting", 0.70)
+            if fail_last:
+                await session.execute(text("SELECT 1 / 0"))
+            # Final commit/drain is get_task_session's own exit path.
+
+    if fail_last:
+        with pytest.raises(DBAPIError):
+            await run()
+    else:
+        await run()
+    expected = [0.60, 0.65] if fail_last else [0.60, 0.65, 0.70]
+    assert [frame["source_value"] for _, frame in sink] == expected
+    revisions = [frame["rev"][str(event_id)] for _, frame in sink]
+    assert revisions == sorted(set(revisions))
+    assert (await _stored(pg_engine, event_id))["betting"]["value"] == expected[-1]
+    assert len(clients) == 1  # parent opens one client for every committed batch
+
+
 @pytest.mark.parametrize("clock", ["20.5", "0:20.5", "NaN"])
 async def test_fractional_espn_model_reaches_committed_blend_and_chart(pg_engine, sink, clock):
     """#10090: a valid final-minute reading reaches the existing committed path."""

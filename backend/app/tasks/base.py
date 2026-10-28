@@ -5,7 +5,7 @@ Shared infrastructure for Celery tasks: engine, session, async helpers.
 import asyncio
 import logging
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -61,11 +61,16 @@ def _get_task_engine(
 @asynccontextmanager
 async def get_task_session(
     *,
+    reuse_publication_client: bool = False,
     statement_timeout_ms: int | None = None,
     lock_timeout_ms: int | None = None,
     engine=None,
 ):
     """Create a fresh async session for Celery task execution.
+
+    ``reuse_publication_client`` opts a frequent publisher into one lazy
+    pass-owned Redis client, closed after the final commit/drain. Other tasks
+    retain the standalone per-batch lifecycle.
 
     This creates a new engine and session maker bound to the current
     event loop, avoiding conflicts between Celery's forked processes
@@ -121,12 +126,18 @@ async def get_task_session(
     # the freshly-created engine's connection pool → GC-reaped "non-checked-in
     # connection" alerts (#1162, ~113/24h). The outer try/finally closes that hole.
     try:
-        async with session_maker() as session:
+        from app.utils.nonvenue_live_push import (
+            nonvenue_publication_scope,
+            publish_committed_nonvenue_frames,
+        )
+
+        async with session_maker() as session, (
+            nonvenue_publication_scope(session)
+            if reuse_publication_client else nullcontext()
+        ):
             try:
                 yield session
                 await session.commit()
-                from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
-
                 await publish_committed_nonvenue_frames(session)
             except Exception:
                 await session.rollback()
