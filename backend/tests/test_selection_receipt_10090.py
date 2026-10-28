@@ -495,14 +495,32 @@ def _refuse(name):
     return hook
 
 
-async def test_disarmed_batch_runs_no_receipt_work_and_the_same_calls(monkeypatch):
+def _pinned_wall(monkeypatch, wall):
+    """Pin the preview registry's wall clock to ``wall[0]``.
+
+    That clock stamps the pending reading (``stamped_at``), and the blend's
+    relative recency weighs that stamp against the stored one: past the 600 s
+    grace, every millisecond between two runs moves p.
+    """
+
+    class Pinned(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return wall[0].astimezone(tz) if tz is not None else wall[0].replace(tzinfo=None)
+
+    monkeypatch.setattr(blend_preview, "datetime", Pinned)
+
+
+async def _disarmed_then_armed(monkeypatch, stored, wall, between=lambda: None):
+    """The same batch run untraced (every receipt hook refused), then traced."""
     real_hooks = {name: getattr(LiveBlendRefresher, name)
                   for name in ("_trace_selection", "_trace_proposal")}
     reading = speaker()  # one reading for both runs
+    _pinned_wall(monkeypatch, wall)
 
     async def run(trace, *, refuse):
         event, market = _event()
-        session = _PreviewSession([(market, event)], None, stored=STORED, rev=10)
+        session = _PreviewSession([(market, event)], None, stored=stored, rev=10)
         r, _ = _one_event_refresher(monkeypatch, session)
         attach(r, trace)
         selector(monkeypatch, reading)
@@ -523,16 +541,49 @@ async def test_disarmed_batch_runs_no_receipt_work_and_the_same_calls(monkeypatc
                          json.dumps(f, sort_keys=True)) for _, f in sent]
         return [type(s).__name__ for s in session.statements], frames, kwargs_seen, r.stats
 
-    calls_off, frames_off, kwargs_off, stats_off = await run(None, refuse=True)
-    assert kwargs_off == [["observation_only"]]  # exactly the untraced call
+    off = await run(None, refuse=True)
     blend_preview.reset_registry_for_tests()
     monkeypatch.setattr(blend_preview, "_REGISTRY", blend_preview.PreviewRegistry())
+    between()
     trace, lines = traced(event=1, outcome=101)
-    calls_on, frames_on, kwargs_on, stats_on = await run(trace, refuse=False)
+    on = await run(trace, refuse=False)
     assert stage(lines, "SELECTED"), "the armed control did select"
+    return off, on
+
+
+async def test_disarmed_batch_runs_no_receipt_work_and_the_same_calls(monkeypatch):
+    # Both runs read ONE wall instant and the stored stamp is offset from it
+    # (gotcha #44). The shared module stamp aged with the session instead: a
+    # shard that reached this test >600 s after collection compared two p's
+    # weighed at different ages (CI 40778570501: 0.700284 vs 0.700285).
+    wall = [datetime.now(timezone.utc)]
+    stored = {"kalshi": {"value": 0.5, "updated_at": wall[0].isoformat()}}
+    (calls_off, frames_off, kwargs_off, stats_off), (calls_on, frames_on, kwargs_on, stats_on) = (
+        await _disarmed_then_armed(monkeypatch, stored, wall))
+    assert kwargs_off == [["observation_only"]]  # exactly the untraced call
     assert kwargs_on == [["observation_only", "selections"]]
     # No added database statement; the same frames; the same outcome counts.
     assert calls_on == calls_off and frames_on == frames_off and stats_on == stats_off
+
+
+async def test_the_disarmed_comparison_sees_a_clock_moved_between_its_runs(monkeypatch):
+    """Control for the pin above: with the stored stamp 605 s behind (past the
+    relative grace), moving the wall 6.03 ms between the runs flips p's sixth
+    decimal, and nothing else in the frame moves. The equality holds because
+    the runs share one clock, not because p cannot move."""
+    wall = [datetime.now(timezone.utc)]
+    stored = {"kalshi": {"value": 0.5,
+                         "updated_at": (wall[0] - timedelta(seconds=605)).isoformat()}}
+
+    def move():
+        wall[0] += timedelta(microseconds=6030)
+
+    (calls_off, (frame_off,), _, stats_off), (calls_on, (frame_on,), _, stats_on) = (
+        await _disarmed_then_armed(monkeypatch, stored, wall, between=move))
+    (p_off,), (p_on,) = (re.findall(r'"p": ([0-9.]+)', f) for f in (frame_off, frame_on))
+    assert (p_off, p_on) == ("0.700278", "0.700279")
+    assert frame_on.replace(p_on, p_off) == frame_off
+    assert calls_on == calls_off and stats_on == stats_off
 
 
 async def test_disarmed_unchanged_route_runs_no_receipt_work(monkeypatch):
