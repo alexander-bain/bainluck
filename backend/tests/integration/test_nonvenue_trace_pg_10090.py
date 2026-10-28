@@ -73,6 +73,11 @@ def stage(lines, name):
     return [line for line in lines if line["stage"] == name]
 
 
+def selected_for(lines, line):
+    (sel,) = [x for x in stage(lines, "SELECTED") if x["obs"] == line["obs"]]
+    return sel
+
+
 def ordered(line, *clocks):
     monos = [line[f"{c}_mono"] for c in clocks]
     walls = [line[f"{c}_wall"] for c in clocks]
@@ -106,9 +111,15 @@ async def test_committed_write_publication_carries_the_kept_rev_and_stamp(pg_eng
     assert pub["rev"] == rev == frame["rev"][str(event_id)]
     assert pub["stamped_at"] == sources["betting"]["updated_at"] == frame["updated_at"]
     assert pub["p"] == frame["p"] and pub["status"] == "live"
-    assert pub["metadata_keys"] == ["betting_book_count"]
-    assert pub["evidence"]["decision"] == "admitted"
-    assert pub["evidence"]["population"] == [{"book": "a", "home_probability": 0.6}]
+    sel = selected_for(lines, pub)
+    assert sel["metadata_keys"] == ["betting_book_count"]
+    assert sel["evidence"]["decision"] == "admitted"
+    assert sel["evidence"]["population"] == [{"book": "a", "home_probability": 0.6}]
+    assert sel["seam_mono"] <= pub["returned_mono"] and sel["txn"] == pub["txn"]
+    final = pub["final"]
+    assert final["final_state"] == "FINAL_STATE_NOT_ESTABLISHED"
+    assert final["blend_probability"] == frame["p"] and final["queued_frame_matches"] is True
+    assert final["observations_in_txn"] == 1 and final["uncovered_keys"] == []
     # The complete committed bag, recomputed with the hero's own helpers.
     stored = await _stored(pg_engine, event_id)
     assert pub["bag_hash"] == nt._hash(stored) == nt._hash(sources)
@@ -117,10 +128,10 @@ async def test_committed_write_publication_carries_the_kept_rev_and_stamp(pg_eng
     assert pub["recomputed_p"] == frame["p"] and pub["p_matches"] is True
     assert (pub["txn"], pub["obs"], pub["commit_result"]) == (1, 1, "COMMITTED")
     assert pub["frame_unchanged"] is True
-    assert ordered(pub, "seam", "returned", "commit_start", "commit_end", "publish_start",
+    assert ordered(pub, "returned", "commit_start", "commit_end", "publish_start",
                    "publish_end")
-    assert [x["stage"] for x in lines] == ["START", "PUBLICATION"]
-    assert [x["line"] for x in lines] == [1, 2]
+    assert [x["stage"] for x in lines] == ["START", "SELECTED", "PUBLICATION"]
+    assert [x["line"] for x in lines] == [1, 2, 3]
 
 
 async def test_two_writes_in_one_transaction_name_the_rev_that_carried_the_first(
@@ -192,8 +203,9 @@ async def test_a_removal_is_named_as_never_sent(pg_engine, sink):
         await session.commit()
         await publish_committed_nonvenue_frames(session)
     (unsent,) = stage(lines, "WRITE_UNSENT")
-    assert (unsent["reason"], unsent["removed"], unsent["value"]) == (
-        "SOURCE_REMOVED_NOT_SENT", True, None)
+    assert (unsent["reason"], unsent["value"]) == ("SOURCE_REMOVED_NOT_SENT", None)
+    sel = selected_for(lines, unsent)
+    assert (sel["removed"], sel["removed_sources"]) == (True, ["betting"])
     assert sink == []
 
 
@@ -305,9 +317,13 @@ async def test_disarmed_and_armed_issue_the_same_sql_frames_and_app_logs(
     lines, sql_on, frames_on, logs_on = await scenario(lambda e: arm([e]))
     assert [(x["stage"], x.get("source"), x.get("reason")) for x in lines] == [
         ("START", None, None),
+        ("SELECTED", "espn", None),
+        ("SELECTED", "stat_model", None),
+        ("SELECTED", "mlb", None),
         ("WRITE_UNSENT", "mlb", "ROLLED_BACK"),
         ("WRITE_UNSENT", "espn", "SUPERSEDED_IN_TRANSACTION"),
         ("PUBLICATION", "stat_model", None),
+        ("SELECTED", "betting", None),
         ("WRITE_UNSENT", "betting", "SOURCE_REMOVED_NOT_SENT"),
     ]
 
@@ -327,6 +343,68 @@ async def test_a_no_op_rewrite_is_its_own_observation_never_coalesced(pg_engine,
             await publish_committed_nonvenue_frames(session)
     first, second = stage(lines, "PUBLICATION")
     assert (first["obs"], second["obs"]) == (1, 2) and first["txn"] != second["txn"]
-    assert (first["value_unchanged"], second["value_unchanged"]) == (False, True)
-    assert second["prior_value"] == 0.7 and second["rev"] > first["rev"]
+    one, two = selected_for(lines, first), selected_for(lines, second)
+    assert (one["value_unchanged"], two["value_unchanged"]) == (False, True)
+    assert two["prior_value"] == 0.7 and second["rev"] > first["rev"]
     assert len(sink) == 2
+
+
+
+async def test_a_selection_whose_update_fails_or_finds_no_row_is_closed(pg_engine, sink):
+    from sqlalchemy import delete
+
+    event_id = await _seed_event(pg_engine)
+    lines = arm([event_id])
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        event = await session.get(Event, event_id)
+        async with pg_engine.begin() as conn:  # the row vanishes after it was read
+            await conn.execute(delete(Event).where(Event.id == event_id))
+        assert await write_nonvenue_probability(session, event, "espn", 0.7) is None
+        await session.commit()
+    (sel,) = stage(lines, "SELECTED")
+    (closed,) = stage(lines, "WRITE_UNSENT")
+    assert (closed["obs"], closed["reason"]) == (sel["obs"], "MISSING_ROW")
+    event_id = await _seed_event(pg_engine)
+    lines = arm([event_id])
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        event = await session.get(Event, event_id)
+        with pytest.raises(Exception):
+            await write_nonvenue_probability(session, event, "espn", 0.7,
+                                             values={"home_score": "not a number"})
+        await session.rollback()
+    (sel,) = stage(lines, "SELECTED")
+    (closed,) = stage(lines, "WRITE_UNSENT")
+    assert (closed["obs"], closed["reason"]) == (sel["obs"], "UPDATE_ERROR")
+    assert sink == []
+
+
+async def test_the_real_betting_ingest_receipts_per_book_versions(pg_engine, sink, monkeypatch):
+    from datetime import datetime, timezone
+
+    from app.tasks.odds_polling import _ingest_event_odds
+    from tests.test_discovery_advances_betting_consensus_5426 import _FakeSnapshot
+
+    async def snapshot(*args, **kwargs):
+        return _FakeSnapshot(0.6, None, None), False
+
+    monkeypatch.setattr("app.tasks.odds_polling._create_or_update_snapshot", snapshot)
+    event_id = await _seed_event(pg_engine)
+    lines = arm([event_id])
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        event = await session.get(Event, event_id)
+        await _ingest_event_odds(
+            session, event,
+            {"bookmakers": [{"key": f"b{i}", "last_update": f"2026-10-28T18:0{i}:00Z"}
+                            for i in range(3)]},
+            datetime.now(timezone.utc), {}, update_opening=False,
+        )
+        await session.commit()
+        await publish_committed_nonvenue_frames(session)
+    (sel,) = stage(lines, "SELECTED")
+    inputs = sel["inputs"]
+    assert inputs["upstream_clock_domain"] == "ODDS_API_BOOKMAKER_LAST_UPDATE"
+    assert [b["book"] for b in inputs["books"]] == ["b0", "b1", "b2"]
+    assert inputs["books"][1]["bookmaker_last_update"] == "2026-10-28T18:01:00Z"
+    assert inputs["select_start"]["mono"] <= inputs["select_end"]["mono"] <= sel["seam_mono"]
+    (pub,) = stage(lines, "PUBLICATION")
+    assert pub["obs"] == sel["obs"] and pub["final"]["queued_frame_matches"] is True

@@ -260,6 +260,7 @@ class BoundedLogTrace:
         self.emit = emit or (lambda record: logger.info("%s %s", log, record))
         self.lines = 0
         self.bytes = 0
+        self.send_errors = 0
         self.stopped = False
         self.arm_mono = None
 
@@ -280,7 +281,7 @@ class BoundedLogTrace:
             self.bytes += len(text)
             self.emit(text)
         except Exception:
-            pass  # evidence must never cost a publication
+            self.send_errors += 1  # evidence must never cost a publication
 
     def _stop(self, reason):
         self.arm_mono = None
@@ -322,6 +323,10 @@ class BoundedLogTrace:
     def _clock(self, name):
         return {f"{name}_wall": self.wall(), f"{name}_mono": self.mono()}
 
+    def clock(self):
+        """``{wall, mono}`` on this trace's clocks, for a producer's own bracket."""
+        return {"wall": self.wall(), "mono": self.mono()}
+
 
 class NonvenueTrace(BoundedLogTrace):
     START_FIELDS = {"upstream_clock": UPSTREAM}
@@ -329,79 +334,130 @@ class NonvenueTrace(BoundedLogTrace):
     def __init__(self, events, expiry, limit, run, wall, mono, emit):
         super().__init__(events, expiry, limit, run, wall, mono, emit)
         self.obs_seq = self.txn_seq = 0
-        self.n_published = self.n_unsent = 0
+        self.n_published = self.n_unsent = self.hook_errors = 0
         self.txns = {}  # id(outer transaction) -> (transaction, txn id)
+        self.selected = {}  # obs -> identity: selected, its UPDATE not yet returned
         self.pending = {}  # id(frame) -> (frame, record): awaiting COMMIT/ROLLBACK
         self.ready = {}  # id(frame) -> (frame, record): committed, awaiting publication
 
     def _counters(self):
         return dict(observations=self.obs_seq, published=self.n_published,
-                    unsent=self.n_unsent, awaiting_commit=len(self.pending),
-                    awaiting_publication=len(self.ready))
+                    unsent=self.n_unsent, awaiting_write=len(self.selected),
+                    awaiting_commit=len(self.pending),
+                    awaiting_publication=len(self.ready),
+                    send_errors=self.send_errors, hook_errors=self.hook_errors)
 
     def _discard(self):
+        self.selected.clear()
         self.pending.clear()
         self.ready.clear()
         self.txns.clear()
 
     # ── the seam (`write_nonvenue_probability`) ──────────────────────────────
 
-    def seam_entered(self, event_id):
-        """At the seam, before the awaited probe and UPDATE; a token or None."""
+    def seam_entered(self, event_id, *, transaction, source, value, evidence, metadata_keys,
+                     prior, inputs):
+        """SELECTED, at the seam before its first await: the obligation exists
+        before the write can hang or fail. Returns the observation id or None."""
         try:
-            if event_id in self.events and self.active():
-                return self._clock("seam")
-        except Exception:
-            pass
-        return None
-
-    def written(self, token, frame, *, transaction, value, removed, rev, stamped_at, sources,
-                status, espn, opening, evidence, metadata_keys, prior, prior_txn_row_write):
-        """Right after RETURNING; the frame is queued, not committed."""
-        try:
-            if token is None or not self.active():
-                return
-            event = frame.get("event_id")
-            if event not in self.events:
-                return
-            if len(self.pending) >= MAX_PENDING:
+            if event_id not in self.events or not self.active():
+                return None
+            if len(self.selected) >= MAX_PENDING:
                 self._stop("PENDING_OVERFLOW")
-                return
-            txn = self._txn(transaction)
-            if txn is None:
-                return
+                return None
+            # A session that just committed autobegins its next transaction
+            # at the first statement, i.e. inside the awaited write: then the
+            # transaction is bound when the UPDATE returns (`txn_pending`).
+            txn = None if transaction is None else self._txn(transaction)
+            if txn is None and (transaction is not None or self.stopped):
+                return None
             self.obs_seq += 1
-            source = frame.get("source")
+            obs = self.obs_seq
+            removed = value is None
             prior_value, prior_updated = _entry_value((prior or {}).get(source)
                                                       if isinstance(prior, dict) else None)
-            record = dict(
-                txn=txn,
-                obs=self.obs_seq,
-                event=event,
-                source=_text(source),
-                rev=_number(rev),
+            identity = dict(txn=txn, obs=obs, event=event_id, source=_text(source))
+            self.selected[obs] = identity
+            pending_txn = {"txn_pending": True} if txn is None else {}
+            if callable(inputs):
+                inputs = inputs()
+            self._send(dict(
+                stage="SELECTED",
+                **identity,
+                **pending_txn,
                 value=_number(value),
-                removed=bool(removed),
+                removed=removed,
                 changed_sources=[] if removed else [_text(source)],
                 removed_sources=[_text(source)] if removed else [],
                 metadata_keys=_clean(list(metadata_keys or ())),
                 evidence=_clean(evidence),
+                inputs=_clean(inputs),
                 prior_value=_number(prior_value),
                 prior_updated_at=_text(prior_updated),
                 prior_clock="ORM_VIEW_MAY_BE_STALE",
-                value_unchanged=(prior_value == value) if prior is not None else None,
-                prior_txn_row_write=prior_txn_row_write,
+                value_unchanged=(prior_value == value) if isinstance(prior, dict) else None,
+                select_clock="SEAM_ENTRY_BEFORE_AWAITED_PROBE_AND_UPDATE",
+                upstream_clock=UPSTREAM,
+                **self._clock("seam"),
+            ))
+            return obs
+        except Exception:
+            self.hook_errors += 1
+            return None
+
+    def written(self, obs, frame, *, transaction, rev, stamped_at, sources, status, espn,
+                opening, prior_txn_row_write):
+        """Right after RETURNING; the frame is queued, not committed."""
+        try:
+            if not self.active():
+                return
+            identity = self.selected.pop(obs, None)
+            if identity is None:
+                return
+            if identity["txn"] is None:
+                identity = dict(identity, txn=self._txn(transaction))
+            if len(self.pending) >= MAX_PENDING:
+                self.selected[obs] = identity  # counted by STOP, never dropped
+                self._stop("PENDING_OVERFLOW")
+                return
+            record = dict(
+                identity,
+                rev=_number(rev),
+                value=_number(frame.get("source_value")),
                 stamped_at=_text(stamped_at),
                 stamped_clock="DB_CLOCK_TIMESTAMP_IN_UPDATE",
-                upstream_clock=UPSTREAM,
+                prior_txn_row_write=prior_txn_row_write,
                 p=_number(frame.get("p")),
                 **bag_fields(sources, status, espn, opening, frame.get("p")),
-                **token,
                 **self._clock("returned"),
             )
+            record["_inputs"] = (status, espn, opening)
             self.pending[id(frame)] = (frame, record)
         except Exception:
-            pass
+            self.hook_errors += 1
+
+    def missing_row(self, obs):
+        """The UPDATE matched no row: nothing was written."""
+        self._closed_unwritten(obs, "MISSING_ROW", None)
+
+    def write_failed(self, obs, exc):
+        """The UPDATE (or its probe) raised or was cancelled."""
+        import asyncio
+
+        reason = ("UPDATE_CANCELLED" if isinstance(exc, asyncio.CancelledError)
+                  else "UPDATE_ERROR")
+        self._closed_unwritten(obs, reason, type(exc).__name__)
+
+    def _closed_unwritten(self, obs, reason, error):
+        try:
+            if obs not in self.selected or not self.active():
+                return
+            identity = self.selected.pop(obs)
+            self.n_unsent += 1
+            self._send(dict(stage="WRITE_UNSENT", **identity, reason=reason,
+                            error=_text(error), **self._clock("failed")))
+        except Exception:
+            self.hook_errors += 1
 
     def _txn(self, transaction):
         if transaction is None:
@@ -423,26 +479,41 @@ class NonvenueTrace(BoundedLogTrace):
         return [(frame, self.pending[id(frame)][1]) for _, frame, *_ in pending
                 if id(frame) in self.pending and self.pending[id(frame)][0] is frame]
 
-    def commit_started(self, pending):
-        """The outer ``before_commit``: COMMIT is about to be sent."""
+    def commit_started(self, pending, sent):
+        """The outer ``before_commit``: COMMIT is about to be sent.
+
+        Each traced event's kept observation gains ``final``: the pure
+        `build_publication` over this transaction's observations of it,
+        AS OF the last traced RETURNING (no new read, so a later untraced
+        write in the same transaction is not seen: FINAL_STATE_NOT_ESTABLISHED).
+        """
         try:
             if not self.pending or not self.active():
                 return
             clock = self._clock("commit_start")
-            for _frame, record in self._traced(pending):
+            traced = self._traced(pending)
+            for _frame, record in traced:
                 record.update(clock)
+            events = {frame["event_id"] for frame, _record in traced}
+            for event in events:
+                entries = [e for e in pending if e[1].get("event_id") == event]
+                kept = self._find(entries[-1][1])
+                if kept is not None:
+                    kept["final"] = _final(event, entries, kept, sent)
         except Exception:
-            pass
+            self.hook_errors += 1
 
     def committed(self, pending, latest, sent):
         """The outer ``after_commit``. ``latest`` is the kept frame per event and
         ``sent`` whether `nonvenue_live_push` queues it for publication."""
         try:
             self._forget_txn()
-            if not self.pending or not self.active():
+            if not self.pending:
                 return
             clock = self._clock("commit_end")
             for frame, record in self._traced(pending):
+                if not self.active():  # STOP counts it before anything is popped
+                    return
                 del self.pending[id(frame)]
                 record.update(clock, commit_result="COMMITTED")
                 kept = latest.get(frame["event_id"])
@@ -455,13 +526,14 @@ class NonvenueTrace(BoundedLogTrace):
                     self._unsent(record, "SOURCE_REMOVED_NOT_SENT"
                                  if frame.get("source_value") is None else "STATUS_NOT_LIVE")
                 elif len(self.ready) >= MAX_PENDING:
+                    self.pending[id(frame)] = (frame, record)
                     self._stop("PENDING_OVERFLOW")
                     return
                 else:
                     record["frame_hash"] = _hash(frame)
                     self.ready[id(frame)] = (frame, record)
         except Exception:
-            pass
+            self.hook_errors += 1
 
     def _find(self, frame):
         held = self.pending.get(id(frame))
@@ -471,10 +543,12 @@ class NonvenueTrace(BoundedLogTrace):
         """`_after_rollback`'s discarded entries: never committed."""
         try:
             self._forget_txn()
-            if not self.pending or not self.active():
+            if not self.pending:
                 return
             nested = bool(getattr(transaction, "nested", False))
             for frame, record in self._traced(entries):
+                if not self.active():
+                    return
                 del self.pending[id(frame)]
                 result = ("SAVEPOINT_ROLLED_BACK" if nested
                           else "COMMIT_FAILED_ROLLED_BACK" if "commit_start_mono" in record
@@ -482,7 +556,7 @@ class NonvenueTrace(BoundedLogTrace):
                 self._unsent(record, "ROLLED_BACK", commit_result=result,
                              **self._clock("rollback"))
         except Exception:
-            pass
+            self.hook_errors += 1
 
     def _forget_txn(self):
         """Drop ended outer transactions (a COMMIT or ROLLBACK closed them)."""
@@ -491,8 +565,9 @@ class NonvenueTrace(BoundedLogTrace):
                 del self.txns[key]
 
     def _unsent(self, record, reason, **fields):
+        """Caller has checked ``active()``: this line is never lost to a STOP."""
         self.n_unsent += 1
-        self._record("WRITE_UNSENT", **record, reason=reason, **fields)
+        self._send(dict(stage="WRITE_UNSENT", **_public(record), reason=reason, **fields))
 
     # ── the publication (`publish_committed_nonvenue_frames`) ────────────────
 
@@ -506,18 +581,20 @@ class NonvenueTrace(BoundedLogTrace):
                            frame_unchanged=_hash(frame) == held[1].get("frame_hash"))
             return frame
         except Exception:
+            self.hook_errors += 1
             return None
 
     def published(self, token, sent):
         try:
-            held = self.ready.pop(id(token), None)
-            if held is None:
+            if id(token) not in self.ready or not self.active():
                 return
+            held = self.ready.pop(id(token))
             self.n_published += 1
-            self._record("PUBLICATION", **held[1], **self._clock("publish_end"),
-                         result="SENT" if sent else "NOT_SENT")
+            self._send(dict(stage="PUBLICATION", **_public(held[1]),
+                            **self._clock("publish_end"),
+                            result="SENT" if sent else "NOT_SENT"))
         except Exception:
-            pass
+            self.hook_errors += 1
 
     def publish_closed(self, frames, reason):
         """The batch ended without a result for these traced frames."""
@@ -526,15 +603,59 @@ class NonvenueTrace(BoundedLogTrace):
                 held = self.ready.get(id(frame))
                 if held is None or held[0] is not frame:
                     continue
+                if not self.active():
+                    return
                 del self.ready[id(frame)]
                 record = held[1]
-                result = (reason if "publish_start_mono" in record
-                          else f"NOT_ATTEMPTED_AFTER_{reason}")
                 self.n_published += 1
-                self._record("PUBLICATION", **record, **self._clock("publish_end"),
-                             result=result)
+                if "publish_start_mono" in record:
+                    # Handed to publish_frame; the batch's outcome ended it.
+                    self._send(dict(stage="PUBLICATION", **_public(record),
+                                    **self._clock("publish_end"), result=reason))
+                else:
+                    # Never handed over: a batch closure, not a publish end.
+                    self._send(dict(stage="PUBLICATION", **_public(record),
+                                    **self._clock("batch_closed"),
+                                    result=f"NOT_ATTEMPTED_AFTER_{reason}"))
         except Exception:
-            pass
+            self.hook_errors += 1
+
+
+def _public(record):
+    return {k: v for k, v in record.items() if not k.startswith("_")}
+
+
+def _final(event, entries, kept, sent):
+    """`build_publication` over the transaction's observations of ``event``."""
+    from app.utils.probability_publication import build_publication
+
+    try:
+        observations = [e[4] for e in entries]
+        last = observations[-1]
+        status, espn, opening = kept.get("_inputs", (None, None, None))
+        frame = entries[-1][1]
+        built = build_publication(
+            event_id=event, sources=last.get("returned_sources"), rev=last.get("rev"),
+            status=status, espn_win_prob_home=espn, opening_home_probability=opening,
+            observations=observations, queued_frame=frame if sent(frame) else None,
+        )
+    except Exception as exc:
+        return dict(final_state="FINAL_STATE_NOT_ESTABLISHED",
+                    error=_text(type(exc).__name__))
+    return dict(
+        final_state="FINAL_STATE_NOT_ESTABLISHED",
+        as_of="LAST_TRACED_RETURNING",
+        observations_in_txn=len(observations),
+        blend_probability=_number(built.get("blend_probability")),
+        blend_tier=_text(built.get("blend_tier")),
+        blend_method=_text(built.get("blend_method")),
+        coverage=_text(built.get("coverage")),
+        uncovered_keys=_clean(built.get("uncovered_keys")),
+        unobserved_bumps=_number(built.get("unobserved_bumps")),
+        removed_sources=_clean(built.get("removed_sources")),
+        queued_frame_matches=built.get("queued_frame_matches"),
+        payload_sha256=_text(built.get("payload_sha256")),
+    )
 
 
 def bag_fields(sources, status, espn, opening, frame_p=None, *, recompute=True):

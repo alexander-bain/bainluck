@@ -12,7 +12,8 @@ from app.utils.aggregation import stamp_source_reading
 
 
 async def portable_nonvenue_write(
-    session, event, source, value, *, metadata=None, values=None, evidence=None
+    session, event, source, value, *, metadata=None, values=None, evidence=None,
+    trace_inputs=None,
 ):
     if value is None:
         sources = dict(event.win_probability_sources or {})

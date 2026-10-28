@@ -55,7 +55,7 @@ def _before_commit(session):
         return
     trace = nonvenue_trace()
     if trace is not None:
-        trace.commit_started(session.info.get(_PENDING, ()))
+        trace.commit_started(session.info.get(_PENDING, ()), _frame_is_sent)
     from app.utils.probability_publication import (
         record_committing_publications,
         recording_enabled,
@@ -198,6 +198,7 @@ async def write_nonvenue_probability(
     metadata=None,
     values=None,
     evidence=None,
+    trace_inputs=None,
 ):
     """Atomically replace/remove one allowed source and queue its returned blend.
 
@@ -208,11 +209,30 @@ async def write_nonvenue_probability(
     retain the ESPN writer's own id/fallback columns. ``evidence`` is the
     producer's own eligibility record for this write (#4971); it is kept only
     in the publication row, never in the bag. No commit happens here.
+    ``trace_inputs`` (#10090) is the producer's own input/version witness, a
+    dict or a zero-argument callable; it is read only for a traced event and
+    reaches nothing but `nonvenue_trace`.
     """
     if source not in NONVENUE_SOURCES:
         raise ValueError(f"not a nonvenue probability source: {source}")
     trace = nonvenue_trace()
-    seam = None if trace is None else trace.seam_entered(event.id)
+    seam = None if trace is None else trace.seam_entered(
+        event.id, transaction=session.sync_session.get_transaction(), source=source,
+        value=value, evidence=evidence, metadata_keys=sorted(metadata or {}),
+        prior=(event.__dict__.get("win_probability_sources")
+               if inspect(event, raiseerr=False) is not None else None),
+        inputs=trace_inputs,
+    )
+    try:
+        return await _write(session, event, source, value, metadata, values, evidence,
+                            trace, seam)
+    except BaseException as exc:
+        if seam is not None:
+            trace.write_failed(seam, exc)
+        raise
+
+
+async def _write(session, event, source, value, metadata, values, evidence, trace, seam):
     prior_txn_row_write = await _probe_prior_txn_row_write(session, event.id)
     # Literal source dispatch keeps the existing writer/eligibility scanner
     # able to verify every mint. This entry point never accepts venue sources.
@@ -253,6 +273,8 @@ async def write_nonvenue_probability(
         )
     ).first()
     if row is None:
+        if seam is not None:
+            trace.missing_row(seam)
         return None
     sources, status, espn, opening, removed_at, rev = row
     # Mirror a Core update without marking the JSONB dirty: a later autoflush
@@ -298,10 +320,8 @@ async def write_nonvenue_probability(
     )
     if seam is not None:
         trace.written(
-            seam, frame, transaction=session.sync_session.get_transaction(), value=value,
-            removed=value is None, rev=rev, stamped_at=at, sources=sources, status=status,
-            espn=espn, opening=opening, evidence=evidence,
-            metadata_keys=sorted(metadata or {}), prior=previous,
+            seam, frame, transaction=session.sync_session.get_transaction(), rev=rev,
+            stamped_at=at, sources=sources, status=status, espn=espn, opening=opening,
             prior_txn_row_write=prior_txn_row_write,
         )
     return sources
