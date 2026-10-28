@@ -1922,8 +1922,11 @@ class LedgerRegistry(PreviewRegistry):
             # them only when every source is elected from this same event.
             frame["preview"]["pending_entries_version"] = 2
             frame["preview"]["pending_entries_authority"] = "event-ledger-v1"
+            # ``base`` is the committed read this frame was composed on, kept
+            # for an optional publication observer only; `_publish` pops it
+            # with ``_ledger``, so it never reaches the wire (#10090).
             frame["_ledger"] = {"gen": gen, "seq": seq, "contributors": [
-                (name, *owners[name]) for name in sorted(state.pending)]}
+                (name, *owners[name]) for name in sorted(state.pending)], "base": base}
             return frame, excluded
         if seq <= 1:
             return None, excluded  # nothing of this generation was ever sent
@@ -2125,20 +2128,24 @@ class LedgerRegistry(PreviewRegistry):
             self._alarm_batch_open = False
             self._flush_alarms()
 
-    async def _publish(self, frame: dict, call, channel, stats: dict, retries: int = 2) -> None:
+    async def _publish(self, frame: dict, call, channel, stats: dict, retries: int = 2,
+                       observe=None) -> None:
         meta = frame.pop("_ledger")
         payload = json.dumps(frame)
         kind = frame["preview"]["kind"]
         if kind == "revoke":
             # Permissive, with the generation and through_seq it was allocated.
-            await self._eval(call, "revoke", channel(frame["event_id"]), payload)
+            reply = await self._eval(call, "revoke", channel(frame["event_id"]), payload)
             stats["revoked"] = stats.get("revoked", 0) + 1
+            observe_publication(observe, frame, meta, reply)
             return
         source = frame["source"]
         claim = self.claims.get(source)
         if claim is None or payload.count(LEDGER_TTL_TOKEN) != 1:
             self._refusal(stats, "fenced" if claim is None else "malformed", "publish",
                           source, frame["event_id"])
+            observe_publication(observe, frame, meta,
+                                ("local_fenced" if claim is None else "local_malformed",))
             return
         argv = [source, claim, frame["event_id"], " ".join(self.sources),
                 meta["gen"], meta["seq"], channel(frame["event_id"]), payload]
@@ -2146,6 +2153,7 @@ class LedgerRegistry(PreviewRegistry):
             argv.extend((name, owner, expires))
         reply = await self._eval(call, "publish", *argv)
         status = reply[0]
+        observe_publication(observe, frame, meta, reply)
         if status == "published":
             stats["published"] = stats.get("published", 0) + 1
         elif status == "contributor" and retries > 0:
@@ -2156,7 +2164,7 @@ class LedgerRegistry(PreviewRegistry):
                     "source": source, "through": None, "reason": "expired",
                     "base_rev": None, "base": None}
             for fresh in await self._mutate(sync, call, stats):
-                await self._publish(fresh, call, channel, stats, retries - 1)
+                await self._publish(fresh, call, channel, stats, retries - 1, observe)
         elif status in ("stale", "terminal"):
             # A newer ledger write (its own frame carries every entry) or a
             # tombstone superseded this read-set.
@@ -2175,12 +2183,34 @@ class LedgerRegistry(PreviewRegistry):
                     frames.append(item)
         return frames
 
-    async def execute(self, items: list, call, channel, stats: dict) -> None:
-        """Each operation's frames are published before the next operation runs."""
+    async def execute(self, items: list, call, channel, stats: dict, observe=None) -> None:
+        """Each operation's frames are published before the next operation runs.
+
+        ``observe`` (optional) is told about every composed frame at its send;
+        see `observe_publication`.
+        """
         with self._alarm_batch():
             for item in items:
                 for frame in await self.prepare([item], call, stats):
-                    await self._publish(frame, call, channel, stats)
+                    await self._publish(frame, call, channel, stats, observe=observe)
+
+
+def observe_publication(observe, frame: dict, meta: Any, reply: Any) -> None:
+    """#10090: hand one composed ledger frame and its send result to an observer.
+
+    ``frame`` is the payload as sent (before the Redis TTL substitution),
+    ``meta`` the popped ``_ledger`` (generation, sequence, contributors and the
+    committed base the frame was composed on), ``reply`` the publish reply or a
+    local refusal. The observer is the optional stage trace: it reads only, is
+    called after the send it describes, and every failure is swallowed here, so
+    it cannot change the frame, the send or its order.
+    """
+    if observe is None:
+        return
+    try:
+        observe(frame, meta, tuple(reply) if isinstance(reply, (list, tuple)) else ())
+    except Exception:
+        pass
 
 
 _REGISTRY: Optional[PreviewRegistry] = None
