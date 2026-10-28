@@ -13,9 +13,11 @@ THE SPECIMEN, measured by latency on production 2026-10-28 (390px, ordinary load
     17:41 0.165 beside a fresh load's 0.1744, 17:46 0.145 beside 0.1592. That
     alternation is the jagged held tail Alex reported on build 88.
 
-The fixture is the stored shape of that game, read from the served payload
+The fixture is the SERVED shape of that game, read from the served payload
 (`tests/fixtures/held_tail_book_floor_15336073.json`, provenance inside): each
-book's recorded rows with their `valid_until`, and Polymarket's readings.
+book's recorded rows with their served `valid_until` — truncated to the minute,
+not the stored stamp — and Polymarket's readings. The specimen had two books
+throughout, so the truncation cannot move its count.
 
 Route-level for the ship (the #6863 lesson: a unit guard on a helper passes just
 as happily when the call site never asks it), unit-level for the count.
@@ -29,7 +31,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import app.routes.events as events_route
 from app.routes.events import (
     EVENT_HISTORY_IN_WINDOW_SNAPSHOT_CAP,
     EVENT_HISTORY_PRE_WINDOW_SNAPSHOT_CAP,
@@ -159,7 +160,9 @@ async def _serve(event, wp_rows, odds_rows, hours=48):
 
 def _without_the_floor(monkeypatch):
     """The pre-fix line: no per-minute spans, #9081's edge withdrawal only."""
-    monkeypatch.setattr(events_route, "_sportsbook_floor_spans", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "app.routes.events._sportsbook_floor_spans", lambda *a, **k: []
+    )
 
 
 def _line(payload, offset, *, since=_HELD_FROM):
@@ -245,6 +248,59 @@ async def test_control_before_the_fix_the_route_served_what_production_served(
 
 
 # ---------------------------------------------------------------------------
+# The final — the refusal does not vanish when the row turns terminal (R1)
+# ---------------------------------------------------------------------------
+
+
+def _terminal_event(offset, odds, status):
+    event = _event(offset, status=status)
+    if status == "completed":
+        # Authoritative and prompt: 40 s after the last poll, so #1833 keeps it.
+        event.completed_at = max(r.valid_until or r.captured_at for r in odds) + timedelta(
+            seconds=40
+        )
+    return event
+
+
+@pytest.mark.parametrize("status", ["completed", "suspended"])
+async def test_a_finished_or_suspended_row_keeps_the_refusal_it_held_live(
+    status, monkeypatch
+):
+    """lane1b R1 on 34b1cca7: a terminal row DISCARDED the open span.
+
+    The game was refused all game, so its span is still open at the last stamp,
+    and on a completed or suspended row #9081 does not withdraw. Discarding the
+    span put the books back into every minute the moment the row turned
+    terminal: the live line was Polymarket's, the settled line books-weighted
+    again — the whole chart redrawn at the final. Held through the last stamp,
+    every in-game minute is Polymarket's reading, exactly as while live.
+    """
+    offset = _offset()
+    wp, odds = _specimen(offset)
+    event = _terminal_event(offset, odds, status)
+    payload = await _serve(event, wp, odds)
+
+    whole = _line(payload, offset, since=datetime(2026, 10, 28, 16, 30, tzinfo=UTC))
+    assert len(whole) > 40
+    mismatched = [
+        (m, v) for m, v in whole
+        if v != pytest.approx(_polymarket_at_bucket_end(m), abs=1e-6)
+    ]
+    assert mismatched == []
+
+    # The control carries the defect: without the floor the same terminal row
+    # draws the books-weighted line in nearly every minute.
+    _without_the_floor(monkeypatch)
+    before = _line(
+        await _serve(event, wp, odds), offset,
+        since=datetime(2026, 10, 28, 16, 30, tzinfo=UTC),
+    )
+    assert sum(
+        v != pytest.approx(_polymarket_at_bucket_end(m), abs=1e-6) for m, v in before
+    ) > 40
+
+
+# ---------------------------------------------------------------------------
 # What must not move
 # ---------------------------------------------------------------------------
 
@@ -302,7 +358,7 @@ async def test_a_pre_match_tail_the_hero_still_counts_keeps_its_line(monkeypatch
     """#5426: a narrow caller can thin the tail while the hero keeps the books.
 
     The hero is the authority for "now": while it counts the sportsbooks, a thin
-    trailing span is not applied, and the line is the line it was.
+    thin tail is not applied, and the line is the line it was.
     """
     offset = _offset()
     wp, odds = _specimen(offset)
@@ -313,6 +369,81 @@ async def test_a_pre_match_tail_the_hero_still_counts_keeps_its_line(monkeypatch
     before = await _serve(event, wp, odds)
 
     assert _body(after) == _body(before)
+
+
+async def test_a_folded_event_fails_open_to_the_line_it_drew(monkeypatch):
+    """lane1b R2 on 34b1cca7: the count ran on #6399's richest-row-per-book filter.
+
+    A stale twin holds books A and B's rich pre-match history, ending five
+    minutes before kickoff; the canonical row is polled every minute with A, B,
+    D, E (and F from K+30). The filter picks A and B from the twin, so counted
+    on the filtered rows the books stand two from K-5 to K+30 and a refusal is
+    invented while every canonical poll saw four. A folded event's hero can rest
+    on a sibling row, so the route fails open, as `_hero_sources` does.
+    """
+    from collections import Counter
+
+    from app.utils.proven_duplicates import series_row_for_each_source
+
+    ghost_id = _SPECIMEN_ID + 1
+    kickoff = datetime.now(UTC).replace(second=0, microsecond=0) - timedelta(minutes=61)
+    odds = []
+    for bookmaker in ("A", "B"):
+        for i in range(100):
+            start = kickoff - timedelta(hours=10) + timedelta(minutes=5 * i)
+            row = _book(bookmaker, start, start + timedelta(minutes=5), 0.5 + i / 1000)
+            row.event_id = ghost_id
+            odds.append(row)
+    for minute in range(60):
+        start = kickoff + timedelta(minutes=minute, seconds=7)
+        for bookmaker in ("A", "B", "D", "E") + (("F",) if minute >= 30 else ()):
+            odds.append(
+                _book(bookmaker, start, start + timedelta(minutes=1), 0.6 + minute / 1000)
+            )
+    wp = [_wp(kickoff + timedelta(minutes=m, seconds=5), 0.40) for m in range(60)]
+
+    # The hazard is real on these rows: the filtered set invents a refusal.
+    chosen = series_row_for_each_source(
+        Counter((r.bookmaker, r.event_id) for r in odds), _SPECIMEN_ID
+    )
+    filtered = [r for r in odds if chosen.get(r.bookmaker) == r.event_id]
+    assert _spans(filtered, tail="counted")[-1][1] > kickoff + timedelta(minutes=29)
+
+    async def _folded(_db, event_id, _absorbed=None):
+        return [event_id, ghost_id]
+
+    monkeypatch.setattr("app.utils.proven_duplicates.folded_series_event_ids", _folded)
+    event = _event(timedelta(0))
+    event.commence_time = kickoff
+    event.win_probability_sources["polymarket"]["value"] = 0.40
+    event.win_probability_sources["polymarket"]["updated_at"] = wp[-1].captured_at.isoformat()
+    after = await _serve(event, wp, odds)
+    _without_the_floor(monkeypatch)
+    before = await _serve(event, wp, odds)
+
+    assert after["aggregate_line"] and _body(after) == _body(before)
+
+
+async def test_a_raise_inside_the_floor_fails_open_to_the_line_it_drew(monkeypatch):
+    """lane1b P2: the withholding runs inside the floor's own fail-open guard.
+
+    Outside it, a raise would reach the blend block's catch-all and serve
+    `aggregate_line: []` — the reader loses the Bain Luck line, unlogged.
+    """
+    offset = _offset()
+    wp, odds = _specimen(offset)
+    event = _event(offset)
+    _without_the_floor(monkeypatch)
+    before = await _serve(event, wp, odds)
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("withholding failed")
+
+    monkeypatch.undo()
+    monkeypatch.setattr("app.routes.events._withhold_refused_sportsbook_minutes", _boom)
+    after = await _serve(event, wp, odds)
+
+    assert after["aggregate_line"] and _body(after) == _body(before)
 
 
 # ---------------------------------------------------------------------------
@@ -377,7 +508,7 @@ _T = datetime(2026, 10, 28, 17, 0, tzinfo=UTC)
 def _spans(odds, **kw):
     kw.setdefault("trusted_from", None)
     kw.setdefault("trusted_until", None)
-    kw.setdefault("trailing", True)
+    kw.setdefault("tail", "withdrawn")
     return _sportsbook_floor_spans(odds, **kw)
 
 
@@ -422,7 +553,78 @@ def test_a_book_quoting_no_home_probability_is_not_counted():
 
 def test_an_open_tail_is_applied_only_when_asked():
     odds = [_book("a", _T, _T + timedelta(minutes=5), 0.5)]
-    assert _spans(odds, trailing=False) == []
+    assert _spans(odds, tail="counted") == []
+
+
+def test_a_terminal_tail_holds_a_standing_refusal_through_the_last_stamp():
+    """No point re-admits the books at the final: the terminal point owns the edge."""
+    odds = [
+        _book("a", _T, _T + timedelta(minutes=5), 0.5),
+        _book("b", _T, _T + timedelta(minutes=5), 0.5),
+    ]
+    assert _spans(odds, tail="terminal") == [(_T, None)]
+
+
+def test_a_refusal_first_counted_at_a_terminal_rows_last_stamp_is_the_terminal_points():
+    """#8951's shape: three books until the last poll, which counted two."""
+    odds = [
+        _book("a", _T, _T + timedelta(minutes=19), 0.5),
+        _book("b", _T, _T + timedelta(minutes=19), 0.5),
+        _book("c", _T, _T + timedelta(minutes=18), 0.5),
+    ]
+    assert _spans(odds, tail="terminal") == []
+    assert _spans(odds, tail="withdrawn") == [(_T + timedelta(minutes=19), None)]
+
+
+def test_an_unknown_tail_is_refused_loudly():
+    with pytest.raises(ValueError):
+        _spans([_book("a", _T, _T + timedelta(minutes=5), 0.5)], tail="open")
+
+
+def test_a_stamp_within_one_poll_of_the_trust_bound_is_not_counted():
+    """lane1b M9: a row lost at the cut covers from the cut minus the tolerance.
+
+    A stamp 10 s before the bound could be the same poll as a row the read did
+    not return, so it is past the trusted span: the refusal closes on it.
+    """
+    bound = _T + timedelta(minutes=20)
+    near = bound - timedelta(seconds=10)
+    odds = [
+        _book("a", _T, near, 0.5),
+        _book("a", near, _T + timedelta(minutes=30), 0.6),
+        _book("b", _T, _T + timedelta(minutes=30), 0.5),
+    ]
+    assert _spans(odds, trusted_until=bound) == [(_T, near)]
+
+
+@pytest.mark.parametrize("read_cut", [None, timedelta(minutes=-50)])
+async def test_a_settled_games_end_cap_bounds_the_count(read_cut, monkeypatch):
+    """lane1b M10: the route passes the EARLIER of the read's cut and `end_cap`.
+
+    Asked of the call site (the #6863 lesson): an authoritative `completed_at`
+    caps the read at completed_at + 30 min, and a row captured before the cap
+    can stretch past it, so no count is trusted beyond it; a truncated read is
+    trusted only to its own cut, wherever that falls.
+    """
+    seen = []
+
+    def _spy(rows, **kw):
+        seen.append(kw)
+        return []
+
+    offset = _offset()
+    wp, odds = _specimen(offset)
+    event = _terminal_event(offset, odds, "completed")
+    end_cap = event.completed_at + timedelta(minutes=30)
+    cut = None if read_cut is None else event.completed_at + read_cut
+    monkeypatch.setattr("app.routes.events._sportsbook_floor_spans", _spy)
+    monkeypatch.setattr(
+        "app.routes.events._snapshot_read_complete_until", lambda *_a, **_k: cut
+    )
+    await _serve(event, wp, odds)
+
+    assert [kw["trusted_until"] for kw in seen] == [cut or end_cap]
+    assert [kw["tail"] for kw in seen] == ["terminal"]
 
 
 def test_no_count_is_taken_where_a_row_the_read_dropped_could_stand():

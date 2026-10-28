@@ -32080,6 +32080,15 @@ def _blend_outlives_edge(event, last_ts: datetime, *, event_status=None) -> bool
     return blend_ts >= last_ts
 
 
+def _terminal_point_owns_the_edge(is_finished: bool, status: str | None) -> bool:
+    """A finished, settled or suspended row: its right edge is the terminal point's.
+
+    One definition for `_sportsbook_withdrawal` (#9081) and the per-minute book
+    floor (#11105), so the two cannot disagree about whose edge it is.
+    """
+    return bool(is_finished) or status in SETTLED_STATUSES or status == EVENT_SUSPENDED
+
+
 def _sportsbook_withdrawal(
     snapshots: list,
     history: list,
@@ -32122,7 +32131,7 @@ def _sportsbook_withdrawal(
     """
     if hero_sources is None or "betting" in hero_sources:
         return None
-    if is_finished or status in SETTLED_STATUSES or status == EVENT_SUSPENDED:
+    if _terminal_point_owns_the_edge(is_finished, status):
         return None
     if not history:
         return None
@@ -32189,7 +32198,7 @@ def _sportsbook_floor_spans(
     *,
     trusted_from: datetime | None,
     trusted_until: datetime | None,
-    trailing: bool,
+    tail: str,
 ) -> list[tuple[datetime, datetime | None]]:
     """The spans in which ruling 051 had certainly refused the sportsbooks (#11105).
 
@@ -32211,18 +32220,37 @@ def _sportsbook_floor_spans(
     holds until the next stamp: an unrecorded poll in between could only have seen
     books whose rows already cover the stamp before it. A count at or over the
     floor proves nothing and leaves the minute as it was — a book that went dark
-    and came back is still counted, so this can miss a refusal but never invent
-    one. Every ``captured_at`` and ``valid_until`` is the instant of a real poll,
-    which is what makes them the instants to count at.
+    and came back is still counted. Every ``captured_at`` and ``valid_until`` is
+    the instant of a real poll, which is what makes them the instants to count at.
 
-    ``trailing`` decides the span still open at the last stamp. That span is the
-    line's right edge, which `_sportsbook_withdrawal` already rules on, so the
-    caller passes "#9081 withdraws here" and the two cannot disagree: kept where
-    the hero has itself stopped counting the books, dropped on a finished,
-    settled or suspended row (the terminal point's edge) and wherever the hero
-    still counts them — a narrow caller (#5426, discovery's h2h/us fetch) leaves
-    `betting` in place while touching only the books it asked for, so a thin
-    pre-match tail can be that caller rather than the market.
+    THE EXACT CLAIM: a span opens only at a stamp whose own poll saw fewer than
+    `BETTING_BOOK_FLOOR` books, on the rows of ONE event as read — except where
+    that stamp was not a full poll. Two such routes are known: (a) the narrow
+    caller (#5426, discovery's us/h2h fetch, which does reach live games) stamps
+    only the books it asked for, so its stamp can open a span up to one full
+    poll interval early, and only when the books it missed are absent from the
+    next full poll too — if they reappear there, their extended rows cover its
+    stamp; (b) book churn, a book leaving as another arrives, for which no bound
+    is claimed here. Rows folded in from a second event are
+    not this claim (#6399 keeps each book's richest row, and a stale twin's
+    pre-match history can end a book's coverage before the game): the caller
+    passes none.
+
+    ``tail`` decides the span still open at the last stamp, which is the line's
+    right edge, so the caller passes what already rules on that edge:
+
+    * ``"withdrawn"`` — `_sportsbook_withdrawal` stops the books at the edge, so
+      the span stays open to it and the two cannot disagree.
+    * ``"terminal"`` — a finished, settled or suspended row, whose edge is the
+      terminal point's (#8951, #9081). A refusal standing before the last stamp
+      is held through it with no point re-admitting the books, so the line does
+      not change its blend at the final and gains no reading the play end
+      (#1833) would count. A refusal first counted AT the last stamp is a claim
+      about that edge alone and is the terminal point's, so it is not a span.
+    * ``"counted"`` — the hero still counts the books, so the span is dropped: a
+      narrow caller (#5426) leaves `betting` in place while touching only the
+      books it asked for, so a thin pre-match tail can be that caller rather
+      than the market.
 
     Stamps outside ``[trusted_from, trusted_until)`` are where a row the read did
     not return could cover the instant (the live window's cutoff, a truncated
@@ -32236,6 +32264,8 @@ def _sportsbook_floor_spans(
 
     from app.tasks.odds_polling import BETTING_BOOK_FLOOR
 
+    if tail not in ("withdrawn", "terminal", "counted"):
+        raise ValueError(f"unknown tail {tail!r}")
     tolerance = _BOOK_FLOOR_POLL_TOLERANCE
 
     def _utc(stamp: datetime) -> datetime:
@@ -32278,6 +32308,7 @@ def _sportsbook_floor_spans(
 
     spans: list[tuple[datetime, datetime | None]] = []
     opened: datetime | None = None
+    last_stamp = max(stamps, default=None)
     for stamp in sorted(stamps):
         if trusted_from is not None and stamp < trusted_from:
             continue
@@ -32295,7 +32326,9 @@ def _sportsbook_floor_spans(
         elif not refused and opened is not None:
             spans.append((opened, stamp))
             opened = None
-    if opened is not None and trailing:
+    if opened is not None and (
+        tail == "withdrawn" or (tail == "terminal" and opened < last_stamp)
+    ):
         spans.append((opened, None))
     return spans
 
@@ -34149,36 +34182,49 @@ async def get_event_odds_history(
             # #11105: and in every earlier minute the headline had stopped
             # counting them, not only at the edge, so a held page's frames and
             # the served line are the same blend. See `_sportsbook_floor_spans`.
-            # The span still open at the last stamp is the edge, which is
-            # #9081's to decide, so it is kept exactly where #9081 withdraws.
-            # A failure here fails OPEN to the line as it was, loudly, rather
-            # than taking the whole blend line down inside the try below.
-            try:
-                _trusted_until = snapshot_read_complete_until
-                if end_cap is not None and (
-                    _trusted_until is None or end_cap < _trusted_until
-                ):
-                    _trusted_until = end_cap
-                _floor_spans = _sportsbook_floor_spans(
-                    snapshots,
-                    trusted_from=(
-                        cutoff + _BOOK_FLOOR_POLL_TOLERANCE
-                        if cutoff is not None
-                        else None
-                    ),
-                    trusted_until=_trusted_until,
-                    trailing=_withdrawal is not None,
-                )
-            except Exception:
-                logger.warning(
-                    "per-minute book floor skipped for event %d (#11105)",
-                    event_id,
-                    exc_info=True,
-                )
-                _floor_spans = []
-            agg_sources["betting"] = _withhold_refused_sportsbook_minutes(
-                agg_sources["betting"], _floor_spans
-            )
+            # The span still open at the last stamp is the edge: open exactly
+            # where #9081 withdraws, held through a terminal row's last stamp
+            # (the terminal point owns what follows), dropped where the hero
+            # still counts the books. A folded event fails open, as
+            # `_hero_sources` does: `snapshots` is by now each book's richest
+            # row across the series (#6399), and a stale twin's history can end
+            # a book's coverage early and invent a refusal. A failure here fails
+            # OPEN to the line as it was, loudly, rather than taking the whole
+            # blend line down inside the try below.
+            if len(series_event_ids) <= 1:
+                try:
+                    _trusted_until = snapshot_read_complete_until
+                    if end_cap is not None and (
+                        _trusted_until is None or end_cap < _trusted_until
+                    ):
+                        _trusted_until = end_cap
+                    if _withdrawal is not None:
+                        _tail = "withdrawn"
+                    elif _terminal_point_owns_the_edge(
+                        is_finished, getattr(event, "status", None)
+                    ):
+                        _tail = "terminal"
+                    else:
+                        _tail = "counted"
+                    agg_sources["betting"] = _withhold_refused_sportsbook_minutes(
+                        agg_sources["betting"],
+                        _sportsbook_floor_spans(
+                            snapshots,
+                            trusted_from=(
+                                cutoff + _BOOK_FLOOR_POLL_TOLERANCE
+                                if cutoff is not None
+                                else None
+                            ),
+                            trusted_until=_trusted_until,
+                            tail=_tail,
+                        ),
+                    )
+                except Exception:
+                    logger.warning(
+                        "per-minute book floor skipped for event %d (#11105)",
+                        event_id,
+                        exc_info=True,
+                    )
             if _withdrawal is not None and agg_sources["betting"]:
                 agg_sources["betting"].append(
                     TimestampedProb(timestamp=_withdrawal, home_probability=None)
