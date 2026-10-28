@@ -41,6 +41,7 @@ import { teamShortNames } from "@/lib/teamShortName";
 import { useAxisPoleFit } from "@/hooks/useAxisPoleFit";
 import { axisPoleStyle, axisLabelStyle } from "@/lib/axisPoleFit";
 import { teamTextColor } from "@/lib/teamColors";
+import { createChartTimestampMs } from "@/lib/chartTimestampMs";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
   OddsHistoryPoint,
@@ -1757,6 +1758,8 @@ export default function OddsChart({
   // #3419) — required for
   // Recharts ReferenceLine (period markers) to match categorical XAxis values.
   const chartData: ChartDataPoint[] = useMemo(() => {
+    // #10090 — this transform's own timestamp→ms reuse; see the helper.
+    const chartTimestampMs = createChartTimestampMs();
     const dataMap = new Map<string, ChartDataPoint>();
     // Explicit source withdrawal ends carry; seeded empty minutes do not.
     const withdrawn = new Map<string, Set<string>>();
@@ -1887,7 +1890,7 @@ export default function OddsChart({
       for (const point of filteredAggregateLine) {
         const delta = homeProbToChartAxis(point.home_probability);
         const dp = ensurePoint(point.timestamp);
-        if (!insideRecordedWindow(parseISO(dp.timestamp).getTime(), checkpointWindow)) {
+        if (!insideRecordedWindow(chartTimestampMs(dp.timestamp), checkpointWindow)) {
           dp.bainLuckDelta = delta;
           dp.bainLuckAt = point.timestamp;
         }
@@ -1910,7 +1913,7 @@ export default function OddsChart({
     // a point still carrying 17–27.
     if (scoringPlays && scoringPlays.length > 0) {
       const sortedPoints = Array.from(dataMap.values()).sort(
-        (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
+        (a, b) => chartTimestampMs(a.timestamp) - chartTimestampMs(b.timestamp)
       );
       attachScoringPlays(sortedPoints, scoringPlays);
     }
@@ -1959,7 +1962,7 @@ export default function OddsChart({
     // Forward-filling is semantically correct: the probability IS the last
     // known value until a new data point arrives.
     const sorted = Array.from(dataMap.values()).sort(
-      (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
+      (a, b) => chartTimestampMs(a.timestamp) - chartTimestampMs(b.timestamp)
     );
 
     // Every key this chart draws (see `plottedProbKeys`) gets forward-filled.
@@ -1979,7 +1982,7 @@ export default function OddsChart({
       // the previous row to this one, not this row alone: a window inside one
       // minute has no row of its own, and a value carried from the row before
       // it into the row after it would bridge it all the same.
-      const rowMs = parseISO(pt.timestamp).getTime();
+      const rowMs = chartTimestampMs(pt.timestamp);
       const touchesCheckpointWindow = spanTouchesRecordedWindow(prevRowMs ?? rowMs, rowMs, checkpointWindow);
       const inCheckpointWindow = insideRecordedWindow(rowMs, checkpointWindow);
       prevRowMs = rowMs;
@@ -2034,7 +2037,7 @@ export default function OddsChart({
         const fromValue = valueAtMinute(iv.fromMs);
         const toValue = iv.kind === "interior" ? valueAtMinute(iv.toMs) : null;
         for (const pt of sorted) {
-          const ms = parseISO(pt.timestamp).getTime();
+          const ms = chartTimestampMs(pt.timestamp);
           if (ms < fromMinute) continue;
           // An interior hole ends at the next observation's minute; a
           // trailing one runs to the end of the drawn domain, live edge
