@@ -1443,6 +1443,7 @@ class HeldRowQuotes:
         # preview events; empty means no idle sampling at all.
         self.preview_events: Callable[[], Container[int]] = frozenset
         self._sessions = None
+        self._clock_read_factory = None
         self._idle_task: Optional[asyncio.Task] = None
         self._closed = False
         self._sample_started = 0  # ordinal of the newest sample started
@@ -1485,7 +1486,12 @@ class HeldRowQuotes:
         self._last_sample_started = self._now()
         try:
             async with asyncio.timeout(self.SAMPLE_TIMEOUT_S):
-                async with sessions() as session:
+                # This is a single read, not a durable write. Where the owner
+                # provides an autocommit observation scope, keep the clock read
+                # on that same bounded burst path. Publish only after its
+                # context completes; input freezing and ordinal rules remain.
+                factory = self._clock_read_factory or sessions
+                async with factory() as session:
                     value = (await session.execute(select(func.clock_timestamp()))).scalar_one()
                 # Publish the sample only after the session has fully exited,
                 # and never over one that STARTED later: an idle read that
@@ -1954,6 +1960,7 @@ class LiveBlendRefresher:
             # #10090 idle bound: this refresher's CURRENT preview events gate
             # the owner's idle sampler (legacy single-source and ledger alike).
             quotes.preview_events = lambda: getattr(self, "preview_events", frozenset())
+            quotes._clock_read_factory = getattr(self, "_observation_read_factory", None)
 
     def __init__(
         self,
