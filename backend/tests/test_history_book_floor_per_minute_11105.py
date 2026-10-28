@@ -300,6 +300,69 @@ async def test_a_finished_or_suspended_row_keeps_the_refusal_it_held_live(
     ) > 40
 
 
+def _narrow_tail_rows(kickoff):
+    """lane1b probe 3: four books full-polled to K+60, then a #5426 narrow
+    caller stamps two of them at K+62 and again at K+64."""
+    odds = [
+        _book(b, kickoff, kickoff + timedelta(minutes=60), 0.60)
+        for b in ("draftkings", "fanduel", "betmgm", "caesars")
+    ]
+    odds += [
+        _book(b, kickoff + timedelta(minutes=62), kickoff + timedelta(minutes=64), 0.62)
+        for b in ("draftkings", "fanduel")
+    ]
+    wp = [_wp(kickoff + timedelta(minutes=m, seconds=5), 0.40) for m in range(65)]
+    return wp, odds
+
+
+def _narrow_tail_event(kickoff, wp, status):
+    admitted = {"value": 0.62, "updated_at": (kickoff + timedelta(minutes=64)).isoformat()}
+    event = _event(timedelta(0), betting=admitted, book_count=4, status=status)
+    event.commence_time = kickoff
+    event.win_probability_sources["polymarket"]["value"] = 0.40
+    event.win_probability_sources["polymarket"]["updated_at"] = wp[-1].captured_at.isoformat()
+    if status == "completed":
+        event.completed_at = kickoff + timedelta(minutes=64, seconds=40)
+    return event
+
+
+@pytest.mark.parametrize("status", ["live", "completed", "suspended"])
+async def test_a_narrow_tail_the_hero_counts_is_not_refused_at_the_final(
+    status, monkeypatch
+):
+    """lane1b N1 on eea6b000: the terminal tail dropped the "counted" escape.
+
+    The narrow caller's two-book stamps after the last full poll open a span
+    still open at the last stamp. While live the hero still counts the books,
+    so that span is dropped (#5426). Chosen from the terminal status alone, the
+    same span was HELD through the last stamp at the final — 0.40 where the line
+    had read 0.574 — a refusal the hero never made, redrawn at the final. The
+    hero counting the books wins over the terminal tail, as while live.
+    """
+    kickoff = datetime.now(UTC).replace(second=0, microsecond=0) - timedelta(minutes=70)
+    wp, odds = _narrow_tail_rows(kickoff)
+    event = _narrow_tail_event(kickoff, wp, status)
+    payload = await _serve(event, wp, odds)
+
+    def tail(p):
+        return [
+            (x["timestamp"], x["home_probability"])
+            for x in p["aggregate_line"]
+            if kickoff + timedelta(minutes=62)
+            <= datetime.fromisoformat(x["timestamp"])
+            < kickoff + timedelta(minutes=65)
+        ]
+
+    after = tail(payload)
+    _without_the_floor(monkeypatch)
+    before = tail(await _serve(event, wp, odds))
+
+    assert len(after) == 3
+    assert after == before
+    # The books are in the tail, so the equality is not vacuous.
+    assert all(v != pytest.approx(0.40, abs=1e-6) for _, v in after)
+
+
 # ---------------------------------------------------------------------------
 # What must not move
 # ---------------------------------------------------------------------------

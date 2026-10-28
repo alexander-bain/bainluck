@@ -34185,7 +34185,8 @@ async def get_event_odds_history(
             # The span still open at the last stamp is the edge: open exactly
             # where #9081 withdraws, held through a terminal row's last stamp
             # (the terminal point owns what follows), dropped where the hero
-            # still counts the books. A folded event fails open, as
+            # still counts the books — at the final as while live, so a #5426
+            # narrow tail the hero counted is not refused at the final. A folded event fails open, as
             # `_hero_sources` does: `snapshots` is by now each book's richest
             # row across the series (#6399), and a stale twin's history can end
             # a book's coverage early and invent a refusal. A failure here fails
@@ -34202,7 +34203,7 @@ async def get_event_odds_history(
                         _tail = "withdrawn"
                     elif _terminal_point_owns_the_edge(
                         is_finished, getattr(event, "status", None)
-                    ):
+                    ) and "betting" not in (_hero_sources or ()):
                         _tail = "terminal"
                     else:
                         _tail = "counted"
