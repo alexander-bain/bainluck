@@ -217,7 +217,7 @@ describe("#10751 a finished chart keeps the distinct-minute movement it drew", (
       winProbHistory={body.win_prob_history} winProbSources={body.win_prob_sources}
       backendBlendServed homeTeam="Harris/Hsieh" awayTeam="Lammons/Withrow"
       isLive={status === "live"} eventStatus={status} commenceTime={COMMENCE}
-      completedAt={body.completed_at ?? undefined}
+      completedAt={body.completed_at ?? undefined} servedStatus={body.status ?? undefined}
       chartStartTime={domain?.start} chartEndTime={domain?.end}
     />);
   };
@@ -248,19 +248,34 @@ describe("#10751 a finished chart keeps the distinct-minute movement it drew", (
     expect(Math.max(...yTicks(html))).toBeLessThan(55);
   });
 
-  it("CONTROL: the chart's own game-end cut still applies — an ESPN end before the frames trims them", () => {
-    const withEnd: EventHistoryResponse = {
-      ...served,
-      win_prob_history: {
-        ...served.win_prob_history,
-        espn: [{ timestamp: "2026-10-01T17:41:00Z", home_probability: 0.25, away_probability: 0.75 }],
-      },
-    };
+  // An ESPN series that stops at 17:41, before the frames.
+  const espnEndsAt1741 = (body: EventHistoryResponse): EventHistoryResponse => ({
+    ...body,
+    win_prob_history: {
+      ...body.win_prob_history,
+      espn: [{ timestamp: "2026-10-01T17:41:00Z", home_probability: 0.25, away_probability: 0.75 }],
+    },
+  });
+
+  it("CONTROL: the chart's own game-end cut still applies to the FINISHED body — an ESPN end before the frames trims them", () => {
+    const withEnd = espnEndsAt1741({ ...served, status: "completed", completed_at: "2026-10-01T17:50:00Z" });
     const kept = finishedChartFrames(admitted, EVENT_ID, completed, withEnd);
     expect(kept).toHaveLength(3); // the selector keeps them; the renderer decides
     const html = draw(mergeLiveChartHistory(withEnd, kept)!, "completed");
     expect(callout(html)).toBe("25%");
     expect(yTicks(html).length).toBeGreaterThan(0);
     expect(Math.max(...yTicks(html))).toBeLessThan(55);
+  });
+
+  // #10751 (15333459): the end cut waits for a body that knows the game ended.
+  // While the held body is still the live one (status live, no completed_at)
+  // its last ESPN/score/sportsbook point is not a game end — it was built
+  // while play went on — so the movement stays drawn until the next read.
+  it("the LIVE body still held under a Final detail is not cut to its ESPN series' last point", () => {
+    const withEnd = espnEndsAt1741(served);
+    const kept = finishedChartFrames(admitted, EVENT_ID, completed, withEnd);
+    const html = draw(mergeLiveChartHistory(withEnd, kept)!, "completed");
+    expect(callout(html)).toBe("43%");
+    expect(Math.max(...yTicks(html))).toBeGreaterThanOrEqual(55);
   });
 });

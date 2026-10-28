@@ -31,6 +31,7 @@ import { renderedComplementPercents, renderedDuelPercents, renderedPercent } fro
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
 import { observedPlayStartMs } from "@/lib/observedPlayStart";
+import { servedBeforeFinish } from "@/lib/eventState";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1445,7 +1446,10 @@ export function computeSharedChartDomain(
   // If sportsbook data extends slightly beyond (within 10 min), include it
   // to avoid premature chart cutoff when ESPN data is sparse.
   const isCompleted = eventStatus === "completed" || eventStatus === "closed";
-  if (isCompleted) {
+  // #10751 — the status is the page's detail; the body may still be the live
+  // one. That body cannot say where the game ended, so it keeps its full
+  // extent until the finished history arrives (see `servedBeforeFinish`).
+  if (isCompleted && !servedBeforeFinish(historyData)) {
     const GAME_END_SOURCES = new Set([
       "espn",
       "stat_model",

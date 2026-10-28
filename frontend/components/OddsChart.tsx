@@ -90,6 +90,7 @@ import {
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import { chartEndpointAttributes, type ChartEndpointIdentity } from "@/lib/displayIdentity";
 import { tenthsSideLabel } from "@/lib/tenthsOptIn";
+import { servedBeforeFinish } from "@/lib/eventState";
 import {
   bucketSupport,
   classifySeriesSupport,
@@ -483,6 +484,13 @@ interface OddsChartProps {
   onTimeRangeChange?: (range: "all" | "live") => void;
   /** Authoritative game end time from the backend (set when any source confirms game over) */
   completedAt?: string;
+  /**
+   * #10751 — the SERVED history body's own status, beside `completedAt` (also
+   * the body's). `eventStatus` is the page's detail and can already say Final
+   * over a body built while the game was still in play; that body is not cut
+   * to a game end it does not record. Absent ⇒ today's behaviour.
+   */
+  servedStatus?: string;
   /**
    * #6238 — this sport's winner market prices a draw, so the tooltip may not
    * print an away percentage: every one it could print is `100 − home`, which
@@ -1045,6 +1053,7 @@ export default function OddsChart({
   externalTimeRange,
   onTimeRangeChange,
   completedAt,
+  servedStatus,
   awayWithheld = false,
   defaultSourcesExpanded = false,
   publications,
@@ -1175,8 +1184,13 @@ export default function OddsChart({
   // Determine chart end boundary for completed games.
   // Use last game data point (ESPN/odds), NOT completedAt which is a backend
   // processing timestamp often 30-45 minutes after the game actually ended.
+  //
+  // #10751: only over a body that knows the game finished. A Final detail over
+  // the live body (the history read is a separate request) would cut at that
+  // body's last sportsbook quote — 15333459 drew 19:27 for a line it had just
+  // drawn to 19:57 — so that body is drawn as served until the next read.
   const smartEndTime = useMemo(() => {
-    if (!isClosed) return null;
+    if (!isClosed || servedBeforeFinish({ status: servedStatus, completed_at: completedAt })) return null;
 
     const gameEndCandidates: Date[] = [];
 
@@ -1229,7 +1243,7 @@ export default function OddsChart({
     }
 
     return null;
-  }, [isClosed, completedAt, espnHistory, winProbHistory, history]);
+  }, [isClosed, servedStatus, completedAt, espnHistory, winProbHistory, history]);
 
   /**
    * #6987 — THE END CUTOFF IS NOT A PROPERTY OF THE RANGE.
