@@ -190,10 +190,8 @@ DEFAULT_STAMP_LOCK_TIMEOUT_MS = 500
 #: Kalshi's slowest flush spending up to 8.9 s in checkout and connection
 #: setup. Set to 1, the caller still stops waiting at the same deadline and
 #: gets the same TimeoutError, but the read is ABANDONED, not cancelled: it
-#: finishes on its own task and returns its connection to the pool. At most one
-#: abandoned read per kind; while it runs, that kind's next opportunity passes
-#: exactly as it does when the session slots are taken. Default off. Read at
-#: call time; a config var change restarts the dyno anyway.
+#: finishes on its own task and returns its connection to the pool. Default
+#: off. Read at call time; a config var change restarts the dyno anyway.
 OPTIONAL_DB_ABANDON_ENV = "LIVE_BLEND_ABANDON_OPTIONAL_DB"
 #: An abandoned read still holds its session slot and connection; one that has
 #: not finished this long after it started is cancelled after all.
@@ -236,31 +234,23 @@ PENDING_STAMP_BUDGET_S = 1.0
 # stamps across all of its refresh calls; the rest stay owed in continuation
 # order for a quiet flush, which keeps the full time budget above. Without it a
 # busy flush's old debt ran serially for up to that second after its fresh work.
-#: `LIVE_BLEND_FRESH_FLUSH_PENDING_ATTEMPTS` (#10090 WORST bucket 3) raises it
-#: for an on/off comparison: after a lock burst the owed stamps drain one per
-#: busy flush, which stretched 2026-10-28's 21:48 burst ~13 s past its last
-#: refusal. Each extra attempt can cost its flush up to one stamp lock wait.
-FRESH_FLUSH_PENDING_ATTEMPTS_ENV = "LIVE_BLEND_FRESH_FLUSH_PENDING_ATTEMPTS"
-FRESH_FLUSH_PENDING_ATTEMPTS_MAX = 8
-
-
-def fresh_flush_pending_attempts(raw: Optional[str]) -> int:
-    """1 (today) unless ``raw`` is an integer in 1..MAX."""
-    try:
-        value = int((raw or "").strip())
-    except ValueError:
-        return 1
-    return value if 1 <= value <= FRESH_FLUSH_PENDING_ATTEMPTS_MAX else 1
-
-
-FRESH_FLUSH_PENDING_ATTEMPTS = fresh_flush_pending_attempts(
-    os.getenv(FRESH_FLUSH_PENDING_ATTEMPTS_ENV))
+FRESH_FLUSH_PENDING_ATTEMPTS = 1
 
 # #10090 — fixed fresh-stamp workers per refresh. Two disjoint stamps waiting
 # on rows/publication must not hold a third ready fresh event. Each holds one
 # session only inside its stamp; with a consumer's price writer and standalone
 # writer that is the lent engine's five connections (pool 3 + overflow 2).
 FRESH_STAMP_WORKERS = 3
+
+# An abandoned read keeps its session slot until it finishes. Across every
+# kind here AND PR #11700's detached observation read (`_detached_reads`, when
+# that is in the tree), at most this many hold a slot at once, so two of the
+# FRESH_STAMP_WORKERS slots always stay for fresh stamps (lane1b's 2255Z
+# composition finding: separate per-kind limits let four optional tasks
+# compete for three slots). While the share is taken every optional kind's next
+# opportunity passes exactly as it does when the slots are taken, and a read
+# that reaches its deadline then is cancelled, as it is with the switch off.
+OPTIONAL_DB_HELD_MAX = FRESH_STAMP_WORKERS - 2
 
 # #10090 — admitted cohorts are stamped live-first, as a call's own population
 # is. Stage trace 02:14Z 2026-10-15: a live game's admitted stamp started
@@ -4610,7 +4600,7 @@ class LiveBlendRefresher:
         from app.tasks.base import get_task_session
         if not acknowledged:
             return
-        if self._session_slots.locked() or self._optional_db_busy("normal_ack"):
+        if self._session_slots.locked() or self._optional_db_busy():
             # Never queue behind a stamp for a slot: the next opportunity
             # settles these. Checked with no await before the acquisition.
             self._remember_normal_acks(acknowledged)
@@ -4739,7 +4729,7 @@ class LiveBlendRefresher:
             # this opportunity passes and the next one (after the cooldown)
             # tries again. Each of its three acquisitions checks this with no
             # await between the check and the acquisition.
-            if self._session_slots.locked() or self._optional_db_busy("normal_read"):
+            if self._session_slots.locked() or self._optional_db_busy():
                 return
             acked, self._normal_acked = self._normal_acked, {}
             if acked:
@@ -4854,10 +4844,13 @@ class LiveBlendRefresher:
 
     # ── #10090: optional reads abandoned at their deadline ───────────────────
 
-    def _optional_db_busy(self, kind: str) -> bool:
-        """An abandoned read of this kind is still finishing; skip this turn."""
-        task = self._optional_db_running.get(kind)
-        return task is not None and not task.done()
+    def _optional_db_busy(self) -> bool:
+        """Abandoned optional work already holds its share of the slots; skip this turn."""
+        held = sum(not task.done() for task in self._optional_db_running.values())
+        if optional_db_abandons():
+            # PR #11700's detached observation reads share the same slots.
+            held += sum(not task.done() for task in getattr(self, "_detached_reads", ()))
+        return held >= OPTIONAL_DB_HELD_MAX
 
     async def _optional_db(self, kind: str, budget_s: float, body):
         """Await ``body()`` for at most ``budget_s``; TimeoutError past it.
@@ -4872,8 +4865,8 @@ class LiveBlendRefresher:
         if not optional_db_abandons():
             async with asyncio.timeout(budget_s):
                 return await body()
-        if self._optional_db_busy(kind):
-            raise TimeoutError(f"optional {kind} read still finishing")
+        if self._optional_db_busy():
+            raise TimeoutError(f"optional {kind} read skipped: abandoned reads hold their share")
         task = asyncio.create_task(body(), name=f"optional-db:{kind}")
         try:
             # The same deadline scope as off; only the read behind it is shielded.
@@ -4884,6 +4877,10 @@ class LiveBlendRefresher:
                 # The read's own TimeoutError, or one that ended at the deadline.
                 if not task.cancelled():
                     task.exception()
+                raise
+            if self._optional_db_busy():
+                # Another read took the share meanwhile: cancel, as with the switch off.
+                await self._optional_db_cancel_and_join(task, TimeoutError())
                 raise
             self._optional_db_abandon(kind, task, OPTIONAL_DB_ABANDON_LIMIT_S - budget_s)
             raise OptionalDbAbandoned(f"optional {kind} read abandoned after {budget_s}s")
@@ -4904,14 +4901,15 @@ class LiveBlendRefresher:
         """
         if not optional_db_abandons():
             return await body(None)
-        if self._optional_db_busy(kind):
-            raise TimeoutError(f"optional {kind} read still finishing")
+        if self._optional_db_busy():
+            raise TimeoutError(f"optional {kind} read skipped: abandoned reads hold their share")
         gate = _CapacityReadGate()
         task = asyncio.create_task(body(gate), name=f"optional-db:{kind}")
         try:
             return await asyncio.shield(task)
         except CancelledError as exc:
-            if gate.reading and not task.done() and not self._preview_maintenance_closed:
+            if (gate.reading and not task.done() and not self._preview_maintenance_closed
+                    and not self._optional_db_busy()):
                 gate.abandoned = True
                 self._optional_db_abandon(kind, task, OPTIONAL_DB_ABANDON_LIMIT_S)
                 raise
@@ -5563,7 +5561,7 @@ class LiveBlendRefresher:
                 time.monotonic() < self._preview_maintenance_after or
                 (self._preview_maintenance_task is not None and
                  not self._preview_maintenance_task.done()) or
-                self._optional_db_busy("preview_capacity")):
+                self._optional_db_busy()):
             return
         self._preview_maintenance_after = time.monotonic() + 30.0
         self._preview_maintenance_task = asyncio.create_task(self._maintain_preview_capacity())

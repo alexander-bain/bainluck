@@ -11,8 +11,6 @@ TimeoutError but lets the read finish on its own task. Off, nothing changes.
 The observation preview read is PR #11700's and is untouched here. The
 connection half is proven on real Postgres in
 `tests/integration/test_optional_db_abandon_pg_10090.py`.
-
-Bucket 3 (`LIVE_BLEND_FRESH_FLUSH_PENDING_ATTEMPTS`) is pinned at the bottom.
 """
 
 import asyncio
@@ -86,7 +84,7 @@ async def test_off_is_the_old_timeout_and_cancels_the_read(monkeypatch, setting)
         await r._optional_db("normal_read", .02, body)
     assert body.ended == "cancelled"
     assert r.optional_db_abandoned == 0 and not r._optional_db_running
-    assert not r._optional_db_busy("normal_read")
+    assert not r._optional_db_busy()
 
 
 async def test_on_releases_the_caller_at_the_deadline_and_the_read_finishes(abandon):
@@ -97,21 +95,20 @@ async def test_on_releases_the_caller_at_the_deadline_and_the_read_finishes(aban
     with pytest.raises(TimeoutError):
         await r._optional_db("normal_read", .02, body)
     assert loop.time() - started < .5
-    # Not cancelled: still running, holding its kind.
-    assert body.ended is None and r._optional_db_busy("normal_read")
+    # Not cancelled: still running, holding the optional share.
+    assert body.ended is None and r._optional_db_busy()
     assert r.optional_db_abandoned == 1
-    # The same kind's next opportunity passes without starting another read.
-    second = Body()
-    with pytest.raises(TimeoutError):
-        await r._optional_db("normal_read", .02, second)
-    assert not second.started.is_set()
-    # Another kind is independent.
-    assert not r._optional_db_busy("normal_ack")
+    # Every kind's next opportunity passes without starting another read.
+    for kind in ("normal_read", "normal_ack"):
+        second = Body()
+        with pytest.raises(TimeoutError):
+            await r._optional_db(kind, .02, second)
+        assert not second.started.is_set()
     body.release.set()
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     assert body.ended == "finished"
-    assert not r._optional_db_busy("normal_read") and not r._optional_db_limits
+    assert not r._optional_db_busy() and not r._optional_db_limits
 
 
 async def test_on_returns_a_read_that_finishes_in_time_and_raises_its_error(abandon):
@@ -151,7 +148,7 @@ async def test_on_a_read_that_never_finishes_is_cancelled_at_the_limit(abandon, 
             break
         await asyncio.sleep(.01)
     assert body.ended == "cancelled"
-    assert not r._optional_db_busy("normal_read") and not r._optional_db_limits
+    assert not r._optional_db_busy() and not r._optional_db_limits
 
 
 async def test_on_a_late_failure_is_retrieved_and_logged(abandon, caplog):
@@ -213,10 +210,128 @@ async def test_off_busy_checks_are_inert(monkeypatch):
     monkeypatch.delenv(OPTIONAL_DB_ABANDON_ENV, raising=False)
     r, _ = refresher()
     assert r._session_slots._value == FRESH_STAMP_WORKERS
-    for kind in ("normal_read", "normal_ack", "preview_capacity"):
-        assert not r._optional_db_busy(kind)
+    assert not r._optional_db_busy()
+    # PR #11700's detached observation reads count only with the switch on, so
+    # off stays exactly what master (with or without #11700) does.
+    r._detached_reads = {asyncio.get_running_loop().create_future()}
+    assert not r._optional_db_busy()
 
 
+
+
+# ── one optional share across every kind, composed with PR #11700 ────────────
+
+
+class SlotBody(Body):
+    """A read that holds a session slot, as every real optional read does."""
+
+    def __init__(self, r):
+        super().__init__()
+        self.r = r
+
+    async def __call__(self):
+        async with self.r._session_slot():
+            return await super().__call__()
+
+
+async def _two_stamps_enter(r):
+    """Two fresh stamps acquire session slots at once, without waiting."""
+    async with asyncio.timeout(.1):
+        async with r._session_slot(), r._session_slot():
+            return True
+
+
+async def _every_optional_kind_passes(r, opened):
+    r._normal_acked = {}
+    await r._settle_normal_recovery({(1, 7)})
+    assert r._normal_acked == {1: 7}
+    await asyncio.wait_for(r._recover_normal_prices(), 1)
+    assert r._normal_acked == {1: 7}
+    capacity = Body()
+    with pytest.raises(TimeoutError):
+        await r._optional_db_in_pass("preview_capacity", lambda gate: capacity())
+    assert not capacity.started.is_set()
+    assert not opened, "an optional kind opened a session while the share was taken"
+
+
+async def test_on_one_abandoned_read_holds_the_whole_optional_share(abandon):
+    """lane1b 2255Z: the optional kinds together leave two slots for fresh stamps."""
+    r, opened = refresher()
+    held = SlotBody(r)
+    with pytest.raises(TimeoutError):
+        await r._optional_db("normal_read", .02, held)
+    assert held.ended is None
+    assert r._session_slots._value == FRESH_STAMP_WORKERS - 1
+    await _every_optional_kind_passes(r, opened)
+    assert await _two_stamps_enter(r)
+    assert r.optional_db_abandoned == 1
+    held.release.set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert r._session_slots._value == FRESH_STAMP_WORKERS and not r._optional_db_busy()
+
+
+async def test_on_a_detached_observation_read_takes_the_optional_share(abandon):
+    """Composed with PR #11700: its detached read counts against the same share."""
+    r, opened = refresher()
+    observation = SlotBody(r)
+    task = asyncio.create_task(observation())
+    r._detached_reads = {task}
+    await observation.started.wait()
+    assert r._optional_db_busy()
+    await _every_optional_kind_passes(r, opened)
+    assert await _two_stamps_enter(r)
+    observation.release.set()
+    await task
+    assert not r._optional_db_busy()
+
+
+async def test_on_a_read_reaching_its_deadline_after_the_share_was_taken_is_cancelled(abandon):
+    """Two kinds time out together: the second costs its connection, as off does."""
+    r, _ = refresher()
+    first = SlotBody(r)
+    caller = asyncio.create_task(r._optional_db("normal_ack", .2, first))
+    await first.started.wait()
+    later = SlotBody(r)
+    with pytest.raises(TimeoutError):
+        await r._optional_db("normal_read", .02, later)
+    assert later.ended is None and r.optional_db_abandoned == 1
+    with pytest.raises(TimeoutError) as raised:
+        await caller
+    assert not isinstance(raised.value, lbr.OptionalDbAbandoned)
+    assert first.ended == "cancelled" and r.optional_db_abandoned == 1
+    assert r._session_slots._value == FRESH_STAMP_WORKERS - 1
+    assert await _two_stamps_enter(r)
+    later.release.set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert r._session_slots._value == FRESH_STAMP_WORKERS
+
+
+async def test_on_a_capacity_read_reaching_its_pass_deadline_after_the_share_was_taken_is_cancelled(
+    abandon,
+):
+    r, _ = refresher()
+    held = SlotBody(r)
+    reading = SlotBody(r)
+
+    async def body(gate):
+        gate.reading = True
+        return await reading()
+
+    caller = asyncio.create_task(r._optional_db_in_pass("preview_capacity", body))
+    await reading.started.wait()
+    with pytest.raises(TimeoutError):
+        await r._optional_db("normal_ack", .02, held)
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    assert reading.ended == "cancelled" and r.optional_db_abandoned == 1
+    assert await _two_stamps_enter(r)
+    held.release.set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert r._session_slots._value == FRESH_STAMP_WORKERS
 
 
 # ── preview capacity maintenance: abandoned only while inside its read ───────
@@ -326,8 +441,8 @@ async def test_capacity_on_the_pass_ends_at_its_deadline_and_the_read_finishes_t
     with pytest.raises(TimeoutError):
         await _retire_under_pass(r)
     assert loop.time() - started < .5
-    # The read was not cancelled; it still holds its slot and its kind.
-    assert read.ended is None and r._optional_db_busy("preview_capacity")
+    # The read was not cancelled; it still holds its slot and the optional share.
+    assert read.ended is None and r._optional_db_busy()
     assert r.optional_db_abandoned == 1
     assert r._session_slots._value == FRESH_STAMP_WORKERS - 1
     read.release.set()
@@ -336,7 +451,7 @@ async def test_capacity_on_the_pass_ends_at_its_deadline_and_the_read_finishes_t
     assert read.ended == "finished" and read.closed == 1
     # A read the pass outlived proves nothing: no retirement, no publication.
     assert calls == {"retire_policy": [], "published": []}
-    assert not r._optional_db_busy("preview_capacity") and not r._optional_db_limits
+    assert not r._optional_db_busy() and not r._optional_db_limits
     assert r._session_slots._value == FRESH_STAMP_WORKERS
 
 
@@ -456,48 +571,3 @@ async def test_capacity_on_drain_cancels_an_abandoned_read(abandon):
     assert held.ended == "cancelled"
     assert not r._optional_db_running and not r._optional_db_limits
 
-
-# ── bucket 3: owed stamps a busy flush may attempt ───────────────────────────
-
-
-@pytest.mark.parametrize("raw, expected", [
-    (None, 1), ("", 1), ("x", 1), ("0", 1), ("-2", 1), ("9", 1), ("1.5", 1),
-    ("1", 1), (" 2 ", 2), ("3", 3), ("8", 8),
-])
-async def test_fresh_flush_pending_attempts_parses_only_a_bounded_integer(raw, expected):
-    assert lbr.fresh_flush_pending_attempts(raw) == expected
-
-
-async def test_fresh_flush_pending_attempts_defaults_to_today():
-    import os
-
-    assert lbr.FRESH_FLUSH_PENDING_ATTEMPTS == lbr.fresh_flush_pending_attempts(
-        os.getenv(lbr.FRESH_FLUSH_PENDING_ATTEMPTS_ENV))
-    if lbr.FRESH_FLUSH_PENDING_ATTEMPTS_ENV not in os.environ:
-        assert lbr.FRESH_FLUSH_PENDING_ATTEMPTS == 1
-
-
-@pytest.mark.parametrize("attempts", [1, 2, 3])
-async def test_a_busy_flush_attempts_the_configured_owed_stamps_and_keeps_the_rest(
-    monkeypatch, attempts,
-):
-    """Across every call of one fresh-bearing flush, never more than N."""
-    from tests.test_ws_flush_cadence_10090 import _Recording
-
-    async def prepared(event_ids):
-        return {}
-
-    monkeypatch.setattr(lbr, "FRESH_FLUSH_PENDING_ATTEMPTS", attempts)
-    r = _Recording(min_refresh_interval_s=0)
-    r._prepare_groups = prepared
-    r.adopt_pending(range(1, 9))
-    await r.refresh([99], flush_started=1000)
-    await r.refresh([98], flush_started=1000)
-    attempted = list(range(1, 1 + attempts))
-    assert [ids for ids, _ in r.batches] == [[99], *([e] for e in attempted), [98]]
-    assert r.pending_event_ids() == frozenset(range(1, 9)) - set(attempted)
-    # The quiet flush still drains the rest in continuation order.
-    await r.refresh_pending(flush_started=1001)
-    assert [ids for ids, _ in r.batches][-(8 - attempts):] == [
-        [e] for e in range(1 + attempts, 9)]
-    assert not r.pending_event_ids()
