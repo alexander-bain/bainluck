@@ -5655,9 +5655,13 @@ class LiveBlendRefresher:
                         if preview.ledger:
                             # TSP-1: operations and prepared frames run through
                             # the ledger CAS; nothing is relabeled here.
+                            # #10090: the stage trace sees each send; with no
+                            # trace the call is exactly the untraced one.
+                            observe = self._stage_hook("preview")
                             await preview.execute(
                                 frames, self._preview_call(connection), event_channel,
                                 self.preview_stats,
+                                **({} if observe is None else {"observe": observe}),
                             )
                             return
                         # A blend composed before this lock may be older than a

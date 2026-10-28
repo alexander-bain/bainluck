@@ -17,6 +17,12 @@ write, fence or stamp. This trace follows the exact selected input (same
   ADMISSION        the refresher's admit/defer decision and its reason
   EVENT_COMMITTED  the stamp whose observation basis holds that exact mark
   EVENT_PUBLICATION  the Redis result for that revision (not browser delivery)
+  PREVIEW          a provisional frame this process SENT for the event: its
+                   (epoch, seq), reply, base_rev and whole composed bag, with
+                   each basis key joined to this trace's exact input_seq
+                   (`ExactKalshiTrace.preview`). Changed-only: a re-commit of
+                   an unchanged value opens no chain, so its observation reads
+                   TRACKED_OUTCOME_NO_RETAINED_COMMIT_AT_THIS_OBSERVATION
   ATTEMPT          one stamp attempt: start, session, commit, disposition,
                    revision and the actual `window.release`
 

@@ -16,6 +16,7 @@ from app.utils.blend_preview import (
     LEDGER_TTL_TOKEN,
     _basis_observation_time,
     _ledger_text,
+    observe_publication,
 )
 from app.utils.dnpl_authority_transport import encode_preview
 from app.utils.dnpl_redis_authority import (
@@ -240,7 +241,7 @@ class AuthorityLedgerRegistry(LedgerRegistry):
             for frame in frames
         ]
 
-    async def _publish(self, frame, call, channel, stats, retries=2):
+    async def _publish(self, frame, call, channel, stats, retries=2, observe=None):
         source = frame.get("_dnpl_source")
         if (
             frame.get("_dnpl_authority") != self.authority
@@ -249,12 +250,18 @@ class AuthorityLedgerRegistry(LedgerRegistry):
             or self._halted
         ):
             stats["authority_refused"] = stats.get("authority_refused", 0) + 1
+            if observe is not None:
+                observe_publication(
+                    observe,
+                    {key: value for key, value in frame.items() if not key.startswith("_")},
+                    frame.get("_ledger"), ("local_authority_refused",),
+                )
             return
         clean = {
             key: value for key, value in frame.items() if not key.startswith("_dnpl_")
         }
         if clean["preview"]["kind"] == "revoke":
-            clean.pop("_ledger")
+            meta = clean.pop("_ledger")
             result = await self._guarded_call(
                 call,
                 source,
@@ -263,6 +270,7 @@ class AuthorityLedgerRegistry(LedgerRegistry):
                 channel(clean["event_id"]),
                 encode_preview(self.authority, clean),
             )
+            observe_publication(observe, clean, meta, result)
             if result[0] == "published":
                 stats["revoked"] = stats.get("revoked", 0) + 1
             else:
@@ -272,6 +280,7 @@ class AuthorityLedgerRegistry(LedgerRegistry):
         payload = json.dumps(clean)
         if clean.get("source") != source or payload.count(LEDGER_TTL_TOKEN) != 1:
             stats["authority_refused"] = stats.get("authority_refused", 0) + 1
+            observe_publication(observe, clean, meta, ("local_authority_refused",))
             return
         argv = [
             source,
@@ -286,6 +295,7 @@ class AuthorityLedgerRegistry(LedgerRegistry):
         for name, owner, expires in meta["contributors"]:
             argv.extend((name, owner, expires))
         result = await self._eval(call, "publish", *argv)
+        observe_publication(observe, clean, meta, result)
         if result[0] == "published":
             stats["published"] = stats.get("published", 0) + 1
         elif result[0] == "contributor" and retries > 0:
@@ -303,7 +313,7 @@ class AuthorityLedgerRegistry(LedgerRegistry):
                 }
             )
             for fresh in await self._mutate(sync, call, stats):
-                await self._publish(fresh, call, channel, stats, retries - 1)
+                await self._publish(fresh, call, channel, stats, retries - 1, observe)
         elif result[0] in ("stale", "terminal"):
             stats["ledger_superseded"] = stats.get("ledger_superseded", 0) + 1
         else:

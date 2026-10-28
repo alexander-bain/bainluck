@@ -29,6 +29,22 @@ about browser delivery; use the existing page capture for that final boundary.
 Missing START is UNAVAILABLE, not zero traffic. STOP explains lost coverage.
 After expiry, remove the temporary trace settings; no new socket, provider poll,
 collector, automatic restart or activation is performed by this code.
+
+PREVIEW (#10090) closes the join from those inputs to the provisional state a
+reader adopts. At the ledger's send, one line per composed frame of a traced
+event: the frame's ``(epoch, seq)`` (the identity a held page adopts), its
+``publication`` reply, and for a blend the committed ``base_rev`` and the WHOLE
+composed bag, base plus pending, one row per probability source: role, value,
+write clock, observation basis, refusal and the weight the hero gives it, with
+the tier, ``recomputed_p`` and whether it equals the frame's ``p``. A basis key
+equal to a retained commit's ``stored_epoch`` names that ``input_seq``
+(EXACT_OUTCOME_OBSERVATION_BASIS, the EVENT_COMMITTED rule); a tracked outcome
+at another observation says so; equal values are never a link. Revokes carry
+``through_seq`` and ``reason`` (expiry, refusal, removal). ``ttl_ms`` is the
+Redis-computed lifetime; a reader's own expiry is receipt-relative. Limits: a
+process sees only frames it sends, so the other venue's frames for the same
+event appear as ``seq`` gaps here and in its own trace; the line describes the
+send, never browser delivery.
 """
 
 import json
@@ -48,6 +64,8 @@ FIELDS = (
 )
 CLOCK_FIELDS = ("ts", "ts_ms", "timestamp")
 MAX_PENDING = 64
+PREVIEW_SOURCES = 16  # rows per PREVIEW line; the rest are counted
+PREVIEW_BASIS = 8  # observation-basis keys per row; the rest are counted
 
 
 def number(value):
@@ -63,6 +81,21 @@ def number(value):
         return parsed if math.isfinite(parsed) else "INVALID"
     except (ValueError, TypeError, OverflowError):
         return "INVALID"
+
+
+def _word(value):
+    """Our own short enums only (statuses, reasons, source keys)."""
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_:-]{1,48}", value):
+        return value
+    return "INVALID"
+
+
+def _int(value):
+    return value if type(value) is int else "INVALID"
+
+
+def _scalar(value):
+    return None if value is None else number(value)
 
 
 class ExactKalshiTrace:
@@ -533,3 +566,155 @@ class ExactKalshiTrace:
                 publication=status,
                 browser_delivery="UNAVAILABLE"
             )
+
+    def preview(self, frame, ledger, reply):
+        """One composed ledger preview frame of a traced event, at its send.
+
+        The registry's publication observer (`blend_preview.observe_publication`).
+        Reads only; never raises.
+        """
+        try:
+            if not self.active() or not isinstance(frame, dict):
+                return
+            event = frame.get("event_id")
+            if type(event) is not int or not self.tracks_event(event):
+                return
+            meta = frame.get("preview") if isinstance(frame.get("preview"), dict) else {}
+            kind = meta.get("kind")
+            fields = dict(
+                event=event,
+                kind=kind if kind in ("blend", "revoke") else "INVALID",
+                epoch=_int(meta.get("epoch")),
+                seq=_int(meta.get("seq")),
+                publication=_word(reply[0]) if reply else "UNAVAILABLE",
+                browser_delivery="UNAVAILABLE",
+            )
+            if kind == "revoke":
+                fields.update(
+                    through_seq=_int(meta.get("through_seq")),
+                    reason=_word(meta.get("reason")),
+                )
+            elif kind == "blend":
+                try:
+                    fields.update(self._preview_state(frame, meta, ledger, reply))
+                except Exception:
+                    fields["composition"] = "COMPOSITION_ERROR"  # a line, not silence
+            self._record("PREVIEW", **fields)
+        except Exception:
+            pass  # evidence must never cost a quote
+
+    def _preview_state(self, frame, meta, ledger, reply):
+        from types import SimpleNamespace
+
+        from app.utils.aggregation import (
+            OBSERVED_BASIS_KEY,
+            OBSERVED_VALUE_KEY,
+            compute_aggregate_probability_tiered,
+            effective_source_weights,
+            parse_source_entry,
+        )
+        from app.utils.probability_eligibility import is_refused
+
+        ledger = ledger if isinstance(ledger, dict) else {}
+        published = bool(reply) and reply[0] == "published" and len(reply) > 1
+        fields = dict(
+            base_rev=_int(meta.get("base_rev")),
+            p=number(frame.get("p")),
+            mover=_word(frame.get("source")),
+            ttl_ms=number(reply[1]) if published else "UNAVAILABLE",
+            contributors=[
+                dict(source=_word(name), owner=_int(owner), deadline_ms=_int(expires))
+                for name, owner, expires in list(ledger.get("contributors") or ())[
+                    :PREVIEW_SOURCES
+                ]
+            ],
+            deadline_clock="REDIS_TIME_MS",
+        )
+        base, pending = ledger.get("base"), meta.get("pending_entries")
+        if not isinstance(base, dict) or not isinstance(base.get("sources"), dict):
+            fields["composition"] = "BASE_UNAVAILABLE"
+            return fields
+        if not isinstance(pending, dict):
+            fields["composition"] = "PENDING_ENTRIES_UNAVAILABLE"
+            return fields
+        # The exact bag `_composed_frame` aggregated: the committed base with
+        # each pending source's stamped entry over it.
+        bag = {**base["sources"], **pending}
+        status = base.get("status")
+        shim = SimpleNamespace(
+            win_probability_sources=bag,
+            status=status,
+            espn_win_prob_home=base.get("espn_win_prob_home"),
+            opening_home_probability=base.get("opening_home_probability"),
+        )
+        probability, tier = compute_aggregate_probability_tiered(shim, status)
+        keys, _values, weights = effective_source_weights(shim, status)
+        weight_of = dict(zip(keys, weights))
+        rows, omitted = [], 0
+        for name in sorted(bag):
+            entry = bag[name]
+            value, updated = parse_source_entry(entry)
+            if (value is None or not isinstance(name, str)
+                    or not re.fullmatch(r"[a-z0-9_]{1,40}", name)):
+                continue  # not a probability source (an injuries list, a flag)
+            if len(rows) >= PREVIEW_SOURCES:
+                omitted += 1
+                continue
+            row = dict(
+                source=name,
+                role="PENDING" if name in pending else "BASE",
+                value=number(value),
+                updated_epoch=updated.timestamp() if updated is not None else None,
+                refused=bool(is_refused(entry)),
+                weight=weight_of.get(name, "NOT_WEIGHTED"),
+            )
+            basis = entry.get(OBSERVED_BASIS_KEY) if isinstance(entry, dict) else None
+            if isinstance(basis, dict):
+                ids = sorted(k for k in basis if re.fullmatch(r"\d{1,12}", str(k)))
+                shown = ids[:PREVIEW_BASIS]
+                row.update(
+                    observed_basis={k: number(basis[k]) for k in shown},
+                    observed_basis_omitted=len(basis) - len(shown),
+                    observed_value=_scalar(entry.get(OBSERVED_VALUE_KEY)),
+                    inputs=self._preview_inputs(basis, shown),
+                )
+            rows.append(row)
+        fields.update(
+            composition="BASE_PLUS_PENDING_ENTRIES",
+            status=_word(status) if status is not None else None,
+            espn_win_prob_home=_scalar(base.get("espn_win_prob_home")),
+            opening_home_probability=_scalar(base.get("opening_home_probability")),
+            tier=_word(tier) if tier is not None else None,
+            recomputed_p=_scalar(probability),
+            recomputed_matches=(
+                probability is not None
+                and isinstance(frame.get("p"), float)
+                and float(probability) == frame["p"]
+            ),
+            sources=rows,
+            sources_omitted=omitted,
+        )
+        return fields
+
+    def _preview_inputs(self, basis, ids):
+        """Exact input identities behind one source's observation basis."""
+        inputs = []
+        for key in ids:
+            oid = int(key)
+            identity = self.commits.get(oid)
+            if identity is not None and identity.get("stored_epoch") == basis[key]:
+                if "_price_logged" in identity:
+                    self._price_chain(identity)  # a repeat's chain, as stamp does
+                inputs.append(dict(
+                    outcome=oid,
+                    input_seq=identity.get("input_seq", "UNAVAILABLE"),
+                    receive_id=identity.get("receive_id", "UNAVAILABLE"),
+                    linkage="EXACT_OUTCOME_OBSERVATION_BASIS",
+                ))
+            elif identity is not None or oid in self.targets:
+                inputs.append(dict(
+                    outcome=oid,
+                    input_seq="UNAVAILABLE",
+                    linkage="TRACKED_OUTCOME_NO_RETAINED_COMMIT_AT_THIS_OBSERVATION",
+                ))
+        return inputs
