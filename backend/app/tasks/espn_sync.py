@@ -941,16 +941,6 @@ async def _sync_espn_live_events():
                 espn_data[key] = events
                 espn_read_at[key] = read_at
 
-            # ── Who serves a sport ESPN did not answer for? (#3473) ─
-            #
-            # BEFORE the passes, because both of them consume the same silence
-            # and neither may read it as an empty slate. This is the step-7
-            # question, and it is answered here rather than inside the loops so
-            # that a sport is decided once per pass and receipted once.
-            failover_decisions = await _decide_failovers(
-                espn_data, all_fetch_keys, stats
-            )
-
             # ── First pass: live + recently-completed events ─────
             recently_completed_cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
             started_cutoff = datetime.now(timezone.utc) - timedelta(hours=5)
@@ -1035,6 +1025,14 @@ async def _sync_espn_live_events():
             finally:
                 await widen_espn.close()
 
+            # #10090: healthy sports have committed/published before any
+            # unrelated dark sport's ledger or standby-provider check waits.
+            # Both passes still use the same ESPN reading to skip dark sports;
+            # the decision is consumed only by _act_on_failovers after them.
+            failover_decisions = await _decide_failovers(
+                espn_data, all_fetch_keys, stats
+            )
+
             # ── Second pass: scheduled events (team pre-population) ─
             # #9143: today's dated board for any sport whose undated board has
             # not rolled for one of its own id-anchored rows. Rows are free here
@@ -1072,7 +1070,7 @@ async def _sync_espn_live_events():
                 if sport_key not in ESPN_SPORT_MAPPING:
                     continue
                 # Same reading, same reason as the pass above (#3473). The
-                # decision was taken once, before either loop.
+                # decision is taken once, after healthy live rows publish.
                 if _failover.espn_reading(espn_data, sport_key) != _failover.FIXTURES:
                     continue
                 espn_events = scheduled_dated_boards.get(sport_key) or scheduled_board_for(
