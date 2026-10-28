@@ -11,12 +11,9 @@ struct NBAScoringChanceComparison9483: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let point {
-                // Names the prop these chances describe.
-                Text("Selected line")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Text(point.label)
-                    .font(.headline)
+                // Names the prop these chances describe — the one place the
+                // selected line is printed during play.
+                Text("\(Text("Selected line · ").font(.subheadline).foregroundStyle(.secondary))\(Text(point.label).font(.headline))")
                     .fixedSize(horizontal: false, vertical: true)
                 if typeSize >= .xxxLarge {
                     VStack(alignment: .leading, spacing: 16) { readings(point) }
@@ -92,13 +89,14 @@ struct NBAScoringFigures9483: View {
 
     var body: some View {
         Group {
+            // Two equal columns at ordinary sizes; the unit or side wraps
+            // inside its own column rather than pushing the pair into rows.
+            // From XXXL, as the chance pair below, a ~120pt column on a 375
+            // deck card could split "projection" mid-word, so they stack.
             if typeSize >= .xxxLarge {
                 VStack(alignment: .leading, spacing: 12) { figures }
             } else {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: 24) { figures }
-                    VStack(alignment: .leading, spacing: 12) { figures }
-                }
+                HStack(alignment: .top, spacing: 16) { figures }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -127,11 +125,26 @@ struct NBAScoringFigures9483: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text(Self.text(card, value))
-                .font(.system(size: figureSize, weight: .bold).monospacedDigit())
-                .foregroundStyle(tint(value))
+            figureText(value)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// One text, so the side ("Knicks by") and unit ("points") stay with
+    /// their number and wrap at a space when the column is narrow.
+    private func figureText(_ value: Double) -> Text {
+        let parts = Self.parts(card, value)
+        let lead = Text(parts.lead.isEmpty ? "" : parts.lead + " ")
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(tint(value))
+        let figure = Text(parts.figure)
+            .font(.system(size: figureSize, weight: .bold).monospacedDigit())
+            .foregroundStyle(tint(value))
+        let unit = Text(parts.unit.isEmpty ? "" : " " + parts.unit)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        return Text("\(lead)\(figure)\(unit)")
     }
 
     /// A margin is coloured by the side it favours; a tie and a total stay neutral.
@@ -146,6 +159,16 @@ struct NBAScoringFigures9483: View {
 
     static func text(_ card: NBALadderCard9483, _ value: Double) -> String {
         card.words(value) + (card.family == .margin ? "" : " points")
+    }
+
+    /// `text` split for display: the side or unit as supporting words around
+    /// the large number. Built from the card's own pieces (`number`, the side
+    /// names, `words` for a tie), never by parsing `text`; joined with spaces
+    /// it is `text` exactly.
+    static func parts(_ card: NBALadderCard9483, _ value: Double) -> (lead: String, figure: String, unit: String) {
+        guard card.family == .margin else { return ("", NBALadderCard9483.number(value), "points") }
+        guard value != 0 else { return ("", card.words(value), "") }
+        return ("\(value > 0 ? card.homeShort : card.awayShort) by", NBALadderCard9483.number(abs(value)), "")
     }
 
     static func accessibilitySummary(for card: NBALadderCard9483) -> String {

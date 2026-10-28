@@ -51,24 +51,13 @@ struct NBALadderCardView9483: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             chart(selected: point)
-            if card.phase == .during {
-                HStack(spacing: 16) {
-                    Label("Pregame", systemImage: "circle")
-                    Label("Current", systemImage: "circle.fill")
-                }
-                .font(.subheadline)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("Hollow marks: pregame chance. Filled marks: current chance.")
+            // The comparison above keys hollow/filled whenever it has a line;
+            // with the selection unavailable it carries no key, so this does.
+            if card.phase == .during && point == nil {
+                chanceKey
             }
             if isMargin {
-                HStack {
-                    Text("← \(card.awayShort) by")
-                    Spacer(minLength: 8)
-                    Text("\(card.homeShort) by →")
-                }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
+                sideKey
             }
             lineControls(selected: selected, point: point)
             if card.phase != .during, card.forecast != nil {
@@ -105,12 +94,70 @@ struct NBALadderCardView9483: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// Previous / selected line / next. During play the steps name the
-    /// adjacent line and stack under the selection at accessibility sizes.
+    /// Hollow = pregame, filled = current; whole words, stacked at
+    /// accessibility sizes rather than broken mid-word.
+    private var chanceKey: some View {
+        Group {
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Pregame", systemImage: "circle")
+                    Label("Current", systemImage: "circle.fill")
+                }
+            } else {
+                HStack(spacing: 16) {
+                    Label("Pregame", systemImage: "circle")
+                    Label("Current", systemImage: "circle.fill")
+                }
+            }
+        }
+        .font(.subheadline)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityLabel("Hollow marks: pregame chance. Filled marks: current chance.")
+    }
+
+    /// Which side each half of the margin axis favours. The arrow is held to
+    /// its name (no-break space); at accessibility sizes the halves stack,
+    /// away still leading and home still trailing.
+    private var sideKey: some View {
+        let away = Text("←\u{00A0}\(card.awayShort) by")
+        let home = Text("\(card.homeShort) by\u{00A0}→")
+        return Group {
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 2) {
+                    away
+                        .fixedSize(horizontal: false, vertical: true)
+                    home
+                        .multilineTextAlignment(.trailing)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            } else {
+                HStack {
+                    away
+                    Spacer(minLength: 8)
+                    home
+                }
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .accessibilityHidden(true)
+    }
+
+    /// Previous / selected line / next. During play the comparison above
+    /// already names the selected line, so the compact card shows only the
+    /// steps (each naming the adjacent line) and full size adds the details
+    /// action; at accessibility sizes the steps stack under it.
     @ViewBuilder private func lineControls(selected: Int?, point: NBALadderCard9483.Point?) -> some View {
         let previous = stepButton(-1, selected: selected)
         let next = stepButton(1, selected: selected)
-        if card.phase == .during && typeSize.isAccessibilitySize {
+        if card.phase == .during && !expanded {
+            HStack {
+                previous
+                Spacer(minLength: 16)
+                next
+            }
+        } else if card.phase == .during && typeSize.isAccessibilitySize {
             VStack(spacing: 4) {
                 selection(point)
                 HStack {
@@ -170,23 +217,22 @@ struct NBALadderCardView9483: View {
 
     private func readout(_ point: NBALadderCard9483.Point?) -> some View {
         VStack(spacing: 2) {
-            if let point {
+            if let point, card.phase == .during {
+                // The comparison above names the line and its chances once;
+                // this keeps only the existing source action. Its spoken label
+                // names the line (`NBAScoringLineControls9483.detailsLabel`).
+                HStack(spacing: 4) {
+                    Text("Details & timing")
+                    Image(systemName: "chevron.right").imageScale(.small)
+                }
+                .font(.subheadline)
+            } else if let point {
                 let text = Self.readout(card, point)
-                // Live comparisons are already prominent above the chart.
-                // Keep this existing source action without repeating tiny figures.
-                Text(card.phase == .during ? point.label : text.main)
+                Text(text.main)
                     .font(.subheadline.weight(.semibold).monospacedDigit())
                     .foregroundStyle(point.chance == nil ? Color.secondary : color(point))
                 let more = expanded ? (text.sub.isEmpty ? "Details" : " · details") : ""
-                if card.phase == .during {
-                    if expanded {
-                        HStack(spacing: 4) {
-                            Text("Details & timing")
-                            Image(systemName: "chevron.right").imageScale(.small)
-                        }
-                        .font(.subheadline)
-                    }
-                } else if !text.sub.isEmpty || !more.isEmpty {
+                if !text.sub.isEmpty || !more.isEmpty {
                     Text(text.sub + more)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
