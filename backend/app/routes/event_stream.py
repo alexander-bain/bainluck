@@ -55,6 +55,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Event, FuturesMarket
 from app.services.database import async_session_maker
 from app.utils.blend_preview import is_preview_frame, preview_route_events
+from app.utils.fold_base_trace import fold_base_trace
 from app.utils.live_push import (
     MAX_FRAME_AGE_S, event_channel, latest_frames, parse_frame, sse_encode,
 )
@@ -485,6 +486,8 @@ async def _stream(
     preview_floors = {}
     active_preview_origin = None
     preview_session = None
+    # #10090: log-only, env-armed receipt of a traced fold's committed base.
+    fold_trace = fold_base_trace()
 
     def preview_wire(frame):
         if not authority_v3:
@@ -507,6 +510,8 @@ async def _stream(
         get_base = getattr(hub, "folded_preview_base", None)
         base = (get_base(event_id, members=list(subscription.subscriptions))
                 if callable(get_base) else None)
+        if fold_trace is not None:
+            fold_trace.base(event_id, base, fold_session=preview_session.session)
         return preview_session.update(
             base, floors=preview_floors, now=asyncio.get_event_loop().time(),
             frame=frame, elapsed_ms=elapsed_ms,

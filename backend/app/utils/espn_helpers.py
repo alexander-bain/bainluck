@@ -2297,6 +2297,7 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
     from app.utils.nonvenue_live_push import write_nonvenue_probability
     await write_nonvenue_probability(
         session, event, "espn", round(ee.home_win_probability, 4), values=_update_vals,
+        trace_inputs=lambda: _espn_witness(ee),
     )
 
     # #922: skip the ESPNSnapshot append for completed/closed events — it is a
@@ -2369,6 +2370,13 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
 # Statistical model win probability
 # ---------------------------------------------------------------------------
 
+def _espn_witness(ee) -> dict:
+    """#10090: the ESPN reading's own version witness, for a traced write only."""
+    return {"espn_id": ee.espn_id, "status": ee.status, "status_detail": ee.status_detail,
+            "period": ee.period, "clock": ee.clock, "home_score": ee.home_score,
+            "away_score": ee.away_score, "home_win_probability": ee.home_win_probability}
+
+
 async def retire_priorless_stat_model(session, event, *, mirror_orm: bool) -> bool:
     """Drop a deferring model's earlier ``stat_model`` reading from the row (#8522).
 
@@ -2385,7 +2393,10 @@ async def retire_priorless_stat_model(session, event, *, mirror_orm: bool) -> bo
     if retired is None:
         return False
     from app.utils.nonvenue_live_push import write_nonvenue_probability
-    await write_nonvenue_probability(session, event, "stat_model", None)
+    await write_nonvenue_probability(
+        session, event, "stat_model", None,
+        trace_inputs=lambda: {"decision": "priorless_retired"},
+    )
     return True
 
 
@@ -2528,6 +2539,13 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
                 from app.utils.nonvenue_live_push import write_nonvenue_probability
                 await write_nonvenue_probability(
                     session, event, "stat_model", round(stat_wp, 4),
+                    trace_inputs=lambda: {
+                        "model_inputs": "espn_pass", "home_score": ee.home_score,
+                        "away_score": ee.away_score, "clock": model_clock,
+                        "period": period_str, "sport_key": sport_key,
+                        "pregame_spread": pregame_spread, "opening": opening_prob,
+                        "espn": _espn_witness(ee),
+                    },
                 )
 
                 from app.tasks.snapshots import (
@@ -2687,6 +2705,7 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
                 await write_nonvenue_probability(
                     session, event, "espn", round(ee.home_win_probability, 4),
                     values={"espn_win_prob_home": ee.home_win_probability},
+                    trace_inputs=lambda: _espn_witness(ee),
                 )
 
                 snapshot = ESPNSnapshot(
