@@ -53,6 +53,7 @@ import functools
 import json
 import logging
 import os
+import _thread
 import sys
 import threading
 import time
@@ -156,12 +157,15 @@ class ClockBridge:
                     self._deadline = deadline
                 self._armed_pending += 1
                 if self._thread is None:
+                    # Nothing here may give up the GIL: beside one GIL-busy
+                    # sibling, `uuid4` (os.urandom) cost the writer 7.5 ms and
+                    # `Thread.start`'s bootstrap wait 12-30 ms. The run id is
+                    # drawn on the bridge thread; a raw helper starts it.
                     thread = threading.Thread(
-                        target=self._thread_main, args=(uuid.uuid4().hex[:8],),
-                        name="clock-bridge", daemon=True,
+                        target=self._thread_main, name="clock-bridge", daemon=True,
                     )
                     self._thread = thread
-                    thread.start()
+                    _thread.start_new_thread(self._start, (thread,))
                 else:
                     self._wake.set()
         except Exception:
@@ -169,9 +173,17 @@ class ClockBridge:
 
     # ── the run (its own thread and loop) ───────────────────────────────────
 
-    def _thread_main(self, run):
+    def _start(self, thread):
         try:
-            asyncio.run(self._run(run))
+            thread.start()
+        except Exception:
+            with self._lock:
+                if self._thread is thread:
+                    self._thread = None
+
+    def _thread_main(self):
+        try:
+            asyncio.run(self._run(uuid.uuid4().hex[:8]))
         except Exception:
             pass
         finally:

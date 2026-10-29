@@ -81,6 +81,7 @@ def make_bridge(conns, period_s=0.05, env=None):
 def finish(bridge, timeout=5.0):
     thread = bridge._thread
     if thread is not None:
+        thread._started.wait(timeout)  # started by a raw helper, not the hook
         thread.join(timeout)
         assert not thread.is_alive()
 
@@ -438,4 +439,30 @@ def test_a_forked_child_inherits_no_run():
     assert bridge._thread is None and bridge._roles == set()
     assert isinstance(bridge._lock, type(threading.Lock()))
     bridge._wake.set()
+    running._started.wait(1.0)
     running.join(1.0)
+
+
+def test_the_hook_never_waits_for_the_new_thread_beside_a_gil_busy_sibling():
+    # `uuid4` (os.urandom) gives up the GIL and `Thread.start` waits until the new
+    # thread holds it once: beside one busy thread, 12 ms median on the caller.
+    stop = []
+
+    def busy():
+        while not stop:
+            sum(range(1000))
+
+    sibling = threading.Thread(target=busy, daemon=True)
+    sibling.start()
+    took = []
+    try:
+        for _ in range(10):
+            bridge, _, _ = make_bridge([FakeConn()], period_s=10.0)
+            started = time.perf_counter()
+            bridge.armed("kalshi", 0.05)
+            took.append(time.perf_counter() - started)
+            finish(bridge)
+    finally:
+        stop.append(True)
+        sibling.join(2.0)
+    assert sorted(took)[len(took) // 2] < 0.005
