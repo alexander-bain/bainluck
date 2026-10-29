@@ -66,6 +66,9 @@ SPECS = {
     # `live_blend_refresh.FRESH_FLUSH_PENDING_ATTEMPTS`, read once per flush.
     # Its "today" is the worker's own setting (an env since #11709), `today()`.
     "pending_attempts": {"modes": ("alternate",), "values": (1, 32), "today": 1},
+    # `live_blend_refresh.RELEASE_UNATTEMPTED_DEBT_SWITCH`, read once per mixed
+    # refresh: when a call's unattempted old events leave its fence.
+    "release_unattempted_debt": {"modes": ("alternate",), "values": (0, 1), "today": 0},
 }
 SWITCHES = tuple(SPECS)
 MODES = ("off", "ab", "alternate")

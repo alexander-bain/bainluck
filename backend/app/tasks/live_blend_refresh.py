@@ -247,6 +247,12 @@ OPTIONAL_DB_SWITCH = "abandon_optional_db"
 #: `FRESH_FLUSH_PENDING_ATTEMPTS`'s runtime trial name: ``alternate`` between two
 #: values by period, read once per flush (`_fresh_flush_pending_attempts`).
 PENDING_ATTEMPTS_SWITCH = "pending_attempts"
+#: #10090 R8b runtime trial (``alternate`` 0/1, today 0), read once per mixed
+#: `refresh` (`_release_unattempted_debt`): a call releases from its fence the
+#: old events it will not attempt as soon as it knows which those are — before
+#: its fresh stamps when the choice needs no read, else when the old
+#: population's live-first read returns — instead of after the fresh stamps.
+RELEASE_UNATTEMPTED_DEBT_SWITCH = "release_unattempted_debt"
 
 
 def _optional_db_key(event_ids) -> Optional[int]:
@@ -270,6 +276,14 @@ def _fresh_flush_pending_attempts() -> int:
         return _optional_db_trial().value(PENDING_ATTEMPTS_SWITCH, FRESH_FLUSH_PENDING_ATTEMPTS)
     except Exception:  # noqa: BLE001 — a switch read never fails a flush
         return FRESH_FLUSH_PENDING_ATTEMPTS
+
+
+def _release_unattempted_debt() -> bool:
+    """This call's `release_unattempted_debt` arm; off on any switch error."""
+    try:
+        return bool(_optional_db_trial().value(RELEASE_UNATTEMPTED_DEBT_SWITCH, 0))
+    except Exception:  # noqa: BLE001 — a switch read never fails a flush
+        return False
 
 
 def _switch_tags(event_id, at: Optional[float] = None) -> str:
@@ -2649,6 +2663,9 @@ class LiveBlendRefresher:
         if signal is not None and not signal.done():
             signal.set_result(None)
         interrupted = False
+        # #10090 R8b: the old population's live-first read, started beside the
+        # fresh stamps when `release_unattempted_debt` is on (see below).
+        early_read = None
         try:
             # One event already owns its transaction. For multiple admitted events,
             # prepare once and commit each independently so a later row lock cannot
@@ -2720,9 +2737,72 @@ class LiveBlendRefresher:
             populations = () if len(due) == 1 else (
                 fresh.intersection(due), set(due).difference(fresh),
             )
+            if (
+                populations
+                and len(populations[1]) > 1
+                and flush_started is not None
+                and self._pending_fresh_flush
+                and _release_unattempted_debt()
+            ):
+                # #10090 R8b (`release_unattempted_debt`): the old events this
+                # call will not attempt leave its fence as soon as it knows
+                # which those are, so they become ordinary debt the door can
+                # take, and their newer prices can be written, while the fresh
+                # stamps run — not after them (15330559 held 21.7-30.4 s). The
+                # attempted ones, and the order, are exactly today's.
+                fresh_population, old = populations
+                carried = [eid for eid in self._pending_continuation if eid in old]
+                left = self._pending_attempts_limit - self._pending_attempts
+
+                def release_unattempted(remainder, front):
+                    budget_deferred.update(remainder)
+                    self._lock_retry.update(remainder.intersection(retry))
+                    self._throttle_deferred.update(remainder.difference(retry))
+                    # The continuation the budget cut below would have left.
+                    self._pending_continuation = front + [
+                        eid for eid in self._pending_continuation if eid not in old
+                    ]
+                    window.release(remainder)
+
+                if left == 1 and carried:
+                    # The continuation head is the one attempt: no read decides it.
+                    release_unattempted(old.difference(carried[:1]), carried)
+                    populations = (fresh_population, set(carried[:1]))
+                elif 0 < left < len(old) and len(fresh_population) < FRESH_STAMP_WORKERS:
+                    # The live-first read decides: run it beside the fresh
+                    # stamps (they leave a stamp worker free, so none waits for
+                    # its session) and release the rest when it returns.
+                    async def read_old_population():
+                        prepared = await self._prepare_groups(list(old))
+
+                        def live_first(event_id: int) -> tuple[bool, int]:
+                            context = prepared.get(event_id)
+                            return (context is None or context[0].status != "live", event_id)
+
+                        queued = set(carried)
+                        ordered = carried + sorted(
+                            (eid for eid in old if eid not in queued), key=live_first,
+                        )
+                        attempt = ordered[:left]
+                        release_unattempted(
+                            set(ordered[left:]),
+                            [eid for eid in attempt if eid in queued] + ordered[left:],
+                        )
+                        return set(attempt), prepared
+
+                    early_read = asyncio.create_task(read_old_population())
             for population in populations:
                 if not population:
                     continue
+                early_prepared = early_failure = None
+                if early_read is not None and population.isdisjoint(fresh):
+                    read, early_read = early_read, None
+                    try:
+                        population, early_prepared = await read
+                    except Exception as exc:  # handled as a failed preparation below
+                        early_failure = exc
+                        with contextlib.suppress(Exception):
+                            _optional_db_trial().trip(RELEASE_UNATTEMPTED_DEBT_SWITCH, exc)
                 pending_only = population.isdisjoint(fresh)
                 if pending_only and pending_budget_spent():
                     # A repeated mixed call may have consumed the remaining
@@ -2766,7 +2846,14 @@ class LiveBlendRefresher:
                 # read of all of them. A read failure stays with its own event.
                 prepared = None
                 try:
-                    if not head_only and (
+                    if early_failure is not None:
+                        raise early_failure
+                    if early_prepared is not None:
+                        # Order only: it was read before the fresh stamps, so
+                        # each attempt below reads its own group again.
+                        if not head_only:
+                            prepared = early_prepared
+                    elif not head_only and (
                         pending_only or len(population) > FRESH_STAMP_WORKERS
                     ):
                         prepared = await self._prepare_groups(list(population))
@@ -2920,7 +3007,7 @@ class LiveBlendRefresher:
                                 if eid not in population
                             ]
                             break
-                        await stamp_event(event_id)
+                        await stamp_event(event_id, read_current=early_prepared is not None)
             # Admitted cohorts finish inside this call; the door closes with
             # no turn between its last worker ending and the close (or when a
             # lifecycle drain stops admitting), so the remaining drain is
@@ -2962,6 +3049,17 @@ class LiveBlendRefresher:
             # running beside the consumer's final drain or next refresh. An
             # admitted stamp ends first: it may still submit a frame.
             try:
+                if early_read is not None:
+                    # Never awaited: the call failed or was cancelled first. Its
+                    # old population stays owed (above); no read outlives it.
+                    early_read.cancel()
+                    while not early_read.done():
+                        try:
+                            await asyncio.wait({early_read})
+                        except CancelledError:
+                            continue
+                    if not early_read.cancelled():
+                        early_read.exception()
                 await self._admission_close(window, cancel=interrupted)
             finally:
                 try:
