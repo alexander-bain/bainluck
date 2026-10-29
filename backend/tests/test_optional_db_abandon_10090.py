@@ -144,8 +144,10 @@ async def test_on_a_read_that_never_finishes_is_cancelled_at_the_limit(abandon, 
     body = Body()
     with pytest.raises(TimeoutError):
         await r._optional_db("normal_read", .02, body)
+    # Until the task's done callback has run too, not just the cancel landing
+    # in the body: on a slow runner both can wake in one loop iteration.
     for _ in range(100):
-        if body.ended:
+        if body.ended and not r._optional_db_limits:
             break
         await asyncio.sleep(.01)
     assert body.ended == "cancelled"
