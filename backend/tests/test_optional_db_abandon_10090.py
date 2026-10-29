@@ -392,6 +392,67 @@ async def test_composed_off_leaves_the_observation_read_as_11700_ships_it(monkey
     await task
 
 
+async def _hold_slot(r, seconds):
+    async with r._session_slot():
+        await asyncio.sleep(seconds)
+
+
+async def _last_slot_taken_first(r):
+    """Leave one slot free, then schedule a stamp that takes it before any task
+    the caller starts: the caller's check passes, its read then queues."""
+    held = [asyncio.create_task(_hold_slot(r, .5)) for _ in range(FRESH_STAMP_WORKERS - 1)]
+    await asyncio.sleep(0)
+    assert r._session_slots._value == 1 and not r._session_slots.locked()
+    return held + [asyncio.create_task(_hold_slot(r, .35))]
+
+
+@pytest.mark.parametrize("kind", ["normal_ack", "normal_read"])
+async def test_on_a_read_still_queued_for_its_slot_at_the_deadline_is_cancelled(abandon, kind):
+    """discover's review of b26b2d9c: a read with no slot holds no connection to keep.
+
+    Abandoning it would spend the share (capping #11700's observation read) and
+    leave it queued FIFO ahead of the next fresh stamp; off cancels it.
+    """
+    r, opened = refresher()
+    stamps = await _last_slot_taken_first(r)
+    if kind == "normal_ack":
+        with pytest.raises(TimeoutError):
+            await r._settle_normal_recovery({(1, 7)})
+    else:
+        await asyncio.wait_for(r._recover_normal_prices(), 1)
+    assert r.optional_db_abandoned == 0 and not r._optional_db_running
+    assert not r._optional_db_busy()
+    await asyncio.gather(*stamps)
+    await asyncio.sleep(0)
+    assert not opened, "the read took a slot after its caller left"
+    assert r._session_slots._value == FRESH_STAMP_WORKERS
+
+
+async def test_on_an_abandoned_ack_settlement_skips_the_page_read_quietly(abandon, caplog):
+    """The page read's own acquisition check counts the share, like the other two."""
+    r, _ = refresher()
+    release = asyncio.Event()
+
+    class Slow:
+        async def execute(self, statement, params=None):
+            await release.wait()
+
+    @asynccontextmanager
+    async def factory():
+        yield Slow()
+
+    r._session_factory = factory
+    r._normal_acked = {1: 7}
+    with caplog.at_level(logging.WARNING, logger="app.tasks.live_blend_refresh"):
+        await asyncio.wait_for(r._recover_normal_prices(), 1)
+    assert r.optional_db_abandoned == 1
+    assert "durable normal recovery retained" not in caplog.text
+    release.set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not r._optional_db_busy()
+
+
 # ── preview capacity maintenance: abandoned only while inside its read ───────
 
 

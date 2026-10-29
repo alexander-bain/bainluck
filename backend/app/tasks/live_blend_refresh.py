@@ -236,7 +236,7 @@ def optional_db_abandons() -> bool:
 
 
 class _CapacityReadGate:
-    """Where a preview capacity read is, so its pass deadline abandons only the read.
+    """Where an optional read is, so its deadline abandons only the read.
 
     ``reading`` covers checkout through the first result; past it the body is
     in Redis work that the pass deadline still cancels, as it always did.
@@ -4707,25 +4707,28 @@ class LiveBlendRefresher:
             self._remember_normal_acks(acknowledged)
             return
         factory = self._session_factory or get_task_session
+        gate = _CapacityReadGate()
 
         async def settle():
-            async with self._session_slot(), factory() as session:
-                # One roundtrip for the cohort: per-event DELETEs could spend
-                # the whole budget and roll back every already-paid intent,
-                # causing needless reader reconciliation on the next sweep.
-                event_ids, revisions = zip(*acknowledged)
-                await session.execute(text(
-                    "DELETE FROM owed_chart_points AS owed USING "
-                    "unnest(CAST(:event_ids AS integer[]), "
-                    "CAST(:revisions AS bigint[])) AS ack(event_id, revision) "
-                    "WHERE owed.source=:source AND owed.event_id=ack.event_id "
-                    "AND (owed.reading->>'rev')::bigint<=ack.revision"
-                ), {"source": self._normal_source,
-                    "event_ids": list(event_ids), "revisions": list(revisions)})
+            async with self._session_slot():
+                gate.reading = True
+                async with factory() as session:
+                    # One roundtrip for the cohort: per-event DELETEs could spend
+                    # the whole budget and roll back every already-paid intent,
+                    # causing needless reader reconciliation on the next sweep.
+                    event_ids, revisions = zip(*acknowledged)
+                    await session.execute(text(
+                        "DELETE FROM owed_chart_points AS owed USING "
+                        "unnest(CAST(:event_ids AS integer[]), "
+                        "CAST(:revisions AS bigint[])) AS ack(event_id, revision) "
+                        "WHERE owed.source=:source AND owed.event_id=ack.event_id "
+                        "AND (owed.reading->>'rev')::bigint<=ack.revision"
+                    ), {"source": self._normal_source,
+                        "event_ids": list(event_ids), "revisions": list(revisions)})
 
         # Settling an older ACK cannot erase a newer committed intent, so an
         # abandoned settlement that commits late settles the same rows.
-        await self._optional_db("normal_ack", .25, settle)
+        await self._optional_db("normal_ack", .25, settle, gate)
 
     def _note_normal_debt(self):
         self._normal_has_debt = True
@@ -4846,32 +4849,36 @@ class LiveBlendRefresher:
                         "live_blend_refresh[%s]: normal ACK settlement retained",
                         self.source,
                     )
-            if self._session_slots.locked():
+            if self._session_slots.locked() or self._optional_db_busy():
                 return
             epoch = self._normal_epoch
             # Freeze a finite sweep: new arrivals cannot indefinitely postpone
             # retrying an older failed event. Both reads use (source, id); bound
             # raw rows BEFORE coalescing so duplicate revisions cannot turn a
             # LIMIT32 result into an unbounded DISTINCT/sort over the backlog.
-            async def read_page():
-                async with self._session_slot(), factory() as session:
-                    if self._normal_horizon is None:
-                        self._normal_horizon = (await session.execute(text(
-                            "SELECT id FROM owed_chart_points WHERE source=:source "
-                            "ORDER BY id DESC LIMIT 1"
-                        ), {"source": self._normal_source})).scalar_one_or_none()
-                        if self._normal_horizon is None:
-                            if epoch == self._normal_epoch:
-                                self._normal_has_debt = False
-                            return None
-                    return (await session.execute(text(
-                        "SELECT id, event_id, reading FROM owed_chart_points "
-                        "WHERE source=:source AND id>:after AND id<=:horizon "
-                        "ORDER BY id LIMIT 32"
-                    ), {"source": self._normal_source, "after": self._normal_after,
-                        "horizon": self._normal_horizon})).all()
+            gate = _CapacityReadGate()
 
-            rows = await self._optional_db("normal_read", .25, read_page)
+            async def read_page():
+                async with self._session_slot():
+                    gate.reading = True
+                    async with factory() as session:
+                        if self._normal_horizon is None:
+                            self._normal_horizon = (await session.execute(text(
+                                "SELECT id FROM owed_chart_points WHERE source=:source "
+                                "ORDER BY id DESC LIMIT 1"
+                            ), {"source": self._normal_source})).scalar_one_or_none()
+                            if self._normal_horizon is None:
+                                if epoch == self._normal_epoch:
+                                    self._normal_has_debt = False
+                                return None
+                        return (await session.execute(text(
+                            "SELECT id, event_id, reading FROM owed_chart_points "
+                            "WHERE source=:source AND id>:after AND id<=:horizon "
+                            "ORDER BY id LIMIT 32"
+                        ), {"source": self._normal_source, "after": self._normal_after,
+                            "horizon": self._normal_horizon})).all()
+
+            rows = await self._optional_db("normal_read", .25, read_page, gate)
             if rows is None:
                 return
             if not rows:
@@ -4953,7 +4960,7 @@ class LiveBlendRefresher:
             held += sum(not task.done() for task in self._detached_reads)
         return held >= OPTIONAL_DB_HELD_MAX
 
-    async def _optional_db(self, kind: str, budget_s: float, body):
+    async def _optional_db(self, kind: str, budget_s: float, body, gate=None):
         """Await ``body()`` for at most ``budget_s``; TimeoutError past it.
 
         Off (the default), exactly ``asyncio.timeout(budget_s)`` around the
@@ -4961,7 +4968,9 @@ class LiveBlendRefresher:
         is never cancelled for the deadline: the caller is released with the
         same TimeoutError and the body finishes, keeping its connection. A
         cancellation of the CALLER still cancels the body and waits for it, as
-        the timeout's own cancellation did.
+        the timeout's own cancellation did. With a ``gate``, a body that has not
+        set ``gate.reading`` (still queued for its session slot) is cancelled at
+        the deadline, as with the switch off: it holds no connection to keep.
         """
         if not optional_db_abandons():
             async with asyncio.timeout(budget_s):
@@ -4979,8 +4988,9 @@ class LiveBlendRefresher:
                 if not task.cancelled():
                     task.exception()
                 raise
-            if self._optional_db_busy():
-                # Another read took the share meanwhile: cancel, as with the switch off.
+            if self._optional_db_busy() or (gate is not None and not gate.reading):
+                # Another read took the share meanwhile, or this one is still
+                # queued for its slot: cancel, as with the switch off.
                 await self._optional_db_cancel_and_join(task, TimeoutError())
                 raise
             self._optional_db_abandon(kind, task, OPTIONAL_DB_ABANDON_LIMIT_S - budget_s)
