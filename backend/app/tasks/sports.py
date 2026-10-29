@@ -526,6 +526,24 @@ async def _discover_events():
                             update_opening=False,
                             drop_below_floor=False,
                         )
+                        # #10090: commit AND publish this game before the next
+                        # game's registry lookup and snapshot bookkeeping, as
+                        # `_poll_all_odds` does. The `betting` stamp is the last
+                        # write `_ingest_event_odds` makes, and with one commit
+                        # per sport this game's row stayed locked through every
+                        # later game's snapshot dedup and the team block below.
+                        # Speed's lock watch, 2026-10-29 04:08Z: a discovery
+                        # transaction in that shape was a holder, open at least
+                        # 4.8 s on one sport's team block. The game is now the
+                        # transaction unit; the error unit is still the sport (a
+                        # failed game rolls back only its own writes, and the
+                        # `except` below ends the sport). `snapshot_cache` keeps
+                        # its rows across the commit: `expire_on_commit=False`.
+                        await session.commit()
+                        from app.utils.nonvenue_live_push import (
+                            publish_committed_nonvenue_frames,
+                        )
+                        await publish_committed_nonvenue_frames(session)
 
                     # Auto-create Team records for any teams not yet in the DB.
                     # This ensures college teams (Harvard, Brown, Stanford, etc.)
@@ -618,6 +636,11 @@ async def _discover_events():
                                         ),
                                     ),
                                 ).limit(200)
+                                # #10090: this sport's games were committed one
+                                # by one above, so a row in the identity map may
+                                # be older than the row in the table. Read the
+                                # table's team ids, not the cached ones.
+                                .execution_options(populate_existing=True)
                             )
                             linked_count = 0
                             for evt in unlinked_result.scalars().all():
@@ -655,6 +678,10 @@ async def _discover_events():
                                 duplicate_alerts = []
                             duplicate_alerts.extend(alerts)
 
+                    # #10090: since the per-game commit above, this commit closes
+                    # only the team block's own short transaction (team creates,
+                    # identity rows, team-id links) and the audit read.
+                    #
                     # #837: release this sport's rows BEFORE the next sport's
                     # Odds API and ESPN calls. Since #5426 discovery stamps
                     # `betting` on every game it sees, live ones included, and a

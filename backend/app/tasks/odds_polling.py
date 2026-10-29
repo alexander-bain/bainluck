@@ -1265,6 +1265,13 @@ async def _poll_mlb_pregame():
             total_snapshots += await _ingest_event_odds(
                 session, event, event_data, commence_time, snapshot_cache,
             )
+            # #10090: the game is the transaction unit, as in `_poll_all_odds`.
+            # One commit after the slate held each game's row from its
+            # `betting` stamp through every later game's snapshot bookkeeping.
+            # A failure now loses only the game in hand: earlier games stay.
+            await session.commit()
+            from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
+            await publish_committed_nonvenue_frames(session)
 
         await session.commit()
         from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
