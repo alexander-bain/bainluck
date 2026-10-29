@@ -1118,15 +1118,15 @@ final class EventPublicationCaller4974Tests: XCTestCase {
             separatedBy: "forcedDomain:sharedChartDomain,legacyDataDomain:legacyChartDataDomain,").count - 1, 2,
                        "both charts take the one axis AND the one legacy ink window")
         XCTAssertTrue(page.contains(
-            "privatevarlegacyChartDataDomain:ClosedRange<Date>?{Self.pageLegacyChartDataDomain(event:vm.event,history:vm.history,range:chartRange,journey:vm.publicationJourney,key:publicationTaskKey,now:displayNow())}"))
+            "privatevarlegacyChartDataDomain:ClosedRange<Date>?{Self.pageLegacyChartDataDomain(event:vm.event,history:vm.history,range:chartRange,journey:vm.publicationJourney,key:publicationTaskKey,remembering:vm,now:displayNow())}"))
         XCTAssertTrue(page.contains(
-            "guardchartPublicationJourney(journey,key:key)!=nilelse{returnnil}returnpageLegacyChartDomain(event:event,history:history,range:range,now:now)"),
+            "guardchartPublicationJourney(journey,key:key)!=nilelse{returnnil}returnpageLegacyChartDomain(event:event,history:history,range:range,remembering:vm,now:now)"),
                       "the ink window is handed only for the journey the chart is handed")
         XCTAssertTrue(page.contains(
-            "letlegacyDomain=pageLegacyChartDomain(event:event,history:history,range:range,now:now)returnpublicationSharedChartDomain(legacyDomain,journey:journey,key:key)"),
+            "letlegacyDomain=pageLegacyChartDomain(event:event,history:history,range:range,remembering:vm,now:now)returnpublicationSharedChartDomain(legacyDomain,journey:journey,key:key)"),
                       "the axis widens the same one legacy window the ink keeps")
         XCTAssertTrue(page.contains(
-            "privatevarsharedChartDomain:ClosedRange<Date>?{Self.pageSharedChartDomain(event:vm.event,history:vm.history,range:chartRange,journey:vm.publicationJourney,key:publicationTaskKey,now:displayNow())}"))
+            "privatevarsharedChartDomain:ClosedRange<Date>?{Self.pageSharedChartDomain(event:vm.event,history:vm.history,range:chartRange,journey:vm.publicationJourney,key:publicationTaskKey,remembering:vm,now:displayNow())}"))
         XCTAssertTrue(page.contains("returnpublicationSharedChartDomain(legacyDomain,journey:journey,key:key)"))
         XCTAssertTrue(page.contains("letcurrent=chartPublicationJourney(journey,key:key)"),
                       "the window widens only for the journey the chart is handed")

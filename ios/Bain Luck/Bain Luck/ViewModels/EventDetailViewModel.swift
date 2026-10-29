@@ -75,6 +75,19 @@ final class EventDetailViewModel: ObservableObject {
     /// every payload the page takes, not only one whose live edge moved: a
     /// withdrawn source's series can leave a payload at the same edge.
     private(set) var historyGeneration = 0
+    /// #10090 — where the page's shared chart window opens, remembered for the
+    /// payload on screen: both chart mounts read it on every page body, and
+    /// working it out scans the whole payload. Not `@Published`; written only
+    /// from the read below.
+    let chartWindowOpenings = SharedChartWindow.OpeningMemo()
+
+    /// The shared chart window's opening on this model's own `history`, keyed
+    /// on its `historyGeneration`, so a payload and its generation always come
+    /// from the same write.
+    func chartWindowOpening(commenceTime: String?, range: OddsTimeRange, sportKey: String?) -> Date? {
+        chartWindowOpenings.opening(history: history, historyGeneration: historyGeneration,
+                                    commenceTime: commenceTime, range: range, sportKey: sportKey)
+    }
     /// #10090 — the edges of the payload the chart holds, kept by the chart's
     /// own rule (`OddsChartViewModel.adopt`, `EventHistoryFreshness`): an
     /// offered payload that rule refuses is refused there. `nil` = nothing
