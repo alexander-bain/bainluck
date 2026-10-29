@@ -21,6 +21,7 @@ false "delivered" line: every selection gets exactly one true terminal outcome.
 """
 
 import asyncio
+import gc
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -237,6 +238,7 @@ async def test_a_recheck_that_changed_is_named(monkeypatch):
         return out
 
     monkeypatch.setattr(live_blend, "compute_source_home_probability", selector_)
+    gc.collect()  # DIAG: no gen2 pause inside the 250 ms observation read
     await r.preview_accepted_observations(observations, validate)
     (selected,) = stage(lines, "SELECTED")
     (unsent,) = stage(lines, "SELECTION_UNSENT")
