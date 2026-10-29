@@ -136,7 +136,10 @@ def _drain(engine, path: str):
         finally:
             session.close()
 
-    async def _no_identity(*_a, **_k):
+    async def _no_identity(session, *_a, **_k):
+        # The real lookup reads ``team_identity_mapping`` first, and that read
+        # autoflushes whatever links the category has already assigned.
+        await session.execute(select(Team.id).limit(1))
         return None
 
     def _slow_llm(player_name, sport_category=None, market_name=None):
