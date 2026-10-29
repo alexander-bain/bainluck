@@ -43,13 +43,18 @@ new fingerprint metadata. Ordinary rolling deployment with old writers is
 **not supported**. A process restart is not proof that all old writers stopped.
 
 `LIVE_BLEND_PREVIEW_RESERVATIONS` accepts six comma-separated nonnegative
-integers totaling 1..512, in the table's row order (active then upcoming).
+integers totaling 1..1024, in the table's row order (active then upcoming).
+Totals above 512 use the `v2` fingerprint (cap 1024); see
+`docs/dnpl-reservation-relimit-runbook-10090.md`.
 It is **initial-bootstrap configuration only**. The persistent fingerprint
 includes sizes, league-map hash, and the classification semantics version.
 An existing ledger rejects mismatches, including after an ordinary restart.
 Changing environment sizes or the league mapping is therefore not an
 operational tuning mechanism in this ship. No automatic reconfiguration,
-namespace reset, counter reset, or rekey procedure is supplied.
+namespace reset, counter reset, or rekey procedure is supplied. Under v3
+authority, an attended sizes-only change is a fresh incarnation with the new
+fingerprint through the existing operator, never an in-place edit:
+`docs/dnpl-reservation-relimit-runbook-10090.md`.
 
 Migration keeps the existing Redis namespace, generations, sequences, owners,
 revision floors, read tickets, and issued expiry deadlines. Initialization

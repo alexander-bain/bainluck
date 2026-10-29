@@ -94,7 +94,8 @@ class TestMutation:
         assert _alarms(caplog) == [("exhausted", "claim", "kalshi", "1", "-")]
 
     async def test_a_full_ledger_refuses_the_new_event_and_says_so(self, rig, caplog, monkeypatch):
-        monkeypatch.setattr(blend_preview, "LEDGER_MAX_EVENTS", 1)
+        # The script's max_ev is the policy's cap (#10090 v2); force it to one.
+        monkeypatch.setattr(type(rig.k.policy), "cap", property(lambda self: 1))
         assert _blends(await rig.run(rig.k, _propose(rig.k, "kalshi", 0.6)))
         assert await rig.run(rig.k, _propose(rig.k, "kalshi", 0.6, event_id=EV + 1)) == []
         assert _alarms(caplog) == [("full", "propose", "kalshi", "1", str(EV + 1))]
