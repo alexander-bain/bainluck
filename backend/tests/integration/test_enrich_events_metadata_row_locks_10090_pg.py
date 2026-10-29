@@ -15,7 +15,7 @@ enriched row under the venue stamps' own 500 ms ``lock_timeout``. Red on master
 (``LockNotAvailable``), green on the fix.
 
 Opt-in on ``SEARCH_TEST_DATABASE_URL``, following the other real-Postgres
-contracts. Not wired into a CI step: it SKIPS in hosted CI and is run locally.
+contracts; hosted CI runs it in the shared-tail #10090 return-to-stored step.
 """
 
 import os
@@ -43,6 +43,23 @@ def _sync_dsn(url: str) -> str:
     return url.replace("postgresql+asyncpg://", "postgresql://", 1)
 
 
+async def _drop_tables_the_models_do_not_declare(conn):
+    """`bl_searchtest` is shared by every step of the CI postgres job, and an
+    earlier step can leave a table our metadata does not declare — #4586's
+    restore leaves `bak_4586_futures_markets`, whose `id` DEFAULT depends on
+    `futures_markets_id_seq`, so `drop_all` fails on `futures_markets`
+    (hosted CI 40794170287). Same helper as the #1927 PG files.
+    """
+    import app.models.models  # noqa: F401 — registers every table on Base
+    from app.services.database import Base
+
+    known = set(Base.metadata.tables)
+    rows = await conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'"))
+    for (name,) in rows.fetchall():
+        if name not in known:
+            await conn.execute(text(f'DROP TABLE IF EXISTS "{name}" CASCADE'))
+
+
 @pytest.fixture
 async def engine():
     from sqlalchemy.ext.asyncio import create_async_engine
@@ -52,6 +69,7 @@ async def engine():
 
     eng = create_async_engine(DB_URL)
     async with eng.begin() as conn:
+        await _drop_tables_the_models_do_not_declare(conn)
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
         await conn.execute(
