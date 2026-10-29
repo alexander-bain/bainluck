@@ -28,7 +28,7 @@ machine that would change it.
 
 from __future__ import annotations
 
-import re
+import ast
 from pathlib import Path
 
 from sqlalchemy.dialects import postgresql
@@ -81,11 +81,28 @@ def test_the_compiled_postgres_ddl_is_the_built_statement() -> None:
     assert BUILT_INDEXDEF.replace("public.", "").replace(" USING btree", "") == ddl
 
 
-def _executed(src: str) -> str:
-    """Source without docstrings and comments, i.e. the code that runs."""
-    src = re.sub(r'"""(?:.|\n)*?"""', "", src)
-    src = re.sub(r"'''(?:.|\n)*?'''", "", src)
-    return "\n".join(re.sub(r"#.*$", "", line) for line in src.split("\n"))
+def _executed_strings(src: str) -> list[str]:
+    """Every string literal in code that runs; docstrings and comments excluded.
+
+    Raw index DDL here is triple-quoted SQL passed to ``op.execute``
+    (add_discover_feed_indexes.py), so only docstring positions are skipped.
+    """
+    tree = ast.parse(src)
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            first = node.body[0] if node.body else None
+            if (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+            ):
+                docstrings.add(id(first.value))
+    return [
+        n.value
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docstrings
+    ]
 
 
 def test_no_migration_builds_it() -> None:
@@ -95,7 +112,7 @@ def test_no_migration_builds_it() -> None:
     offenders = [
         p.name
         for p in files
-        if INDEX_NAME in _executed(p.read_text(encoding="utf-8"))
+        if any(INDEX_NAME in v for v in _executed_strings(p.read_text(encoding="utf-8")))
     ]
     assert offenders == [], (
         f"{INDEX_NAME} is built by a migration: {offenders}. Gotcha #31: build it "
