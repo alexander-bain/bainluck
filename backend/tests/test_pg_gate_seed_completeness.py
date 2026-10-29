@@ -48,6 +48,9 @@ from app.models.models import Base
 #: the discovery arm below fails if such a gate grows an INSERT and is not
 #: listed, so this list cannot silently fall behind.
 COVERED = (
+    # #10090: seeds `sports` (naming `active`) and `events` by raw INSERT to
+    # prove the enrich task's count no longer holds an enriched row's lock.
+    "test_enrich_events_metadata_row_locks_10090_pg.py",
     # #10090: raw event/sport seeds exercise tier reservation maintenance.
     "test_dnpl_reservations_10090_pg.py",
     # #683. The constraint case seeds an import, an evidence row and intervals by

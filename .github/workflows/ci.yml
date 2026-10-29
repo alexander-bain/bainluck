@@ -5282,6 +5282,7 @@ jobs:
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           if python -m pytest tests/integration/test_pm_return_to_stored_10090_pg.py \
+            tests/integration/test_enrich_events_metadata_row_locks_10090_pg.py \
             -v -rs > /tmp/return-to-stored10090.txt 2>&1; then
             gate_status=0
           else
@@ -5294,8 +5295,8 @@ jobs:
             echo "::error::#10090 return-to-stored gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]2 passed[,[:space:]]" /tmp/return-to-stored10090.txt || {
-            echo "::error::#10090 return-to-stored gate did not run both cases"
+          grep -qE "[^0-9]3 passed[,[:space:]]" /tmp/return-to-stored10090.txt || {
+            echo "::error::#10090 return-to-stored + enrich row-lock gate did not run all 3 cases"
             exit 1
           }
 

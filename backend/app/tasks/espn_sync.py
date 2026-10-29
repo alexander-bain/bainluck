@@ -86,6 +86,17 @@ from app.utils.game_state import (  # noqa: F401
 )
 
 
+async def _count_unenriched_events(session) -> int:
+    """How many events still lack metadata — a server-side count, not a fetch-all."""
+    result = await session.execute(
+        select(func.count()).select_from(Event).where(
+            Event.llm_gender.is_(None),
+            Event.llm_level.is_(None),
+        )
+    )
+    return int(result.scalar() or 0)
+
+
 async def _enrich_events_metadata(limit: int = 50):
     """Async implementation of enrich_events_metadata."""
     from app.services import llm
@@ -117,13 +128,7 @@ async def _enrich_events_metadata(limit: int = 50):
             events = result.scalars().all()
 
             if not events:
-                remaining_result = await session.execute(
-                    select(Event.id).where(
-                        Event.llm_gender.is_(None),
-                        Event.llm_level.is_(None),
-                    )
-                )
-                stats["remaining"] = len(remaining_result.all())
+                stats["remaining"] = await _count_unenriched_events(session)
                 return stats
 
             for event in events:
@@ -146,14 +151,15 @@ async def _enrich_events_metadata(limit: int = 50):
 
                 stats["processed"] += 1
 
+            # #10090: commit BEFORE counting. The assignments above are only
+            # flushed by the next query, so counting first made autoflush take
+            # row locks on these 50 rows — the newest, i.e. today's live and
+            # upcoming games — and hold them through a full-table scan
+            # (~45 s measured 10/28) while live price stamps queued behind them.
+            await session.commit()
+
             # Count remaining
-            remaining_result = await session.execute(
-                select(Event.id).where(
-                    Event.llm_gender.is_(None),
-                    Event.llm_level.is_(None),
-                )
-            )
-            stats["remaining"] = len(remaining_result.all())
+            stats["remaining"] = await _count_unenriched_events(session)
 
     except Exception as e:
         logger.warning("Enrichment task error: %s", e)
