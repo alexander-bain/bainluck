@@ -39,13 +39,14 @@ async def mixed_chunk_rig(monkeypatch, *, unit=None, mode=None):
 async def test_initial_mixed_chunk_allows_fresh_acknowledged_a_during_b_hold(monkeypatch):
     rig, task, writes = await mixed_chunk_rig(monkeypatch)
     try:
-        before = len(_blends(rig.frames))
         rig.bound[0] += .1
+        fresh = datetime.fromtimestamp(rig.bound[0], timezone.utc).isoformat()
         await rig.feed()
-        await until(lambda: len(_blends(rig.frames)) > before)
-        assert _blends(rig.frames)[-1]['display_observed_at'] == datetime.fromtimestamp(
-            rig.bound[0], timezone.utc,
-        ).isoformat()
+        # The initial feed's A observation may also go out during the hold,
+        # at the pre-bump time; any new frame is not enough (#11744). Wait,
+        # bounded by time, for the post-bump frame to be the newest.
+        await until(lambda: _blends(rig.frames)[-1:] and _blends(rig.frames)[-1]['display_observed_at'] == fresh)
+        assert _blends(rig.frames)[-1]['display_observed_at'] == fresh
         assert not task.done() and not rig.release.is_set()
         assert writes == [{900: .7}], 'only B owns the held transaction'
     finally:
