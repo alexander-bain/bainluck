@@ -12,6 +12,7 @@ the receipts carrying each event's arm.
 
 import asyncio
 import json
+import math
 import logging
 import time
 
@@ -82,12 +83,12 @@ async def _refreshed(s):
     b"\xff\xfe",
 ])
 def test_anything_but_a_running_half_trial_reads_off(raw):
-    assert sw.parse(raw, NOW) == OFF
+    assert sw.parse(raw, NOW, NAME) == OFF
 
 
 def test_a_trial_up_to_thirty_minutes_reads_as_written():
-    assert sw.parse(_stored(1, 1800), NOW) == SwitchState("ab", 1, NOW + 1800)
-    assert sw.parse(_stored(0, 1).encode(), NOW) == SwitchState("ab", 0, NOW + 1)
+    assert sw.parse(_stored(1, 1800), NOW, NAME) == SwitchState("ab", 1, NOW + 1800)
+    assert sw.parse(_stored(0, 1).encode(), NOW, NAME) == SwitchState("ab", 0, NOW + 1)
 
 
 # ── one process's reader ─────────────────────────────────────────────────────
@@ -208,8 +209,8 @@ async def test_each_mode_change_is_logged_once_per_process(caplog):
         s.arm(NAME, 2)
     lines = [r.getMessage() for r in caplog.records if "speed_switch[pid=" in r.getMessage()]
     assert len(lines) == 2
-    assert f"{NAME} mode=ab half=0 expires_at=" in lines[0]
-    assert f"{NAME} mode=off half=- expires_at=-" in lines[1]
+    assert f"{NAME} mode=ab half=0 values=- period_s=- expires_at=" in lines[0]
+    assert f"{NAME} mode=off half=- values=- period_s=- expires_at=-" in lines[1]
 
 
 @pytest.mark.parametrize("setting", [None, "", "0", "off"])
@@ -310,7 +311,7 @@ def test_setter_starts_reads_and_stops_a_trial(admin):
     assert out["mode"] == "ab" and out["half"] == 1
     assert before + 1800 <= out["expires_at"] <= time.time() + 1800
     assert fake.ttls[sw.key(NAME)] == 1800
-    assert sw.parse(fake.values[sw.key(NAME)], time.time()) == SwitchState(
+    assert sw.parse(fake.values[sw.key(NAME)], time.time(), NAME) == SwitchState(
         "ab", 1, out["expires_at"])
     read = client.get("/api/admin/speed-switch", headers=AUTH).json()
     assert read["switches"][NAME]["mode"] == "ab" and read["max_ttl_s"] == 1800
@@ -475,3 +476,295 @@ async def test_tail_and_delivery_receipts_carry_the_arm(trial, monkeypatch, capl
     await r.refresh_pending()
     (line,) = dr._lines(caplog)
     assert line["event"] == "1" and line["sw"] == "abandon_optional_db:off"
+
+
+# ── alternate: server-wide settings by wall-clock period ─────────────────────
+
+ATTEMPTS = "pending_attempts"
+START = 1_799_999_940.0  # a minute boundary just before NOW
+
+
+def _alternation(a=1, b=3, period_s=60, start=START, expires_in=600.0, now=NOW, **extra):
+    return json.dumps({"mode": "alternate", "a": a, "b": b, "period_s": period_s,
+                       "start": start, "expires_at": now + expires_in, **extra})
+
+
+def _both(attempts=None, abandon=None):
+    """Stored values in SWITCHES order."""
+    by_name = {NAME: abandon, ATTEMPTS: attempts}
+    return [by_name[name] for name in sw.SWITCHES]
+
+
+@pytest.mark.parametrize("name, mode, kwargs", [
+    (ATTEMPTS, "ab", {"half": 0}),                       # a flush constant has no per-game arm
+    (ATTEMPTS, "alternate", {"a": 3, "b": 5, "period_s": 60}),   # neither arm is today's
+    (ATTEMPTS, "alternate", {"a": 1, "b": 1, "period_s": 60}),
+    (ATTEMPTS, "alternate", {"a": 1, "b": 33, "period_s": 60}),
+    (ATTEMPTS, "alternate", {"a": 0, "b": 1, "period_s": 60}),
+    (ATTEMPTS, "alternate", {"a": 1, "b": 3, "period_s": 30}),   # under a minute
+    (ATTEMPTS, "alternate", {"a": 1, "b": 3, "period_s": 90}),   # not whole minutes
+    (ATTEMPTS, "alternate", {"a": 1, "b": 3, "period_s": 960}),
+    (ATTEMPTS, "alternate", {"a": True, "b": 3, "period_s": 60}),
+    (NAME, "alternate", {"a": 1, "b": 1, "period_s": 60}),
+    (NAME, "alternate", {"a": 1, "b": 2, "period_s": 60}),
+    (NAME, "all", {}),
+])
+def test_alternation_outside_the_limits_is_refused(name, mode, kwargs):
+    assert sw.validate(name, mode, **kwargs) is not None
+
+
+@pytest.mark.parametrize("raw", [
+    _alternation(start=START + 30),            # not a minute boundary
+    _alternation(start=NOW + 120),             # starts in the future
+    _alternation(start=NOW - 3600),            # older than any 30-minute trial
+    _alternation(expires_in=1801),
+    _alternation(b=5, a=3),
+])
+def test_a_stored_alternation_outside_the_limits_reads_off(raw):
+    assert sw.parse(raw, NOW, ATTEMPTS) == OFF
+
+
+async def test_alternation_switches_by_period_and_every_process_agrees():
+    stored = _both(attempts=_alternation(a=1, b=3, period_s=60))
+    first, _, clock_1, _ = _switches(stored)
+    second, _, clock_2, _ = _switches(stored)
+    await _refreshed(first)
+    await _refreshed(second)
+    seen = []
+    for t in range(int(NOW), int(NOW) + 600):
+        clock_1.t = clock_2.t = float(t)
+        value = first.value(ATTEMPTS, 1)
+        assert value == second.value(ATTEMPTS, 1), "two venue processes disagree"
+        seen.append(value)
+    assert seen.count(3) == 300 and seen.count(1) == 300, "half the time on each arm"
+    # Arms follow whole minutes from the start minute: a first.
+    clock_1.t = START + 5
+    assert first.value(ATTEMPTS, 1) == 1
+    clock_1.t = START + 65
+    assert first.value(ATTEMPTS, 1) == 3
+
+
+async def test_each_arm_boundary_is_logged_once_per_process(caplog):
+    s, _, clock, _ = _switches(_both(attempts=_alternation(a=1, b=3, period_s=60)))
+    await _refreshed(s)
+    with caplog.at_level(logging.INFO, logger="app.tasks.speed_switches"):
+        for t in range(int(NOW), int(NOW) + 130, 5):
+            clock.t = float(t)
+            s.value(ATTEMPTS, 1)
+    arms = [r.getMessage() for r in caplog.records
+            if f"{ATTEMPTS} arm=" in r.getMessage()]
+    # NOW sits 60 s into the trial (arm b); two boundaries follow in 130 s.
+    assert [m.split(" arm=")[1].split()[0:2] for m in arms] == [
+        ["b", "value=3"], ["a", "value=1"], ["b", "value=3"]]
+    assert all("since=" in m and "until=" in m for m in arms)
+
+
+async def test_tags_name_the_arm_of_the_moment_the_line_describes():
+    s, _, clock, _ = _switches(_both(attempts=_alternation(a=1, b=3, period_s=60)))
+    await _refreshed(s)
+    clock.t = START + 70                       # b now
+    assert s.tags(5) == " sw=pending_attempts:3"
+    # A delivery line written now about the minute that started at START is arm a.
+    assert s.tags(5, at=START) == " sw=pending_attempts:1"
+
+
+async def test_a_boolean_switch_alternates_off_and_on_for_every_read():
+    s, _, clock, _ = _switches(_both(abandon=_alternation(a=0, b=1, period_s=120)))
+    await _refreshed(s)
+    clock.t = START + 30
+    assert not any(s.arm(NAME, eid) for eid in range(10))
+    clock.t = START + 150
+    assert all(s.arm(NAME, eid) for eid in range(10))
+    assert s.tags(4) == " sw=abandon_optional_db:on"
+
+
+# ── pending_attempts: read once per flush, never stalls the flush ────────────
+
+
+@pytest.fixture
+def attempts_trial(monkeypatch):
+    """An alternation whose current arm the test sets (`arm['value']`)."""
+    arm = {"value": 3, "tripped": []}
+
+    class _Trial:
+        def value(self, name, default, at=None):
+            assert name == ATTEMPTS
+            return default if arm["tripped"] else arm["value"]
+
+        def trip(self, name, error):
+            arm["tripped"].append((name, error))
+
+        def state(self, name):
+            return OFF
+
+        def arm(self, name, event_id, at=None):
+            return False
+
+        def tags(self, event_id, at=None):
+            return ""
+
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: _Trial())
+    monkeypatch.setattr(blend_mod, "FRESH_FLUSH_PENDING_ATTEMPTS", 1)
+    return arm
+
+
+def _recording():
+    from tests.test_ws_flush_cadence_10090 import _Recording
+
+    async def prepared(event_ids):
+        return {}
+
+    r = _Recording(min_refresh_interval_s=0)
+    r._prepare_groups = prepared
+    return r
+
+
+async def test_a_busy_flush_attempts_the_trials_owed_stamps_and_keeps_the_rest(attempts_trial):
+    r = _recording()
+    r.adopt_pending(range(1, 9))
+    await r.refresh([99], flush_started=1000)
+    await r.refresh([98], flush_started=1000)
+    assert [ids for ids, _ in r.batches] == [[99], [1], [2], [3], [98]]
+    assert r.pending_event_ids() == frozenset(range(4, 9))
+
+
+async def test_the_allowance_is_read_once_per_flush(attempts_trial):
+    r = _recording()
+    r.adopt_pending(range(1, 9))
+    await r.refresh([99], flush_started=1000)
+    attempts_trial["value"] = 1               # the arm changes mid-flush
+    await r.refresh([98], flush_started=1000)
+    assert [ids for ids, _ in r.batches] == [[99], [1], [2], [3], [98]]
+    await r.refresh([97], flush_started=1001)   # the next flush reads the new arm
+    assert [ids for ids, _ in r.batches][-2:] == [[97], [4]]
+
+
+async def test_without_a_trial_the_allowance_is_the_setting(monkeypatch):
+    s = SpeedSwitches(read=lambda: _both(), monotonic=time.monotonic)
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: s)
+    for setting in (1, 2):
+        monkeypatch.setattr(blend_mod, "FRESH_FLUSH_PENDING_ATTEMPTS", setting)
+        assert blend_mod._fresh_flush_pending_attempts() == setting
+
+
+async def test_a_failed_attempt_only_the_trial_allowed_switches_it_off(attempts_trial):
+    r = _recording()
+    real = r._refresh_batch
+
+    async def batch(event_ids, now, **kw):
+        if event_ids == [2]:
+            raise RuntimeError("stamp failed")
+        return await real(event_ids, now, **kw)
+
+    r._refresh_batch = batch
+    r.adopt_pending(range(1, 9))
+    await r.refresh([99], flush_started=1000)
+    assert [name for name, _ in attempts_trial["tripped"]] == [ATTEMPTS]
+    assert [ids for ids, _ in r.batches] == [[99], [1]], "this flush stopped at the failure"
+    await r.refresh([97], flush_started=1001)
+    assert [ids for ids, _ in r.batches][-2:] == [[97], [3]], "back to today's one"
+
+
+async def test_a_failed_first_attempt_is_todays_and_trips_nothing(attempts_trial):
+    r = _recording()
+    real = r._refresh_batch
+
+    async def batch(event_ids, now, **kw):
+        if event_ids == [1]:
+            raise RuntimeError("stamp failed")
+        return await real(event_ids, now, **kw)
+
+    r._refresh_batch = batch
+    r.adopt_pending(range(1, 9))
+    await r.refresh([99], flush_started=1000)
+    assert attempts_trial["tripped"] == []
+
+
+async def test_a_slow_redis_never_stalls_the_flush_read(monkeypatch):
+    """The reporting chat's 0023Z bound: a slow (not refused) Redis returns the
+    cached value, then the setting, promptly — never after a socket timeout."""
+    stored = {"values": _both(attempts=_alternation(a=1, b=3, period_s=60,
+                                                    now=time.time(),
+                                                    start=math.floor(time.time() / 60) * 60.0))}
+    slow = {"on": False}
+
+    def read():
+        if slow["on"]:
+            time.sleep(2)  # a Redis that accepts the connection and never answers
+        return list(stored["values"])
+
+    mono = _Clock(0.0)
+    s = SpeedSwitches(read=read, monotonic=mono)
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: s)
+    monkeypatch.setattr(blend_mod, "FRESH_FLUSH_PENDING_ATTEMPTS", 1)
+    blend_mod._fresh_flush_pending_attempts()
+    await s._refresh
+    trial_value = s.value(ATTEMPTS, 1)
+    assert trial_value in (1, 3)
+    slow["on"] = True
+    loop = asyncio.get_running_loop()
+    mono.t = sw.CACHE_S                       # due for a refresh, which now hangs
+    started = loop.time()
+    for _ in range(100):
+        assert blend_mod._fresh_flush_pending_attempts() in (1, 3)
+    assert loop.time() - started < .05, "the flush read waited on Redis"
+    await asyncio.wait_for(s._refresh, 1.5)    # gives up at its own bound
+    assert blend_mod._fresh_flush_pending_attempts() == 1, "slow Redis reads as the setting"
+
+
+# ── setter: alternation ──────────────────────────────────────────────────────
+
+
+def test_setter_starts_and_stops_an_alternation(admin):
+    client, fake = admin
+    before = time.time()
+    out = client.post("/api/admin/speed-switch", headers=AUTH, json={
+        "name": ATTEMPTS, "mode": "alternate", "ttl_s": 600, "a": 1, "b": 3, "period_s": 60,
+    })
+    assert out.status_code == 200, out.text
+    body = out.json()
+    assert (body["mode"], body["a"], body["b"], body["period_s"]) == ("alternate", 1, 3, 60)
+    assert body["start"] % 60 == 0 and before - 60 < body["start"] <= time.time()
+    assert fake.ttls[sw.key(ATTEMPTS)] == 600
+    stopped = client.post("/api/admin/speed-switch", headers=AUTH,
+                          json={"name": ATTEMPTS, "mode": "off"})
+    assert stopped.json()["mode"] == "off" and sw.key(ATTEMPTS) not in fake.values
+
+
+@pytest.mark.parametrize("body", [
+    {"name": ATTEMPTS, "mode": "ab", "ttl_s": 600, "half": 0},
+    {"name": ATTEMPTS, "mode": "alternate", "ttl_s": 600, "a": 3, "b": 5, "period_s": 60},
+    {"name": ATTEMPTS, "mode": "alternate", "ttl_s": 600, "a": 1, "b": 3, "period_s": 30},
+    {"name": ATTEMPTS, "mode": "alternate", "ttl_s": 1801, "a": 1, "b": 3, "period_s": 60},
+    {"name": ATTEMPTS, "mode": "alternate", "ttl_s": 600, "a": 1, "b": 3},
+])
+def test_setter_refuses_an_alternation_outside_the_limits(admin, body):
+    client, fake = admin
+    assert client.post("/api/admin/speed-switch", json=body, headers=AUTH).status_code == 422
+    assert fake.values == {}
+
+
+async def test_bucket1_alternation_abandons_every_read_in_its_on_period(monkeypatch):
+    from tests.test_optional_db_abandon_10090 import Body
+
+    monkeypatch.delenv(OPTIONAL_DB_ABANDON_ENV, raising=False)
+    clock = _Clock(START + 30)                # the off period (a = 0)
+    s = SpeedSwitches(read=lambda: _both(), clock=clock, monotonic=time.monotonic)
+    s._stored = {NAME: SwitchState("alternate", 0, NOW + 600, 0, 1, 60, START)}
+    s._read_at = time.monotonic()
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: s)
+    r = _refresher()
+    off = Body()
+    with pytest.raises(TimeoutError):
+        await r._optional_db("normal_read", .02, off, 4)
+    assert off.ended == "cancelled" and r.optional_db_abandoned == 0
+    clock.t = START + 90                      # the on period, every read, keyed or not
+    for key in (3, None):
+        on = Body()
+        with pytest.raises(blend_mod.OptionalDbAbandoned):
+            await r._optional_db("normal_ack", .02, on, key)
+        on.release.set()
+        for _ in range(3):
+            await asyncio.sleep(0)
+        assert on.ended == "finished"
+    assert r.optional_db_abandoned == 2

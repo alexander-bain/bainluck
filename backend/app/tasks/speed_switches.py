@@ -1,4 +1,5 @@
-"""#10090 — speed switches trialled on half of the live games, without a release.
+"""#10090 — speed switches trialled without a release: on half of the live
+games, or on alternate wall-clock periods for server-wide settings.
 
 Alex's standing approval (ALEX-DECISIONS item 4): Speed may turn an already
 reviewed speed switch on and off for live games without asking each time, for
@@ -6,20 +7,26 @@ at most HALF of the live games, at most 30 minutes per trial, switching back
 automatically when the timer ends or on any error, every trial logged. These
 limits are enforced here, not by process:
 
-* the only runtime modes are ``off`` and ``ab``. ``ab`` turns a switch on for
-  the events whose id parity equals the trial's ``half`` and for no other
-  event. There is no runtime "all games on"; full-on is the switch's env
-  default and needs a release or a config change Alex approves.
+* the runtime modes are ``off``, ``ab`` and ``alternate``. ``ab`` turns a
+  switch on for the events whose id parity equals the trial's ``half`` and
+  for no other event. ``alternate`` switches between two values ``a`` and
+  ``b`` every ``period_s`` (a whole number of minutes, from a minute boundary)
+  of wall-clock time, so every venue process agrees on the arm and each UTC
+  minute — a delivery-receipt window — falls in one arm. A boolean switch
+  alternates off/on (half the time); a numeric one must keep today's value on
+  one arm (`SPECS`). There is no runtime "all games on"; full-on is the
+  switch's env default and needs a release or a config change Alex approves.
 * a trial is one Redis key per switch (``speed_switch:<name>``), written with
   a TTL of at most `MAX_TTL_S`. The reader also refuses an ``expires_at``
   already passed or more than `MAX_TTL_S` ahead, so a key written by hand
   cannot outlive the limit either.
 * every way a read can go wrong — Redis down or slow, a missing key, an
-  unknown mode, a malformed value — reads OFF. The hot path never waits for
-  Redis: it reads this process's cached state, refreshed on a background task
-  at most every `CACHE_S` through `get_redis_client()` (bounded, gotcha #39).
+  unknown mode, a malformed value — reads OFF, which is the env value. The
+  hot path never waits for Redis: it reads this process's cached state,
+  refreshed on a background task at most every `CACHE_S` through
+  `get_redis_client()` with a `READ_TIMEOUT_S` socket bound (gotcha #39).
   A cache that has not refreshed for `STALE_S` reads OFF.
-* a switched path that raises calls `trip`: that switch is OFF in this
+* a switched path that fails calls `trip`: that switch is OFF in this
   process for the rest of the trial, logged once.
 
 The layer itself is off unless `TRIALS_ENV` (``SPEED_SWITCH_TRIALS=1``) is
@@ -27,9 +34,10 @@ set: off, every switch reads OFF and this module never touches Redis, so a
 worker that never runs a trial does exactly what it did before. Turning it on
 is one config change; after that each trial is an admin call, not a release.
 
-Each process logs one line whenever a switch's effective mode changes (name,
-mode, half, expiry), and `tags(event_id)` gives the receipt suffix that splits
-a readout window by arm. The setter is ``POST /api/admin/speed-switch``.
+Each process logs one line whenever a switch's trial changes (name, mode,
+half or values, expiry) and one line at every arm boundary of an alternation.
+`tags(event_id, at)` gives the receipt suffix that splits a readout by arm.
+The setter is ``POST /api/admin/speed-switch``.
 """
 
 from __future__ import annotations
@@ -45,17 +53,28 @@ from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-#: Switch names a trial may name. Each is wired where its switched path runs.
-#: ``abandon_optional_db`` is `live_blend_refresh.OPTIONAL_DB_ABANDON_ENV`.
-SWITCHES = ("abandon_optional_db",)
-MODES = ("off", "ab")
+#: Switch name → what a trial of it may do. ``values`` bounds ``a``/``b``;
+#: ``today`` must be one of them, so an alternation spends at most half the
+#: time away from today's behaviour.
+SPECS = {
+    # `live_blend_refresh.OPTIONAL_DB_ABANDON_ENV`: a pool-level switch, so
+    # `alternate` (off/on by period) is its faithful comparison.
+    "abandon_optional_db": {"modes": ("ab", "alternate"), "values": (0, 1), "today": 0},
+    # `live_blend_refresh.FRESH_FLUSH_PENDING_ATTEMPTS`, read once per flush.
+    "pending_attempts": {"modes": ("alternate",), "values": (1, 32), "today": 1},
+}
+SWITCHES = tuple(SPECS)
+MODES = ("off", "ab", "alternate")
 KEY_PREFIX = "speed_switch:"
 TRIALS_ENV = "SPEED_SWITCH_TRIALS"
 #: Alex: at most 30 minutes per trial.
 MAX_TTL_S = 1800
+#: An alternation period is a whole number of minutes in this range.
+PERIOD_MIN_S = 60
+PERIOD_MAX_S = 900
 CACHE_S = 3.0
 STALE_S = 10.0
-#: The bound on one background read (socket and connect timeout).
+#: The socket bound on one background read; the whole read is bounded at 2×.
 READ_TIMEOUT_S = 0.25
 
 
@@ -64,10 +83,26 @@ class SwitchState:
     mode: str = "off"
     half: int = 0
     expires_at: float = 0.0
+    a: int = 0
+    b: int = 0
+    period_s: int = 0
+    start: float = 0.0
+
+    def arm_index(self, at: float) -> int:
+        """0 while ``a`` is in force, 1 while ``b`` is (alternate only)."""
+        return int((at - self.start) // self.period_s) % 2
+
+    def value_at(self, at: float) -> int:
+        return self.a if self.arm_index(at) == 0 else self.b
 
     def describe(self) -> dict:
-        return {"mode": self.mode, "half": self.half if self.mode == "ab" else None,
-                "expires_at": self.expires_at if self.mode == "ab" else None}
+        out = {"mode": self.mode, "half": None, "expires_at": None}
+        if self.mode == "ab":
+            out.update(half=self.half, expires_at=self.expires_at)
+        elif self.mode == "alternate":
+            out.update(expires_at=self.expires_at, a=self.a, b=self.b,
+                       period_s=self.period_s, start=self.start)
+        return out
 
 
 OFF = SwitchState()
@@ -81,7 +116,31 @@ def key(name: str) -> str:
     return KEY_PREFIX + name
 
 
-def parse(raw, now: float) -> SwitchState:
+def _int(value) -> bool:
+    return type(value) is int
+
+
+def validate(name: str, mode: str, half=0, a=None, b=None, period_s=None) -> Optional[str]:
+    """Why this trial is outside the limits, or None."""
+    spec = SPECS.get(name)
+    if spec is None:
+        return f"unknown switch; allowed: {list(SWITCHES)}"
+    if mode not in spec["modes"]:
+        return f"{name} allows modes {list(spec['modes'])}"
+    if mode == "ab":
+        return None if _int(half) and half in (0, 1) else "half must be 0 or 1"
+    low, high = spec["values"]
+    if not (_int(a) and _int(b) and low <= a <= high and low <= b <= high):
+        return f"a and b must be integers in {low}..{high}"
+    if spec["today"] not in (a, b) or a == b:
+        return f"one of a/b must be today's {spec['today']} and the other must differ"
+    if not (_int(period_s) and PERIOD_MIN_S <= period_s <= PERIOD_MAX_S
+            and period_s % 60 == 0):
+        return f"period_s must be a whole number of minutes in {PERIOD_MIN_S}..{PERIOD_MAX_S}"
+    return None
+
+
+def parse(raw, now: float, name: str) -> SwitchState:
     """The trial a stored value describes, or OFF for anything else."""
     if raw is None:
         return OFF
@@ -89,19 +148,34 @@ def parse(raw, now: float) -> SwitchState:
         if isinstance(raw, bytes):
             raw = raw.decode()
         data = json.loads(raw)
-        mode, half, expires_at = data["mode"], data["half"], float(data["expires_at"])
+        mode, expires_at = data["mode"], float(data["expires_at"])
+        if mode == "ab":
+            half, a, b, period_s, start = data["half"], 0, 0, None, 0.0
+        else:
+            half = 0
+            a, b, period_s = data["a"], data["b"], data["period_s"]
+            start = float(data["start"])
     except (ValueError, TypeError, KeyError, AttributeError, UnicodeDecodeError):
         return OFF
-    if mode != "ab" or type(half) is not int or half not in (0, 1):
+    if validate(name, mode, half, a, b, period_s) is not None:
         return OFF
     if not math.isfinite(expires_at) or not now < expires_at <= now + MAX_TTL_S:
         return OFF
-    return SwitchState("ab", half, expires_at)
+    if mode == "alternate" and not (math.isfinite(start) and start % 60 == 0
+                                    and expires_at - MAX_TTL_S - 60 <= start <= now + 60):
+        return OFF
+    return SwitchState(mode, half, expires_at, a, b, period_s or 0, start)
 
 
-def encode(half: int, expires_at: float, set_at: float) -> str:
-    return json.dumps({"mode": "ab", "half": half, "expires_at": expires_at,
-                       "set_at": set_at}, sort_keys=True)
+def encode(name: str, mode: str, expires_at: float, set_at: float, *, half=0, a=None,
+           b=None, period_s=None) -> str:
+    data = {"mode": mode, "expires_at": expires_at, "set_at": set_at}
+    if mode == "ab":
+        data["half"] = half
+    else:
+        # From the minute the trial is set, so arms follow UTC minutes.
+        data.update(a=a, b=b, period_s=period_s, start=math.floor(set_at / 60) * 60.0)
+    return json.dumps(data, sort_keys=True)
 
 
 def _read_stored() -> list:
@@ -126,6 +200,7 @@ class SpeedSwitches:
         self._refresh: Optional[asyncio.Task] = None
         self._tripped: dict[str, float] = {}
         self._logged: dict[str, SwitchState] = {}
+        self._logged_arm: dict[str, tuple] = {}
 
     def state(self, name: str) -> SwitchState:
         """The trial in force for ``name`` in this process now; never waits."""
@@ -135,35 +210,66 @@ class SpeedSwitches:
             self._schedule_refresh()
         state = self._stored.get(name, OFF)
         if (not enabled or self._read_at is None or now_m - self._read_at >= STALE_S
-                or state.mode != "ab" or not self._clock() < state.expires_at
+                or state.mode == "off" or not self._clock() < state.expires_at
                 or self._tripped.get(name) == state.expires_at):
             state = OFF
         if self._logged.get(name, OFF) != state:
             self._logged[name] = state
+            self._logged_arm.pop(name, None)
             logger.info(
-                "speed_switch[pid=%d]: %s mode=%s half=%s expires_at=%s",
+                "speed_switch[pid=%d]: %s mode=%s half=%s values=%s period_s=%s expires_at=%s",
                 os.getpid(), name, state.mode,
                 state.half if state.mode == "ab" else "-",
-                _iso(state.expires_at) if state.mode == "ab" else "-",
+                f"{state.a}/{state.b}" if state.mode == "alternate" else "-",
+                state.period_s if state.mode == "alternate" else "-",
+                _iso(state.expires_at) if state.mode != "off" else "-",
             )
         return state
 
-    def arm(self, name: str, event_id: int) -> bool:
-        """Whether ``name`` is on for this event: only its trial's half, only while it runs."""
+    def value(self, name: str, default: int, at: Optional[float] = None) -> int:
+        """A numeric switch's value now (or at ``at``): the alternation's arm, else ``default``."""
         state = self.state(name)
-        return state.mode == "ab" and int(event_id) % 2 == state.half
+        if state.mode != "alternate":
+            return default
+        when = self._clock() if at is None else at
+        if at is None:
+            self._note_arm(name, state, when)
+        return state.value_at(when)
 
-    def tags(self, event_id: int) -> str:
-        """The receipt suffix: `` sw=<name>:<on|off>`` per running trial, else empty."""
-        return "".join(
-            f" sw={name}:{'on' if self.arm(name, event_id) else 'off'}"
-            for name in SWITCHES if self.state(name).mode == "ab"
-        )
+    def arm(self, name: str, event_id: int, at: Optional[float] = None) -> bool:
+        """Whether a boolean switch is on for this event now (or at ``at``)."""
+        state = self.state(name)
+        if state.mode == "ab":
+            return int(event_id) % 2 == state.half
+        if state.mode == "alternate":
+            when = self._clock() if at is None else at
+            if at is None:
+                self._note_arm(name, state, when)
+            return state.value_at(when) == 1
+        return False
+
+    def tags(self, event_id: int, at: Optional[float] = None) -> str:
+        """The receipt suffix: `` sw=<name>:<arm>`` per running trial, else empty.
+
+        A boolean switch's arm is ``on``/``off``; a numeric one's is its value.
+        ``at`` is the moment the receipt describes (a delivery window's start).
+        """
+        out = []
+        for name in SWITCHES:
+            state = self.state(name)
+            if state.mode == "off":
+                continue
+            if SPECS[name]["values"] == (0, 1):
+                arm = "on" if self.arm(name, event_id, at) else "off"
+            else:
+                arm = str(self.value(name, SPECS[name]["today"], at))
+            out.append(f" sw={name}:{arm}")
+        return "".join(out)
 
     def trip(self, name: str, error: BaseException) -> None:
-        """A switched path raised: OFF in this process for the rest of the trial."""
+        """A switched path failed: OFF in this process for the rest of the trial."""
         state = self.state(name)
-        if state.mode != "ab":
+        if state.mode == "off":
             return
         self._tripped[name] = state.expires_at
         logger.warning(
@@ -172,6 +278,20 @@ class SpeedSwitches:
             os.getpid(), name, _iso(state.expires_at), type(error).__name__, error,
         )
         self.state(name)
+
+    def _note_arm(self, name: str, state: SwitchState, at: float) -> None:
+        """One line per process at each arm boundary of an alternation."""
+        index = int((at - state.start) // state.period_s)
+        mark = (state, index)
+        if self._logged_arm.get(name) == mark:
+            return
+        self._logged_arm[name] = mark
+        logger.info(
+            "speed_switch[pid=%d]: %s arm=%s value=%s since=%s until=%s",
+            os.getpid(), name, "ab"[index % 2], state.value_at(at),
+            _iso(state.start + index * state.period_s),
+            _iso(min(state.start + (index + 1) * state.period_s, state.expires_at)),
+        )
 
     def _schedule_refresh(self) -> None:
         if self._refresh is not None and not self._refresh.done():
@@ -187,7 +307,7 @@ class SpeedSwitches:
             async with asyncio.timeout(2 * READ_TIMEOUT_S):
                 values = await asyncio.to_thread(self._read)
             now = self._clock()
-            stored = {name: parse(raw, now) for name, raw in zip(SWITCHES, values)}
+            stored = {name: parse(raw, now, name) for name, raw in zip(SWITCHES, values)}
         except Exception:  # noqa: BLE001 — every failure reads OFF
             logger.debug("speed_switch: read failed; every switch reads off", exc_info=True)
             stored = {}

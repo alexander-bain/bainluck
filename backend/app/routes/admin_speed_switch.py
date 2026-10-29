@@ -1,12 +1,19 @@
 """#10090 — start, stop and read a speed-switch trial (`app.tasks.speed_switches`).
 
-``POST /api/admin/speed-switch {name, mode, ttl_s, half}`` writes or clears
-one switch's Redis key. ``mode`` is ``off`` or ``ab``; there is no "all games
-on". ``ab`` turns the switch on for the live events whose id parity equals
-``half`` (default 0) until ``ttl_s`` seconds from now, at most 1800 — Alex's
-standing limits for a trial without a release. The key carries the same TTL,
-so Redis drops it when the trial ends even if nobody clears it. Every worker
-process reads it within a few seconds and logs its own mode change.
+``POST /api/admin/speed-switch`` writes or clears one switch's Redis key:
+
+* ``{name, mode: "off"}`` ends a trial now.
+* ``{name, mode: "ab", ttl_s, half}`` turns a boolean switch on for the live
+  events whose id parity equals ``half`` (default 0).
+* ``{name, mode: "alternate", ttl_s, a, b, period_s}`` switches between values
+  ``a`` and ``b`` every ``period_s`` (whole minutes, 60..900) of wall-clock
+  time from the current minute, ``a`` first. One of ``a``/``b`` must be today's
+  value, so at most half the time differs from today.
+
+``ttl_s`` is at most 1800 — Alex's standing limits for a trial without a
+release. There is no "all games on". The key carries the same TTL, so Redis
+drops it when the trial ends even if nobody clears it. Every worker process
+reads it within a few seconds and logs its own mode change and arm boundaries.
 ``GET /api/admin/speed-switch`` reads every switch's stored trial.
 
 Workers obey a trial only with ``SPEED_SWITCH_TRIALS=1`` in their config
@@ -34,11 +41,15 @@ class SpeedSwitchRequest(BaseModel):
     mode: str
     ttl_s: Optional[int] = None
     half: int = 0
+    a: Optional[int] = None
+    b: Optional[int] = None
+    period_s: Optional[int] = None
 
 
 def _stored(client, now: float) -> dict:
     values = client.mget([sw.key(name) for name in sw.SWITCHES])
-    return {name: sw.parse(raw, now).describe() for name, raw in zip(sw.SWITCHES, values)}
+    return {name: sw.parse(raw, now, name).describe()
+            for name, raw in zip(sw.SWITCHES, values)}
 
 
 def _client():
@@ -70,12 +81,14 @@ async def set_speed_switch(body: SpeedSwitchRequest, request: Request,
     else:
         if body.ttl_s is None or not 1 <= body.ttl_s <= sw.MAX_TTL_S:
             raise HTTPException(status_code=422,
-                                detail=f"ab needs ttl_s between 1 and {sw.MAX_TTL_S}")
-        if body.half not in (0, 1):
-            raise HTTPException(status_code=422, detail="half must be 0 or 1")
-        client.set(sw.key(body.name), sw.encode(body.half, now + body.ttl_s, now),
+                                detail=f"a trial needs ttl_s between 1 and {sw.MAX_TTL_S}")
+        problem = sw.validate(body.name, body.mode, body.half, body.a, body.b, body.period_s)
+        if problem is not None:
+            raise HTTPException(status_code=422, detail=problem)
+        client.set(sw.key(body.name),
+                   sw.encode(body.name, body.mode, now + body.ttl_s, now, half=body.half,
+                             a=body.a, b=body.b, period_s=body.period_s),
                    ex=body.ttl_s)
     stored = _stored(client, now)[body.name]
-    logger.info("speed_switch: admin set %s mode=%s half=%s expires_at=%s",
-                body.name, stored["mode"], stored["half"], stored["expires_at"])
+    logger.info("speed_switch: admin set %s %s", body.name, stored)
     return {"name": body.name, "now": now, "trials_enabled": sw.trials_enabled(), **stored}
