@@ -5262,6 +5262,7 @@ jobs:
             tests/integration/test_dnpl_post_cancel_idle_status_10090_pg.py \
             tests/integration/test_dnpl_authority_10090_pg.py \
             tests/integration/test_dnpl_activation_10090_pg.py \
+            tests/integration/test_dnpl_reservation_relimit_10090_pg.py \
             tests/test_dnpl_idle_retirement_cancellation_10090.py \
             -v -rs > /tmp/held-row11138.txt 2>&1; then
             gate_status=0
@@ -5275,8 +5276,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]253 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row/default-DNPL/reservations/returned-clock gate did not run all 253 cases"
+          grep -qE "[^0-9]260 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row/default-DNPL/reservations/returned-clock gate did not run all 260 cases"
             exit 1
           }
 
