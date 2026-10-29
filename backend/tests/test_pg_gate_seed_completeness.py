@@ -50,6 +50,9 @@ from app.models.models import Base
 COVERED = (
     # #10090: raw event/sport seeds exercise tier reservation maintenance.
     "test_dnpl_reservations_10090_pg.py",
+    # #10090: a live game and two linked markets, seeded raw so the enrichers'
+    # FK check on `futures_markets.event_id` has a real `events` row to lock.
+    "test_enrich_llm_tasks_hold_no_transaction_across_llm_calls_10090_pg.py",
     # #683. The constraint case seeds an import, an evidence row and intervals by
     # raw INSERT to prove the database refuses impossible rows.
     "test_kalshi_archive_store_683_pg.py",
