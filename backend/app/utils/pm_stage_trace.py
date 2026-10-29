@@ -314,6 +314,8 @@ class PMStageTrace(ExactKalshiTrace):
         ))
         if not self.targets:
             self._stop("NO_MAPPED_OUTCOME")
+        else:
+            self._notify_armed(self.deadline - now)
 
     def _open(self, outcome=None, seq=None):
         return any(

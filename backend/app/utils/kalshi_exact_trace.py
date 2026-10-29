@@ -117,6 +117,18 @@ def _scalar(value):
 
 
 class ExactKalshiTrace:
+    # #10090 amendment P: `clock_bridge.attach` sets this in the production
+    # factory; called with the window left at ARMED (START when no ARM_AT).
+    on_armed = None
+
+    def _notify_armed(self, window_left_s):
+        hook = self.on_armed
+        if hook is not None:
+            try:
+                hook(window_left_s)
+            except Exception:
+                pass  # evidence must never cost a quote
+
     @classmethod
     def from_env(cls, env, *, run, wall=time.time, mono=time.monotonic, emit=None):
         try:

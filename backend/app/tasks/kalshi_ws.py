@@ -1046,6 +1046,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     exact_trace = None
     with contextlib.suppress(Exception):
         exact_trace = ExactKalshiTrace.from_env(os.environ, run=None)
+    # #10090 amendment P: an armed trace bridges this pid's clock to the DB's.
+    with contextlib.suppress(Exception):
+        from app.utils.clock_bridge import attach
+
+        attach(exact_trace, "kalshi")
 
     # #2471: one engine for this run, a fresh session per operation; the
     # decorator disposes it after the final drain. Same call shape as the
