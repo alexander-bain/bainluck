@@ -130,7 +130,7 @@ async def test_without_a_head_the_rest_leave_the_fence_when_the_live_first_read_
     if on:
         await settle_until(lambda: len(x.r.holding_event_ids()) == 2)
         assert x.r.holding_event_ids() == frozenset({3, 5})   # live-first: 3
-        assert x.r._pending_continuation == [1, 2, 4]
+        assert x.r._pending_continuation == [3, 1, 2, 4]
         assert x.r.admit_fresh([1], flush_started=1001) == frozenset({1})
     else:
         assert x.r.holding_event_ids() == frozenset({1, 2, 3, 4, 5})
@@ -158,7 +158,7 @@ async def test_two_attempts_left_release_only_past_the_second(monkeypatch, trial
     await fresh_stamp_held(x)
     await settle_until(lambda: len(x.r.holding_event_ids()) == 3)
     assert x.r.holding_event_ids() == frozenset({2, 4, 5})
-    assert x.r._pending_continuation == [1, 3]
+    assert x.r._pending_continuation == [2, 4, 1, 3]
     x.release.set()
     async with asyncio.timeout(2):
         await task
@@ -255,3 +255,60 @@ async def test_a_cancel_during_the_fresh_stamps_joins_the_early_read(monkeypatch
     assert early[0].cancelled()             # joined before the call returned
     assert x.r.pending_event_ids() == frozenset({1, 2, 3, 4, 5})
     assert not x.r._failed_hold_until
+
+
+# ── the early read keeps the order and does not take a fresh stamp's session ──
+
+
+@pytest.mark.parametrize("on", [0, 1])
+async def test_a_call_cancelled_after_the_early_release_leaves_its_live_first_pick_first(
+        monkeypatch, trial, on):
+    trial["value"] = on
+    x = rig(monkeypatch, count=5, block=True, blocked=(5,), statuses={
+        1: "scheduled", 2: "scheduled", 3: "live", 4: "scheduled", 5: "live",
+    })
+    x.r._lock_retry = {1, 2, 3, 4}
+    task = asyncio.create_task(x.r.refresh([5], flush_started=1000))
+    await fresh_stamp_held(x)
+    if on:
+        await settle_until(lambda: len(x.r.holding_event_ids()) == 2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(asyncio.shield(task), 1)
+    x.release.set()
+    trial["value"] = 0                      # the next call runs today's code
+    before = len(x.committed)
+    await x.r.refresh([5], flush_started=2000)
+    # Today's choice, live-first: 3, not the released scheduled events ahead of it.
+    assert [e for e in x.committed[before:] if e != 5] == [3]
+
+
+@pytest.mark.parametrize("on", [0, 1])
+async def test_the_early_read_waits_unless_a_session_is_free_beyond_the_fresh_stamps(
+        monkeypatch, trial, on):
+    trial["value"] = on
+    x = rig(monkeypatch, count=6, statuses={
+        1: "scheduled", 2: "scheduled", 3: "live", 4: "scheduled", 5: "live", 6: "live",
+    })
+    x.r._lock_retry = {1, 2, 3, 4}
+    gate = asyncio.Event()
+    inner = x.r._read_groups
+
+    async def held_shared_read(session, event_ids):
+        if len(event_ids) > 1:              # the old population's shared read
+            await gate.wait()
+        return await inner(session, event_ids)
+
+    x.r._read_groups = held_shared_read
+    other = x.r._session_slots
+    await other.acquire()                   # another owner's session (history, recovery)
+    task = asyncio.create_task(x.r.refresh([5, 6], flush_started=1000))
+    for _ in range(50):
+        await asyncio.sleep(0)
+    # Both fresh stamps commit while the old population's read is held.
+    fresh_done = sorted(e for e in x.committed if e in (5, 6))
+    gate.set()
+    other.release()
+    async with asyncio.timeout(2):
+        await task
+    assert fresh_done == [5, 6]

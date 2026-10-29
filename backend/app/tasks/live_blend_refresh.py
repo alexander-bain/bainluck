@@ -2768,7 +2768,12 @@ class LiveBlendRefresher:
                     # The continuation head is the one attempt: no read decides it.
                     release_unattempted(old.difference(carried[:1]), carried)
                     populations = (fresh_population, set(carried[:1]))
-                elif 0 < left < len(old) and len(fresh_population) < FRESH_STAMP_WORKERS:
+                elif (
+                    0 < left < len(old)
+                    # A session slot free beyond the fresh stamps' own: the
+                    # slots are shared with the history/recovery/preview owners.
+                    and self._session_slots._value > len(fresh_population)
+                ):
                     # The live-first read decides: run it beside the fresh
                     # stamps (they leave a stamp worker free, so none waits for
                     # its session) and release the rest when it returns.
@@ -2784,10 +2789,9 @@ class LiveBlendRefresher:
                             (eid for eid in old if eid not in queued), key=live_first,
                         )
                         attempt = ordered[:left]
-                        release_unattempted(
-                            set(ordered[left:]),
-                            [eid for eid in attempt if eid in queued] + ordered[left:],
-                        )
+                        # The whole order: a call cancelled before its attempts
+                        # leaves them ahead of the events it released.
+                        release_unattempted(set(ordered[left:]), ordered)
                         return set(attempt), prepared
 
                     early_read = asyncio.create_task(read_old_population())
