@@ -7551,6 +7551,17 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         # only canonicals whose ghosts may be labelled below.
         anchored_ids: set[int] = set()
         for event in events:
+            # ONE EVENT'S ROW PER TRANSACTION (#10090). Committing once after
+            # the loop held every row this pass wrote until the last one was
+            # done — 29 s idle in transaction on production 10/29, its last
+            # statement this pass's score stamp, with the live EI writer and the
+            # venue price stamps queued behind it. The previous event's writes
+            # are committed here, before this one's first statement, so the
+            # `continue`s below cannot skip it; the last event's is the commit
+            # after the loop. Nothing is expired (`expire_on_commit=False`), and
+            # a failure partway through no longer takes back the rows already
+            # committed.
+            await _release_rows(session)
             try:
                 receipt = receipts.get(event.id)
                 if receipt is None:
