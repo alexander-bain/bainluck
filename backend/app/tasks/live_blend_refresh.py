@@ -3319,9 +3319,10 @@ class LiveBlendRefresher:
         admits (#10090: until its admitted workers go idle or a lifecycle
         drain calls `stop_admitting`), so a new batch never waits for an
         unrelated older stamp, however long that one is held. Beside it, at
-        most ADMITTED_DEBT_SLOTS due owed events at a time (`window.debts`,
-        default one) are stamped too, so debt progresses while the call lives
-        on; they are not in the returned set.
+        most this admission's debt slots of due owed events at a time
+        (`window.debts`; ADMITTED_DEBT_SLOTS, default one, unless an
+        `admitted_debt_slots` trial's arm says otherwise) are stamped too, so
+        debt progresses while the call lives on; they are not in the returned set.
         Empty means the caller keeps them for its next `refresh`, as before:
         no call is admitting, the clock is earlier, or there is none (the final
         drain keeps its own contract), or the event is fenced — the running call is
@@ -3370,8 +3371,8 @@ class LiveBlendRefresher:
         if free > 0:
             # #10090: a call that keeps admitting may outlive the moment a new
             # `refresh` would have taken the debt, so the oldest due owed events
-            # ride along — at most ADMITTED_DEBT_SLOTS at a time, behind the
-            # cohort, never fenced.
+            # ride along — at most this admission's `slots` at a time, behind
+            # the cohort, never fenced.
             self._wake_book_refused(_mono())
             owed = self._lock_retry | self._throttle_deferred
             rotation = [eid for eid in self._debt_rotation if eid in owed]
