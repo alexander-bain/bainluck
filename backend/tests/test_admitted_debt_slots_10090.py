@@ -167,3 +167,37 @@ def test_slots_are_read_once_at_import_and_clamped_to_the_stamp_workers(raw, exp
     assert slots == expected and type(slots) is int
     if raw in ("two", "0", "9"):
         assert "ADMITTED_DEBT_SLOTS" in stderr
+
+
+class _Slotted(_Gated):
+    """Each stamp holds one of the run's three session slots, as the real
+    `_refresh_batch` does, so the call's own held stamp (99) takes one."""
+
+    async def _refresh_batch(
+        self, event_ids, now, *, prepared=None, on_committed=None, publish_committed=None
+    ):
+        async with self._session_slot():
+            await super()._refresh_batch(
+                event_ids, now, prepared=prepared, on_committed=on_committed,
+                publish_committed=publish_committed,
+            )
+
+
+@pytest.mark.parametrize("slots, started", [
+    (1, [99, 1, 50]),            # today, byte for byte: one debt ahead of a free slot
+    (2, [99, 50, 1, 2]),
+    (3, [99, 50, 1, 2]),
+])
+async def test_debt_queues_behind_the_cohort_that_let_it_in(monkeypatch, slots, started):
+    # live review of 6a448ae0: owed live events with LOWER ids than a fresh live
+    # cohort were queued ahead of it (one sorted list); with 2-3 slots and the
+    # call's own stamp holding a session slot, the fresh price never started.
+    monkeypatch.setattr(lbr, "ADMITTED_DEBT_SLOTS", slots, raising=False)
+    r = _Slotted(blocked={99, 1, 2, 3})
+    task = await _running_call(r)
+    r._live_event_ids.update({1, 2, 3, 50})
+    r.adopt_pending([1, 2, 3])
+    assert r.admit_fresh([50], flush_started=1001) == frozenset({50})
+    await _settle()
+    assert r.started == started
+    await _finish(r, task)

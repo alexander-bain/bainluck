@@ -3294,6 +3294,13 @@ class LiveBlendRefresher:
             window.clocks.update(dict.fromkeys(due, clock))
             window.retry.update(retry)
             live = self._live_event_ids
+            if ADMITTED_DEBT_SLOTS > 1:
+                # Debt rides behind the cohort that let it in: with more than
+                # one slot, owed events with lower ids would otherwise take
+                # every worker (and session slot) ahead of these fresh prices.
+                due = [eid for eid in due if eid in cohort] + [
+                    eid for eid in due if eid not in cohort
+                ]
             window.live_queue.extend(eid for eid in due if eid in live)
             window.queue.extend(eid for eid in due if eid not in live)
             # A finished worker consumes nothing more: reap it (its outcome
