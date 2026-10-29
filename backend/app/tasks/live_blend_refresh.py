@@ -2532,6 +2532,17 @@ class LiveBlendRefresher:
         self.preview_stats: dict[str, int] = {
             "published": 0, "revoked": 0, "fenced": 0, "publish_errors": 0,
         }
+        #: #10090 preview receipt — capacity passes by `end`, and the
+        #: per-minute line itself (`app.utils.preview_receipt`). Log only.
+        self._capacity_ends: dict[str, int] = {}
+        self.preview_receipt = None
+        if self.preview:
+            from app.utils.preview_receipt import PreviewReceipt
+
+            # Late-bound, so a rig that drives the module's clocks drives it.
+            self.preview_receipt = PreviewReceipt(
+                self.source, self._preview_receipt_counters,
+                mono=lambda: _mono(), wall=lambda: _wall())
         #: #10090 — observation-preview reads still running after their caller
         #: stopped waiting (`OBSERVATION_READ_DETACHED_MAX`), and what became of
         #: them; reported on the read-unavailable line.
@@ -2634,6 +2645,8 @@ class LiveBlendRefresher:
         staged, stored_wall = (
             self._receipt_call(receipts.take_staged) if receipts is not None else None
         ) or ({}, None)
+        if self.preview_receipt is not None:
+            self._receipt_call(self.preview_receipt.roll)
         self._wake_book_refused(now)
         retry = set(self._lock_retry)
         deferred = set(self._throttle_deferred)
@@ -2719,7 +2732,7 @@ class LiveBlendRefresher:
         if skipped > 0:
             self.stats["throttled"] += skipped
         if receipts is not None:
-            self._receipt_call(receipts.observe, staged, stored_wall, set(due), now)
+            self._observe_committed(receipts, staged, stored_wall, set(due), now)
         if self._stage_hook("stage_admission") is not None:
             self._stage_trace(
                 "stage_admission", "REFRESH", None, wanted,
@@ -3372,6 +3385,46 @@ class LiveBlendRefresher:
             )
             return None
 
+    def _observe_committed(self, receipts, staged, stored_wall, due, now) -> None:
+        """`TailReceipts.observe`, and the same committed marks for the preview
+        receipt's recv→publish clock."""
+        self._receipt_call(receipts.observe, staged, stored_wall, due, now)
+        if self.preview_receipt is not None:
+            self._receipt_call(self.preview_receipt.committed, staged)
+
+    def _preview_receipt_counters(self) -> dict:
+        """This arm's cumulative counts for the preview receipt. Reads the
+        process registry only if one was already built — never builds it."""
+        from app.utils import blend_preview
+
+        counts = {key: self.preview_stats.get(key, 0) for key in (
+            "published", "revoked", "ledger_recomposed", "ledger_superseded",
+            "withdrawn", "fenced", "authority_refused", "publish_errors")}
+        counts["no_reading"] = self.stats.get("no_reading", 0)
+        registry = blend_preview._REGISTRY
+        for (source, status), n in getattr(registry, "refusal_counts", {}).items():
+            if source == self.source:
+                counts[f"refused:{status}"] = n
+        for end, n in self._capacity_ends.items():
+            counts[f"capacity:{end}"] = n
+        return counts
+
+    def _preview_observer(self):
+        """The ledger send's observer: the stage trace's (if any), then the
+        preview receipt's. Each is read-only and runs after the send."""
+        trace, receipt = self._stage_hook("preview"), self.preview_receipt
+        if receipt is None:
+            return trace
+        if trace is None:
+            return receipt.published
+
+        def observe(frame, meta, reply):
+            try:
+                trace(frame, meta, reply)
+            finally:
+                receipt.published(frame, meta, reply)
+        return observe
+
     async def refresh_pending(
         self,
         *,
@@ -3395,6 +3448,8 @@ class LiveBlendRefresher:
             if self.receipts is not None:
                 # #10090: a quiet flush still closes a finished minute.
                 self._receipt_call(self.receipts.roll)
+            if self.preview_receipt is not None:
+                self._receipt_call(self.preview_receipt.roll)
             return self.stats
         return await self.refresh(
             (), flush_started=flush_started, defer_event_ids=defer_event_ids,
@@ -3619,7 +3674,7 @@ class LiveBlendRefresher:
         if receipts is not None:
             staged, wall = self._receipt_call(receipts.staged_for, marks) or ({}, None)
             staged = {eid: m for eid, m in staged.items() if eid in event_ids}
-            self._receipt_call(receipts.observe, staged, wall, set(), _mono())
+            self._observe_committed(receipts, staged, wall, set(), _mono())
 
     def keep_committed(
         self, event_ids: Iterable[int], *, marks: Iterable[InputMark] = (),
@@ -3802,7 +3857,7 @@ class LiveBlendRefresher:
         if receipts is not None:
             staged, wall = self._receipt_call(receipts.staged_for, marks) or ({}, None)
             staged = {eid: m for eid, m in staged.items() if eid in taken}
-            self._receipt_call(receipts.observe, staged, wall, set(due), _mono())
+            self._observe_committed(receipts, staged, wall, set(due), _mono())
             for event_id in due:
                 if event_id in staged:
                     window.staged[event_id] = staged[event_id]
@@ -6539,6 +6594,7 @@ class LiveBlendRefresher:
 
     def _log_preview_capacity_receipt(self, end: str, c: dict, attempted: int,
                                       idle_attempted: int) -> None:
+        self._capacity_ends[end] = self._capacity_ends.get(end, 0) + 1
         logger.info(PREVIEW_CAPACITY_RECEIPT_FORMAT, self.source, end, c["candidates"],
                     c["missing"], c["retirable"], attempted, c["live"], c["scheduled"],
                     c["suspended"], c["other"], c["live_over_6h"], c["oldest_live_h"],
@@ -6895,9 +6951,9 @@ class LiveBlendRefresher:
                         if preview.ledger:
                             # TSP-1: operations and prepared frames run through
                             # the ledger CAS; nothing is relabeled here.
-                            # #10090: the stage trace sees each send; with no
-                            # trace the call is exactly the untraced one.
-                            observe = self._stage_hook("preview")
+                            # #10090: the stage trace and the preview receipt
+                            # see each send, after it; neither changes it.
+                            observe = self._preview_observer()
                             await preview.execute(
                                 frames, self._preview_call(connection), event_channel,
                                 self.preview_stats,

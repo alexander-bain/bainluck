@@ -40,12 +40,13 @@ async def test_claimed_admission_survives_busy_publication(rig, monkeypatch, sou
     entered, release = asyncio.Event(), asyncio.Event()
     original = reg.execute
 
-    async def held_publication(*args):
+    async def held_publication(*args, **kwargs):
         # Represent a publication batch between Redis calls. A fresh admission
         # needs a different socket, not the publisher's local mutation lock.
+        # (kwargs: the send's read-only observer, #10090 preview receipt.)
         entered.set()
         await release.wait()
-        return await original(*args)
+        return await original(*args, **kwargs)
 
     monkeypatch.setattr(reg, "execute", held_publication)
     ops = await proposal(reg, client.execute_command, source, now=now)

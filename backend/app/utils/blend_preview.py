@@ -1384,6 +1384,9 @@ class LedgerRegistry(PreviewRegistry):
         self._alarm_owed: dict[tuple[str, str, str], tuple[int, Optional[int]]] = {}
         self._alarm_last: dict[tuple[str, str, str], float] = {}
         self._alarm_batch_open = False
+        #: (source, status) -> refusals since this registry was built; read
+        #: only by the per-minute preview receipt (`app.utils.preview_receipt`).
+        self.refusal_counts: dict[tuple[str, str], int] = {}
         self._capacity_registry_id = uuid.uuid4().hex
         self._capacity_pid = os.getpid()
         self._capacity_sample_seq = 0
@@ -2111,6 +2114,7 @@ class LedgerRegistry(PreviewRegistry):
                  event_id: int) -> None:
         key = "fenced" if status == "fenced" else "ledger_refused"
         stats[key] = stats.get(key, 0) + 1
+        self.refusal_counts[(source, status)] = self.refusal_counts.get((source, status), 0) + 1
         self._alarm(status, phase, source, event_id)
 
     def _alarm(self, status: str, phase: str, source: str,
