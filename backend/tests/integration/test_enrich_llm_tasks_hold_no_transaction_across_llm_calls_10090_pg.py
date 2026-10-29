@@ -388,6 +388,34 @@ async def test_cu_v2_holds_nothing_while_it_waits_on_the_next_markets_llm_call(p
         assert profile["story_key"] == STORY_KEY and profile["schema_version"] == 2
 
 
+async def test_cu_v2_write_still_bumps_updated_at(pg_engine, monkeypatch):
+    # The merged write goes through a table clause with no `onupdate`, so the
+    # `updated_at=now()` the old ORM UPDATE carried must be written by name.
+    # Weather staleness, feed candidate order and the cache watermarks read it.
+    from app.tasks.enrich_markets import enrich_cu_v2_profiles
+
+    old = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    async with pg_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE futures_markets SET updated_at = :t WHERE id = ANY(:ids)"),
+            {"t": old, "ids": list(MARKET_IDS)},
+        )
+    stub = _LLMStub(_cu_payload())
+    _install(monkeypatch, stub)
+
+    stats = await enrich_cu_v2_profiles(limit=2)
+
+    assert stats["generated"] == 2
+    async with pg_engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text("SELECT id, updated_at FROM futures_markets WHERE id = ANY(:ids) ORDER BY id"),
+                {"ids": list(MARKET_IDS)},
+            )
+        ).all()
+    assert all(r[1] > old for r in rows), f"CU v2 wrote the profile but left updated_at at {old}: {rows}"
+
+
 async def test_cu_v2_a_failed_llm_call_rolls_back_only_its_own_market(pg_engine, monkeypatch):
     from app.tasks.enrich_markets import DISCOVER_LLM_METADATA_KEY, enrich_cu_v2_profiles
 

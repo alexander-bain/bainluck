@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import httpx
-from sqlalchemy import Integer, String, column as sa_column, select, table as sa_table, update, func
+from sqlalchemy import DateTime, Integer, String, column as sa_column, select, table as sa_table, update, func
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.services.llm_models import resolve_model
@@ -1485,6 +1485,7 @@ _FUTURES_MARKETS_CU_WRITE = sa_table(
     sa_column("id", Integer),
     sa_column("market_metadata", JSONB),
     sa_column("story_key", String(300)),
+    sa_column("updated_at", DateTime(timezone=True)),
 )
 
 
@@ -1777,7 +1778,9 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 # just wrote would run the `event_id` FK check (above).
                 # `story_key` is not mapped on FuturesMarket, so the write goes
                 # through a table clause that names it.
-                values = {"market_metadata": next_metadata}
+                # The table clause carries no `onupdate`, so the bump the ORM
+                # UPDATE made (`updated_at=now()`) is written here by name.
+                values = {"market_metadata": next_metadata, "updated_at": func.now()}
                 story_key = raw.get("story_key")
                 if story_key:
                     values["story_key"] = story_key
