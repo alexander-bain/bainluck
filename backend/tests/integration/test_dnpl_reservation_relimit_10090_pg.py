@@ -20,11 +20,17 @@ import pytest
 from app.services import dnpl_activation as activation
 from app.services.dnpl_activation_command import parse_authority
 from app.utils.dnpl_authority_registry import AuthorityLedgerRegistry
-from app.utils.dnpl_redis_authority import GUARDED_LEDGER_SCRIPT, guard_token, namespace_keys
+from app.utils.dnpl_redis_authority import (
+    GUARDED_LEDGER_SCRIPT,
+    guard_token,
+    guarded_ledger_script,
+    namespace_keys,
+)
 from app.utils.preview_reservations import ReservationPolicy
 from tests.integration.test_dnpl_activation_10090_pg import recovery  # noqa: F401
 from tests.integration.test_dnpl_authority_10090_pg import DB_URL, rig  # noqa: F401
 from tests.test_blend_preview_ledger_tsp1_10090 import redis_kwargs  # noqa: F401
+from tests.test_preview_ledger_cap_v2_10090 import V2_SPLIT, v1_only_script
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -41,20 +47,20 @@ def tool():
     return reservation_relimit_plan
 
 
-async def guarded(client, authority, op, *argv, owner="0", fingerprint=None):
+async def guarded(client, authority, op, *argv, owner="0", fingerprint=None, script=None):
     return await client.eval(
-        GUARDED_LEDGER_SCRIPT, 6, *namespace_keys(authority), guard_token(authority),
+        script or GUARDED_LEDGER_SCRIPT, 6, *namespace_keys(authority), guard_token(authority),
         authority.redis_run_id, authority.redis_master_replid, "kalshi", owner,
         fingerprint or authority.policy_fingerprint, op, "kalshi", *argv,
     )
 
 
-async def open_other_active(client, authority, owner, event_id):
-    """One NEW event's first preview open in the Other-active bucket (4)."""
+async def open_other_active(client, authority, owner, event_id, bucket=4, cap=512, script=None):
+    """One NEW event's first preview open in the Other-active bucket (4) by default."""
     reply = await guarded(
         client, authority, "propose", owner, str(event_id), "kalshi", "open", "1", "1",
-        "10", "60000", "512", '{"value":0.6}', "10", '{"base":10}', "0", "4", "1",
-        owner=owner,
+        "10", "60000", str(cap), '{"value":0.6}', "10", '{"base":10}', "0", str(bucket), "1",
+        owner=owner, script=script,
     )
     return reply[0]
 
@@ -179,6 +185,66 @@ async def test_a_plan_built_for_other_sizes_than_configured_never_reaches_the_op
     assert await r.store.read() == old
     assert await r.store.read_retirement() is None
     assert await r.client.dbsize() == 5
+
+
+async def test_relimit_across_512_to_a_v2_cap_of_1024_and_back(recovery, tmp_path, monkeypatch):  # noqa: F811
+    """#10090 cap raise: one plan moves sizes AND version; rollback restores v1 and 512."""
+    t, r = tool(), recovery
+    server, repl = await r.client.info("server"), await r.client.info("replication")
+    primary = (server["run_id"], repl["master_replid"])
+    first = await r.prepare()
+    await r.controller.arm(first)
+    await r.controller.initialize(first)
+    old = await r.controller.ready(first)
+    assert old.policy_fingerprint.startswith("v1-")
+
+    configured = ",".join(map(str, V2_SPLIT))
+    built = t.build(old, primary, apps(), V2_SPLIT, configured)
+    assert built["summary"]["to_ledger_cap"] == 1024
+    await run_plan(built["activate"], r.controller, tmp_path, monkeypatch, "activate")
+    await run_plan(built["retire"], r.controller, tmp_path, monkeypatch, "retire")
+    new = await r.store.read()
+    assert (new.incarnation, new.state) == (2, "ready")
+    assert new.policy_fingerprint == "v2-six-hour-ba82e47ee634aba7:" + configured
+    assert await r.client.exists(*namespace_keys(old)) == 0
+    assert await r.client.dbsize() == 5
+
+    # Old sizes cannot bind; a writer that predates v2 is refused at claim.
+    with pytest.raises(ValueError, match="reservation policy mismatch"):
+        await producer(r.store, r.client, ReservationPolicy().limits)
+    old_bytes = guarded_ledger_script(v1_only_script())
+    assert await guarded(r.client, new, "claim", script=old_bytes) == ["policy_mismatch"]
+
+    # The whole ledger: exactly 1024 residents, the next refused in every bucket.
+    k = await producer(r.store, r.client, V2_SPLIT)
+    owner = str(k.claim_of("kalshi"))
+    event_id = 0
+    for bucket, limit in enumerate(V2_SPLIT):
+        for _ in range(limit):
+            event_id += 1
+            assert await open_other_active(r.client, new, owner, event_id, bucket, 1024) == "ok"
+    ledger = namespace_keys(new)[0]
+    assert await r.client.hget(ledger, "nevents") == "1024"
+    for bucket in range(6):
+        assert await open_other_active(
+            r.client, new, owner, 2000 + bucket, bucket, 1024) == "bucket_full"
+    # The owner itself, if it ran pre-v2 bytes, is refused before any write.
+    assert await open_other_active(
+        r.client, new, owner, 3000, 4, 1024, script=old_bytes) == "policy_mismatch"
+    assert await r.client.hget(ledger, "nevents") == "1024"
+
+    # Rollback: today's v1 default (192,64,128,64,48,16), config var unset.
+    back = t.build(new, primary, apps(), t.parse_limits("default"), "")
+    assert back["summary"]["to_ledger_cap"] == 512
+    await run_plan(back["activate"], r.controller, tmp_path, monkeypatch, "rollback")
+    await run_plan(back["retire"], r.controller, tmp_path, monkeypatch, "rollback-retire")
+    restored = await r.store.read()
+    assert (restored.incarnation, restored.policy_fingerprint) == (3, ReservationPolicy().fingerprint)
+    assert await r.client.exists(*namespace_keys(new)) == 0
+    with pytest.raises(ValueError, match="reservation policy mismatch"):
+        await producer(r.store, r.client, V2_SPLIT)
+    k3 = await producer(r.store, r.client, ReservationPolicy().limits)
+    assert await fill_other_active(r.client, restored, str(k3.claim_of("kalshi")), 48, 1) == "bucket_full"
 
 
 # --resume: the scripted exit for a stop after a send (lane1 N3 on #11751). Each

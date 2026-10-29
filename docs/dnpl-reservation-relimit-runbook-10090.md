@@ -80,6 +80,80 @@ takes all the room from Tier 1 is `96,48,128,64,144,32`. Its T1 active 96 is
 still about 7× the measured T1 peak. Either value is a parameter to the same
 procedure.
 
+## Totals above 512: the v2 ledger cap
+
+The ledger's resident cap is part of the fingerprint version. Totals 1..512
+stay `v1-six-hour-<map>:…` (today's bytes, cap 512); totals 513..1024 are
+`v2-six-hour-<map>:…` (same classification, status and window semantics, cap
+1024). Every allocation has exactly one fingerprint, so the default and any
+512 split keep v1 and the release changes nothing for the ready authority. The
+same procedure moves sizes AND version in one operation (`--to` a split whose
+total exceeds 512); the summary prints `to_ledger_cap`. Rollback with `--to
+default` returns to v1 and 512.
+
+**Order is binding.** A writer that predates v2 parses no v2 fingerprint: it
+refuses to claim and every command it sends to a v2 ledger is
+`policy_mismatch` (fail closed). Old Python raises `ValueError` for a
+configured total above 512 when it builds the registry, the same path as any
+invalid value of this var today (its effect on the old process is not
+qualified here). So: (1) the release
+carrying v2 is live on `bainluck` AND heavy has converged to it; (2) then this
+runbook. **Never roll the code back while the config var totals more than
+512** — roll the sizes back first (`--to default`), then the code.
+
+**v2 code check** (the mechanical form of (1); required for any `--to` that
+totals more than 512, at step 0 and again at step 4). `<commit>` is each app's
+current release commit, taken from its slug as in step 4. Run `git fetch
+origin` first; a commit this checkout cannot show prints 0, which is a stop.
+
+```bash
+git show <commit>:backend/app/utils/preview_reservations.py | /usr/bin/grep -c 'LEDGER_CAPS = {"v1": 512, "v2": 1024}'   # must print 1
+git show <commit>:backend/app/utils/blend_preview.py | /usr/bin/grep -c "local CAP = version == 'v2' and 1024 or 512"  # must print 1
+```
+
+Both lines, for both `bainluck` and `bainluck-heavy`, must print 1. Any 0 is a
+stop: the release carrying v2 is not live on both apps, and step 8 would start
+a `worker-ws` whose old code refuses the configured total on every registry
+call.
+
+Chosen 1024 split (Alex, decision I = A): `96,48,192,128,448,112`.
+
+| Bucket | Today | 512 resize (item 35) | 1024 proposal | Measured peak |
+| --- | ---: | ---: | ---: | ---: |
+| T1 active | 192 | 96 | 96 | 14 |
+| T1 upcoming | 64 | 48 | 48 | 17 |
+| T2 active | 128 | 128 | 192 | 16 |
+| T2 upcoming | 64 | 64 | 128 | 15 |
+| Other active | 48 | 144 | 448 | 48 (full) |
+| Other upcoming | 16 | 32 | 112 | 16 (full) |
+
+T2 rises because college basketball starts in early November (100+ Division I
+games on a Saturday, plus the six-hour upcoming window) and no measured peak
+contains a college Saturday. Other active 448 is about 9× today's full 48; the
+retained 15:36–19:52Z logs name at least 102 Kalshi and 131 Polymarket
+distinct refused events (a lower bound: one id per alarm line).
+
+Cost at the cap, private `redis-server` 6.2 (libc malloc, laptop CPU, both
+venues pending on every event, committed base padded to production's largest
+stored `win_probability_sources`, 1,599 bytes):
+
+| | 512 (v1) | 1024 (v2) |
+| --- | ---: | ---: |
+| ledger hash fields | 6,674 | 13,330 |
+| `MEMORY USAGE` ledger key | 1.57 MB | 3.14 MB |
+| bytes per resident | 3,067 | 3,067 |
+| `capacity_ticket` Lua, p50 / max, sort reading each clock once (this change) | 6.5 / 7.2 ms | 11.4 / 13.2 ms |
+| `capacity_ticket` Lua, p50 / max, before (per-comparison reads) | 16.1 / 17.0 ms | 39.7 / 47.2 ms |
+| at-capacity `read_ticket` candidates, p50 / max | 3.5 / 4.6 ms | 6.8 / 7.9 ms |
+| hot path (`read_ticket`, refused open), p50 | 0.07–0.08 ms | 0.07–0.08 ms |
+
+Production Redis at 21:15Z 10/29 (`/api/admin/redis-census`, read-only):
+69.0 MB used of 500 MB (13.8%), peak 95.2 MB, `allkeys-lru`, 0 evicted keys.
+The 1024 ledger adds about 1.6 MB over 512. Eviction would hit ledger keys only
+under pressure that does not exist today; a lost ledger is detected (`lost`)
+and fails closed. The per-base guard (`LEDGER_MAX_BASE_BYTES`, 256 KiB) is
+unchanged.
+
 ## Runbook (Integrator)
 
 Assumptions: Integrator holds `LANE-integrator.lock`. Heavy is converged to the
@@ -120,7 +194,9 @@ Scores, odds polling and pages keep working.
    dnpl_namespace_retirement` = 0. Write the eight fields to a private
    `authority.json`, with integers as JSON integers. The primary is
    `<redis_run_id>:<redis_master_replid>`. Record the current fingerprint from a
-   `blend_preview reservation receipt` line.
+   `blend_preview reservation receipt` line. **If `--to` totals more than
+   512:** run the v2 code check on both apps' current release commits. Any 0:
+   stop. Nothing has changed before step 3.
 1. **Snapshot.** Run `python -m app.services.dnpl_activation_command preview
    --expected-authority "$(cat authority.json)" --expected-primary <primary>`.
    Require `SNAPSHOT_MATCH`, exit 0. Anything else: stop, nothing has changed.
@@ -147,13 +223,21 @@ Scores, odds polling and pages keep working.
    does; do not start step 6 before. The verifier checks every dyno's release
    and refuses (`dyno release changed`) while any dyno still runs the old one.
    That refusal comes before any send, but the operator still prints `STOPPED`.
+   **If `--to` totals more than 512:** run the v2 code check again on both
+   bound commits. Any 0: stop, restore the recorded config value, and start
+   (nothing durable has changed before step 6).
 5. **Build plans.** Run `python3 scripts/reservation_relimit_plan.py
    --expected-authority authority.json --primary <primary> --apps apps.json --to
    <sizes> --configured "<exact step-3 readback>" --out-dir <new private dir>`.
    Require `PLANS_WRITTEN`, and check `to_fingerprint` against the expected
    value. For the default proposal that is
-   `v1-six-hour-ba82e47ee634aba7:128,48,96,48,160,32`. Keep the plan files as
-   written (0600); the operator refuses a plan file that is not private.
+   `v1-six-hour-ba82e47ee634aba7:128,48,96,48,160,32`. For the recommended
+   1024 split, `to_fingerprint` must equal
+   `v2-six-hour-ba82e47ee634aba7:96,48,192,128,448,112` and `to_ledger_cap`
+   must equal `1024`. The alternative `96,48,128,64,576,112` has the same
+   prefix and cap: `v2-six-hour-ba82e47ee634aba7:96,48,128,64,576,112`, `1024`.
+   Keep the plan files as written (0600); the operator refuses a plan file that
+   is not private.
 6. **Activate.** Create a fresh run dir, then run the operator:
 
    ```bash
@@ -303,7 +387,7 @@ rollback, waits for the retirement. Build with `--resume` as above (the row's
 `R/acknowledge-plan.json`: it confirms the old namespace is gone with reads and
 never deletes again. If the acknowledgement refuses, escalate.
 
-## Rollback (to `192,64,128,64,48,16`)
+## Rollback (to `192,64,128,64,48,16`, v1, cap 512)
 
 **Triggers**, any of:
 
@@ -322,7 +406,9 @@ fresh 0700 run dirs and the stop rules above, with these changes:
 - In step 3, restore the recorded pre-change value: `heroku config:unset
   LIVE_BLEND_PREVIEW_RESERVATIONS -a bainluck` if it was unset, with
   `--configured ""`.
-- In step 5, use `--to default`.
+- In step 5, use `--to default`. It must print `to_fingerprint`
+  `v1-six-hour-ba82e47ee634aba7:192,64,128,64,48,16` and `to_ledger_cap: 512`.
+- The v2 code check does not apply: `--to default` totals 512.
 
 The rollback is itself a new incarnation, so it restores the sizes, not the old
 ledger contents.
@@ -353,6 +439,15 @@ ledger contents.
     clears the retirement with reads only, with no second deletion.
   - An `arm` send that never reached Redis: the continuation stops and the row
     stays `preparing`. This is the case with no scripted exit.
+  - Across 512: one plan moves to `v2` at `96,48,192,128,448,112`; the ledger
+    holds exactly 1024 residents and refuses the next in every bucket; a
+    pre-v2 writer is refused at claim and on an existing owner's command;
+    rollback returns to v1 and 48.
+- `backend/tests/test_preview_ledger_cap_v2_10090.py`: one fingerprint per
+  allocation (512 is v1, 513 and 1024 are v2, 1025 refused); the producer passes
+  its policy's cap (resident 513 admitted); the capacity receipt validates at
+  1024; the script refuses a fingerprint outside its version's range; capacity
+  candidates keep their order (clockless first, oldest context, numeric id).
 
 These qualify the procedure's source mechanics. They are not a production
 execution, a measured capacity requirement, or reader acceptance.

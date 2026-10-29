@@ -95,8 +95,13 @@ def test_rollback_to_default_from_a_relimited_authority():
         # A league-map or semantics change is a different policy, not a resize.
         (ready(policy="v1-six-hour-0000000000000000:192,64,128,64,48,16"),
          OTHER_FIRST, CONFIGURED, "not limits-only"),
+        # v2 exists only above 512, v1 only up to it: one fingerprint per allocation.
         (ready(policy="v2-six-hour-ba82e47ee634aba7:192,64,128,64,48,16"),
-         OTHER_FIRST, CONFIGURED, "not a v1"),
+         OTHER_FIRST, CONFIGURED, "version does not match its sizes"),
+        (ready(policy="v1-six-hour-ba82e47ee634aba7:192,128,256,128,96,32"),
+         OTHER_FIRST, CONFIGURED, "version does not match its sizes"),
+        (ready(policy="v3-six-hour-ba82e47ee634aba7:192,64,128,64,48,16"),
+         OTHER_FIRST, CONFIGURED, "not a v1/v2"),
         (ready(policy="v1-six-hour-ba82e47ee634aba7:192,64,128,64,48"),
          OTHER_FIRST, CONFIGURED, "not a v1"),
         (ready(policy="v1-six-hour-ba82e47ee634aba7:0192,64,128,64,48,16"),
@@ -112,7 +117,7 @@ def test_refuses_anything_but_a_valid_limits_only_change(expected, limits, confi
         t.build(expected, PRIMARY, apps(), limits, configured)
 
 
-@pytest.mark.parametrize("value", ["128,48,96,48,160", "200,100,100,64,48,16",
+@pytest.mark.parametrize("value", ["128,48,96,48,160", "1000,25,0,0,0,0",
                                    "128, 48,96,48,160,32", "-1,48,96,48,160,32"])
 def test_invalid_sizes_refuse_exactly_as_the_app_would(value):
     t = tool()
@@ -316,3 +321,20 @@ def test_cli_resume_writes_private_remaining_plans(tmp_path, capsys):
         assert t.main(base + extra + ["--out-dir", str(tmp_path / "never")]) == 2
         assert json.loads(capsys.readouterr().out)["status"] == "REFUSED"
     assert not (tmp_path / "never").exists()
+
+
+def test_resume_across_512_continues_the_v2_incarnation_at_its_cap():
+    t = tool()
+    v2 = (96, 48, 192, 128, 448, 112)
+    built = t.build(ready(2), PRIMARY, apps(), v2, "96,48,192,128,448,112")
+    planned = parse_authority(json.dumps(built["next_expected_authority"]))
+    assert planned.policy_fingerprint.startswith("v2-six-hour-")
+    preparing = replace(planned, state="preparing")
+    result = t.resume(preparing, 1, planned, PRIMARY, apps(), "96,48,192,128,448,112")
+    assert [s["step"] for s in result["continue"]["steps"]] == ["initialize", "ready"]
+    assert result["summary"]["to_ledger_cap"] == 1024
+    assert t.resume(planned, 2, planned, PRIMARY, apps(), "96,48,192,128,448,112")[
+        "summary"]["to_ledger_cap"] == 1024
+    # The 512 split of the same row is a different fingerprint: refused.
+    with pytest.raises(t.RelimitRefused, match="planned sizes"):
+        t.resume(preparing, 1, planned, PRIMARY, apps(), CONFIGURED)
