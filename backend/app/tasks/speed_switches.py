@@ -165,10 +165,7 @@ def today_env(name: str) -> Optional[int]:
     raw = os.environ.get(today_env_name(name))
     if raw is None:
         return None
-    problem = None
-    if name in _OWN_SETTING:
-        problem = f"ignored: {name}'s today is {_OWN_SETTING[name]}"
-    else:
+    if name not in _OWN_SETTING:
         low, high = SPECS[name]["values"]
         try:
             value = int(raw.strip(), 10)
@@ -176,11 +173,18 @@ def today_env(name: str) -> Optional[int]:
             value = None
         if value is not None and low <= value <= high:
             return value
-        problem = f"ignored: not an integer in {low}..{high}"
     if (name, raw) not in _WARNED_TODAY_ENV:
         _WARNED_TODAY_ENV.add((name, raw))
-        logger.warning("speed_switch[pid=%d]: %s=%r %s", os.getpid(), today_env_name(name),
-                       raw, problem)
+        # Only allowlisted constants reach the log: CodeQL grades ``name`` as
+        # request data (the admin setter validates through `today`).
+        switch = next(n for n in SWITCHES if n == name)
+        if switch in _OWN_SETTING:
+            logger.warning("speed_switch[pid=%d]: %s ignored: %s's today is %s",
+                           os.getpid(), today_env_name(switch), switch, _OWN_SETTING[switch])
+        else:
+            low, high = SPECS[switch]["values"]
+            logger.warning("speed_switch[pid=%d]: %s ignored: not an integer in %d..%d",
+                           os.getpid(), today_env_name(switch), low, high)
     return None
 
 
