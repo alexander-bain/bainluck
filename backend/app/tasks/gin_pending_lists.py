@@ -131,12 +131,57 @@ SEARCH_TRIGRAM_INDEXES: tuple[str, ...] = (
 #: autovacuum ever emptied it. Which index that statement merged is not known;
 #: this closes the one that nothing was keeping down.
 #:
-#: Listed FIRST in the pass, so a slow trigram flush cannot starve it under the
-#: task's soft limit. Same frozen-literal rule as the search pool.
+#: Listed FIRST in whichever pass visits it, so a slow trigram flush cannot
+#: starve it under the task's soft limit. Same frozen-literal rule as the
+#: search pool.
 WRITE_PATH_GIN_INDEXES: tuple[str, ...] = ("ix_events_event_tags",)
 
-#: Everything one pass visits, in order — and the only names `_flush_one` takes.
+#: The whole declared pool — and the only names `_flush_one` takes.
 FLUSHED_GIN_INDEXES: tuple[str, ...] = WRITE_PATH_GIN_INDEXES + SEARCH_TRIGRAM_INDEXES
+
+#: #10090 — every GIN index on `events`, flushed by their OWN beat on `realtime`
+#: (`flush-events-gin-pending-lists`), `ix_events_event_tags` first.
+#:
+#: WHY A SECOND BEAT. The 2-minute beat on `background` started 37 times in the
+#: 24 h before 15:44Z 10/29 against 720 fires, with gaps of 43 min and 5 h
+#: (task-metrics, read by speed). `background` is `--concurrency=2` against ~140
+#: beats and its measured lag is p50 152 s / max 2,511 s on a 120 s beat
+#: (LAT-P112, recorded at the `warm-container-hubs` entry); this beat's
+#: `expires: 110` therefore discards most fires before a worker takes them, by
+#: design, and no `expires` value fixes a queue that is late by more than a
+#: period. `realtime` delivered 40 s against a declared 40 s (max 54 s) in the
+#: same measurement. `warm-container-hubs` moved for the same reason (#9982).
+#:
+#: WHY IT CANNOT ITSELF BECOME A STALL. (1) A writer never waits on a flush: an
+#: inserting backend over the limit takes the GIN metapage lock CONDITIONALLY and,
+#: finding a cleanup in progress, appends and returns (lane1's PG14 review of
+#: #11732, 10/29 14:05Z: max 3.1 ms at ~650 pages). (2) Each list holds about
+#: one period of growth when the beat delivers, and is capped near
+#: `gin_pending_list_limit` by the writers themselves when it does not, so one
+#: flush is at most one full-limit merge (~10 s, the in-statement merge mapped at
+#: 04:39Z) — under `PER_INDEX_TIMEOUT_MS`. A flush cut by its timeout reclaims 0
+#: pages, so that bound must stay above a full-limit merge. (3) The pass starts no
+#: flush after `EVENTS_PASS_BUDGET_S`, so one fire holds a realtime slot for at
+#: most budget + one flush. (4) These five leave the `background` pass, so no
+#: flush ever waits on another flush's metapage lock.
+EVENTS_GIN_INDEXES: tuple[str, ...] = (
+    "ix_events_event_tags",
+    "ix_events_home_trgm",
+    "ix_events_away_trgm",
+    "ix_events_home_team_name_trgm",
+    "ix_events_away_team_name_trgm",
+)
+
+#: What the `background` pass visits while the events beat is on: the rest of the
+#: pool, in pool order.
+BACKGROUND_GIN_INDEXES: tuple[str, ...] = tuple(
+    name for name in FLUSHED_GIN_INDEXES if name not in EVENTS_GIN_INDEXES
+)
+
+#: The events pass starts no new flush once this much of it has elapsed. With
+#: `PER_INDEX_TIMEOUT_MS` the longest a fire can hold its realtime slot is
+#: 20 + 15 s, under the task's 45 s soft limit.
+EVENTS_PASS_BUDGET_S = 20.0
 
 #: The bound on the longest uninterrupted operation — one flush of one index.
 #: Well under the task's own `soft_time_limit`, which is itself well under the
@@ -153,6 +198,21 @@ def gin_flush_enabled() -> bool:
     """
     raw = os.environ.get("SEARCH_GIN_FLUSH_ENABLED", "1").strip().lower()
     return raw not in {"0", "false", "no", "off"}
+
+
+def events_gin_flush_enabled() -> bool:
+    """Rollback of the `realtime` events beat without a deploy. Defaults ON.
+
+    Off, the events pass skips and the `background` pass takes its five
+    indexes back — exactly the state before the events beat existed.
+    """
+    raw = os.environ.get("EVENTS_GIN_FLUSH_ENABLED", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def background_pass_indexes() -> tuple[str, ...]:
+    """The `background` pass: the whole pool if the events beat is off."""
+    return BACKGROUND_GIN_INDEXES if events_gin_flush_enabled() else FLUSHED_GIN_INDEXES
 
 
 async def _flush_one(session, index_name: str) -> int:
@@ -184,9 +244,32 @@ async def _flush_one(session, index_name: str) -> int:
 
 
 async def _flush_gin_pending_lists() -> dict:
-    """One pass over the declared pool. Never raises; always returns a summary."""
+    """The `background` pass. Never raises; always returns a summary."""
+    return await _flush_pass(
+        background_pass_indexes(), enabled=gin_flush_enabled(), label="background"
+    )
+
+
+async def _flush_events_gin_pending_lists() -> dict:
+    """The `realtime` events pass (#10090). Never raises; always returns a summary."""
+    return await _flush_pass(
+        EVENTS_GIN_INDEXES,
+        enabled=gin_flush_enabled() and events_gin_flush_enabled(),
+        label="events",
+        pass_budget_s=EVENTS_PASS_BUDGET_S,
+    )
+
+
+async def _flush_pass(
+    indexes: tuple[str, ...],
+    *,
+    enabled: bool,
+    label: str,
+    pass_budget_s: float | None = None,
+) -> dict:
+    """One pass over ``indexes``, in order. Never raises; always returns a summary."""
     started = time.perf_counter()
-    if not gin_flush_enabled():
+    if not enabled:
         return {
             "terminal": "skipped",
             "skip_reason": "disabled",
@@ -202,10 +285,17 @@ async def _flush_gin_pending_lists() -> dict:
 
     per_index: dict[str, int] = {}
     errors: list[dict] = []
+    budget_skipped: list[str] = []
     pages_total = 0
 
     async with get_task_session() as session:
-        for index_name in FLUSHED_GIN_INDEXES:
+        for index_name in indexes:
+            if (
+                pass_budget_s is not None
+                and time.perf_counter() - started >= pass_budget_s
+            ):
+                budget_skipped.append(index_name)
+                continue
             try:
                 # A savepoint per index: a flush that fails (lock timeout, a
                 # dropped index) must not poison the transaction the rest
@@ -221,7 +311,7 @@ async def _flush_gin_pending_lists() -> dict:
                 errors.append({"index": index_name, "error": str(exc)[:300]})
 
     completed = len(per_index)
-    total = len(FLUSHED_GIN_INDEXES)
+    total = len(indexes)
     if completed == 0:
         terminal = "failed"
     elif completed < total:
@@ -236,10 +326,13 @@ async def _flush_gin_pending_lists() -> dict:
         "pages_cleaned": pages_total,
         "per_index": per_index,
         "errors": errors,
+        "budget_skipped": budget_skipped,
         "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
     }
     logger.info(
-        "gin_pending_list_flush terminal=%s completed=%s/%s pages=%s elapsed_ms=%s",
+        "gin_pending_list_flush pass=%s terminal=%s completed=%s/%s pages=%s "
+        "elapsed_ms=%s",
+        label,
         terminal,
         completed,
         total,

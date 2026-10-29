@@ -755,6 +755,8 @@ celery_app.conf.task_routes = {
     "app.tasks.stamp_nhl_statpal_fixtures": {"queue": "background"},
     "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
     "app.tasks.heartbeat": {"queue": "realtime"},
+    # #10090 — the `events` GIN flush; reasoning at its beat entry.
+    "app.tasks.flush_events_gin_pending_lists": {"queue": "realtime"},
     "app.tasks.transition_event_statuses": {"queue": "realtime"},
     # #7260. Declared rather than left to `task_default_queue` — a default is not
     # a decision. `background` and NOT `realtime`, where its sibling repairs run:
@@ -6696,15 +6698,38 @@ def flush_search_gin_pending_lists(self):
 
     Budget: the longest uninterrupted operation is ONE index flush, and that is
     what carries the bound (`PER_INDEX_TIMEOUT_MS = 15s`), not the loop
-    boundary. Eight indexes at the 2-minute beat (the seven search trigram
-    lists plus `ix_events_event_tags`, #10090), each inside its own
-    savepoint — the full reasoning and the sawtooth measurement are in
-    `app/tasks/gin_pending_lists.py`.
+    boundary. The three non-`events` search trigram lists at the 2-minute beat
+    (all eight when `EVENTS_GIN_FLUSH_ENABLED=0`; the five `events` lists
+    otherwise ride `flush_events_gin_pending_lists` on `realtime`, #10090),
+    each inside its own savepoint — the full reasoning and the sawtooth
+    measurement are in `app/tasks/gin_pending_lists.py`.
     """
     from app.tasks.gin_pending_lists import _flush_gin_pending_lists
 
     return _tracked_run(
         "flush_search_gin_pending_lists", _flush_gin_pending_lists()
+    )
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=45,
+    time_limit=60,
+    name="app.tasks.flush_events_gin_pending_lists",
+)
+def flush_events_gin_pending_lists(self):
+    """#10090: flush the `events` GIN pending lists every 2 min, on `realtime`.
+
+    The `background` beat above delivered 37 of 720 fires in a day, so an
+    `events` writer crossing `gin_pending_list_limit` still merged the list
+    inside its own UPDATE. Why `realtime`, why it cannot become a stall, and the
+    20 s pass budget (+ one 15 s flush, under the 45 s soft limit) are at
+    `EVENTS_GIN_INDEXES` in `app/tasks/gin_pending_lists.py`.
+    """
+    from app.tasks.gin_pending_lists import _flush_events_gin_pending_lists
+
+    return _tracked_run(
+        "flush_events_gin_pending_lists", _flush_events_gin_pending_lists()
     )
 
 
@@ -8206,6 +8231,22 @@ celery_app.conf.beat_schedule = {
         # minutes late has been superseded by the next one.
         "schedule": 120.0,
         "options": {"queue": "background", "expires": 110},
+    },
+    "flush-events-gin-pending-lists": {
+        "task": "app.tasks.flush_events_gin_pending_lists",
+        # Every 2 min on `realtime` — #10090. The entry above delivered 37 of
+        # 720 fires in a day: `background` runs late by more than its period
+        # (LAT-P112: p50 152 s on a 120 s beat), so `expires: 110` discards most
+        # fires unstarted. The five `events` GIN lists (`ix_events_event_tags`
+        # first) move here; `events` writers merge them in-statement, with the
+        # row locked, when nothing else does. Cost beside the live price poll:
+        # about one period of growth per list (milliseconds), at most
+        # `EVENTS_PASS_BUDGET_S` + one 15 s flush on a cold start, and writers
+        # skip-and-append during a flush instead of waiting. Same `expires` as
+        # the entry above, for the same reason. Rollback without a deploy:
+        # `EVENTS_GIN_FLUSH_ENABLED=0` hands the five back to `background`.
+        "schedule": 120.0,
+        "options": {"queue": "realtime", "expires": 110},
     },
     "typeahead-index-sentinel": {
         "task": "app.tasks.typeahead_index_sentinel",

@@ -53,7 +53,8 @@ class _Nested:
 class FakeSession:
     """Records statements; raises for any index named in ``fail_on``."""
 
-    def __init__(self, *, pages=7, fail_on=(), pages_by_index=None):
+    def __init__(self, *, pages=7, fail_on=(), pages_by_index=None, on_flush=None):
+        self._on_flush = on_flush
         self.statements: list[str] = []
         self.savepoints = 0
         self.rollbacks = 0
@@ -69,6 +70,8 @@ class FakeSession:
         self.statements.append(sql)
         if "gin_clean_pending_list" not in sql:
             return _Result(None)
+        if self._on_flush is not None:
+            self._on_flush(sql)
         for name in self._fail_on:
             if name in sql:
                 raise RuntimeError(f"boom: {name}")
@@ -88,6 +91,21 @@ def _patch_session(monkeypatch, session):
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def _flushed(session) -> list[str]:
+    """The index each issued flush named, in issue order."""
+    out = []
+    for sql in session.statements:
+        if "gin_clean_pending_list" in sql:
+            out.append(sql.split("gin_clean_pending_list('", 1)[1].split("'", 1)[0])
+    return out
+
+
+@pytest.fixture(autouse=True)
+def _both_switches_default(monkeypatch):
+    monkeypatch.delenv("SEARCH_GIN_FLUSH_ENABLED", raising=False)
+    monkeypatch.delenv("EVENTS_GIN_FLUSH_ENABLED", raising=False)
 
 
 # --------------------------------------------------------------------------
@@ -138,30 +156,143 @@ class TestTheWritePathPool:
         assert isinstance(gpl.FLUSHED_GIN_INDEXES, tuple)
         assert len(gpl.FLUSHED_GIN_INDEXES) == len(set(gpl.FLUSHED_GIN_INDEXES))
 
-    def test_event_tags_is_the_first_flush_a_pass_issues(self, monkeypatch):
-        monkeypatch.delenv("SEARCH_GIN_FLUSH_ENABLED", raising=False)
+    def test_event_tags_is_the_first_flush_the_events_pass_issues(self, monkeypatch):
         session = FakeSession(pages=2)
         _patch_session(monkeypatch, session)
-        summary = _run(gpl._flush_gin_pending_lists())
+        summary = _run(gpl._flush_events_gin_pending_lists())
         flushes = [s for s in session.statements if "gin_clean_pending_list" in s]
         assert flushes[0] == (
             "SELECT gin_clean_pending_list('ix_events_event_tags'::regclass) AS pages"
         )
-        assert len(flushes) == len(gpl.FLUSHED_GIN_INDEXES)
+        assert len(flushes) == len(gpl.EVENTS_GIN_INDEXES)
         assert summary["per_index"]["ix_events_event_tags"] == 2
         assert summary["terminal"] == "complete"
 
-    def test_a_failed_event_tags_flush_leaves_every_search_flush_standing(
+    def test_a_failed_event_tags_flush_leaves_every_events_trigram_flush_standing(
         self, monkeypatch
     ):
-        monkeypatch.delenv("SEARCH_GIN_FLUSH_ENABLED", raising=False)
         session = FakeSession(pages=5, fail_on=("ix_events_event_tags",))
         _patch_session(monkeypatch, session)
-        summary = _run(gpl._flush_gin_pending_lists())
+        summary = _run(gpl._flush_events_gin_pending_lists())
         assert [e["index"] for e in summary["errors"]] == ["ix_events_event_tags"]
-        assert summary["per_index"] == {n: 5 for n in gpl.SEARCH_TRIGRAM_INDEXES}
+        assert summary["per_index"] == {
+            n: 5 for n in gpl.EVENTS_GIN_INDEXES if n != "ix_events_event_tags"
+        }
         assert summary["terminal"] == "partial"
         assert not classify_summary(summary).is_green
+
+
+class TestTheEventsPass:
+    """#10090: the `background` beat delivered 37 of 720 fires in a day, so the
+    `events` GIN lists get their own beat on `realtime`. Each index has exactly
+    one owning pass, and one switch puts everything back as it was."""
+
+    def test_the_two_passes_partition_the_pool(self):
+        events, background = gpl.EVENTS_GIN_INDEXES, gpl.BACKGROUND_GIN_INDEXES
+        assert isinstance(events, tuple) and isinstance(background, tuple)
+        assert not set(events) & set(background), "an index flushed by two passes"
+        assert set(events) | set(background) == set(gpl.FLUSHED_GIN_INDEXES)
+        assert len(events) + len(background) == len(gpl.FLUSHED_GIN_INDEXES)
+
+    def test_the_events_pass_is_every_events_index_event_tags_first(self):
+        assert gpl.EVENTS_GIN_INDEXES[0] == "ix_events_event_tags"
+        assert set(gpl.EVENTS_GIN_INDEXES) == {
+            n for n in gpl.FLUSHED_GIN_INDEXES if n.startswith("ix_events_")
+        }
+
+    def test_the_background_pass_keeps_pool_order(self):
+        assert gpl.BACKGROUND_GIN_INDEXES == tuple(
+            n for n in gpl.FLUSHED_GIN_INDEXES if n in gpl.BACKGROUND_GIN_INDEXES
+        )
+
+    def test_the_events_pass_flushes_exactly_its_five_in_order(self, monkeypatch):
+        session = FakeSession(pages=4)
+        _patch_session(monkeypatch, session)
+        summary = _run(gpl._flush_events_gin_pending_lists())
+        assert _flushed(session) == list(gpl.EVENTS_GIN_INDEXES)
+        assert summary["terminal"] == "complete"
+        assert summary["total"] == len(gpl.EVENTS_GIN_INDEXES)
+        assert summary["budget_skipped"] == []
+        assert classify_summary(summary).is_green
+
+    def test_the_background_pass_leaves_the_events_lists_to_the_events_beat(
+        self, monkeypatch
+    ):
+        """A background flush on an `events` index would wait on the events
+        pass's metapage lock (a forced cleanup waits; only writers skip)."""
+        session = FakeSession(pages=4)
+        _patch_session(monkeypatch, session)
+        summary = _run(gpl._flush_gin_pending_lists())
+        assert _flushed(session) == list(gpl.BACKGROUND_GIN_INDEXES)
+        assert not any(n.startswith("ix_events_") for n in _flushed(session))
+        assert summary["terminal"] == "complete"
+
+    @pytest.mark.parametrize("raw", ["0", "false", "off"])
+    def test_the_events_switch_off_hands_all_eight_back_to_background(
+        self, monkeypatch, raw
+    ):
+        monkeypatch.setenv("EVENTS_GIN_FLUSH_ENABLED", raw)
+
+        @asynccontextmanager
+        async def _explode():
+            raise AssertionError("a disabled events pass must not open a session")
+            yield  # pragma: no cover
+
+        monkeypatch.setattr("app.tasks.base.get_task_session", _explode)
+        events = _run(gpl._flush_events_gin_pending_lists())
+        assert events["terminal"] == "skipped"
+        assert not classify_summary(events).is_green
+
+        session = FakeSession(pages=1)
+        _patch_session(monkeypatch, session)
+        background = _run(gpl._flush_gin_pending_lists())
+        assert _flushed(session) == list(gpl.FLUSHED_GIN_INDEXES)
+        assert _flushed(session)[0] == "ix_events_event_tags"
+        assert background["terminal"] == "complete"
+
+    def test_the_search_switch_still_turns_off_both_passes(self, monkeypatch):
+        monkeypatch.setenv("SEARCH_GIN_FLUSH_ENABLED", "0")
+
+        @asynccontextmanager
+        async def _explode():
+            raise AssertionError("a disabled pass must not open a session")
+            yield  # pragma: no cover
+
+        monkeypatch.setattr("app.tasks.base.get_task_session", _explode)
+        assert _run(gpl._flush_events_gin_pending_lists())["terminal"] == "skipped"
+        assert _run(gpl._flush_gin_pending_lists())["terminal"] == "skipped"
+
+    def test_no_flush_starts_after_the_pass_budget(self, monkeypatch):
+        """Bounds how long one fire holds a realtime slot: budget + one flush.
+        Each fake flush costs 12 s against the 20 s budget, so two run and the
+        remaining three are named, not silently dropped."""
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(gpl.time, "perf_counter", lambda: clock["t"])
+
+        def _advance(_sql):
+            clock["t"] += 12.0
+
+        session = FakeSession(pages=3, on_flush=_advance)
+        _patch_session(monkeypatch, session)
+        summary = _run(gpl._flush_events_gin_pending_lists())
+        assert gpl.EVENTS_PASS_BUDGET_S == 20.0
+        assert _flushed(session) == list(gpl.EVENTS_GIN_INDEXES[:2])
+        assert summary["budget_skipped"] == list(gpl.EVENTS_GIN_INDEXES[2:])
+        assert summary["terminal"] == "partial"
+        assert not classify_summary(summary).is_green
+
+    def test_the_background_pass_has_no_pass_budget(self, monkeypatch):
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(gpl.time, "perf_counter", lambda: clock["t"])
+
+        def _advance(_sql):
+            clock["t"] += 30.0
+
+        session = FakeSession(pages=3, on_flush=_advance)
+        _patch_session(monkeypatch, session)
+        summary = _run(gpl._flush_gin_pending_lists())
+        assert _flushed(session) == list(gpl.BACKGROUND_GIN_INDEXES)
+        assert summary["budget_skipped"] == []
 
 
 # --------------------------------------------------------------------------
@@ -203,12 +334,12 @@ class TestThePass:
         _patch_session(monkeypatch, session)
         summary = _run(gpl._flush_gin_pending_lists())
         assert summary["terminal"] == "complete"
-        assert summary["completed"] == len(gpl.FLUSHED_GIN_INDEXES)
-        assert summary["total"] == len(gpl.FLUSHED_GIN_INDEXES)
-        assert summary["pages_cleaned"] == 11 * len(gpl.FLUSHED_GIN_INDEXES)
+        assert summary["completed"] == len(gpl.BACKGROUND_GIN_INDEXES)
+        assert summary["total"] == len(gpl.BACKGROUND_GIN_INDEXES)
+        assert summary["pages_cleaned"] == 11 * len(gpl.BACKGROUND_GIN_INDEXES)
         assert summary["errors"] == []
         assert classify_summary(summary).is_green
-        assert session.savepoints == len(gpl.FLUSHED_GIN_INDEXES)
+        assert session.savepoints == len(gpl.BACKGROUND_GIN_INDEXES)
 
     def test_one_bad_index_must_not_wipe_the_pass(self, monkeypatch):
         """Gotcha #42, in its maintenance-task form. The healthy siblings are
@@ -219,9 +350,9 @@ class TestThePass:
         _patch_session(monkeypatch, session)
         summary = _run(gpl._flush_gin_pending_lists())
         assert summary["terminal"] == "partial"
-        assert summary["completed"] == len(gpl.FLUSHED_GIN_INDEXES) - 1
+        assert summary["completed"] == len(gpl.BACKGROUND_GIN_INDEXES) - 1
         assert [e["index"] for e in summary["errors"]] == ["ix_futures_name_trgm"]
-        for name in gpl.FLUSHED_GIN_INDEXES:
+        for name in gpl.BACKGROUND_GIN_INDEXES:
             if name == "ix_futures_name_trgm":
                 assert name not in summary["per_index"]
             else:
@@ -238,7 +369,7 @@ class TestThePass:
         summary = _run(gpl._flush_gin_pending_lists())
         assert summary["terminal"] == "failed"
         assert summary["completed"] == 0
-        assert len(summary["errors"]) == len(gpl.FLUSHED_GIN_INDEXES)
+        assert len(summary["errors"]) == len(gpl.BACKGROUND_GIN_INDEXES)
         assert not classify_summary(summary).is_green
 
     def test_zero_pages_reclaimed_is_still_a_complete_pass(self, monkeypatch):
@@ -263,7 +394,7 @@ class TestThePass:
         _patch_session(monkeypatch, session)
         summary = _run(gpl._flush_gin_pending_lists())
         assert summary["per_index"]["ix_futures_outcomes_name_trgm"] == 480
-        assert summary["pages_cleaned"] == 480 + (len(gpl.FLUSHED_GIN_INDEXES) - 1)
+        assert summary["pages_cleaned"] == 480 + (len(gpl.BACKGROUND_GIN_INDEXES) - 1)
 
 
 # --------------------------------------------------------------------------
@@ -320,6 +451,31 @@ class TestWiring:
         assert (
             0 < options["expires"] <= period
         ), "an expires longer than the period cannot discard a superseded fire"
+
+    def test_the_events_beat_is_on_realtime_every_two_minutes(self):
+        """#10090: `background` delivered 37 of 720 fires; the events lists ride
+        the queue that delivers its period."""
+        from app.tasks import celery_app
+
+        entry = celery_app.conf.beat_schedule["flush-events-gin-pending-lists"]
+        assert entry["task"] == "app.tasks.flush_events_gin_pending_lists"
+        assert entry["schedule"] == 120.0
+        options = entry["options"]
+        assert options["queue"] == "realtime"
+        assert (
+            0 < options["expires"] <= entry["schedule"]
+        ), "an expires longer than the period cannot discard a superseded fire"
+        route = celery_app.conf.task_routes["app.tasks.flush_events_gin_pending_lists"]
+        assert route == {"queue": "realtime"}, "beat options and task_routes must agree"
+        assert "app.tasks.flush_events_gin_pending_lists" in celery_app.tasks
+
+    def test_the_events_task_holds_its_slot_at_most_budget_plus_one_flush(self):
+        from app.tasks import celery_app
+
+        task = celery_app.tasks["app.tasks.flush_events_gin_pending_lists"]
+        worst = gpl.EVENTS_PASS_BUDGET_S + gpl.PER_INDEX_TIMEOUT_MS / 1000.0
+        assert worst < task.soft_time_limit < task.time_limit
+        assert task.time_limit < celery_app.conf.task_time_limit
 
     def test_the_task_is_registered_under_the_name_the_beat_dispatches(self):
         from app.tasks import celery_app
