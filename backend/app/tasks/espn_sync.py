@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Optional
 
-from sqlalchemy import select, distinct, and_, or_, func, literal, text
+from sqlalchemy import select, distinct, and_, any_, or_, func, literal, text
 from sqlalchemy.orm import selectinload
 
 from app.models import Event, Sport
@@ -4770,17 +4770,53 @@ def illegal_settled_tennis_score_recall():
     2026-09-16 with ``EXPLAIN (ANALYZE)``: **116.6 ms**, 26 rows, a bitmap index
     scan on ``ix_events_sport_id`` — and once the standing population is cleared
     the same query returns nothing for the same cost.
+
+    ── IT STOPPED SEEKING BY 2026-10-29, AND THE SHAPE BELOW IS WHY IT CANNOT
+    AGAIN (#10090) ──
+
+    pg_stat_statements read this statement at a **4.0 s mean, 66 s max** over
+    38,299 calls, 0.03 rows a call, waiting on ``DataFileRead``. The predicate
+    had not changed since 2026-09-16; the data had. Tennis grew to 42,483 rows
+    and the planner's guess at the matches grew with it (583), and against
+    ``ORDER BY id LIMIT 200`` that guess makes walking ``events_pkey`` from the
+    start and filtering every row look cheaper than finding the tennis rows
+    first — it expects 200 matches in the first third of the table. The real
+    match count is ~0, because the standing population was cleared on day one,
+    so the walk never stops early: every pass read the whole 866 MB heap in
+    key order inside the 60-second status beat. Plan-only reads on production
+    (artifacts ``live-10090-status-beat-recall-20261029T2220Z``): the old shape
+    plans that walk (cost 71k), a non-indexable order alone plans a sequential
+    scan (107k), and the shape below plans the seek (23k, a bitmap on
+    ``ix_events_sport_id`` ∩ ``ix_events_status`` over the 9,392 heap pages
+    tennis lives on).
+
+    Two changes, both needed, neither a change to WHICH rows come back:
+
+    * The tennis sport ids arrive as ``sport_id = ANY(ARRAY(SELECT …))`` — an
+      InitPlan — instead of a JOIN on ``Sport.key LIKE``. Through a join the
+      planner cannot know which ``sport_id`` values it is looking for until it
+      has read the rows, so the sport index is not a path it can take; as an
+      InitPlan parameter it is.
+    * The order is ``id + 0``: the same order, but not one ``events_pkey`` can
+      serve, so "walk the key and hope for 200 early" is no longer a plan the
+      planner can pick, however its guess drifts. The first change alone
+      plans the seek on production today, but on a synthetic table with an
+      inflated guess it still walks the key;
+      ``tests/integration/test_illegal_settled_tennis_score_recall_2772_pg.py``
+      pins both.
     """
     from app.utils.espn_tennis_anchor import (
         COMPLETED_WINNER_SET_COUNTS,
         TENNIS_STATUSES_CLAIMING_A_RESULT,
     )
 
+    tennis_sport_ids = func.array(
+        select(Sport.id).where(Sport.key.like("tennis%")).scalar_subquery()
+    )
     return (
         select(Event)
-        .join(Sport, Event.sport_id == Sport.id)
         .where(
-            Sport.key.like("tennis%"),
+            Event.sport_id == any_(tennis_sport_ids),
             Event.status.in_(TENNIS_STATUSES_CLAIMING_A_RESULT),
             Event.home_score.isnot(None),
             Event.away_score.isnot(None),
@@ -4796,8 +4832,9 @@ def illegal_settled_tennis_score_recall():
         # matters. Ordered by the primary key rather than by age because the cap
         # is 200 against a measured 26: at one page a minute no plausible
         # backlog survives long enough for an age order to matter, and
-        # determinism is the whole benefit on offer.
-        .order_by(Event.id)
+        # determinism is the whole benefit on offer. `+ 0` keeps that order
+        # while refusing `events_pkey` the walk described in the docstring.
+        .order_by(Event.id + 0)
         .limit(MAX_ILLEGAL_TENNIS_SCORES_PER_PASS)
     )
 
@@ -6174,6 +6211,23 @@ async def _transition_event_statuses_impl() -> dict:
         # anchor rail from inside functions only, and the rail pulls the ESPN
         # tennis service in behind it.
         from app.utils.espn_tennis_anchor import settled_tennis_score_is_impossible
+
+        # #10090: THE REPAIRS ABOVE COMMIT BEFORE THIS RECALL, as the promotion
+        # and the suspend/resume phase do. The recall is the one statement in
+        # this pass that reads a whole sport rather than seeking a status, and
+        # on 2026-10-29 it ran 4 s on average and 66 s at worst while holding
+        # every row the retirement and both un-settle arms had just written —
+        # the 60-second beat ran 6-124 s and its open transaction defeated the
+        # v5958 migration's `events` lock twice. The recall's own plan is fixed
+        # in `illegal_settled_tennis_score_recall`; this boundary is what keeps
+        # the NEXT drift in it from holding anyone else's write. The same
+        # trade as the commits above: a failure from here on no longer undoes a
+        # retirement or an un-settle that had completed, and the in-flight
+        # marker is still released only after the block commits (later than
+        # durability, never earlier). `expunge_all` for the same stale-copy
+        # reason; the two arms below load their own rows.
+        await session.commit()
+        session.expunge_all()
 
         stats["withdrew_illegal_tennis_score"] = 0
         _illegal_tennis = await session.execute(illegal_settled_tennis_score_recall())
