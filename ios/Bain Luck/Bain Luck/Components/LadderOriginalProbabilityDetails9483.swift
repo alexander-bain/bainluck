@@ -201,45 +201,18 @@ struct LadderOriginalProbabilityDetailsView9483: View {
     let card: NBALadderCard9483?
     let optionKey: String?
     let tint: Color
-    @Environment(\.dynamicTypeSize) private var typeSize
-    @ScaledMetric(relativeTo: .title) private var figureSize: CGFloat = 28
 
     private typealias Model = LadderOriginalProbabilityDetails9483
-    private static let ringSize: CGFloat = 16
-    private static let dotSize: CGFloat = 9
 
     var body: some View {
         if let content = Model.content(card: card, optionKey: optionKey) {
             VStack(alignment: .leading, spacing: 16) {
                 summary(content)
-                DisclosureGroup("About this market") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(content.about, id: \.label) { row in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(row.label).font(.footnote).foregroundStyle(.secondary)
-                                Text(row.value).font(.subheadline)
-                            }
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityElement(children: .combine)
-                        }
-                    }
-                    .padding(.top, 8)
-                }
-                .font(.subheadline)
+                ProbabilityDetailsAbout9483(rows: content.about)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(Model.unavailableTitle).font(.headline)
-                Text(Model.unavailableNote)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(Model.spoken(nil))
+            ProbabilityDetailsUnavailable9483()
         }
     }
 
@@ -250,9 +223,14 @@ struct LadderOriginalProbabilityDetailsView9483: View {
                 .fixedSize(horizontal: false, vertical: true)
             Text("\(Text("Selected line · ").font(.subheadline).foregroundStyle(.secondary))\(Text(content.selected).font(.headline))")
                 .fixedSize(horizontal: false, vertical: true)
-            figures(content.readings)
+            ProbabilityDetailsFigures9483(figures: content.readings.map {
+                ProbabilityDetailsFigure9483(label: $0.label, marker: $0.marker, text: $0.text,
+                                             isValue: $0.value != nil, dateLine: $0.dateLine)
+            }, tint: tint)
             if !content.marks.isEmpty {
-                rail(content.marks)
+                ProbabilityDetailsRail9483(marks: content.marks.compactMap { mark in
+                    mark.value.map { ProbabilityDetailsRailMark9483(id: mark.label, marker: mark.marker, value: $0) }
+                }, tint: tint)
             }
             if let result = content.result {
                 Label(result.text, systemImage: result.symbol)
@@ -264,56 +242,440 @@ struct LadderOriginalProbabilityDetailsView9483: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Model.spoken(content))
     }
+}
 
-    /// Two readings sit side by side only when both fit whole; otherwise they
-    /// stack before anything squeezes, and accessibility sizes always stack.
-    @ViewBuilder private func figures(_ readings: [Model.Reading]) -> some View {
-        if readings.count < 2 || typeSize.isAccessibilitySize {
+// MARK: - Original market Details (#10868)
+
+/// #9483 / #10868 — the Details content for one selected ORIGINAL market (a
+/// cricket Test original such as "South Africa wins"): that original's own
+/// pregame chance first, beside either a separately admitted later reading or
+/// the original contract's own result, on the same 0–100% reference rail, with
+/// title, outcome, rules and provenance behind "About this market".
+///
+/// Presentation only, and no NBA card in between: the host resolves every
+/// word and number. It holds the exact selected original (or nothing), picks
+/// the display `Mode`, writes each reading's figure text and provenance with
+/// the owners' formatter and clock, and admits the result words. This file
+/// formats no number or date, elects no reading, complements nothing and runs
+/// no timer. The `Mode` is the MARKET's display state as the owner admitted
+/// it — never inferred here from the game: a settled original may show its
+/// result while the match is live, and an open one does not settle because the
+/// match finished.
+///
+/// GAP, NOT PAID HERE: the host keeps event/scope admission, latest-payload
+/// reconciliation, Done/Back/focus and Details routing. `Catalogue.scope` is
+/// only compared, never derived.
+enum OriginalMarketDetails9483 {
+    typealias Marker = LadderOriginalProbabilityDetails9483.Marker
+    typealias Row = LadderOriginalProbabilityDetails9483.Row
+
+    /// The original's exact identity as the host holds it — never built here
+    /// from a ticker, a label or an array position.
+    struct Identity: Hashable {
+        let source: String
+        let market: String
+        let side: String
+    }
+
+    /// The host's held selection: an exact identity inside the exact scope it
+    /// was chosen in.
+    struct Selection: Equatable {
+        let scope: String
+        let identity: Identity
+    }
+
+    /// The host's latest admitted originals for one scope.
+    struct Catalogue: Equatable {
+        let scope: String
+        let originals: [Original]
+    }
+
+    /// What the later reading is, as the owner admitted it.
+    enum Later: Equatable {
+        case current, recorded
+
+        var label: String {
+            switch self {
+            case .current: return "Current chance"
+            case .recorded: return "Recorded chance"
+            }
+        }
+    }
+
+    /// The original market's display state, chosen by the owner.
+    enum Mode: Equatable {
+        /// One admitted pregame reading.
+        case pregame
+        /// The pregame reading beside a separately admitted later reading.
+        case comparison(Later)
+        /// The pregame reading beside the original contract's own result.
+        case result
+    }
+
+    struct Reading: Equatable {
+        enum Figure: Equatable {
+            /// The owner's formatted figure, printed verbatim ("0%" included).
+            case value(String)
+            /// The owner's reason this slot has no figure.
+            case missing(String)
+        }
+
+        let figure: Figure
+        /// Where the owner places the reading on the 0–100% rail (0...1).
+        /// Geometry only: an absent, non-finite or out-of-range placement
+        /// draws no mark and is never clamped; the figure text still shows.
+        let placement: Double?
+        /// The reading's own provenance in full — calendar, granularity,
+        /// source — as the owner wrote it.
+        let provenance: String?
+
+        static func value(_ text: String, placement: Double?, provenance: String?) -> Reading {
+            Reading(figure: .value(text), placement: placement, provenance: provenance)
+        }
+
+        static func missing(_ reason: String) -> Reading {
+            Reading(figure: .missing(reason), placement: nil, provenance: nil)
+        }
+    }
+
+    /// The original contract's own grade, independently admitted by its owner
+    /// ("Resolved No", "Void", "Not yet confirmed") — never the match result.
+    struct Grade: Equatable {
+        let words: String
+        /// The grade's own settlement provenance; nil stays unknown.
+        let provenance: String?
+    }
+
+    /// The last recorded value, explicitly historical and separately dated.
+    struct HistoricalQuote: Equatable {
+        let text: String
+        let recorded: String?
+    }
+
+    enum Rules: Equatable {
+        /// Proved rule text, paragraph by paragraph.
+        case verified([String])
+        /// The owner's words for "no proved rules".
+        case unavailable(String)
+        /// No rules section.
+        case omitted
+    }
+
+    struct About: Equatable {
+        let source: String?
+        let rules: Rules
+        /// Phase-admitted provenance rows, exactly as supplied.
+        let provenance: [Row]
+        let historicalQuote: HistoricalQuote?
+    }
+
+    struct Original: Equatable {
+        let identity: Identity
+        let title: String
+        let outcome: String
+        let mode: Mode
+        let pregame: Reading
+        /// Read in `.comparison` only.
+        let later: Reading?
+        /// Read in `.result` only.
+        let grade: Grade?
+        let about: About
+    }
+
+    struct ShownReading: Equatable {
+        let label: String
+        let marker: Marker
+        /// The owner's figure text, or this slot's own missing reason.
+        let text: String
+        let isValue: Bool
+        /// Nil only for a missing reading.
+        let provenance: String?
+        /// A valid rail position, or nil — no mark.
+        let placement: Double?
+    }
+
+    struct ShownResult: Equatable {
+        let words: String
+        /// Nil only when no grade was supplied at all.
+        let provenance: String?
+    }
+
+    struct Content: Equatable {
+        let title: String
+        let outcome: String
+        let readings: [ShownReading]
+        /// `.result` mode only.
+        let result: ShownResult?
+        let about: [Row]
+        let rules: Rules
+
+        /// What the rail draws: only readings with a valid placement.
+        var marks: [ShownReading] { readings.filter { $0.placement != nil } }
+    }
+
+    static let pregameLabel = "Pregame chance"
+    static let resultLabel = "Original market result"
+    static let resultUnavailable = "Result unavailable"
+    static let resultTimeUnknown = "Settlement time unknown"
+    static let historicalLabel = "Last recorded probability (historical)"
+    static let rulesLabel = "Rules"
+    static let unavailable = LadderOriginalProbabilityDetails9483.unavailable
+    static let timeUnknown = LadderOriginalProbabilityDetails9483.timeUnknown
+
+    /// The selected original by exact identity inside the selection's own
+    /// scope. A nil, blank, out-of-scope, withdrawn or duplicated identity is
+    /// no original — never the first, a default or a neighbour.
+    static func original(in catalogue: Catalogue?, selection: Selection?) -> Original? {
+        guard let catalogue, let selection, !blank(selection.scope), selection.scope == catalogue.scope,
+              !blank(selection.identity.source), !blank(selection.identity.market),
+              !blank(selection.identity.side) else { return nil }
+        let matches = catalogue.originals.filter { $0.identity == selection.identity }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    static func content(catalogue: Catalogue?, selection: Selection?) -> Content? {
+        guard let original = original(in: catalogue, selection: selection),
+              !blank(original.title), !blank(original.outcome) else { return nil }
+        let readings: [ShownReading]
+        var result: ShownResult?
+        switch original.mode {
+        case .pregame:
+            readings = [shown(pregameLabel, original.pregame, .solid)]
+        case .comparison(let later):
+            readings = [shown(pregameLabel, original.pregame, .hollow),
+                        shown(later.label, original.later, .solid)]
+        case .result:
+            readings = [shown(pregameLabel, original.pregame, .hollow)]
+            if let grade = original.grade, let words = nonBlank(grade.words) {
+                result = ShownResult(words: words, provenance: nonBlank(grade.provenance) ?? resultTimeUnknown)
+            } else {
+                result = ShownResult(words: resultUnavailable, provenance: nil)
+            }
+        }
+        return Content(title: original.title, outcome: original.outcome, readings: readings,
+                       result: result, about: about(original), rules: rules(original.about.rules))
+    }
+
+    /// A slot keeps its own figure or its own reason; it never borrows the
+    /// other reading, a quote or zero.
+    private static func shown(_ label: String, _ reading: Reading?, _ marker: Marker) -> ShownReading {
+        if let reading, case .value(let text) = reading.figure, !blank(text) {
+            return ShownReading(label: label, marker: marker, text: text, isValue: true,
+                                provenance: nonBlank(reading.provenance) ?? timeUnknown,
+                                placement: railPlacement(reading.placement))
+        }
+        var reason = unavailable
+        if case .missing(let supplied)? = reading?.figure, let words = nonBlank(supplied) { reason = words }
+        return ShownReading(label: label, marker: marker, text: reason, isValue: false,
+                            provenance: nil, placement: nil)
+    }
+
+    /// Geometry validation only, apart from the reading's truth.
+    static func railPlacement(_ value: Double?) -> Double? {
+        guard let value, value.isFinite, (0...1).contains(value) else { return nil }
+        return value
+    }
+
+    /// Title, outcome, source, the owner's provenance rows, then the
+    /// historical quote — dated, labelled historical, never a current chance.
+    static func about(_ original: Original) -> [Row] {
+        var rows = [Row(label: "Market", value: original.title),
+                    Row(label: "Outcome", value: original.outcome)]
+        if let source = nonBlank(original.about.source) {
+            rows.append(Row(label: "Source", value: source))
+        }
+        rows += original.about.provenance.filter { !blank($0.label) && !blank($0.value) }
+        if let quote = original.about.historicalQuote, !blank(quote.text) {
+            let value = nonBlank(quote.recorded).map { "\(quote.text), recorded \($0)" }
+                ?? "\(quote.text), time unknown"
+            rows.append(Row(label: historicalLabel, value: value))
+        }
+        return rows
+    }
+
+    /// Blank paragraphs drop; nothing proved left ⇒ no rules section.
+    static func rules(_ rules: Rules) -> Rules {
+        switch rules {
+        case .verified(let paragraphs):
+            let kept = paragraphs.filter { !blank($0) }
+            return kept.isEmpty ? .omitted : .verified(kept)
+        case .unavailable(let words):
+            return blank(words) ? .omitted : .unavailable(words)
+        case .omitted:
+            return .omitted
+        }
+    }
+
+    static func spoken(_ content: Content?) -> String {
+        guard let content else { return LadderOriginalProbabilityDetails9483.spoken(nil) }
+        var parts = [content.title, "Selected outcome: \(content.outcome)"]
+        for reading in content.readings {
+            if let provenance = reading.provenance {
+                parts.append("\(reading.label) \(reading.text), \(provenance)")
+            } else {
+                parts.append("\(reading.label): \(reading.text)")
+            }
+        }
+        if let result = content.result {
+            parts.append("\(resultLabel): \(result.words)" + (result.provenance.map { ", \($0)" } ?? ""))
+        }
+        return parts.joined(separator: ". ") + "."
+    }
+
+    private static func blank(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private static func nonBlank(_ text: String?) -> String? {
+        guard let text, !blank(text) else { return nil }
+        return text
+    }
+}
+
+/// The selected original's Details inside the host's existing container; the
+/// host keeps its NavigationStack, Done, scrolling, held updates and focus.
+struct OriginalMarketDetailsView9483: View {
+    let catalogue: OriginalMarketDetails9483.Catalogue?
+    let selection: OriginalMarketDetails9483.Selection?
+    let tint: Color
+
+    private typealias Model = OriginalMarketDetails9483
+
+    var body: some View {
+        if let content = Model.content(catalogue: catalogue, selection: selection) {
             VStack(alignment: .leading, spacing: 16) {
-                ForEach(readings, id: \.label) { reading($0) }
+                summary(content)
+                ProbabilityDetailsAbout9483(rows: content.about, rules: content.rules)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ProbabilityDetailsUnavailable9483()
+        }
+    }
+
+    private func summary(_ content: Model.Content) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(content.title)
+                .font(.title3.weight(.bold))
+                .fixedSize(horizontal: false, vertical: true)
+            Text("\(Text("Selected outcome · ").font(.subheadline).foregroundStyle(.secondary))\(Text(content.outcome).font(.headline))")
+                .fixedSize(horizontal: false, vertical: true)
+            ProbabilityDetailsFigures9483(figures: content.readings.map {
+                ProbabilityDetailsFigure9483(label: $0.label, marker: $0.marker, text: $0.text,
+                                             isValue: $0.isValue, dateLine: $0.provenance)
+            }, tint: tint)
+            if !content.marks.isEmpty {
+                ProbabilityDetailsRail9483(marks: content.marks.compactMap { mark in
+                    mark.placement.map { ProbabilityDetailsRailMark9483(id: mark.label, marker: mark.marker, value: $0) }
+                }, tint: tint)
+            }
+            if let result = content.result {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(Model.resultLabel).font(.subheadline).foregroundStyle(.secondary)
+                    Text(result.words).font(.headline)
+                    if let provenance = result.provenance {
+                        Text(provenance).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Model.spoken(content))
+    }
+}
+
+// MARK: - Shared Details pieces
+
+/// Internal only so tests can read the layout decision; the views below are
+/// private to this file.
+enum ProbabilityDetailsLayout9483 {
+    /// Fewer than two readings, or any accessibility size, always stack; two
+    /// readings otherwise sit side by side only when both fit whole.
+    static func alwaysStacks(readings: Int, accessibilitySize: Bool) -> Bool {
+        readings < 2 || accessibilitySize
+    }
+}
+
+private struct ProbabilityDetailsFigure9483 {
+    let label: String
+    let marker: LadderOriginalProbabilityDetails9483.Marker
+    let text: String
+    let isValue: Bool
+    let dateLine: String?
+}
+
+/// Two readings sit side by side only when both fit whole; otherwise they
+/// stack before anything squeezes, and accessibility sizes always stack.
+private struct ProbabilityDetailsFigures9483: View {
+    let figures: [ProbabilityDetailsFigure9483]
+    let tint: Color
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .title) private var figureSize: CGFloat = 28
+
+    var body: some View {
+        if ProbabilityDetailsLayout9483.alwaysStacks(readings: figures.count,
+                                                     accessibilitySize: typeSize.isAccessibilitySize) {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(figures, id: \.label) { figure($0) }
             }
         } else {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 24) {
-                    ForEach(readings, id: \.label) { reading($0).fixedSize() }
+                    ForEach(figures, id: \.label) { figure($0).fixedSize() }
                 }
                 VStack(alignment: .leading, spacing: 16) {
-                    ForEach(readings, id: \.label) { reading($0) }
+                    ForEach(figures, id: \.label) { figure($0) }
                 }
             }
         }
     }
 
-    private func reading(_ reading: Model.Reading) -> some View {
+    private func figure(_ figure: ProbabilityDetailsFigure9483) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Label {
-                Text(reading.label).foregroundStyle(.secondary)
+                Text(figure.label).foregroundStyle(.secondary)
             } icon: {
-                Image(systemName: reading.marker == .solid ? "circle.fill" : "circle")
+                Image(systemName: figure.marker == .solid ? "circle.fill" : "circle")
                     .foregroundStyle(tint)
             }
             .font(.subheadline)
-            if reading.value != nil {
-                Text(reading.text)
+            if figure.isValue {
+                Text(figure.text)
                     .font(.system(size: figureSize, weight: .bold).monospacedDigit())
                     .foregroundStyle(tint)
             } else {
-                Text(reading.text)
+                Text(figure.text)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.primary)
             }
-            if let line = reading.dateLine {
+            if let line = figure.dateLine {
                 Text(line).font(.footnote).foregroundStyle(.secondary)
             }
         }
         .fixedSize(horizontal: false, vertical: true)
     }
+}
 
-    /// A 0–100% reference, not a history: each existing reading is one mark at
-    /// its raw value — hollow ring for the earlier reading, solid dot for the
-    /// current or published one, concentric when they coincide. Nothing joins
-    /// the marks.
-    private func rail(_ marks: [Model.Reading]) -> some View {
+private struct ProbabilityDetailsRailMark9483 {
+    let id: String
+    let marker: LadderOriginalProbabilityDetails9483.Marker
+    let value: Double
+}
+
+/// A 0–100% reference, not a history: each existing reading is one mark at
+/// its raw value — hollow ring for the earlier reading, solid dot for the
+/// current or published one, concentric when they coincide. Nothing joins
+/// the marks.
+private struct ProbabilityDetailsRail9483: View {
+    let marks: [ProbabilityDetailsRailMark9483]
+    let tint: Color
+
+    private static let ringSize: CGFloat = 16
+    private static let dotSize: CGFloat = 9
+
+    var body: some View {
         VStack(spacing: 4) {
             GeometryReader { geo in
                 let inset = Self.ringSize / 2
@@ -322,24 +684,23 @@ struct LadderOriginalProbabilityDetailsView9483: View {
                         .fill(Color.secondary.opacity(0.25))
                         .frame(width: max(geo.size.width - 2 * inset, 0), height: 4)
                         .position(x: geo.size.width / 2, y: geo.size.height / 2)
-                    ForEach(marks, id: \.label) { mark in
-                        if let value = mark.value {
-                            Group {
-                                if mark.marker == .hollow {
-                                    Circle()
-                                        .strokeBorder(tint, lineWidth: 2.5)
-                                        .background(Circle().fill(Color.systemBackground))
-                                        .frame(width: Self.ringSize, height: Self.ringSize)
-                                } else {
-                                    Circle()
-                                        .fill(tint)
-                                        .frame(width: Self.dotSize, height: Self.dotSize)
-                                }
+                    ForEach(marks, id: \.id) { mark in
+                        Group {
+                            if mark.marker == .hollow {
+                                Circle()
+                                    .strokeBorder(tint, lineWidth: 2.5)
+                                    .background(Circle().fill(Color.systemBackground))
+                                    .frame(width: Self.ringSize, height: Self.ringSize)
+                            } else {
+                                Circle()
+                                    .fill(tint)
+                                    .frame(width: Self.dotSize, height: Self.dotSize)
                             }
-                            .position(x: Model.railX(value, width: geo.size.width, inset: inset),
-                                      y: geo.size.height / 2)
-                            .zIndex(mark.marker == .solid ? 1 : 0)
                         }
+                        .position(x: LadderOriginalProbabilityDetails9483.railX(mark.value, width: geo.size.width,
+                                                                                 inset: inset),
+                                  y: geo.size.height / 2)
+                        .zIndex(mark.marker == .solid ? 1 : 0)
                     }
                 }
             }
@@ -353,5 +714,74 @@ struct LadderOriginalProbabilityDetailsView9483: View {
             .foregroundStyle(.secondary)
         }
         .accessibilityHidden(true)
+    }
+}
+
+/// "About this market": provenance rows, then — originals only — the proved
+/// rules or the owner's unavailable words. Rules wrap and scroll inside the
+/// host's container.
+private struct ProbabilityDetailsAbout9483: View {
+    let rows: [LadderOriginalProbabilityDetails9483.Row]
+    var rules: OriginalMarketDetails9483.Rules = .omitted
+
+    var body: some View {
+        DisclosureGroup("About this market") {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.label).font(.footnote).foregroundStyle(.secondary)
+                        Text(row.value).font(.subheadline)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .combine)
+                }
+                rulesSection
+            }
+            .padding(.top, 8)
+        }
+        .font(.subheadline)
+    }
+
+    @ViewBuilder private var rulesSection: some View {
+        switch rules {
+        case .verified(let paragraphs):
+            VStack(alignment: .leading, spacing: 6) {
+                Text(OriginalMarketDetails9483.rulesLabel).font(.footnote).foregroundStyle(.secondary)
+                ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
+                    Text(paragraph).font(.subheadline)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+        case .unavailable(let words):
+            VStack(alignment: .leading, spacing: 2) {
+                Text(OriginalMarketDetails9483.rulesLabel).font(.footnote).foregroundStyle(.secondary)
+                Text(words).font(.subheadline).foregroundStyle(.secondary)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+        case .omitted:
+            EmptyView()
+        }
+    }
+}
+
+private struct ProbabilityDetailsUnavailable9483: View {
+    private typealias Model = LadderOriginalProbabilityDetails9483
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(Model.unavailableTitle).font(.headline)
+            Text(Model.unavailableNote)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Model.spoken(nil))
     }
 }
