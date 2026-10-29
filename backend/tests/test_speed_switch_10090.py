@@ -1106,3 +1106,46 @@ async def test_a_failed_debt_stamp_within_todays_slot_trips_nothing(slots_trial)
     await _settle()
     assert slots_trial["tripped"] == []
     await _finish(r, task)
+
+
+async def test_one_read_of_the_arm_sets_both_the_free_slots_and_the_cohort_first_order(
+        monkeypatch):
+    # calibration review of a7dc24e0: the arm read once per admission must also
+    # order the cohort ahead of its debt (#11718), or the 3-slot minutes compare
+    # a different queue from the one R8 step 2 would run.
+    from tests.test_admitted_debt_slots_10090 import _Slotted, _finish, _running_call, _settle
+
+    reads = []
+
+    class _Trial:
+        def value(self, name, default, at=None):
+            if name != SLOTS:
+                return default
+            reads.append(name)
+            return 3 if len(reads) == 1 else 1   # a later read would see arm a
+
+        def trip(self, name, error):
+            pass
+
+        def state(self, name):
+            return OFF
+
+        def arm(self, name, event_id, at=None):
+            return False
+
+        def tags(self, event_id, at=None):
+            return ""
+
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: _Trial())
+    monkeypatch.setattr(blend_mod, "ADMITTED_DEBT_SLOTS", 1)
+    monkeypatch.setattr(blend_mod, "_mono", lambda: 1000.0)
+    r = _Slotted(blocked={99, 1, 2, 3})
+    task = await _running_call(r)
+    r._live_event_ids.update({1, 2, 3, 50})
+    r.adopt_pending([1, 2, 3])
+    reads.clear()
+    assert r.admit_fresh([50], flush_started=1001) == frozenset({50})
+    await _settle()
+    assert reads == [SLOTS], "one read of the arm per admission"
+    assert r.started == [99, 50, 1, 2], "arm 3: the fresh price starts ahead of its debt"
+    await _finish(r, task)
