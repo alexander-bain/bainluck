@@ -268,9 +268,36 @@ final class OddsChartViewModel: ObservableObject {
         if let memo = pointsMemo, memo.generation == historyGeneration, memo.liveFrames == liveFrames {
             return memo.points
         }
-        let points = OddsChartView.chartPoints(from: history, liveFrames: liveFrames)
+        let points = OddsChartView.extendingToLiveEdge(
+            servedPoints(history), with: liveFrames, history: history)
         pointsMemo = (historyGeneration, liveFrames, points)
         return points
+    }
+
+    /// #10090 — the payload's own points, built once per payload. Every pushed
+    /// frame misses the memo above, and rebuilding these with it parsed every
+    /// stamp and minted a fresh `id` for every point the plot is keyed on, on
+    /// the main thread, before the frame carrying the new price could commit:
+    /// ~20 ms of the ~93 ms a frame cost a hosted chart on an 8,321-point
+    /// payload (Debug simulator). A frame now only extends them.
+    private var servedMemo: (generation: Int, points: [ChartDataPoint])?
+
+    private func servedPoints(_ history: EventHistoryResponse) -> [ChartDataPoint] {
+        if let memo = servedMemo, memo.generation == historyGeneration { return memo.points }
+        let points = OddsChartView.servedPoints(from: history)
+        servedMemo = (historyGeneration, points)
+        return points
+    }
+
+    /// #10090 — the payload's game-state observations, parsed and sorted once
+    /// per payload rather than once per pushed frame.
+    private var gameStateMemo: (generation: Int, index: OddsChartView.GameStateIndex)?
+
+    private func gameStateIndex(_ history: EventHistoryResponse) -> OddsChartView.GameStateIndex {
+        if let memo = gameStateMemo, memo.generation == historyGeneration { return memo.index }
+        let index = OddsChartView.GameStateIndex(history)
+        gameStateMemo = (historyGeneration, index)
+        return index
     }
     private var enrichedMemo: (generation: Int, liveFrames: [LiveBlendPoint], points: [ChartDataPoint])?
     /// Nonpublishing seam for the actual render-path regression test. It is nil
@@ -283,7 +310,8 @@ final class OddsChartViewModel: ObservableObject {
         if let memo = enrichedMemo, memo.generation == historyGeneration, memo.liveFrames == liveFrames {
             return memo.points
         }
-        let points = OddsChartView.enrichWithGameState(chartPoints(liveFrames: liveFrames), history: history)
+        let points = OddsChartView.enrichWithGameState(chartPoints(liveFrames: liveFrames),
+                                                       index: gameStateIndex(history))
         enrichmentBuildCount += 1
         enrichedMemo = (historyGeneration, liveFrames, points)
         return points
@@ -2612,6 +2640,23 @@ struct OddsChartView: View {
         from history: EventHistoryResponse,
         liveFrames: [LiveBlendPoint] = []
     ) -> [ChartDataPoint] {
+        extendingToLiveEdge(servedPoints(from: history), with: liveFrames, history: history)
+    }
+
+    /// The pushed frames' half of `chartPoints`: a sportsbooks-only payload
+    /// (no `win_prob_history`) is never extended. #10090 — split out so the
+    /// view model builds `servedPoints` once per payload, not once per frame.
+    static func extendingToLiveEdge(
+        _ served: [ChartDataPoint],
+        with liveFrames: [LiveBlendPoint],
+        history: EventHistoryResponse
+    ) -> [ChartDataPoint] {
+        guard !(history.winProbHistory?.isEmpty ?? true) else { return served }
+        return extendingBlendToLiveEdge(served, with: liveFrames, history: history)
+    }
+
+    /// The payload's half of `chartPoints`: every served point, no live frame.
+    static func servedPoints(from history: EventHistoryResponse) -> [ChartDataPoint] {
         var points: [ChartDataPoint] = []
         let multiSource = !(history.winProbHistory?.isEmpty ?? true)
 
@@ -2660,7 +2705,7 @@ struct OddsChartView: View {
             }
         }
 
-        return extendingBlendToLiveEdge(points, with: liveFrames, history: history)
+        return points
     }
 
     /// Carry the blend forward to the frames the page has actually been pushed
@@ -3488,7 +3533,7 @@ struct OddsChartView: View {
     /// `rank` breaks a timestamp tie: a `score_history` row (0) is folded
     /// before an ESPN row (1), so a score sighting replaces an ESPN score only
     /// when it is strictly newer — the web's `foldScoreObservations` rule.
-    private struct ObservedStateRow {
+    fileprivate struct ObservedStateRow {
         let date: Date
         let rank: Int
         let homeScore: Int?
@@ -3503,40 +3548,60 @@ struct OddsChartView: View {
     /// Static and internal (was a private instance method) so #925's dating of
     /// carried state can be pinned on the exact shape it runs on.
     static func enrichWithGameState(_ points: [ChartDataPoint], history: EventHistoryResponse) -> [ChartDataPoint] {
-        // Build one time-indexed lookup of every state observation.
-        //
-        // #8565 — `score_history` is a score observation like an ESPN row,
-        // dated by its own timestamp. Since #8501 the server stamps each scoring
-        // play at the FIRST served sighting of its post-play score across BOTH
-        // series; reading ESPN alone left a play stamped from `score_history`
-        // on a point still carrying the score from before it (15315984: the
-        // 17–34 touchdown at 03:28:17 beside 17–27, ESPN uncaptured between
-        // 03:27:17 and 03:31:17). Same contract as the web (`lib/chartGameState.ts`).
-        var stateRows: [ObservedStateRow] = []
-        for ep in history.espnHistory ?? [] {
-            if let date = ep.timestamp.asDate {
-                stateRows.append(ObservedStateRow(
-                    date: date, rank: 1, homeScore: ep.homeScore, awayScore: ep.awayScore,
-                    period: ep.period, clock: ep.gameClock))
-            }
-        }
-        for sh in history.scoreHistory ?? [] {
-            if let date = sh.timestamp.asDate {
-                stateRows.append(ObservedStateRow(
-                    date: date, rank: 0, homeScore: sh.homeScore, awayScore: sh.awayScore,
-                    period: nil, clock: nil))
-            }
-        }
-        stateRows.sort { ($0.date, $0.rank) < ($1.date, $1.rank) }
+        enrichWithGameState(points, index: GameStateIndex(history))
+    }
 
-        // Build scoring plays lookup
-        var playsByTime: [(date: Date, play: ScoringPlay)] = []
-        for sp in history.scoringPlays ?? [] {
-            if let ts = sp.timestamp, let date = ts.asDate {
-                playsByTime.append((date, sp))
+    /// The payload's state observations and scoring plays, parsed and sorted:
+    /// everything `enrichWithGameState` reads from the payload. #10090 — a
+    /// value of its own so the chart builds it once per payload, not once per
+    /// pushed frame.
+    struct GameStateIndex {
+        fileprivate let stateRows: [ObservedStateRow]
+        fileprivate let playsByTime: [(date: Date, play: ScoringPlay)]
+
+        init(_ history: EventHistoryResponse) {
+            // Build one time-indexed lookup of every state observation.
+            //
+            // #8565 — `score_history` is a score observation like an ESPN row,
+            // dated by its own timestamp. Since #8501 the server stamps each scoring
+            // play at the FIRST served sighting of its post-play score across BOTH
+            // series; reading ESPN alone left a play stamped from `score_history`
+            // on a point still carrying the score from before it (15315984: the
+            // 17–34 touchdown at 03:28:17 beside 17–27, ESPN uncaptured between
+            // 03:27:17 and 03:31:17). Same contract as the web (`lib/chartGameState.ts`).
+            var stateRows: [ObservedStateRow] = []
+            for ep in history.espnHistory ?? [] {
+                if let date = ep.timestamp.asDate {
+                    stateRows.append(ObservedStateRow(
+                        date: date, rank: 1, homeScore: ep.homeScore, awayScore: ep.awayScore,
+                        period: ep.period, clock: ep.gameClock))
+                }
             }
+            for sh in history.scoreHistory ?? [] {
+                if let date = sh.timestamp.asDate {
+                    stateRows.append(ObservedStateRow(
+                        date: date, rank: 0, homeScore: sh.homeScore, awayScore: sh.awayScore,
+                        period: nil, clock: nil))
+                }
+            }
+            stateRows.sort { ($0.date, $0.rank) < ($1.date, $1.rank) }
+            self.stateRows = stateRows
+
+            // Build scoring plays lookup
+            var playsByTime: [(date: Date, play: ScoringPlay)] = []
+            for sp in history.scoringPlays ?? [] {
+                if let ts = sp.timestamp, let date = ts.asDate {
+                    playsByTime.append((date, sp))
+                }
+            }
+            playsByTime.sort { $0.date < $1.date }
+            self.playsByTime = playsByTime
         }
-        playsByTime.sort { $0.date < $1.date }
+    }
+
+    static func enrichWithGameState(_ points: [ChartDataPoint], index: GameStateIndex) -> [ChartDataPoint] {
+        let stateRows = index.stateRows
+        let playsByTime = index.playsByTime
 
         // Sort points by time for forward-fill
         var sorted = points.sorted { $0.date < $1.date }
