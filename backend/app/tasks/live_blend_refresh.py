@@ -256,6 +256,13 @@ ADMITTED_DEBT_SLOTS_SWITCH = "admitted_debt_slots"
 #: its fresh stamps when the choice needs no read, else when the old
 #: population's live-first read returns — instead of after the fresh stamps.
 RELEASE_UNATTEMPTED_DEBT_SWITCH = "release_unattempted_debt"
+#: #10090 runtime trial (``alternate`` 0/1, today 0), read once per cohort a
+#: catalog handover carries over committed (`keep_committed`): on, the next
+#: `refresh` stamps those events as its fresh population instead of as old debt
+#: under the per-flush allowance. Production 2026-10-29 15:36:25Z: one handover
+#: turned 18 bridged events into debt at once; FRESH_FLUSH_PENDING_ATTEMPTS=3
+#: let about three through per call, so the last waited 10.5 s.
+HANDOVER_FRESH_SWITCH = "handover_fresh"
 #: `ADMITTED_STAMP_BATCH`'s runtime trial name: ``alternate`` between two values
 #: by period, read once per admitted worker turn that could batch
 #: (`_admitted_stamp_batch`).
@@ -306,6 +313,14 @@ def _release_unattempted_debt() -> bool:
     try:
         return bool(_optional_db_trial().value(RELEASE_UNATTEMPTED_DEBT_SWITCH, 0))
     except Exception:  # noqa: BLE001 — a switch read never fails a flush
+        return False
+
+
+def _handover_fresh() -> bool:
+    """This hand-over's `handover_fresh` arm; off on any switch error."""
+    try:
+        return bool(_optional_db_trial().value(HANDOVER_FRESH_SWITCH, 0))
+    except Exception:  # noqa: BLE001 — a switch read never fails a hand-over
         return False
 
 
@@ -2305,6 +2320,10 @@ class LiveBlendRefresher:
         #: markets ticked. On a quiet game the wait is the next tick or the
         #: 120s poll.
         self._throttle_deferred: set[int] = set()
+        #: #10090 `handover_fresh` — owed events a lifecycle hand-over carried
+        #: over committed (`keep_committed`); the next `refresh` that finds one
+        #: due stamps it as fresh. Always a subset of what is still owed.
+        self._carried_fresh: set[int] = set()
         self._pending_continuation: list[int] = []
         self._pending_flush_started: Optional[float] = None
         #: This flush's old-stamp allowance, read when the flush starts.
@@ -2555,6 +2574,14 @@ class LiveBlendRefresher:
         # partial board; ordinary callers retain the same admission behavior.
         excluded = set(defer_event_ids)
         due = [eid for eid in wanted if eid not in excluded and self._due(eid, clock)]
+        if self._carried_fresh:
+            # #10090 `handover_fresh`: a committed cohort a hand-over carried
+            # over is this call's fresh, not old debt. One not due yet stays
+            # carried; one no longer owed was stamped by another path.
+            self._carried_fresh.intersection_update(wanted)
+            carried = self._carried_fresh.intersection(due)
+            self._carried_fresh.difference_update(carried)
+            fresh |= carried
         self._pending_continuation = [
             eid for eid in self._pending_continuation if eid in wanted
         ]
@@ -3432,6 +3459,23 @@ class LiveBlendRefresher:
             staged, wall = self._receipt_call(receipts.staged_for, marks) or ({}, None)
             staged = {eid: m for eid, m in staged.items() if eid in event_ids}
             self._receipt_call(receipts.observe, staged, wall, set(), _mono())
+
+    def keep_committed(
+        self, event_ids: Iterable[int], *, marks: Iterable[InputMark] = (),
+    ) -> None:
+        """#10090 — `keep_owed` for a cohort a lifecycle step hands over
+        ALREADY COMMITTED: the catalog handover's bridged transfer
+        (`_PMBridgeWriter.transfer`), whose drain fenced the game flush that
+        would have stamped it as fresh. With `handover_fresh` on, the next
+        `refresh` that finds these events due stamps them as fresh — live
+        first, on the fixed workers, outside FRESH_FLUSH_PENDING_ATTEMPTS — so
+        one handover's whole cohort does not drain a few events per call.
+        Off (today, and any switch error) it is exactly `keep_owed`.
+        """
+        event_ids = set(event_ids)
+        self.keep_owed(event_ids, marks=marks)
+        if event_ids and _handover_fresh():
+            self._carried_fresh.update(event_ids)
 
     # ── #10090: admitting a committed cohort into the running refresh ────────
 

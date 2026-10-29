@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { API_URL } from '@/lib/api';
 import { frameFoldOrder } from '@/lib/foldRevision';
 import { rememberLiveChartFrame, type LiveChartFrame } from '@/lib/liveChartHistory';
@@ -288,6 +289,12 @@ export function useLiveEventStream(
       // deadline rather than at the next 5 s tick. The controller cancels it on
       // `stop()` below, and a deadline that outlives its rollover opens nothing.
       schedule: timerSchedule,
+      // #10090: one committed frame is one render. The page's `onFrame` writes
+      // its SWR cache, which React renders synchronously, while the frame/chart
+      // state set above is ordinary state rendered a task later: two full page
+      // renders per frame, and the headline could paint before the chart.
+      // Only the transport's own listeners call this, never a render or effect.
+      deliver: (run) => flushSync(run),
     });
 
     controller.start();

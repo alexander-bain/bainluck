@@ -135,6 +135,15 @@ export interface LiveStreamDeps {
   schedule?: (action: () => void, ms: number) => () => void;
   /** #10090 — the healthy-rollover wait, in ms. Injected so a test can pin it. */
   healthyRolloverDelay?: () => number;
+  /**
+   * #10090 — runs one committed frame's delivery (`onFrame` and the delivery
+   * state it implies) as a unit. The hook passes react-dom's `flushSync`: the
+   * page writes the frame to its SWR cache (a synchronous store update) while
+   * the hook's own frame/chart state is ordinary state, so without one flush a
+   * frame rendered the whole page twice — headline first, chart a task later.
+   * Omitted, the delivery simply runs.
+   */
+  deliver?: (run: () => void) => void;
 }
 
 /**
@@ -246,6 +255,7 @@ export function createLiveStreamController(
   deps: LiveStreamDeps,
 ): LiveStreamController {
   const { open, now, onFrame, onDeliveringChange, onStatusChange, onRecovery, onReconcile, onPreview, onPreviewReset, schedule } = deps;
+  const deliver = deps.deliver ?? ((run: () => void) => run());
   const healthyRolloverDelay =
     deps.healthyRolloverDelay ??
     (() =>
@@ -462,9 +472,19 @@ export function createLiveStreamController(
       // THE ONLY place the delivery clock is rearmed. A frame is the only
       // evidence that anything is still publishing.
       lastDataAt = now();
-      onFrame(parsed);
-      setDelivering(true);
-      setStatus('open');
+      const frame = parsed;
+      try {
+        deliver(() => {
+          onFrame(frame);
+          setDelivering(true);
+          setStatus('open');
+        });
+      } finally {
+        // Both are idempotent: a delivery that threw still leaves push marked
+        // delivering, exactly as before the wrapper existed.
+        setDelivering(true);
+        setStatus('open');
+      }
     };
     next.addEventListener('probability', onProbability);
     // Legacy clients ignore this event. It is not deduped by raw revision:
