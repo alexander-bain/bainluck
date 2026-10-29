@@ -130,15 +130,23 @@ class AuthorityLedgerRegistry(LedgerRegistry):
             when,
         )
 
+    def _drop(self, source, reason):
+        # Counted for the per-minute preview receipt only.
+        key = (source, reason)
+        self.refusal_counts[key] = self.refusal_counts.get(key, 0) + 1
+        return []
+
     def propose(self, event_id, source, **kwargs):
-        if self._halted or source not in self.claims:
-            return []
+        if self._halted:
+            return self._drop(source, "local_halted")
+        if source not in self.claims:
+            return self._drop(source, "local_unclaimed")
         observed = _basis_observation_time(kwargs.get("observed_basis"))
         if observed is None or observed <= self._observed_after:
-            return []
+            return self._drop(source, "local_before_floor")
         ticket = getattr(kwargs["event"], "preview_read_ticket", None)
         if not self._ticket_matches(ticket, source):
-            return []
+            return self._drop(source, "local_ticket")
         return [self._bind_op(op) for op in super().propose(event_id, source, **kwargs)]
 
     def _settle_op(self, *args, **kwargs):
