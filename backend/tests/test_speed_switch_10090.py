@@ -814,7 +814,7 @@ async def test_the_recovery_page_read_stays_off_in_a_trial(trial, monkeypatch):
     r = _refresher()
     keys = []
 
-    async def capture(kind, budget_s, body, key=None):
+    async def capture(kind, budget_s, body, key=None, gate=None):
         keys.append((kind, key))
         return None
 
