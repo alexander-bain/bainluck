@@ -126,7 +126,12 @@ async def db():
 
 def _wire(monkeypatch, maker, *, lock_timeout: str | None):
     """The real task, with only its I/O replaced: ESPN's board, and a real
-    session committed once at the end, as ``get_task_session`` does."""
+    session committed at the end, as ``get_task_session`` does.
+
+    The budget is a property of the CONNECTION, the way ``get_task_session``
+    arms one (#4482), never a ``SET LOCAL``: the pass commits once per event
+    (#10090), and a transaction-scoped budget would end at the first commit and
+    leave the release waiting on its holder with no bound at all."""
     import app.services.espn_tennis as svc
     import app.tasks.espn_sync as espn_sync
     from tests.test_espn_tennis_anchor import _competition
@@ -143,17 +148,31 @@ def _wire(monkeypatch, maker, *, lock_timeout: str | None):
 
     @asynccontextmanager
     async def _session(**_kwargs):
-        async with maker() as session:
-            try:
-                if lock_timeout:
-                    await session.execute(
-                        text(f"SET LOCAL lock_timeout = '{lock_timeout}'")
-                    )
-                yield session
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        engine = (
+            create_async_engine(
+                DB_URL, connect_args={"server_settings": {"lock_timeout": lock_timeout}}
+            )
+            if lock_timeout
+            else None
+        )
+        try:
+            budgeted = (
+                async_sessionmaker(engine, expire_on_commit=False)
+                if engine is not None
+                else maker
+            )
+            async with budgeted() as session:
+                try:
+                    yield session
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    raise
+        finally:
+            if engine is not None:
+                await engine.dispose()
 
     monkeypatch.setattr(svc, "fetch_scoreboards", lambda dates=None: (payloads, []))
     monkeypatch.setattr(espn_sync, "get_task_session", _session)
