@@ -2904,13 +2904,17 @@ struct OddsChartView: View {
                 frames.removeLast()
             } else if let edge = BlendPreview.syntheticEdgeToReplace(history, authority: authority, at: preview.date),
                let edgeAt = edge.timestamp.asDate,
+               let carried = BlendPreview.carriedPointsAfter(history, at: preview.date),
                let index = rendered.lastIndex(where: {
                    $0.source == "aggregate" && $0.date == edgeAt && $0.probability == edge.homeProbability
                }),
                !rendered.enumerated().contains(where: {
                    $0.offset != index && $0.element.source == "aggregate" && $0.element.date >= preview.date
+                       && !carried.contains($0.element.date)
                }) {
                 rendered.remove(at: index)
+                // #10090 — the carry-forward minute the same read brought goes with its edge.
+                rendered.removeAll { $0.source == "aggregate" && $0.date >= preview.date && carried.contains($0.date) }
                 replacedPin = true
             } else if rendered.contains(where: { $0.source == "aggregate" && $0.date >= preview.date }) {
                 frames.removeLast()

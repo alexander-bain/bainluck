@@ -916,11 +916,14 @@ nonisolated enum BlendPreview {
         }
         if let authority, let history, !chartCoversAuthority(history, authority: authority) { return frames }
         let line = history?.aggregateLine ?? []
-        let replacing = history.flatMap { history in
+        // The edge and the carry-forward minute it brought, when the preview replaces them.
+        let replaced = history.flatMap { history in
             authority.flatMap { syntheticEdgeToReplace(history, authority: $0, at: at) }
-        } != nil
-        for stamp in replacing ? Array(line.dropLast()) : line {
-            guard let committedAt = stamp.timestamp.asDate, committedAt < at else { return frames }
+                .flatMap { _ in carriedPointsAfter(history, at: at) }
+        }
+        for stamp in replaced != nil ? Array(line.dropLast()) : line {
+            guard let committedAt = stamp.timestamp.asDate,
+                  committedAt < at || replaced?.contains(committedAt) == true else { return frames }
         }
         if let last = frames.last, last.date >= at { return frames }
         return frames + [LiveBlendPoint(date: at, homeProbability: p, previewAuthority: authority)]
@@ -953,11 +956,49 @@ nonisolated enum BlendPreview {
               let revision = history.blendEdgeFoldRevision?.revision,
               revision.rows.count == authority.base.rows.count, authority.base.covers(revision),
               let edge = history.aggregateLine?.last, let edgeAt = edge.timestamp.asDate,
-              edgeAt >= at else { return nil }
-        for point in (history.aggregateLine ?? []).dropLast() {
-            guard let date = point.timestamp.asDate, date < at else { return nil }
-        }
+              edgeAt >= at, carriedPointsAfter(history, at: at) != nil else { return nil }
         return edge
+    }
+
+    /// #10090 — the served blend points before the edge, at or after `at`,
+    /// that go with the edge it replaces (web's `overlayBlendPreviewLine`):
+    /// each must sit in a carry-forward minute (`carriedForwardMinutes`). Nil
+    /// when any one is a reading, or unreadable, so the preview yields to it.
+    static func carriedPointsAfter(_ history: EventHistoryResponse, at: Date) -> Set<Date>? {
+        var late: Set<Date> = []
+        for point in (history.aggregateLine ?? []).dropLast() {
+            guard let date = point.timestamp.asDate else { return nil }
+            if date >= at { late.insert(date) }
+        }
+        guard !late.isEmpty else { return late }
+        return late.isSubset(of: carriedForwardMinutes(history)) ? late : nil
+    }
+
+    /// #10090 — the served blend minutes that hold nothing but the backend's
+    /// carry-forward (web's `carriedForwardMinutes`). On a live game whose
+    /// sources have been quiet for 30 s, `_extend_win_prob_history_to_live_edge`
+    /// appends each source's last value at the read time (`liveEdge`), and the
+    /// blend is bucketed by minute, so the line gains a point at the start of
+    /// the read's minute that is a delivery time, not a reading. A minute
+    /// qualifies only when a carried point is in it and no real source or
+    /// sportsbook reading is.
+    static func carriedForwardMinutes(_ history: EventHistoryResponse) -> Set<Date> {
+        func minute(_ stamp: String) -> Date? {
+            stamp.asDate.map { Date(timeIntervalSince1970: ($0.timeIntervalSince1970 / 60).rounded(.down) * 60) }
+        }
+        var carried: Set<Date> = [], real: Set<Date> = []
+        for point in (history.winProbHistory ?? [:]).values.joined() {
+            guard let at = minute(point.timestamp) else { continue }
+            if point.liveEdge == true || point.evidence?.kind == "live_edge" {
+                carried.insert(at)
+            } else {
+                real.insert(at)
+            }
+        }
+        let sportsbooks = history.history.map(\.timestamp)
+            + (history.bookmakerHistory ?? [:]).values.joined().map(\.timestamp)
+        real.formUnion(sportsbooks.compactMap(minute))
+        return carried.subtracting(real)
     }
 
     /// `event` with the provisional hero overlaid, or `event` itself when no
