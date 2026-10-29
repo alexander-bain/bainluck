@@ -38,8 +38,10 @@ def _trials_enabled(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _todays_setting(monkeypatch):
-    """`pending_attempts`' today is the worker's own setting; pinned at 1 here."""
+    """`pending_attempts`' and `admitted_debt_slots`' today is the worker's own
+    setting; pinned at 1 here."""
     monkeypatch.setattr(blend_mod, "FRESH_FLUSH_PENDING_ATTEMPTS", 1)
+    monkeypatch.setattr(blend_mod, "ADMITTED_DEBT_SLOTS", 1)
 
 
 class _Clock:
@@ -506,7 +508,7 @@ def _alternation(a=1, b=3, period_s=60, start=START, span_s=1200.0, expires_in=N
 def _both(attempts=None, abandon=None):
     """Stored values in SWITCHES order."""
     by_name = {NAME: abandon, ATTEMPTS: attempts}
-    return [by_name[name] for name in sw.SWITCHES]
+    return [by_name.get(name) for name in sw.SWITCHES]
 
 
 @pytest.mark.parametrize("name, mode, kwargs", [
@@ -937,20 +939,23 @@ def test_a_stored_alternation_that_is_not_whole_pairs_reads_off(period_s, expire
 
 
 @pytest.mark.parametrize(
-    "layer, abandon, attempts, expected",
+    "layer, abandon, attempts, slots, expected",
     [
-        ("1", None, 1, "layer SPEED_SWITCH_TRIALS=on today pending_attempts=1 abandon_optional_db=0"),
-        (None, "1", 3, "layer SPEED_SWITCH_TRIALS=off today pending_attempts=3 abandon_optional_db=1"),
+        ("1", None, 1, 1, "layer SPEED_SWITCH_TRIALS=on today pending_attempts=1 "
+                          "abandon_optional_db=0 admitted_debt_slots=1"),
+        (None, "1", 3, 2, "layer SPEED_SWITCH_TRIALS=off today pending_attempts=3 "
+                          "abandon_optional_db=1 admitted_debt_slots=2"),
     ],
 )
 def test_each_process_logs_the_layer_and_todays_values_once(
-        monkeypatch, caplog, layer, abandon, attempts, expected):
+        monkeypatch, caplog, layer, abandon, attempts, slots, expected):
     for env, value in ((sw.TRIALS_ENV, layer), (OPTIONAL_DB_ABANDON_ENV, abandon)):
         if value is None:
             monkeypatch.delenv(env, raising=False)
         else:
             monkeypatch.setenv(env, value)
     monkeypatch.setattr(blend_mod, "FRESH_FLUSH_PENDING_ATTEMPTS", attempts)
+    monkeypatch.setattr(blend_mod, "ADMITTED_DEBT_SLOTS", slots)
     monkeypatch.setattr(blend_mod, "_SPEED_SWITCH_LOGGED_PID", None)
 
     def no_redis():
@@ -970,3 +975,134 @@ def test_a_forked_process_logs_its_own_start_line(monkeypatch, caplog):
     with caplog.at_level(logging.INFO, logger=blend_mod.logger.name):
         blend_mod.LiveBlendRefresher("kalshi")
     assert [r for r in caplog.records if r.getMessage().startswith("speed_switch[")]
+
+
+# ── admitted_debt_slots: read once per door admission (#11718) ───────────────
+
+SLOTS = "admitted_debt_slots"
+
+
+@pytest.mark.parametrize("mode, kwargs", [
+    ("ab", {"half": 0}),                                  # a door constant has no per-game arm
+    ("alternate", {"a": 2, "b": 3, "period_s": 60}),      # neither arm is today's
+    ("alternate", {"a": 1, "b": 4, "period_s": 60}),      # above the stamp workers
+    ("alternate", {"a": 0, "b": 1, "period_s": 60}),
+])
+def test_a_debt_slots_trial_outside_the_limits_is_refused(mode, kwargs):
+    assert sw.validate(SLOTS, mode, **kwargs) is not None
+
+
+def test_a_debt_slots_alternation_of_today_and_three_is_accepted():
+    assert sw.validate(SLOTS, "alternate", a=1, b=3, period_s=60) is None
+
+
+def test_a_debt_slots_alternation_keeps_the_workers_own_setting_on_one_arm(monkeypatch):
+    # R8 step 2 may set ADMITTED_DEBT_SLOTS=2 in the worker's env (#11718).
+    monkeypatch.setattr(blend_mod, "ADMITTED_DEBT_SLOTS", 2)
+    assert sw.validate(SLOTS, "alternate", a=1, b=3, period_s=60) is not None
+    assert sw.parse(_alternation(a=1, b=3), NOW, SLOTS) == OFF
+    assert sw.validate(SLOTS, "alternate", a=2, b=3, period_s=60) is None
+    assert sw.parse(_alternation(a=2, b=3), NOW, SLOTS).mode == "alternate"
+
+
+async def test_debt_slots_tag_names_the_arm():
+    stored = [_alternation(a=1, b=3, period_s=60) if name == SLOTS else None
+              for name in sw.SWITCHES]
+    s, _, clock, _ = _switches(stored)
+    await _refreshed(s)
+    s.state(SLOTS)                             # this process runs the trial from NOW
+    clock.t = START + 130
+    assert s.tags(5) == " sw=admitted_debt_slots:1"
+    assert s.tags(5, at=NOW) == " sw=admitted_debt_slots:3"
+
+
+@pytest.fixture
+def slots_trial(monkeypatch):
+    """An admitted_debt_slots alternation whose current arm the test sets."""
+    arm = {"value": 3, "tripped": []}
+
+    class _Trial:
+        def value(self, name, default, at=None):
+            if name != SLOTS:
+                return default
+            return default if arm["tripped"] else arm["value"]
+
+        def trip(self, name, error):
+            arm["tripped"].append((name, error))
+
+        def state(self, name):
+            return OFF
+
+        def arm(self, name, event_id, at=None):
+            return False
+
+        def tags(self, event_id, at=None):
+            return ""
+
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: _Trial())
+    monkeypatch.setattr(blend_mod, "ADMITTED_DEBT_SLOTS", 1)
+    monkeypatch.setattr(blend_mod, "_mono", lambda: 1000.0)
+    return arm
+
+
+async def test_each_admission_reads_the_trials_arm(slots_trial):
+    from tests.test_admitted_debt_slots_10090 import _Gated, _finish, _running_call, _settle
+
+    r = _Gated(blocked={99, 1, 2, 3, 4, 5})
+    task = await _running_call(r)
+    r.adopt_pending(range(1, 9))
+    r.admit_fresh((), flush_started=1001)
+    await _settle()
+    assert r.started == [99, 1, 2, 3], "arm b: three owed stamps beside the call"
+    slots_trial["value"] = 1                  # the arm changes while three are in flight
+    r.admit_fresh((), flush_started=1002)
+    await _settle()
+    assert r.started == [99, 1, 2, 3], "arm a: no new debt until below today's one"
+    await _finish(r, task)
+
+
+async def test_a_failed_debt_stamp_only_the_trial_let_in_switches_it_off(slots_trial):
+    from tests.test_admitted_debt_slots_10090 import _Gated, _finish, _running_call, _settle
+
+    r = _Gated(blocked={99})
+    real = r._refresh_batch
+
+    async def batch(event_ids, now, **kw):
+        if event_ids == [2]:
+            raise RuntimeError("stamp failed")
+        return await real(event_ids, now, **kw)
+
+    r._refresh_batch = batch
+    task = await _running_call(r)
+    r.adopt_pending(range(1, 9))
+    r.admit_fresh((), flush_started=1001)
+    await _settle()
+    assert [name for name, _ in slots_trial["tripped"]] == [SLOTS]
+    r.admit_fresh((), flush_started=1002)
+    await _settle()
+    r.admit_fresh((), flush_started=1003)
+    await _settle()
+    # Back to today's one slot: one owed event per admission from here.
+    assert r.started[-2:] == [4, 5] and r.pending_event_ids() == frozenset({2, 6, 7, 8})
+    await _finish(r, task)
+
+
+async def test_a_failed_debt_stamp_within_todays_slot_trips_nothing(slots_trial):
+    from tests.test_admitted_debt_slots_10090 import _Gated, _finish, _running_call, _settle
+
+    slots_trial["value"] = 1
+    r = _Gated(blocked={99})
+    real = r._refresh_batch
+
+    async def batch(event_ids, now, **kw):
+        if event_ids == [1]:
+            raise RuntimeError("stamp failed")
+        return await real(event_ids, now, **kw)
+
+    r._refresh_batch = batch
+    task = await _running_call(r)
+    r.adopt_pending(range(1, 4))
+    r.admit_fresh((), flush_started=1001)
+    await _settle()
+    assert slots_trial["tripped"] == []
+    await _finish(r, task)
