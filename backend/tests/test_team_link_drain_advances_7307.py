@@ -85,8 +85,8 @@ def _regexp(pattern, value):  # pragma: no cover - exercised through SQL
     return re.search(pattern, value, re.IGNORECASE) is not None
 
 
-def _make_engine():
-    engine = create_engine("sqlite://")
+def _make_engine(url: str = "sqlite://"):
+    engine = create_engine(url)
 
     @event.listens_for(engine, "connect")
     def _register(dbapi_conn, _record):  # pragma: no cover - connection hook
