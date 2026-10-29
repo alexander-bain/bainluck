@@ -290,6 +290,14 @@ LOCK_RETRY_PROMPT_SWITCH = "lock_retry_prompt"
 #: is ordinary debt again, so a lock that persists costs at most these attempts
 #: (each behind the same statement bound), never a loop.
 LOCK_RETRY_PROMPT_DELAYS_S = (1.0, 2.0, 4.0)
+#: #10090 runtime trial (``alternate`` 0/1, today 0), read when a debt drain or
+#: door admission finds a lock retry deferred only by a buffered, not yet
+#: written withdrawal (`withdrawing_event_ids`): on, the retry is taken past
+#: it as `owed_past_withdrawal` takes throttle-deferred debt, its prompt
+#: included. Production 2026-10-29: PM lock holds were 22.9% of held seconds,
+#: on the busy wide-book games whose buffer never clears, so a due
+#: `lock_retry_prompt` stayed out flush after flush.
+LOCK_RETRY_PAST_WITHDRAWAL_SWITCH = "lock_retry_past_withdrawal"
 
 
 def _optional_db_key(event_ids) -> Optional[int]:
@@ -360,6 +368,14 @@ def _lock_retry_prompt() -> bool:
     try:
         return bool(_optional_db_trial().value(LOCK_RETRY_PROMPT_SWITCH, 0))
     except Exception:  # noqa: BLE001 — a switch read never fails a stamp
+        return False
+
+
+def _lock_retry_past_withdrawal() -> bool:
+    """This drain's `lock_retry_past_withdrawal` arm; off on any switch error."""
+    try:
+        return bool(_optional_db_trial().value(LOCK_RETRY_PAST_WITHDRAWAL_SWITCH, 0))
+    except Exception:  # noqa: BLE001 — a switch read never fails a flush
         return False
 
 
@@ -2594,7 +2610,8 @@ class LiveBlendRefresher:
         #10090 ``withdrawing_event_ids``: those of ``defer_event_ids`` deferred
         only by a buffered withdrawal the caller has not started writing. With
         `owed_past_withdrawal` on, a throttle-deferred one is not excluded
-        (`_past_withdrawal`); fresh events and lock retries still are.
+        (`_past_withdrawal`), and with `lock_retry_past_withdrawal` on, a lock
+        retry is not; fresh events still are.
 
         #10090 — ``flush_started`` is the socket flush's start on `_mono`
         (`run_flush_cadence`). When given, the per-event floor, the failed-retry
@@ -3400,8 +3417,9 @@ class LiveBlendRefresher:
         committed; the withdrawal, when it lands, is ordered after the stamp by
         the same-event fence (`join_stamp_reading`) and owes its own stamp.
         Throttle-deferred events only: a fresh cohort keeps waiting for its
-        withdrawal, and a lock retry keeps its own path. Empty when the switch
-        is off, and without reading it when nothing is withdrawing.
+        withdrawal, and a lock retry keeps its own path (`_lock_retry_past`).
+        Empty when the switch is off, and without reading it when nothing is
+        withdrawing.
         """
         withdrawing = set(withdrawing)
         if not withdrawing:
@@ -3409,7 +3427,26 @@ class LiveBlendRefresher:
         retry = self._lock_retry if retry is None else retry
         deferred = self._throttle_deferred if deferred is None else deferred
         passable = withdrawing.intersection(deferred).difference(retry, fresh)
-        if not passable or not _owed_past_withdrawal():
+        if passable and not _owed_past_withdrawal():
+            passable = set()
+        return passable | self._lock_retry_past(withdrawing, fresh, retry)
+
+    def _lock_retry_past(self, withdrawing, fresh=(), retry=None) -> set[int]:
+        """#10090 `lock_retry_past_withdrawal`: the lock retries a drain or a
+        door may take although their caller still defers them, for the same
+        reason as `_past_withdrawal`'s debt: their prices are committed, and
+        the only thing pending is a buffered withdrawal no write has started.
+        `_due` still gates each as it gates any lock retry (a failed-retry
+        hold included), and a due prompt (`_take_lock_prompts`) is taken as it
+        would be with nothing withdrawing. A fresh cohort keeps waiting. Empty when the switch is
+        off, and without reading it when no lock retry is withdrawing.
+        """
+        withdrawing = set(withdrawing)
+        if not withdrawing:
+            return set()
+        retry = self._lock_retry if retry is None else retry
+        passable = withdrawing.intersection(retry).difference(fresh)
+        if not passable or not _lock_retry_past_withdrawal():
             return set()
         return passable
 
@@ -3669,11 +3706,16 @@ class LiveBlendRefresher:
         if self._lock_prompt_at:
             # #10090 `lock_retry_prompt`: a row-lock skip whose prompt attempt
             # is due rides this admission beside the cohort, outside the debt
-            # slots, as it would be fresh in a new `refresh`.
+            # slots, as it would be fresh in a new `refresh`. With
+            # `lock_retry_past_withdrawal` on, a buffered withdrawal does not
+            # keep it out.
+            prompt_excluded = excluded.difference(
+                self._lock_retry_past(withdrawing_event_ids, event_ids)
+            )
             taken |= self._take_lock_prompts(
                 (
                     eid for eid in self._lock_retry
-                    if eid not in excluded and eid not in window.holding
+                    if eid not in prompt_excluded and eid not in window.holding
                     and self._due(eid, flush_started)
                 ),
                 _mono(),
