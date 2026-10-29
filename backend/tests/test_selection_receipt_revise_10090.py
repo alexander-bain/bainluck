@@ -115,13 +115,14 @@ async def test_a_batch_aborted_in_compute_closes_the_open_selection(monkeypatch,
     r, session, lines = batch_rig(monkeypatch)
     original = r._oriented
 
-    async def oriented(session_, event_id, home_prob, *, reading=None, before_fallback=None):
+    async def oriented(session_, event_id, home_prob, *, reading=None, before_fallback=None,
+                       **kw):
         if event_id == 2:
             if how == "cancelled":
                 raise asyncio.CancelledError()
             await before_fallback()  # the cold read arms the budget first
         return await original(session_, event_id, home_prob, reading=reading,
-                              before_fallback=before_fallback)
+                              before_fallback=before_fallback, **kw)
 
     monkeypatch.setattr(r, "_oriented", oriented)
     r.stamp_lock_timeout_ms = 250

@@ -942,9 +942,11 @@ def test_a_stored_alternation_that_is_not_whole_pairs_reads_off(period_s, expire
     "layer, abandon, attempts, slots, expected",
     [
         ("1", None, 1, 1, "layer SPEED_SWITCH_TRIALS=on today pending_attempts=1 "
-                          "abandon_optional_db=0 admitted_debt_slots=1"),
+                          "abandon_optional_db=0 admitted_debt_slots=1 "
+                          "admitted_stamp_batch=1"),
         (None, "1", 3, 2, "layer SPEED_SWITCH_TRIALS=off today pending_attempts=3 "
-                          "abandon_optional_db=1 admitted_debt_slots=2"),
+                          "abandon_optional_db=1 admitted_debt_slots=2 "
+                          "admitted_stamp_batch=1"),
     ],
 )
 def test_each_process_logs_the_layer_and_todays_values_once(
