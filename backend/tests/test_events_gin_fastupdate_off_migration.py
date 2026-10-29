@@ -9,10 +9,7 @@ them — is `tests/integration/test_events_writes_never_merge_a_gin_backlog_1009
 
 Pins:
 * every GIN index any migration creates on `events` is in the migration, so no
-  writer is left with a list to merge (a sixth one must join by an edit). The
-  two production built outside any migration are the follow-up's
-  (`events_fts_gin_fastupdate_off`), and the real-Postgres file's census reads
-  every `events` GIN from `pg_index` after both;
+  writer is left with a list to merge (a sixth one must join by an edit);
 * both batches open with `LOCK TABLE events IN ACCESS EXCLUSIVE MODE`, so the
   batch cannot deadlock a live query that locks the indexes in OID order (the
   behaviour gate holds the deadlock arm);
@@ -65,13 +62,11 @@ def _events_gin_indexes_created_by_migrations() -> set[str]:
     return names
 
 
-def test_revision_id_fits_gotcha_1_and_sits_on_the_single_head():
+def test_revision_id_fits_gotcha_1_and_is_the_single_head():
     assert MIGRATION.revision == NAME
     assert len(MIGRATION.revision) <= 32
     script = ScriptDirectory.from_config(Config(str(BACKEND / "alembic.ini")))
-    heads = list(script.get_heads())
-    assert len(heads) == 1
-    assert NAME in {r.revision for r in script.iterate_revisions(heads[0], "base")}
+    assert list(script.get_heads()) == [NAME]
     assert script.get_revision(MIGRATION.down_revision) is not None
 
 

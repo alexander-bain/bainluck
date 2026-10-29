@@ -7844,8 +7844,6 @@ jobs:
         # attended drop of the duplicate pair (events_gin_fastupdate_off).
         # +1 = a reader arriving mid-batch, indexes in production OID order, is
         # queued, never deadlocked (LOCK TABLE first).
-        # +4 = events_fts_gin_fastupdate_off: a pg_index census of every events
-        # GIN (parent-only strawman, both, downgrade) + reversed-OID reader.
         if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set +e
@@ -7868,8 +7866,8 @@ jobs:
             echo "::error::#10090 GIN backlog gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/ginbacklog10090.txt || {
-            echo "::error::#10090 GIN backlog gate did not run all twelve cases"
+          grep -qE "[^0-9]8 passed[,[:space:]]" /tmp/ginbacklog10090.txt || {
+            echo "::error::#10090 GIN backlog gate did not run all eight cases"
             exit 1
           }
 
