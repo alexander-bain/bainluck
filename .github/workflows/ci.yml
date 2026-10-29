@@ -1839,6 +1839,7 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_hook_queue_reaches_what_its_gate_allows_5531_pg.py \
+            tests/integration/test_enrich_llm_tasks_hold_no_transaction_across_llm_calls_10090_pg.py \
             -v -rs 2>&1 | tee /tmp/hookqueue5531.txt
           if grep -qiE "[0-9]+ skipped" /tmp/hookqueue5531.txt; then
             echo "::error::#5531 hook queue window SKIPPED — the gate did not run"

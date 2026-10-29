@@ -245,6 +245,18 @@ POLL_STAMP_COUNTS = {
     # settled reader shows as a result rather than a price, and a fresher stamp
     # can only make `routes/playoffs.py`'s stale-row drop more permissive.
     "app/tasks/ws_open_contracts.py": 1,
+    # #10090 (PR #11719 R1). `enrich_cu_v2_profiles` merged its two UPDATEs of a
+    # market into one statement through a table clause, which carries no
+    # `onupdate`, so the `updated_at=now()` the ORM UPDATE always added is now
+    # written by name. NOT A NEW STAMP: the same column was bumped on the same
+    # write before, invisibly to this textual census. It is not a price write
+    # (it writes `market_metadata`/`story_key`), and it stamps
+    # `FuturesMarket.updated_at`, never `FuturesOutcome.last_updated`, the
+    # column every READ_SIDE_CONSUMERS gate keys on. Consumers re-checked: the
+    # market-level readers (`routes/weather.py`'s stale cutoff, feed candidate
+    # order, the cache `max(updated_at)` watermarks) see exactly what the parent
+    # gave them; dropping the bump would have been the change.
+    "app/tasks/enrich_markets.py": 1,
 }
 
 

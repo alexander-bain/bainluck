@@ -16,7 +16,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import httpx
-from sqlalchemy import select, update, func
+from sqlalchemy import DateTime, Integer, String, column as sa_column, select, table as sa_table, update, func
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.services.llm_models import resolve_model
 from app.services.llm_request import JobBudget, LLMCallRefused, complete_chat, complete_chat_detailed
@@ -654,6 +655,13 @@ async def enrich_market_images(limit: int = 50):
             .limit(limit)
         )
         markets = result.all()
+        # #10090: no transaction stays open across a Pexels request. The read
+        # ends here (plain tuples), and each market's write commits on its
+        # own below. This loop used to commit once at the end, so every
+        # written row stayed locked across every later market's request: the
+        # 2026-10-29 00:58Z lock watch caught it idle in transaction 172 s,
+        # holding up a market writer of the same row.
+        await session.commit()
 
         for market_id, name, category, event_id in markets:
             candidates = _image_query_candidates(
@@ -691,6 +699,7 @@ async def enrich_market_images(limit: int = 50):
                     .where(FuturesMarket.id == market_id)
                     .values(image_url=url, image_width=width, image_height=height)
                 )
+                await session.commit()
                 stats["found"] += 1
             else:
                 stats["errors"] += 1
@@ -986,6 +995,13 @@ async def enrich_market_hooks(limit: int = 50):
                 evidence=evidence,
             )
 
+            # #10090: end the transaction the reads above opened BEFORE the LLM
+            # call, and commit each market's write before the next one's call.
+            # This loop used to commit once at the end, so every hook written
+            # kept its row locked across every later market's call. Commit
+            # does not expire `candidates` (`expire_on_commit=False`).
+            await session.commit()
+
             try:
                 response = complete_chat(
                     "hooks", client, max_output_tokens=150, temperature=0.7,
@@ -1055,6 +1071,7 @@ async def enrich_market_hooks(limit: int = 50):
                         market_metadata=next_metadata,
                     )
                 )
+                await session.commit()
                 stats["generated"] += 1
                 if was_regen:
                     stats["regenerated"] += 1
@@ -1212,6 +1229,11 @@ async def enrich_discover_llm_metadata(limit: int = 100):
                 + ("\n".join(outcome_lines) if outcome_lines else "- unknown")
             )
 
+            # #10090: end the transaction the reads above opened BEFORE the LLM
+            # call, and commit each market's write before the next one's call.
+            # Nothing is held while the model answers.
+            await session.commit()
+
             try:
                 result = complete_chat_detailed(
                     "discover_metadata", client, max_output_tokens=350, temperature=0.1,
@@ -1240,6 +1262,7 @@ async def enrich_discover_llm_metadata(limit: int = 100):
                         story_key=computed_story_key,
                     )
                 )
+                await session.commit()
                 usage = getattr(response, "usage", None)
                 if usage:
                     stats["estimated_input_tokens"] += int(getattr(usage, "prompt_tokens", 0) or 0)
@@ -1455,6 +1478,17 @@ async def _resolve_entity_refs(session, names: list[str]) -> dict[str, dict[str,
     return out
 
 
+#: The columns `enrich_cu_v2_profiles` writes, `story_key` included: the
+#: column exists (migration c852a0story01) but FuturesMarket does not map it.
+_FUTURES_MARKETS_CU_WRITE = sa_table(
+    "futures_markets",
+    sa_column("id", Integer),
+    sa_column("market_metadata", JSONB),
+    sa_column("story_key", String(300)),
+    sa_column("updated_at", DateTime(timezone=True)),
+)
+
+
 async def enrich_cu_v2_profiles(limit: int = 125):
     """Generate Content Understanding v2 profiles for feed-shaped markets.
 
@@ -1591,8 +1625,17 @@ async def enrich_cu_v2_profiles(limit: int = 125):
     # session rather than borrowing the write session. Two reasons, both real:
     # the write session's invariant above stays true, and a failed grounding
     # SELECT would otherwise poison the write transaction (Postgres refuses
-    # every later statement until rollback) — and since this loop commits ONCE
-    # at the end, that rollback would discard every profile written so far.
+    # every later statement until rollback).
+    #
+    # #10090: no transaction of either session stays open across an LLM call.
+    # Each market is ONE UPDATE, committed before the next market's call, and
+    # the grounding read ends as soon as it has answered. This loop used to
+    # commit once at the end: with up to 125 calls in between, the write
+    # transaction sat idle for minutes, and a market's second UPDATE (its
+    # `story_key`, on a row version this transaction had written) fired the
+    # `event_id` foreign-key check, which held FOR KEY SHARE on the game's
+    # `events` row. The live prediction-market writers' FOR UPDATE on that row
+    # queued behind it, and the live stamp behind them.
     async with get_task_session() as write_session, get_task_session() as resolve_session:
         for item in work_items:
             if stats["estimated_cost_usd"] >= COST_CAP_USD:
@@ -1673,10 +1716,13 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                         item["id"], resolve_exc,
                     )
                     resolved_refs = {}
-                    try:
-                        await resolve_session.rollback()
-                    except Exception:
-                        pass
+                try:
+                    await resolve_session.rollback()  # read-only: ends its transaction
+                except Exception:
+                    # Nothing was written on this session, so a failed rollback
+                    # loses nothing; a broken connection fails the next read,
+                    # which the grounding step above already tolerates.
+                    pass
 
                 subjects, subject_ref, subject_entity_id, subject_resolved = (
                     ground_subjects(mentions, resolved_refs)
@@ -1728,19 +1774,22 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 next_metadata = dict(item["metadata"])
                 next_metadata[DISCOVER_LLM_METADATA_KEY] = profile
 
-                await write_session.execute(
-                    update(FuturesMarket)
-                    .where(FuturesMarket.id == item["id"])
-                    .values(market_metadata=next_metadata)
-                )
-
+                # One statement: a second UPDATE of the row this transaction
+                # just wrote would run the `event_id` FK check (above).
+                # `story_key` is not mapped on FuturesMarket, so the write goes
+                # through a table clause that names it.
+                # The table clause carries no `onupdate`, so the bump the ORM
+                # UPDATE made (`updated_at=now()`) is written here by name.
+                values = {"market_metadata": next_metadata, "updated_at": func.now()}
                 story_key = raw.get("story_key")
                 if story_key:
-                    from sqlalchemy import text as _text
-                    await write_session.execute(
-                        _text("UPDATE futures_markets SET story_key = :sk WHERE id = :mid"),
-                        {"sk": story_key, "mid": item["id"]},
-                    )
+                    values["story_key"] = story_key
+                await write_session.execute(
+                    update(_FUTURES_MARKETS_CU_WRITE)
+                    .where(_FUTURES_MARKETS_CU_WRITE.c.id == item["id"])
+                    .values(**values)
+                )
+                await write_session.commit()
                 stats["generated"] += 1
             except LLMCallRefused as exc:
                 # #11042 slice 3: the call was never sent. A refusal is a stop,
@@ -2332,6 +2381,12 @@ async def enrich_snippet_angles(limit: int = 125):
             .limit(limit * 3)
         )
         candidates = result.scalars().all()
+        # #10090: each market's write commits on its own below, so the
+        # failure path's rollback now discards one market, not the batch. A
+        # rollback expires every object the session holds (gotcha #6), and
+        # this loop reads the next candidate's attributes after it; detached
+        # rows keep what they loaded.
+        session.expunge_all()
 
         for market in candidates:
             if stats["processed"] >= limit:
@@ -2379,6 +2434,11 @@ async def enrich_snippet_angles(limit: int = 125):
 
             angle = select_angle(ctx)
 
+            # #10090: end the read transaction before the LLM call. This loop
+            # used to commit once at the end, so every written row stayed
+            # locked across every later market's call.
+            await session.commit()
+
             phrased_text = None
             if angle:
                 phrased_text = await _llm_rephrase_snippet(
@@ -2400,6 +2460,7 @@ async def enrich_snippet_angles(limit: int = 125):
                     .where(FuturesMarket.id == market.id)
                     .values(market_metadata=next_metadata)
                 )
+                await session.commit()
                 if angle:
                     stats["angles_found"] += 1
             except Exception as exc:
