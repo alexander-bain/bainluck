@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 #: costs one pass of staleness and never a wait. A write that never waits
 #: cannot be one side of a lock-order cycle (#10090: 00:45:41Z 10/29, the EI
 #: flush and the score writer each waited on the other's events row).
+#: NO KEY UPDATE is the lock the UPDATE itself takes. Plain FOR UPDATE would
+#: also clash with the key-share lock every snapshot INSERT takes through its
+#: foreign key: an open price write would make EI skip that game, and a price
+#: write arriving mid-statement would wait on EI.
 LIVE_EI_WRITE_SQL = """
     WITH v AS (
         SELECT *
@@ -38,7 +42,7 @@ LIVE_EI_WRITE_SQL = """
         FROM events e
         WHERE e.id = ANY(CAST(:ids AS integer[]))
         ORDER BY e.id
-        FOR UPDATE OF e SKIP LOCKED
+        FOR NO KEY UPDATE OF e SKIP LOCKED
     )
     UPDATE events
     SET raw_ei = v.raw_ei,

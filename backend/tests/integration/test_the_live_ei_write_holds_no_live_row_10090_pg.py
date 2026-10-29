@@ -22,6 +22,10 @@ it is held, and:
 On unfixed ``origin/master`` dca1ff3baf both read the other way: the step is
 still parked on the held row, and the lower game's row is locked (55P03).
 
+``test_an_open_price_write_neither_makes_ei_skip_its_game_nor_waits_on_ei``:
+the EI lock is NO KEY UPDATE, so a snapshot INSERT's FK key-share lock neither
+makes EI skip a game nor waits on EI.
+
 Controls: ``test_the_probe_can_see_a_held_row`` (the probe is not blind), and
 ``test_the_ei_values_are_the_formulas`` (same values as calling the formula, so
 the rewrite moved only when and how the write lands).
@@ -213,6 +217,45 @@ async def test_a_held_live_row_neither_blocks_the_ei_write_nor_has_its_neighbour
         await holder.rollback()
         await holder.close()
         await asyncio.wait_for(step, timeout=10)
+
+
+async def test_an_open_price_write_neither_makes_ei_skip_its_game_nor_waits_on_ei(pg_engine):
+    """A snapshot INSERT holds FOR KEY SHARE on its events row through the FK.
+
+    The EI write must lock no harder than its own UPDATE (FOR NO KEY UPDATE):
+    with plain FOR UPDATE it skips the game while the price write is open, and
+    a price write that arrives while EI holds the row waits for EI's commit.
+    """
+    insert = text(
+        "INSERT INTO odds_snapshots (event_id, captured_at, bookmaker, "
+        "home_win_probability, away_win_probability, reading_count) "
+        "VALUES (:e, now(), 'draftkings', 0.5, 0.5, 1)"
+    )
+    writer = await pg_engine.connect()
+    await writer.begin()
+    await writer.execute(insert, {"e": HELD_GAME})
+    try:
+        assert await asyncio.wait_for(_the_pass_step(pg_engine), timeout=5) == 2
+        assert (await _committed_ei(pg_engine))[HELD_GAME].raw_ei is not None
+    finally:
+        await writer.rollback()
+        await writer.close()
+
+    from app.tasks.excitement_index import LIVE_EI_WRITE_SQL
+
+    async with pg_engine.connect() as ei_conn:
+        await ei_conn.begin()
+        await ei_conn.execute(
+            text(LIVE_EI_WRITE_SQL),
+            {"ids": [FREE_GAME], "raw_ei": [0.5], "ei_metadata": ["{}"],
+             "now": datetime.now(timezone.utc)},
+        )
+        async with pg_engine.connect() as price:
+            await price.begin()
+            await price.execute(text(f"SET LOCAL lock_timeout = '{STAMP_LOCK_TIMEOUT}'"))
+            await price.execute(insert, {"e": FREE_GAME})  # 55P03 under FOR UPDATE
+            await price.rollback()
+        await ei_conn.rollback()
 
 
 async def test_the_ei_values_are_the_formulas(pg_engine):

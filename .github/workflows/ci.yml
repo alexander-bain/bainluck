@@ -7807,7 +7807,7 @@ jobs:
         # the real LiveBlendRefresher against game A.
         #
         # 3 = the ship arm + the refresher-bound control + the failed-game
-        # rollback/publication control. +3: the live EI write skips held rows.
+        # rollback/publication control. +4: the live EI write skips held rows.
         if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -7818,8 +7818,8 @@ jobs:
             echo "::error::#10090 per-game commit gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]8 passed[,[:space:]]" /tmp/pergame10090.txt || {
-            echo "::error::#10090 per-game commit gate did not run all eight cases"
+          grep -qE "[^0-9]9 passed[,[:space:]]" /tmp/pergame10090.txt || {
+            echo "::error::#10090 per-game commit gate did not run all nine cases"
             exit 1
           }
 
