@@ -346,11 +346,56 @@ interface PreviewChartHistory {
   blend_edge_pinned?: boolean | null;
   blend_edge_observed_at?: string | null;
   blend_edge_fold_revision?: unknown;
+  /** The served series the blend line was bucketed from (sources and sportsbooks). */
+  win_prob_history?: Record<string, ServedSeriesPoint[] | null | undefined> | null;
+  history?: ServedSeriesPoint[] | null;
 }
 
 interface PreviewChartPoint {
   timestamp: string;
   home_probability: number;
+}
+
+interface ServedSeriesPoint {
+  timestamp: string;
+  live_edge?: boolean | null;
+  evidence?: { kind?: string | null } | null;
+}
+
+/** The headline's committed value and its clock, which the page may write onto the served edge. */
+interface HeldChartBlend extends HeldBlend {
+  hero_probability?: number | null;
+  hero_probability_observed_at?: string | null;
+}
+
+const BLEND_BUCKET_MS = 60_000;
+
+/**
+ * #10090 — the served blend minutes that hold nothing but the backend's
+ * carry-forward. On a live game whose sources have been quiet for 30 s,
+ * `_extend_win_prob_history_to_live_edge` appends each source's last value at
+ * the read time (`live_edge`), and the blend is bucketed by minute, so the line
+ * gains a point at the start of the read's minute that is a delivery time, not
+ * a reading. A minute qualifies only when a carried point is in it and no real
+ * source or sportsbook reading is.
+ */
+function carriedForwardMinutes(served: PreviewChartHistory): Set<number> {
+  const carried = new Set<number>();
+  const real = new Set<number>();
+  const minuteOf = (timestamp: string) => {
+    const at = Date.parse(timestamp);
+    return Number.isFinite(at) ? Math.floor(at / BLEND_BUCKET_MS) * BLEND_BUCKET_MS : NaN;
+  };
+  for (const series of Object.values(served.win_prob_history ?? {})) {
+    for (const point of series ?? []) {
+      const minute = minuteOf(point.timestamp);
+      if (point.live_edge === true || point.evidence?.kind === "live_edge") carried.add(minute);
+      else real.add(minute);
+    }
+  }
+  for (const point of served.history ?? []) real.add(minuteOf(point.timestamp));
+  for (const minute of real) carried.delete(minute);
+  return carried;
 }
 
 /**
@@ -360,7 +405,7 @@ interface PreviewChartPoint {
  * Revoke, expiry, reconnect and a newer commit return the original line.
  */
 export function overlayBlendPreviewLine(
-  event: HeldBlend | null | undefined,
+  event: HeldChartBlend | null | undefined,
   state: BlendPreviewState | null,
   now: number,
   line: PreviewChartPoint[] | undefined,
@@ -387,16 +432,33 @@ export function overlayBlendPreviewLine(
       || ((served.blend_edge_pinned === true || served.blend_edge_fold_revision != null)
         && (!edgeRevision || !base || !coversPreviewFloors(base, edgeRevision))))) return line;
   const edgeObserved = Date.parse(served?.blend_edge_observed_at ?? "");
+  // #10090: the page may already have written the headline's committed value
+  // onto that edge (#3911's pin, #8749's in-place repair), so it is found by
+  // its served instant, not its value. A rewritten value must be exactly the
+  // headline's, observed before this preview; `displayedPreview` has already
+  // ordered that committed fold at or below the preview's base.
+  const heroObserved = Date.parse(event?.hero_probability_observed_at ?? "");
+  const edgeValueServed = edge !== undefined && servedEdge !== undefined
+    && (servedEdge.home_probability === edge.home_probability
+      || (edge.home_probability === event?.hero_probability
+        && Number.isFinite(heroObserved) && heroObserved < at));
   const replaceSyntheticEdge = edge !== undefined && servedEdge !== undefined
     && served?.event_id === state?.eventId && served.blend_edge_pinned === true
     && Number.isFinite(edgeObserved) && edgeObserved < at
     && Date.parse(edge.timestamp) >= at
     && Date.parse(servedEdge.timestamp) === Date.parse(edge.timestamp)
-    && servedEdge.home_probability === edge.home_probability
+    && edgeValueServed
     && edgeRevision !== null && base !== null
     && Object.keys(edgeRevision).length === Object.keys(base).length
     && coversPreviewFloors(base, edgeRevision);
-  const historical = replaceSyntheticEdge ? line!.slice(0, -1) : line ?? [];
+  // With that edge gone, the carry-forward minute behind it is the same read
+  // time (`carriedForwardMinutes`); only served points at or after the preview go.
+  const carried = replaceSyntheticEdge ? carriedForwardMinutes(served!) : null;
+  const servedInstants = new Set((served?.aggregate_line ?? []).map(point => Date.parse(point.timestamp)));
+  const historical = (replaceSyntheticEdge ? line!.slice(0, -1) : line ?? []).filter(point => {
+    const committedAt = Date.parse(point.timestamp);
+    return !(carried?.has(committedAt) && servedInstants.has(committedAt) && committedAt >= at);
+  });
   for (const point of historical) {
     const committedAt = Date.parse(point.timestamp);
     if (!Number.isFinite(committedAt) || committedAt >= at) return line;
