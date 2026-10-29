@@ -321,3 +321,20 @@ def test_cli_resume_writes_private_remaining_plans(tmp_path, capsys):
         assert t.main(base + extra + ["--out-dir", str(tmp_path / "never")]) == 2
         assert json.loads(capsys.readouterr().out)["status"] == "REFUSED"
     assert not (tmp_path / "never").exists()
+
+
+def test_resume_across_512_continues_the_v2_incarnation_at_its_cap():
+    t = tool()
+    v2 = (96, 48, 192, 128, 448, 112)
+    built = t.build(ready(2), PRIMARY, apps(), v2, "96,48,192,128,448,112")
+    planned = parse_authority(json.dumps(built["next_expected_authority"]))
+    assert planned.policy_fingerprint.startswith("v2-six-hour-")
+    preparing = replace(planned, state="preparing")
+    result = t.resume(preparing, 1, planned, PRIMARY, apps(), "96,48,192,128,448,112")
+    assert [s["step"] for s in result["continue"]["steps"]] == ["initialize", "ready"]
+    assert result["summary"]["to_ledger_cap"] == 1024
+    assert t.resume(planned, 2, planned, PRIMARY, apps(), "96,48,192,128,448,112")[
+        "summary"]["to_ledger_cap"] == 1024
+    # The 512 split of the same row is a different fingerprint: refused.
+    with pytest.raises(t.RelimitRefused, match="planned sizes"):
+        t.resume(preparing, 1, planned, PRIMARY, apps(), CONFIGURED)

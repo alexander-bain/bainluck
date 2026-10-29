@@ -237,7 +237,8 @@ def resume(
         raise RelimitRefused("activation_step must be 0, 1 or 2")
     if current.state == "ready" and activation_step != 2:
         raise RelimitRefused("a ready authority records activation_step 2")
-    if configured_policy(configured).fingerprint != planned.policy_fingerprint:
+    target = configured_policy(configured)
+    if target.fingerprint != planned.policy_fingerprint:
         raise RelimitRefused(
             f"{RESERVATIONS_ENV} read back from the app does not produce the planned sizes"
         )
@@ -263,6 +264,7 @@ def resume(
             "activation_step": activation_step,
             "remaining_activation_steps": remaining,
             "to_fingerprint": planned.policy_fingerprint,
+            "to_ledger_cap": target.cap,
             "to_incarnation": planned.incarnation,
             "configured_value": configured,
             "plans": sorted(plans),
