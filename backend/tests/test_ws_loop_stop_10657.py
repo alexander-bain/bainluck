@@ -174,7 +174,9 @@ class TestTheFlushLoopEndsWithItsRun:
         _timing(monkeypatch, module, refresh=0.3)
         _install_session(monkeypatch, slate, lambda n: [])
 
-        stats = await asyncio.wait_for(consumer(), timeout=5)
+        # Shielded: a run whose flush loop outlives its stop holds every
+        # cancellation, so an unshielded bound would hang instead of failing.
+        stats = await asyncio.wait_for(asyncio.shield(consumer()), timeout=5)
         returned = time.monotonic()
         # Several cadence periods: the pre-#10657 loop re-entered here.
         await asyncio.sleep(10 * (PERIOD + WORK))
