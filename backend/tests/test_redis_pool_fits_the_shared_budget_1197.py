@@ -956,6 +956,7 @@ _EXPECTED_SYNC_SIGNATURES = {
     (2.0, 2.0, False),  # the price-refresh / watchdog variant
     (1.0, 1.0, True),   # search_head_warmer's two named 1.0s constants + #9051 trail
     (0.5, 5.0, True),   # the latency middleware on the hot request path
+    (0.25, 0.25, True),  # #10090 speed_switches._read_stored, one thread at a time
 }
 
 
