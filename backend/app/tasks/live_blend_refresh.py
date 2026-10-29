@@ -76,7 +76,7 @@ import os
 import time
 from dataclasses import dataclass, replace as _replace
 from datetime import datetime, timezone
-from typing import Awaitable, Callable, Container, Iterable, Optional
+from typing import Any, Awaitable, Callable, Container, Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +256,10 @@ ADMITTED_DEBT_SLOTS_SWITCH = "admitted_debt_slots"
 #: its fresh stamps when the choice needs no read, else when the old
 #: population's live-first read returns — instead of after the fresh stamps.
 RELEASE_UNATTEMPTED_DEBT_SWITCH = "release_unattempted_debt"
+#: `ADMITTED_STAMP_BATCH`'s runtime trial name: ``alternate`` between two values
+#: by period, read once per admitted worker turn that could batch
+#: (`_admitted_stamp_batch`).
+ADMITTED_STAMP_BATCH_SWITCH = "admitted_stamp_batch"
 
 
 def _optional_db_key(event_ids) -> Optional[int]:
@@ -287,6 +291,14 @@ def _admitted_debt_slots() -> int:
         return _optional_db_trial().value(ADMITTED_DEBT_SLOTS_SWITCH, ADMITTED_DEBT_SLOTS)
     except Exception:  # noqa: BLE001 — a switch read never fails an admission
         return ADMITTED_DEBT_SLOTS
+
+
+def _admitted_stamp_batch() -> int:
+    """This worker turn's batch size: a running alternation's arm, else the setting."""
+    try:
+        return _optional_db_trial().value(ADMITTED_STAMP_BATCH_SWITCH, ADMITTED_STAMP_BATCH)
+    except Exception:  # noqa: BLE001 — a switch read never fails a stamp
+        return ADMITTED_STAMP_BATCH
 
 
 def _release_unattempted_debt() -> bool:
@@ -355,6 +367,17 @@ FRESH_FLUSH_PENDING_ATTEMPTS = _owed_budget_env("FRESH_FLUSH_PENDING_ATTEMPTS", 
 # committed at 23:16:43.5Z 2026-10-28 were stamped in event-id order over 30 s.
 # Env `ADMITTED_DEBT_SLOTS` (1..3, the stamp workers); 1 is today's behaviour.
 ADMITTED_DEBT_SLOTS = _owed_budget_env("ADMITTED_DEBT_SLOTS", 1, int, 1, 3)
+# #10090 — how many queued NON-LIVE admitted events one stamp worker takes into
+# one transaction: one session and slot, one read, one COMMIT and one
+# publication for all of them, each event keeping its own savepoint and lock
+# budget (#837). Production 15:37–15:44Z 2026-10-29 (Kalshi, v5950): the run's
+# refresh was open 39–47 s a minute while about half of its ~300 attempts a
+# minute stamped nothing (`unobserved` + `no_reading`), each paying its own
+# checkout, read and commit on one of FRESH_STAMP_WORKERS slots. Taken only
+# while no live game waits, from the head of the queue, and only events of the
+# same admitted cohort (same flush clock and stored wall); a live game is never
+# in one. Env `ADMITTED_STAMP_BATCH` (1..8); 1 is today's behaviour.
+ADMITTED_STAMP_BATCH = _owed_budget_env("ADMITTED_STAMP_BATCH", 1, int, 1, 8)
 _OWED_BUDGET_LOGGED = False
 #: #10090 — the pid that printed the speed-switch start line (a forked venue
 #: process prints its own).
@@ -2196,9 +2219,9 @@ class LiveBlendRefresher:
             logger.info(
                 "live_blend_refresh[%s]: owed-stamp budget "
                 "FRESH_FLUSH_PENDING_ATTEMPTS=%d PENDING_STAMP_BUDGET_S=%.3g "
-                "ADMITTED_DEBT_SLOTS=%d",
+                "ADMITTED_DEBT_SLOTS=%d ADMITTED_STAMP_BATCH=%d",
                 source, FRESH_FLUSH_PENDING_ATTEMPTS, PENDING_STAMP_BUDGET_S,
-                ADMITTED_DEBT_SLOTS,
+                ADMITTED_DEBT_SLOTS, ADMITTED_STAMP_BATCH,
             )
         global _SPEED_SWITCH_LOGGED_PID
         if _SPEED_SWITCH_LOGGED_PID != os.getpid():
@@ -2211,10 +2234,10 @@ class LiveBlendRefresher:
             logger.info(
                 "speed_switch[pid=%d]: layer SPEED_SWITCH_TRIALS=%s "
                 "today pending_attempts=%d abandon_optional_db=%d "
-                "admitted_debt_slots=%d",
+                "admitted_debt_slots=%d admitted_stamp_batch=%d",
                 os.getpid(), "on" if trials_enabled() else "off",
                 FRESH_FLUSH_PENDING_ATTEMPTS, int(optional_db_abandons()),
-                ADMITTED_DEBT_SLOTS,
+                ADMITTED_DEBT_SLOTS, ADMITTED_STAMP_BATCH,
             )
         #: #11181 — durable custody of owed chart points. Both production
         #: consumers pass one (guarded); None keeps every owed point in memory.
@@ -2453,6 +2476,7 @@ class LiveBlendRefresher:
     async def _oriented(
         self, session, event_id: int, home_prob: float, *, reading=None,
         before_fallback: Optional[Callable[[], Awaitable[None]]] = None,
+        fallback_scope: Optional[Callable[[], Any]] = None,
     ) -> float:
         """Apply the inversion verdict, computing it at most once per TTL.
 
@@ -2480,9 +2504,17 @@ class LiveBlendRefresher:
         if before_fallback is not None:
             # Preserve the existing bound on the cold Event/OddsSnapshot reads.
             await before_fallback()
-        corrected = await _check_and_fix_inversion(
-            session, event_id, home_prob, self.source,
-        )
+        if fallback_scope is None:
+            corrected = await _check_and_fix_inversion(
+                session, event_id, home_prob, self.source,
+            )
+        else:
+            # #10090: siblings share the transaction, so a failed cold read
+            # rolls back only its own savepoint, never their stamps.
+            async with fallback_scope():
+                corrected = await _check_and_fix_inversion(
+                    session, event_id, home_prob, self.source,
+                )
         flipped = not math.isclose(corrected, home_prob, rel_tol=0.0, abs_tol=1e-9)
         self._inversion[event_id] = (now + self.inversion_ttl_s, flipped)
         return corrected
@@ -3592,19 +3624,57 @@ class LiveBlendRefresher:
 
     async def _admitted_worker(self, window: _FreshAdmission) -> None:
         while window.live_queue or window.queue:
-            await self._stamp_admitted(window, window.next_queued())
+            # Read before the pick: a non-live head taken while a live game
+            # waits (ADMITTED_LIVE_RUN) is stamped alone, as today.
+            live_waiting = bool(window.live_queue)
+            event_id = window.next_queued()
+            group_ids = [event_id]
+            if not live_waiting and window.queue:
+                group_ids = self._admitted_batch(window, event_id)
+            await self._stamp_admitted(window, group_ids)
 
-    async def _stamp_admitted(self, window: _FreshAdmission, event_id: int) -> None:
-        """One admitted event, read in its own session after its cohort
+    def _admitted_batch(self, window: _FreshAdmission, head: int) -> list[int]:
+        """#10090 — the non-live head and, when an `ADMITTED_STAMP_BATCH`
+        above one is in force, the queued events that follow it from the same
+        cohort: the head of the queue only, in queue order, stopping at the
+        first event that is live by now or carries another flush clock or
+        stored wall, or the moment a live game is queued. Nothing is reordered
+        or skipped; an event not taken stays at the head for the next turn."""
+        limit = _admitted_stamp_batch()
+        live = self._live_event_ids
+        if limit <= 1 or head in live:
+            return [head]
+        clock = window.clocks.get(head, window.clock)
+        stored_wall = window.stored_wall.get(head)
+        group_ids = [head]
+        queue = window.queue
+        while queue and len(group_ids) < limit and not window.live_queue:
+            event_id = queue[0]
+            if (
+                event_id in live
+                or window.clocks.get(event_id, window.clock) != clock
+                or window.stored_wall.get(event_id) != stored_wall
+            ):
+                break
+            group_ids.append(queue.popleft())
+        return group_ids
+
+    async def _stamp_admitted(self, window: _FreshAdmission, group_ids: list[int]) -> None:
+        """Admitted events read in their own session after their cohort
         committed, exactly as a singleton stamp reads, published through the
-        running call's one sender. Never raises but for cancellation."""
+        running call's one sender. Never raises but for cancellation.
+
+        One event (today) owns its whole transaction. Several (an
+        `ADMITTED_STAMP_BATCH` above one, `_admitted_batch`) share one session,
+        read and COMMIT, each in its own savepoint with its own lock budget;
+        they share one flush clock and stored wall by construction."""
         receipts = self.receipts
-        group_ids = [event_id]
-        staged = (
-            {event_id: window.staged[event_id]} if event_id in window.staged else {}
-        )
-        stored_wall = window.stored_wall.get(event_id)
-        clock = window.clocks.get(event_id, window.clock)
+        staged = {
+            event_id: window.staged[event_id]
+            for event_id in group_ids if event_id in window.staged
+        }
+        stored_wall = window.stored_wall.get(group_ids[0])
+        clock = window.clocks.get(group_ids[0], window.clock)
 
         def committed(ids):
             window.completed.update(ids)
@@ -3625,21 +3695,35 @@ class LiveBlendRefresher:
                 "live_blend_refresh[%s]: admitted group failed for %s",
                 self.source, group_ids,
             )
-            if event_id in window.debts and len(window.debts) > ADMITTED_DEBT_SLOTS:
+            if (
+                not window.debts.isdisjoint(group_ids)
+                and len(window.debts) > ADMITTED_DEBT_SLOTS
+            ):
                 # An owed stamp only an `admitted_debt_slots` trial let in beside
                 # the setting's has failed: that trial switches off in this
                 # process (automatic switch-back on error); the stamps already
                 # in flight finish and no new debt rides past the setting.
                 _optional_db_trial().trip(ADMITTED_DEBT_SLOTS_SWITCH, exc)
-            if event_id not in window.completed:
-                window.failed.add(event_id)
+            if len(group_ids) > ADMITTED_STAMP_BATCH:
+                # A batch only an `admitted_stamp_batch` trial formed has
+                # failed: that trial switches off in this process; its events
+                # stay owed exactly as a failed singleton's do.
+                _optional_db_trial().trip(ADMITTED_STAMP_BATCH_SWITCH, exc)
+            unfinished = [
+                event_id for event_id in group_ids if event_id not in window.completed
+            ]
+            if unfinished:
+                window.failed.update(unfinished)
                 self._refresh_failed(
-                    group_ids, window.retry, clock, receipts, staged,
+                    unfinished, window.retry, clock, receipts, staged,
                     stored_wall, exc,
                 )
         else:
-            if event_id not in window.completed:
-                committed(group_ids)
+            unfinished = [
+                event_id for event_id in group_ids if event_id not in window.completed
+            ]
+            if unfinished:
+                committed(unfinished)
         finally:
             window.release(group_ids)
 
@@ -4183,9 +4267,9 @@ class LiveBlendRefresher:
         from app.utils.live_blend import compute_source_home_probability
         from app.utils.live_push import build_frame, build_source_snapshot
         from app.utils.repair_lock_budget import (
-            SET_LOCK_AND_STATEMENT_TIMEOUT_SQL, SET_LOCK_TIMEOUT_SQL,
-            SET_STATEMENT_TIMEOUT_SQL, is_lock_timeout, is_query_canceled,
-            lock_timeout_value,
+            RESET_STATEMENT_TIMEOUT_SQL, SET_LOCK_AND_STATEMENT_TIMEOUT_SQL,
+            SET_LOCK_TIMEOUT_SQL, SET_STATEMENT_TIMEOUT_SQL, is_lock_timeout,
+            is_query_canceled, lock_timeout_value,
         )
 
         # live/034 S1 — frames are COLLECTED here and published after the
@@ -4313,6 +4397,20 @@ class LiveBlendRefresher:
                 lock_budget_set = True
                 statement_bound_set = statement_bound_set or whole_statement
 
+            async def sibling_fallback():
+                # #10090 (`admitted_stamp_batch`): a sibling's stamp may have
+                # armed the whole-statement bound; the cold orientation reads
+                # keep the lock budget alone (#11138), as in a one-event batch.
+                nonlocal lock_budget_failed, statement_bound_set
+                if statement_bound_set:
+                    try:
+                        await session.execute(RESET_STATEMENT_TIMEOUT_SQL)
+                    except Exception:
+                        lock_budget_failed = True
+                        raise
+                    statement_bound_set = False
+                await ensure_lock_budget()
+
             # #10090 (preview arm only): canary readings awaiting their
             # UPDATE, the preview seq each published, and canary events whose
             # attempt failed.
@@ -4366,9 +4464,11 @@ class LiveBlendRefresher:
                                 )
                             continue
 
+                        single = len(grouped) == 1
                         home_prob = await self._oriented(
                             session, event_id, reading.home_probability, reading=reading,
-                            before_fallback=ensure_lock_budget,
+                            before_fallback=ensure_lock_budget if single else sibling_fallback,
+                            fallback_scope=None if single else session.begin_nested,
                         )
                         value = round(home_prob, 4)
 

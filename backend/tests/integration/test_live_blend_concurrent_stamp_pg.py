@@ -661,7 +661,8 @@ async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
     for source in ("kalshi", "polymarket"):
         arm = lbr.LiveBlendRefresher(source)
 
-        async def oriented(session, eid, probability, *, reading=None, before_fallback=None):
+        async def oriented(session, eid, probability, *, reading=None, before_fallback=None,
+                           **kw):
             return probability
 
         async def publish(batch, _source=source):

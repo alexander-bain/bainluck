@@ -72,6 +72,10 @@ SPECS = {
     # `live_blend_refresh.RELEASE_UNATTEMPTED_DEBT_SWITCH`, read once per mixed
     # refresh: when a call's unattempted old events leave its fence.
     "release_unattempted_debt": {"modes": ("alternate",), "values": (0, 1), "today": 0},
+    # `live_blend_refresh.ADMITTED_STAMP_BATCH`, read once per admitted worker
+    # turn that could batch: queued non-live events of one cohort stamped in one
+    # transaction. Its "today" is the worker's own setting, `today()`.
+    "admitted_stamp_batch": {"modes": ("alternate",), "values": (1, 8), "today": 1},
 }
 SWITCHES = tuple(SPECS)
 MODES = ("off", "ab", "alternate")
@@ -130,6 +134,7 @@ def key(name: str) -> str:
 _TODAY_SETTINGS = {
     "pending_attempts": "FRESH_FLUSH_PENDING_ATTEMPTS",
     "admitted_debt_slots": "ADMITTED_DEBT_SLOTS",
+    "admitted_stamp_batch": "ADMITTED_STAMP_BATCH",
 }
 
 
