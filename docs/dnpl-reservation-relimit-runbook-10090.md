@@ -80,6 +80,65 @@ takes all the room from Tier 1 is `96,48,128,64,144,32`. Its T1 active 96 is
 still about 7× the measured T1 peak. Either value is a parameter to the same
 procedure.
 
+## Totals above 512: the v2 ledger cap
+
+The ledger's resident cap is part of the fingerprint version. Totals 1..512
+stay `v1-six-hour-<map>:…` (today's bytes, cap 512); totals 513..1024 are
+`v2-six-hour-<map>:…` (same classification, status and window semantics, cap
+1024). Every allocation has exactly one fingerprint, so the default and any
+512 split keep v1 and the release changes nothing for the ready authority. The
+same procedure moves sizes AND version in one operation (`--to` a split whose
+total exceeds 512); the summary prints `to_ledger_cap`. Rollback with `--to
+default` returns to v1 and 512.
+
+**Order is binding.** A writer that predates v2 parses no v2 fingerprint: it
+refuses to claim and every command it sends to a v2 ledger is
+`policy_mismatch` (fail closed). Old Python raises `ValueError` for a
+configured total above 512 when it builds the registry, the same path as any
+invalid value of this var today (its effect on the old process is not
+qualified here). So: (1) the release
+carrying v2 is live on `bainluck` AND heavy has converged to it; (2) then this
+runbook. **Never roll the code back while the config var totals more than
+512** — roll the sizes back first (`--to default`), then the code.
+
+Proposed 1024 split (Alex picks): `96,48,192,128,448,112`.
+
+| Bucket | Today | 512 resize (item 35) | 1024 proposal | Measured peak |
+| --- | ---: | ---: | ---: | ---: |
+| T1 active | 192 | 96 | 96 | 14 |
+| T1 upcoming | 64 | 48 | 48 | 17 |
+| T2 active | 128 | 128 | 192 | 16 |
+| T2 upcoming | 64 | 64 | 128 | 15 |
+| Other active | 48 | 144 | 448 | 48 (full) |
+| Other upcoming | 16 | 32 | 112 | 16 (full) |
+
+T2 rises because college basketball starts in early November (100+ Division I
+games on a Saturday, plus the six-hour upcoming window) and no measured peak
+contains a college Saturday. Other active 448 is about 9× today's full 48; the
+retained 15:36–19:52Z logs name at least 102 Kalshi and 131 Polymarket
+distinct refused events (a lower bound: one id per alarm line).
+
+Cost at the cap, private `redis-server` 6.2 (libc malloc, laptop CPU, both
+venues pending on every event, committed base padded to production's largest
+stored `win_probability_sources`, 1,599 bytes):
+
+| | 512 (v1) | 1024 (v2) |
+| --- | ---: | ---: |
+| ledger hash fields | 6,674 | 13,330 |
+| `MEMORY USAGE` ledger key | 1.57 MB | 3.14 MB |
+| bytes per resident | 3,067 | 3,067 |
+| `capacity_ticket` Lua, p50 / max, sort reading each clock once (this change) | 6.5 / 7.2 ms | 11.4 / 13.2 ms |
+| `capacity_ticket` Lua, p50 / max, before (per-comparison reads) | 16.1 / 17.0 ms | 39.7 / 47.2 ms |
+| at-capacity `read_ticket` candidates, p50 / max | 3.5 / 4.6 ms | 6.8 / 7.9 ms |
+| hot path (`read_ticket`, refused open), p50 | 0.07–0.08 ms | 0.07–0.08 ms |
+
+Production Redis at 21:15Z 10/29 (`/api/admin/redis-census`, read-only):
+69.0 MB used of 500 MB (13.8%), peak 95.2 MB, `allkeys-lru`, 0 evicted keys.
+The 1024 ledger adds about 1.6 MB over 512. Eviction would hit ledger keys only
+under pressure that does not exist today; a lost ledger is detected (`lost`)
+and fails closed. The per-base guard (`LEDGER_MAX_BASE_BYTES`, 256 KiB) is
+unchanged.
+
 ## Runbook (Integrator)
 
 Assumptions: Integrator holds `LANE-integrator.lock`. Heavy is converged to the
@@ -303,7 +362,7 @@ rollback, waits for the retirement. Build with `--resume` as above (the row's
 `R/acknowledge-plan.json`: it confirms the old namespace is gone with reads and
 never deletes again. If the acknowledgement refuses, escalate.
 
-## Rollback (to `192,64,128,64,48,16`)
+## Rollback (to `192,64,128,64,48,16`, v1, cap 512)
 
 **Triggers**, any of:
 
@@ -353,6 +412,15 @@ ledger contents.
     clears the retirement with reads only, with no second deletion.
   - An `arm` send that never reached Redis: the continuation stops and the row
     stays `preparing`. This is the case with no scripted exit.
+  - Across 512: one plan moves to `v2` at `96,48,192,128,448,112`; the ledger
+    holds exactly 1024 residents and refuses the next in every bucket; a
+    pre-v2 writer is refused at claim and on an existing owner's command;
+    rollback returns to v1 and 48.
+- `backend/tests/test_preview_ledger_cap_v2_10090.py`: one fingerprint per
+  allocation (512 is v1, 513 and 1024 are v2, 1025 refused); the producer passes
+  its policy's cap (resident 513 admitted); the capacity receipt validates at
+  1024; the script refuses a fingerprint outside its version's range; capacity
+  candidates keep their order (clockless first, oldest context, numeric id).
 
 These qualify the procedure's source mechanics. They are not a production
 execution, a measured capacity requirement, or reader acceptance.

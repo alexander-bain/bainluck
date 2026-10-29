@@ -110,7 +110,7 @@ def test_bounded_custom_policy_changes_identity(monkeypatch):
 
 
 @pytest.mark.parametrize("raw", [
-    "", "1,2", "512,1,0,0,0,0", "0,0,0,0,0,0",
+    "", "1,2", "1024,1,0,0,0,0", "0,0,0,0,0,0",
     "-1,1,1,1,1,1", "1.5,1,1,1,1,1", "١,1,1,1,1,1",
 ])
 def test_invalid_configuration_fails_closed(monkeypatch, raw):

@@ -95,8 +95,13 @@ def test_rollback_to_default_from_a_relimited_authority():
         # A league-map or semantics change is a different policy, not a resize.
         (ready(policy="v1-six-hour-0000000000000000:192,64,128,64,48,16"),
          OTHER_FIRST, CONFIGURED, "not limits-only"),
+        # v2 exists only above 512, v1 only up to it: one fingerprint per allocation.
         (ready(policy="v2-six-hour-ba82e47ee634aba7:192,64,128,64,48,16"),
-         OTHER_FIRST, CONFIGURED, "not a v1"),
+         OTHER_FIRST, CONFIGURED, "version does not match its sizes"),
+        (ready(policy="v1-six-hour-ba82e47ee634aba7:192,128,256,128,96,32"),
+         OTHER_FIRST, CONFIGURED, "version does not match its sizes"),
+        (ready(policy="v3-six-hour-ba82e47ee634aba7:192,64,128,64,48,16"),
+         OTHER_FIRST, CONFIGURED, "not a v1/v2"),
         (ready(policy="v1-six-hour-ba82e47ee634aba7:192,64,128,64,48"),
          OTHER_FIRST, CONFIGURED, "not a v1"),
         (ready(policy="v1-six-hour-ba82e47ee634aba7:0192,64,128,64,48,16"),
@@ -112,7 +117,7 @@ def test_refuses_anything_but_a_valid_limits_only_change(expected, limits, confi
         t.build(expected, PRIMARY, apps(), limits, configured)
 
 
-@pytest.mark.parametrize("value", ["128,48,96,48,160", "200,100,100,64,48,16",
+@pytest.mark.parametrize("value", ["128,48,96,48,160", "1000,25,0,0,0,0",
                                    "128, 48,96,48,160,32", "-1,48,96,48,160,32"])
 def test_invalid_sizes_refuse_exactly_as_the_app_would(value):
     t = tool()

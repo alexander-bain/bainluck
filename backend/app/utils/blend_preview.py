@@ -107,7 +107,7 @@ script enforces it:
   barrier and cannot open or recreate a tombstone. The database increment is
   lifecycle ordering only: source values and observation timestamps do not
   change. Active continuations retain their original deadlines. Mixed-version
-  owners cannot retire. At 512 events the caller may reread bounded ids and
+  owners cannot retire. At capacity the caller may reread bounded ids and
   retire authoritatively finished rows or idle future-scheduled residents.
   A fresh SHARE/SKIP LOCKED read preserves live, suspended and started or
   undated scheduled rows. Distant starts go first; valid proposals survive.
@@ -185,6 +185,7 @@ LEDGER_KEY = "live:blend_preview:ledger"
 LEDGER_MARKER_KEY = "live:blend_preview:ledger:initialized"
 #: Replaced by the script with the reader's ttl at the final send.
 LEDGER_TTL_TOKEN = '"@@TTL@@"'
+#: The v1 cap. A ledger's own bound is its policy's (`ReservationPolicy.cap`).
 LEDGER_MAX_EVENTS = DEFAULT_MAX_EVENTS
 #: Lists bigger than this are not stored as a committed floor (it is skipped).
 LEDGER_MAX_BASE_BYTES = 262144
@@ -274,15 +275,19 @@ end
 -- Reservation protocol: old scripts do not understand it. Deployment MUST
 -- stop/drain every old writer before cutover; capability fields detect overlap,
 -- but cannot make an old script honor a new policy. Authority stays numeric.
+-- v2 is v1 at a larger resident cap, valid only above v1's (one fingerprint
+-- per allocation); a v1-only script refuses every v2 fingerprint here.
 local limits, total = {}, 0
-local spec = string.match(fingerprint or '', '^v1%-six%-hour%-%x+:(.*)$')
+local version, spec = string.match(fingerprint or '', '^(v[12])%-six%-hour%-%x+:(.*)$')
 if not spec then return {'policy_mismatch'} end
+local CAP = version == 'v2' and 1024 or 512
 for token in string.gmatch(spec .. ',', '(.-),') do
   local n = uint(token)
   if n == nil then return {'policy_mismatch'} end
   limits[#limits + 1] = n; total = total + n
 end
-if #limits ~= 6 or total < 1 or total > 512 then return {'policy_mismatch'} end
+if #limits ~= 6 or total < 1 or total > CAP
+    or (version == 'v2' and total <= 512) then return {'policy_mismatch'} end
 local configured = redis.call('HGET', L, 'reservation_policy')
 if configured and configured ~= fingerprint then return {'policy_mismatch'} end
 local counts, unclassified = {}, field('r:unclassified')
@@ -329,7 +334,7 @@ if op == 'claim' then
   local n = math.max(epoch, shared)
   if n >= MAX then return {'exhausted'} end
   local residents = field('nevents')
-  if residents == BAD or (residents or 0) > 512 then return {'malformed'} end
+  if residents == BAD or (residents or 0) > CAP then return {'malformed'} end
   n = n + 1
   if not configured then
     -- One bounded cutover validation before writing ANY policy metadata.
@@ -338,7 +343,7 @@ if op == 'claim' then
       local id = string.match(f, '^e:(%d+):gen$')
       if id then
         actual = actual + 1
-        if actual > 512 or field(f) == BAD or field('e:' .. id .. ':seq') == nil
+        if actual > CAP or field(f) == BAD or field('e:' .. id .. ':seq') == nil
             or field('e:' .. id .. ':seq') == BAD then return {'malformed'} end
       end
     end
@@ -385,7 +390,7 @@ if op == 'read_ticket' or op == 'capacity_ticket' then
   if count == BAD then return {'malformed'} end
   local candidates, idle = {}, {}
   if (ARGV[6] == '1' or op == 'capacity_ticket') and compatible then
-    -- At capacity only: at most 512 event ids, never base/payload values.
+    -- At capacity only: at most CAP event ids, never base/payload values.
     -- The caller rereads their authoritative DB status before retiring any.
     for _, f in ipairs(redis.call('HKEYS', L)) do
       local id = string.match(f, '^e:(%d+):gen$')
@@ -403,16 +408,19 @@ if op == 'read_ticket' or op == 'capacity_ticket' then
   end
   if op == 'capacity_ticket' then
     -- Unclassified first, then oldest context: progress survives process restart.
+    -- Each clock is read once, not per comparison (same values: one atomic script).
+    local clocks = {}
+    for _, id in ipairs(candidates) do clocks[id] = field('e:' .. id .. ':r_clock') or 0 end
     table.sort(candidates, function(a, b)
-      local ac = field('e:' .. a .. ':r_clock') or 0
-      local bc = field('e:' .. b .. ':r_clock') or 0
+      local ac, bc = clocks[a], clocks[b]
       if ac == BAD or bc == BAD then return a < b end
       if ac == bc then return tonumber(a) < tonumber(b) end
       return ac < bc
     end)
+    local owed = debt()
     return {'ok', decimal(barrier), cjson.encode(candidates), cjson.encode(idle),
-      cjson.encode({unclassified=unclassified, debt=debt(), compatible=compatible,
-        ready=compatible and unclassified == 0 and debt() == 0, counts=counts}), decimal(now)}
+      cjson.encode({unclassified=unclassified, debt=owed, compatible=compatible,
+        ready=compatible and unclassified == 0 and owed == 0, counts=counts}), decimal(now)}
   end
   return out
 end
@@ -1372,6 +1380,7 @@ class LedgerRegistry(PreviewRegistry):
         from app.utils.preview_reservations import ReservationPolicy
 
         self.policy = policy if policy is not None else ReservationPolicy.configured()
+        kwargs.setdefault("max_events", self.policy.cap)
         super().__init__(**kwargs)
         self.max_events = min(self.max_events, self.policy.total)
         self.capacity_status: dict = {}
@@ -1484,7 +1493,7 @@ class LedgerRegistry(PreviewRegistry):
                  and isinstance(counts, dict) and set(counts) == {str(i) for i in range(7)}
                  and all(uint(value) for value in counts.values())
                  and uint(status.get("unclassified")) and uint(status.get("debt"))
-                 and sum(counts.values()) + status["unclassified"] <= LEDGER_MAX_EVENTS
+                 and sum(counts.values()) + status["unclassified"] <= self.policy.cap
                  and type(status.get("compatible")) is bool
                  and type(status.get("shared_ready")) is bool
                  and status["shared_ready"] == (status["compatible"] and status["unclassified"] == 0
@@ -1973,7 +1982,7 @@ class LedgerRegistry(PreviewRegistry):
                 entry.ledger_open_attempt = op["local_seq"]
             reply = await self._eval(
                 call, "propose", *common, op["mode"], op["chain"], op["local_seq"],
-                op["ctx_rev"], int(self.max_uncommitted_s * 1000), LEDGER_MAX_EVENTS,
+                op["ctx_rev"], int(self.max_uncommitted_s * 1000), self.policy.cap,
                 op["payload"], op["base_rev"], op["base"], op.get("read_ticket"),
                 op.get("bucket"), op.get("context_clock"),
             )
@@ -1997,7 +2006,7 @@ class LedgerRegistry(PreviewRegistry):
                                      op["committed_rev"])
         else:
             reply = await self._eval(call, "terminal", *common, op["ctx_rev"],
-                                     LEDGER_MAX_EVENTS, op.get("read_ticket"))
+                                     self.policy.cap, op.get("read_ticket"))
         status = reply[0]
         if trace is not None:
             _readset_replied(trace, receipt, op, reply)
