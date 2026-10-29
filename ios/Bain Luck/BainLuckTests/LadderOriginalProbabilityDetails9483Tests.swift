@@ -1083,3 +1083,634 @@ final class OriginalMarketChooser9483Tests: XCTestCase {
         }
     }
 }
+
+/// Prepared, not executed. The handicap card shows, per panel, exactly what the
+/// existing Details resolve for that panel's original in `.result` mode, the
+/// owner's separately admitted actual and the owner's words, and acts only
+/// through `OriginalMarketChooser9483.action`.
+///
+/// RETAINED (TENNIS-HANDICAP-RETAINED-CASES.json, event 15327291, Fokina–Tiafoe):
+/// the three Polymarket originals' market/outcome ids, market names, outcomes,
+/// units, pregame consensus 0.67/0.71/0.47 recorded 2026-10-11T12:45:25.328389Z
+/// (before the verified 12:50Z start), raw final quotes 0.9995 with their quote
+/// clocks, raw original results (true), reported sets 2–1 and games 18–18
+/// captured 17:06:47.950466Z. Those raw values live only in `Retained`.
+/// CONSTRUCTED owner input: the scope, every identity (built from the packet's
+/// `constructed_owner_action_id`, never looked up by title), every display
+/// word, figure text, calendar line (PDT is UTC−7 in October), grade word,
+/// rules-unavailable words, block states, explanation and every
+/// malformed/withdrawn/NaN/contradictory/width case. No rule text is supplied
+/// by the retained rows, so none is invented. Taps go through
+/// `OriginalHandicapCard9483.action`, the closure the view's buttons run.
+/// Geometry, fit at 320/375/393/wide/AX, hosting and VoiceOver focus are NOT
+/// asserted here.
+@MainActor
+final class OriginalHandicapCard9483Tests: XCTestCase {
+    private typealias H = OriginalHandicapCard9483
+    private typealias M = OriginalMarketDetails9483
+
+    /// The retained row facts for one original — raw values and clocks only.
+    private struct Retained {
+        let market: Int
+        let outcome: Int
+        let marketName: String
+        let outcomeName: String
+        let unit: String
+        let pregame: Double
+        let pregameAt: String
+        let rawFinalQuote: Double
+        let quoteObservedAt: String
+        let rawResult: Bool
+        let constructedActionID: String
+    }
+
+    private static let fokinaSets = Retained(
+        market: 65123150, outcome: 244876662,
+        marketName: "Set Handicap: Frances Tiafoe (-1.5) vs Alejandro Davidovich Fokina (+1.5)",
+        outcomeName: "Alejandro Davidovich Fokina", unit: "sets",
+        pregame: 0.67, pregameAt: "2026-10-11T12:45:25.328389+00:00",
+        rawFinalQuote: 0.9995, quoteObservedAt: "2026-10-11T14:06:15.499070+00:00", rawResult: true,
+        constructedActionID: "constructed:15327291:polymarket:65123150:244876662")
+    private static let tiafoeSets = Retained(
+        market: 65123149, outcome: 244876660,
+        marketName: "Set Handicap: Alejandro Davidovich Fokina (-1.5) vs Frances Tiafoe (+1.5)",
+        outcomeName: "Frances Tiafoe", unit: "sets",
+        pregame: 0.71, pregameAt: "2026-10-11T12:45:25.328389+00:00",
+        rawFinalQuote: 0.9995, quoteObservedAt: "2026-10-11T14:54:06.778032+00:00", rawResult: true,
+        constructedActionID: "constructed:15327291:polymarket:65123149:244876660")
+    private static let fokinaGames = Retained(
+        market: 65149801, outcome: 244973047,
+        marketName: "Game Spread: Frances Tiafoe (-0.5) vs Alejandro Davidovich Fokina (+0.5)",
+        outcomeName: "Alejandro Davidovich Fokina", unit: "games",
+        pregame: 0.47, pregameAt: "2026-10-11T12:45:25.328389+00:00",
+        rawFinalQuote: 0.9995, quoteObservedAt: "2026-10-11T16:20:15.999040+00:00", rawResult: true,
+        constructedActionID: "constructed:15327291:polymarket:65149801:244973047")
+    private static let retainedSets = (fokina: 2, tiafoe: 1)
+    private static let retainedGames = (fokina: 18, tiafoe: 18)
+    private static let scoreCaptureAt = "2026-10-11T17:06:47.950466+00:00"
+    private static let verifiedStart = "2026-10-11T12:50:00+00:00"
+
+    // CONSTRUCTED owner words. Readable calendar lines are fixture text, not a
+    // production formatter; the raw clocks above stay separate.
+    private let scope = "constructed:tennis-final:15327291:handicaps"
+    private static let pregameWords = "Polymarket · recorded Sun, Oct 11, 2026, 5:45 AM PDT, before the match"
+    private static let actualWords = "ESPN · captured Sun, Oct 11, 2026, 10:06 AM PDT"
+    private static let rulesUnavailable = "Rules aren't available for this prop yet."
+    private static let laterWords = "Polymarket · recorded Sun, Oct 11, 2026, 7:06 AM PDT"
+
+    private static let words = H.Words(
+        eyebrow: "HANDICAPS · EXPECTATIONS, GRADED", title: "Both players took a set",
+        explanationTitle: "How these props work",
+        explanation: ["For this completed best-of-three match, +1.5 sets means winning at least one set. +0.5 games means finishing level or ahead in total games.",
+                      "These are separate outcomes, not a combined prediction."],
+        tapInvitation: "Tap a panel to open its original prop.",
+        scopeUnavailable: "Handicap props unavailable in this update",
+        panelUnavailable: "Prop unavailable in this update",
+        comparisonUnavailable: "Pre-match comparison unavailable for this prop")
+
+    /// CONSTRUCTED identity from the packet's constructed action id.
+    private func identity(_ r: Retained) -> M.Identity {
+        M.Identity(source: "polymarket", market: r.constructedActionID, side: "outcome:\(r.outcome)")
+    }
+
+    private func figure(_ r: Retained) -> String { "\(Int((r.pregame * 100).rounded()))%" }
+
+    private func original(_ r: Retained, mode: M.Mode = .result, identity: M.Identity? = nil,
+                          pregame: M.Reading? = nil, later: M.Reading? = nil,
+                          grade: M.Grade? = M.Grade(words: "Won", provenance: nil),
+                          quote: M.HistoricalQuote? = nil) -> M.Original {
+        M.Original(identity: identity ?? self.identity(r), title: r.marketName, outcome: r.outcomeName, mode: mode,
+                   pregame: pregame ?? .value(figure(r), placement: r.pregame, provenance: Self.pregameWords),
+                   later: later, grade: grade,
+                   about: M.About(source: "Polymarket", rules: .unavailable(Self.rulesUnavailable),
+                                  provenance: [], historicalQuote: quote))
+    }
+
+    private var retainedOriginals: [M.Original] {
+        [original(Self.fokinaSets), original(Self.tiafoeSets), original(Self.fokinaGames)]
+    }
+
+    private func count(figure: String, unit: String, blocks: [Bool], spoken: String,
+                       provenance: String? = OriginalHandicapCard9483Tests.actualWords) -> H.Actual {
+        .count(H.Count(figure: figure, unit: unit, blocks: blocks, provenance: provenance, spoken: spoken))
+    }
+
+    private var gamePair: H.Actual {
+        .pair(H.Pair(caption: "Final games",
+                     first: H.PairSide(figure: "\(Self.retainedGames.fokina)", name: "Fokina"), relation: "level",
+                     second: H.PairSide(figure: "\(Self.retainedGames.tiafoe)", name: "Tiafoe"),
+                     provenance: Self.actualWords, spoken: "Final games: Fokina 18, Tiafoe 18, level"))
+    }
+
+    private func panel(original: M.Identity?, subject: String, predicate: String, condition: String,
+                       actual: H.Actual, mark: H.ResultMark? = .positive) -> H.Panel {
+        H.Panel(original: original, subject: subject, predicate: predicate, condition: condition, actual: actual,
+                resultMark: mark, openHint: "Opens the original \(condition) prop.")
+    }
+
+    private var fokinaSetPanel: H.Panel {
+        panel(original: identity(Self.fokinaSets), subject: "Fokina", predicate: "Fokina to win at least one set",
+              condition: "+1.5 sets",
+              actual: count(figure: "\(Self.retainedSets.fokina)", unit: "sets won · final", blocks: [true, true],
+                            spoken: "Fokina won 2 sets, final"))
+    }
+
+    private var tiafoeSetPanel: H.Panel {
+        panel(original: identity(Self.tiafoeSets), subject: "Tiafoe", predicate: "Tiafoe to win at least one set",
+              condition: "+1.5 sets",
+              actual: count(figure: "\(Self.retainedSets.tiafoe)", unit: "set won · final", blocks: [true, false],
+                            spoken: "Tiafoe won 1 set, final"))
+    }
+
+    private var gamePanel: H.Panel {
+        panel(original: identity(Self.fokinaGames), subject: "Fokina",
+              predicate: "Fokina to finish level or ahead on games", condition: "+0.5 games", actual: gamePair)
+    }
+
+    private func groups(sets: [H.Panel], games: [H.Panel]) -> [H.Group] {
+        [H.Group(heading: "Win at least one set", panels: sets),
+         H.Group(heading: "Finish level or ahead on games", panels: games)]
+    }
+
+    private func card(phase: H.Phase = .final, originals: [M.Original]? = nil, scope: String? = nil,
+                      held: M.Selection? = nil, groups: [H.Group]? = nil, words: H.Words? = nil) -> H.Input {
+        H.Input(phase: phase,
+                catalogue: M.Catalogue(scope: scope ?? self.scope, originals: originals ?? retainedOriginals),
+                held: held,
+                groups: groups ?? self.groups(sets: [fokinaSetPanel, tiafoeSetPanel], games: [gamePanel]),
+                words: words ?? Self.words)
+    }
+
+    private func shown(_ panel: H.Panel, in input: H.Input, file: StaticString = #filePath,
+                       line: UInt = #line) -> H.Shown? {
+        guard case .shown(let shown)? = H.state(panel, in: input) else {
+            XCTFail("expected a shown panel", file: file, line: line)
+            return nil
+        }
+        return shown
+    }
+
+    /// Taps a panel exactly as its button does; nil when it has no button.
+    private func tap(_ panel: H.Panel, in input: H.Input) -> M.Selection? {
+        var handed: [M.Selection] = []
+        guard let action = H.action(panel, in: input, onSelect: { handed.append($0) }) else { return nil }
+        action()
+        XCTAssertEqual(handed.count, 1, "one tap, one proposal")
+        return handed.first
+    }
+
+    // MARK: - The three retained originals
+
+    func testTheThreeRetainedOriginalsKeepTheirExactIdentitiesUnitsChancesAndOwnResults() {
+        let input = card()
+        let cases: [(H.Panel, Retained)] = [(fokinaSetPanel, Self.fokinaSets), (tiafoeSetPanel, Self.tiafoeSets),
+                                            (gamePanel, Self.fokinaGames)]
+        for (panel, r) in cases {
+            // Same "+00:00" ISO form, so the strings order as the instants do.
+            XCTAssertLessThan(r.pregameAt, Self.verifiedStart, "a before reading")
+            guard let placed = shown(panel, in: input) else { continue }
+            XCTAssertEqual(placed.chance.label, M.pregameLabel)
+            XCTAssertEqual(placed.chance.text, figure(r), "the owner's figure, verbatim")
+            XCTAssertTrue(placed.chance.isValue)
+            XCTAssertEqual(placed.chance.marker, .hollow, "the historical reading beside a result")
+            XCTAssertEqual(placed.chance.placement, r.pregame, "the raw admitted value on the rail")
+            XCTAssertEqual(placed.chance.provenance, Self.pregameWords)
+            XCTAssertTrue(r.rawResult)
+            XCTAssertEqual(placed.result, M.ShownResult(words: "Won", provenance: M.resultTimeUnknown),
+                           "no settlement clock is supplied, and no quote clock stands in for one")
+            XCTAssertEqual(placed.mark, .positive)
+
+            let selection = H.selection(panel, in: input)
+            XCTAssertEqual(selection, M.Selection(scope: scope, identity: identity(r)))
+            let details = M.content(catalogue: input.catalogue, selection: selection)
+            XCTAssertEqual(details?.title, r.marketName, "the existing Details open that exact original")
+            XCTAssertEqual(details?.outcome, r.outcomeName)
+            XCTAssertEqual(details?.rules, .unavailable(Self.rulesUnavailable), "no rule text is invented")
+        }
+        XCTAssertEqual(cases.map { $0.1.unit }, ["sets", "sets", "games"])
+        XCTAssertEqual(cases.map { item -> String in
+            switch item.0.actual {
+            case .count: return "count"
+            case .pair: return "pair"
+            case .missing: return "missing"
+            }
+        }, ["count", "count", "pair"], "set panels carry a count, the game panel a named pair")
+        XCTAssertEqual(Set(cases.map { identity($0.1) }).count, 3, "three distinct originals")
+    }
+
+    func testOverlappingChancesAreNeverNormalizedComplementedOrMultiplied() {
+        let input = card()
+        let panels = [fokinaSetPanel, tiafoeSetPanel, gamePanel]
+        XCTAssertEqual(panels.compactMap { shown($0, in: input)?.chance.text }, ["67%", "71%", "47%"])
+        XCTAssertEqual(panels.compactMap { shown($0, in: input)?.chance.placement }, [0.67, 0.71, 0.47],
+                       "three independent originals; their sum is not 100%")
+        let spoken = panels.map { H.spoken($0, in: input) }
+        XCTAssertTrue(spoken[0].contains("67%") && !spoken[0].contains("71%") && !spoken[0].contains("47%"))
+        XCTAssertTrue(spoken[1].contains("71%") && !spoken[1].contains("67%") && !spoken[1].contains("29%"),
+                      "never the complement of a neighbour")
+        XCTAssertTrue(spoken[2].contains("47%") && !spoken[2].contains("53%"))
+        for words in spoken {
+            for banned in ["combined", "48%", "32%", "22%", "100%"] {
+                XCTAssertFalse(words.contains(banned), "\(banned) is no reading of these originals")
+            }
+        }
+    }
+
+    // MARK: - Actual is context, never a grade
+
+    func testActualCountsAndPairStayIndependentOfTheOriginalsGrade() {
+        // CONSTRUCTED contradiction: the owner's actual says 0 sets while the
+        // original's own grade says Won. Both show verbatim; nothing reconciles them.
+        let contradictory = panel(original: identity(Self.fokinaSets), subject: "Fokina",
+                                  predicate: "Fokina to win at least one set", condition: "+1.5 sets",
+                                  actual: count(figure: "0", unit: "sets won · final", blocks: [false, false],
+                                                spoken: "Fokina won 0 sets, final"))
+        let won = card(groups: groups(sets: [contradictory], games: []))
+        XCTAssertEqual(shown(contradictory, in: won)?.result.words, "Won")
+        XCTAssertTrue(H.spoken(contradictory, in: won).contains("Actual: Fokina won 0 sets, final"))
+
+        // The reverse: the actual says 2 sets, the owner's grade says Lost.
+        let lostOriginals = [original(Self.fokinaSets, grade: M.Grade(words: "Lost", provenance: nil)),
+                             original(Self.tiafoeSets), original(Self.fokinaGames)]
+        let lost = card(originals: lostOriginals)
+        XCTAssertEqual(shown(fokinaSetPanel, in: lost)?.result.words, "Lost")
+        XCTAssertEqual(fokinaSetPanel.actual, count(figure: "2", unit: "sets won · final", blocks: [true, true],
+                                                    spoken: "Fokina won 2 sets, final"))
+
+        // A missing grade keeps the game pair whole and never becomes a loss.
+        let ungraded = card(originals: [original(Self.fokinaSets), original(Self.tiafoeSets),
+                                        original(Self.fokinaGames, grade: nil)])
+        XCTAssertEqual(shown(gamePanel, in: ungraded)?.result, M.ShownResult(words: M.resultUnavailable, provenance: nil))
+        XCTAssertTrue(H.spoken(gamePanel, in: ungraded).contains("Final games: Fokina 18, Tiafoe 18, level"))
+        XCTAssertFalse(H.spoken(gamePanel, in: ungraded).contains("Lost"))
+    }
+
+    func testAResultMarkNeedsTheOriginalsOwnSuppliedGrade() {
+        for grade in [nil, M.Grade(words: "", provenance: nil), M.Grade(words: " \n", provenance: "x")] {
+            let input = card(originals: [original(Self.fokinaSets, grade: grade), original(Self.tiafoeSets),
+                                         original(Self.fokinaGames)])
+            XCTAssertNil(shown(fokinaSetPanel, in: input)?.mark,
+                         "no glyph without the original's grade, whatever the actual or the owner's mark")
+            XCTAssertEqual(shown(fokinaSetPanel, in: input)?.result.words, M.resultUnavailable)
+        }
+        // Graded, but the owner supplies no decoration: none is inferred from the words.
+        let undecorated = panel(original: identity(Self.tiafoeSets), subject: "Tiafoe",
+                                predicate: "Tiafoe to win at least one set", condition: "+1.5 sets",
+                                actual: tiafoeSetPanel.actual, mark: nil)
+        let input = card(groups: groups(sets: [fokinaSetPanel, undecorated], games: [gamePanel]))
+        XCTAssertNil(shown(undecorated, in: input)?.mark)
+        XCTAssertEqual(shown(undecorated, in: input)?.result.words, "Won")
+        // The owner's decoration is shown as supplied beside its own grade.
+        let negative = panel(original: identity(Self.fokinaGames), subject: "Fokina",
+                             predicate: "Fokina to finish level or ahead on games", condition: "+0.5 games",
+                             actual: gamePair, mark: .negative)
+        let lost = card(originals: [original(Self.fokinaSets), original(Self.tiafoeSets),
+                                    original(Self.fokinaGames, grade: M.Grade(words: "Lost", provenance: nil))],
+                        groups: groups(sets: [fokinaSetPanel, tiafoeSetPanel], games: [negative]))
+        XCTAssertEqual(shown(negative, in: lost)?.mark, .negative)
+        XCTAssertEqual(H.ResultMark.positive.symbol, "checkmark.circle.fill")
+        XCTAssertFalse(H.spoken(negative, in: lost).contains("checkmark"), "the glyph is decoration, not speech")
+    }
+
+    // MARK: - Missing inputs keep their own words
+
+    func testMissingReadingsActualsGradesAndRulesKeepTheirOwnWords() {
+        let withheld = original(Self.tiafoeSets, pregame: .missing("Withheld: too few trades"))
+        let zero = original(Self.fokinaGames, pregame: .value("0%", placement: 0, provenance: Self.pregameWords))
+        let noActual = panel(original: identity(Self.fokinaSets), subject: "Fokina",
+                             predicate: "Fokina to win at least one set", condition: "+1.5 sets",
+                             actual: .missing("Set count unavailable"))
+        let undated = panel(original: identity(Self.tiafoeSets), subject: "Tiafoe",
+                            predicate: "Tiafoe to win at least one set", condition: "+1.5 sets",
+                            actual: count(figure: "1", unit: "set won · final", blocks: [true, false],
+                                          spoken: "Tiafoe won 1 set, final", provenance: nil))
+        let input = card(originals: [original(Self.fokinaSets), withheld, zero],
+                         groups: groups(sets: [noActual, undated], games: [gamePanel]))
+
+        let tiafoe = shown(undated, in: input)
+        XCTAssertEqual(tiafoe?.chance.text, "Withheld: too few trades")
+        XCTAssertEqual(tiafoe?.chance.isValue, false)
+        XCTAssertNil(tiafoe?.chance.placement, "no reading, no mark — never zero")
+        XCTAssertNotNil(H.selection(undated, in: input), "a missing chance does not close the original")
+        XCTAssertTrue(H.spoken(undated, in: input).contains("Actual: Tiafoe won 1 set, final, \(M.timeUnknown)"),
+                      "an undated actual stays unknown")
+
+        XCTAssertEqual(shown(gamePanel, in: input)?.chance.placement, 0, "0% is a reading, not an absence")
+        XCTAssertNotNil(H.selection(gamePanel, in: input))
+
+        XCTAssertTrue(H.spoken(noActual, in: input).contains("Actual: Set count unavailable"))
+        XCTAssertEqual(shown(noActual, in: input)?.chance.text, "67%", "the original stays useful")
+
+        // Rules stay the Details': the owner's words, or no section — never invented text.
+        let blankRules = M.Original(identity: identity(Self.fokinaSets), title: Self.fokinaSets.marketName,
+                                    outcome: Self.fokinaSets.outcomeName, mode: .result,
+                                    pregame: .value("67%", placement: 0.67, provenance: Self.pregameWords),
+                                    later: nil, grade: M.Grade(words: "Won", provenance: nil),
+                                    about: M.About(source: "Polymarket", rules: .unavailable(" "), provenance: [],
+                                                   historicalQuote: nil))
+        let rules = card(originals: [blankRules, original(Self.tiafoeSets), original(Self.fokinaGames)])
+        XCTAssertEqual(M.content(catalogue: rules.catalogue, selection: H.selection(fokinaSetPanel, in: rules))?.rules,
+                       .omitted)
+        XCTAssertNotNil(shown(fokinaSetPanel, in: rules), "missing rules never hide the panel")
+    }
+
+    func testANonResultModeKeepsTheComparisonUnavailableAndHealthyPanelsUseful() {
+        let later = M.Reading.value("99.95%", placement: Self.tiafoeSets.rawFinalQuote, provenance: Self.laterWords)
+        for mode in [M.Mode.pregame, .comparison(.recorded), .comparison(.current)] {
+            let input = card(originals: [original(Self.fokinaSets), original(Self.tiafoeSets, mode: mode, later: later),
+                                         original(Self.fokinaGames)])
+            XCTAssertEqual(H.state(tiafoeSetPanel, in: input), .comparisonUnavailable(Self.words.comparisonUnavailable),
+                           "\(mode) is never forced into a final comparison")
+            let spoken = H.spoken(tiafoeSetPanel, in: input)
+            XCTAssertFalse(spoken.contains("99.95%"), "a later chance is never read as final")
+            XCTAssertFalse(spoken.contains("71%"))
+            XCTAssertTrue(spoken.contains("Actual: Tiafoe won 1 set, final"))
+            XCTAssertEqual(tap(tiafoeSetPanel, in: input), M.Selection(scope: scope, identity: identity(Self.tiafoeSets)),
+                           "the exact original still opens its own Details in its own mode")
+            XCTAssertEqual(shown(fokinaSetPanel, in: input)?.chance.text, "67%", "neighbours stay useful")
+            XCTAssertEqual(shown(gamePanel, in: input)?.chance.text, "47%")
+        }
+    }
+
+    // MARK: - Final only
+
+    func testBeforeAndDuringPlayTheCardShowsAndOffersNothing() {
+        for phase in [H.Phase.before, .during] {
+            let input = card(phase: phase, held: M.Selection(scope: scope, identity: identity(Self.fokinaSets)))
+            XCTAssertFalse(H.isShown(input))
+            XCTAssertNil(H.catalogue(input))
+            for panel in H.panels(input) {
+                XCTAssertNil(H.state(panel, in: input))
+                XCTAssertNil(H.selection(panel, in: input))
+                XCTAssertFalse(H.isSelected(panel, in: input))
+                XCTAssertNil(H.action(panel, in: input, onSelect: { _ in XCTFail("no action before the final") }))
+                XCTAssertEqual(H.spoken(panel, in: input), "")
+            }
+            XCTAssertFalse(H.showsTapInvitation(input, onSelect: { _ in }))
+        }
+        // The existing Details are untouched by the card's phase.
+        let before = card(phase: .before)
+        XCTAssertEqual(M.content(catalogue: before.catalogue,
+                                 selection: M.Selection(scope: scope, identity: identity(Self.fokinaSets)))?.result?.words,
+                       "Won")
+        XCTAssertTrue(H.isShown(card()))
+    }
+
+    // MARK: - Actions
+
+    func testEachPanelHandsBackItsExactSelectionThroughTheChoosersOwnAction() {
+        // CONSTRUCTED: an odd but valid owner scope is copied, never rebuilt.
+        let odd = "constructed:tennis-final:15327291 / handicaps (v2)"
+        // A fourth original the card does not place stays in the full catalogue.
+        let other = M.Identity(source: "polymarket", market: "constructed:15327291:polymarket:65123150:other", side: "outcome:other")
+        let extra = M.Original(identity: other, title: Self.fokinaSets.marketName, outcome: "Frances Tiafoe",
+                               mode: .result, pregame: .value("33%", placement: 0.33, provenance: Self.pregameWords),
+                               later: nil, grade: M.Grade(words: "Lost", provenance: nil),
+                               about: M.About(source: "Polymarket", rules: .unavailable(Self.rulesUnavailable),
+                                              provenance: [], historicalQuote: nil))
+        let input = card(originals: retainedOriginals + [extra], scope: odd)
+        let cases: [(H.Panel, Retained)] = [(fokinaSetPanel, Self.fokinaSets), (tiafoeSetPanel, Self.tiafoeSets),
+                                            (gamePanel, Self.fokinaGames)]
+        for (panel, r) in cases {
+            let handed = tap(panel, in: input)
+            XCTAssertEqual(handed, M.Selection(scope: odd, identity: identity(r)))
+            XCTAssertEqual(handed.flatMap { M.content(catalogue: input.catalogue, selection: $0) }?.title, r.marketName)
+        }
+        let chooser = OriginalMarketChooser9483.choices(catalogue: input.catalogue, selection: nil, labels: [:],
+                                                        unavailableChoice: "Outcome unavailable")
+        XCTAssertEqual(chooser.count, 4, "the grouped card never replaces the full catalogue")
+        XCTAssertTrue(chooser.allSatisfy(\.isAvailable))
+
+        let ids = [H.accessibilityID(fokinaSetPanel, group: 0, index: 0),
+                   H.accessibilityID(tiafoeSetPanel, group: 0, index: 1),
+                   H.accessibilityID(gamePanel, group: 1, index: 0)]
+        XCTAssertEqual(Set(ids).count, 3, "each panel keeps its own focus id")
+        XCTAssertTrue(ids[0].contains(Self.fokinaSets.constructedActionID))
+    }
+
+    func testInvalidDuplicateWithdrawnAndClaimedTwiceIdentitiesStayNamedAndOpenNothing() {
+        let foreign = M.Identity(source: "polymarket", market: "constructed:15327291:polymarket:0:0", side: "outcome:0")
+        let unavailable = H.State.unavailable(Self.words.panelUnavailable)
+        func setPanel(_ id: M.Identity?, predicate: String = "Fokina to win at least one set") -> H.Panel {
+            panel(original: id, subject: "Fokina", predicate: predicate, condition: "+1.5 sets",
+                  actual: fokinaSetPanel.actual)
+        }
+        let blankIDs = [
+            M.Identity(source: " ", market: Self.fokinaSets.constructedActionID, side: "outcome:244876662"),
+            M.Identity(source: "polymarket", market: "", side: "outcome:244876662"),
+            M.Identity(source: "polymarket", market: Self.fokinaSets.constructedActionID, side: " "),
+        ]
+        // A blank identity opens nothing even when an original carries the same blank identity.
+        var cases: [(H.Panel, [M.Original])] = blankIDs.flatMap { id in
+            [(setPanel(id), retainedOriginals), (setPanel(id), retainedOriginals + [original(Self.fokinaSets, identity: id)])]
+        }
+        cases += [(setPanel(nil), retainedOriginals), (setPanel(foreign), retainedOriginals),
+                  (setPanel(identity(Self.fokinaSets), predicate: "  "), retainedOriginals)]
+        for (bad, originals) in cases {
+            let input = card(originals: originals, groups: groups(sets: [bad, tiafoeSetPanel], games: [gamePanel]))
+            XCTAssertEqual(H.state(bad, in: input), unavailable)
+            XCTAssertNil(tap(bad, in: input))
+            XCTAssertTrue(H.spoken(bad, in: input).contains("Actual: Fokina won 2 sets, final"),
+                          "the panel stays named with its own actual")
+            XCTAssertEqual(tap(tiafoeSetPanel, in: input)?.identity, identity(Self.tiafoeSets),
+                           "a healthy neighbour still acts")
+        }
+
+        // Withdrawn: the catalogue no longer holds Fokina's set original.
+        let withdrawn = card(originals: [original(Self.tiafoeSets), original(Self.fokinaGames)])
+        XCTAssertEqual(H.state(fokinaSetPanel, in: withdrawn), unavailable)
+        XCTAssertNil(tap(fokinaSetPanel, in: withdrawn), "no neighbour elected")
+
+        // Duplicated in the catalogue: an ambiguous identity is no original.
+        let duplicated = card(originals: retainedOriginals + [original(Self.tiafoeSets, identity: identity(Self.fokinaSets))])
+        XCTAssertEqual(H.state(fokinaSetPanel, in: duplicated), unavailable)
+        XCTAssertNil(tap(fokinaSetPanel, in: duplicated))
+
+        // Claimed twice on the card: neither panel attaches.
+        let twice = setPanel(identity(Self.fokinaSets))
+        let claimed = card(groups: groups(sets: [fokinaSetPanel, twice], games: [gamePanel]))
+        XCTAssertEqual(H.state(fokinaSetPanel, in: claimed), unavailable)
+        XCTAssertEqual(H.state(twice, in: claimed), unavailable)
+        XCTAssertEqual(tap(gamePanel, in: claimed)?.identity, identity(Self.fokinaGames))
+    }
+
+    func testABlankOrMissingCatalogueScopeSuppressesEveryPanel() {
+        for blank in ["", " ", "\n"] {
+            let input = card(scope: blank, held: M.Selection(scope: blank, identity: identity(Self.fokinaSets)))
+            XCTAssertTrue(H.isShown(input))
+            XCTAssertNil(H.catalogue(input), "the scope-unavailable words replace the panels")
+            for panel in H.panels(input) {
+                XCTAssertNil(H.state(panel, in: input))
+                XCTAssertNil(tap(panel, in: input))
+                XCTAssertFalse(H.isSelected(panel, in: input))
+            }
+            XCTAssertFalse(H.showsTapInvitation(input, onSelect: { _ in }))
+        }
+        let none = H.Input(phase: .final, catalogue: nil, held: nil,
+                           groups: groups(sets: [fokinaSetPanel], games: [gamePanel]), words: Self.words)
+        XCTAssertNil(H.catalogue(none))
+        XCTAssertNil(H.state(fokinaSetPanel, in: none))
+        XCTAssertFalse(H.showsTapInvitation(none, onSelect: { _ in }))
+    }
+
+    func testANaNIgnoredValueNeverClosesAValidOriginal() {
+        let nanLater = M.Reading.value("—", placement: .nan, provenance: Self.laterWords)
+        let nan = original(Self.fokinaSets, later: nanLater, quote: M.HistoricalQuote(text: "99.95%", recorded: nil))
+        XCTAssertNotEqual(nan, nan, "whole-payload equality fails on NaN — membership must not use it")
+        let input = card(originals: [nan, original(Self.tiafoeSets), original(Self.fokinaGames)])
+        XCTAssertEqual(tap(fokinaSetPanel, in: input), M.Selection(scope: scope, identity: identity(Self.fokinaSets)))
+        XCTAssertEqual(shown(fokinaSetPanel, in: input)?.chance.text, "67%")
+
+        let nanPregame = original(Self.tiafoeSets, pregame: .value("71%", placement: .nan, provenance: Self.pregameWords))
+        let geometry = card(originals: [original(Self.fokinaSets), nanPregame, original(Self.fokinaGames)])
+        XCTAssertEqual(shown(tiafoeSetPanel, in: geometry)?.chance.text, "71%", "the figure still shows")
+        XCTAssertNil(shown(tiafoeSetPanel, in: geometry)?.chance.placement, "no clamped mark")
+        XCTAssertNotNil(tap(tiafoeSetPanel, in: geometry), "invalid geometry never closes the original")
+    }
+
+    func testTheRawFinalQuoteNeverBecomesAChanceOrAResult() {
+        let rows = [Self.fokinaSets, Self.tiafoeSets, Self.fokinaGames]
+        let originals = rows.map { r in
+            original(r, later: .value("99.95%", placement: r.rawFinalQuote, provenance: Self.laterWords),
+                     quote: M.HistoricalQuote(text: "99.95%", recorded: "Sun, Oct 11, 2026, 7:06 AM PDT"))
+        }
+        let input = card(originals: originals)
+        for (panel, r) in zip([fokinaSetPanel, tiafoeSetPanel, gamePanel], rows) {
+            XCTAssertEqual(shown(panel, in: input)?.chance.placement, r.pregame, "the baseline, not \(r.rawFinalQuote)")
+            XCTAssertEqual(shown(panel, in: input)?.result.provenance, M.resultTimeUnknown,
+                           "a quote clock (\(r.quoteObservedAt)) is not a settlement time")
+            let spoken = H.spoken(panel, in: input)
+            XCTAssertFalse(spoken.contains("99.95"))
+            XCTAssertFalse(spoken.contains("7:06"))
+        }
+    }
+
+    // MARK: - Static content and the tap invitation
+
+    func testWithoutACallbackThePanelsAreStaticAndNoTapIsInvited() {
+        let input = card(held: M.Selection(scope: scope, identity: identity(Self.tiafoeSets)))
+        for panel in H.panels(input) {
+            XCTAssertNil(H.action(panel, in: input, onSelect: nil))
+            XCTAssertNotNil(shown(panel, in: input), "static is not unavailable")
+        }
+        XCTAssertFalse(H.showsTapInvitation(input, onSelect: nil))
+        XCTAssertEqual(H.panels(input).map { H.isSelected($0, in: input) }, [false, true, false],
+                       "the held mark survives without a callback")
+    }
+
+    func testTheTapInvitationNeedsADisplayedPanelThatCanAct() {
+        let some: (M.Selection) -> Void = { _ in }
+        XCTAssertTrue(H.showsTapInvitation(card(), onSelect: some))
+
+        let broken = [panel(original: nil, subject: "Fokina", predicate: "Fokina to win at least one set",
+                            condition: "+1.5 sets", actual: fokinaSetPanel.actual)]
+        XCTAssertFalse(H.showsTapInvitation(card(groups: groups(sets: broken, games: [])), onSelect: some),
+                       "no displayed original can open")
+        XCTAssertFalse(H.showsTapInvitation(card(groups: []), onSelect: some), "no panels, no invitation")
+
+        let missing = card(originals: [original(Self.fokinaSets, pregame: .missing("Unavailable")),
+                                       original(Self.tiafoeSets, pregame: .value("0%", placement: 0, provenance: Self.pregameWords)),
+                                       original(Self.fokinaGames)],
+                           groups: groups(sets: broken + [fokinaSetPanel, tiafoeSetPanel], games: []))
+        XCTAssertTrue(H.showsTapInvitation(missing, onSelect: some), "missing and 0% chances still act")
+
+        let w = Self.words
+        let blankWords = H.Words(eyebrow: w.eyebrow, title: w.title, explanationTitle: w.explanationTitle,
+                                 explanation: w.explanation, tapInvitation: " ", scopeUnavailable: w.scopeUnavailable,
+                                 panelUnavailable: w.panelUnavailable, comparisonUnavailable: w.comparisonUnavailable)
+        XCTAssertFalse(H.showsTapInvitation(card(words: blankWords), onSelect: some))
+        XCTAssertFalse(Self.words.explanation.joined().lowercased().contains("tap"),
+                       "the explanation itself invites no tap")
+    }
+
+    // MARK: - Held selection
+
+    func testTheHeldSelectionMarksOnlyItsExactPanelAndRefreshProposesNothing() {
+        let held = M.Selection(scope: scope, identity: identity(Self.fokinaGames))
+        XCTAssertEqual(H.panels(card(held: held)).map { H.isSelected($0, in: card(held: held)) }, [false, false, true])
+        for wrong in [M.Selection(scope: "constructed:other", identity: identity(Self.fokinaGames)),
+                      M.Selection(scope: scope, identity: M.Identity(source: "polymarket", market: "x", side: "y"))] {
+            let input = card(held: wrong)
+            XCTAssertFalse(H.panels(input).contains { H.isSelected($0, in: input) })
+        }
+        let sequence = [card(held: held), card(originals: [original(Self.fokinaSets), original(Self.tiafoeSets)], held: held),
+                        card(held: held)]
+        var marks: [[Bool]] = []
+        for update in sequence {
+            // Building every button's action is what a render does; none may fire.
+            _ = H.panels(update).map { H.action($0, in: update, onSelect: { _ in XCTFail("a passive update proposed a selection") }) }
+            marks.append(H.panels(update).map { H.isSelected($0, in: update) })
+        }
+        XCTAssertEqual(marks, [[false, false, true], [false, false, false], [false, false, true]],
+                       "a withdrawn held original marks no neighbour")
+    }
+
+    // MARK: - Layout and explanation decisions
+
+    func testPanelsShareARowOnlyWhenEveryWholePanelFits() {
+        typealias L = OriginalHandicapLayout9483
+        XCTAssertEqual(L.sharedWidth(available: 400, ideals: [150, 170], spacing: 10, accessibilitySize: false), 195)
+        XCTAssertNil(L.sharedWidth(available: 340, ideals: [150, 170], spacing: 10, accessibilitySize: false),
+                     "a share below the wider panel's whole width stacks")
+        XCTAssertNil(L.sharedWidth(available: 1000, ideals: [150, 170], spacing: 10, accessibilitySize: true),
+                     "accessibility sizes always stack")
+        XCTAssertNil(L.sharedWidth(available: 1000, ideals: [150], spacing: 10, accessibilitySize: false),
+                     "a lone panel takes the full width")
+        XCTAssertEqual(L.sharedWidth(available: .infinity, ideals: [20, 30], spacing: 10, accessibilitySize: false),
+                       L.minimumTarget, "never narrower than a 44 pt target")
+        let invalid: [[CGFloat]] = [[.nan, 10], [-1, 10], [.infinity, 10]]
+        for bad in invalid {
+            XCTAssertNil(L.sharedWidth(available: 400, ideals: bad, spacing: 10, accessibilitySize: false))
+        }
+        XCTAssertNil(L.sharedWidth(available: .nan, ideals: [10, 10], spacing: 10, accessibilitySize: false))
+    }
+
+    func testTheExplanationShowsExpandedWithoutAHostBinding() {
+        XCTAssertEqual(H.explanationStyle(card(), hasBinding: true), .disclosure)
+        XCTAssertEqual(H.explanationStyle(card(), hasBinding: false), .expanded, "never an inert disclosure")
+        func words(title: String, paragraphs: [String]) -> H.Words {
+            H.Words(eyebrow: Self.words.eyebrow, title: Self.words.title, explanationTitle: title,
+                    explanation: paragraphs, tapInvitation: Self.words.tapInvitation,
+                    scopeUnavailable: Self.words.scopeUnavailable, panelUnavailable: Self.words.panelUnavailable,
+                    comparisonUnavailable: Self.words.comparisonUnavailable)
+        }
+        XCTAssertEqual(H.explanationStyle(card(words: words(title: " ", paragraphs: Self.words.explanation)), hasBinding: true),
+                       .expanded, "a disclosure needs a title")
+        XCTAssertEqual(H.explanationStyle(card(words: words(title: "How these props work", paragraphs: ["", " "])),
+                                          hasBinding: true), .none)
+        XCTAssertEqual(H.explanation(card(words: words(title: "t", paragraphs: ["", "Kept whole."]))), ["Kept whole."])
+    }
+
+    // MARK: - Spoken and words
+
+    func testSpokenChanceCountScoreResultAndProvenanceStayDistinct() {
+        let input = card()
+        XCTAssertEqual(H.spoken(fokinaSetPanel, in: input),
+                       "Fokina to win at least one set. Pregame chance 67%, \(Self.pregameWords). "
+                       + "Actual: Fokina won 2 sets, final, \(Self.actualWords). "
+                       + "\(M.resultLabel): Won, \(M.resultTimeUnknown).")
+        XCTAssertEqual(H.spoken(gamePanel, in: input),
+                       "Fokina to finish level or ahead on games. Pregame chance 47%, \(Self.pregameWords). "
+                       + "Actual: Final games: Fokina 18, Tiafoe 18, level, \(Self.actualWords). "
+                       + "\(M.resultLabel): Won, \(M.resultTimeUnknown).")
+        XCTAssertEqual(H.resultLine(M.ShownResult(words: "Won", provenance: nil), condition: "+1.5 sets"), "Won · +1.5 sets")
+        XCTAssertEqual(H.resultLine(M.ShownResult(words: "Won", provenance: nil), condition: " "), "Won")
+        for words in H.panels(input).map({ H.spoken($0, in: input) }) {
+            for banned in ["price", "odds", "quote", "bookmaker", "Selected"] {
+                XCTAssertFalse(words.lowercased().contains(banned.lowercased()))
+            }
+        }
+    }
+
+    func testLongOwnerWordsAreKeptWhole() {
+        let long = "Alejandro Davidovich Fokina to win at least one set in this completed best-of-three match (CONSTRUCTED long predicate)"
+        let condition = "+1.5 sets (Set Handicap: Frances Tiafoe -1.5 vs Alejandro Davidovich Fokina +1.5)"
+        let wordy = panel(original: identity(Self.fokinaSets), subject: "Alejandro Davidovich Fokina", predicate: long,
+                          condition: condition, actual: fokinaSetPanel.actual)
+        let input = card(groups: groups(sets: [wordy, tiafoeSetPanel], games: [gamePanel]))
+        XCTAssertTrue(H.spoken(wordy, in: input).hasPrefix(long + "."), "never shortened")
+        guard let result = shown(wordy, in: input)?.result else { return }
+        XCTAssertEqual(H.resultLine(result, condition: condition), "Won · \(condition)")
+        XCTAssertEqual(wordy.openHint, "Opens the original \(condition) prop.")
+    }
+}
