@@ -85,6 +85,10 @@ SPECS = {
     # `live_blend_refresh.LOCK_RETRY_PROMPT_SWITCH`, read once per row-lock skip:
     # whether its retry is attempted promptly as fresh or waits in the owed queue.
     "lock_retry_prompt": {"modes": ("alternate",), "values": (0, 1), "today": 0},
+    # `live_blend_refresh.LOCK_RETRY_PAST_WITHDRAWAL_SWITCH`, read when a debt
+    # drain or door admission has a lock retry deferred only by a buffered
+    # withdrawal: whether that retry (and its due prompt) is taken past it.
+    "lock_retry_past_withdrawal": {"modes": ("alternate",), "values": (0, 1), "today": 0},
 }
 SWITCHES = tuple(SPECS)
 MODES = ("off", "ab", "alternate")
