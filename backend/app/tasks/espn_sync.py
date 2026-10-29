@@ -853,6 +853,9 @@ async def _sync_espn_live_events():
                 logger.warning(
                     "Authority straggler pass failed: %s", e, exc_info=True
                 )
+            # #10090: this arm's rows are LIVE games after ESPN's board rolls;
+            # free before the next arm asks ESPN anything.
+            await _release_rows(session)
 
             # ── And the rows that aged out of that window entirely (#6280) ──
             #
@@ -873,6 +876,7 @@ async def _sync_espn_live_events():
                 logger.warning(
                     "Deep authority straggler pass failed: %s", e, exc_info=True
                 )
+            await _release_rows(session)  # #10090, as above
 
             # ── And the stranded rows that were never LATE, only MISDATED ──
             #
@@ -2311,10 +2315,20 @@ async def _ask_boards_by_espn_id(
     JSONB — which is exactly what the deep arm's stamp does — therefore has to
     read it once the door has finished with it, or it writes back a dict the door
     has already moved on from and silently drops the probability it just stored.
+
+    EVERY BOARD IS ASKED FOR BEFORE ANY ROW IS WRITTEN (#10090). The shallow
+    arm's rows are LIVE games once ESPN's undated board rolls at Eastern
+    midnight, and nothing an arm writes is committed until the arm has returned
+    (``_release_rows``). Asked board-then-write per group, group 1's live row
+    stayed locked through every later group's ESPN read — production
+    2026-10-29 04:39Z: idle in transaction 6.2 s, whole-column
+    ``win_probability_sources`` writes 0.2-0.4 s apart, the socket's stamps
+    queued behind it. The groups, their order, every write and every stamp are
+    unchanged; only the network moved out from between them, as
+    ``fetch_live_box_scores`` did for #9049.
     """
+    asked = []
     for (sport_key, board_date), events in ordered_groups:
-        # Per-group, so one sport's dark board or bad row cannot wipe the pass
-        # for every other sport (gotcha #42).
         try:
             board = await espn.get_scoreboard(sport_key, date=board_date)
             # The observation clock for every score THIS board writes (#4571).
@@ -2323,8 +2337,16 @@ async def _ask_boards_by_espn_id(
             # single response, so stamping per row would call the last straggler
             # fresher than the first. Each group is its own fetch, so each group
             # gets its own stamp rather than sharing the pass-level `now`.
-            board_observed_at = datetime.now(timezone.utc)
+            asked.append(
+                (sport_key, board_date, events, board, datetime.now(timezone.utc), None)
+            )
         except Exception as e:
+            asked.append((sport_key, board_date, events, None, None, e))
+
+    for sport_key, board_date, events, board, board_observed_at, e in asked:
+        # Per-group, so one sport's dark board or bad row cannot wipe the pass
+        # for every other sport (gotcha #42).
+        if e is not None:
             stats["errors"].append(
                 f"{stat_prefix}_fetch_{sport_key}_{board_date}: {str(e)}"
             )
@@ -2682,12 +2704,23 @@ async def _recover_unstarted_authority_fixtures(session, espn, now, stats):
     # cannot advance — then the id for a reproducible pass.
     eligible.sort(key=lambda item: (item[0], item[1]))
 
+    # Every anchor is asked before any row is written (#10090), for the reason
+    # `_ask_boards_by_espn_id` gives: a write here is not committed until
+    # `_release_rows`, so asking between writes held the earlier rows across
+    # the later ESPN reads. Same rows, same order, same writes.
+    answers = []
     for _asked, _event_id, sport_key, event in eligible[
         :MAX_UNSTARTED_RECOVERY_ASKS_PER_PASS
     ]:
         try:
             espn_event = await espn.get_event(sport_key, event.espn_id)
         except Exception as e:
+            answers.append((sport_key, event, None, e))
+            continue
+        answers.append((sport_key, event, espn_event, None))
+
+    for sport_key, event, espn_event, e in answers:
+        if e is not None:
             stats["errors"].append(f"unstarted_recovery_{event.id}: {str(e)}")
             continue
 
