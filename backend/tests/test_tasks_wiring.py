@@ -377,6 +377,9 @@ class TestBeatScheduleCompleteness:
         # `/api/events/search` off the 4 MB sawtooth. Gotcha #12: this allowlist
         # is the reason a new beat entry cannot land silently.
         "flush-search-gin-pending-lists",
+        # #10090 — the `events` GIN lists on `realtime`, because the beat above
+        # delivers ~5% of its fires on `background`.
+        "flush-events-gin-pending-lists",
         "precompute-discover-candidate-base",
         # #2236 — the narrow republisher for live-containing feed shapes, whose
         # 60 s stale ceiling the 120 s beat above structurally cannot cover.
