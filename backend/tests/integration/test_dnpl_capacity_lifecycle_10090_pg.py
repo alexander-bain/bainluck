@@ -87,9 +87,9 @@ async def ordinary_capacity(capacity, monkeypatch):
     run both paths together. Classification remains enabled in these cases.
     """
     worker = capacity[0]
-    async def no_policy_retirement(event_id, ticket, deadline_ms, when):
+    async def no_policy_retirement(event_ids, ticket, deadline_ms, when):
         return None
-    monkeypatch.setattr(worker, '_retire_policy_preview_event', no_policy_retirement)
+    monkeypatch.setattr(worker, '_retire_policy_preview_events', no_policy_retirement)
     return capacity
 
 
@@ -416,8 +416,8 @@ async def test_idle_status_proof_is_locked_and_busy_rows_are_skipped(rig, ordina
                            sources=BASE10, rev=10), client.execute_command, event_channel, worker.preview_stats)
     entered = False
     if race.startswith('before_lock'):
-        retire = worker._retire_idle_preview_event
-        async def flip_then_retire(eid, ticket, deadline_ms, when):
+        retire = worker._retire_idle_preview_events
+        async def flip_then_retire(eids, ticket, deadline_ms, when):
             nonlocal entered
             entered = True
             async with rig.engine.begin() as conn:
@@ -428,8 +428,8 @@ async def test_idle_status_proof_is_locked_and_busy_rows_are_skipped(rig, ordina
                     'before_lock_null': "commence_time=NULL",
                 }
                 await conn.execute(text("UPDATE events SET " + changes[race] + " WHERE id=481"))
-            await retire(eid, ticket, deadline_ms, when)
-        monkeypatch.setattr(worker, '_retire_idle_preview_event', flip_then_retire)
+            await retire(eids, ticket, deadline_ms, when)
+        monkeypatch.setattr(worker, '_retire_idle_preview_events', flip_then_retire)
     elif race == 'during_mutation':
         prepare = worker._prepare_ledger_previews
         async def prove_status_update_is_locked(items):

@@ -460,6 +460,12 @@ class _Row:
     def __init__(self, **values):
         self._mapping = values
 
+    def __getattr__(self, name):
+        try:
+            return self.__dict__["_mapping"][name]
+        except KeyError:
+            raise AttributeError(name) from None
+
 
 class _HangingRead:
     """A capacity session whose first statement runs until released."""
@@ -488,6 +494,9 @@ class _HangingRead:
                 class Result:
                     def first(self):
                         return outer.row
+
+                    def all(self):
+                        return [outer.row]
 
                 return Result()
 
