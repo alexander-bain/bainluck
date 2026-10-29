@@ -13,6 +13,7 @@ the receipts carrying each event's arm.
 import asyncio
 import json
 import math
+import os
 import logging
 import threading
 import time
@@ -930,3 +931,42 @@ def test_a_stored_alternation_that_is_not_whole_pairs_reads_off(period_s, expire
     raw = json.dumps({"mode": "alternate", "a": 3, "b": 1, "period_s": period_s,
                       "start": START, "expires_at": expires_at})
     assert sw.parse(raw, NOW, ATTEMPTS) == OFF
+
+
+# ── the start line: R8's per-process readback ────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "layer, abandon, attempts, expected",
+    [
+        ("1", None, 1, "layer SPEED_SWITCH_TRIALS=on today pending_attempts=1 abandon_optional_db=0"),
+        (None, "1", 3, "layer SPEED_SWITCH_TRIALS=off today pending_attempts=3 abandon_optional_db=1"),
+    ],
+)
+def test_each_process_logs_the_layer_and_todays_values_once(
+        monkeypatch, caplog, layer, abandon, attempts, expected):
+    for env, value in ((sw.TRIALS_ENV, layer), (OPTIONAL_DB_ABANDON_ENV, abandon)):
+        if value is None:
+            monkeypatch.delenv(env, raising=False)
+        else:
+            monkeypatch.setenv(env, value)
+    monkeypatch.setattr(blend_mod, "FRESH_FLUSH_PENDING_ATTEMPTS", attempts)
+    monkeypatch.setattr(blend_mod, "_SPEED_SWITCH_LOGGED_PID", None)
+
+    def no_redis():
+        raise AssertionError("the start line reads the environment only")
+
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", no_redis)
+    monkeypatch.setattr(sw, "_read_stored", no_redis)
+    with caplog.at_level(logging.INFO, logger=blend_mod.logger.name):
+        blend_mod.LiveBlendRefresher("kalshi")
+        blend_mod.LiveBlendRefresher("polymarket")
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("speed_switch[")]
+    assert lines == [f"speed_switch[pid={os.getpid()}]: {expected}"]
+
+
+def test_a_forked_process_logs_its_own_start_line(monkeypatch, caplog):
+    monkeypatch.setattr(blend_mod, "_SPEED_SWITCH_LOGGED_PID", os.getpid() + 1)  # the parent's
+    with caplog.at_level(logging.INFO, logger=blend_mod.logger.name):
+        blend_mod.LiveBlendRefresher("kalshi")
+    assert [r for r in caplog.records if r.getMessage().startswith("speed_switch[")]

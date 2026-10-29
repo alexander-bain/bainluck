@@ -324,6 +324,9 @@ PENDING_STAMP_BUDGET_S = _owed_budget_env("PENDING_STAMP_BUDGET_S", 1.0, float, 
 # still stops the serial old work.
 FRESH_FLUSH_PENDING_ATTEMPTS = _owed_budget_env("FRESH_FLUSH_PENDING_ATTEMPTS", 1, int, 1, 32)
 _OWED_BUDGET_LOGGED = False
+#: #10090 — the pid that printed the speed-switch start line (a forked venue
+#: process prints its own).
+_SPEED_SWITCH_LOGGED_PID: Optional[int] = None
 
 # #10090 — fixed fresh-stamp workers per refresh. Two disjoint stamps waiting
 # on rows/publication must not hold a third ready fresh event. Each holds one
@@ -2157,6 +2160,20 @@ class LiveBlendRefresher:
                 "live_blend_refresh[%s]: owed-stamp budget "
                 "FRESH_FLUSH_PENDING_ATTEMPTS=%d PENDING_STAMP_BUDGET_S=%.3g",
                 source, FRESH_FLUSH_PENDING_ATTEMPTS, PENDING_STAMP_BUDGET_S,
+            )
+        global _SPEED_SWITCH_LOGGED_PID
+        if _SPEED_SWITCH_LOGGED_PID != os.getpid():
+            # #10090 — once per process, the switchboard's readback: whether
+            # the layer is on and today's values a trial alternates against.
+            # Environment only; no Redis read.
+            from app.tasks.speed_switches import trials_enabled
+
+            _SPEED_SWITCH_LOGGED_PID = os.getpid()
+            logger.info(
+                "speed_switch[pid=%d]: layer SPEED_SWITCH_TRIALS=%s "
+                "today pending_attempts=%d abandon_optional_db=%d",
+                os.getpid(), "on" if trials_enabled() else "off",
+                FRESH_FLUSH_PENDING_ATTEMPTS, int(optional_db_abandons()),
             )
         #: #11181 — durable custody of owed chart points. Both production
         #: consumers pass one (guarded); None keeps every owed point in memory.
