@@ -19065,6 +19065,23 @@ def _unstarted_entry_ttl(cached_resp: dict, cached_at: float) -> float:
 #: row, on the database's own clock. Present-only and always together.
 STATE_READ_NOT_BEFORE_KEY = "state_read_not_before"
 STATE_READ_NOT_AFTER_KEY = "state_read_not_after"
+#: #10090 (A6 clock bridge) — rides with the window, never without it. ``True``
+#: when THIS response's build read the row, so the window falls inside the
+#: request that carried it; ``False`` when the payload came out of
+#: `_event_detail_cache`, built by an earlier request whose window may predate
+#: this one. A collector that pairs its own request clock with the database's
+#: may anchor only on ``True``.
+STATE_READ_FRESH_KEY = "state_read_fresh"
+
+
+def _with_state_read_fresh(payload: dict, fresh: bool) -> dict:
+    """``payload`` marked fresh or cached — a copy, never the shared dict.
+
+    No window, no mark: the flag qualifies a window and claims nothing alone.
+    """
+    if STATE_READ_NOT_BEFORE_KEY not in payload:
+        return payload
+    return {**payload, STATE_READ_FRESH_KEY: fresh}
 
 
 async def event_state_read_window(db: AsyncSession) -> dict:
@@ -19094,7 +19111,10 @@ async def event_state_read_window(db: AsyncSession) -> dict:
     state newer than payload A's only when B's ``not_before`` is strictly after
     A's ``not_after``; overlapping windows are unordered and nothing here
     chooses for them. A cached payload carries the window of the build that
-    made it, which is the point: that build is what it describes.
+    made it, which is the point: that build is what it describes. The payload
+    says which it is (``state_read_fresh``, `STATE_READ_FRESH_KEY`), so a
+    reader pairing the window with its OWN request clock never takes a cached
+    build's window for a read made inside its request.
 
     What the window covers — events-row columns ONLY: the raw ``status``,
     ``home_score``/``away_score``, ``completed_at``, ``period``/``game_clock``,
@@ -19242,7 +19262,9 @@ async def _coalesced_fresh_detail(event_id: int, asked_at: float, build) -> dict
         if entry is not None and entry[0] > asked_at:
             # Any build that started after we asked — fresh or an ordinary
             # miss — read state at least as new as the write we were told of.
-            return entry[2]
+            # It read the row inside OUR request, too, so its window is fresh
+            # for us although the entry is marked cached for everyone else.
+            return _with_state_read_fresh(entry[2], True)
         return None
 
     return await _coalesced_fresh_build(
@@ -20630,14 +20652,18 @@ async def get_event(
     # served. `event_id` is rebound above when a duplicate resolves, so caching
     # only under it would make every request for a ghost url re-run the verdict
     # query — the one population that always needs it.
+    #
+    # #10090: the entry is marked cached — every later reader of it gets a
+    # window read before it asked — and this request's own copy fresh.
     if not _detail_skip_cache_publish.get():
+        _published = _with_state_read_fresh(response, False)
         for _cache_key in {requested_event_id, event_id}:
             if len(_event_detail_cache) >= _EVENT_DETAIL_MAX_SIZE:
                 oldest = min(_event_detail_cache, key=lambda k: _event_detail_cache[k][0])
                 del _event_detail_cache[oldest]
-            _event_detail_cache[_cache_key] = (_now, event.status, response)
+            _event_detail_cache[_cache_key] = (_now, event.status, _published)
 
-    return response
+    return _with_state_read_fresh(response, True)
 
 
 # ── Scoring play extraction from StatPal play-by-play data ──────────────────
