@@ -27,6 +27,9 @@ once.
 * one sport (CERT-3611): while the pass asks ESPN for game B's dated board,
   game A — on the undated board, same sport — is free. RED at 0fd0bd5ea3 (A was
   written first and stayed locked, same savepoint, through the wait);
+* StatPal livescores (#10090): while the writer reads the next sport's board,
+  the row the previous sport confirm-stamped takes a venue stamp under a 500 ms
+  lock budget. RED at 76013097 (one transaction over every sport);
 * controls: the probe DOES see a lock that is held (else every arm passes on a
   blind probe), and every write still commits.
 
@@ -664,3 +667,161 @@ class TestOneSportsDatedBoardWaitsForNoWrittenRow:
                 ).all()
             )
         assert periods == {a: "2nd Period", b: "2nd Period"}, periods
+
+
+# ── #10090: the StatPal livescore writer, the same class on the 30 s beat ──
+#
+# Production 10/28 00:00-00:02Z: three holders from the realtime dyno sat idle
+# in transaction 14.0-18.5 s, each last statement the confirm-only score stamp
+# (`UPDATE events SET score_source=…, score_observed_at=… WHERE id AND period
+# AND game_clock AND home_score AND away_score`), with 5-9 venue price stamps
+# refused behind each under their 500 ms lock budget. `_sync_statpal_livescores`
+# held one transaction over every sport and read the next sport's StatPal board
+# with the previous sport's rows still locked.
+
+
+class _StatPalBoardRow:
+    """One in-progress StatPal live-board row (the 6056 file's `_Fixture` shape)."""
+
+    def __init__(self, home, away, *, raw_status, game_clock, scores, clocked):
+        self.start_time = None
+        self.home_team, self.away_team = home, away
+        self.status = "live"
+        self.fixture_id = f"10090-{home}"
+        self.odds_id = None
+        self.home_score, self.away_score = scores
+        self.raw_status = raw_status
+        self.game_clock = game_clock
+        self.clock_field_served = clocked
+
+
+async def _venue_stamp_lands(engine, event_id) -> bool:
+    """Can the venue arm's stamp take this row inside its 500 ms lock budget?"""
+    async with engine.connect() as conn:
+        tx = await conn.begin()
+        try:
+            await conn.execute(text("SET LOCAL lock_timeout = '500ms'"))
+            await conn.execute(
+                text(
+                    "UPDATE events SET win_probability_sources = "
+                    "win_probability_sources WHERE id = :id"
+                ),
+                {"id": event_id},
+            )
+            return True
+        except DBAPIError:
+            return False
+        finally:
+            await tx.rollback()
+
+
+@needs_postgres
+class TestStatPalLivescoresHoldNoRowAcrossTheNextBoard:
+    async def test_a_confirmed_row_takes_a_venue_stamp_while_the_next_board_is_read(
+        self, db, monkeypatch  # noqa: F811 — imported pytest fixture
+    ):
+        """RED at 76013097: the first sport's confirm-only stamp held its row
+        through the second sport's StatPal read, so the venue stamp timed out."""
+        from contextlib import asynccontextmanager
+
+        import app.services.statpal_api as statpal_api
+        import app.tasks.statpal_sync as statpal_sync
+        from app.models.models import Event
+        from app.utils.score_observation import SCORE_SOURCE_STATPAL
+
+        engine, maker, ids = db
+        nhl_row, mlb_row = ids["the_stat_model_row"], ids["the_failing_sports_row"]
+        boards = {
+            "nhl": _StatPalBoardRow(
+                "San Jose Sharks", "Anaheim Ducks",
+                raw_status="2nd Period", game_clock="10:00", scores=(1, 0),
+                clocked=True,
+            ),
+            "mlb": _StatPalBoardRow(
+                "Seattle Mariners", "Los Angeles Angels",
+                raw_status="Top 5th", game_clock=None, scores=(2, 1),
+                clocked=False,
+            ),
+        }
+        # Each row already holds what its board says (and NHL its anchor), so
+        # the pass's only write is the confirm-only stamp — production's holder
+        # statement exactly. MLB's live board carries no anchor field (#3094).
+        async with maker() as session:
+            await session.execute(
+                update(Event).where(Event.id == nhl_row).values(
+                    period="10:00 - 2nd Period", game_clock="10:00",
+                    home_score=1, away_score=0,
+                    statpal_fixture_id=boards["nhl"].fixture_id,
+                )
+            )
+            await session.execute(
+                update(Event).where(Event.id == mlb_row).values(
+                    period="Top 5th", game_clock=None, home_score=2, away_score=1,
+                )
+            )
+            await session.commit()
+
+        written: list = []
+        held_after_write: list = []
+        at_read: list = []
+
+        @asynccontextmanager
+        async def _session(**_kwargs):
+            async with maker() as session:
+                try:
+                    yield session
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    raise
+
+        real_write = statpal_sync.write_live_state_if_unmoved
+
+        async def _write_then_probe(session, event, values, **kwargs):
+            landed = await real_write(session, event, values, **kwargs)
+            written.append(event.id)
+            # POSITIVE LOCK CONTROL, in this run: the writer's own uncommitted
+            # stamp IS visible to the probe, so a "free" below is not blindness.
+            held_after_write.append(not await _venue_stamp_lands(engine, event.id))
+            return landed
+
+        class _Service:
+            async def get_live_scores(self, sport):
+                at_read.append(
+                    (sport, {row: await _venue_stamp_lands(engine, row) for row in written})
+                )
+                board = boards.get(sport)
+                return [board] if board else []
+
+            async def close(self):
+                pass
+
+        monkeypatch.setattr(statpal_sync, "get_task_session", _session)
+        monkeypatch.setattr(statpal_sync, "write_live_state_if_unmoved", _write_then_probe)
+        monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+        monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+
+        result = await statpal_sync._sync_statpal_livescores()
+
+        assert sorted(s for s, _ in at_read) == ["mlb", "nhl"], at_read
+        assert sorted(written) == sorted([nhl_row, mlb_row]), written
+        assert held_after_write == [True, True], held_after_write
+        # The arm reached its question: the second read had a written row to probe.
+        assert at_read[1][1], at_read
+        assert all(all(free.values()) for _, free in at_read), at_read
+        # WRITE CONTROL: confirmation only, and both stamps committed.
+        assert result["events_updated"] == 0, result
+        assert result["livescore_confirmation_lost_race"] == 0, result
+        async with maker() as session:
+            stamps = dict(
+                (
+                    await session.execute(
+                        select(Event.id, Event.score_source).where(
+                            Event.id.in_([nhl_row, mlb_row])
+                        )
+                    )
+                ).all()
+            )
+        assert stamps == {
+            nhl_row: SCORE_SOURCE_STATPAL, mlb_row: SCORE_SOURCE_STATPAL,
+        }, stamps
