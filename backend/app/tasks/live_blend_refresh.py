@@ -247,6 +247,9 @@ OPTIONAL_DB_SWITCH = "abandon_optional_db"
 #: `FRESH_FLUSH_PENDING_ATTEMPTS`'s runtime trial name: ``alternate`` between two
 #: values by period, read once per flush (`_fresh_flush_pending_attempts`).
 PENDING_ATTEMPTS_SWITCH = "pending_attempts"
+#: `ADMITTED_DEBT_SLOTS`'s runtime trial name: ``alternate`` between two values
+#: by period, read once per door admission (`_admitted_debt_slots`).
+ADMITTED_DEBT_SLOTS_SWITCH = "admitted_debt_slots"
 #: #10090 R8b runtime trial (``alternate`` 0/1, today 0), read once per mixed
 #: `refresh` (`_release_unattempted_debt`): a call releases from its fence the
 #: old events it will not attempt as soon as it knows which those are — before
@@ -276,6 +279,14 @@ def _fresh_flush_pending_attempts() -> int:
         return _optional_db_trial().value(PENDING_ATTEMPTS_SWITCH, FRESH_FLUSH_PENDING_ATTEMPTS)
     except Exception:  # noqa: BLE001 — a switch read never fails a flush
         return FRESH_FLUSH_PENDING_ATTEMPTS
+
+
+def _admitted_debt_slots() -> int:
+    """This admission's debt slots: a running alternation's arm, else the setting."""
+    try:
+        return _optional_db_trial().value(ADMITTED_DEBT_SLOTS_SWITCH, ADMITTED_DEBT_SLOTS)
+    except Exception:  # noqa: BLE001 — a switch read never fails an admission
+        return ADMITTED_DEBT_SLOTS
 
 
 def _release_unattempted_debt() -> bool:
@@ -2199,9 +2210,11 @@ class LiveBlendRefresher:
             _SPEED_SWITCH_LOGGED_PID = os.getpid()
             logger.info(
                 "speed_switch[pid=%d]: layer SPEED_SWITCH_TRIALS=%s "
-                "today pending_attempts=%d abandon_optional_db=%d",
+                "today pending_attempts=%d abandon_optional_db=%d "
+                "admitted_debt_slots=%d",
                 os.getpid(), "on" if trials_enabled() else "off",
                 FRESH_FLUSH_PENDING_ATTEMPTS, int(optional_db_abandons()),
+                ADMITTED_DEBT_SLOTS,
             )
         #: #11181 — durable custody of owed chart points. Both production
         #: consumers pass one (guarded); None keeps every owed point in memory.
@@ -3408,9 +3421,10 @@ class LiveBlendRefresher:
         admits (#10090: until its admitted workers go idle or a lifecycle
         drain calls `stop_admitting`), so a new batch never waits for an
         unrelated older stamp, however long that one is held. Beside it, at
-        most ADMITTED_DEBT_SLOTS due owed events at a time (`window.debts`,
-        default one) are stamped too, so debt progresses while the call lives
-        on; they are not in the returned set.
+        most this admission's debt slots of due owed events at a time
+        (`window.debts`; ADMITTED_DEBT_SLOTS, default one, unless an
+        `admitted_debt_slots` trial's arm says otherwise) are stamped too, so
+        debt progresses while the call lives on; they are not in the returned set.
         Empty means the caller keeps them for its next `refresh`, as before:
         no call is admitting, the clock is earlier, or there is none (the final
         drain keeps its own contract), or the event is fenced — the running call is
@@ -3454,12 +3468,13 @@ class LiveBlendRefresher:
             if eid not in excluded and eid not in window.holding
         }
         cohort = frozenset(taken)
-        free = ADMITTED_DEBT_SLOTS - len(window.debts)
+        slots = _admitted_debt_slots()
+        free = slots - len(window.debts)
         if free > 0:
             # #10090: a call that keeps admitting may outlive the moment a new
             # `refresh` would have taken the debt, so the oldest due owed events
-            # ride along — at most ADMITTED_DEBT_SLOTS at a time, behind the
-            # cohort, never fenced.
+            # ride along — at most this admission's `slots` at a time, behind
+            # the cohort, never fenced.
             self._wake_book_refused(_mono())
             owed = self._lock_retry | self._throttle_deferred
             rotation = [eid for eid in self._debt_rotation if eid in owed]
@@ -3540,7 +3555,7 @@ class LiveBlendRefresher:
             window.clocks.update(dict.fromkeys(due, clock))
             window.retry.update(retry)
             live = self._live_event_ids
-            if ADMITTED_DEBT_SLOTS > 1:
+            if slots > 1:
                 # Debt rides behind the cohort that let it in: with more than
                 # one slot, owed events with lower ids would otherwise take
                 # every worker (and session slot) ahead of these fresh prices.
@@ -3610,6 +3625,12 @@ class LiveBlendRefresher:
                 "live_blend_refresh[%s]: admitted group failed for %s",
                 self.source, group_ids,
             )
+            if event_id in window.debts and len(window.debts) > ADMITTED_DEBT_SLOTS:
+                # An owed stamp only an `admitted_debt_slots` trial let in beside
+                # the setting's has failed: that trial switches off in this
+                # process (automatic switch-back on error); the stamps already
+                # in flight finish and no new debt rides past the setting.
+                _optional_db_trial().trip(ADMITTED_DEBT_SLOTS_SWITCH, exc)
             if event_id not in window.completed:
                 window.failed.add(event_id)
                 self._refresh_failed(

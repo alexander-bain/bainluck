@@ -66,6 +66,9 @@ SPECS = {
     # `live_blend_refresh.FRESH_FLUSH_PENDING_ATTEMPTS`, read once per flush.
     # Its "today" is the worker's own setting (an env since #11709), `today()`.
     "pending_attempts": {"modes": ("alternate",), "values": (1, 32), "today": 1},
+    # `live_blend_refresh.ADMITTED_DEBT_SLOTS`, read once per door admission.
+    # Its "today" is likewise the worker's own setting (an env since #11718).
+    "admitted_debt_slots": {"modes": ("alternate",), "values": (1, 3), "today": 1},
     # `live_blend_refresh.RELEASE_UNATTEMPTED_DEBT_SWITCH`, read once per mixed
     # refresh: when a call's unattempted old events leave its fence.
     "release_unattempted_debt": {"modes": ("alternate",), "values": (0, 1), "today": 0},
@@ -123,14 +126,22 @@ def key(name: str) -> str:
     return KEY_PREFIX + name
 
 
+#: Switches whose "today" is a worker env setting in `live_blend_refresh`.
+_TODAY_SETTINGS = {
+    "pending_attempts": "FRESH_FLUSH_PENDING_ATTEMPTS",
+    "admitted_debt_slots": "ADMITTED_DEBT_SLOTS",
+}
+
+
 def today(name: str) -> int:
-    """A switch's value with no trial running: `pending_attempts` reads the
-    worker's own `FRESH_FLUSH_PENDING_ATTEMPTS`, so an alternation always keeps
-    the value actually in force on one arm whatever that setting is."""
-    if name == "pending_attempts":
+    """A switch's value with no trial running: `pending_attempts` and
+    `admitted_debt_slots` read the worker's own setting, so an alternation
+    always keeps the value actually in force on one arm whatever it is."""
+    setting = _TODAY_SETTINGS.get(name)
+    if setting is not None:
         from app.tasks import live_blend_refresh
 
-        return live_blend_refresh.FRESH_FLUSH_PENDING_ATTEMPTS
+        return getattr(live_blend_refresh, setting)
     return SPECS[name]["today"]
 
 
