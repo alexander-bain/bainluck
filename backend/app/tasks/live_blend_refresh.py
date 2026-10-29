@@ -263,6 +263,21 @@ RELEASE_UNATTEMPTED_DEBT_SWITCH = "release_unattempted_debt"
 #: turned 18 bridged events into debt at once; FRESH_FLUSH_PENDING_ATTEMPTS=3
 #: let about three through per call, so the last waited 10.5 s.
 HANDOVER_FRESH_SWITCH = "handover_fresh"
+#: #10090 runtime trial (``alternate`` 0/1, today 0), read once per row-lock
+#: skip (`_lock_retry_prompt`): on, a stamp that gave up on a row lock is
+#: attempted again as a later call's FRESH population once its delay below has
+#: passed, instead of joining the back of the owed queue. That queue drains one
+#: event per fresh-bearing flush (FRESH_FLUSH_PENDING_ATTEMPTS) plus one per door
+#: admission (ADMITTED_DEBT_SLOTS), so on a busy socket the lock-skipped price
+#: waited out every event owed ahead of it. Production 2026-10-29 17:40:49.7Z:
+#: Kalshi event 15335270 skipped once and was stamped 97.8 s later with no
+#: attempt in between.
+LOCK_RETRY_PROMPT_SWITCH = "lock_retry_prompt"
+#: How long after the Nth skip in a row (N from 0) its prompt attempt is due.
+#: Its length is the bound: a row still locked after these many prompt attempts
+#: is ordinary debt again, so a lock that persists costs at most these attempts
+#: (each behind the same statement bound), never a loop.
+LOCK_RETRY_PROMPT_DELAYS_S = (1.0, 2.0, 4.0)
 
 
 def _optional_db_key(event_ids) -> Optional[int]:
@@ -309,6 +324,14 @@ def _handover_fresh() -> bool:
     try:
         return bool(_optional_db_trial().value(HANDOVER_FRESH_SWITCH, 0))
     except Exception:  # noqa: BLE001 — a switch read never fails a hand-over
+        return False
+
+
+def _lock_retry_prompt() -> bool:
+    """This row-lock skip's `lock_retry_prompt` arm; off on any switch error."""
+    try:
+        return bool(_optional_db_trial().value(LOCK_RETRY_PROMPT_SWITCH, 0))
+    except Exception:  # noqa: BLE001 — a switch read never fails a stamp
         return False
 
 
@@ -2301,6 +2324,11 @@ class LiveBlendRefresher:
         #: over committed (`keep_committed`); the next `refresh` that finds one
         #: due stamps it as fresh. Always a subset of what is still owed.
         self._carried_fresh: set[int] = set()
+        #: #10090 `lock_retry_prompt` — row-lock skips owed a prompt attempt:
+        #: event id -> the `_mono` time it is due. Always within `_lock_retry`.
+        self._lock_prompt_at: dict[int, float] = {}
+        #: Prompt attempts taken in an event's current run of row-lock skips.
+        self._lock_prompt_taken: dict[int, int] = {}
         self._pending_continuation: list[int] = []
         self._pending_flush_started: Optional[float] = None
         #: This flush's old-stamp allowance, read when the flush starts.
@@ -2537,6 +2565,12 @@ class LiveBlendRefresher:
         deferred = set(self._throttle_deferred)
         fresh = set(event_ids)
         wanted = fresh | retry | deferred
+        if self._lock_prompt_at or self._lock_prompt_taken:
+            # No stamp is in flight between calls: one no longer owed as a
+            # lock retry was stamped or released, so its run of skips is over.
+            for owed in (self._lock_prompt_at, self._lock_prompt_taken):
+                for eid in [eid for eid in owed if eid not in retry]:
+                    del owed[eid]
         # A caller may still be writing this event's price/withdrawal cohort.
         # Leave its fresh inputs and existing debt owed without reading a
         # partial board; ordinary callers retain the same admission behavior.
@@ -2567,6 +2601,12 @@ class LiveBlendRefresher:
             # Sticky for the flush: old attempts made before its first fresh
             # call count against the same allowance, so none is added after.
             self._pending_fresh_flush = True
+        if self._lock_prompt_at:
+            # #10090 `lock_retry_prompt`: a row-lock skip whose prompt attempt
+            # is due is this call's fresh, not debt behind the allowance. It
+            # does not make the flush fresh-bearing: a quiet flush keeps its
+            # time budget for the rest of the debt.
+            fresh |= self._take_lock_prompts(retry.intersection(due), now)
 
         def pending_budget_spent():
             if flush_started is None:
@@ -3405,6 +3445,29 @@ class LiveBlendRefresher:
         """
         self._throttle_deferred.update(event_ids)
 
+    def _schedule_lock_prompt(self, event_id: int) -> None:
+        """#10090 `lock_retry_prompt` — this event's stamp just gave up on a
+        row lock. On, and while its run of skips has prompt attempts left,
+        its next attempt is due `LOCK_RETRY_PROMPT_DELAYS_S` from now as fresh
+        (`_take_lock_prompts`). Off (today, and any switch error), or once
+        those are spent, it is ordinary debt exactly as before."""
+        taken = self._lock_prompt_taken.get(event_id, 0)
+        if taken < len(LOCK_RETRY_PROMPT_DELAYS_S) and _lock_retry_prompt():
+            self._lock_prompt_at[event_id] = _mono() + LOCK_RETRY_PROMPT_DELAYS_S[taken]
+
+    def _take_lock_prompts(self, candidates: Iterable[int], now: float) -> set[int]:
+        """The candidates whose prompt attempt is due at ``now``; each is
+        taken (no longer scheduled) and counted against its run's bound."""
+        prompt = set()
+        for event_id in candidates:
+            at = self._lock_prompt_at.get(event_id)
+            if at is not None and at <= now:
+                prompt.add(event_id)
+        for event_id in prompt:
+            del self._lock_prompt_at[event_id]
+            self._lock_prompt_taken[event_id] = self._lock_prompt_taken.get(event_id, 0) + 1
+        return prompt
+
     def keep_owed(self, event_ids: Iterable[int], *, marks: Iterable[InputMark] = ()) -> None:
         """#10090 — record what `refresh` records for an event it must defer.
 
@@ -3512,6 +3575,18 @@ class LiveBlendRefresher:
             if eid not in excluded and eid not in window.holding
         }
         cohort = frozenset(taken)
+        if self._lock_prompt_at:
+            # #10090 `lock_retry_prompt`: a row-lock skip whose prompt attempt
+            # is due rides this admission beside the cohort, outside the debt
+            # slots, as it would be fresh in a new `refresh`.
+            taken |= self._take_lock_prompts(
+                (
+                    eid for eid in self._lock_retry
+                    if eid not in excluded and eid not in window.holding
+                    and self._due(eid, flush_started)
+                ),
+                _mono(),
+            )
         slots = _admitted_debt_slots()
         free = slots - len(window.debts)
         if free > 0:
@@ -4719,6 +4794,7 @@ class LiveBlendRefresher:
                         self._dispositions[event_id] = ("lock",)
                         self._lock_retry.add(event_id)
                         self._last_refresh_at.pop(event_id, None)
+                        self._schedule_lock_prompt(event_id)
                         logger.info(
                             "live_blend_refresh[%s]: event %s row locked >%sms, "
                             "re-queued for the next flush%s",

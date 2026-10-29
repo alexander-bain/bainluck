@@ -75,6 +75,9 @@ SPECS = {
     # `live_blend_refresh.HANDOVER_FRESH_SWITCH`, read once per cohort a catalog
     # handover carries over committed: whether the next refresh stamps it fresh.
     "handover_fresh": {"modes": ("alternate",), "values": (0, 1), "today": 0},
+    # `live_blend_refresh.LOCK_RETRY_PROMPT_SWITCH`, read once per row-lock skip:
+    # whether its retry is attempted promptly as fresh or waits in the owed queue.
+    "lock_retry_prompt": {"modes": ("alternate",), "values": (0, 1), "today": 0},
 }
 SWITCHES = tuple(SPECS)
 MODES = ("off", "ab", "alternate")
