@@ -394,8 +394,17 @@ struct EventDetailView: View {
             // #9483 v445 C3 — another event on this page: the old event's
             // reader closes and its stream, reasons and ladder selections go
             // before the new event's stream begins.
-            .onChange(of: eventId) { _, _ in nflCards.resetNBAStream() }
+            .onChange(of: eventId) { _, _ in
+                nflCards.resetNBAStream()
+                showProbabilityDetails = false
+            }
             .onDisappear {
+                // #11703 — the freshness details belong to this page. Its
+                // popover is presented above the whole stack, so a link that
+                // pushes another game would otherwise leave it up over that
+                // page, reading this one's stopped model (build 89: "Update
+                // interrupted … 34 minutes ago" over a healthy live game).
+                showProbabilityDetails = false
                 duringPageAnchor.cancel()
                 afterPageAnchor.cancel()
                 marketPageVisible = false
