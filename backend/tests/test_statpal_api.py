@@ -1081,6 +1081,10 @@ class TestSyncHelpers:
             async def flush(self):
                 pass
 
+            # #10090: the writer commits each sport before the next board.
+            async def commit(self):
+                pass
+
             def add(self, obj):
                 self.added.append(obj)
 

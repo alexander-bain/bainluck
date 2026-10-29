@@ -2016,11 +2016,11 @@ async def _sync_statpal_livescores() -> dict:
                     # a 30-second beat, beside the ESPN writer on its own beat,
                     # and `_sync_statpal_schedules` runs the same columns from
                     # BACKGROUND. Nothing above took a lock, and this function
-                    # has no intermediate commit — one `get_task_session()`
-                    # spans every sport and every fixture in the pass — so an
-                    # ORM assignment here would sit in the session until the
-                    # very end and could overwrite a newer observation another
-                    # queue committed in between. The sequential guard cannot
+                    # commits once per sport (#10090) — one transaction spans
+                    # every fixture of the sport — so an ORM assignment here
+                    # would sit in the session until that commit and could
+                    # overwrite a newer observation another queue committed in
+                    # between. The sequential guard cannot
                     # see that happen: it was right about the row it was shown.
                     #
                     # So the decision is re-asserted at write time against the
@@ -2136,6 +2136,15 @@ async def _sync_statpal_livescores() -> dict:
 
                     if updated:
                         sport_updated += 1
+
+                # #10090: this sport's rows are free before the next sport's
+                # board is read. Committing once at the end held every row this
+                # sport had written — the confirm-only score stamp included —
+                # across the next StatPal call: 14-18 s idle in transaction on
+                # production 10/28, with both venue arms' price stamps refused
+                # behind it. The ESPN live pass's #9049 fix, on this writer.
+                # No ORM row outlives the commit: the next sport reads its own.
+                await session.commit()
 
                 total_updated += sport_updated
                 total_score_snaps += sport_snaps
