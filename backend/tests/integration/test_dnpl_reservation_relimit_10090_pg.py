@@ -9,7 +9,7 @@ still configured with the old sizes refuses to bind, the old namespace is gone,
 and the scripted rollback restores the original allocation. No production.
 """
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from types import SimpleNamespace
 import json
 import os
@@ -17,6 +17,8 @@ from uuid import uuid4
 
 import pytest
 
+from app.services import dnpl_activation as activation
+from app.services.dnpl_activation_command import parse_authority
 from app.utils.dnpl_authority_registry import AuthorityLedgerRegistry
 from app.utils.dnpl_redis_authority import GUARDED_LEDGER_SCRIPT, guard_token, namespace_keys
 from app.utils.preview_reservations import ReservationPolicy
@@ -69,7 +71,7 @@ async def producer(store, client, limits):
     return registry
 
 
-async def run_plan(plan_data, controller, tmp_path, monkeypatch, name):
+async def run_plan(plan_data, controller, tmp_path, monkeypatch, name, expect="PLAN_DONE"):
     from app.services import dnpl_activation_operator as operator
     from app.services import dnpl_activation_runner as runner
 
@@ -87,8 +89,8 @@ async def run_plan(plan_data, controller, tmp_path, monkeypatch, name):
     )
     result = await operator.execute_plan(
         plan, controller, lock_path=lock, identity="relimit-lab", run_dir=run_dir)
-    assert result["status"] == "PLAN_DONE", result
-    return plan
+    assert result["status"] == expect, result
+    return result
 
 
 def apps():
@@ -177,3 +179,149 @@ async def test_a_plan_built_for_other_sizes_than_configured_never_reaches_the_op
     assert await r.store.read() == old
     assert await r.store.read_retirement() is None
     assert await r.client.dbsize() == 5
+
+
+# --resume: the scripted exit for a stop after a send (lane1 N3 on #11751). Each
+# stop is real: a truncated plan, or a lost reply after Redis executed (or never
+# received) the command. Only platform writer observations are simulated.
+
+def lose_reply(controller, monkeypatch, script, *, executed=True):
+    real = controller._eval_once
+
+    async def lossy(client, sent, keys, args):
+        if sent is script:
+            if executed:
+                await real(client, sent, keys, args)
+            raise TimeoutError("reply lost")
+        return await real(client, sent, keys, args)
+
+    monkeypatch.setattr(controller, "_eval_once", lossy)
+    return lambda: monkeypatch.setattr(controller, "_eval_once", real)
+
+
+def truncated(plan_data, steps):
+    return {**plan_data, "steps": plan_data["steps"][:steps]}
+
+
+async def relimit_start(t, r):
+    server, repl = await r.client.info("server"), await r.client.info("replication")
+    primary = (server["run_id"], repl["master_replid"])
+    first = await r.prepare()
+    await r.controller.arm(first)
+    await r.controller.initialize(first)
+    old = await r.controller.ready(first)
+    built = t.build(old, primary, apps(), OTHER_FIRST, "128,48,96,48,160,32")
+    planned = parse_authority(json.dumps(built["next_expected_authority"]))
+    return primary, old, built, planned
+
+
+async def finish_and_admit(t, r, primary, planned, step, tmp_path, monkeypatch, tag):
+    """Resume from the row actually left, then prove the new sizes serve."""
+    current = await r.store.read()
+    result = t.resume(current, step, planned, primary, apps(), "128,48,96,48,160,32")
+    if "continue" in result:
+        await run_plan(result["continue"], r.controller, tmp_path, monkeypatch, tag + "-continue")
+    assert await r.store.read() == planned
+    await run_plan(result["retire"], r.controller, tmp_path, monkeypatch, tag + "-retire")
+    assert await r.store.read_retirement() is None
+    assert await r.client.dbsize() == 5
+    k = await producer(r.store, r.client, OTHER_FIRST)
+    assert await fill_other_active(r.client, planned, str(k.claim_of("kalshi")), 160, 1) == "bucket_full"
+
+
+@pytest.mark.parametrize("stop", ["after_prepare", "arm_reply_lost", "after_initialize"])
+async def test_a_stop_between_prepare_and_ready_resumes_from_the_burned_step(  # noqa: F811
+        recovery, tmp_path, monkeypatch, stop):
+    t, r = tool(), recovery
+    primary, old, built, planned = await relimit_start(t, r)
+    preparing = replace(planned, state="preparing")
+    if stop == "after_prepare":
+        await run_plan(truncated(built["activate"], 1), r.controller, tmp_path, monkeypatch, "a")
+        step = 0
+    elif stop == "arm_reply_lost":
+        restore = lose_reply(r.controller, monkeypatch, activation.ARM_SCRIPT)
+        result = await run_plan(built["activate"], r.controller, tmp_path, monkeypatch, "a",
+                                expect="UNCERTAIN")
+        assert [s["step"] for s in result["steps"]] == ["prepare", "arm"]
+        restore()
+        step = 1
+    else:
+        await run_plan(truncated(built["activate"], 3), r.controller, tmp_path, monkeypatch, "a")
+        step = 2
+    assert await r.store.read() == preparing
+    assert await r.store.activation_step(preparing) == step
+    # Previews are off on every tier from here: no producer binds a preparing
+    # authority, with the new sizes or the restored old ones.
+    for limits in (OTHER_FIRST, ReservationPolicy().limits):
+        with pytest.raises(ValueError, match="ready primary authority"):
+            await producer(r.store, r.client, limits)
+    # Rollback cannot be built from this row; the original plan cannot be replayed.
+    with pytest.raises(t.RelimitRefused, match="ready allocated"):
+        t.build(preparing, primary, apps(), t.parse_limits("default"), "")
+    # A resume that claims an earlier step than the row holds is refused by PG.
+    if step:
+        early = t.resume(preparing, step - 1, planned, primary, apps(), "128,48,96,48,160,32")
+        await run_plan(early["continue"], r.controller, tmp_path, monkeypatch, "early",
+                       expect="UNCERTAIN")
+        assert await r.store.read() == preparing
+        assert await r.store.activation_step(preparing) == step
+    await finish_and_admit(t, r, primary, planned, step, tmp_path, monkeypatch, "resume")
+
+
+async def test_lost_ready_readback_and_lost_retire_reply_resume_with_reads(  # noqa: F811
+        recovery, tmp_path, monkeypatch):
+    t, r = tool(), recovery
+    primary, old, built, planned = await relimit_start(t, r)
+    # The ready transition commits, but the run's final readback is lost.
+    real_read_ready = r.controller.read_ready
+
+    async def lost_readback(prepared):
+        return False
+
+    monkeypatch.setattr(r.controller, "read_ready", lost_readback)
+    result = await run_plan(built["activate"], r.controller, tmp_path, monkeypatch, "a",
+                            expect="UNCERTAIN")
+    assert result["ready_readback"] is False
+    monkeypatch.setattr(r.controller, "read_ready", real_read_ready)
+    assert await r.store.read() == planned
+    assert await r.store.read_retirement() == old
+    # Step 7's retire reaches Redis but its reply is lost: PG keeps the row.
+    restore = lose_reply(r.controller, monkeypatch, activation.CLEAN_PREDECESSOR_SCRIPT)
+    await run_plan(built["retire"], r.controller, tmp_path, monkeypatch, "b", expect="UNCERTAIN")
+    restore()
+    assert await r.store.read_retirement() == old
+    assert await r.client.exists(*namespace_keys(old)) == 0
+    # Previews already flow under the new sizes (only rollback waits).
+    k = await producer(r.store, r.client, OTHER_FIRST)
+    assert k.authority == planned
+    result = t.resume(planned, 2, planned, primary, apps(), "128,48,96,48,160,32")
+    assert "continue" not in result
+    deletes = []
+    real = r.controller._eval_once
+
+    async def watch(client, sent, keys, args):
+        deletes.append(sent is activation.CLEAN_PREDECESSOR_SCRIPT)
+        return await real(client, sent, keys, args)
+
+    monkeypatch.setattr(r.controller, "_eval_once", watch)
+    await run_plan(result["acknowledge"], r.controller, tmp_path, monkeypatch, "ack")
+    assert deletes == [False]  # resolved with a read, never a second deletion
+    assert await r.store.read_retirement() is None
+    assert await r.client.dbsize() == 5
+
+
+async def test_an_arm_send_that_never_reached_redis_has_no_scripted_exit(  # noqa: F811
+        recovery, tmp_path, monkeypatch):
+    t, r = tool(), recovery
+    primary, old, built, planned = await relimit_start(t, r)
+    preparing = replace(planned, state="preparing")
+    restore = lose_reply(r.controller, monkeypatch, activation.ARM_SCRIPT, executed=False)
+    await run_plan(built["activate"], r.controller, tmp_path, monkeypatch, "a", expect="UNCERTAIN")
+    restore()
+    assert await r.store.activation_step(preparing) == 1
+    result = t.resume(preparing, 1, planned, primary, apps(), "128,48,96,48,160,32")
+    await run_plan(result["continue"], r.controller, tmp_path, monkeypatch, "c", expect="UNCERTAIN")
+    # Stuck preparing: committed-only delivery, no previews, escalation (runbook N3).
+    assert await r.store.read() == preparing
+    with pytest.raises(ValueError, match="ready primary authority"):
+        await producer(r.store, r.client, OTHER_FIRST)

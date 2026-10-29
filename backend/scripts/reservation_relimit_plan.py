@@ -24,6 +24,12 @@ Offline and read-only: no network, database or Redis. It refuses unless
 
 Rollback is the same command with `--to default` against the new authority
 (`next-expected-authority.json`). Building a plan is not permission to run it.
+
+`--resume <plan dir>` is the scripted exit when a run stops after a send. Given
+the row the stop left (the planned incarnation, `preparing` or `ready`) and its
+`activation_step`, it writes only the remaining steps: `continue-plan.json`
+(the rest of arm, initialize, ready), `retire-plan.json`, and for a ready row
+`acknowledge-plan.json` (a lost retire reply, resolved with reads only).
 """
 
 from __future__ import annotations
@@ -111,6 +117,24 @@ def authority_json(authority: Authority) -> dict:
     return json.loads(json.dumps(asdict(authority), default=str))
 
 
+def operator_plan(run_id, primary: tuple[str, str], apps: dict, steps) -> dict:
+    data = {
+        "run_id": str(run_id),
+        "primary": primary[0] + ":" + primary[1],
+        "apps": apps,
+        "steps": [
+            {
+                "step": step,
+                "expected": authority_json(before),
+                "candidate": None if after is None else authority_json(after),
+            }
+            for step, before, after in steps
+        ],
+    }
+    parse_plan(json.dumps(data).encode())  # The operator's own validation.
+    return data
+
+
 def build(
     expected: Authority,
     primary: tuple[str, str],
@@ -139,21 +163,7 @@ def build(
     run_ids = run_ids or (uuid4(), uuid4())
 
     def plan(run_id, steps):
-        data = {
-            "run_id": str(run_id),
-            "primary": primary[0] + ":" + primary[1],
-            "apps": apps,
-            "steps": [
-                {
-                    "step": step,
-                    "expected": authority_json(before),
-                    "candidate": None if after is None else authority_json(after),
-                }
-                for step, before, after in steps
-            ],
-        }
-        parse_plan(json.dumps(data).encode())  # The operator's own validation.
-        return data
+        return operator_plan(run_id, primary, apps, steps)
 
     activate = plan(
         run_ids[0],
@@ -183,6 +193,75 @@ def build(
     }
 
 
+_ACTIVATION = ("arm", "initialize", "ready")
+
+
+def resume(
+    current: Authority,
+    activation_step: int,
+    planned: Authority,
+    primary: tuple[str, str],
+    apps: dict,
+    configured: str,
+    *,
+    run_ids=None,
+) -> dict:
+    """Plans that finish an interrupted change from the row it actually left.
+
+    `planned` is the original `next-expected-authority.json`. `current` must be
+    that incarnation, either still `preparing` (activation stopped between
+    prepare and ready) or `ready` (only the final readback or the retirement
+    was lost). `activation_step` is the row's own `dnpl_authority.activation_step`:
+    every arm/initialize send is burned in PostgreSQL before it is made, so the
+    remaining transitions start there and nothing is repeated. PostgreSQL and
+    the Lua fences still refuse a wrong step at runtime. Any other row is not
+    resumable here: read it back and escalate.
+    """
+    if planned.state != "ready" or planned.incarnation < 2:
+        raise RelimitRefused("planned authority must be the written next-expected ready row")
+    preparing = replace(planned, state="preparing")
+    if current not in (preparing, planned):
+        raise RelimitRefused("authority is not the planned incarnation; not resumable")
+    if (current.redis_run_id, current.redis_master_replid) != primary:
+        raise RelimitRefused("authority primary differs; this is not the normal route")
+    if type(activation_step) is not int or activation_step not in (0, 1, 2):
+        raise RelimitRefused("activation_step must be 0, 1 or 2")
+    if current.state == "ready" and activation_step != 2:
+        raise RelimitRefused("a ready authority records activation_step 2")
+    if configured_policy(configured).fingerprint != planned.policy_fingerprint:
+        raise RelimitRefused(
+            f"{RESERVATIONS_ENV} read back from the app does not produce the planned sizes"
+        )
+    run_ids = run_ids or (uuid4(), uuid4(), uuid4())
+    plans = {}
+    remaining = []
+    if current.state == "preparing":
+        remaining = list(_ACTIVATION[activation_step:])
+        plans["continue"] = operator_plan(
+            run_ids[0], primary, apps, [(step, preparing, None) for step in remaining]
+        )
+    plans["retire"] = operator_plan(run_ids[1], primary, apps, [("retire", planned, None)])
+    if current.state == "ready":
+        # After a retire send whose reply was lost: verify with reads, never delete again.
+        plans["acknowledge"] = operator_plan(
+            run_ids[2], primary, apps, [("acknowledge_retirement", planned, None)]
+        )
+    return {
+        **plans,
+        "next_expected_authority": authority_json(planned),
+        "summary": {
+            "resumed_state": current.state,
+            "activation_step": activation_step,
+            "remaining_activation_steps": remaining,
+            "to_fingerprint": planned.policy_fingerprint,
+            "to_incarnation": planned.incarnation,
+            "configured_value": configured,
+            "plans": sorted(plans),
+            "mutation_permitted": False,
+        },
+    }
+
+
 def _write_private(directory: Path, name: str, data: dict) -> None:
     fd = os.open(directory / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w") as out:
@@ -199,7 +278,12 @@ def main(argv=None) -> int:
     parser.add_argument("--primary", required=True, help="run_id:master_replid of the Redis primary")
     parser.add_argument("--apps", type=Path, required=True,
                         help="JSON {bainluck: {release, slug, commit}, bainluck-heavy: {...}}")
-    parser.add_argument("--to", required=True, help="six sizes, e.g. 128,48,96,48,160,32, or 'default'")
+    parser.add_argument("--to", help="six sizes, e.g. 128,48,96,48,160,32, or 'default'")
+    parser.add_argument("--resume", type=Path,
+                        help="the plan directory of an interrupted change: build its remaining steps "
+                             "from the row it left (--expected-authority) instead of a new change")
+    parser.add_argument("--activation-step", type=int,
+                        help="with --resume: the row's own dnpl_authority.activation_step")
     parser.add_argument("--configured", required=True,
                         help=f"exact {RESERVATIONS_ENV} read back from the app ('' when unset)")
     parser.add_argument("--out-dir", type=Path, required=True, help="new directory; must not exist")
@@ -209,18 +293,34 @@ def main(argv=None) -> int:
         apps = json.loads(args.apps.read_text())
         if not isinstance(apps, dict) or set(apps) != set(APPS):
             raise RelimitRefused("exact app bindings required")
-        result = build(expected, parse_primary(args.primary), apps,
-                       parse_limits(args.to), args.configured)
+        if (args.resume is None) == (args.to is None):
+            raise RelimitRefused("exactly one of --to or --resume required")
+        if (args.resume is None) != (args.activation_step is None):
+            raise RelimitRefused("--activation-step goes with --resume and only with it")
+        if args.resume is None:
+            result = build(expected, parse_primary(args.primary), apps,
+                           parse_limits(args.to), args.configured)
+            files = {"activate-plan.json": result["activate"],
+                     "retire-plan.json": result["retire"],
+                     "RELIMIT-SUMMARY.json": result["summary"]}
+            status = "PLANS_WRITTEN"
+        else:
+            planned = parse_authority((args.resume / "next-expected-authority.json").read_text())
+            result = resume(expected, args.activation_step, planned, parse_primary(args.primary),
+                            apps, args.configured)
+            files = {f"{name}-plan.json": result[name]
+                     for name in ("continue", "retire", "acknowledge") if name in result}
+            files["RESUME-SUMMARY.json"] = result["summary"]
+            status = "RESUME_WRITTEN"
+        files["next-expected-authority.json"] = result["next_expected_authority"]
         args.out_dir.mkdir(mode=0o700)
-        _write_private(args.out_dir, "activate-plan.json", result["activate"])
-        _write_private(args.out_dir, "retire-plan.json", result["retire"])
-        _write_private(args.out_dir, "next-expected-authority.json", result["next_expected_authority"])
-        _write_private(args.out_dir, "RELIMIT-SUMMARY.json", result["summary"])
+        for name, data in files.items():
+            _write_private(args.out_dir, name, data)
     except Exception as exc:
         reason = str(exc) if isinstance(exc, RelimitRefused) else type(exc).__name__
         print(json.dumps({"status": "REFUSED", "reason": reason}))
         return 2
-    print(json.dumps({"status": "PLANS_WRITTEN", **result["summary"]}, sort_keys=True))
+    print(json.dumps({"status": status, **result["summary"]}, sort_keys=True))
     return 0
 
 

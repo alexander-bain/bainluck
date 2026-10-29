@@ -17,6 +17,7 @@ from uuid import uuid4
 import pytest
 
 from app.services import dnpl_activation_operator as operator
+from app.services.dnpl_activation_command import parse_authority
 from app.services.dnpl_authority import Authority
 from app.utils.dnpl_redis_authority import namespace_keys
 from app.utils.preview_reservations import DEFAULT_LIMITS, ReservationPolicy
@@ -192,3 +193,126 @@ def test_script_runs_as_a_file_from_the_backend_root():
                           cwd=BACKEND, capture_output=True, text=True, timeout=60)
     assert done.returncode == 0, done.stderr
     assert "--configured" in done.stdout
+
+
+# --resume: the scripted exit when a run stops after a send (lane1 N3 on #11751).
+
+def _planned(t, old=None):
+    old = old or ready(2)
+    built = t.build(old, PRIMARY, apps(), OTHER_FIRST, CONFIGURED)
+    return old, built, parse_authority(json.dumps(built["next_expected_authority"]))
+
+
+@pytest.mark.parametrize("step, remaining", [
+    (0, ["arm", "initialize", "ready"]),
+    (1, ["initialize", "ready"]),
+    (2, ["ready"]),
+])
+def test_resume_from_a_preparing_row_continues_at_its_burned_activation_step(step, remaining):
+    t = tool()
+    _, built, planned = _planned(t)
+    preparing = replace(planned, state="preparing")
+    result = t.resume(preparing, step, planned, PRIMARY, apps(), CONFIGURED)
+    cont = operator.parse_plan(json.dumps(result["continue"]).encode())
+    assert [s.step for s in cont.steps] == remaining
+    assert all(s.expected == preparing and s.candidate is None for s in cont.steps)
+    # Exactly the tail of the original activation, never a new allocation.
+    original = operator.parse_plan(json.dumps(built["activate"]).encode())
+    assert [(s.step, s.expected) for s in original.steps[-len(remaining):]] == [
+        (s.step, s.expected) for s in cont.steps]
+    retire = operator.parse_plan(json.dumps(result["retire"]).encode())
+    assert [(s.step, s.expected) for s in retire.steps] == [("retire", planned)]
+    assert "acknowledge" not in result
+    assert len({cont.run_id, retire.run_id}) == 2
+    assert result["summary"]["remaining_activation_steps"] == remaining
+    assert result["summary"]["plans"] == ["continue", "retire"]
+    assert result["summary"]["mutation_permitted"] is False
+
+
+def test_resume_from_the_ready_row_offers_retire_or_a_read_only_acknowledgement():
+    t = tool()
+    _, _, planned = _planned(t)
+    result = t.resume(planned, 2, planned, PRIMARY, apps(), CONFIGURED)
+    assert "continue" not in result
+    assert operator.parse_plan(json.dumps(result["retire"]).encode()).steps[0].step == "retire"
+    ack = operator.parse_plan(json.dumps(result["acknowledge"]).encode())
+    assert [(s.step, s.expected) for s in ack.steps] == [("acknowledge_retirement", planned)]
+    assert result["summary"]["remaining_activation_steps"] == []
+
+
+@pytest.mark.parametrize("case, reason", [
+    ("old_row", "not the planned incarnation"),
+    ("other_namespace", "not the planned incarnation"),
+    ("other_sizes", "not the planned incarnation"),
+    ("disabled", "not the planned incarnation"),
+    ("wrong_primary", "primary differs"),
+    ("step_3", "0, 1 or 2"),
+    ("step_bool", "0, 1 or 2"),
+    ("ready_step_1", "records activation_step 2"),
+    ("configured_unset", "does not produce the planned sizes"),
+    ("planned_not_ready", "next-expected ready row"),
+])
+def test_resume_refuses_any_row_but_the_planned_incarnation(case, reason):
+    t = tool()
+    old, _, planned = _planned(t)
+    preparing = replace(planned, state="preparing")
+    current, step, configured, plan_row, primary = preparing, 1, CONFIGURED, planned, PRIMARY
+    if case == "old_row":
+        current = old
+    elif case == "other_namespace":
+        current = replace(preparing, namespace=uuid4())
+    elif case == "other_sizes":
+        current = replace(preparing, policy_fingerprint=ReservationPolicy(
+            (96, 48, 128, 64, 144, 32)).fingerprint)
+    elif case == "disabled":
+        current = replace(planned, state="disabled")
+    elif case == "wrong_primary":
+        primary = ("c" * 40, "d" * 40)
+    elif case == "step_3":
+        step = 3
+    elif case == "step_bool":
+        step = True
+    elif case == "ready_step_1":
+        current = planned
+    elif case == "configured_unset":
+        configured = ""
+    elif case == "planned_not_ready":
+        plan_row = preparing
+    with pytest.raises(t.RelimitRefused, match=reason):
+        t.resume(current, step, plan_row, primary, apps(), configured)
+
+
+def test_cli_resume_writes_private_remaining_plans(tmp_path, capsys):
+    t = tool()
+    out = tmp_path / "relimit"
+    assert t.main(_inputs(tmp_path, ready(2)) + [
+        "--to", CONFIGURED, "--configured", CONFIGURED, "--out-dir", str(out)]) == 0
+    capsys.readouterr()
+    planned = json.loads((out / "next-expected-authority.json").read_text())
+    stalled = tmp_path / "stalled.json"
+    stalled.write_text(json.dumps({**planned, "state": "preparing"}))
+    base = ["--expected-authority", str(stalled), "--primary", ":".join(PRIMARY),
+            "--apps", str(tmp_path / "apps.json"), "--configured", CONFIGURED]
+    res = tmp_path / "resume"
+    assert t.main(base + ["--resume", str(out), "--activation-step", "1",
+                          "--out-dir", str(res)]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["status"] == "RESUME_WRITTEN"
+    assert printed["remaining_activation_steps"] == ["initialize", "ready"]
+    assert stat.S_IMODE(res.stat().st_mode) == 0o700
+    assert {p.name for p in res.iterdir()} == {
+        "continue-plan.json", "retire-plan.json", "next-expected-authority.json",
+        "RESUME-SUMMARY.json"}
+    for p in res.iterdir():
+        assert stat.S_IMODE(p.stat().st_mode) == 0o600
+    assert [s.step for s in operator.read_plan(res / "continue-plan.json").steps] == [
+        "initialize", "ready"]
+    assert json.loads((res / "next-expected-authority.json").read_text()) == planned
+    # Mode arguments are exclusive and paired.
+    for extra in (["--to", CONFIGURED, "--resume", str(out), "--activation-step", "1"],
+                  ["--resume", str(out)],
+                  ["--to", CONFIGURED, "--activation-step", "1"],
+                  []):
+        assert t.main(base + extra + ["--out-dir", str(tmp_path / "never")]) == 2
+        assert json.loads(capsys.readouterr().out)["status"] == "REFUSED"
+    assert not (tmp_path / "never").exists()
