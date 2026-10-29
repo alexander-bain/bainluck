@@ -69,6 +69,9 @@ SPECS = {
     # `live_blend_refresh.ADMITTED_DEBT_SLOTS`, read once per door admission.
     # Its "today" is likewise the worker's own setting (an env since #11718).
     "admitted_debt_slots": {"modes": ("alternate",), "values": (1, 3), "today": 1},
+    # `live_blend_refresh.RELEASE_UNATTEMPTED_DEBT_SWITCH`, read once per mixed
+    # refresh: when a call's unattempted old events leave its fence.
+    "release_unattempted_debt": {"modes": ("alternate",), "values": (0, 1), "today": 0},
 }
 SWITCHES = tuple(SPECS)
 MODES = ("off", "ab", "alternate")

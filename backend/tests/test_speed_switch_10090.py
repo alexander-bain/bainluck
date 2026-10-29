@@ -1149,3 +1149,42 @@ async def test_one_read_of_the_arm_sets_both_the_free_slots_and_the_cohort_first
     assert reads == [SLOTS], "one read of the arm per admission"
     assert r.started == [99, 50, 1, 2], "arm 3: the fresh price starts ahead of its debt"
     await _finish(r, task)
+
+
+# ── release_unattempted_debt: read once per mixed refresh (R8b) ──────────────
+
+RELEASE = "release_unattempted_debt"
+
+
+@pytest.mark.parametrize("mode, kwargs", [
+    ("ab", {"half": 0}),                                  # a call-level choice has no per-game arm
+    ("alternate", {"a": 1, "b": 1, "period_s": 60}),      # no today arm
+    ("alternate", {"a": 0, "b": 2, "period_s": 60}),
+    ("alternate", {"a": True, "b": 0, "period_s": 60}),
+])
+def test_a_release_trial_outside_the_limits_is_refused(mode, kwargs):
+    assert sw.validate(RELEASE, mode, **kwargs) is not None
+
+
+def test_a_release_alternation_of_off_and_on_is_accepted():
+    assert sw.validate(RELEASE, "alternate", a=0, b=1, period_s=60) is None
+    assert sw.today(RELEASE) == 0
+
+
+async def test_release_tag_names_the_arm():
+    stored = [_alternation(a=0, b=1, period_s=60) if name == RELEASE else None
+              for name in sw.SWITCHES]
+    s, _, clock, _ = _switches(stored)
+    await _refreshed(s)
+    s.state(RELEASE)                           # this process runs the trial from NOW
+    clock.t = START + 130
+    assert s.tags(5) == " sw=release_unattempted_debt:off"
+    assert s.tags(5, at=NOW) == " sw=release_unattempted_debt:on"
+
+
+def test_the_release_arm_is_off_on_any_switch_error(monkeypatch):
+    def broken():
+        raise RuntimeError("switchboard unreadable")
+
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", broken)
+    assert blend_mod._release_unattempted_debt() is False
