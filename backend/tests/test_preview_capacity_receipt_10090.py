@@ -46,6 +46,7 @@ class _Rig:
         self.worker = LiveBlendRefresher('kalshi', session_factory=factory)
         self.candidate_ticket = None
         self.policy_rereads = 0
+        self.policy_batches, self.idle_tickets = [], []
 
         async def ticket(include_candidates=False):
             # capacity_ticket (the first, candidates call) also returns the
@@ -67,14 +68,16 @@ class _Rig:
             # policy retirement are exercised by the reservation PG controls.
             pass
 
-        async def retire_policy(eid, ticket, deadline_ms, when):
-            self.policy_rereads += 1
+        async def retire_policy(eids, ticket, deadline_ms, when):
+            # One batch, proved by one locked read: no per-resident ticket.
+            self.policy_batches.append(list(eids))
 
         async def retire(eid, rev, ticket):
             self.retired.append(eid)
 
-        async def retire_idle(eid, ticket, deadline_ms, when):
-            self.idle_retired.append(eid)
+        async def retire_idle(eids, ticket, deadline_ms, when):
+            self.idle_retired.extend(eids)
+            self.idle_tickets.append(ticket)
 
         async def publish(frames):
             self.missing.extend(frames)
@@ -89,9 +92,9 @@ class _Rig:
 
         monkeypatch.setattr(self.worker, '_preview_ticket', ticket)
         monkeypatch.setattr(self.worker, '_classify_preview_residents', classify)
-        monkeypatch.setattr(self.worker, '_retire_policy_preview_event', retire_policy)
+        monkeypatch.setattr(self.worker, '_retire_policy_preview_events', retire_policy)
         monkeypatch.setattr(self.worker, '_retire_preview_event', retire)
-        monkeypatch.setattr(self.worker, '_retire_idle_preview_event', retire_idle)
+        monkeypatch.setattr(self.worker, '_retire_idle_preview_events', retire_idle)
         monkeypatch.setattr(self.worker, '_publish_previews', publish)
         monkeypatch.setattr(blend_preview, 'registry', lambda: _Registry)
 
@@ -131,7 +134,7 @@ async def test_full_pass_splits_residents_by_state_and_counts_attempts(monkeypat
         'end': 'done', 'candidates': '6', 'missing': '1', 'retirable': '1',
         'attempted': '2', 'live': '2', 'scheduled': '1', 'suspended': '1',
         'other': '1', 'live_over_6h': '1', 'oldest_live_h': '10.0',
-        'idle': '0', 'idle_attempted': '0',
+        'idle': '0', 'idle_attempted': '0', 'policy_attempted': '0', 'reclaimed': '0',
     }
 
 
@@ -150,6 +153,9 @@ async def test_idle_reclaim_is_counted_apart_from_attempted(monkeypatch, caplog)
     caplog.set_level(logging.INFO, logger=lbr.__name__)
     await rig.worker._maintain_preview_capacity()
     assert rig.retired == [4] and rig.idle_retired == [9, 3] and rig.missing == []
+    # One idle batch, proved after a ticket read AFTER the lifecycle retirement
+    # moved the barrier (7 was read before it).
+    assert rig.idle_tickets == [8]
     [line] = _receipts(caplog)
     fields = _fields(line)
     assert fields['end'] == 'done' and fields['attempted'] == '1'
@@ -186,7 +192,6 @@ async def test_silent_returns_now_leave_a_receipt(monkeypatch, caplog, ticket, e
 
 @pytest.mark.parametrize('stop, end', [
     ('classification', 'ticket_lost'),
-    ('policy_item', 'ticket_lost'),
     ('policy_pass', 'ticket_lost'),
     ('empty_after_policy', 'no_candidates'),
 ])
@@ -204,8 +209,6 @@ async def test_reservation_prepass_returns_keep_receipt(monkeypatch, caplog, sto
                 return None, [], set(), 1_000_000
             if stop == 'empty_after_policy' and candidate_calls == 3:
                 return 7, [], set(), 1_000_000
-        elif stop == 'policy_item':
-            return None, []
         return await original_ticket(include_candidates=include_candidates)
 
     monkeypatch.setattr(rig.worker, '_preview_ticket', ticket)
@@ -215,6 +218,9 @@ async def test_reservation_prepass_returns_keep_receipt(monkeypatch, caplog, sto
     assert _fields(line)['end'] == end
     assert rig.retired == [] and rig.idle_retired == [] and rig.missing == []
     assert rig.worker.preview_stats['publish_errors'] == 0
+    # The idle resident is offered to policy retirement once, as one batch.
+    assert rig.policy_batches == ([] if stop == 'classification' else [[9]])
+    assert _fields(line)['policy_attempted'] == ('0' if stop == 'classification' else '1')
 
 
 async def test_ticket_lost_mid_pass_is_named(monkeypatch, caplog):
