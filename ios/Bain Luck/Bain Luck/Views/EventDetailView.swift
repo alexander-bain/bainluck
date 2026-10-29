@@ -86,12 +86,12 @@ struct EventDetailView: View {
     private var legacyChartDataDomain: ClosedRange<Date>? {
         Self.pageLegacyChartDataDomain(event: vm.event, history: vm.history, range: chartRange,
                                        journey: vm.publicationJourney, key: publicationTaskKey,
-                                       now: displayNow())
+                                       remembering: vm, now: displayNow())
     }
     private var sharedChartDomain: ClosedRange<Date>? {
         Self.pageSharedChartDomain(event: vm.event, history: vm.history, range: chartRange,
                                    journey: vm.publicationJourney, key: publicationTaskKey,
-                                   now: displayNow())
+                                   remembering: vm, now: displayNow())
     }
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -4668,9 +4668,10 @@ extension EventDetailView {
     static func pageSharedChartDomain(
         event: EventDetail?, history: EventHistoryResponse?, range: OddsTimeRange,
         journey: PublicationJourney4974.Journey?, key: PublicationTaskKey4974,
-        now: Date = Date()
+        remembering vm: EventDetailViewModel? = nil, now: Date = Date()
     ) -> ClosedRange<Date>? {
-        let legacyDomain = pageLegacyChartDomain(event: event, history: history, range: range, now: now)
+        let legacyDomain = pageLegacyChartDomain(event: event, history: history, range: range,
+                                                 remembering: vm, now: now)
         return publicationSharedChartDomain(legacyDomain, journey: journey, key: key)
     }
 
@@ -4681,21 +4682,31 @@ extension EventDetailView {
     static func pageLegacyChartDataDomain(
         event: EventDetail?, history: EventHistoryResponse?, range: OddsTimeRange,
         journey: PublicationJourney4974.Journey?, key: PublicationTaskKey4974,
-        now: Date = Date()
+        remembering vm: EventDetailViewModel? = nil, now: Date = Date()
     ) -> ClosedRange<Date>? {
         guard chartPublicationJourney(journey, key: key) != nil else { return nil }
-        return pageLegacyChartDomain(event: event, history: history, range: range, now: now)
+        return pageLegacyChartDomain(event: event, history: history, range: range,
+                                     remembering: vm, now: now)
     }
 
     /// The unchanged page window for legacy observations, shared by both charts.
+    ///
+    /// #10090 — handed the page's view model (`vm`, whose `history` this is),
+    /// the window's opening comes from its per-payload memo instead of a fresh
+    /// scan; the end still reads the status, the clock and the payload here.
     static func pageLegacyChartDomain(
         event: EventDetail?, history: EventHistoryResponse?, range: OddsTimeRange,
-        now: Date = Date()
+        remembering vm: EventDetailViewModel? = nil, now: Date = Date()
     ) -> ClosedRange<Date>? {
         guard let event else { return nil }
+        guard let vm else {
+            return SharedChartWindow.domain(
+                status: event.status, commenceTime: event.commenceTime,
+                history: history, range: range, sportKey: event.sport, now: now)
+        }
         return SharedChartWindow.domain(
-            status: event.status, commenceTime: event.commenceTime,
-            history: history, range: range, sportKey: event.sport, now: now)
+            opening: vm.chartWindowOpening(commenceTime: event.commenceTime, range: range, sportKey: event.sport),
+            status: event.status, history: history, now: now)
     }
 
     /// Both page charts keep one selected time window. Stored checkpoint

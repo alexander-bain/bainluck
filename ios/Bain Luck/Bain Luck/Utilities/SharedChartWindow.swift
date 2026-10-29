@@ -39,6 +39,20 @@ enum SharedChartWindow {
         sportKey: String? = nil,
         now: Date = Date()
     ) -> ClosedRange<Date>? {
+        domain(opening: opening(commenceTime: commenceTime, history: history, range: range, sportKey: sportKey),
+               status: status, history: history, now: now)
+    }
+
+    /// Where the window opens, or `nil` when there is no window. The half of
+    /// `domain` that scans the payload (#10090: `ObservedPlayStart.cut` is
+    /// ~25 ms on a week-shaped live payload), and a pure function of these four
+    /// inputs, so a page can remember it per payload (`OpeningMemo`).
+    static func opening(
+        commenceTime: String?,
+        history: EventHistoryResponse?,
+        range: OddsTimeRange,
+        sportKey: String? = nil
+    ) -> Date? {
         guard let scheduledStart = commenceTime?.asDate else { return nil }
         // #7878 D — a stored start the payload says is NOT a start (Kalshi's
         // expected resolution hour, `commence_time_is_kickoff: false`) cannot
@@ -92,6 +106,18 @@ enum SharedChartWindow {
             let firstReading = earliestReading(in: history) ?? actualStart
             start = min(actualStart, max(firstReading, earliestPlausibleStart))
         }
+        return start
+    }
+
+    /// The window from a known `opening`: its end reads the status, the clock
+    /// and the payload's last readings, so it is worked out on every call.
+    static func domain(
+        opening start: Date?,
+        status: String?,
+        history: EventHistoryResponse?,
+        now: Date = Date()
+    ) -> ClosedRange<Date>? {
+        guard let start else { return nil }
 
         // Build a domain only when the upper bound is at/after the lower bound.
         // A market-less / aged-out closed game can have history whose only points
@@ -141,6 +167,40 @@ enum SharedChartWindow {
             stamps += points.map(\.timestamp)
         }
         return stamps.compactMap(\.asDate).min()
+    }
+
+    /// #10090 — the page's one remembered `opening`. The event page hands both
+    /// charts this window on every body (once per chart mount), and an update
+    /// that changed nothing the opening reads — a score, a price, a markets
+    /// reread — paid the payload scan each time. One entry, keyed on exactly
+    /// what `opening` reads; `historyGeneration` stands for the payload and
+    /// must move on every write to it (`EventDetailViewModel.history`).
+    final class OpeningMemo {
+        struct Key: Equatable {
+            let historyGeneration: Int
+            let commenceTime: String?
+            let range: OddsTimeRange
+            let sportKey: String?
+        }
+
+        private var entry: (key: Key, opening: Date?)?
+        /// How many times the memo was asked, and how many times `opening`
+        /// actually ran.
+        private(set) var readCount = 0
+        private(set) var buildCount = 0
+
+        func opening(history: EventHistoryResponse?, historyGeneration: Int,
+                     commenceTime: String?, range: OddsTimeRange, sportKey: String?) -> Date? {
+            readCount += 1
+            let key = Key(historyGeneration: historyGeneration, commenceTime: commenceTime,
+                          range: range, sportKey: sportKey)
+            if let entry, entry.key == key { return entry.opening }
+            let opening = SharedChartWindow.opening(commenceTime: commenceTime, history: history,
+                                                    range: range, sportKey: sportKey)
+            buildCount += 1
+            entry = (key, opening)
+            return opening
+        }
     }
 
     /// Whether a point may be drawn in a chart handed `domain`. A chart's scale
