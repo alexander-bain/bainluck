@@ -126,7 +126,15 @@ WORK = 0.05
 class _LosesOneCancel(lbr.LiveBlendRefresher):
     """Every quiet flush reaches `refresh_pending`. The first cancellation
     that lands in it is swallowed — standing in for a dependency (a 3.11
-    `wait_for`/`timeout` race) that loses one — and every later one is not."""
+    `wait_for`/`timeout` race) that loses one — and every later one is not.
+
+    The first timed flush is HELD here until that cancellation arrives, so the
+    recycle's cancellation always lands in a flush. With every flush a fixed
+    sleep, it could land in the turns between two — the cadence, or the
+    Polymarket flush's observation-drain join after `refresh_pending` returned
+    (fb5fbf7a) — where it ends the loop correctly but loses nothing, and the
+    premise failed on a slow runner (CI 40808658921 a1; 46/300 locally under
+    full CPU load). The final drain's untimed call still returns."""
 
     instances: list = []
 
@@ -139,7 +147,10 @@ class _LosesOneCancel(lbr.LiveBlendRefresher):
     async def refresh_pending(self, *, flush_started=None, defer_event_ids=()):
         self.entered.append(time.monotonic())
         try:
-            await asyncio.sleep(WORK)
+            if flush_started is not None and not self.swallowed:
+                await asyncio.Event().wait()  # until the recycle cancels it
+            else:
+                await asyncio.sleep(WORK)
         except asyncio.CancelledError:
             if self.swallowed:
                 raise
