@@ -4464,11 +4464,11 @@ class LiveBlendRefresher:
                                 )
                             continue
 
-                        single = len(grouped) == 1
                         home_prob = await self._oriented(
                             session, event_id, reading.home_probability, reading=reading,
-                            before_fallback=ensure_lock_budget if single else sibling_fallback,
-                            fallback_scope=None if single else session.begin_nested,
+                            **({"before_fallback": ensure_lock_budget} if len(grouped) == 1
+                               else {"before_fallback": sibling_fallback,
+                                     "fallback_scope": session.begin_nested}),
                         )
                         value = round(home_prob, 4)
 

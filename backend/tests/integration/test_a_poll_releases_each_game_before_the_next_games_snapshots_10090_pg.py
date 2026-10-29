@@ -430,7 +430,8 @@ def _refresher(monkeypatch, engine):
     )
     frames: list[dict] = []
 
-    async def _oriented(session, event_id, home_prob, *, reading=None, before_fallback=None):
+    async def _oriented(session, event_id, home_prob, *, reading=None, before_fallback=None,
+                        **kw):
         return home_prob
 
     async def _publish(batch):
