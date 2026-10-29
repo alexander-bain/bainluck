@@ -338,6 +338,7 @@ final class OddsChartViewModel: ObservableObject {
     private(set) var playStartBuildCount = 0
     private(set) var periodSightingsBuildCount = 0
     private(set) var drawnBuildCount = 0
+    private(set) var periodMarkersBuildCount = 0
 
     private var playStartMemo: (generation: Int, scheduled: Date, sportKey: String?, cut: Date?)?
 
@@ -386,6 +387,7 @@ final class OddsChartViewModel: ObservableObject {
             return memo.markers
         }
         let markers = OddsChartView.periodMarkers(sightings, minSpacing: minSpacing)
+        periodMarkersBuildCount += 1
         periodMarkersMemo = (historyGeneration, sportKey, minSpacing, markers)
         return markers
     }

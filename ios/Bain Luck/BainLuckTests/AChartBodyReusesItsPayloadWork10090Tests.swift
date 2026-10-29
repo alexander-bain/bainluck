@@ -89,12 +89,13 @@ final class AChartBodyReusesItsPayloadWork10090Tests: XCTestCase {
     }
 
     private struct Counts: Equatable {
-        let playStart: Int, sightings: Int, drawn: Int, enrichment: Int
+        let playStart: Int, sightings: Int, markers: Int, drawn: Int, enrichment: Int
     }
 
     private func counts(_ model: OddsChartViewModel) -> Counts {
         Counts(playStart: model.playStartBuildCount, sightings: model.periodSightingsBuildCount,
-               drawn: model.drawnBuildCount, enrichment: model.enrichmentBuildCount)
+               markers: model.periodMarkersBuildCount, drawn: model.drawnBuildCount,
+               enrichment: model.enrichmentBuildCount)
     }
 
     func testAnUnrelatedUpdateRebuildsNothingAndAFrameRebuildsOnlyWhatItMoves() throws {
@@ -137,6 +138,10 @@ final class AChartBodyReusesItsPayloadWork10090Tests: XCTestCase {
         XCTAssertEqual(afterFrames.sightings, mounted.sightings, "a pushed frame re-parsed the period sightings")
         XCTAssertEqual(afterFrames.enrichment, mounted.enrichment + 3)
         XCTAssertEqual(afterFrames.drawn, mounted.drawn + 3, "a pushed frame did not re-cut the drawn points")
+        // Each frame moves the drawn span's end (70:00 → 71:00 → 71:01 → 71:02),
+        // so the chip spacing moves and the markers are re-spaced; a memo that
+        // ignored the spacing would hand the plot the mounted span's chips.
+        XCTAssertEqual(afterFrames.markers, mounted.markers + 3, "a pushed frame that moved the span kept the old spacing's markers")
         XCTAssertGreaterThan(plotBuilds, afterScores, "a pushed frame must still reach the plot")
         XCTAssertTrue(model.enrichedChartPoints(liveFrames: input.frames).contains {
             $0.source == "aggregate" && $0.date == Self.frame(2).date
@@ -167,14 +172,24 @@ final class AChartBodyReusesItsPayloadWork10090Tests: XCTestCase {
         let cut = at(18)
         let forced = at(10)...at(80)
         let legacy = at(-30)...at(60)
+        // Each window differs from the one before it; the commented ones in ONE
+        // field only, so a memo key that dropped that field would answer them
+        // with their neighbour's cut.
         return [
             .init(finishedEnd: nil, forcedDomain: nil, legacyDataDomain: nil, started: false, range: .all, sinceStart: nil),
             .init(finishedEnd: nil, forcedDomain: nil, legacyDataDomain: nil, started: true, range: .all, sinceStart: cut),
             .init(finishedEnd: nil, forcedDomain: nil, legacyDataDomain: nil, started: true, range: .sinceStart, sinceStart: cut),
             .init(finishedEnd: nil, forcedDomain: nil, legacyDataDomain: nil, started: true, range: .sinceStart, sinceStart: at(40)),
+            // `started` alone: the cut at 12:40 drops points only once the game has started.
+            .init(finishedEnd: nil, forcedDomain: nil, legacyDataDomain: nil, started: false, range: .sinceStart, sinceStart: at(40)),
+            .init(finishedEnd: nil, forcedDomain: at(10)...at(71, 1), legacyDataDomain: nil, started: true, range: .sinceStart, sinceStart: cut),
+            // The forced window's END alone, as the page's live window moves every second.
             .init(finishedEnd: nil, forcedDomain: forced, legacyDataDomain: nil, started: true, range: .sinceStart, sinceStart: cut),
+            // The legacy window alone.
             .init(finishedEnd: nil, forcedDomain: forced, legacyDataDomain: legacy, started: true, range: .sinceStart, sinceStart: cut),
             .init(finishedEnd: at(55), forcedDomain: nil, legacyDataDomain: nil, started: true, range: .all, sinceStart: cut),
+            // The finish clip alone.
+            .init(finishedEnd: nil, forcedDomain: nil, legacyDataDomain: nil, started: true, range: .all, sinceStart: cut),
         ]
     }
 
@@ -196,6 +211,13 @@ final class AChartBodyReusesItsPayloadWork10090Tests: XCTestCase {
         }
         XCTAssertFalse(vm.drawnPoints(liveFrames: frames, window: Self.windows()[2]).isEmpty,
                        "the fixture draws nothing Since Start — the comparisons above would be vacuous")
+        // The single-field neighbours draw different points, so each one-field
+        // change is visible in the output, not only in the build count.
+        let plain = { OddsChartView.drawnPoints(vm.enrichedChartPoints(liveFrames: frames), window: Self.windows()[$0]).count }
+        XCTAssertNotEqual(plain(3), plain(4), "starting the game did not move the Since Start cut")
+        XCTAssertNotEqual(plain(5), plain(6), "moving the forced window's end past a frame did not move the cut")
+        XCTAssertNotEqual(plain(6), plain(7), "the legacy window did not move the cut")
+        XCTAssertNotEqual(plain(8), plain(9), "the finish clip did not move the cut")
     }
 
     func testTheDrawnPointsFollowANewPayload() throws {
