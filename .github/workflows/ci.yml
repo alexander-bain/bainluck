@@ -7841,6 +7841,8 @@ jobs:
         # upgrade (zero pending, fastupdate=off) + its downgrade (parent restored).
         # +4 = the same arms for the five events GINs, plus the upgrade after the
         # attended drop of the duplicate pair (events_gin_fastupdate_off).
+        # +1 = a reader arriving mid-batch, indexes in production OID order, is
+        # queued, never deadlocked (LOCK TABLE first).
         if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set +e
@@ -7863,8 +7865,8 @@ jobs:
             echo "::error::#10090 GIN backlog gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]7 passed[,[:space:]]" /tmp/ginbacklog10090.txt || {
-            echo "::error::#10090 GIN backlog gate did not run all seven cases"
+          grep -qE "[^0-9]8 passed[,[:space:]]" /tmp/ginbacklog10090.txt || {
+            echo "::error::#10090 GIN backlog gate did not run all eight cases"
             exit 1
           }
 

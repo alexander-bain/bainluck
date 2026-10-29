@@ -25,6 +25,12 @@ Arms:
 * duplicates dropped first: the attended psql drop of the
   `_team_name_trgm` pair runs before the release. The upgrade still applies.
 * undo: the downgrade restores the parent's reloptions and behaviour (D51).
+* no deadlock (lane1b's review of 965ff55c): the indexes are recreated in
+  production's creation order, so their OIDs ascend as production's very likely
+  do (duplicates < event_tags < `_trgm` pair). A query locks a table's indexes
+  in OID order, so a reader arriving after statement 0 must be queued and then
+  answered. Without the table lock first, it held the duplicates while waiting
+  on `event_tags` and was killed by the deadlock detector.
 
 The table lives in its own schema with only the columns the writes touch. The
 statements under test name the indexes unqualified, as production's do, and
@@ -33,6 +39,7 @@ statements under test name the indexes unqualified, as production's do, and
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import os
 import pathlib
@@ -85,6 +92,15 @@ INDEXES = (
     "ix_events_away_trgm",
     "ix_events_home_team_name_trgm",
     "ix_events_away_team_name_trgm",
+)
+#: The order production's migrations created them: add_search_indexes
+#: (2026-02-02), add_event_tags (2026-03-01), add_pg_trgm (2026-05-02).
+PRODUCTION_CREATION_ORDER = (
+    "ix_events_home_team_name_trgm",
+    "ix_events_away_team_name_trgm",
+    "ix_events_event_tags",
+    "ix_events_home_trgm",
+    "ix_events_away_trgm",
 )
 
 
@@ -281,3 +297,67 @@ async def test_the_downgrade_restores_the_parent(conn):
     await _live_writes(conn)
     pending = await _empty_backlogs(conn)
     assert all(pages > 0 for pages in pending.values()), pending
+
+
+async def test_a_query_arriving_mid_batch_is_queued_never_deadlocked(conn):
+    for name in INDEXES:
+        await conn.execute(text(f"DROP INDEX {name}"))
+    for name in PRODUCTION_CREATION_ORDER:
+        await conn.execute(text(_original_index_ddl(name)))
+    await conn.commit()
+    oids = dict(
+        (
+            await conn.execute(
+                text(
+                    "SELECT c.relname, c.oid::bigint FROM pg_class c "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = :s AND c.relname = ANY(:names)"
+                ),
+                {"s": SCHEMA, "names": list(INDEXES)},
+            )
+        ).all()
+    )
+    await conn.commit()
+    assert sorted(oids, key=oids.get) == list(PRODUCTION_CREATION_ORDER), (
+        f"the fixture is not in production's OID order, so it cannot see the "
+        f"deadlock: {oids}"
+    )
+
+    engine = create_async_engine(DB_URL)
+    try:
+        async with engine.connect() as migration, engine.connect() as reader:
+            for c in (migration, reader):
+                await c.execute(text(f"SET search_path TO {SCHEMA}, public"))
+                await c.execute(text("SET lock_timeout = '10s'"))
+                await c.commit()
+            reader_pid = (await reader.execute(text("SELECT pg_backend_pid()"))).scalar_one()
+            await reader.commit()
+
+            statements = list(MIGRATION.UPGRADE_SQL)
+            await migration.execute(text(statements[0]))
+            read = asyncio.create_task(
+                reader.execute(text("SELECT count(*) FROM events WHERE id = 1"))
+            )
+            for _ in range(500):
+                queued = (
+                    await conn.execute(
+                        text("SELECT count(*) FROM pg_locks WHERE pid = :p AND NOT granted"),
+                        {"p": reader_pid},
+                    )
+                ).scalar_one()
+                await conn.commit()
+                if queued:
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                read.cancel()
+                pytest.fail("the reader never queued, so the gate cannot see the window")
+            for statement in statements[1:]:
+                await migration.execute(text(statement))
+            await migration.commit()
+            assert (await read).scalar_one() == 1, (
+                "a live events query arriving mid-batch must be delayed, never killed"
+            )
+            await reader.rollback()
+    finally:
+        await engine.dispose()

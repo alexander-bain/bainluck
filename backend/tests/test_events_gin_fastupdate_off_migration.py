@@ -10,7 +10,10 @@ them — is `tests/integration/test_events_writes_never_merge_a_gin_backlog_1009
 Pins:
 * every GIN index any migration creates on `events` is in the migration, so no
   writer is left with a list to merge (a sixth one must join by an edit);
-* each statement is `ALTER INDEX IF EXISTS … SET (fastupdate = off)`, so the
+* both batches open with `LOCK TABLE events IN ACCESS EXCLUSIVE MODE`, so the
+  batch cannot deadlock a live query that locks the indexes in OID order (the
+  behaviour gate holds the deadlock arm);
+* each ALTER is `ALTER INDEX IF EXISTS … SET (fastupdate = off)`, so the
   attended drop of the duplicate pair can run before or after it;
 * the downgrade resets `fastupdate` only, keeping production's
   `gin_pending_list_limit` values;
@@ -37,6 +40,10 @@ SOURCE = (VERSIONS / f"{NAME}.py").read_text(encoding="utf-8")
 _spec = importlib.util.spec_from_file_location(NAME, VERSIONS / f"{NAME}.py")
 MIGRATION = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(MIGRATION)
+
+#: Statement 0 of both batches, so a query arriving mid-batch waits at the
+#: table instead of holding lower-OID indexes the batch has yet to ALTER.
+LOCK_EVENTS = "LOCK TABLE events IN ACCESS EXCLUSIVE MODE"
 
 _EVENTS_GIN = re.compile(
     r"CREATE INDEX\s+(?:CONCURRENTLY\s+)?(?:IF NOT EXISTS\s+)?(\w+)\s+"
@@ -81,14 +88,14 @@ def test_the_write_path_index_goes_first():
 
 
 def test_upgrade_sets_only_fastupdate_off_and_tolerates_a_dropped_index():
-    assert MIGRATION.UPGRADE_SQL == tuple(
+    assert MIGRATION.UPGRADE_SQL == (LOCK_EVENTS,) + tuple(
         f"ALTER INDEX IF EXISTS {name} SET (fastupdate = off)"
         for name in MIGRATION.INDEXES
     )
 
 
 def test_downgrade_resets_only_fastupdate():
-    assert MIGRATION.DOWNGRADE_SQL == tuple(
+    assert MIGRATION.DOWNGRADE_SQL == (LOCK_EVENTS,) + tuple(
         f"ALTER INDEX IF EXISTS {name} RESET (fastupdate)"
         for name in MIGRATION.INDEXES
     )

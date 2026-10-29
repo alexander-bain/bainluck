@@ -18,9 +18,9 @@ Production read 2026-10-29 15:47Z (step 0, db-query): every index valid;
 None carried `fastupdate`. Receipt:
 artifacts/10090-closure-board-20261028/gin-ddl/step0-precheck-20261029T1547Z.json
 
-WHAT THIS DOES, EXHAUSTIVELY: one storage parameter on each of five indexes. No
-column, no data, no scan, no index build (gotcha #31 does not apply). Existing
-reloptions (`gin_pending_list_limit`) are kept. The entries already pending
+WHAT THIS DOES, EXHAUSTIVELY: one storage parameter on each of five indexes,
+under one table lock held for the batch (LOCKS). No column, no data, no scan,
+no index build (gotcha #31 does not apply). Existing reloptions (`gin_pending_list_limit`) are kept. The entries already pending
 stay readable and are emptied by the GIN flush task or the next autovacuum of
 `events`; with the option off, no writer adds to a list again.
 
@@ -29,16 +29,31 @@ and are being dropped in attended psql (Alex, 2026-10-29). They are listed here
 with `IF EXISTS`, so the order of the drop and this release does not matter:
 before the drop they stop merging too, after it they are skipped.
 
-LOCKS. `ALTER INDEX ... SET (fastupdate)` takes ACCESS EXCLUSIVE on the index.
-Planning any query on `events` opens all of its indexes, so while the ALTER
-waits, every new `events` reader and writer queues behind it. `alembic/env.py`
-sets the connection's `lock_timeout` (5 s) and wraps the batch in
-`run_with_lock_retry` (4 attempts), so a straggler makes this retry instead of
-queueing the site behind it. Once the first ALTER is granted, any transaction
-that planned an `events` query has finished, so the rest wait only on a direct
-`gin_clean_pending_list` of a later index (the flush task, up to its 15 s
-per-index timeout); the same lock timeout bounds that wait. Once granted, it is
-a catalog write.
+LOCKS. Both batches open with `LOCK TABLE events IN ACCESS EXCLUSIVE MODE`.
+`ALTER INDEX ... SET (fastupdate)` alone locks the index only, while a query
+locks the table first and then every index in OID order. Production created
+the duplicate pair (2026-02-02) before `event_tags` (2026-03-01) and the
+`_trgm` pair (2026-05-02), the opposite of this batch's order. Without the
+table lock, a query arriving after the first ALTER holds the duplicates while
+waiting on `event_tags`, and the batch reaching the duplicates waits on it: a
+deadlock (40P01, which the lock retry does not retry). lane1b's review of
+965ff55c reproduced it (artifacts/10090-11740-review-965ff55c/). With the table
+lock first, a query arriving mid-batch waits at the table holding no index lock.
+It blocks nothing new: an exclusive lock on any `events` index already stops
+every `events` query.
+
+`alembic/env.py` sets the connection's `lock_timeout` (5 s) and wraps the batch
+in `run_with_lock_retry` (4 attempts), so a straggler makes this retry instead
+of queueing the site behind it. `lock_timeout` applies to each lock wait, not
+the batch: once the table lock is granted, an ALTER can still wait on a direct
+`gin_clean_pending_list` of its index (the flush task, up to its 15 s
+per-index timeout; the flush takes no table lock). The theoretical ceiling is
+6 locks x 5 s x 4 attempts + 3 x 2 s backoff = 126 s: over
+`migration_lock_budget.RELEASE_PHASE_BUDGET_S` (120 s, which assumes one wait
+per attempt), under gotcha #31's ~5 min. It needs a flush to meet every ALTER
+in turn; the realistic case is one wait per attempt, 4 x 5 s + 3 x 2 s = 26 s.
+Release while the events flush pass reads short. Once granted, it is a catalog
+write.
 
 COST. Each non-HOT `events` write pays its GIN inserts directly instead of
 batching them. The `fo_trgm_fastupdate_off` precedent measured single-row
@@ -77,10 +92,12 @@ INDEXES: tuple[str, ...] = (
     "ix_events_away_team_name_trgm",
 )
 
-UPGRADE_SQL: tuple[str, ...] = tuple(
+#: Statement 0 of both batches. See LOCKS in the module docstring.
+LOCK_EVENTS = "LOCK TABLE events IN ACCESS EXCLUSIVE MODE"
+UPGRADE_SQL: tuple[str, ...] = (LOCK_EVENTS,) + tuple(
     f"ALTER INDEX IF EXISTS {name} SET (fastupdate = off)" for name in INDEXES
 )
-DOWNGRADE_SQL: tuple[str, ...] = tuple(
+DOWNGRADE_SQL: tuple[str, ...] = (LOCK_EVENTS,) + tuple(
     f"ALTER INDEX IF EXISTS {name} RESET (fastupdate)" for name in INDEXES
 )
 
