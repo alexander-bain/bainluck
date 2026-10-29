@@ -202,6 +202,37 @@ async def test_on_the_door_admits_a_due_prompt_past_the_withdrawal(monkeypatch, 
         assert x.r.pending_event_ids() == (frozenset({2}) if on else frozenset({1, 2}))
 
 
+async def test_on_the_door_keeps_a_due_prompt_whose_write_is_unfinished(
+        monkeypatch, trial):
+    """calibration's review of 884dce30: the door's prompt path and its debt
+    slots keep a lock retry whose price write is unfinished (in
+    ``defer_event_ids`` but not in ``withdrawing_event_ids``) out, with the
+    switch on, while the withdrawing one passes. Kills the mutants that judge
+    either door site against the whole deferred set (CM1, CM5)."""
+    trial["value"] = 1
+    x = rig(monkeypatch, count=4, block=True, blocked=(3,))
+    x.r._lock_retry |= {1, 4}
+    x.r._lock_prompt_at.update({1: 0.0, 4: 0.0})       # both due
+    call = asyncio.create_task(
+        x.r.refresh([3], flush_started=1000, defer_event_ids={1, 4})
+    )
+    try:
+        while x.r._admission is None:
+            await asyncio.sleep(0)
+        x.r.admit_fresh(
+            [], flush_started=1001, defer_event_ids={1, 4},
+            withdrawing_event_ids={1},                  # 4's write is unfinished
+        )
+        assert 1 in x.r._admission.events
+        assert 4 not in x.r._admission.events
+    finally:
+        x.release.set()
+        await asyncio.wait_for(call, 2)
+    assert 4 not in x.committed
+    assert 4 in x.r._lock_prompt_at                    # not spent
+    assert 4 in x.r.pending_event_ids()
+
+
 async def test_nothing_withdrawing_or_no_retry_withdrawing_reads_no_switch(
         monkeypatch, trial):
     x = rig(monkeypatch, count=3)
