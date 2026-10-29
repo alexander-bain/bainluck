@@ -81,6 +81,10 @@ SET_LOCK_AND_STATEMENT_TIMEOUT_SQL = text(
 SET_STATEMENT_TIMEOUT_SQL = text(
     "SELECT set_config('statement_timeout', CAST(:ms AS text), true)"
 )
+#: #10090 — back to the resting ``statement_timeout`` (a startup parameter,
+#: #4482) for the rest of the transaction, so a read after a bounded stamp keeps
+#: the lock budget alone.
+RESET_STATEMENT_TIMEOUT_SQL = text("SET LOCAL statement_timeout TO DEFAULT")
 
 #: A contended row must never be given more than this share of what is left of
 #: the request. Half: the rail still has a verification query and a response to
