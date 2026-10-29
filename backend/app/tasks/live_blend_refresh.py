@@ -72,6 +72,7 @@ from contextvars import ContextVar
 from collections import deque
 import logging
 import math
+import os
 import time
 from dataclasses import dataclass, replace as _replace
 from datetime import datetime, timezone
@@ -177,15 +178,48 @@ DEFAULT_SNAPSHOT_MAX_GAP_S = 60.0
 #: alone, cancelled at 0.65 s with the statement bound.
 DEFAULT_STAMP_LOCK_TIMEOUT_MS = 500
 
+def _owed_budget_env(name, default, cast, low, high):
+    """#10090 — read one owed-stamp budget setting from the environment.
+
+    Read once at import. Missing or blank is the default; unparseable or
+    non-finite is the default with one warning; out of range is clamped to
+    [low, high] with one warning.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = cast(raw.strip())
+    except (TypeError, ValueError):
+        value = None
+    if value is None or not math.isfinite(value):
+        logger.warning(
+            "live_blend_refresh: %s=%r is not a valid %s; using %r",
+            name, raw, cast.__name__, default,
+        )
+        return default
+    clamped = min(max(value, low), high)
+    if clamped != value:
+        logger.warning(
+            "live_blend_refresh: %s=%r is outside [%r, %r]; using %r",
+            name, raw, low, high, clamped,
+        )
+    return clamped
+
+
 # Old stamp retries must not occupy an entire periodic flush while fresh quote
 # writes wait for the next one. Cooperative: finish each attempted transaction
 # and publication; never cancel a stamp merely because this budget elapsed.
-PENDING_STAMP_BUDGET_S = 1.0
+# #10090 — env `PENDING_STAMP_BUDGET_S` (0.25..5.0) so values are tried by config.
+PENDING_STAMP_BUDGET_S = _owed_budget_env("PENDING_STAMP_BUDGET_S", 1.0, float, 0.25, 5.0)
 # #10090 — a flush that carries fresh event IDs attempts at most this many old
 # stamps across all of its refresh calls; the rest stay owed in continuation
 # order for a quiet flush, which keeps the full time budget above. Without it a
 # busy flush's old debt ran serially for up to that second after its fresh work.
-FRESH_FLUSH_PENDING_ATTEMPTS = 1
+# Env `FRESH_FLUSH_PENDING_ATTEMPTS` (1..32); above 1 the time budget above
+# still stops the serial old work.
+FRESH_FLUSH_PENDING_ATTEMPTS = _owed_budget_env("FRESH_FLUSH_PENDING_ATTEMPTS", 1, int, 1, 32)
+_OWED_BUDGET_LOGGED = False
 
 # #10090 — fixed fresh-stamp workers per refresh. Two disjoint stamps waiting
 # on rows/publication must not hold a third ready fresh event. Each holds one
@@ -2000,6 +2034,15 @@ class LiveBlendRefresher:
         chart_custody: Optional[OwedChartCustody] = None,
     ) -> None:
         self.source = source
+        global _OWED_BUDGET_LOGGED
+        if not _OWED_BUDGET_LOGGED:
+            # #10090 — once per process, so a readout binds a window to its setting.
+            _OWED_BUDGET_LOGGED = True
+            logger.info(
+                "live_blend_refresh[%s]: owed-stamp budget "
+                "FRESH_FLUSH_PENDING_ATTEMPTS=%d PENDING_STAMP_BUDGET_S=%.3g",
+                source, FRESH_FLUSH_PENDING_ATTEMPTS, PENDING_STAMP_BUDGET_S,
+            )
         #: #11181 — durable custody of owed chart points. Both production
         #: consumers pass one (guarded); None keeps every owed point in memory.
         self._chart_custody = chart_custody
