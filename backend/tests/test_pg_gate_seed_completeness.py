@@ -568,6 +568,9 @@ COVERED = (
     # the nullable `external_id` is the reach: without it the registry does not
     # resolve the payload to the seeded rows and nothing writes `betting`.
     "test_a_poll_releases_each_game_before_the_next_games_snapshots_10090_pg.py",
+    # #10090: seeds `sports`, `teams`, two live `events` rows and five
+    # `odds_snapshots` each by raw INSERT, enough for EI to score both games.
+    "test_the_live_ei_write_holds_no_live_row_10090_pg.py",
     # #10305: the anchor-schedule rail's one-row mode (lock, fence, reach).
     "test_reconcile_anchor_schedule_member_10305_pg.py",
     # #837 follow-up: seeds two invented sports, their teams and four `events`

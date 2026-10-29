@@ -2656,14 +2656,17 @@ async def _poll_all_odds():
             events_closed = stale_outcome["closed"]
             events_suspended = stale_outcome["suspended"]
 
-            # Update GEI for all live events (real-time excitement scores)
-            live_gei_updated = 0
-            if has_live_games:
-                live_gei_updated = await update_live_gei(session)
-
+            # #10090: release the closed/suspended rows before EI reads every
+            # live game's snapshots and computes in Python.
             await session.commit()
             from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
             await publish_committed_nonvenue_frames(session)
+
+            # Update GEI for all live events (real-time excitement scores).
+            # It commits its own write and skips rows another writer holds.
+            live_gei_updated = 0
+            if has_live_games:
+                live_gei_updated = await update_live_gei(session)
 
         # Compute hash and check for changes
         new_hash = compute_odds_hash(all_events_data)
