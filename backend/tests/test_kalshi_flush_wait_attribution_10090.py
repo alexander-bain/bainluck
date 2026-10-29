@@ -116,11 +116,13 @@ SLOW = 0.25
 QUIET = 0.1
 
 
-def rig(*, games=2, live=None, delays=None, on_commit=None, commits=()):
+def rig(*, games=2, live=None, delays=None, on_commit=None, commits=(),
+        set_lock=None):
     """The shipped flush; ``delays`` sleeps at one seam: prepare, commit,
     publish, stamp (the refresh task's own work) or pending (inline refresh);
     inside the transaction set_lock, write (each price row) or rerank.
-    ``commits`` overrides the commit sleep per transaction, in order."""
+    ``commits`` overrides the commit sleep per transaction, in order.
+    ``set_lock``, if given, is awaited in place of the set_lock sleep."""
     delays = defaultdict(float, delays or {})
     commits = list(commits)
     markets = {oid: 1000 + g for g in range(games) for oid in (2 * g, 2 * g + 1)}
@@ -132,6 +134,8 @@ def rig(*, games=2, live=None, delays=None, on_commit=None, commits=()):
 
         async def execute(self, stmt, bind=None):
             if stmt is SET_LOCK_TIMEOUT_SQL:
+                if set_lock is not None:
+                    await set_lock()
                 await asyncio.sleep(delays["set_lock"])
                 return SimpleNamespace(rowcount=1)
             pairs = price_writes(stmt, statement_params(stmt, bind))
@@ -213,7 +217,8 @@ def rig(*, games=2, live=None, delays=None, on_commit=None, commits=()):
             timings.flushed(_now() - started)
 
     return SimpleNamespace(flush=timed_flush, buffer=buffer, prices=prices,
-                           timings=timings, delays=delays, stats=ns["stats"])
+                           timings=timings, delays=delays, stats=ns["stats"],
+                           refresher=refresher)
 
 
 def tick(r, *games):
@@ -379,7 +384,8 @@ def test_the_unit_shape_and_longest_selection():
     assert t.line() == (
         "flush n=2 total=3.0s max=2.0s phases=0 save=0.0s rank_commit=3.0s "
         "publish=0.0s stamp=0.0s slowest db=1.25s publish=0.00s "
-        "stamp_wait=0.50s db_phase=1.25s/live/12 db.set_lock=0.00s "
+        "stamp_wait=0.50s db_phase=1.25s/live/12 db.set_lock=0.00s"
+        "[checkout=0.00s full_at_start=0/0 connects=0 connect=0.00s set=0.00s] "
         "db.save=0.00s db.rerank=0.00s db.unknown=1.25s"
     )
     t.reset()
@@ -483,7 +489,8 @@ def test_nested_waits_stay_with_their_flush_across_a_minute_reset():
     t.flushed(1.0)
     assert t.slowest_db["save"] == 0.5
     assert t.line().endswith(
-        "db.set_lock=0.00s db.save=0.50s db.rerank=0.00s db.unknown=0.25s"
+        "db.set_lock=0.00s[checkout=0.00s full_at_start=0/0 connects=0 connect=0.00s set=0.00s] "
+        "db.save=0.50s db.rerank=0.00s db.unknown=0.25s"
     )
 
 
