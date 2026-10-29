@@ -5668,6 +5668,18 @@ async def _transition_event_statuses_impl() -> dict:
 
         last_snaps: dict = {}
         if live_events:
+            # #10090: COMMIT BEFORE THE HISTORY READ. The venue-settlement CAS
+            # above and the demotion / released-session stamps just made are
+            # live games' rows, and this read spans every long-running live game
+            # in `win_prob_snapshots` — measured at 19.6-20.9 s on production
+            # (holder watch 2026-10-28 23:43Z and 2026-10-29 00:01Z), with both
+            # venue arms' blend writes queued behind the transaction that held
+            # them. No expunge: nothing re-selects these rows before the phase
+            # commit below, so the identity map is exactly what it was without
+            # this line; only the lock ends sooner. A failure in the read no
+            # longer undoes a settlement suspension or a demotion that had
+            # completed, the same choice the promotion commit made.
+            await session.commit()
             last_snaps = {
                 row.event_id: row.last_snap
                 for row in (await session.execute(
@@ -5829,6 +5841,13 @@ async def _transition_event_statuses_impl() -> dict:
         ]
 
         if suspended_events:
+            # #10090: the same release before the second history read, which
+            # spans every suspended game of the last 48 h. The staleness arm's
+            # suspensions were flushed by the SELECT above and stayed locked
+            # through the read, and a just-suspended game is one whose markets
+            # are still trading. The #9588 returns are written here too rather
+            # than at the next flush.
+            await session.commit()
             resume_snaps = {
                 row.event_id: row.last_snap
                 for row in (await session.execute(
