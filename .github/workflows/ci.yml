@@ -7250,8 +7250,8 @@ jobs:
             echo "::error::#10090 status-release contract SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]11 passed[,[:space:]]" /tmp/statusrelease10090.txt || {
-            echo "::error::#10090 status-release contract did not run all eleven cases (four promoted, three resumed, four history-read releases)"
+          grep -qE "[^0-9]13 passed[,[:space:]]" /tmp/statusrelease10090.txt || {
+            echo "::error::#10090 status-release contract did not run all 13 cases (4 promoted, 3 resumed, 4 history-read, 2 tennis-recall releases)"
             exit 1
           }
           # CERT-4214's witnesses for the same commit: a genuine settlement
