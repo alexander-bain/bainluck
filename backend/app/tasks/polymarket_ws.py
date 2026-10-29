@@ -765,7 +765,9 @@ class _PMBridgeWriter:
         """Hand committed cohorts to the refresher's debt (lifecycle only:
         catalog handover before maps change, shutdown before the drain)."""
         completed = self.take_completed()
-        keep_owed = getattr(refresher, "keep_owed", None)
+        keep_owed = getattr(refresher, "keep_committed", None) or getattr(
+            refresher, "keep_owed", None
+        )
         for ids, marks, events in completed:
             if events and keep_owed is not None:
                 keep_owed(events, marks=[marks[oid] for oid in ids if oid in marks])
