@@ -35,6 +35,12 @@ def _trials_enabled(monkeypatch):
     monkeypatch.setenv(sw.TRIALS_ENV, "1")
 
 
+@pytest.fixture(autouse=True)
+def _todays_setting(monkeypatch):
+    """`pending_attempts`' today is the worker's own setting; pinned at 1 here."""
+    monkeypatch.setattr(blend_mod, "FRESH_FLUSH_PENDING_ATTEMPTS", 1)
+
+
 class _Clock:
     def __init__(self, t):
         self.t = t
@@ -461,6 +467,9 @@ async def test_tail_and_delivery_receipts_carry_the_arm(trial, monkeypatch, capl
     monkeypatch.setattr(blend_mod, "_mono", clock)
     monkeypatch.setattr(blend_mod, "_wall", lambda: dr.EPOCH + clock.t)
     monkeypatch.setattr(blend_mod, "_live_handoff", {})
+    # The switch reads the receipts' clock; this process runs the trial from 0.
+    monkeypatch.setattr(trial, "_clock", blend_mod._wall)
+    trial.state(NAME)
 
     held, _ = tr._refresher()
     await tr._commit(held, clock, 1000.0, event_id=2)
@@ -485,9 +494,12 @@ ATTEMPTS = "pending_attempts"
 START = 1_799_999_940.0  # a minute boundary just before NOW
 
 
-def _alternation(a=1, b=3, period_s=60, start=START, expires_in=600.0, now=NOW, **extra):
+def _alternation(a=1, b=3, period_s=60, start=START, span_s=1200.0, expires_in=None, now=NOW,
+                 **extra):
+    """Whole a/b pairs from ``start`` (``span_s``), unless ``expires_in`` (from ``now``) is given."""
+    expires_at = start + span_s if expires_in is None else now + expires_in
     return json.dumps({"mode": "alternate", "a": a, "b": b, "period_s": period_s,
-                       "start": start, "expires_at": now + expires_in, **extra})
+                       "start": start, "expires_at": expires_at, **extra})
 
 
 def _both(attempts=None, abandon=None):
@@ -563,10 +575,13 @@ async def test_each_arm_boundary_is_logged_once_per_process(caplog):
 async def test_tags_name_the_arm_of_the_moment_the_line_describes():
     s, _, clock, _ = _switches(_both(attempts=_alternation(a=1, b=3, period_s=60)))
     await _refreshed(s)
-    clock.t = START + 70                       # b now
-    assert s.tags(5) == " sw=pending_attempts:3"
-    # A delivery line written now about the minute that started at START is arm a.
-    assert s.tags(5, at=START) == " sw=pending_attempts:1"
+    s.state(ATTEMPTS)                          # this process runs the trial from NOW
+    clock.t = START + 130                      # a now
+    assert s.tags(5) == " sw=pending_attempts:1"
+    # A delivery line written now about the minute that started at NOW is arm b.
+    assert s.tags(5, at=NOW) == " sw=pending_attempts:3"
+    # The minute that started at START opened before this process ran the trial.
+    assert s.tags(5, at=START) == ""
 
 
 async def test_a_boolean_switch_alternates_off_and_on_for_every_read():
@@ -726,7 +741,9 @@ def test_setter_starts_and_stops_an_alternation(admin):
     body = out.json()
     assert (body["mode"], body["a"], body["b"], body["period_s"]) == ("alternate", 1, 3, 60)
     assert body["start"] % 60 == 0 and before - 60 < body["start"] <= time.time()
-    assert fake.ttls[sw.key(ATTEMPTS)] == 600
+    # Whole a/b pairs from the start minute: the key lives until then, never longer.
+    assert body["expires_at"] == body["start"] + 600
+    assert 540 <= fake.ttls[sw.key(ATTEMPTS)] <= 600
     stopped = client.post("/api/admin/speed-switch", headers=AUTH,
                           json={"name": ATTEMPTS, "mode": "off"})
     assert stopped.json()["mode"] == "off" and sw.key(ATTEMPTS) not in fake.values
@@ -833,3 +850,83 @@ async def test_a_read_thread_that_outlives_its_bound_is_never_joined_by_a_second
         assert running["peak"] == 1
     finally:
         gate.set()
+
+
+# ── lane1 review: receipt edges and today's setting ──────────────────────────
+
+
+async def _running_from(values, wall):
+    """Switches whose process begins running the stored trials at ``wall``."""
+    s, _, clock, _ = _switches(values, wall=wall)
+    await _refreshed(s)
+    for name in sw.SWITCHES:
+        s.state(name)
+    return s, clock
+
+
+async def test_the_minute_before_an_alternation_carries_no_arm():
+    # (at - start) // period is -1 there, and -1 % 2 is arm b.
+    s, clock = await _running_from(_both(attempts=_alternation(a=1, b=3)), START + 5)
+    clock.t = START + 20                       # the line for [START-60, START) closes now
+    assert s.tags(5, at=START - 60) == ""
+
+
+async def test_the_minute_before_a_half_trial_carries_no_arm():
+    s, clock = await _running_from(_both(abandon=_stored(half=0)), NOW)
+    clock.t = NOW + 20
+    assert s.tags(4, at=NOW - 60) == ""
+    assert s.tags(4, at=NOW) == " sw=abandon_optional_db:on"
+
+
+@pytest.fixture
+def setting_3(monkeypatch):
+    """Speed's step 2: FRESH_FLUSH_PENDING_ATTEMPTS=3 in the worker's env (#11709)."""
+    monkeypatch.setattr(blend_mod, "FRESH_FLUSH_PENDING_ATTEMPTS", 3)
+
+
+def test_an_alternation_must_keep_the_workers_own_setting_on_one_arm(setting_3):
+    assert sw.validate(ATTEMPTS, "alternate", a=1, b=32, period_s=60) is not None
+    assert sw.parse(_alternation(a=1, b=32), NOW, ATTEMPTS) == OFF
+    assert sw.validate(ATTEMPTS, "alternate", a=3, b=8, period_s=60) is None
+    assert sw.parse(_alternation(a=3, b=8), NOW, ATTEMPTS).mode == "alternate"
+
+
+@pytest.mark.parametrize("body", [
+    # one 15-minute arm in a 10-minute trial: the whole trial at 3
+    {"name": ATTEMPTS, "mode": "alternate", "ttl_s": 600, "a": 3, "b": 1, "period_s": 900},
+    # one 15-minute "on" arm in a 15-minute trial: every read of every game, the whole trial
+    {"name": NAME, "mode": "alternate", "ttl_s": 900, "a": 1, "b": 0, "period_s": 900},
+    # three one-minute arms, two of them away from today
+    {"name": ATTEMPTS, "mode": "alternate", "ttl_s": 180, "a": 3, "b": 1, "period_s": 60},
+])
+def test_an_alternation_that_is_not_whole_pairs_is_refused(admin, body):
+    client, fake = admin
+    assert client.post("/api/admin/speed-switch", json=body, headers=AUTH).status_code == 422
+    assert fake.values == {}
+
+
+def test_every_accepted_alternation_spends_exactly_half_its_minutes_away_from_today(admin):
+    client, fake = admin
+    for period_s in range(60, 901, 60):
+        for ttl_s in (60, 120, 180, 300, 600, 900, 1200, 1740, 1800):
+            for a, b in ((1, 3), (3, 1)):
+                fake.values.clear()
+                out = client.post("/api/admin/speed-switch", headers=AUTH, json={
+                    "name": ATTEMPTS, "mode": "alternate", "ttl_s": ttl_s,
+                    "a": a, "b": b, "period_s": period_s})
+                if out.status_code != 200:
+                    continue
+                state = sw.parse(fake.values[sw.key(ATTEMPTS)], time.time(), ATTEMPTS)
+                assert state.mode == "alternate"
+                assert state.expires_at - time.time() <= sw.MAX_TTL_S
+                span = range(int(state.start), int(math.ceil(state.expires_at)))
+                away = sum(state.value_at(t + .5) != sw.today(ATTEMPTS) for t in span)
+                assert 2 * away == len(span), (period_s, ttl_s, a, b, away, len(span))
+
+
+@pytest.mark.parametrize("period_s, expires_at", [
+    (900, START + 900), (60, START + 660), (60, START + 61)])
+def test_a_stored_alternation_that_is_not_whole_pairs_reads_off(period_s, expires_at):
+    raw = json.dumps({"mode": "alternate", "a": 3, "b": 1, "period_s": period_s,
+                      "start": START, "expires_at": expires_at})
+    assert sw.parse(raw, NOW, ATTEMPTS) == OFF

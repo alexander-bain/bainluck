@@ -72,13 +72,14 @@ _DEFAULT_REDIS_SOCKET_TIMEOUT = 5.0
 #
 #   * SIGNATURES. The cap is per POOL and the cache keys on the parameter set,
 #     so a process holds one pool per distinct (socket_timeout,
-#     socket_connect_timeout, fast_fail) triple it uses. There are FIVE in the
+#     socket_connect_timeout, fast_fail) triple it uses. There are SIX in the
 #     tree: (5,5,False) the default, (5,5,True) sentinel filing + the Sentry
 #     filter, (2,2,False) price-refresh/watchdog, (1,1,True) search_head_warmer
 #     (two differently-NAMED constants that are both 1.0, hence one signature,
-#     not two) + the #9051 blend prune trail, and (0.5,5,True) the latency
-#     middleware. No process uses all
-#     five, but none of that is in the arithmetic.
+#     not two) + the #9051 blend prune trail, (0.5,5,True) the latency
+#     middleware, and (0.25,0.25,True) the #10090 speed-switch reader (one read
+#     thread at a time per worker-ws venue process). No process uses all
+#     six, but none of that is in the arithmetic.
 #   * THE ASYNC CLIENT, which is deliberately uncached (see below) because
 #     event_stream.py aclose()s per SSE stream — so its pools are per-caller and
 #     counted nowhere here. The persistent request-cache and rate-limit clients

@@ -8,7 +8,8 @@
 * ``{name, mode: "alternate", ttl_s, a, b, period_s}`` switches between values
   ``a`` and ``b`` every ``period_s`` (whole minutes, 60..900) of wall-clock
   time from the current minute, ``a`` first. One of ``a``/``b`` must be today's
-  value, so at most half the time differs from today.
+  value and ``ttl_s`` a whole number of a/b pairs; the trial ends ``ttl_s``
+  after its start minute, so exactly half its minutes differ from today.
 
 ``ttl_s`` is at most 1800 — Alex's standing limits for a trial without a
 release. There is no "all games on". The key carries the same TTL, so Redis
@@ -22,6 +23,7 @@ per app, so the web dyno's value is the worker's when both run on one app).
 """
 
 import logging
+import math
 import time
 from typing import Optional
 
@@ -82,13 +84,15 @@ async def set_speed_switch(body: SpeedSwitchRequest, request: Request,
         if body.ttl_s is None or not 1 <= body.ttl_s <= sw.MAX_TTL_S:
             raise HTTPException(status_code=422,
                                 detail=f"a trial needs ttl_s between 1 and {sw.MAX_TTL_S}")
-        problem = sw.validate(body.name, body.mode, body.half, body.a, body.b, body.period_s)
+        problem = sw.validate(body.name, body.mode, body.half, body.a, body.b, body.period_s,
+                              span_s=body.ttl_s if body.mode == "alternate" else None)
         if problem is not None:
             raise HTTPException(status_code=422, detail=problem)
+        expires_at = sw.expiry(body.mode, body.ttl_s, now)
         client.set(sw.key(body.name),
-                   sw.encode(body.name, body.mode, now + body.ttl_s, now, half=body.half,
+                   sw.encode(body.name, body.mode, expires_at, now, half=body.half,
                              a=body.a, b=body.b, period_s=body.period_s),
-                   ex=body.ttl_s)
+                   ex=max(1, math.ceil(expires_at - now)))
     stored = _stored(client, now)[body.name]
     # Only allowlisted constants reach the log: CodeQL grades the request body and
     # a Redis read alike as py/log-injection. Each worker logs its arm and expiry.

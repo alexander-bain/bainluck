@@ -13,9 +13,11 @@ limits are enforced here, not by process:
   ``b`` every ``period_s`` (a whole number of minutes, from a minute boundary)
   of wall-clock time, so every venue process agrees on the arm and each UTC
   minute — a delivery-receipt window — falls in one arm. A boolean switch
-  alternates off/on (half the time); a numeric one must keep today's value on
-  one arm (`SPECS`). There is no runtime "all games on"; full-on is the
-  switch's env default and needs a release or a config change Alex approves.
+  alternates off/on; a numeric one must keep today's value on one arm
+  (`SPECS`). An alternation runs a whole number of a/b pairs from its start
+  minute (`expiry`), so it spends at most half its minutes away from today.
+  There is no runtime "all games on"; full-on is the switch's env default and
+  needs a release or a config change Alex approves.
 * a trial is one Redis key per switch (``speed_switch:<name>``), written with
   a TTL of at most `MAX_TTL_S`. The reader also refuses an ``expires_at``
   already passed or more than `MAX_TTL_S` ahead, so a key written by hand
@@ -62,6 +64,7 @@ SPECS = {
     # `alternate` (off/on by period) is its faithful comparison.
     "abandon_optional_db": {"modes": ("ab", "alternate"), "values": (0, 1), "today": 0},
     # `live_blend_refresh.FRESH_FLUSH_PENDING_ATTEMPTS`, read once per flush.
+    # Its "today" is the worker's own setting (an env since #11709), `today()`.
     "pending_attempts": {"modes": ("alternate",), "values": (1, 32), "today": 1},
 }
 SWITCHES = tuple(SPECS)
@@ -117,12 +120,25 @@ def key(name: str) -> str:
     return KEY_PREFIX + name
 
 
+def today(name: str) -> int:
+    """A switch's value with no trial running: `pending_attempts` reads the
+    worker's own `FRESH_FLUSH_PENDING_ATTEMPTS`, so an alternation always keeps
+    the value actually in force on one arm whatever that setting is."""
+    if name == "pending_attempts":
+        from app.tasks import live_blend_refresh
+
+        return live_blend_refresh.FRESH_FLUSH_PENDING_ATTEMPTS
+    return SPECS[name]["today"]
+
+
 def _int(value) -> bool:
     return type(value) is int
 
 
-def validate(name: str, mode: str, half=0, a=None, b=None, period_s=None) -> Optional[str]:
-    """Why this trial is outside the limits, or None."""
+def validate(name: str, mode: str, half=0, a=None, b=None, period_s=None,
+             span_s=None) -> Optional[str]:
+    """Why this trial is outside the limits, or None. ``span_s`` is an
+    alternation's length from its start minute, when known."""
     spec = SPECS.get(name)
     if spec is None:
         return f"unknown switch; allowed: {list(SWITCHES)}"
@@ -133,11 +149,14 @@ def validate(name: str, mode: str, half=0, a=None, b=None, period_s=None) -> Opt
     low, high = spec["values"]
     if not (_int(a) and _int(b) and low <= a <= high and low <= b <= high):
         return f"a and b must be integers in {low}..{high}"
-    if spec["today"] not in (a, b) or a == b:
-        return f"one of a/b must be today's {spec['today']} and the other must differ"
+    if today(name) not in (a, b) or a == b:
+        return f"one of a/b must be today's {today(name)} and the other must differ"
     if not (_int(period_s) and PERIOD_MIN_S <= period_s <= PERIOD_MAX_S
             and period_s % 60 == 0):
         return f"period_s must be a whole number of minutes in {PERIOD_MIN_S}..{PERIOD_MAX_S}"
+    if span_s is not None and not (0 < span_s <= MAX_TTL_S and span_s % (2 * period_s) == 0):
+        return (f"ttl_s must be a whole number of a/b pairs ({2 * period_s} s each) up to "
+                f"{MAX_TTL_S}, so each arm runs equally long")
     return None
 
 
@@ -158,14 +177,24 @@ def parse(raw, now: float, name: str) -> SwitchState:
             start = float(data["start"])
     except (ValueError, TypeError, KeyError, AttributeError, UnicodeDecodeError):
         return OFF
-    if validate(name, mode, half, a, b, period_s) is not None:
+    span_s = expires_at - start if mode == "alternate" else None
+    if validate(name, mode, half, a, b, period_s, span_s) is not None:
         return OFF
     if not math.isfinite(expires_at) or not now < expires_at <= now + MAX_TTL_S:
         return OFF
     if mode == "alternate" and not (math.isfinite(start) and start % 60 == 0
-                                    and expires_at - MAX_TTL_S - 60 <= start <= now + 60):
+                                    and start <= now + 60):
         return OFF
     return SwitchState(mode, half, expires_at, a, b, period_s or 0, start)
+
+
+def expiry(mode: str, ttl_s: int, set_at: float) -> float:
+    """When a trial set at ``set_at`` ends: an alternation ``ttl_s`` after its
+    start minute (whole a/b pairs, so each arm runs equally long), anything else
+    ``ttl_s`` after it is set."""
+    if mode == "alternate":
+        return math.floor(set_at / 60) * 60.0 + ttl_s
+    return set_at + ttl_s
 
 
 def encode(name: str, mode: str, expires_at: float, set_at: float, *, half=0, a=None,
@@ -204,6 +233,8 @@ class SpeedSwitches:
         self._reads_lock = threading.Lock()
         self._reads_running = 0
         self._logged_arm: dict[str, tuple] = {}
+        #: When this process began running each switch's current state.
+        self._since: dict[str, float] = {}
 
     def state(self, name: str) -> SwitchState:
         """The trial in force for ``name`` in this process now; never waits."""
@@ -218,6 +249,7 @@ class SpeedSwitches:
             state = OFF
         if self._logged.get(name, OFF) != state:
             self._logged[name] = state
+            self._since[name] = self._clock()
             self._logged_arm.pop(name, None)
             logger.info(
                 "speed_switch[pid=%d]: %s mode=%s half=%s values=%s period_s=%s expires_at=%s",
@@ -256,16 +288,20 @@ class SpeedSwitches:
 
         A boolean switch's arm is ``on``/``off``; a numeric one's is its value.
         ``at`` is the moment the receipt describes (a delivery window's start).
+        A window that opened before this process began running the trial (the
+        minute before it, or the one it began in) carries no arm.
         """
         out = []
         for name in SWITCHES:
             state = self.state(name)
             if state.mode == "off":
                 continue
+            if at is not None and at < self._since.get(name, 0.0):
+                continue
             if SPECS[name]["values"] == (0, 1):
                 arm = "on" if self.arm(name, event_id, at) else "off"
             else:
-                arm = str(self.value(name, SPECS[name]["today"], at))
+                arm = str(self.value(name, today(name), at))
             out.append(f" sw={name}:{arm}")
         return "".join(out)
 
