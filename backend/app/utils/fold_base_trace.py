@@ -67,6 +67,10 @@ def fold_base_trace():
             _TRACE = FoldBaseTrace.from_env(os.environ)
         except Exception:
             _TRACE = None
+        if _TRACE is not None:
+            from app.utils.clock_bridge import attach
+
+            attach(_TRACE, "fold")
     return _TRACE
 
 

@@ -3589,6 +3589,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         tail_receipts.exact_trace = PMStageTrace.from_env(
             os.environ, run=tail_receipts.run, event_of=event_id_by_outcome,
         )
+    # #10090 amendment P: an armed trace bridges this pid's clock to the DB's.
+    with contextlib.suppress(Exception):
+        from app.utils.clock_bridge import attach
+
+        attach(tail_receipts.exact_trace, "polymarket")
     # #9462 review: stamps the previous run still owed when it recycled. Its
     # prices are already stored; the first flush below stamps them.
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)

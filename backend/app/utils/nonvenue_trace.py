@@ -169,6 +169,10 @@ def nonvenue_trace():
             _TRACE = NonvenueTrace.from_env(os.environ)
         except Exception:
             _TRACE = None
+        if _TRACE is not None:
+            from app.utils.clock_bridge import attach
+
+            attach(_TRACE, "nonvenue")
     return _TRACE
 
 
@@ -298,6 +302,17 @@ class BoundedLogTrace:
 
     SCHEMA = SCHEMA
     START_FIELDS: dict = {}
+    # #10090 amendment P: `clock_bridge.attach` sets this in the production
+    # factory; called with the window left at ARMED (START when no ARM_AT).
+    on_armed = None
+
+    def _notify_armed(self, window_left_s):
+        hook = self.on_armed
+        if hook is not None:
+            try:
+                hook(window_left_s)
+            except Exception:
+                pass  # evidence must never cost a publication
 
     def __init__(self, events, expiry, limit, run, wall, mono, emit):
         self.events, self.expiry, self.limit, self.run = events, expiry, limit, run
@@ -352,6 +367,7 @@ class BoundedLogTrace:
             self._send(dict(stage="ARMED", events=sorted(self.events), arm_mono=arm_mono,
                             armed_mono=now, late_by_s=round(now - arm_mono, 6),
                             window_left_s=round(self.deadline - now, 6)))
+            self._notify_armed(self.deadline - now)
         if self.wall() >= self.expiry or now >= self.deadline:
             self._stop("EXPIRED")
             return False
