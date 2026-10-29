@@ -60,13 +60,35 @@ final class AScrubDoesNotRebuildTheChartOrThePage8651Tests: XCTestCase {
         XCTAssertTrue(after.contains { $0.probability == 0.11 }, "the new payload's reading is not on the chart")
     }
 
-    /// The control, direction two: a newly pushed live frame is new points.
+    /// The control, direction two: a newly pushed live frame is on the chart.
+    ///
+    /// #10090 — asked of a blend payload, where a frame draws, and of what is
+    /// drawn: the payload's own points now keep their ids across a frame
+    /// (`APushedFrameKeepsTheChartsServedPoints10090Tests`), so new ids no
+    /// longer stand for "not served from the memo".
     func testANewLiveFrameIsNewPoints() throws {
-        let vm = OddsChartViewModel(eventId: 1, preloaded: try history(0.82))
+        let vm = OddsChartViewModel(eventId: 1, preloaded: try blendHistory())
         let before = vm.chartPoints(liveFrames: [])
         let after = vm.chartPoints(liveFrames: [frame])
-        XCTAssertNotEqual(before.map(\.id), after.map(\.id), "a pushed live frame was answered from the memo")
+        XCTAssertFalse(before.contains { $0.date == frame.date })
+        XCTAssertTrue(after.contains {
+            $0.source == "aggregate" && $0.date == frame.date && $0.probability == frame.homeProbability
+        }, "a pushed live frame was answered from the memo")
         XCTAssertEqual(after.map(\.id), vm.chartPoints(liveFrames: [frame]).map(\.id))
+    }
+
+    private func blendHistory() throws -> EventHistoryResponse {
+        let dec = JSONDecoder()
+        dec.keyDecodingStrategy = .convertFromSnakeCase
+        return try dec.decode(EventHistoryResponse.self, from: Data("""
+        {
+          "event_id": 1, "home_team": "H", "away_team": "A", "status": "live",
+          "history": [{"timestamp": "2026-07-27T12:00:00Z", "home_probability": 0.35}],
+          "win_prob_history": {"kalshi": [{"timestamp": "2026-07-27T12:10:00Z", "home_probability": 0.4}]},
+          "aggregate_line": [{"timestamp": "2026-07-27T12:00:00Z", "home_probability": 0.35},
+                             {"timestamp": "2026-07-27T12:20:00Z", "home_probability": 0.45}]
+        }
+        """.utf8))
     }
 
     /// No payload, no points — and no stale ones from before it went away.
@@ -99,9 +121,16 @@ final class AScrubDoesNotRebuildTheChartOrThePage8651Tests: XCTestCase {
         let chart = try code("Bain Luck/Components/OddsChartView.swift")
         XCTAssertTrue(chart.contains("vm.chartPoints(liveFrames:liveFrames)"),
                       "the chart no longer asks its view model for points")
-        let direct = chart.components(separatedBy: "OddsChartView.chartPoints(from:history,liveFrames:liveFrames)").count - 1
+        // #10090 — the memo builds the transform's two halves itself (the
+        // payload's points once per payload, the frames per frame), so no body
+        // calls the whole transform and each half has exactly one caller.
+        let direct = chart.components(separatedBy: "OddsChartView.chartPoints(from:").count - 1
             + chart.components(separatedBy: "Self.chartPoints(from:").count - 1
-        XCTAssertEqual(direct, 1, "the transform is called \(direct) times; only the memo may call it")
+        XCTAssertEqual(direct, 0, "the transform is called \(direct) times; only the memo may build points")
+        for half in ["OddsChartView.servedPoints(from:history)", "OddsChartView.extendingToLiveEdge("] {
+            let calls = chart.components(separatedBy: half).count - 1
+            XCTAssertEqual(calls, 1, "\(half) is called \(calls) times; only the memo may call it")
+        }
     }
 
     /// The scrubbed moment is the chart's state; the page never holds it.
