@@ -2266,16 +2266,19 @@ class LiveBlendRefresher:
             # #10090 — once per process, the switchboard's readback: whether
             # the layer is on and today's values a trial alternates against.
             # Environment only; no Redis read.
-            from app.tasks.speed_switches import trials_enabled
+            from app.tasks.speed_switches import today_env_in_force, trials_enabled
 
             _SPEED_SWITCH_LOGGED_PID = os.getpid()
+            # Each switch whose today SPEED_SWITCH_TODAY_<NAME> sets; none, none shown.
+            overrides = "".join(f" {name}={value}"
+                                for name, value in today_env_in_force().items())
             logger.info(
                 "speed_switch[pid=%d]: layer SPEED_SWITCH_TRIALS=%s "
                 "today pending_attempts=%d abandon_optional_db=%d "
-                "admitted_debt_slots=%d admitted_stamp_batch=%d",
+                "admitted_debt_slots=%d admitted_stamp_batch=%d%s",
                 os.getpid(), "on" if trials_enabled() else "off",
                 FRESH_FLUSH_PENDING_ATTEMPTS, int(optional_db_abandons()),
-                ADMITTED_DEBT_SLOTS, ADMITTED_STAMP_BATCH,
+                ADMITTED_DEBT_SLOTS, ADMITTED_STAMP_BATCH, overrides,
             )
         #: #11181 — durable custody of owed chart points. Both production
         #: consumers pass one (guarded); None keeps every owed point in memory.
