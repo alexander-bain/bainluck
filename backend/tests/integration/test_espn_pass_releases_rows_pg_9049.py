@@ -30,6 +30,10 @@ once.
 * StatPal livescores (#10090): while the writer reads the next sport's board,
   the row the previous sport confirm-stamped takes a venue stamp under a 500 ms
   lock budget. RED at 76013097 (one transaction over every sport);
+* straggler arms (#10090): while the deep and unstarted arms ask ESPN, the
+  row the shallow arm wrote is free, and no board read of
+  `_ask_boards_by_espn_id` finds a row that arm wrote locked. RED at 765e1e1d
+  (the three arms asked ESPN between writes and committed once, after the third);
 * controls: the probe DOES see a lock that is held (else every arm passes on a
   blind probe), and every write still commits.
 
@@ -825,3 +829,113 @@ class TestStatPalLivescoresHoldNoRowAcrossTheNextBoard:
         assert stamps == {
             nhl_row: SCORE_SOURCE_STATPAL, mlb_row: SCORE_SOURCE_STATPAL,
         }, stamps
+
+
+@needs_postgres
+class TestTheStragglerArmsHoldNoRowAcrossAnEspnRead:
+    """#10090, lock watch 4 (2026-10-29 04:38:57–04:39:03Z): the pass's first
+    transaction sat idle in transaction 6.2 s between whole-column
+    `win_probability_sources` writes, the socket's stamps queued behind it. The
+    three straggler arms asked ESPN, wrote, asked again, and committed once,
+    after the third — and the shallow arm's rows are live games once ESPN's
+    board rolls at Eastern midnight."""
+
+    async def test_the_shallow_arms_row_is_free_while_the_later_arms_ask_espn(
+        self, db, monkeypatch
+    ):
+        """RED before #10090: `[False, False]`."""
+        import app.tasks.espn_sync as espn_sync
+        from app.models.models import Event
+
+        engine, maker, ids = db
+        live_row = ids["the_stat_model_row"]
+        seen = []
+
+        async def _no_write(session, event_id):
+            return None
+
+        async def _shallow(session, espn, now, stats, door):
+            await session.execute(
+                update(Event).where(Event.id == live_row).values(home_score=3)
+            )
+
+        async def _asks_espn(session, espn, now, stats, *a):
+            seen.append(await _is_free(engine, live_row))
+
+        _wire(monkeypatch, maker, ids, _no_write)
+        monkeypatch.setattr(espn_sync, "_settle_authority_stragglers", _shallow)
+        monkeypatch.setattr(espn_sync, "_settle_deep_authority_stragglers", _asks_espn)
+        monkeypatch.setattr(
+            espn_sync, "_recover_unstarted_authority_fixtures", _asks_espn
+        )
+
+        stats = await espn_sync._sync_espn_live_events()
+
+        assert stats["errors"] == [], stats["errors"]
+        assert seen == [True, True]
+        # WRITE CONTROL: the shallow arm's write committed.
+        async with maker() as session:
+            score = (
+                await session.execute(
+                    select(Event.home_score).where(Event.id == live_row)
+                )
+            ).scalar_one()
+        assert score == 3
+
+    async def test_no_row_an_arm_wrote_is_locked_while_it_reads_a_board(self, db):
+        """`_ask_boards_by_espn_id` on a real session. RED before #10090:
+        `[[], [False], [False, False]]` — each board read found the earlier
+        groups' rows locked."""
+        from types import SimpleNamespace
+
+        from app.models.models import Event
+        from app.tasks.espn_sync import _ask_boards_by_espn_id
+
+        engine, maker, ids = db
+        rows = [
+            ids["the_stat_model_row"],
+            ids["a_sibling_the_pass_also_writes"],
+            ids["the_next_sports_row"],
+        ]
+        written: list = []
+        probes: list = []
+
+        class _Espn:
+            async def get_scoreboard(self, sport_key, date=None):
+                probes.append([await _is_free(engine, r) for r in written])
+                return [SimpleNamespace(espn_id=date)]
+
+        async def _door(
+            session, event, matched, claimed, stats, *, allow_unstarted, observed_at
+        ):
+            await session.execute(
+                update(Event).where(Event.id == event.id).values(game_clock="0:00")
+            )
+            written.append(event.id)
+
+        groups = [
+            (
+                ("icehockey_nhl", f"2026102{n}"),
+                [SimpleNamespace(id=row, espn_id=f"2026102{n}", status="live")],
+            )
+            for n, row in enumerate(rows)
+        ]
+        stats = {"errors": [], "authority_dark_sports": 0, "straggler_boards_fetched": 0}
+        async with maker() as session:
+            await _ask_boards_by_espn_id(
+                session, _Espn(), groups, stats, _door,
+                stat_prefix="straggler", log_tag="%s",
+            )
+            await session.commit()
+
+        assert len(probes) == 3
+        assert all(all(free) for free in probes), probes
+        # WRITE CONTROL: every group was written, in order, and committed.
+        assert written == rows
+        async with maker() as session:
+            clocks = (
+                await session.execute(
+                    select(Event.game_clock).where(Event.id.in_(rows))
+                )
+            ).scalars().all()
+        assert clocks == ["0:00"] * 3
