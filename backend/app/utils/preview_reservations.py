@@ -17,7 +17,14 @@ from typing import Any
 # allocation or league-map fingerprint, including across ordinary restarts.
 RESERVATIONS_ENV = "LIVE_BLEND_PREVIEW_RESERVATIONS"
 DEFAULT_LIMITS = (192, 64, 128, 64, 48, 16)
-MAX_EVENTS = 512
+#: Ledger capacity per fingerprint version. v2 is v1's classification, status
+#: and window semantics with a larger resident cap; it exists only for totals
+#: above v1's, so every allocation has exactly one fingerprint and a v1-sized
+#: policy keeps today's bytes. A v1 script parses no v2 fingerprint and refuses
+#: it (`policy_mismatch`), so an old writer fails closed against a v2 ledger.
+LEDGER_CAPS = {"v1": 512, "v2": 1024}
+MAX_EVENTS = LEDGER_CAPS["v1"]
+MAX_TOTAL = LEDGER_CAPS["v2"]
 UPCOMING_WINDOW = timedelta(hours=6)
 
 
@@ -29,10 +36,10 @@ class ReservationPolicy:
         if (
             len(self.limits) != 6
             or any(type(n) is not int or n < 0 for n in self.limits)
-            or not 0 < sum(self.limits) <= MAX_EVENTS
+            or not 0 < sum(self.limits) <= MAX_TOTAL
         ):
             raise ValueError(
-                "preview reservations require six nonnegative integers totaling 1..512"
+                f"preview reservations require six nonnegative integers totaling 1..{MAX_TOTAL}"
             )
 
     @property
@@ -40,16 +47,27 @@ class ReservationPolicy:
         return sum(self.limits)
 
     @property
+    def version(self) -> str:
+        return "v1" if self.total <= MAX_EVENTS else "v2"
+
+    @property
+    def cap(self) -> int:
+        """The ledger's resident bound for this policy's fingerprint version."""
+        return LEDGER_CAPS[self.version]
+
+    @property
     def fingerprint(self) -> str:
         # Includes the classification/window version, not just allocation sizes.
         from app.utils.highlights import LEAGUE_TIERS
 
         # v1 pins fallback/status/window semantics; bump on ANY semantic change.
+        # v2 = v1 semantics at the larger ledger cap (LEDGER_CAPS).
         # Mapping changes are independently fingerprinted across workers.
         mapping = hashlib.sha256(
             json.dumps(LEAGUE_TIERS, sort_keys=True).encode()
         ).hexdigest()[:16]
-        return "v1-six-hour-" + mapping + ":" + ",".join(str(n) for n in self.limits)
+        return (self.version + "-six-hour-" + mapping + ":"
+                + ",".join(str(n) for n in self.limits))
 
     @classmethod
     def configured(cls) -> ReservationPolicy:

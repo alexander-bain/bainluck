@@ -16,8 +16,13 @@ writer verifier, desk hold, single-send records and fences unchanged.
 Offline and read-only: no network, database or Redis. It refuses unless
 
 - the expected authority is ready, on the given primary (normal retirement);
-- its fingerprint is `v1-six-hour-<map>:<six sizes>` with the SAME version and
-  league-map hash this checkout computes (a map change is not limits-only);
+- its fingerprint is `<version>-six-hour-<map>:<six sizes>` with the SAME
+  league-map hash this checkout computes (a map change is not limits-only) and
+  the version its sizes imply. The version may change: v2 is v1's semantics at
+  the larger ledger cap, chosen only when the target total exceeds v1's 512, so
+  a change across 512 is still limits-only. A v1-only writer refuses a v2
+  ledger (`policy_mismatch`); the release carrying v2 must therefore be live,
+  and every old writer stopped, before the activate plan runs;
 - the target sizes differ, are valid, and equal what the app would parse from
   `--configured` (the exact `LIVE_BLEND_PREVIEW_RESERVATIONS` read back from the
   app; an empty string means unset, i.e. the defaults).
@@ -50,21 +55,22 @@ from app.utils.preview_reservations import (  # noqa: E402
     ReservationPolicy,
 )
 
-_FINGERPRINT = re.compile(r"(v1-six-hour-[0-9a-f]{16}):([0-9]+(?:,[0-9]+){5})\Z")
+_FINGERPRINT = re.compile(r"(v[12])-six-hour-([0-9a-f]{16}):([0-9]+(?:,[0-9]+){5})\Z")
 
 
 class RelimitRefused(ValueError):
     """The requested change is not a valid limits-only re-fingerprint."""
 
 
-def split_fingerprint(fingerprint: str) -> tuple[str, tuple[int, ...]]:
+def split_fingerprint(fingerprint: str) -> tuple[str, str, tuple[int, ...]]:
+    """(version, league-map hash, sizes) of a six-hour policy fingerprint."""
     match = _FINGERPRINT.fullmatch(fingerprint)
     if match is None:
-        raise RelimitRefused("authority fingerprint is not a v1 six-hour policy")
-    limits = tuple(int(n) for n in match.group(2).split(","))
-    if match.group(2) != ",".join(str(n) for n in limits):
+        raise RelimitRefused("authority fingerprint is not a v1/v2 six-hour policy")
+    limits = tuple(int(n) for n in match.group(3).split(","))
+    if match.group(3) != ",".join(str(n) for n in limits):
         raise RelimitRefused("authority fingerprint sizes are not canonical")
-    return match.group(1), limits
+    return match.group(1), match.group(2), limits
 
 
 def parse_limits(value: str) -> tuple[int, ...]:
@@ -90,11 +96,13 @@ def configured_policy(value: str) -> ReservationPolicy:
 
 
 def target_policy(expected: Authority, limits: tuple[int, ...], configured: str) -> ReservationPolicy:
-    prefix, current = split_fingerprint(expected.policy_fingerprint)
-    ReservationPolicy(current)  # The ledger itself refuses an invalid allocation.
+    version, mapping, current = split_fingerprint(expected.policy_fingerprint)
+    # The ledger itself refuses an invalid allocation, or one under the wrong version.
+    if ReservationPolicy(current).version != version:
+        raise RelimitRefused("authority fingerprint version does not match its sizes")
     target = ReservationPolicy(tuple(limits))
-    target_prefix, _ = split_fingerprint(target.fingerprint)
-    if target_prefix != prefix:
+    _, target_mapping, _ = split_fingerprint(target.fingerprint)
+    if target_mapping != mapping:
         raise RelimitRefused(
             "league map or semantics version differs from the authority; not limits-only"
         )
@@ -172,6 +180,7 @@ def build(
         "summary": {
             "from_fingerprint": expected.policy_fingerprint,
             "to_fingerprint": target.fingerprint,
+            "to_ledger_cap": target.cap,
             "from_incarnation": expected.incarnation,
             "to_incarnation": candidate.incarnation,
             "from_ledger_key": namespace_keys(expected)[0],
