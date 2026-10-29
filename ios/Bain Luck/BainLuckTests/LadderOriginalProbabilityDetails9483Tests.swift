@@ -284,3 +284,407 @@ final class LadderOriginalProbabilityDetails9483Tests: XCTestCase {
         }
     }
 }
+
+/// Prepared, not executed. The original-market Details read only what the host
+/// resolved for the exact held original: `Mode`, the owner's figure text,
+/// placement and provenance, the owner's grade words and rules.
+///
+/// Retained (accepted source packets for KXTESTMATCH-26OCT090330AUSSA): the
+/// three originals' titles, outcomes, verbatim `rules_primary`, pregame
+/// baselines 48/47/9, the four recorded frames' values, and the separate
+/// settlement 2026-10-13T12:35:49.612166Z (SA No / AUS Yes / TIE No). Every
+/// display word, figure text, provenance and calendar line, scope, identity and
+/// every unknown/void/malformed/width case is CONSTRUCTED owner input — no
+/// internal app ids exist for these rows. Geometry, fit at 320/375/393/wide,
+/// and VoiceOver focus are NOT asserted here.
+@MainActor
+final class OriginalMarketDetails9483Tests: XCTestCase {
+    private typealias M = OriginalMarketDetails9483
+
+    private struct Frame {
+        let text: String
+        let value: Double
+        let provenance: String
+    }
+
+    private struct Retained {
+        let side: String
+        let title: String
+        let outcome: String
+        let rules: String
+        let pregameText: String
+        let pregame: Double
+        let gradeWords: String
+        let frames: [Frame]
+    }
+
+    // CONSTRUCTED scope + owner calendar lines (EDT is UTC−4 in October).
+    private let scope = "constructed:cricket-live:KXTESTMATCH-26OCT090330AUSSA:match-winner"
+    private let pregameProvenance = "Kalshi · period ending Thu, Oct 8, 2026, 8:00 PM EDT"
+    private let settled = "Kalshi settled Tue, Oct 13, 2026, 8:35:49 AM EDT"
+
+    private func frame(_ text: String, _ value: Double, _ clock: String, _ label: String) -> Frame {
+        Frame(text: text, value: value,
+              provenance: "Kalshi · 1-minute period ending Tue, Oct 13, 2026, \(clock) AM EDT · \(label)")
+    }
+
+    private var retained: [Retained] {
+        [
+            Retained(side: "SA", title: "South Africa wins", outcome: "South Africa",
+                     rules: "If South Africa wins the South Africa vs Australia men's professional Test series cricket match originally scheduled for Oct 9, 2026 at 3:30 AM EDT, then the market resolves to Yes.",
+                     pregameText: "48%", pregame: 0.48, gradeWords: "Resolved No",
+                     frames: [frame("3%", 0.03, "5:11", "Day 5 · 64 overs"),
+                              frame("1%", 0.01, "5:46", "Day 5 · lunch"),
+                              frame("2%", 0.02, "7:03", "Day 5 · 84 overs"),
+                              frame("1%", 0.01, "7:09", "Day 5 · 85 overs")]),
+            Retained(side: "AUS", title: "Australia wins", outcome: "Australia",
+                     rules: "If Australia wins the South Africa vs Australia men's professional Test series cricket match originally scheduled for Oct 9, 2026 at 3:30 AM EDT, then the market resolves to Yes.",
+                     pregameText: "47%", pregame: 0.47, gradeWords: "Resolved Yes",
+                     frames: [frame("64%", 0.64, "5:11", "Day 5 · 64 overs"),
+                              frame("87%", 0.87, "5:48", "Day 5 · lunch"),
+                              frame("79%", 0.79, "7:03", "Day 5 · 84 overs"),
+                              frame("95%", 0.95, "7:11", "Day 5 · 85 overs")]),
+            Retained(side: "TIE", title: "Draw/Tie wins", outcome: "Draw/Tie",
+                     rules: "If South Africa and Australia draw or tie in the South Africa vs Australia men's professional Test series cricket match originally scheduled for Oct 9, 2026 at 3:30 AM EDT, then the market resolves to Yes.",
+                     pregameText: "9%", pregame: 0.09, gradeWords: "Resolved No",
+                     frames: [frame("35%", 0.35, "5:11", "Day 5 · 64 overs"),
+                              frame("17%", 0.17, "5:45", "Day 5 · lunch"),
+                              frame("20%", 0.20, "7:02", "Day 5 · 84 overs"),
+                              frame("3%", 0.03, "7:11", "Day 5 · 85 overs")]),
+        ]
+    }
+
+    private func identity(_ side: String, _ outcomeSide: String = "Yes") -> M.Identity {
+        M.Identity(source: "kalshi", market: "KXTESTMATCH-26OCT090330AUSSA-\(side)", side: outcomeSide)
+    }
+
+    private func about(_ r: Retained, rules: M.Rules? = nil, provenance: [M.Row] = [],
+                       quote: M.HistoricalQuote? = nil) -> M.About {
+        M.About(source: "Kalshi · KXTESTMATCH-26OCT090330AUSSA-\(r.side)", rules: rules ?? .verified([r.rules]),
+                provenance: provenance, historicalQuote: quote)
+    }
+
+    private func original(_ r: Retained, _ mode: M.Mode, pregame: M.Reading? = nil, later: M.Reading? = nil,
+                          grade: M.Grade? = nil, about: M.About? = nil,
+                          title: String? = nil, outcome: String? = nil,
+                          identity: M.Identity? = nil) -> M.Original {
+        M.Original(identity: identity ?? self.identity(r.side), title: title ?? r.title,
+                   outcome: outcome ?? r.outcome, mode: mode,
+                   pregame: pregame ?? .value(r.pregameText, placement: r.pregame, provenance: pregameProvenance),
+                   later: later, grade: grade, about: about ?? self.about(r))
+    }
+
+    private func selection(_ side: String, scope: String? = nil, outcomeSide: String = "Yes") -> M.Selection {
+        M.Selection(scope: scope ?? self.scope, identity: identity(side, outcomeSide))
+    }
+
+    private func content(_ originals: [M.Original], _ side: String) -> M.Content? {
+        M.content(catalogue: M.Catalogue(scope: scope, originals: originals), selection: selection(side))
+    }
+
+    private func only(_ o: M.Original) -> M.Content {
+        M.content(catalogue: M.Catalogue(scope: scope, originals: [o]),
+                  selection: M.Selection(scope: scope, identity: o.identity))!
+    }
+
+    private func recorded(_ f: Frame) -> M.Reading { .value(f.text, placement: f.value, provenance: f.provenance) }
+
+    // MARK: - The three retained originals
+
+    func testEachRetainedOriginalOpensWithItsOwnTitleOutcomeAndPregameChance() {
+        let all = retained.map { original($0, .pregame) }
+        for r in retained {
+            let c = content(all, r.side)!
+            XCTAssertEqual(c.title, r.title)
+            XCTAssertEqual(c.outcome, r.outcome)
+            XCTAssertEqual(c.readings.map(\.label), [M.pregameLabel])
+            XCTAssertEqual(c.readings[0].text, r.pregameText, "the owner's figure, printed verbatim")
+            XCTAssertEqual(c.readings[0].marker, .solid, "a lone published reading is solid")
+            XCTAssertEqual(c.readings[0].provenance, pregameProvenance)
+            XCTAssertEqual(c.marks.map(\.placement), [r.pregame], "the raw value, never a complement")
+            XCTAssertNil(c.result)
+            XCTAssertEqual(c.rules, .verified([r.rules]))
+        }
+        // Three independent Yes contracts: no normalising to 100.
+        XCTAssertEqual(retained.map { content(all, $0.side)!.readings[0].text }, ["48%", "47%", "9%"])
+    }
+
+    func testFourRecordedFramesEachPairWithTheOriginalsOwnBaseline() {
+        for r in retained {
+            XCTAssertEqual(r.frames.count, 4)
+            for f in r.frames {
+                let c = only(original(r, .comparison(.recorded), later: recorded(f)))
+                XCTAssertEqual(c.readings.map(\.label), [M.pregameLabel, "Recorded chance"])
+                XCTAssertEqual(c.readings.map(\.text), [r.pregameText, f.text])
+                XCTAssertEqual(c.readings.map(\.marker), [.hollow, .solid])
+                XCTAssertEqual(c.readings.map(\.provenance), [pregameProvenance, f.provenance],
+                               "each reading carries its own clock and source")
+                XCTAssertEqual(c.marks.map(\.placement), [r.pregame, f.value])
+                XCTAssertNil(c.result)
+                XCTAssertFalse(M.spoken(c).contains("point"), "no invented delta")
+            }
+        }
+        let live = only(original(retained[1], .comparison(.current), later: recorded(retained[1].frames[3])))
+        XCTAssertEqual(live.readings[1].label, "Current chance")
+    }
+
+    func testResultModePairsThePregameChanceWithTheOriginalsOwnSettledResult() {
+        for r in retained {
+            let c = only(original(r, .result, grade: M.Grade(words: r.gradeWords, provenance: settled)))
+            XCTAssertEqual(c.readings.map(\.label), [M.pregameLabel], "no current chance beside a result")
+            XCTAssertEqual(c.readings[0].marker, .hollow)
+            XCTAssertEqual(c.marks.map(\.placement), [r.pregame], "the result draws no mark")
+            XCTAssertEqual(c.result, M.ShownResult(words: r.gradeWords, provenance: settled))
+            let spoken = M.spoken(c)
+            XCTAssertTrue(spoken.contains("\(M.resultLabel): \(r.gradeWords), \(settled)"))
+            for word in ["100%", "Hit", "Miss", "Winner", "Lost", "7:24", "7:26"] {
+                XCTAssertFalse(spoken.contains(word), "\(word) is not this original's result or clock")
+            }
+        }
+    }
+
+    // MARK: - Mode is the market's, not the game's
+
+    func testEachModeSuppressesTheFieldsItDoesNotShow() {
+        let r = retained[0]
+        let later = recorded(r.frames[2])
+        let grade = M.Grade(words: r.gradeWords, provenance: settled)
+
+        let pregame = only(original(r, .pregame, later: later, grade: grade))
+        XCTAssertEqual(pregame.readings.count, 1)
+        XCTAssertNil(pregame.result)
+
+        let comparison = only(original(r, .comparison(.current), later: later, grade: grade))
+        XCTAssertNil(comparison.result, "a supplied later grade stays hidden outside result mode")
+        XCTAssertFalse(M.spoken(comparison).contains(r.gradeWords))
+        XCTAssertFalse(M.spoken(comparison).contains(settled))
+
+        let result = only(original(r, .result, later: later, grade: grade))
+        XCTAssertEqual(result.readings.map(\.label), [M.pregameLabel], "result mode ignores a current chance")
+        XCTAssertFalse(M.spoken(result).contains(r.frames[2].provenance))
+        XCTAssertFalse(M.spoken(result).contains("Current"))
+    }
+
+    func testTheOriginalsGradeIsItsOwnAndNeverTheMatchOutcome() {
+        // CONSTRUCTED: the match is over (Australia won by 214 runs) but the
+        // owner has not admitted SA's grade — the leaf shows the owner's words.
+        let sa = retained[0]
+        let pending = only(original(sa, .result, grade: M.Grade(words: "Not yet confirmed", provenance: nil)))
+        XCTAssertEqual(pending.result?.words, "Not yet confirmed")
+        XCTAssertFalse(M.spoken(pending).contains("Resolved No"))
+        XCTAssertFalse(M.spoken(pending).contains("Lost"))
+
+        // CONSTRUCTED: a settled original while its game is still live — the
+        // owner chose result mode; nothing here reads a game phase.
+        let tie = retained[2]
+        let early = only(original(tie, .result, later: recorded(tie.frames[0]),
+                                  grade: M.Grade(words: "Resolved No", provenance: settled)))
+        XCTAssertEqual(early.result?.words, "Resolved No")
+
+        // CONSTRUCTED: the match finished but the owner keeps the market open.
+        let open = only(original(sa, .comparison(.recorded), later: recorded(sa.frames[3]),
+                                 grade: M.Grade(words: "Resolved No", provenance: settled)))
+        XCTAssertNil(open.result)
+    }
+
+    func testUnknownVoidAndMissingGradesAreNeverALossOrZero() {
+        let r = retained[2]
+        for words in ["Void", "Not yet confirmed", "Unknown"] {
+            let c = only(original(r, .result, grade: M.Grade(words: words, provenance: nil)))
+            XCTAssertEqual(c.result?.words, words)
+            XCTAssertFalse(M.spoken(c).contains("Resolved No"))
+            XCTAssertFalse(M.spoken(c).contains("0%"))
+        }
+        for grade in [nil, M.Grade(words: "", provenance: settled), M.Grade(words: " \n", provenance: nil)] {
+            let c = only(original(r, .result, grade: grade))
+            XCTAssertEqual(c.result, M.ShownResult(words: M.resultUnavailable, provenance: nil))
+        }
+    }
+
+    func testAMissingSettlementClockStaysUnknown() {
+        let r = retained[1]
+        // CONSTRUCTED: the matrix quote clock is in About; it is not a grade clock.
+        let c = only(original(r, .result, grade: M.Grade(words: "Resolved Yes", provenance: nil),
+                              about: about(r, provenance: [M.Row(label: "Quote observed",
+                                                                 value: "Tue, Oct 13, 2026, 7:11 AM EDT")])))
+        XCTAssertEqual(c.result?.provenance, M.resultTimeUnknown)
+        XCTAssertTrue(M.spoken(c).hasSuffix("\(M.resultLabel): Resolved Yes, \(M.resultTimeUnknown)."))
+        XCTAssertFalse(M.spoken(c).contains("7:11"))
+    }
+
+    // MARK: - Readings
+
+    func testMissingAndWithheldReadingsKeepTheirOwnSlotsAndRealZeroIsAValue() {
+        let r = retained[1]
+        let f = r.frames[0]
+        let withheld = only(original(r, .comparison(.recorded), pregame: .missing("Withheld: too few trades"),
+                                     later: recorded(f)))
+        XCTAssertEqual(withheld.readings.map(\.text), ["Withheld: too few trades", f.text])
+        XCTAssertEqual(withheld.readings.map(\.isValue), [false, true])
+        XCTAssertNil(withheld.readings[0].provenance, "a missing reading has no date")
+        XCTAssertEqual(withheld.marks.map(\.label), ["Recorded chance"], "neither slot borrows the other")
+
+        let noLater = only(original(r, .comparison(.current), later: nil))
+        XCTAssertEqual(noLater.readings.map(\.text), [r.pregameText, M.unavailable])
+        XCTAssertEqual(noLater.marks.count, 1)
+
+        for bad in [M.Reading.missing(""), .value("", placement: 0.5, provenance: pregameProvenance),
+                    .value("  ", placement: nil, provenance: nil)] {
+            let c = only(original(r, .pregame, pregame: bad))
+            XCTAssertEqual(c.readings[0].text, M.unavailable)
+            XCTAssertFalse(c.readings[0].isValue)
+            XCTAssertTrue(c.marks.isEmpty, "no figure, no mark — never zero")
+        }
+
+        let zero = only(original(r, .pregame, pregame: .value("0%", placement: 0, provenance: pregameProvenance)))
+        XCTAssertTrue(zero.readings[0].isValue, "0% is a reading, not an absence")
+        XCTAssertEqual(zero.marks.map(\.placement), [0])
+
+        let undated = only(original(r, .pregame, pregame: .value("47%", placement: 0.47, provenance: nil)))
+        XCTAssertEqual(undated.readings[0].provenance, M.timeUnknown, "never assumed now")
+    }
+
+    func testEqualValuesFromDistinctObservationsStaySeparate() {
+        let r = retained[2]
+        let a = "Kalshi · period ending Thu, Oct 8, 2026, 8:00 PM EDT"
+        let b = "Kalshi · 1-minute period ending Tue, Oct 13, 2026, 5:45 AM EDT · Day 5 · lunch"
+        let c = only(original(r, .comparison(.recorded), pregame: .value("17%", placement: 0.17, provenance: a),
+                              later: .value("17%", placement: 0.17, provenance: b)))
+        XCTAssertEqual(c.readings.map(\.text), ["17%", "17%"])
+        XCTAssertEqual(c.marks.map(\.marker), [.hollow, .solid], "concentric, both drawn")
+        XCTAssertEqual(c.readings.map(\.provenance), [a, b])
+    }
+
+    func testRailPlacementIsGeometryOnly() {
+        let r = retained[0]
+        let ends = only(original(r, .comparison(.recorded), pregame: .value("0%", placement: 0, provenance: "a"),
+                                 later: .value("100%", placement: 1, provenance: "b")))
+        XCTAssertEqual(ends.marks.map(\.placement), [0, 1])
+        XCTAssertEqual(LadderOriginalProbabilityDetails9483.railX(0, width: 200, inset: 8), 8, "endpoints drawn whole")
+        XCTAssertEqual(LadderOriginalProbabilityDetails9483.railX(1, width: 200, inset: 8), 192)
+
+        let invalid: [Double?] = [Double.nan, Double.infinity, -Double.infinity, -0.01, 1.01, nil]
+        for bad in invalid {
+            let c = only(original(r, .pregame, pregame: .value("48%", placement: bad, provenance: pregameProvenance)))
+            XCTAssertEqual(c.readings[0].text, "48%", "the figure still shows")
+            XCTAssertTrue(c.readings[0].isValue)
+            XCTAssertNil(c.readings[0].placement, "no clamped mark")
+            XCTAssertTrue(c.marks.isEmpty)
+        }
+        XCTAssertNil(M.railPlacement(1.0000001))
+        XCTAssertEqual(M.railPlacement(0.5), 0.5)
+    }
+
+    // MARK: - About
+
+    func testTheHistoricalQuoteStaysDatedInAboutAndNeverLeadsOrMarks() {
+        let r = retained[0]
+        let quote = M.HistoricalQuote(text: "2%", recorded: "Tue, Oct 13, 2026, 7:03 AM EDT")
+        let c = only(original(r, .pregame, about: about(r, quote: quote)))
+        XCTAssertEqual(c.about.last, M.Row(label: M.historicalLabel, value: "2%, recorded Tue, Oct 13, 2026, 7:03 AM EDT"))
+        XCTAssertEqual(c.readings.map(\.text), [r.pregameText])
+        XCTAssertEqual(c.marks.map(\.placement), [r.pregame])
+        XCTAssertFalse(M.spoken(c).contains("2%"))
+
+        let missing = only(original(r, .comparison(.current), pregame: .missing("Unavailable"), later: nil,
+                                    about: about(r, quote: M.HistoricalQuote(text: "2%", recorded: nil))))
+        XCTAssertEqual(missing.readings.map(\.text), [M.unavailable, M.unavailable], "the quote fills no slot")
+        XCTAssertTrue(missing.marks.isEmpty)
+        XCTAssertEqual(missing.about.last?.value, "2%, time unknown")
+    }
+
+    func testAboutCarriesTitleOutcomeSourceAndOnlyTheOwnersProvenance() {
+        let r = retained[1]
+        let rows = [M.Row(label: "Pregame reading", value: pregameProvenance), M.Row(label: "", value: "x"),
+                    M.Row(label: "Blank", value: " ")]
+        let c = only(original(r, .pregame, about: about(r, provenance: rows)))
+        XCTAssertEqual(c.about, [M.Row(label: "Market", value: "Australia wins"),
+                                 M.Row(label: "Outcome", value: "Australia"),
+                                 M.Row(label: "Source", value: "Kalshi · KXTESTMATCH-26OCT090330AUSSA-AUS"),
+                                 M.Row(label: "Pregame reading", value: pregameProvenance)])
+        XCTAssertFalse(c.about.contains { $0.value.lowercased().contains("finalized") },
+                       "no fetched-later status is admitted by the leaf")
+    }
+
+    func testRulesAreVerifiedTextOwnerUnavailableWordsOrOmitted() {
+        let r = retained[2]
+        XCTAssertEqual(only(original(r, .pregame)).rules, .verified([r.rules]), "rules_primary verbatim")
+        for empty in [M.Rules.verified([]), .verified(["", "  \n"]), .unavailable(" "), .omitted] {
+            XCTAssertEqual(only(original(r, .pregame, about: about(r, rules: empty))).rules, .omitted)
+        }
+        XCTAssertEqual(only(original(r, .pregame, about: about(r, rules: .verified(["", r.rules])))).rules,
+                       .verified([r.rules]))
+        let words = "Rules aren't available for this market yet."
+        XCTAssertEqual(only(original(r, .pregame, about: about(r, rules: .unavailable(words)))).rules,
+                       .unavailable(words))
+        let long = Array(repeating: r.rules, count: 40).joined(separator: " ")
+        guard case .verified(let kept) = only(original(r, .pregame, about: about(r, rules: .verified([long, r.rules])))).rules
+        else { return XCTFail("verified rules expected") }
+        XCTAssertEqual(kept.map(\.count), [long.count, r.rules.count], "long rules are kept whole")
+    }
+
+    // MARK: - Identity
+
+    func testOnlyTheExactSelectedOriginalInItsScopeIsShown() {
+        let all = retained.map { original($0, .pregame) }
+        let catalogue = M.Catalogue(scope: scope, originals: all)
+        XCTAssertEqual(M.content(catalogue: catalogue, selection: selection("SA"))?.title, "South Africa wins")
+        XCTAssertEqual(M.content(catalogue: catalogue, selection: selection("AUS"))?.title, "Australia wins")
+        XCTAssertNil(M.content(catalogue: catalogue, selection: nil))
+        XCTAssertNil(M.content(catalogue: nil, selection: selection("SA")))
+        XCTAssertNil(M.content(catalogue: catalogue, selection: selection("SA", scope: "constructed:other-event")),
+                     "a selection from another scope is no selection")
+        XCTAssertNil(M.content(catalogue: catalogue, selection: selection("SA", outcomeSide: "No")))
+        XCTAssertNil(M.content(catalogue: catalogue, selection: selection("ENG")))
+
+        let withdrawn = M.Catalogue(scope: scope, originals: all.filter { $0.identity != identity("SA") })
+        XCTAssertNil(M.content(catalogue: withdrawn, selection: selection("SA")), "withdrawn names no neighbour")
+
+        let duplicated = M.Catalogue(scope: scope, originals: all + [original(retained[1], .pregame,
+                                                                               identity: identity("SA"))])
+        XCTAssertNil(M.content(catalogue: duplicated, selection: selection("SA")), "an ambiguous identity is no selection")
+
+        let blankScope = M.Catalogue(scope: " ", originals: all)
+        XCTAssertNil(M.content(catalogue: blankScope, selection: selection("SA", scope: " ")))
+        let blankSide = M.Catalogue(scope: scope, originals: [original(retained[0], .pregame, identity: identity("SA", ""))])
+        XCTAssertNil(M.content(catalogue: blankSide, selection: selection("SA", outcomeSide: "")))
+
+        let spoken = M.spoken(nil)
+        XCTAssertTrue(spoken.hasPrefix(LadderOriginalProbabilityDetails9483.unavailableTitle))
+        XCTAssertFalse(spoken.contains("%"))
+    }
+
+    func testAMalformedTitleOrOutcomeIsUnavailableNeverAnotherName() {
+        let r = retained[0]
+        XCTAssertNil(content([original(r, .pregame, title: "  ")], "SA"))
+        XCTAssertNil(content([original(r, .pregame, outcome: "")], "SA"))
+    }
+
+    // MARK: - Layout decision
+
+    func testReadingPairsStackAtAccessibilitySizesAndALoneReadingNeverPairs() {
+        XCTAssertTrue(ProbabilityDetailsLayout9483.alwaysStacks(readings: 1, accessibilitySize: false))
+        XCTAssertTrue(ProbabilityDetailsLayout9483.alwaysStacks(readings: 2, accessibilitySize: true))
+        // Two readings at ordinary sizes are left to ViewThatFits (side by side
+        // only when both fit whole at 320/375/393/wide) — not asserted here.
+        XCTAssertFalse(ProbabilityDetailsLayout9483.alwaysStacks(readings: 2, accessibilitySize: false))
+    }
+
+    // MARK: - Spoken
+
+    func testTheSpokenSummaryNamesTitleOutcomeEachReadingAndTheResult() {
+        let r = retained[1]
+        let f = r.frames[1]
+        let comparison = only(original(r, .comparison(.recorded), later: recorded(f)))
+        XCTAssertEqual(M.spoken(comparison),
+                       "Australia wins. Selected outcome: Australia. "
+                       + "Pregame chance 47%, \(pregameProvenance). Recorded chance 87%, \(f.provenance).")
+        let result = only(original(r, .result, grade: M.Grade(words: "Resolved Yes", provenance: settled)))
+        XCTAssertEqual(M.spoken(result),
+                       "Australia wins. Selected outcome: Australia. Pregame chance 47%, \(pregameProvenance). "
+                       + "Original market result: Resolved Yes, \(settled).")
+        for word in ["price", "odds", "quote", "bookmaker"] {
+            XCTAssertFalse(M.spoken(result).lowercased().contains(word))
+        }
+    }
+}
