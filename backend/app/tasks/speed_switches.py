@@ -17,7 +17,8 @@ limits are enforced here, not by process:
   (`SPECS`). An alternation runs a whole number of a/b pairs from its start
   minute (`expiry`), so it spends at most half its minutes away from today.
   There is no runtime "all games on"; full-on is the switch's env default and
-  needs a release or a config change Alex approves.
+  needs a release or a config change Alex approves: ``SPEED_SWITCH_TODAY_<NAME>``
+  (`today_env`) sets any switch's today except the four with their own setting.
 * a trial is one Redis key per switch (``speed_switch:<name>``), written with
   a TTL of at most `MAX_TTL_S`. The reader also refuses an ``expires_at``
   already passed or more than `MAX_TTL_S` ahead, so a key written by hand
@@ -149,18 +150,73 @@ _TODAY_SETTINGS = {
     "admitted_debt_slots": "ADMITTED_DEBT_SLOTS",
     "admitted_stamp_batch": "ADMITTED_STAMP_BATCH",
 }
+#: Any other switch's "today" may be set by ``SPEED_SWITCH_TODAY_<NAME>`` (the
+#: name upper-cased), so a switch an A/B shows safe can be left on by one config
+#: change. Unset or outside ``SPECS[name]["values"]`` keeps the literal.
+TODAY_ENV_PREFIX = "SPEED_SWITCH_TODAY_"
+#: Switches that already have their own worker setting: that setting is their
+#: only knob and wins; their ``SPEED_SWITCH_TODAY_<NAME>`` is ignored (warned).
+_OWN_SETTING = {**_TODAY_SETTINGS, "abandon_optional_db": "LIVE_BLEND_ABANDON_OPTIONAL_DB"}
+_WARNED_TODAY_ENV: set = set()
+
+
+def today_env_name(name: str) -> str:
+    return TODAY_ENV_PREFIX + name.upper()
+
+
+def today_env(name: str) -> Optional[int]:
+    """``SPEED_SWITCH_TODAY_<NAME>``'s value when set and valid, else None.
+
+    Invalid (not an integer in the switch's values) or set on a switch with its
+    own setting logs one warning per process and value, and reads None."""
+    raw = os.environ.get(today_env_name(name))
+    if raw is None:
+        return None
+    if name not in _OWN_SETTING:
+        low, high = SPECS[name]["values"]
+        try:
+            value = int(raw.strip(), 10)
+        except ValueError:
+            value = None
+        if value is not None and low <= value <= high:
+            return value
+    if (name, raw) not in _WARNED_TODAY_ENV:
+        _WARNED_TODAY_ENV.add((name, raw))
+        # Only allowlisted constants reach the log: CodeQL grades ``name`` as
+        # request data (the admin setter validates through `today`).
+        switch = next(n for n in SWITCHES if n == name)
+        if switch in _OWN_SETTING:
+            logger.warning("speed_switch[pid=%d]: %s ignored: %s's today is %s",
+                           os.getpid(), today_env_name(switch), switch, _OWN_SETTING[switch])
+        else:
+            low, high = SPECS[switch]["values"]
+            logger.warning("speed_switch[pid=%d]: %s ignored: not an integer in %d..%d",
+                           os.getpid(), today_env_name(switch), low, high)
+    return None
+
+
+def today_env_in_force() -> dict:
+    """Every switch whose today ``SPEED_SWITCH_TODAY_<NAME>`` sets, by name."""
+    out = {}
+    for name in SWITCHES:
+        value = today_env(name)
+        if value is not None:
+            out[name] = value
+    return out
 
 
 def today(name: str) -> int:
-    """A switch's value with no trial running: `pending_attempts` and
-    `admitted_debt_slots` read the worker's own setting, so an alternation
-    always keeps the value actually in force on one arm whatever it is."""
+    """A switch's value with no trial running: `pending_attempts`,
+    `admitted_debt_slots` and `admitted_stamp_batch` read the worker's own
+    setting and any other switch its ``SPEED_SWITCH_TODAY_<NAME>``, so an
+    alternation always keeps the value actually in force on one arm."""
     setting = _TODAY_SETTINGS.get(name)
     if setting is not None:
         from app.tasks import live_blend_refresh
 
         return getattr(live_blend_refresh, setting)
-    return SPECS[name]["today"]
+    override = today_env(name)
+    return SPECS[name]["today"] if override is None else override
 
 
 def _int(value) -> bool:
@@ -294,10 +350,12 @@ class SpeedSwitches:
         return state
 
     def value(self, name: str, default: int, at: Optional[float] = None) -> int:
-        """A numeric switch's value now (or at ``at``): the alternation's arm, else ``default``."""
+        """A numeric switch's value now (or at ``at``): the alternation's arm,
+        else its ``SPEED_SWITCH_TODAY_<NAME>`` (`today_env`), else ``default``."""
         state = self.state(name)
         if state.mode != "alternate":
-            return default
+            override = today_env(name)
+            return default if override is None else override
         when = self._clock() if at is None else at
         if at is None:
             self._note_arm(name, state, when)

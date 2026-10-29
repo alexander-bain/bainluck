@@ -15,7 +15,9 @@
 release. There is no "all games on". The key carries the same TTL, so Redis
 drops it when the trial ends even if nobody clears it. Every worker process
 reads it within a few seconds and logs its own mode change and arm boundaries.
-``GET /api/admin/speed-switch`` reads every switch's stored trial.
+``GET /api/admin/speed-switch`` reads every switch's stored trial and the
+answering process's ``today`` for each (`sw.today`, ``SPEED_SWITCH_TODAY_<NAME>``
+included).
 
 Workers obey a trial only with ``SPEED_SWITCH_TRIALS=1`` in their config
 (``trials_enabled`` reports the answering process's setting; Heroku config is
@@ -65,6 +67,7 @@ async def get_speed_switches(request: Request, secret: str = Query(None)) -> dic
     _check_admin_secret(secret, request=request)
     now = time.time()
     return {"now": now, "max_ttl_s": sw.MAX_TTL_S, "trials_enabled": sw.trials_enabled(),
+            "today": {name: sw.today(name) for name in sw.SWITCHES},
             "switches": _stored(_client(), now)}
 
 
