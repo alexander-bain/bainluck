@@ -25,7 +25,8 @@ WHAT IT REFUSES.
   per-ENGINE startup parameters (#4482), so they cannot vary per session on a
   shared engine. These consumers never passed one; the engine carries the same
   resting bounds every task engine does (five connections maximum, pre-ping,
-  1800 s recycle, the resting ``statement_timeout``). Socket consumers retain
+  1800 s recycle, the resting ``statement_timeout``; the pre-ping is the
+  switch below). Socket consumers retain
   all five connections so overlapping flush/stamp work can reuse them.
   A caller that needs a tighter budget uses ``get_task_session`` directly.
 * Use after close. Once the run has drained, a late caller cannot quietly
@@ -36,15 +37,32 @@ the ones still open — a cancelled flush or resolution write unwinding its
 rollback — and disposes the engine exactly once. :func:`owns_consumer_sessions`
 calls it in a ``finally`` around the whole consumer, after the consumer's own
 final drain has returned.
+
+PRE-PING (#10090). On asyncpg the pool's pre-ping is three round trips per
+checkout (BEGIN, ``;``, ROLLBACK), and a Kalshi price phase checks out once, so
+three of the five round trips its first statement waits on are the ping.
+``WS_CONSUMER_POOL_PRE_PING`` (read once at import; default on, today's
+behaviour) turns it off for this engine only, never the web or Celery engines.
+Off, a connection the server closed is found by the operation's first
+statement: SQLAlchemy invalidates it on the disconnect error, the session rolls
+back through the task factory (nothing commits or publishes), and the next
+checkout connects afresh. ``pool_recycle`` is unchanged.
+
+CHECKOUT PROBE (#10090). :func:`checkout_probe` lets a caller time what the
+pool did inside one span on this engine — when the connection was handed over,
+how many connects that took and how long they ran, and whether every slot was
+already out when the span began — without touching the statements it times.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +71,133 @@ logger = logging.getLogger(__name__)
 #: consumer's ``finally``, so this only covers a rollback unwinding; it is a
 #: bound, not an expected wait.
 CLOSE_WAIT_S = 10.0
+
+
+def _pre_ping_env(name: str, default: bool) -> bool:
+    """#10090 — one boolean setting. Missing or blank is the default; anything
+    but true/false/1/0/yes/no/on/off is the default with one warning."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    value = raw.strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    logger.warning(
+        "ws_consumer_sessions: %s=%r is not a valid boolean; using %r",
+        name, raw, default,
+    )
+    return default
+
+
+#: #10090 — the consumer engine's ``pool_pre_ping``. Env
+#: `WS_CONSUMER_POOL_PRE_PING`; default True is today's engine exactly.
+CONSUMER_POOL_PRE_PING = _pre_ping_env("WS_CONSUMER_POOL_PRE_PING", True)
+_PRE_PING_LOGGED = False
+
+
+class CheckoutProbe:
+    """What this engine's pool did inside one :func:`checkout_probe` span."""
+
+    __slots__ = (
+        "clock", "full_at_start", "checked_out_at", "connects", "connect_s",
+        "_connect_started",
+    )
+
+    def __init__(self, clock, full_at_start: bool) -> None:
+        self.clock = clock
+        self.full_at_start = full_at_start
+        self.checked_out_at = None
+        self.connects = 0
+        self.connect_s = 0.0
+        self._connect_started = None
+
+
+_PROBE: ContextVar[CheckoutProbe | None] = ContextVar("ws_checkout_probe", default=None)
+_SESSION_ENGINE: ContextVar = ContextVar("ws_consumer_session_engine", default=None)
+
+
+def _pool_full(pool) -> bool:
+    overflow = getattr(pool, "_max_overflow", 0)
+    if overflow < 0:
+        return False
+    return pool.checkedout() >= pool.size() + overflow
+
+
+@contextmanager
+def checkout_probe(clock):
+    """Record this task's pool events until exit, on ``clock``.
+
+    ``full_at_start`` reads the pool of the consumer session this task is in;
+    outside one (or on another engine) the probe records nothing. Contexts are
+    per task, and SQLAlchemy's greenlet shares its task's, so a concurrent
+    task's checkout or connect never lands here.
+    """
+    engine = _SESSION_ENGINE.get()
+    full = False
+    if engine is not None:
+        try:
+            full = _pool_full(engine.sync_engine.pool)
+        except Exception:  # a log field must never fail the phase
+            full = False
+    probe = CheckoutProbe(clock, full)
+    token = _PROBE.set(probe)
+    try:
+        yield probe
+    finally:
+        _PROBE.reset(token)
+
+
+def _probe_connect_started(*_args):
+    probe = _PROBE.get()
+    if probe is not None:
+        probe._connect_started = probe.clock()
+    return None  # the dialect's own connect runs
+
+
+def _probe_connected(*_args):
+    probe = _PROBE.get()
+    if probe is not None and probe._connect_started is not None:
+        probe.connects += 1
+        probe.connect_s += probe.clock() - probe._connect_started
+        probe._connect_started = None
+
+
+def _probe_checked_out(*_args):
+    probe = _PROBE.get()
+    if probe is not None and probe.checked_out_at is None:
+        probe.checked_out_at = probe.clock()
+
+
+def _consumer_engine():
+    from sqlalchemy import event
+
+    from app.tasks import base as task_base
+
+    global _PRE_PING_LOGGED
+    # On (the default) the factory is asked exactly what it was asked before.
+    if CONSUMER_POOL_PRE_PING:
+        engine = task_base._get_task_engine(retain_full_pool=True)
+    else:
+        engine = task_base._get_task_engine(retain_full_pool=True, pool_pre_ping=False)
+    if not _PRE_PING_LOGGED:
+        # Once per process, so a capture binds its window to the setting.
+        _PRE_PING_LOGGED = True
+        logger.info(
+            "ws_consumer_sessions: consumer engine pool_pre_ping=%s "
+            "(WS_CONSUMER_POOL_PRE_PING)", CONSUMER_POOL_PRE_PING,
+        )
+    try:
+        sync = engine.sync_engine
+        event.listen(sync, "do_connect", _probe_connect_started)
+        event.listen(sync, "connect", _probe_connected)
+        event.listen(sync, "checkout", _probe_checked_out)
+    except Exception:  # log fields only: the engine serves without them
+        logger.warning(
+            "ws_consumer_sessions: checkout probe not installed", exc_info=True,
+        )
+    return engine
 
 
 class _SingleRead:
@@ -86,15 +231,13 @@ class ConsumerSessions:
         self._observation_closers: set[asyncio.Task] = set()
 
     def _engine_here(self):
-        from app.tasks import base as task_base
-
         if self._closing:
             raise RuntimeError(
                 f"{self.label}: consumer sessions are closed; this run has drained"
             )
         loop = asyncio.get_running_loop()
         if self._engine is None:
-            self._engine = task_base._get_task_engine(retain_full_pool=True)
+            self._engine = _consumer_engine()
             self._loop = loop
             self._pid = os.getpid()
         elif loop is not self._loop or os.getpid() != self._pid:
@@ -118,6 +261,7 @@ class ConsumerSessions:
         engine = self._engine_here()
         self._open += 1
         self._idle.clear()
+        engine_token = _SESSION_ENGINE.set(engine)
         try:
             # Looked up at call time so the factory's transaction semantics —
             # commit, publish committed frames, rollback, close — stay the one
@@ -125,6 +269,8 @@ class ConsumerSessions:
             async with task_base.get_task_session(engine=engine) as session:
                 yield session
         finally:
+            with contextlib.suppress(ValueError):  # exited in another context
+                _SESSION_ENGINE.reset(engine_token)
             self._open -= 1
             if not self._open:
                 self._idle.set()
