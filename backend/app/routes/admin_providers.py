@@ -1330,6 +1330,13 @@ async def sync_espn_live_events(
                 if changed:
                     updated.append(event.id)
 
+        # #10090: this game's row is free before the next game's LLM match.
+        # One commit at the end held every live row the route had written —
+        # score stamp included — through every later game's model calls. The
+        # session keeps its loaded rows on commit (`expire_on_commit=False`).
+        if not dry_run:
+            await db.commit()
+
     if not dry_run:
         await db.commit()
 

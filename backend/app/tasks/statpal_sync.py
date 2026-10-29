@@ -902,13 +902,10 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             # (CERT-2825), not by us.
                             #
                             # WHY THE WINDOW IS LONG ENOUGH TO MATTER, measured
-                            # rather than assumed: `_sync_statpal_schedules` has
-                            # NO intermediate commit — the #4307 note in this
-                            # file says so in as many words, and it is why one
-                            # ambiguous fixture used to discard a whole sport's
-                            # pass. The gap between the read and the commit
-                            # therefore spans every REMAINING fixture in the
-                            # sport, network calls included, not a few
+                            # rather than assumed: `_sync_statpal_schedules`
+                            # commits once per sport (#10090), so the gap
+                            # between the read and the commit spans every
+                            # REMAINING fixture in the sport, not a few
                             # microseconds.
                             #
                             # So the write is a conditional UPDATE that
@@ -1216,6 +1213,14 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                     "live_games": len(live),
                     "live_created": live_created,
                 })
+
+                # #10090: this sport's rows are free before the pause and before
+                # the next sport's two StatPal reads. One transaction over the
+                # whole pass held every live row this sport wrote — score stamp
+                # included — through both, the livescore writer's defect on the
+                # hourly writer. No ORM row outlives the commit: the next sport
+                # loads its own.
+                await session.commit()
 
                 # Rate limit between sports
                 await asyncio.sleep(0.5)
