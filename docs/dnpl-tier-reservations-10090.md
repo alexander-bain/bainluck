@@ -49,7 +49,10 @@ includes sizes, league-map hash, and the classification semantics version.
 An existing ledger rejects mismatches, including after an ordinary restart.
 Changing environment sizes or the league mapping is therefore not an
 operational tuning mechanism in this ship. No automatic reconfiguration,
-namespace reset, counter reset, or rekey procedure is supplied.
+namespace reset, counter reset, or rekey procedure is supplied. Under v3
+authority, an attended sizes-only change is a fresh incarnation with the new
+fingerprint through the existing operator, never an in-place edit:
+`docs/dnpl-reservation-relimit-runbook-10090.md`.
 
 Migration keeps the existing Redis namespace, generations, sequences, owners,
 revision floors, read tickets, and issued expiry deadlines. Initialization
