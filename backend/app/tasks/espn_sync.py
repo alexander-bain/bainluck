@@ -6373,11 +6373,12 @@ async def _transition_event_statuses_impl() -> dict:
                 stats["unreachable_suspended_budget"],
             )
 
-    # OUTSIDE THE BLOCK ON PURPOSE: the `async with` above is what commits, so
-    # this is the first line at which any retirement this pass wrote is durable
-    # and a restore may safely act (CERT-2757). An exception skips it and the
-    # marker's expiry cleans up — which is the right direction, because an
-    # exception also rolled the retirement back.
+    # OUTSIDE THE BLOCK ON PURPOSE: any retirement this pass wrote is durable
+    # at the #10090 commit before the tennis recall, and the `async with`
+    # above commits the rest, so by this line a restore may safely act
+    # (CERT-2757) — later than durability, never earlier. An exception after
+    # the #10090 commit skips this release but leaves the retirement durable;
+    # the marker's TTL then covers restore, which is slower and still correct.
     _release_unreachable_suspended_inflight(unreachable_inflight_token)
     return stats
 

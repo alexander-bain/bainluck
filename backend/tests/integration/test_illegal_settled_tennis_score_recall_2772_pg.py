@@ -299,8 +299,12 @@ async def test_postgres_greatest_and_the_python_judgment_agree_row_by_row(pg_eng
 # tennis score is legal, and the planner's guess at the matches is inflated by
 # the same correlation it cannot see on production (the score columns are not
 # independent of the sport). All of it is inserted and ANALYZEd inside one
-# transaction that is rolled back — `pg_statistic` is transactional, so the
-# shared CI database keeps the statistics it had.
+# transaction that is rolled back. That undoes only part of it: `pg_statistic`
+# is transactional and rolls back, but ANALYZE updates `pg_class.reltuples` and
+# `relpages` IN PLACE, so `events` keeps the inflated row count (measured 100 →
+# 120,100 after ROLLBACK) plus ~120k dead tuples until autovacuum. So never put
+# an `events` plan assertion after this test in the same CI matrix group
+# (`shared`); today every other `events` EXPLAIN test runs in a different one.
 #
 # THE CONTROLS ARE WHAT MAKE THE GUARD WORTH HAVING. A fixture on which the old
 # shape also seeks proves nothing, so the old shape and the half-fix are planned
