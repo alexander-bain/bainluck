@@ -14,6 +14,7 @@ import asyncio
 import json
 import math
 import logging
+import threading
 import time
 
 import pytest
@@ -768,3 +769,67 @@ async def test_bucket1_alternation_abandons_every_read_in_its_on_period(monkeypa
             await asyncio.sleep(0)
         assert on.ended == "finished"
     assert r.optional_db_abandoned == 2
+
+
+# ── review R1/R2: no game outside the half has a switched read; one read thread ──
+@pytest.mark.parametrize("ids", [[4, 7], [7, 4], [2, 4, 9], (e for e in (6, 3))])
+def test_a_read_about_both_halves_has_no_key(ids):
+    assert blend_mod._optional_db_key(ids) is None
+
+
+def test_a_read_about_one_half_is_keyed_to_that_half():
+    assert blend_mod._optional_db_key([8, 4, 6]) % 2 == 0
+    assert blend_mod._optional_db_key([9, 5]) % 2 == 1
+    assert blend_mod._optional_db_key([]) is None
+
+
+async def test_a_read_about_both_halves_is_never_abandoned_in_a_trial(trial):
+    from tests.test_optional_db_abandon_10090 import Body
+
+    r = _refresher()
+    mixed = Body()
+    with pytest.raises(TimeoutError):
+        await r._optional_db("normal_ack", .02, mixed, blend_mod._optional_db_key([4, 7]))
+    assert mixed.ended == "cancelled" and r.optional_db_abandoned == 0
+
+
+async def test_the_recovery_page_read_stays_off_in_a_trial(trial, monkeypatch):
+    r = _refresher()
+    keys = []
+
+    async def capture(kind, budget_s, body, key=None):
+        keys.append((kind, key))
+        return None
+
+    monkeypatch.setattr(r, "_optional_db", capture)
+    r._normal_after = 32  # an owed_chart_points row id in the trial's parity
+    await r._recover_normal_prices()
+    assert keys == [("normal_read", None)]
+
+
+async def test_a_read_thread_that_outlives_its_bound_is_never_joined_by_a_second():
+    gate = threading.Event()
+    running = {"now": 0, "peak": 0}
+    lock = threading.Lock()
+
+    def stalled():  # a resolver stall: socket timeouts do not bound getaddrinfo
+        with lock:
+            running["now"] += 1
+            running["peak"] = max(running["peak"], running["now"])
+        try:
+            gate.wait(5)
+            return []
+        finally:
+            with lock:
+                running["now"] -= 1
+
+    mono = {"t": 0.0}
+    s = SpeedSwitches(read=stalled, monotonic=lambda: mono["t"])
+    try:
+        for step in range(6):
+            mono["t"] = step * sw.CACHE_S
+            assert s.state(NAME) == OFF
+            await asyncio.wait_for(s._refresh, 2)
+        assert running["peak"] == 1
+    finally:
+        gate.set()

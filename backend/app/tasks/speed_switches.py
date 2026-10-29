@@ -47,6 +47,7 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -200,6 +201,8 @@ class SpeedSwitches:
         self._refresh: Optional[asyncio.Task] = None
         self._tripped: dict[str, float] = {}
         self._logged: dict[str, SwitchState] = {}
+        self._reads_lock = threading.Lock()
+        self._reads_running = 0
         self._logged_arm: dict[str, tuple] = {}
 
     def state(self, name: str) -> SwitchState:
@@ -296,16 +299,30 @@ class SpeedSwitches:
     def _schedule_refresh(self) -> None:
         if self._refresh is not None and not self._refresh.done():
             return
+        if self._reads_running:
+            # The last read's thread outlived its bound (a stalled resolver is not
+            # bounded by socket timeouts): never start a second; the cache goes
+            # stale and reads OFF meanwhile.
+            return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
         self._refresh = loop.create_task(self._refresh_once(), name="speed-switch-read")
 
+    def _read_counted(self) -> list:
+        with self._reads_lock:
+            self._reads_running += 1
+        try:
+            return self._read()
+        finally:
+            with self._reads_lock:
+                self._reads_running -= 1
+
     async def _refresh_once(self) -> None:
         try:
             async with asyncio.timeout(2 * READ_TIMEOUT_S):
-                values = await asyncio.to_thread(self._read)
+                values = await asyncio.to_thread(self._read_counted)
             now = self._clock()
             stored = {name: parse(raw, now, name) for name, raw in zip(SWITCHES, values)}
         except Exception:  # noqa: BLE001 — every failure reads OFF

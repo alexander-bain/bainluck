@@ -90,5 +90,9 @@ async def set_speed_switch(body: SpeedSwitchRequest, request: Request,
                              a=body.a, b=body.b, period_s=body.period_s),
                    ex=body.ttl_s)
     stored = _stored(client, now)[body.name]
-    logger.info("speed_switch: admin set %s %s", body.name, stored)
+    # Only allowlisted constants reach the log: CodeQL grades the request body and
+    # a Redis read alike as py/log-injection. Each worker logs its arm and expiry.
+    logger.info("speed_switch: admin set %s mode=%s",
+                next(n for n in sw.SWITCHES if n == body.name),
+                next(m for m in sw.MODES if m == body.mode))
     return {"name": body.name, "now": now, "trials_enabled": sw.trials_enabled(), **stored}

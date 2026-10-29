@@ -208,11 +208,12 @@ def optional_db_abandons() -> bool:
 
 #: Its runtime trial name (`app.tasks.speed_switches`). ``alternate`` abandons
 #: every read in the "on" periods: the switch acts on the shared connection
-#: pool, so alternating periods is its faithful comparison. ``ab`` abandons the
-#: reads keyed to one event-id parity — a read is keyed to the lowest event id
-#: it is about; the normal recovery page read names no event until it returns,
-#: so it is keyed to its page cursor — but its effect still reaches both
-#: halves' deliveries through the pool.
+#: pool, so alternating periods is its faithful comparison. ``ab`` abandons only
+#: the reads whose games are ALL in the trial's half (one event-id parity), so no
+#: game outside the half ever has a switched read; a read about games of both
+#: halves stays off, and so does the normal recovery page read, which names no
+#: game until it returns. Its effect still reaches both halves' deliveries
+#: through the pool.
 OPTIONAL_DB_SWITCH = "abandon_optional_db"
 #: `FRESH_FLUSH_PENDING_ATTEMPTS`'s runtime trial name: ``alternate`` between two
 #: values by period, read once per flush (`_fresh_flush_pending_attempts`).
@@ -220,11 +221,18 @@ PENDING_ATTEMPTS_SWITCH = "pending_attempts"
 
 
 def _optional_db_key(event_ids) -> Optional[int]:
-    """The lowest event id a read is about, or None (the read then stays off)."""
+    """An event id standing for a read's games when all share one id parity, else None.
+
+    None keeps the read off in an ``ab`` trial: a read about games of both halves
+    would otherwise be switched for games outside the trial's half.
+    """
     try:
-        return min(int(event_id) for event_id in event_ids)
+        ids = [int(event_id) for event_id in event_ids]
     except (TypeError, ValueError):
         return None
+    if not ids or len({event_id % 2 for event_id in ids}) != 1:
+        return None
+    return ids[0]
 
 
 def _fresh_flush_pending_attempts() -> int:
@@ -4886,8 +4894,7 @@ class LiveBlendRefresher:
                     ), {"source": self._normal_source, "after": self._normal_after,
                         "horizon": self._normal_horizon})).all()
 
-            rows = await self._optional_db("normal_read", .25, read_page,
-                                           _optional_db_key([self._normal_after]))
+            rows = await self._optional_db("normal_read", .25, read_page)
             if rows is None:
                 return
             if not rows:
