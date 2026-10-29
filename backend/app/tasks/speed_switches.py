@@ -72,6 +72,9 @@ SPECS = {
     # `live_blend_refresh.RELEASE_UNATTEMPTED_DEBT_SWITCH`, read once per mixed
     # refresh: when a call's unattempted old events leave its fence.
     "release_unattempted_debt": {"modes": ("alternate",), "values": (0, 1), "today": 0},
+    # `live_blend_refresh.HANDOVER_FRESH_SWITCH`, read once per cohort a catalog
+    # handover carries over committed: whether the next refresh stamps it fresh.
+    "handover_fresh": {"modes": ("alternate",), "values": (0, 1), "today": 0},
 }
 SWITCHES = tuple(SPECS)
 MODES = ("off", "ab", "alternate")
