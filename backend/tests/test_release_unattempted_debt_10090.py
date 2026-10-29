@@ -250,7 +250,8 @@ async def test_a_cancel_during_the_fresh_stamps_joins_the_early_read(monkeypatch
     assert len(early) == 1 and not early[0].done()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        # Bounded: a call that never cancels its held read would never return.
+        await asyncio.wait_for(asyncio.shield(task), 1)
     assert early[0].cancelled()             # joined before the call returned
     assert x.r.pending_event_ids() == frozenset({1, 2, 3, 4, 5})
     assert not x.r._failed_hold_until
