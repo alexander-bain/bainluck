@@ -57,6 +57,7 @@ import importlib.util
 import os
 import pathlib
 import re
+import time
 
 import pytest
 from sqlalchemy import text
@@ -511,3 +512,125 @@ async def test_a_query_arriving_mid_full_text_batch_is_queued_never_deadlocked(c
         f"cannot see the deadlock: {order}"
     )
     await _assert_a_reader_mid_batch_is_queued_then_answered(conn, FTS_MIGRATION.UPGRADE_SQL)
+
+
+def _migrate_on_a_sync_connection(direction: str, monkeypatch) -> dict:
+    """Run the full-text revision's own `upgrade()`/`downgrade()` as env.py does.
+
+    A psycopg2 connection in its own thread, so the test can hold and release
+    `events` from asyncio while the migration polls.
+    """
+    from types import SimpleNamespace
+
+    from sqlalchemy import create_engine
+
+    from app.utils.migration_lock_budget import psycopg2_url
+
+    out: dict = {}
+    engine = create_engine(psycopg2_url(DB_URL))
+    try:
+        with engine.connect() as sync:
+            sync.execute(text(f"SET search_path TO {SCHEMA}, public"))
+            sync.execute(text("SET lock_timeout = '12s'"))
+            out["pid"] = sync.execute(text("SELECT pg_backend_pid()")).scalar_one()
+            monkeypatch.setattr(
+                FTS_MIGRATION,
+                "op",
+                SimpleNamespace(get_bind=lambda: sync, execute=lambda s: sync.execute(text(s))),
+            )
+            started = time.monotonic()
+            getattr(FTS_MIGRATION, direction)()
+            sync.commit()
+            out["took_s"] = time.monotonic() - started
+    finally:
+        engine.dispose()
+    return out
+
+
+async def _hold_events(engine):
+    """An `events` reader whose transaction stays open: the v5958 holder class."""
+    holder = await engine.connect()
+    await holder.execute(text(f"SET search_path TO {SCHEMA}, public"))
+    await holder.execute(text("SELECT count(*) FROM events"))
+    return holder
+
+
+async def _access_exclusive_requests(c) -> int:
+    n = (
+        await c.execute(
+            text(
+                "SELECT count(*) FROM pg_locks WHERE locktype = 'relation' "
+                "AND relation = 'events'::regclass AND mode = 'AccessExclusiveLock'"
+            )
+        )
+    ).scalar_one()
+    await c.commit()
+    return n
+
+
+async def test_a_long_events_holder_gets_no_lock_request_queued_behind_it(conn, monkeypatch):
+    """v5958: a lock request waiting on a long reader queues every writer behind it.
+
+    The revision must not request the lock while a transaction older than the
+    gate holds `events`; a writer arriving meanwhile must not wait; once the
+    holder ends, the revision takes the lock and applies.
+    """
+    await _add_full_text_indexes(conn)
+    await _upgrade(conn)
+    monkeypatch.setattr(FTS_MIGRATION, "GATE_HOLDER_AGE_S", 0.2, raising=False)
+    engine = create_async_engine(DB_URL)
+    holder = await _hold_events(engine)
+    migration = None
+    try:
+        await asyncio.sleep(0.5)
+        migration = asyncio.create_task(
+            asyncio.to_thread(_migrate_on_a_sync_connection, "upgrade", monkeypatch)
+        )
+        writer_waits = []
+        for i in range(8):
+            await asyncio.sleep(0.25)
+            assert await _access_exclusive_requests(conn) == 0, (
+                "the revision requested the events lock behind a live holder, so "
+                "every writer now queues behind the request"
+            )
+            started = time.monotonic()
+            await conn.execute(
+                text("UPDATE events SET last_updated = now() WHERE id = :id"), {"id": i + 1}
+            )
+            await conn.commit()
+            writer_waits.append(time.monotonic() - started)
+        assert not migration.done(), "the revision did not wait for the holder"
+        await holder.commit()
+        result = await asyncio.wait_for(migration, timeout=30)
+    finally:
+        await holder.rollback()
+        await holder.close()
+        if migration is not None and not migration.done():
+            await asyncio.wait([migration], timeout=30)
+        await conn.rollback()
+        await engine.dispose()
+    assert max(writer_waits) < 0.5, f"a writer queued while the holder lived: {writer_waits}"
+    census = await _gin_census(conn)
+    assert _fastupdate_on(census) == set(), census
+    assert result["took_s"] < FTS_MIGRATION.GATE_BUDGET_S
+
+
+async def test_an_already_applied_revision_takes_no_lock_even_beside_a_holder(conn, monkeypatch):
+    """The attended-apply path: nothing to change means the release takes no lock."""
+    await _add_full_text_indexes(conn)
+    await _upgrade(conn)
+    await _fts_upgrade(conn)
+    engine = create_async_engine(DB_URL)
+    holder = await _hold_events(engine)
+    try:
+        await asyncio.sleep(1.2)
+        result = await asyncio.wait_for(
+            asyncio.to_thread(_migrate_on_a_sync_connection, "upgrade", monkeypatch), timeout=20
+        )
+    finally:
+        await holder.rollback()
+        await holder.close()
+        await engine.dispose()
+    assert result["took_s"] < 0.5, (
+        f"an already-applied revision waited {result['took_s']:.2f} s beside a holder"
+    )
