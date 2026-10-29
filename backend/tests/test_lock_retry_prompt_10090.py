@@ -296,6 +296,27 @@ async def test_a_door_leaves_a_prompt_retry_the_caller_still_writes_scheduled(
     await running
 
 
+async def test_a_door_leaves_a_prompt_retry_a_running_stamp_still_holds_scheduled(
+        monkeypatch, trial, clock):
+    """Between the skip's re-queue and `stamp_event`'s own release, a door can
+    see the event both owed and held: admitting it then would run two
+    overlapping stamps of one event (discover's D5 probe on 91dc53c1)."""
+    import asyncio
+
+    x = rig(monkeypatch, count=12, block=True, blocked=(9,))
+    running, attempts = await running_call_with_a_due_prompt(x, clock)
+    x.r._admission.holding.add(11)
+    x.r.admit_fresh([10], flush_started=clock[0])
+    async with asyncio.timeout(1):
+        while not {3, 10}.issubset(x.committed):
+            await asyncio.sleep(0)
+    assert attempts.count(11) == 1
+    assert 11 in x.r._lock_prompt_at
+    x.r._admission.holding.discard(11)
+    x.release.set()
+    await running
+
+
 async def test_the_switch_is_read_once_per_row_lock_skip(monkeypatch, trial, clock):
     x = rig(monkeypatch, count=3)
     locking(x, {2})
