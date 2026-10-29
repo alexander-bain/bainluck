@@ -79,6 +79,9 @@ SPECS = {
     # turn that could batch: queued non-live events of one cohort stamped in one
     # transaction. Its "today" is the worker's own setting, `today()`.
     "admitted_stamp_batch": {"modes": ("alternate",), "values": (1, 8), "today": 1},
+    # `live_blend_refresh.OWED_PAST_WITHDRAWAL_SWITCH`, read once per debt drain
+    # deferred only by a buffered withdrawal: whether the drain stamps past it.
+    "owed_past_withdrawal": {"modes": ("alternate",), "values": (0, 1), "today": 0},
     # `live_blend_refresh.LOCK_RETRY_PROMPT_SWITCH`, read once per row-lock skip:
     # whether its retry is attempted promptly as fresh or waits in the owed queue.
     "lock_retry_prompt": {"modes": ("alternate",), "values": (0, 1), "today": 0},

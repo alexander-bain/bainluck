@@ -4281,7 +4281,19 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 work_noted = True
                 catalog_boundary.flush_work += 1
 
-        async def refresh_owed(unfinished_events):
+        def owed_beside(unfinished_events, withdrawing_events=()):
+            # #10090: what a debt drain beside these deferred events can take;
+            # None while the refresher cannot say (membership unknown).
+            reader = getattr(blend_refresher, "owed_beside", None)
+            if reader is not None:
+                return set(reader(unfinished_events, withdrawing_events))
+            pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+            return (
+                None if pending_reader is None
+                else set(pending_reader()).difference(unfinished_events)
+            )
+
+        async def refresh_owed(unfinished_events, withdrawing_events=()):
             # #10090: the quiet ending's owed stamps. Awaited here, one held
             # event's debt (a stamp waiting on its row lock) held this flush's
             # return, so the cadence could start no flush and every unrelated
@@ -4291,14 +4303,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # `admit_fresh` beside it, and the held event stays fenced. The
             # final drain and untimed calls still await it (no later flush
             # would finish it), as does a call with nothing owed (free).
-            pending_reader = getattr(blend_refresher, "pending_event_ids", None)
-            owed_events = (
-                None if pending_reader is None
-                else set(pending_reader()).difference(unfinished_events)
-            )
+            owed_events = owed_beside(unfinished_events, withdrawing_events)
+            # #10090 `owed_past_withdrawal`: only when there is one, so a
+            # caller without the argument is called exactly as before.
+            extra = {"withdrawing_event_ids": withdrawing_events} if withdrawing_events else {}
             if final or flush_started is None or owed_events == set():
                 await blend_refresher.refresh_pending(
                     flush_started=flush_started, defer_event_ids=unfinished_events,
+                    **extra,
                 )
                 return
             # Capture BEFORE the call consumes the debt, as the fresh chunk's
@@ -4307,6 +4319,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             stamp_owner.fresh = set()
             stamp_owner.task = asyncio.create_task(blend_refresher.refresh_pending(
                 flush_started=flush_started, defer_event_ids=unfinished_events,
+                **extra,
             ))
             try:
                 # One turn: the call takes its debt and asks for a connection.
@@ -5062,12 +5075,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         refresh_events = event_ids_for_outcomes(
                             headline_event_ids, ready,
                         )
-                        pending_reader = getattr(blend_refresher, "pending_event_ids", None)
-                        unfinished_events = (
+                        writing_events = (
                             event_ids_for_outcomes(headline_event_ids, unfinished_price_ids)
-                            | speaking_withdrawals
                             | catalog_boundary.bridges.unstamped
                         )
+                        unfinished_events = writing_events | speaking_withdrawals
+                        # #10090 `owed_past_withdrawal`: deferred only by a
+                        # buffered withdrawal no write has started.
+                        withdrawing = speaking_withdrawals - writing_events
+                        extra = {"withdrawing_event_ids": withdrawing} if withdrawing else {}
                         if stamp_owner.task is not None and not stamp_owner.task.done():
                             # A committed whole cohort in this or a later flush may use
                             # the running owner's free worker. Its marks travel
@@ -5078,6 +5094,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                        if oid in batch_marks
                                        and oid not in headline_event_ids.non_speakers],
                                 defer_event_ids=unfinished_events,
+                                **extra,
                             )
                             stamp_owner.fresh.update(admitted)
                             if stamp_owner.events is not None:
@@ -5127,16 +5144,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         # Capture BEFORE refresh consumes due debt and starts
                         # awaiting its database read; querying it later can miss
                         # the very in-flight cohort that needs the exclusion.
+                        owed_now = owed_beside(unfinished_events, withdrawing)
                         stamp_owner.events = (
-                            None if pending_reader is None
-                            else (refresh_events | set(pending_reader())).difference(
-                                unfinished_events,
-                            )
+                            None if owed_now is None
+                            else (refresh_events - unfinished_events) | owed_now
                         )
                         stamp_owner.fresh = set(refresh_events)
                         stamp_owner.task = asyncio.create_task(blend_refresher.refresh(
                             refresh_events, flush_started=flush_started,
                             defer_event_ids=unfinished_events,
+                            **extra,
                         ))
                         # One turn of the loop: the refresh takes this chunk's
                         # staged receipts and asks for its connection before
@@ -5194,30 +5211,31 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         withdrawn_events = event_ids_for_outcomes(headline_event_ids, withdrawn)
         async with buffer_lock:
             withdraw_cohort_ids.update(withdraw_buffer)
-            unfinished_events = (
+            writing_events = (
                 event_ids_for_outcomes(headline_event_ids, unfinished_price_ids)
-                | event_ids_for_outcomes(
-                    headline_event_ids,
-                    withdraw_cohort_ids.intersection(withdraw_buffer),
-                )
                 | catalog_boundary.bridges.unstamped
             )
+            buffered_withdrawals = event_ids_for_outcomes(
+                headline_event_ids,
+                withdraw_cohort_ids.intersection(withdraw_buffer),
+            )
+            unfinished_events = writing_events | buffered_withdrawals
+        # #10090 `owed_past_withdrawal`: deferred only by a buffered withdrawal
+        # this flush has not started writing (its withdrawal pass is over).
+        withdrawing = buffered_withdrawals - writing_events
+        extra = {"withdrawing_event_ids": withdrawing} if withdrawing else {}
         if not batch and not withdrawn_events and not owed:
             # #837 tail — a flush with no new prices still owes the stamps a row
             # lock deferred: those prices are already stored, so waiting for the
             # next venue tick would strand them on a quiet market. Free when
             # nothing is queued (no session is opened).
-            pending_reader = getattr(blend_refresher, "pending_event_ids", None)
-            if pending_reader is not None and set(pending_reader()).difference(
-                unfinished_events,
-            ):
+            owed_now = owed_beside(unfinished_events, withdrawing)
+            if owed_now:
                 note_flush_work()
             if stamp_owner.task is not None:
                 # Do not overlap a second refresh with the active owner. If
                 # nothing else is owed, this quiet batch has no work to join.
-                if pending_reader is not None and not set(pending_reader()).difference(
-                    unfinished_events,
-                ):
+                if owed_now is not None and not owed_now:
                     return wrote_all
                 if not final and flush_started is not None and not stamp_owner.task.done():
                     # #10090: joining the running call here held this flush, and
@@ -5227,25 +5245,21 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     admit = getattr(blend_refresher, "admit_fresh", None)
                     if admit is not None:
                         admit((), flush_started=flush_started,
-                              defer_event_ids=unfinished_events)
+                              defer_event_ids=unfinished_events, **extra)
                     return wrote_all
                 await stamp_owner.join()
-            await refresh_owed(unfinished_events)
+            await refresh_owed(unfinished_events, withdrawing)
             return wrote_all
         if not owed and not withdrawn_events:
             # A cohort excluded from an earlier chunk's stamp may now be
             # complete even when it contributed no additional ready inputs.
-            pending_reader = getattr(blend_refresher, "pending_event_ids", None)
-            if pending_reader is not None and set(pending_reader()).difference(
-                unfinished_events,
-            ):
+            owed_now = owed_beside(unfinished_events, withdrawing)
+            if owed_now:
                 note_flush_work()
             if stamp_owner.task is not None:
                 # Do not overlap a second refresh with the active owner. If
                 # nothing else is owed, this quiet batch has no work to join.
-                if pending_reader is not None and not set(pending_reader()).difference(
-                    unfinished_events,
-                ):
+                if owed_now is not None and not owed_now:
                     return wrote_all
                 if not final and flush_started is not None and not stamp_owner.task.done():
                     # #10090: joining the running call here held this flush, and
@@ -5255,10 +5269,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     admit = getattr(blend_refresher, "admit_fresh", None)
                     if admit is not None:
                         admit((), flush_started=flush_started,
-                              defer_event_ids=unfinished_events)
+                              defer_event_ids=unfinished_events, **extra)
                     return wrote_all
                 await stamp_owner.join()
-            await refresh_owed(unfinished_events)
+            await refresh_owed(unfinished_events, withdrawing)
             return wrote_all
         # The prices held for a withdrawal, and the withdrawal itself: one
         # refresh, never a second for an event the chunks already refreshed.
@@ -5276,6 +5290,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 marks=[batch_marks[oid] for oid in owed if oid in batch_marks
                        and oid not in headline_event_ids.non_speakers],
                 defer_event_ids=unfinished_events,
+                **extra,
             )
             stamp_owner.fresh.update(admitted)
             if stamp_owner.events is not None:
@@ -5311,6 +5326,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             tail_events,
             flush_started=flush_started,
             defer_event_ids=unfinished_events,
+            **extra,
         )
         return wrote_all
 

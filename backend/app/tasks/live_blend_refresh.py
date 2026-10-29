@@ -267,6 +267,14 @@ HANDOVER_FRESH_SWITCH = "handover_fresh"
 #: by period, read once per admitted worker turn that could batch
 #: (`_admitted_stamp_batch`).
 ADMITTED_STAMP_BATCH_SWITCH = "admitted_stamp_batch"
+#: #10090 runtime trial (``alternate`` 0/1, today 0), read once per debt drain
+#: that a caller says is deferred only by a buffered, not yet written withdrawal
+#: (`withdrawing_event_ids`): on, an already committed throttle-deferred price
+#: is stamped past it. Production 2026-10-29 17:35:36Z: 15331111's committed
+#: price waited 45 s while its legs drew thousands of wide books a minute, each
+#: one re-buffering a withdrawal that priced nothing out; none was written
+#: in flight, yet every flush's drain excluded the event.
+OWED_PAST_WITHDRAWAL_SWITCH = "owed_past_withdrawal"
 #: #10090 runtime trial (``alternate`` 0/1, today 0), read once per row-lock
 #: skip (`_lock_retry_prompt`): on, a stamp that gave up on a row lock is
 #: attempted again as a later call's FRESH population once its delay below has
@@ -336,6 +344,14 @@ def _handover_fresh() -> bool:
     try:
         return bool(_optional_db_trial().value(HANDOVER_FRESH_SWITCH, 0))
     except Exception:  # noqa: BLE001 — a switch read never fails a hand-over
+        return False
+
+
+def _owed_past_withdrawal() -> bool:
+    """This drain's `owed_past_withdrawal` arm; off on any switch error."""
+    try:
+        return bool(_optional_db_trial().value(OWED_PAST_WITHDRAWAL_SWITCH, 0))
+    except Exception:  # noqa: BLE001 — a switch read never fails a flush
         return False
 
 
@@ -2571,8 +2587,14 @@ class LiveBlendRefresher:
     async def refresh(
         self, event_ids: Iterable[int], *, flush_started: Optional[float] = None,
         defer_event_ids: Iterable[int] = (),
+        withdrawing_event_ids: Iterable[int] = (),
     ) -> dict[str, int]:
         """Recompute and stamp the blend for these events. Never raises.
+
+        #10090 ``withdrawing_event_ids``: those of ``defer_event_ids`` deferred
+        only by a buffered withdrawal the caller has not started writing. With
+        `owed_past_withdrawal` on, a throttle-deferred one is not excluded
+        (`_past_withdrawal`); fresh events and lock retries still are.
 
         #10090 — ``flush_started`` is the socket flush's start on `_mono`
         (`run_flush_cadence`). When given, the per-event floor, the failed-retry
@@ -2607,6 +2629,9 @@ class LiveBlendRefresher:
         # Leave its fresh inputs and existing debt owed without reading a
         # partial board; ordinary callers retain the same admission behavior.
         excluded = set(defer_event_ids)
+        excluded.difference_update(
+            self._past_withdrawal(withdrawing_event_ids, fresh, retry, deferred)
+        )
         due = [eid for eid in wanted if eid not in excluded and self._due(eid, clock)]
         if self._carried_fresh:
             # #10090 `handover_fresh`: a committed cohort a hand-over carried
@@ -3332,6 +3357,7 @@ class LiveBlendRefresher:
         *,
         flush_started: Optional[float] = None,
         defer_event_ids: Iterable[int] = (),
+        withdrawing_event_ids: Iterable[int] = (),
     ) -> dict[str, int]:
         """#837 tail — stamp only the deferred events. Never raises.
 
@@ -3352,6 +3378,7 @@ class LiveBlendRefresher:
             return self.stats
         return await self.refresh(
             (), flush_started=flush_started, defer_event_ids=defer_event_ids,
+            withdrawing_event_ids=withdrawing_event_ids,
         )
 
     def pending_event_ids(self) -> frozenset:
@@ -3365,6 +3392,37 @@ class LiveBlendRefresher:
             self._lock_retry | self._throttle_deferred
             | self._book_refused_woken(_mono())
         )
+
+    def _past_withdrawal(self, withdrawing, fresh=(), retry=None, deferred=None) -> set[int]:
+        """#10090 `owed_past_withdrawal`: the owed events a drain may stamp
+        although its caller still defers them, because the only thing pending
+        is a buffered withdrawal no write has started. Their prices are already
+        committed; the withdrawal, when it lands, is ordered after the stamp by
+        the same-event fence (`join_stamp_reading`) and owes its own stamp.
+        Throttle-deferred events only: a fresh cohort keeps waiting for its
+        withdrawal, and a lock retry keeps its own path. Empty when the switch
+        is off, and without reading it when nothing is withdrawing.
+        """
+        withdrawing = set(withdrawing)
+        if not withdrawing:
+            return set()
+        retry = self._lock_retry if retry is None else retry
+        deferred = self._throttle_deferred if deferred is None else deferred
+        passable = withdrawing.intersection(deferred).difference(retry, fresh)
+        if not passable or not _owed_past_withdrawal():
+            return set()
+        return passable
+
+    def owed_beside(
+        self, defer_event_ids: Iterable[int], withdrawing_event_ids: Iterable[int] = (),
+    ) -> frozenset:
+        """#10090 — the owed events a drain beside ``defer_event_ids`` can take
+        (`pending_event_ids` less the deferred ones, less `_past_withdrawal`'s),
+        so a caller's "anything owed?" test agrees with the drain it starts."""
+        excluded = set(defer_event_ids).difference(
+            self._past_withdrawal(withdrawing_event_ids)
+        )
+        return frozenset(self.pending_event_ids().difference(excluded))
 
     # ── #11317 P2: a refused bundled pair waits for a changed input ──────────
 
@@ -3549,6 +3607,7 @@ class LiveBlendRefresher:
         flush_started: Optional[float],
         marks: Iterable[InputMark] = (),
         defer_event_ids: Iterable[int] = (),
+        withdrawing_event_ids: Iterable[int] = (),
     ) -> frozenset:
         """Hand a newly COMMITTED whole cohort to the running `refresh`.
 
@@ -3593,8 +3652,8 @@ class LiveBlendRefresher:
                 )
             return frozenset()
         excluded = set(defer_event_ids)
+        event_ids = list(event_ids)  # read again below (trace, door)
         if self._stage_hook("stage_admission") is not None:
-            event_ids = list(event_ids)  # traced only: read twice below
             for eid in event_ids:
                 if eid in excluded or eid in window.holding:
                     self._stage_trace(
@@ -3632,10 +3691,15 @@ class LiveBlendRefresher:
             rotation += sorted(owed.difference(rotation))
             order = [eid for eid in self._pending_continuation if eid in owed]
             order += [eid for eid in rotation if eid not in order]
+            # #10090 `owed_past_withdrawal`: debt deferred only by a buffered
+            # withdrawal may ride; the cohort itself is excluded as before.
+            debt_excluded = excluded.difference(
+                self._past_withdrawal(withdrawing_event_ids, event_ids)
+            )
             for eid in order:
                 if free <= 0:
                     break
-                if eid in taken or eid in excluded or eid in window.holding:
+                if eid in taken or eid in debt_excluded or eid in window.holding:
                     continue
                 if self._due(eid, flush_started):
                     taken.add(eid)
