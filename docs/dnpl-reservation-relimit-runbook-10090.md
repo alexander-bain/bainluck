@@ -101,7 +101,22 @@ carrying v2 is live on `bainluck` AND heavy has converged to it; (2) then this
 runbook. **Never roll the code back while the config var totals more than
 512** — roll the sizes back first (`--to default`), then the code.
 
-Proposed 1024 split (Alex picks): `96,48,192,128,448,112`.
+**v2 code check** (the mechanical form of (1); required for any `--to` that
+totals more than 512, at step 0 and again at step 4). `<commit>` is each app's
+current release commit, taken from its slug as in step 4. Run `git fetch
+origin` first; a commit this checkout cannot show prints 0, which is a stop.
+
+```bash
+git show <commit>:backend/app/utils/preview_reservations.py | /usr/bin/grep -c 'LEDGER_CAPS = {"v1": 512, "v2": 1024}'   # must print 1
+git show <commit>:backend/app/utils/blend_preview.py | /usr/bin/grep -c "local CAP = version == 'v2' and 1024 or 512"  # must print 1
+```
+
+Both lines, for both `bainluck` and `bainluck-heavy`, must print 1. Any 0 is a
+stop: the release carrying v2 is not live on both apps, and step 8 would start
+a `worker-ws` whose old code refuses the configured total on every registry
+call.
+
+Chosen 1024 split (Alex, decision I = A): `96,48,192,128,448,112`.
 
 | Bucket | Today | 512 resize (item 35) | 1024 proposal | Measured peak |
 | --- | ---: | ---: | ---: | ---: |
@@ -179,7 +194,9 @@ Scores, odds polling and pages keep working.
    dnpl_namespace_retirement` = 0. Write the eight fields to a private
    `authority.json`, with integers as JSON integers. The primary is
    `<redis_run_id>:<redis_master_replid>`. Record the current fingerprint from a
-   `blend_preview reservation receipt` line.
+   `blend_preview reservation receipt` line. **If `--to` totals more than
+   512:** run the v2 code check on both apps' current release commits. Any 0:
+   stop. Nothing has changed before step 3.
 1. **Snapshot.** Run `python -m app.services.dnpl_activation_command preview
    --expected-authority "$(cat authority.json)" --expected-primary <primary>`.
    Require `SNAPSHOT_MATCH`, exit 0. Anything else: stop, nothing has changed.
@@ -206,13 +223,21 @@ Scores, odds polling and pages keep working.
    does; do not start step 6 before. The verifier checks every dyno's release
    and refuses (`dyno release changed`) while any dyno still runs the old one.
    That refusal comes before any send, but the operator still prints `STOPPED`.
+   **If `--to` totals more than 512:** run the v2 code check again on both
+   bound commits. Any 0: stop, restore the recorded config value, and start
+   (nothing durable has changed before step 6).
 5. **Build plans.** Run `python3 scripts/reservation_relimit_plan.py
    --expected-authority authority.json --primary <primary> --apps apps.json --to
    <sizes> --configured "<exact step-3 readback>" --out-dir <new private dir>`.
    Require `PLANS_WRITTEN`, and check `to_fingerprint` against the expected
    value. For the default proposal that is
-   `v1-six-hour-ba82e47ee634aba7:128,48,96,48,160,32`. Keep the plan files as
-   written (0600); the operator refuses a plan file that is not private.
+   `v1-six-hour-ba82e47ee634aba7:128,48,96,48,160,32`. For the recommended
+   1024 split, `to_fingerprint` must equal
+   `v2-six-hour-ba82e47ee634aba7:96,48,192,128,448,112` and `to_ledger_cap`
+   must equal `1024`. The alternative `96,48,128,64,576,112` has the same
+   prefix and cap: `v2-six-hour-ba82e47ee634aba7:96,48,128,64,576,112`, `1024`.
+   Keep the plan files as written (0600); the operator refuses a plan file that
+   is not private.
 6. **Activate.** Create a fresh run dir, then run the operator:
 
    ```bash
@@ -381,7 +406,9 @@ fresh 0700 run dirs and the stop rules above, with these changes:
 - In step 3, restore the recorded pre-change value: `heroku config:unset
   LIVE_BLEND_PREVIEW_RESERVATIONS -a bainluck` if it was unset, with
   `--configured ""`.
-- In step 5, use `--to default`.
+- In step 5, use `--to default`. It must print `to_fingerprint`
+  `v1-six-hour-ba82e47ee634aba7:192,64,128,64,48,16` and `to_ledger_cap: 512`.
+- The v2 code check does not apply: `--to default` totals 512.
 
 The rollback is itself a new incarnation, so it restores the sizes, not the old
 ledger contents.
