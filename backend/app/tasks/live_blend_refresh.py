@@ -298,6 +298,10 @@ LOCK_RETRY_PROMPT_DELAYS_S = (1.0, 2.0, 4.0)
 #: on the busy wide-book games whose buffer never clears, so a due
 #: `lock_retry_prompt` stayed out flush after flush.
 LOCK_RETRY_PAST_WITHDRAWAL_SWITCH = "lock_retry_past_withdrawal"
+#: `PRICE_FLUSH_SECONDS`'s runtime trial name: ``alternate`` between two
+#: intervals in milliseconds (`100..2000`), read at each switched flush-loop
+#: wait (`_price_flush_period_s`).
+PRICE_FLUSH_MS_SWITCH = "price_flush_ms"
 
 
 def _optional_db_key(event_ids) -> Optional[int]:
@@ -377,6 +381,21 @@ def _lock_retry_past_withdrawal() -> bool:
         return bool(_optional_db_trial().value(LOCK_RETRY_PAST_WITHDRAWAL_SWITCH, 0))
     except Exception:  # noqa: BLE001 — a switch read never fails a flush
         return False
+
+
+def _price_flush_period_s(default) -> float:
+    """This wait's flush interval in seconds: a running alternation's arm, else ``default``."""
+    base = float(default() if callable(default) else default)
+    default_ms = round(base * 1000)
+    try:
+        from app.tasks.speed_switches import today
+
+        if today(PRICE_FLUSH_MS_SWITCH) != default_ms:
+            return base
+        ms = _optional_db_trial().value(PRICE_FLUSH_MS_SWITCH, default_ms)
+    except Exception:  # noqa: BLE001 — a switch read never fails a flush wait
+        return base
+    return base if ms == default_ms else ms / 1000.0
 
 
 def _switch_tags(event_id, at: Optional[float] = None) -> str:
@@ -1463,6 +1482,7 @@ async def run_flush_cadence(
     flush, period: float, stop=None, *, failed_retry_interval_s: Optional[float] = None,
     wake=None, work_count: Optional[Callable[[], int]] = None,
     wake_coalesce_s: Optional[float] = None,
+    switch_period: bool = False,
 ) -> None:
     """#10090 — start a flush every ``period`` seconds, START to START.
 
@@ -1522,8 +1542,13 @@ async def run_flush_cadence(
     def stopped() -> bool:
         return stop is not None and stop.is_set()
 
-    retry_period = period if failed_retry_interval_s is None else failed_retry_interval_s
-    due = _mono() + period
+    def current_period() -> float:
+        base = float(period() if callable(period) else period)
+        return _price_flush_period_s(base) if switch_period else base
+
+    base_period = float(period() if callable(period) else period)
+    retry_period = base_period if failed_retry_interval_s is None else failed_retry_interval_s
+    due = _mono() + current_period()
     not_before = _mono()  # no actual flush has used the budget yet
     while not stopped():
         wait = due - _mono()
@@ -1556,7 +1581,8 @@ async def run_flush_cadence(
             wake.clear()
         ok = await flush(started)
         used = work_count is None or work_count() != before
-        due = started + period if ok is not False else _mono() + retry_period
+        step_period = current_period()
+        due = started + step_period if ok is not False else _mono() + retry_period
         if used or ok is False:
             not_before = due
 

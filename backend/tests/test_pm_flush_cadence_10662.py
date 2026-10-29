@@ -51,7 +51,8 @@ async def test_real_pm_consumer_binds_timer_floor_and_legacy_retry(
             instances.append(self)
 
     async def cadence(flush, period, stop=None, *, failed_retry_interval_s=None,
-                      wake=None, work_count=None, wake_coalesce_s=None):
+                      wake=None, work_count=None, wake_coalesce_s=None, switch_period=False):
+        assert switch_period is (getattr(flush, "__name__", None) == "flush_prices")
         calls.append((period, failed_retry_interval_s))
         if failed_retry_interval_s is not None:
             assert isinstance(wake, asyncio.Event) and work_count() == 0

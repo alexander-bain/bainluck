@@ -41,11 +41,12 @@ async def _run_recording(monkeypatch, arm):
 
     async def cadence(
         flush, period, stop=None, *, failed_retry_interval_s=None,
-        wake=None, work_count=None, wake_coalesce_s=None,
+        wake=None, work_count=None, wake_coalesce_s=None, switch_period=False,
     ):
         # #10090: what each caller passes for the idle wake, asserted per
         # caller by the tests (PM's standalone flush passes neither; only
         # PM's game flush takes the post-wake coalescing pause).
+        assert switch_period is (getattr(flush, "__name__", None) in ("timed_flush", "flush_prices"))
         wakes.append((
             isinstance(wake, asyncio.Event),
             None if work_count is None else work_count(),
