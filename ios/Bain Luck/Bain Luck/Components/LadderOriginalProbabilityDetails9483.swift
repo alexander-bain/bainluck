@@ -785,3 +785,208 @@ private struct ProbabilityDetailsUnavailable9483: View {
         .accessibilityLabel(Model.spoken(nil))
     }
 }
+
+// MARK: - Original market chooser (#10868)
+
+/// #10868 — the small original-outcome chooser above the selected original's
+/// Details: every original the owner supplied (India / West Indies, or South
+/// Africa / Australia / Draw/tie), in the owner's order, as one compact group
+/// of named choices, with the existing Details for the HELD selection below.
+///
+/// Controlled and stateless. The host keeps the catalogue, the held selection,
+/// refresh and withdrawal, navigation, Done/Back and focus; this file keeps no
+/// selection, elects no first or default original, sorts and caps nothing and
+/// moves no focus. A choice acts only through the existing
+/// `OriginalMarketDetails9483.content(catalogue:selection:)` contract — the
+/// one the Details below read — so an original whose scope, identity, title or
+/// outcome would not open its own Details is never a button: it stays
+/// visible, labelled and unavailable, and its neighbours keep theirs. A tap
+/// hands the host the catalogue's scope and the original's identity,
+/// unchanged; rendering and passive updates call nothing.
+///
+/// GAP, NOT PAID HERE: like the Details, the catalogue carries no event id;
+/// the host keeps event and scope together.
+enum OriginalMarketChooser9483 {
+    typealias Details = OriginalMarketDetails9483
+
+    struct Choice: Equatable {
+        /// The owner's label for this exact identity, else the original's own
+        /// title verbatim, else the owner's unavailable-choice words.
+        let label: String
+        /// The exact selection a tap hands back — the catalogue's scope and
+        /// this original's identity, unchanged — or nil when this original
+        /// does not open its own Details.
+        let selection: Details.Selection?
+        /// The held selection opens this exact original.
+        let isSelected: Bool
+        /// Shown under a readable label that cannot open; nil otherwise.
+        let status: String?
+
+        var isAvailable: Bool { selection != nil }
+    }
+
+    enum Arrangement: Equatable {
+        /// No originals: the owner's empty words only.
+        case empty
+        /// Choices sit side by side and wrap at the actual width; a label
+        /// wider than the row wraps inside its own choice.
+        case wrapping
+        /// One full-width choice per line.
+        case stacked
+    }
+
+    static let unavailableStatus = Details.unavailable
+
+    /// Every supplied original, in the owner's order — none dropped, sorted,
+    /// capped or merged, a malformed one included as unavailable.
+    static func choices(catalogue: Details.Catalogue?, selection: Details.Selection?,
+                        labels: [Details.Identity: String], unavailableChoice: String) -> [Choice] {
+        guard let catalogue else { return [] }
+        return catalogue.originals.map { original in
+            let candidate = Details.Selection(scope: catalogue.scope, identity: original.identity)
+            let opens = Details.content(catalogue: catalogue, selection: candidate) != nil
+            let own = ownLabel(original, labels: labels)
+            return Choice(label: own ?? nonBlank(unavailableChoice) ?? unavailableStatus,
+                          selection: opens ? candidate : nil,
+                          isSelected: opens && candidate == selection,
+                          status: opens || own == nil ? nil : unavailableStatus)
+        }
+    }
+
+    /// The owner's label for the exact identity, else the title verbatim —
+    /// never parsed, shortened or taken from another original.
+    static func ownLabel(_ original: Details.Original, labels: [Details.Identity: String]) -> String? {
+        nonBlank(labels[original.identity]) ?? nonBlank(original.title)
+    }
+
+    /// The only way a choice acts: the host's callback with the choice's own
+    /// exact selection. Nil — static content, never an inert button — when
+    /// there is no callback or the original does not open. The view's buttons
+    /// run exactly this closure.
+    static func action(_ choice: Choice,
+                       onSelect: ((Details.Selection) -> Void)?) -> (() -> Void)? {
+        guard let onSelect, let selection = choice.selection else { return nil }
+        return { onSelect(selection) }
+    }
+
+    /// Accessibility sizes always stack; otherwise the choices wrap at the
+    /// actual width, whatever the device.
+    static func arrangement(choices: Int, accessibilitySize: Bool) -> Arrangement {
+        guard choices > 0 else { return .empty }
+        return accessibilitySize ? .stacked : .wrapping
+    }
+
+    /// The label, then why it cannot open. "Selected" is the trait, not text.
+    static func spoken(_ choice: Choice) -> String {
+        choice.status.map { "\(choice.label), \($0)" } ?? choice.label
+    }
+
+    private static func nonBlank(_ text: String?) -> String? {
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return text
+    }
+}
+
+/// The chooser and the held original's existing Details, inside the host's
+/// container; the host keeps scrolling, held updates, navigation and focus.
+struct OriginalMarketChooserView9483: View {
+    let catalogue: OriginalMarketDetails9483.Catalogue?
+    let selection: OriginalMarketDetails9483.Selection?
+    let heading: String
+    let emptyWords: String
+    let unavailableChoice: String
+    var labels: [OriginalMarketDetails9483.Identity: String] = [:]
+    let tint: Color
+    var onSelect: ((OriginalMarketDetails9483.Selection) -> Void)?
+
+    private typealias Model = OriginalMarketChooser9483
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        let choices = Model.choices(catalogue: catalogue, selection: selection, labels: labels,
+                                    unavailableChoice: unavailableChoice)
+        VStack(alignment: .leading, spacing: 16) {
+            chooser(choices)
+            OriginalMarketDetailsView9483(catalogue: catalogue, selection: selection, tint: tint)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func chooser(_ choices: [Model.Choice]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !heading.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(heading)
+                    .font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            switch Model.arrangement(choices: choices.count, accessibilitySize: typeSize.isAccessibilitySize) {
+            case .empty:
+                Text(emptyWords)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            case .wrapping:
+                FlowLayout(spacing: 8) {
+                    ForEach(Array(choices.enumerated()), id: \.offset) { _, choice in
+                        control(choice, fullWidth: false)
+                    }
+                }
+            case .stacked:
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(choices.enumerated()), id: \.offset) { _, choice in
+                        control(choice, fullWidth: true)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func control(_ choice: Model.Choice, fullWidth: Bool) -> some View {
+        if let action = Model.action(choice, onSelect: onSelect) {
+            Button(action: action) {
+                face(choice, fullWidth: fullWidth)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Model.spoken(choice))
+            .accessibilityAddTraits(choice.isSelected ? .isSelected : [])
+        } else {
+            face(choice, fullWidth: fullWidth)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Model.spoken(choice))
+                .accessibilityAddTraits(choice.isSelected ? .isSelected : [])
+        }
+    }
+
+    /// Selected: a checkmark and a heavier outline, not colour alone.
+    /// Unavailable: a minus mark, a dashed outline and its status line.
+    private func face(_ choice: Model.Choice, fullWidth: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 10)
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if choice.isSelected {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(tint)
+            } else if !choice.isAvailable {
+                Image(systemName: "minus.circle").foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(choice.label)
+                    .font(.subheadline.weight(choice.isSelected ? .semibold : .regular))
+                    .foregroundStyle(choice.isAvailable ? Color.primary : Color.secondary)
+                if let status = choice.status {
+                    Text(status).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(minWidth: 44, maxWidth: fullWidth ? .infinity : nil, minHeight: 44, alignment: .leading)
+        .background(shape.fill(choice.isSelected ? tint.opacity(0.10) : Color.clear))
+        .overlay(shape.strokeBorder(choice.isSelected ? tint : Color.secondary.opacity(0.35),
+                                    style: StrokeStyle(lineWidth: choice.isSelected ? 2 : 1,
+                                                       dash: choice.isAvailable ? [] : [4, 3])))
+        .contentShape(shape)
+    }
+}
