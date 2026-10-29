@@ -15,8 +15,11 @@ database. These pin:
   savepoint, failed COMMIT), superseded by a later write of the same event in
   the same transaction (naming the rev that carried it), or a removal;
 * a failed fanout names what it attempted and what it never handed over;
-* disarmed, armed on another event, and armed on this event issue the SAME SQL,
-  the same Redis frames and the same application log lines.
+* disarmed and armed on another event issue the SAME SQL; armed on this event
+  adds only the final read (one SAVEPOINT-wrapped SELECT per traced COMMIT);
+  all three send the same Redis frames and the same application log lines;
+* ``final`` is ESTABLISHED only when that read finds the row the last traced
+  RETURNING left, and names what differs when a later untraced write moved it.
 """
 
 import json
@@ -117,7 +120,10 @@ async def test_committed_write_publication_carries_the_kept_rev_and_stamp(pg_eng
     assert sel["evidence"]["population"] == [{"book": "a", "home_probability": 0.6}]
     assert sel["seam_mono"] <= pub["returned_mono"] and sel["txn"] == pub["txn"]
     final = pub["final"]
-    assert final["final_state"] == "FINAL_STATE_NOT_ESTABLISHED"
+    assert (final["final_state"], final["check"]) == (
+        "FINAL_STATE_ESTABLISHED", "ROW_MATCHES_LAST_TRACED_RETURNING")
+    assert final["observed_rev"] == rev and final["differs"] == []
+    assert final["observed_bag_hash"] == pub["bag_hash"]
     assert final["blend_probability"] == frame["p"] and final["queued_frame_matches"] is True
     assert final["observations_in_txn"] == 1 and final["uncovered_keys"] == []
     # The complete committed bag, recomputed with the hero's own helpers.
@@ -270,7 +276,8 @@ async def test_a_failed_fanout_names_attempted_and_never_handed_over(
 async def test_disarmed_and_armed_issue_the_same_sql_frames_and_app_logs(
     pg_engine, sink, caplog
 ):
-    """The byte-identity control: only `nonvenue-trace` lines differ."""
+    """The byte-identity control: only `nonvenue-trace` lines and, armed on
+    this event, the final reads differ."""
 
     async def scenario(arming=None):
         event_id = await _seed_event(pg_engine)
@@ -327,7 +334,17 @@ async def test_disarmed_and_armed_issue_the_same_sql_frames_and_app_logs(
         ("WRITE_UNSENT", "betting", "SOURCE_REMOVED_NOT_SENT"),
     ]
 
-    assert sql_off == sql_other == sql_on
+    # Disarmed and armed elsewhere: byte-identical SQL. Armed here: the same
+    # SQL plus exactly one SAVEPOINT-wrapped final read per traced COMMIT.
+    assert sql_off == sql_other
+    reads = [i for i, statement in enumerate(sql_on)
+             if statement.startswith("SELECT events.id, events.win_probability_sources_rev")]
+    assert len(reads) == 2 == nt.nonvenue_trace().final_reads
+    for i in reads:
+        assert sql_on[i - 1].startswith("SAVEPOINT ")
+        assert sql_on[i + 1] == "RELEASE " + sql_on[i - 1]
+    added = {j for i in reads for j in (i - 1, i, i + 1)}
+    assert [x for j, x in enumerate(sql_on) if j not in added] == sql_off
     assert frames_off == frames_other == frames_on and len(frames_off) == 1
     assert logs_off == logs_other == logs_on
 
@@ -466,3 +483,126 @@ async def test_the_real_betting_ingest_receipts_per_book_versions(pg_engine, sin
     assert inputs["select_start"]["mono"] <= inputs["select_end"]["mono"] <= sel["seam_mono"]
     (pub,) = stage(lines, "PUBLICATION")
     assert pub["obs"] == sel["obs"] and pub["final"]["queued_frame_matches"] is True
+
+
+async def _status(engine, event_id):
+    from sqlalchemy import select
+
+    async with engine.connect() as conn:
+        return (await conn.execute(select(Event.status, Event.win_probability_sources_rev)
+                                   .where(Event.id == event_id))).one()
+
+
+@pytest.mark.parametrize("later", ["bag", "status", "orm_pending", "savepoint_undone"])
+async def test_final_state_is_established_only_when_nothing_moved_the_row_after(
+    pg_engine, sink, later
+):
+    """The final read: a write this receipt did not trace, after the last traced
+    RETURNING and in the same transaction, keeps the final NOT_ESTABLISHED and
+    names what moved. ``status`` moves no rev (the trigger counts the bag
+    only); ``orm_pending`` is flushed by SQLAlchemy AFTER ``before_commit``, so
+    the row still matches when read; an untraced write undone by its own
+    savepoint leaves the committed row as traced. The write path is unchanged:
+    the traced frame commits and is published either way."""
+    from sqlalchemy import update
+
+    event_id = await _seed_event(pg_engine)
+    lines = arm([event_id])
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        event = await session.get(Event, event_id)
+        await write_nonvenue_probability(session, event, "espn", 0.7)
+        untraced = update(Event).where(Event.id == event_id)
+        if later == "bag":
+            await session.execute(untraced.values(win_probability_sources={
+                "espn": {"value": 0.2, "updated_at": "2026-10-28T18:00:00+00:00"}}))
+        elif later == "status":
+            await session.execute(untraced.values(status="final"))
+        elif later == "orm_pending":
+            event.status = "final"  # unflushed: it lands after before_commit
+        else:
+            async with session.begin_nested() as nested:
+                await session.execute(untraced.values(status="final"))
+                await nested.rollback()
+        await session.commit()
+        await publish_committed_nonvenue_frames(session)
+    (pub,) = stage(lines, "PUBLICATION")
+    assert pub["result"] == "SENT" and [f["source"] for _, f in sink] == ["espn"]
+    final = pub["final"]
+    status, rev = await _status(pg_engine, event_id)
+    expected = {
+        "bag": ("FINAL_STATE_NOT_ESTABLISHED", "ROW_DIFFERS", ["rev", "sources"], "live"),
+        "status": ("FINAL_STATE_NOT_ESTABLISHED", "ROW_DIFFERS", ["status"], "final"),
+        "orm_pending": ("FINAL_STATE_NOT_ESTABLISHED", "ORM_WRITE_PENDING", [], "final"),
+        "savepoint_undone": ("FINAL_STATE_ESTABLISHED", "ROW_MATCHES_LAST_TRACED_RETURNING",
+                             [], "live"),
+    }[later]
+    assert (final["final_state"], final["check"], final["differs"], status) == expected
+    assert final["orm_write_pending"] is (later == "orm_pending")
+    # The read saw the row as COMMIT stored it, except the flush it names.
+    assert final["observed_rev"] == rev
+    assert (final["observed_rev"] == pub["rev"] + 1) is (later == "bag")
+    assert final["observed_status"] == ("final" if later == "status" else "live")
+    assert final["check_clock"] == "BEFORE_COMMIT_READ_IN_TXN" and final["read_ms"] >= 0
+    assert final["as_of"] == "LAST_TRACED_RETURNING"
+
+
+async def test_a_failed_final_read_costs_the_receipt_never_the_commit(
+    pg_engine, sink, monkeypatch
+):
+    from sqlalchemy import text
+
+    from app.utils import nonvenue_live_push as push
+
+    monkeypatch.setattr(push, "_committing_rows_query", lambda _ids: text("SELECT 1/0"))
+    event_id = await _seed_event(pg_engine)
+    lines = arm([event_id])
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        await write_nonvenue_probability(session, await session.get(Event, event_id),
+                                         "espn", 0.7)
+        await session.commit()
+        await publish_committed_nonvenue_frames(session)
+    nt.nonvenue_trace()._stop("EXPIRED")
+    assert (await _stored(pg_engine, event_id))["espn"]["value"] == 0.7
+    (pub,) = stage(lines, "PUBLICATION")
+    assert (pub["commit_result"], pub["result"]) == ("COMMITTED", "SENT") and len(sink) == 1
+    final = pub["final"]
+    assert (final["final_state"], final["check"]) == ("FINAL_STATE_NOT_ESTABLISHED",
+                                                      "READ_ERROR")
+    assert final["error"] and "observed_rev" not in final
+    (stop,) = stage(lines, "STOP")
+    assert (stop["hook_errors"], stop["final_reads"]) == (1, 1)
+
+
+@pytest.mark.parametrize("armed", [False, True])
+async def test_a_cancel_inside_the_final_read_prevents_a_commit_and_is_counted(
+    pg_engine, sink, monkeypatch, armed
+):
+    """The read stands in as slow so a 0.2 s cancel lands inside it. Disarmed,
+    the same cancel arrives after COMMIT returned and the price is stored;
+    armed, the COMMIT is never sent, and STOP says why."""
+    import asyncio
+
+    from sqlalchemy import text
+
+    from app.utils import nonvenue_live_push as push
+
+    monkeypatch.setattr(push, "_committing_rows_query",
+                        lambda _ids: text("SELECT pg_sleep(0.5)"))
+    event_id = await _seed_event(pg_engine)
+    lines = arm([event_id]) if armed else None
+    timed_out = False
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        await write_nonvenue_probability(session, await session.get(Event, event_id),
+                                         "espn", 0.7)
+        try:
+            async with asyncio.timeout(0.2):
+                await session.commit()
+        except TimeoutError:
+            timed_out = True
+    stored = (await _stored(pg_engine, event_id)).get("espn", {}).get("value")
+    assert (timed_out, stored) == ((True, None) if armed else (False, 0.7))
+    if armed:
+        nt.nonvenue_trace()._stop("EXPIRED")
+        (stop,) = stage(lines, "STOP")
+        assert (stop["final_reads_interrupted"], stop["awaiting_commit"],
+                stop["hook_errors"]) == (1, 1, 0)

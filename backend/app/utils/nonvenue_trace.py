@@ -6,7 +6,8 @@ venue traces (`pm_stage_trace`, `kalshi_exact_trace`) cannot see those writes,
 and the #4971 publication journal is dark, records no commit or publish time,
 and coalesces no-ops. This receipt follows each traced write (an OBSERVATION)
 from the seam to its Redis publication, in the writing process's log, with no
-database write and no Redis call. Every observation is kept, no-ops included.
+database write, no Redis call and, armed, one read per traced COMMIT (``final``).
+Every observation is kept, no-ops included.
 
 Each observation line carries:
   identity      ``txn`` (this process's id for the OUTER transaction), ``obs``
@@ -38,6 +39,17 @@ Each observation line carries:
   outcome       ``commit_result`` (COMMITTED, ROLLED_BACK, SAVEPOINT_ROLLED_BACK,
                 COMMIT_FAILED_ROLLED_BACK) and, for the frame, ``frame_hash`` at
                 commit and ``frame_unchanged`` at publish
+  final         on the event's kept observation: `build_publication` over the
+                transaction's observations AS OF the last traced RETURNING, and
+                ``final_state``. FINAL_STATE_ESTABLISHED only when one read at
+                the outer ``before_commit``, inside the transaction, finds the
+                row equal to that RETURNING on rev, bag, status, ESPN and
+                opening (``check: ROW_MATCHES_LAST_TRACED_RETURNING``) with no
+                pending ORM write to it; otherwise NOT_ESTABLISHED with
+                ``check`` ROW_DIFFERS (``differs``, ``observed_rev``),
+                ORM_WRITE_PENDING, ROW_MISSING, READ_ERROR or NOT_READ. It is
+                the state COMMIT stores if it succeeds; ``commit_result`` says
+                whether it did
 
 Lines:
   PUBLICATION    a committed observation whose frame reached `publish_frame`;
@@ -104,7 +116,12 @@ transactions); overflow, expiry or a budget emits STOP and discards all state.
 Disarmed (no NONVENUE_TRACE_EVENTS): `nonvenue_trace()` returns None after one
 environment read per process, and every hook in `nonvenue_live_push` is a
 ``None`` check: the same SQL, the same Redis calls, the same frames, the same
-log lines. Every method catches its own exceptions: evidence must never cost a
+log lines. Armed, the only added SQL is the final read: one SAVEPOINT-wrapped
+SELECT per outer COMMIT that carries a traced observation (so at most one per
+SELECTED line, inside the line budget), none after STOP or for untraced
+events; ``final_reads`` in STOP counts them. A cancellation that lands inside
+that read prevents a COMMIT that would otherwise have been sent: the armed
+trace's one effect on the write path, counted as ``final_reads_interrupted``. Every method catches its own exceptions: evidence must never cost a
 price, a commit or a publication. No payloads beyond the probability bag,
 SQL parameters or credentials are recorded. Activation is owner-controlled
 (Root with the Integrator); this code performs none.
@@ -135,6 +152,10 @@ MAX_BYTES = 262_144  # emitted JSON per process run, including STOP
 # betting SELECTED), so this reserve normally keeps the total under MAX_BYTES.
 BYTE_RESERVE = 8_192
 UPSTREAM = "NOT_SUPPLIED_AT_SEAM"
+ESTABLISHED = "FINAL_STATE_ESTABLISHED"
+NOT_ESTABLISHED = "FINAL_STATE_NOT_ESTABLISHED"
+# What `build_publication` reads from the row, compared at the final read.
+FINAL_FIELDS = ("rev", "sources", "status", "espn_win_prob_home", "opening_home_probability")
 
 _UNSET = object()
 _TRACE = _UNSET
@@ -360,7 +381,8 @@ class NonvenueTrace(BoundedLogTrace):
     def __init__(self, events, expiry, limit, run, wall, mono, emit):
         super().__init__(events, expiry, limit, run, wall, mono, emit)
         self.obs_seq = self.txn_seq = 0
-        self.n_published = self.n_unsent = self.hook_errors = 0
+        self.n_published = self.n_unsent = self.hook_errors = self.final_reads = 0
+        self.final_reads_interrupted = 0
         self.txns = {}  # id(outer transaction) -> (transaction, txn id)
         self.selected = {}  # obs -> identity: selected, its UPDATE not yet returned
         self.pending = {}  # id(frame) -> (frame, record): awaiting COMMIT/ROLLBACK
@@ -371,7 +393,9 @@ class NonvenueTrace(BoundedLogTrace):
                     unsent=self.n_unsent, awaiting_write=len(self.selected),
                     awaiting_commit=len(self.pending),
                     awaiting_publication=len(self.ready),
-                    send_errors=self.send_errors, hook_errors=self.hook_errors)
+                    send_errors=self.send_errors, hook_errors=self.hook_errors,
+                    final_reads=self.final_reads,
+                    final_reads_interrupted=self.final_reads_interrupted)
 
     def _discard(self):
         self.selected.clear()
@@ -518,13 +542,19 @@ class NonvenueTrace(BoundedLogTrace):
         return [(frame, self.pending[id(frame)][1]) for _, frame, *_ in pending
                 if id(frame) in self.pending and self.pending[id(frame)][0] is frame]
 
-    def commit_started(self, pending, sent):
+    def commit_started(self, pending, sent, read=None):
         """The outer ``before_commit``: COMMIT is about to be sent.
 
         Each traced event's kept observation gains ``final``: the pure
-        `build_publication` over this transaction's observations of it,
-        AS OF the last traced RETURNING (no new read, so a later untraced
-        write in the same transaction is not seen: FINAL_STATE_NOT_ESTABLISHED).
+        `build_publication` over this transaction's observations of it, AS OF
+        the last traced RETURNING. ``read`` (`_read_committing_rows`) is then
+        called ONCE for all of them: the rows as COMMIT will store them. An
+        event whose row still equals its last traced RETURNING on every
+        blend input, with no pending ORM write to flush, is
+        FINAL_STATE_ESTABLISHED; anything else (a later untraced write in this
+        transaction, a vanished row, a failed read) stays NOT_ESTABLISHED and
+        says why (``check``). No ``read``, no traced event or an inactive
+        trace: no read at all.
         """
         try:
             if not self.pending:
@@ -537,13 +567,38 @@ class NonvenueTrace(BoundedLogTrace):
             for _frame, record in traced:
                 record.update(clock)
             events = {frame["event_id"] for frame, _record in traced}
+            built = {}
             for event in events:
                 entries = [e for e in pending if e[1].get("event_id") == event]
                 kept = self._find(entries[-1][1])
                 if kept is not None:
                     kept["final"] = _final(event, entries, kept, sent)
+                    if "as_of" in kept["final"]:
+                        built[event] = (kept["final"], _expected(entries, kept))
+            if read is not None and built:
+                self._establish(built, read)
         except Exception:
             self.hook_errors += 1
+
+    def _establish(self, built, read):
+        """One read for every traced event of this COMMIT. An Exception costs
+        only the receipt; a cancellation inside the read is counted and
+        re-raised, and the COMMIT it precedes is never sent."""
+        started = self.mono()
+        try:
+            self.final_reads += 1
+            rows = read(sorted(built))
+            error = None
+        except Exception as exc:
+            self.hook_errors += 1  # the receipt says so; the COMMIT goes on
+            rows, error = {}, _text(type(exc).__name__)
+        except BaseException:
+            self.final_reads_interrupted += 1  # its observation stays awaiting_commit
+            raise
+        read_ms = round((self.mono() - started) * 1000, 3)
+        for event, (final, expected) in built.items():
+            final.update(_check(rows.get(event), expected, error), read_ms=read_ms,
+                         check_clock="BEFORE_COMMIT_READ_IN_TXN")
 
     def committed(self, pending, latest, sent):
         """The outer ``after_commit``. ``latest`` is the kept frame per event and
@@ -685,10 +740,10 @@ def _final(event, entries, kept, sent):
             observations=observations, queued_frame=frame if sent(frame) else None,
         )
     except Exception as exc:
-        return dict(final_state="FINAL_STATE_NOT_ESTABLISHED",
-                    error=_text(type(exc).__name__))
+        return dict(final_state=NOT_ESTABLISHED, error=_text(type(exc).__name__))
     return dict(
-        final_state="FINAL_STATE_NOT_ESTABLISHED",
+        final_state=NOT_ESTABLISHED,
+        check="NOT_READ",
         as_of="LAST_TRACED_RETURNING",
         observations_in_txn=len(observations),
         blend_probability=_number(built.get("blend_probability")),
@@ -700,6 +755,36 @@ def _final(event, entries, kept, sent):
         removed_sources=_clean(built.get("removed_sources")),
         queued_frame_matches=built.get("queued_frame_matches"),
         payload_sha256=_text(built.get("payload_sha256")),
+    )
+
+
+def _expected(entries, kept):
+    """The blend inputs `_final` was built from: the last traced RETURNING."""
+    last = entries[-1][4]
+    status, espn, opening = kept.get("_inputs", (None, None, None))
+    return dict(rev=last.get("rev"), sources=last.get("returned_sources"), status=status,
+                espn_win_prob_home=espn, opening_home_probability=opening)
+
+
+def _check(row, expected, error):
+    """ESTABLISHED only when the committing row equals the last traced RETURNING
+    on every input `build_publication` reads (``rev`` alone is not enough: the
+    trigger bumps it for the bag only, never for status, ESPN or opening) and
+    no pending ORM write to that row is still to be flushed."""
+    if error is not None:
+        return dict(check="READ_ERROR", error=error)
+    if row is None:
+        return dict(check="ROW_MISSING")
+    differs = [key for key in FINAL_FIELDS if row.get(key) != expected.get(key)]
+    pending = bool(row.get("orm_pending"))
+    check = ("ROW_DIFFERS" if differs else "ORM_WRITE_PENDING" if pending
+             else "ROW_MATCHES_LAST_TRACED_RETURNING")
+    return dict(
+        final_state=ESTABLISHED if check == "ROW_MATCHES_LAST_TRACED_RETURNING"
+        else NOT_ESTABLISHED,
+        check=check, differs=differs, orm_write_pending=pending,
+        observed_rev=_number(row.get("rev")), observed_bag_hash=_hash(row.get("sources")),
+        observed_status=_text(row.get("status")),
     )
 
 

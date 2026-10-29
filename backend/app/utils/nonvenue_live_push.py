@@ -10,7 +10,8 @@ records each event's final committed bag inside the same transaction
 
 #10090: with ``NONVENUE_TRACE_EVENTS`` armed, a traced event's writes are
 receipted in this process's log from RETURNING through COMMIT to the Redis
-reply (`app.utils.nonvenue_trace`). Disarmed, each hook is a ``None`` check.
+reply (`app.utils.nonvenue_trace`), and a COMMIT carrying one re-reads that
+row once (`_read_committing_rows`). Disarmed, each hook is a ``None`` check.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from sqlalchemy import (
     func,
     inspect,
     literal,
+    select,
     text,
     update,
 )
@@ -57,7 +59,8 @@ def _before_commit(session):
         return
     trace = nonvenue_trace()
     if trace is not None:
-        trace.commit_started(session.info.get(_PENDING, ()), _frame_is_sent)
+        trace.commit_started(session.info.get(_PENDING, ()), _frame_is_sent,
+                             read=lambda ids: _read_committing_rows(session, ids))
     from app.utils.probability_publication import (
         record_committing_publications,
         recording_enabled,
@@ -118,6 +121,52 @@ def _after_rollback(session, transaction):
     trace = nonvenue_trace()
     if trace is not None:
         trace.rolled_back(transaction, rolled_back)
+
+
+def _committing_rows_query(event_ids):
+    return select(
+        Event.id,
+        Event.win_probability_sources_rev,
+        Event.win_probability_sources,
+        Event.status,
+        Event.espn_win_prob_home,
+        Event.opening_home_probability,
+    ).where(Event.id.in_(event_ids))
+
+
+def _read_committing_rows(session, event_ids):
+    """#10090, armed only: the traced events' rows as this COMMIT will store them.
+
+    Called by `nonvenue_trace` from the outer ``before_commit``, once per
+    COMMIT that carries a traced event, never when disarmed. Our UPDATE holds
+    each row's lock until COMMIT, so no other transaction can change it; what
+    this transaction still can change after this read is its own pending ORM
+    state, which SQLAlchemy flushes AFTER ``before_commit``: an Event with that
+    id in ``new``/``dirty``/``deleted`` is reported as ``orm_pending``. The
+    read runs in its own SAVEPOINT, so a failed SELECT costs only the receipt.
+    Returns ``{event_id: {rev, sources, status, espn_win_prob_home,
+    opening_home_probability, orm_pending}}``; a vanished row is absent.
+    """
+    ids = sorted(event_ids)
+
+    def row_id(obj):
+        key = inspect(obj).key
+        return key[1][0] if key else obj.__dict__.get("id")
+
+    flushing = {
+        row_id(obj)
+        for obj in (*session.new, *session.dirty, *session.deleted)
+        if isinstance(obj, Event)
+    }
+    connection = session.connection()
+    with connection.begin_nested():
+        rows = connection.execute(_committing_rows_query(ids)).all()
+    return {
+        event_id: dict(rev=rev, sources=sources, status=status,
+                       espn_win_prob_home=espn, opening_home_probability=opening,
+                       orm_pending=event_id in flushing)
+        for event_id, rev, sources, status, espn, opening in rows
+    }
 
 
 _PRIOR_WRITE_PROBE_SQL = (
