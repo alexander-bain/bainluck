@@ -6696,7 +6696,8 @@ def flush_search_gin_pending_lists(self):
 
     Budget: the longest uninterrupted operation is ONE index flush, and that is
     what carries the bound (`PER_INDEX_TIMEOUT_MS = 15s`), not the loop
-    boundary. Seven indexes at the 2-minute beat, each inside its own
+    boundary. Eight indexes at the 2-minute beat (the seven search trigram
+    lists plus `ix_events_event_tags`, #10090), each inside its own
     savepoint — the full reasoning and the sawtooth measurement are in
     `app/tasks/gin_pending_lists.py`.
     """
