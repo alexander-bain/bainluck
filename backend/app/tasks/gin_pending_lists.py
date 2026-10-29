@@ -69,7 +69,7 @@ nothing to warm and nothing to invalidate.
 BUDGET, AND WHY IT IS BOUNDED WHERE IT IS. The longest uninterrupted operation
 is one `gin_clean_pending_list` call, so THAT is what carries the timeout
 (`PER_INDEX_TIMEOUT_MS`), not the loop boundary — the shape gotcha #124's
-sibling entry records for budget guards. A pass over seven indexes at a 2-minute
+sibling entry records for budget guards. A pass over eight indexes at a 2-minute
 beat merges roughly one minute of accumulation each time, which is work an
 inserting backend would otherwise do anyway; this moves it off the read path and
 off whichever poll happened to cross the line, it does not create it.
@@ -77,7 +77,7 @@ off whichever poll happened to cross the line, it does not create it.
 ONE BAD INDEX MUST NOT WIPE THE PASS (gotcha #42): every index is attempted
 inside its own try/except and its own savepoint, and damage lands in ``errors``.
 The summary speaks `task_verdict`'s vocabulary, and the three terminals are
-distinct on purpose — `complete` (all seven visited), `partial` (some visited),
+distinct on purpose — `complete` (every index visited), `partial` (some visited),
 `failed` (none). **The unit is indexes VISITED, never pages reclaimed**: a pass
 that finds every list already empty has done exactly its job, and the steady
 state this task is trying to reach is `pages_cleaned = 0`. What must never read
@@ -117,6 +117,27 @@ SEARCH_TRIGRAM_INDEXES: tuple[str, ...] = (
     "ix_teams_name_trgm",
 )
 
+#: #10090 Holder A — GIN indexes flushed for their WRITERS, not for search.
+#:
+#: An `events` writer whose insert pushes a GIN pending list past
+#: `gin_pending_list_limit` merges the whole list inside its own statement, with
+#: the row it is updating still locked. Mapped on production 2026-10-29 04:39Z:
+#: a single-row `UPDATE events` was active ≥ 9.9 s, the price stamps for the same
+#: row queued behind it on `transactionid`, and autovacuum's ANALYZE queued
+#: behind it on the GIN metapage lock — the shape of an in-statement merge
+#: (reproduced locally on PG14, magnitude not). The four `events` trigram lists
+#: are flushed above; `ix_events_event_tags` (`jsonb_path_ops`, created with the
+#: GIN default `fastupdate = on`) was in no list, so only a writer or a rare
+#: autovacuum ever emptied it. Which index that statement merged is not known;
+#: this closes the one that nothing was keeping down.
+#:
+#: Listed FIRST in the pass, so a slow trigram flush cannot starve it under the
+#: task's soft limit. Same frozen-literal rule as the search pool.
+WRITE_PATH_GIN_INDEXES: tuple[str, ...] = ("ix_events_event_tags",)
+
+#: Everything one pass visits, in order — and the only names `_flush_one` takes.
+FLUSHED_GIN_INDEXES: tuple[str, ...] = WRITE_PATH_GIN_INDEXES + SEARCH_TRIGRAM_INDEXES
+
 #: The bound on the longest uninterrupted operation — one flush of one index.
 #: Well under the task's own `soft_time_limit`, which is itself well under the
 #: 300 s global hard `task_time_limit` (a SIGKILL, which would be recorded as
@@ -145,9 +166,10 @@ async def _flush_one(session, index_name: str) -> int:
     The index name is validated against the frozen literal by the caller and
     then interpolated, because ``regclass`` will not take a bind parameter in
     this position on every driver path. The value can therefore only ever be
-    one of seven constants defined in this module.
+    one of the constants in `FLUSHED_GIN_INDEXES`. `ix_events_event_tags` was
+    created by the same migration role as the trigram indexes (`add_event_tags`).
     """
-    if index_name not in SEARCH_TRIGRAM_INDEXES:
+    if index_name not in FLUSHED_GIN_INDEXES:
         raise ValueError(f"index not in the declared pool: {index_name!r}")
     await session.execute(
         text(f"SET LOCAL statement_timeout = {int(PER_INDEX_TIMEOUT_MS)}")
@@ -183,10 +205,10 @@ async def _flush_gin_pending_lists() -> dict:
     pages_total = 0
 
     async with get_task_session() as session:
-        for index_name in SEARCH_TRIGRAM_INDEXES:
+        for index_name in FLUSHED_GIN_INDEXES:
             try:
                 # A savepoint per index: a flush that fails (lock timeout, a
-                # dropped index) must not poison the transaction the next six
+                # dropped index) must not poison the transaction the rest
                 # still have to run in.
                 async with session.begin_nested():
                     pages = await _flush_one(session, index_name)
@@ -199,7 +221,7 @@ async def _flush_gin_pending_lists() -> dict:
                 errors.append({"index": index_name, "error": str(exc)[:300]})
 
     completed = len(per_index)
-    total = len(SEARCH_TRIGRAM_INDEXES)
+    total = len(FLUSHED_GIN_INDEXES)
     if completed == 0:
         terminal = "failed"
     elif completed < total:

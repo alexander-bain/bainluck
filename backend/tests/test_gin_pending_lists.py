@@ -3,7 +3,7 @@
 The class of defect this file exists to catch is the one gotcha #53 names: a
 maintenance pass that *returns* while flushing nothing, and reads as healthy
 because it did not raise. Every assertion below is about what the SUMMARY
-proves, what a single bad index does to its six siblings, and where the budget
+proves, what a single bad index does to its siblings, and where the budget
 is bounded — not about the number of pages Postgres happened to reclaim.
 """
 
@@ -119,6 +119,51 @@ class TestThePool:
         }
 
 
+class TestTheWritePathPool:
+    """#10090 Holder A: `ix_events_event_tags` is flushed for its writers. An
+    `events` writer that crosses the pending-list limit merges the list inside
+    its own single-row UPDATE, with the row locked, and nothing else was keeping
+    this list down."""
+
+    def test_the_write_path_pool_is_event_tags_exactly(self):
+        assert gpl.WRITE_PATH_GIN_INDEXES == ("ix_events_event_tags",)
+
+    def test_the_pass_visits_the_write_path_first_then_every_search_index(self):
+        """First, so a slow trigram flush cannot starve it under the soft limit;
+        and the search pool is carried whole, so this ship cannot quietly drop
+        one of the seven the cold-search measurement rests on."""
+        assert gpl.FLUSHED_GIN_INDEXES == (
+            gpl.WRITE_PATH_GIN_INDEXES + gpl.SEARCH_TRIGRAM_INDEXES
+        )
+        assert isinstance(gpl.FLUSHED_GIN_INDEXES, tuple)
+        assert len(gpl.FLUSHED_GIN_INDEXES) == len(set(gpl.FLUSHED_GIN_INDEXES))
+
+    def test_event_tags_is_the_first_flush_a_pass_issues(self, monkeypatch):
+        monkeypatch.delenv("SEARCH_GIN_FLUSH_ENABLED", raising=False)
+        session = FakeSession(pages=2)
+        _patch_session(monkeypatch, session)
+        summary = _run(gpl._flush_gin_pending_lists())
+        flushes = [s for s in session.statements if "gin_clean_pending_list" in s]
+        assert flushes[0] == (
+            "SELECT gin_clean_pending_list('ix_events_event_tags'::regclass) AS pages"
+        )
+        assert len(flushes) == len(gpl.FLUSHED_GIN_INDEXES)
+        assert summary["per_index"]["ix_events_event_tags"] == 2
+        assert summary["terminal"] == "complete"
+
+    def test_a_failed_event_tags_flush_leaves_every_search_flush_standing(
+        self, monkeypatch
+    ):
+        monkeypatch.delenv("SEARCH_GIN_FLUSH_ENABLED", raising=False)
+        session = FakeSession(pages=5, fail_on=("ix_events_event_tags",))
+        _patch_session(monkeypatch, session)
+        summary = _run(gpl._flush_gin_pending_lists())
+        assert [e["index"] for e in summary["errors"]] == ["ix_events_event_tags"]
+        assert summary["per_index"] == {n: 5 for n in gpl.SEARCH_TRIGRAM_INDEXES}
+        assert summary["terminal"] == "partial"
+        assert not classify_summary(summary).is_green
+
+
 # --------------------------------------------------------------------------
 # The statement the pool builds
 # --------------------------------------------------------------------------
@@ -158,12 +203,12 @@ class TestThePass:
         _patch_session(monkeypatch, session)
         summary = _run(gpl._flush_gin_pending_lists())
         assert summary["terminal"] == "complete"
-        assert summary["completed"] == len(gpl.SEARCH_TRIGRAM_INDEXES)
-        assert summary["total"] == len(gpl.SEARCH_TRIGRAM_INDEXES)
-        assert summary["pages_cleaned"] == 11 * len(gpl.SEARCH_TRIGRAM_INDEXES)
+        assert summary["completed"] == len(gpl.FLUSHED_GIN_INDEXES)
+        assert summary["total"] == len(gpl.FLUSHED_GIN_INDEXES)
+        assert summary["pages_cleaned"] == 11 * len(gpl.FLUSHED_GIN_INDEXES)
         assert summary["errors"] == []
         assert classify_summary(summary).is_green
-        assert session.savepoints == len(gpl.SEARCH_TRIGRAM_INDEXES)
+        assert session.savepoints == len(gpl.FLUSHED_GIN_INDEXES)
 
     def test_one_bad_index_must_not_wipe_the_pass(self, monkeypatch):
         """Gotcha #42, in its maintenance-task form. The healthy siblings are
@@ -174,9 +219,9 @@ class TestThePass:
         _patch_session(monkeypatch, session)
         summary = _run(gpl._flush_gin_pending_lists())
         assert summary["terminal"] == "partial"
-        assert summary["completed"] == len(gpl.SEARCH_TRIGRAM_INDEXES) - 1
+        assert summary["completed"] == len(gpl.FLUSHED_GIN_INDEXES) - 1
         assert [e["index"] for e in summary["errors"]] == ["ix_futures_name_trgm"]
-        for name in gpl.SEARCH_TRIGRAM_INDEXES:
+        for name in gpl.FLUSHED_GIN_INDEXES:
             if name == "ix_futures_name_trgm":
                 assert name not in summary["per_index"]
             else:
@@ -188,12 +233,12 @@ class TestThePass:
         """ "It returned" is not "it worked" (gotcha #53). Every index failing is
         a FAILED pass, not a complete one with an empty ledger."""
         monkeypatch.delenv("SEARCH_GIN_FLUSH_ENABLED", raising=False)
-        session = FakeSession(fail_on=gpl.SEARCH_TRIGRAM_INDEXES)
+        session = FakeSession(fail_on=gpl.FLUSHED_GIN_INDEXES)
         _patch_session(monkeypatch, session)
         summary = _run(gpl._flush_gin_pending_lists())
         assert summary["terminal"] == "failed"
         assert summary["completed"] == 0
-        assert len(summary["errors"]) == len(gpl.SEARCH_TRIGRAM_INDEXES)
+        assert len(summary["errors"]) == len(gpl.FLUSHED_GIN_INDEXES)
         assert not classify_summary(summary).is_green
 
     def test_zero_pages_reclaimed_is_still_a_complete_pass(self, monkeypatch):
@@ -218,7 +263,7 @@ class TestThePass:
         _patch_session(monkeypatch, session)
         summary = _run(gpl._flush_gin_pending_lists())
         assert summary["per_index"]["ix_futures_outcomes_name_trgm"] == 480
-        assert summary["pages_cleaned"] == 480 + (len(gpl.SEARCH_TRIGRAM_INDEXES) - 1)
+        assert summary["pages_cleaned"] == 480 + (len(gpl.FLUSHED_GIN_INDEXES) - 1)
 
 
 # --------------------------------------------------------------------------
