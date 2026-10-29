@@ -299,27 +299,32 @@ final class PublicationAxisInk4974Tests: XCTestCase {
         XCTAssertFalse(axisBody.contains("legacyDataDomain"), "the axis reads the legacy window")
     }
 
-    /// `filterPoints` is private and reads view state, so its steps are pinned
-    /// by source: the finish clip, the axis, the legacy window, then Since
-    /// Start, in that order — the composition `drawn` replays. Inline and
-    /// fullscreen both draw from it.
+    /// `filterPoints` reads view state, so its steps are pinned by source: the
+    /// finish clip, the axis, the legacy window, then Since Start, in that
+    /// order — the composition `drawn` replays. Inline and fullscreen both
+    /// draw from it. #10090 — the steps run in `drawnPoints` on the view's
+    /// `drawnWindow` (memoized by the view model), so both are pinned.
     func testTheChartsFilterRunsTheseStepsInOrder() throws {
         let chart = try code("Bain Luck/Components/OddsChartView.swift")
-        let start = try XCTUnwrap(chart.range(of: "privatefuncfilterPoints(_points:[ChartDataPoint])->[ChartDataPoint]{"))
-        let end = try XCTUnwrap(chart.range(of: "returnSelf.sinceStartWindow(filtered,range:drawnRange,kickoff:sinceStartDate)}",
+        XCTAssertTrue(chart.contains(
+            "DrawnWindow(finishedEnd:EventState.isFinished(status)?gameEndDate:nil,forcedDomain:forcedDomain,legacyDataDomain:legacyDataDomain,started:isGameStarted,range:drawnRange,sinceStart:isGameStarted?sinceStartDate:nil)"),
+                      "the drawn window no longer carries the view's clip, windows and Since Start")
+        XCTAssertTrue(chart.contains("privatefuncfilterPoints()->[ChartDataPoint]{vm.drawnPoints(liveFrames:liveFrames,window:drawnWindow)}"))
+        let start = try XCTUnwrap(chart.range(of: "staticfuncdrawnPoints(_points:[ChartDataPoint],window:DrawnWindow)->[ChartDataPoint]{"))
+        let end = try XCTUnwrap(chart.range(of: "returnsinceStartWindow(filtered,range:window.range,kickoff:window.sinceStart)}",
                                             range: start.upperBound..<chart.endIndex))
         let body = chart[start.upperBound..<end.upperBound]
         var cursor = body.startIndex
         for step in [
-            "ifEventState.isFinished(status),letendDate=gameEndDate{filtered=filtered.filter{$0.date<=endDate}}",
-            "ifletforcedDomain{filtered=filtered.filter{SharedChartWindow.contains($0.date,in:forcedDomain)}}",
-            "ifletlegacyDataDomain{filtered=filtered.filter{SharedChartWindow.contains($0.date,in:legacyDataDomain)}}",
-            "guardisGameStartedelse{returnfiltered}",
+            "ifletendDate=window.finishedEnd{filtered=filtered.filter{$0.date<=endDate}}",
+            "ifletforcedDomain=window.forcedDomain{filtered=filtered.filter{SharedChartWindow.contains($0.date,in:forcedDomain)}}",
+            "ifletlegacyDataDomain=window.legacyDataDomain{filtered=filtered.filter{SharedChartWindow.contains($0.date,in:legacyDataDomain)}}",
+            "guardwindow.startedelse{returnfiltered}",
         ] {
             let found = try XCTUnwrap(body.range(of: step, range: cursor..<body.endIndex), "missing or out of order: \(step)")
             cursor = found.upperBound
         }
-        XCTAssertEqual(chart.components(separatedBy: "letdataPoints=filterPoints(enrichedPoints)").count - 1, 2,
+        XCTAssertEqual(chart.components(separatedBy: "letdataPoints=filterPoints()").count - 1, 2,
                        "the inline and fullscreen charts draw from the one filter")
         XCTAssertTrue(chart.contains("forcedDomain:ClosedRange<Date>?=nil,legacyDataDomain:ClosedRange<Date>?=nil,"),
                       "the input defaults to nil, so every existing caller draws as before")

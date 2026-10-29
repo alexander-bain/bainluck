@@ -1134,7 +1134,10 @@ final class EventPublicationCaller4974Tests: XCTestCase {
 
         let chart = try code("Bain Luck/Components/OddsChartView.swift")
         XCTAssertTrue(chart.contains("ifletforced=forcedDomain{returnforced}"))
-        XCTAssertTrue(chart.contains("ifEventState.isFinished(status),letendDate=gameEndDate{filtered=filtered.filter{$0.date<=endDate}}"),
+        // #10090 — the clip runs in `drawnPoints` on the view's `drawnWindow`.
+        XCTAssertTrue(chart.contains("finishedEnd:EventState.isFinished(status)?gameEndDate:nil"),
+                      "the legacy finish clip")
+        XCTAssertTrue(chart.contains("ifletendDate=window.finishedEnd{filtered=filtered.filter{$0.date<=endDate}}"),
                       "the legacy finish clip")
         let score = try code("Bain Luck/Components/ScoreDifferentialChartView.swift")
         XCTAssertTrue(score.contains("ifletforced=forcedDomain{returnforced}"))

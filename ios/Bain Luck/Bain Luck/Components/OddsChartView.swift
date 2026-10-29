@@ -313,7 +313,104 @@ final class OddsChartViewModel: ObservableObject {
         let points = OddsChartView.enrichWithGameState(chartPoints(liveFrames: liveFrames),
                                                        index: gameStateIndex(history))
         enrichmentBuildCount += 1
+        enrichedRevision &+= 1
         enrichedMemo = (historyGeneration, liveFrames, points)
+        return points
+    }
+    /// #10090 — names the array `enrichedChartPoints` last built, so a product
+    /// derived from it can tell it is still current without comparing points.
+    private(set) var enrichedRevision = 0
+
+    // MARK: Body-derived products (#10090)
+    //
+    // Every body pass — a pushed price, but equally a score, a status, a tick
+    // of the page's clock — re-derived these from the whole payload on the
+    // main thread before the chart could commit: ~68 of the ~76 ms one
+    // unrelated update cost a hosted chart on a week-shaped 10,021-point live
+    // payload (Debug simulator), Since Start's opening alone ~24 ms a call,
+    // twice a pass. Each memo holds ONE entry, keyed on exactly what its pure
+    // builder reads, so it is a cache of the view on screen, never a history.
+    // Plain stored state, like the memos above: written during a body pass,
+    // so it must not publish.
+
+    /// How many times each product below was built, for the tests that pin
+    /// what an update rebuilds (as `enrichmentBuildCount` does above).
+    private(set) var playStartBuildCount = 0
+    private(set) var periodSightingsBuildCount = 0
+    private(set) var drawnBuildCount = 0
+    private(set) var periodMarkersBuildCount = 0
+
+    private var playStartMemo: (generation: Int, scheduled: Date, sportKey: String?, cut: Date?)?
+
+    /// `ObservedPlayStart.cut` for this payload: a scan of every ESPN and
+    /// win-probability row, so it is run once per payload, scheduled start and
+    /// sport, not on every body.
+    func observedPlayStart(scheduled: Date, sportKey: String?) -> Date? {
+        guard let history else { return nil }
+        if let memo = playStartMemo, memo.generation == historyGeneration,
+           memo.scheduled == scheduled, memo.sportKey == sportKey {
+            return memo.cut
+        }
+        let cut = ObservedPlayStart.cut(scheduled: scheduled, history: history, sportKey: sportKey)
+        playStartBuildCount += 1
+        playStartMemo = (historyGeneration, scheduled, sportKey, cut)
+        return cut
+    }
+
+    private var periodSightingsMemo: (generation: Int, sportKey: String?,
+                                      sightings: OddsChartView.PeriodSightings)?
+
+    /// The payload's period boundaries before any window spaces them out
+    /// (`OddsChartView.periodSightings`): every ESPN row and win-probability
+    /// state parsed, so once per payload and sport.
+    func periodSightings(sportKey: String?) -> OddsChartView.PeriodSightings {
+        guard let history else { return OddsChartView.PeriodSightings(sorted: [], provenance: [:]) }
+        if let memo = periodSightingsMemo, memo.generation == historyGeneration, memo.sportKey == sportKey {
+            return memo.sightings
+        }
+        let sightings = OddsChartView.periodSightings(history, sportKey: sportKey)
+        periodSightingsBuildCount += 1
+        periodSightingsMemo = (historyGeneration, sportKey, sightings)
+        periodMarkersMemo = nil
+        return sightings
+    }
+
+    private var periodMarkersMemo: (generation: Int, sportKey: String?, minSpacing: TimeInterval,
+                                    markers: [PeriodMarker])?
+
+    /// The spaced period markers for one spacing. Kept so an update that does
+    /// not move the drawn window hands the plot the same markers, ids and all.
+    fileprivate func periodMarkers(sportKey: String?, minSpacing: TimeInterval) -> [PeriodMarker] {
+        let sightings = periodSightings(sportKey: sportKey)
+        if let memo = periodMarkersMemo, memo.generation == historyGeneration,
+           memo.sportKey == sportKey, memo.minSpacing == minSpacing {
+            return memo.markers
+        }
+        let markers = OddsChartView.periodMarkers(sightings, minSpacing: minSpacing)
+        periodMarkersBuildCount += 1
+        periodMarkersMemo = (historyGeneration, sportKey, minSpacing, markers)
+        return markers
+    }
+
+    private var drawnMemo: (enriched: Int, window: OddsChartView.DrawnWindow, points: [ChartDataPoint])?
+
+    /// The points the chart draws: `enrichedChartPoints` cut to `window`
+    /// (`OddsChartView.drawnPoints`). A new frame rebuilds them; an update
+    /// that changes neither the frames nor the window reuses them.
+    func drawnPoints(liveFrames: [LiveBlendPoint], window: OddsChartView.DrawnWindow) -> [ChartDataPoint] {
+        // No payload builds no enriched points and so names no new revision:
+        // the last payload's cut must not answer for it.
+        guard history != nil else {
+            drawnMemo = nil
+            return []
+        }
+        let enriched = enrichedChartPoints(liveFrames: liveFrames)
+        if let memo = drawnMemo, memo.enriched == enrichedRevision, memo.window == window {
+            return memo.points
+        }
+        let points = OddsChartView.drawnPoints(enriched, window: window)
+        drawnBuildCount += 1
+        drawnMemo = (enrichedRevision, window, points)
         return points
     }
 
@@ -591,8 +688,8 @@ struct OddsChartView: View {
     /// (the fullscreen chart), so the two views agree on when play began.
     private var sinceStartDate: Date? {
         guard let kickoffDate else { return nil }
-        return ObservedPlayStart.cut(scheduled: kickoffDate, history: vm.history,
-                                     sportKey: sportKey) ?? kickoffDate
+        // #10090 — once per payload (`observedPlayStart`), not on every body.
+        return vm.observedPlayStart(scheduled: kickoffDate, sportKey: sportKey) ?? kickoffDate
     }
 
     /// #9483 — what names an inspected reading's phase: this chart's own Since
@@ -1020,8 +1117,8 @@ struct OddsChartView: View {
                     .frame(height: chartHeight)
             } else if let history = vm.history {
                 let enrichedPoints = vm.enrichedChartPoints(liveFrames: liveFrames)
-                let dataPoints = filterPoints(enrichedPoints)
-                let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
+                let dataPoints = filterPoints()
+                let periodMarkers = extractPeriodMarkers(filteredPoints: dataPoints)
                 let checkpoints = checkpointMount(for: dataPoints)
                 let moments = checkpoints?.moments(from: history.moments)
                     ?? Self.chartMoments(from: history.moments, points: dataPoints)
@@ -1165,8 +1262,8 @@ struct OddsChartView: View {
             Group {
                 if let history = vm.history {
                     let enrichedPoints = vm.enrichedChartPoints(liveFrames: liveFrames)
-                    let dataPoints = filterPoints(enrichedPoints)
-                    let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
+                    let dataPoints = filterPoints()
+                    let periodMarkers = extractPeriodMarkers(filteredPoints: dataPoints)
                     // #4974 — the same mount as the inline chart, so the two
                     // cannot disagree about what was recorded.
                     let checkpoints = checkpointMount(for: dataPoints)
@@ -1495,11 +1592,38 @@ struct OddsChartView: View {
         return nil
     }
 
-    private func filterPoints(_ points: [ChartDataPoint]) -> [ChartDataPoint] {
+    /// Everything that cuts the drawn points out of the enriched ones — the
+    /// whole input of `drawnPoints` besides the points, so the view model's
+    /// memo of them (#10090) is keyed on exactly what the cut reads.
+    struct DrawnWindow: Equatable {
+        /// A finished game's clip (`gameEndDate`); nil while it is not finished.
+        let finishedEnd: Date?
+        let forcedDomain: ClosedRange<Date>?
+        let legacyDataDomain: ClosedRange<Date>?
+        /// The Since Start cut, or nil for none; read only once the game has
+        /// started (`started`).
+        let started: Bool
+        let range: OddsTimeRange
+        let sinceStart: Date?
+    }
+
+    private var drawnWindow: DrawnWindow {
+        DrawnWindow(finishedEnd: EventState.isFinished(status) ? gameEndDate : nil,
+                    forcedDomain: forcedDomain, legacyDataDomain: legacyDataDomain,
+                    started: isGameStarted, range: drawnRange,
+                    sinceStart: isGameStarted ? sinceStartDate : nil)
+    }
+
+    /// The points this chart draws (`drawnWindow`), through the view model's memo.
+    private func filterPoints() -> [ChartDataPoint] {
+        vm.drawnPoints(liveFrames: liveFrames, window: drawnWindow)
+    }
+
+    static func drawnPoints(_ points: [ChartDataPoint], window: DrawnWindow) -> [ChartDataPoint] {
         var filtered = points
 
         // Always clip post-game data for completed games (prevents Kalshi/Polymarket drift toward 50%)
-        if EventState.isFinished(status), let endDate = gameEndDate {
+        if let endDate = window.finishedEnd {
             filtered = filtered.filter { $0.date <= endDate }
         }
 
@@ -1507,7 +1631,7 @@ struct OddsChartView: View {
         // chart's x-scale does not clip its marks, so All's pre-game points,
         // drawn against a window that opened at first pitch, ran out through the
         // y-axis to the screen edge on Alex's phone.
-        if let forcedDomain {
+        if let forcedDomain = window.forcedDomain {
             filtered = filtered.filter { SharedChartWindow.contains($0.date, in: forcedDomain) }
         }
 
@@ -1517,12 +1641,12 @@ struct OddsChartView: View {
         // and readout below is chosen from these points. Applied on top of the
         // axis cut, never instead of it, and never to checkpoints
         // (`admitsPublicationCheckpoint`).
-        if let legacyDataDomain {
+        if let legacyDataDomain = window.legacyDataDomain {
             filtered = filtered.filter { SharedChartWindow.contains($0.date, in: legacyDataDomain) }
         }
 
-        guard isGameStarted else { return filtered }
-        return Self.sinceStartWindow(filtered, range: drawnRange, kickoff: sinceStartDate)
+        guard window.started else { return filtered }
+        return sinceStartWindow(filtered, range: window.range, kickoff: window.sinceStart)
     }
 
     /// #7878 D / #8215 — where "Since Start" may cut, or `nil` for nowhere.
@@ -1651,7 +1775,56 @@ struct OddsChartView: View {
     /// `ScoreDifferentialChartView` — the other half of the same event page —
     /// has always worked this way, using the scheduled start as a filter floor
     /// and never as a marker position.
-    private func extractPeriodMarkers(_ history: EventHistoryResponse, filteredPoints: [ChartDataPoint]) -> [PeriodMarker] {
+    private func extractPeriodMarkers(filteredPoints: [ChartDataPoint]) -> [PeriodMarker] {
+        // Dedup markers that are too close together, so the floating period chips
+        // in `.chartOverlay` do not overlap each other.
+        //
+        // UX-P090 — THE OLD 3% WAS ARITHMETICALLY TOO SMALL TO DO ITS OWN JOB, and
+        // that is measurable rather than aesthetic. The threshold is a fraction of
+        // the chart's DURATION, and the x-axis is linear, so it is equally a
+        // fraction of the chart's WIDTH. The plot area is about 345pt on an
+        // iPhone 16 (393pt screen − 32pt card padding − 24pt rotated team gutter),
+        // so 3% bought ~10pt of separation between two chips that are each ~28pt
+        // wide (a 2-character label at size 10, plus 4pt horizontal padding each
+        // side, centred by `.position`). Two chips 10pt apart on centre overlap by
+        // roughly two thirds of their width. The comment claimed it "prevents
+        // Q3/Q4 overlap"; it prevented the two markers from being drawn at
+        // literally the same x, which is a different thing.
+        //
+        // The chip needs its own width in separation, so the floor is
+        // chipWidth / plotWidth ≈ 28/337 ≈ 8.3%. Rounded UP to 9% to cover the
+        // wider labels that actually exist — "OT2", and the two-digit innings that
+        // #1831's 1…N ladder made reachable ("10", "11").
+        //
+        // WHAT THIS DOES NOT DROP, checked before changing it: real period
+        // boundaries are far coarser than 9% of a game. Nine innings across a 3h
+        // chart are ~20 min apart against a 16.2 min threshold; four NBA quarters
+        // across 2.5h are ~35 min apart against 13.5 min. So every genuine period
+        // still draws its chip — this removes collisions, not information. The
+        // absolute floor stays at 3 minutes for very short domains, where the
+        // percentage alone would go to zero.
+        let chartDuration: TimeInterval
+        if let first = filteredPoints.first?.date, let last = filteredPoints.last?.date {
+            chartDuration = last.timeIntervalSince(first)
+        } else {
+            chartDuration = 3600
+        }
+        let minSpacing = max(chartDuration * Self.periodChipMinSpacingFraction, 180)
+        // #10090 — the payload's sightings once per payload, the spaced
+        // markers once per spacing (`OddsChartViewModel.periodMarkers`).
+        return vm.periodMarkers(sportKey: sportKey, minSpacing: minSpacing)
+    }
+
+    /// The payload's period boundaries, first sighting per label, in date
+    /// order, with each one's provenance: everything `extractPeriodMarkers`
+    /// reads from the payload. #10090 — pure, so the chart builds it once per
+    /// payload instead of on every body.
+    struct PeriodSightings {
+        let sorted: [(label: String, date: Date)]
+        let provenance: [String: PeriodProvenance]
+    }
+
+    static func periodSightings(_ history: EventHistoryResponse, sportKey: String?) -> PeriodSightings {
         var firstSeen: [(label: String, date: Date)] = []
         var seenLabels: Set<String> = []
         // #3348 — provenance per label, kept beside `firstSeen` rather than
@@ -1672,7 +1845,7 @@ struct OddsChartView: View {
             // period began after it (#3348 `notBefore`).
             var previous: Date?
             for point in sorted {
-                let label = normalizePeriodLabel(point.period)
+                let label = normalizePeriodLabel(point.period, sportKey: sportKey)
                 guard !label.isEmpty else { continue }
                 if !seenLabels.contains(label) {
                     seenLabels.insert(label)
@@ -1726,8 +1899,8 @@ struct OddsChartView: View {
         //
         // `isObserved`, not `!isEstimated`: a marker with no `source` is
         // unknown, and unknown is not admitted as observed.
-        let servedMarkers = Self.servedPeriodMarkers(from: history.periodMarkers, sportKey: sportKey)
-        Self.admitServedMarkers(servedMarkers, firstSeen: &firstSeen, seenLabels: &seenLabels, provenance: &provenance)
+        let servedMarkers = servedPeriodMarkers(from: history.periodMarkers, sportKey: sportKey)
+        admitServedMarkers(servedMarkers, firstSeen: &firstSeen, seenLabels: &seenLabels, provenance: &provenance)
 
         // #6718 — NOTHING IS INSERTED HERE, AND THAT IS THE FIX.
         //
@@ -1764,42 +1937,13 @@ struct OddsChartView: View {
             }
         }
 
-        let sorted = firstSeen.sorted { $0.date < $1.date }
+        return PeriodSightings(sorted: firstSeen.sorted { $0.date < $1.date }, provenance: provenance)
+    }
 
-        // Dedup markers that are too close together, so the floating period chips
-        // in `.chartOverlay` do not overlap each other.
-        //
-        // UX-P090 — THE OLD 3% WAS ARITHMETICALLY TOO SMALL TO DO ITS OWN JOB, and
-        // that is measurable rather than aesthetic. The threshold is a fraction of
-        // the chart's DURATION, and the x-axis is linear, so it is equally a
-        // fraction of the chart's WIDTH. The plot area is about 345pt on an
-        // iPhone 16 (393pt screen − 32pt card padding − 24pt rotated team gutter),
-        // so 3% bought ~10pt of separation between two chips that are each ~28pt
-        // wide (a 2-character label at size 10, plus 4pt horizontal padding each
-        // side, centred by `.position`). Two chips 10pt apart on centre overlap by
-        // roughly two thirds of their width. The comment claimed it "prevents
-        // Q3/Q4 overlap"; it prevented the two markers from being drawn at
-        // literally the same x, which is a different thing.
-        //
-        // The chip needs its own width in separation, so the floor is
-        // chipWidth / plotWidth ≈ 28/337 ≈ 8.3%. Rounded UP to 9% to cover the
-        // wider labels that actually exist — "OT2", and the two-digit innings that
-        // #1831's 1…N ladder made reachable ("10", "11").
-        //
-        // WHAT THIS DOES NOT DROP, checked before changing it: real period
-        // boundaries are far coarser than 9% of a game. Nine innings across a 3h
-        // chart are ~20 min apart against a 16.2 min threshold; four NBA quarters
-        // across 2.5h are ~35 min apart against 13.5 min. So every genuine period
-        // still draws its chip — this removes collisions, not information. The
-        // absolute floor stays at 3 minutes for very short domains, where the
-        // percentage alone would go to zero.
-        let chartDuration: TimeInterval
-        if let first = filteredPoints.first?.date, let last = filteredPoints.last?.date {
-            chartDuration = last.timeIntervalSince(first)
-        } else {
-            chartDuration = 3600
-        }
-        let minSpacing = max(chartDuration * Self.periodChipMinSpacingFraction, 180)
+    /// `sightings` spaced at least `minSpacing` apart (see `extractPeriodMarkers`).
+    fileprivate static func periodMarkers(_ sightings: PeriodSightings, minSpacing: TimeInterval) -> [PeriodMarker] {
+        let sorted = sightings.sorted
+        let provenance = sightings.provenance
 
         var deduped: [(label: String, date: Date)] = []
         for item in sorted {
@@ -4322,7 +4466,7 @@ struct OddsChartView: View {
     /// and nothing else, because that is the one period string carrying no unit
     /// noun of its own. Every verbose period this chart actually receives today
     /// is still read from its noun.
-    private func normalizePeriodLabel(_ raw: String) -> String {
+    private static func normalizePeriodLabel(_ raw: String, sportKey: String?) -> String {
         PeriodLabel.normalize(raw, sport: sportKey)
     }
 }
