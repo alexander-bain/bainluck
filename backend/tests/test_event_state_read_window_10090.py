@@ -19,7 +19,11 @@ state was read inside that window. Graded here:
 * it is taken AFTER duplicate resolution, so it brackets the row actually served;
 * a cached payload keeps the window of the build that made it (a cached poll is
   honestly older), while a new build carries a new one;
-* a failure to read it serves the page exactly as before.
+* a failure to read it serves the page exactly as before;
+* the payload says whether its window was read inside the request that
+  carried it (`state_read_fresh`): a build's own response says ``true``, the
+  cache entry and every poll served from it say ``false``, and no window means
+  no flag (A6 clock bridge, C1).
 """
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -28,8 +32,10 @@ import pytest
 
 from app.routes import events as events_route
 from app.routes.events import (
+    STATE_READ_FRESH_KEY,
     STATE_READ_NOT_AFTER_KEY,
     STATE_READ_NOT_BEFORE_KEY,
+    build_event_detail_uncoalesced,
     event_state_read_window,
     get_event,
 )
@@ -188,7 +194,110 @@ class TestTheDetailRoute:
         with_window = both_routes.detail(_ClockedSession(_now(), _window(T0)))
         assert STATE_READ_NOT_BEFORE_KEY not in without
         assert STATE_READ_NOT_AFTER_KEY not in without
-        stripped = {k: v for k, v in with_window.items() if k not in _keys(_window(T0))}
+        # The fresh flag qualifies the window and leaves with it (C1).
+        claim = {*_keys(_window(T0)), STATE_READ_FRESH_KEY}
+        stripped = {k: v for k, v in with_window.items() if k not in claim}
         assert stripped.keys() == without.keys()
         assert stripped["status"] == without["status"]
         assert stripped["hero_probability"] == without["hero_probability"]
+
+
+class TestTheFreshFlag:
+    """C1 for the A6 clock bridge: a collector pairs its own request bracket
+    with the window, which is sound only when the window was read inside that
+    request. A cached payload carries an earlier build's window, so it must
+    say so — or a 40-second-old read becomes a fresh anchor."""
+
+    def test_the_build_says_fresh_and_its_cache_entry_says_cached(self, both_routes):
+        both_routes.cache.clear()
+        first = _window(T0)
+        detail = both_routes.detail(_ClockedSession(_now(), first))
+        _cached_at, _status, entry = both_routes.cache[CANON_ID]
+        assert detail[STATE_READ_FRESH_KEY] is True
+        assert entry[STATE_READ_FRESH_KEY] is False
+        # The flag is the ONLY difference: same window, same page.
+        assert {k: v for k, v in detail.items() if k != STATE_READ_FRESH_KEY} == {
+            k: v for k, v in entry.items() if k != STATE_READ_FRESH_KEY
+        }
+        assert _served_window(entry) == _keys(first)
+
+    def test_a_poll_served_from_cache_says_cached(self, both_routes):
+        both_routes.cache.clear()
+        first, later = _window(T0), _window(T0 + timedelta(seconds=40))
+        built = both_routes.detail(_ClockedSession(_now(), first))
+        session = _ClockedSession(_now(), later)
+        polled = both_routes.detail(session)
+        assert not any(WINDOW_STATEMENT in s for s in session.statements)
+        assert _served_window(polled) == _keys(first)
+        assert polled[STATE_READ_FRESH_KEY] is False
+        # Serving the build's own copy as fresh did not flip the shared entry,
+        # and the poll did not flip the build's copy after the fact.
+        assert built[STATE_READ_FRESH_KEY] is True
+        assert both_routes.cache[CANON_ID][2][STATE_READ_FRESH_KEY] is False
+
+    def test_a_fresh_read_says_fresh_with_its_own_window(self, both_routes):
+        both_routes.cache.clear()
+        first, later = _window(T0), _window(T0 + timedelta(seconds=40))
+        both_routes.detail(_ClockedSession(_now(), first))
+        try:
+            fresh = asyncio.run(
+                get_event(CANON_ID, db=_ClockedSession(_now(), later), fresh=True)
+            )
+        finally:
+            events_route._DETAIL_FRESH_BUILDS.clear()
+        assert _served_window(fresh) == _keys(later)
+        assert fresh[STATE_READ_FRESH_KEY] is True
+        assert both_routes.cache[CANON_ID][2][STATE_READ_FRESH_KEY] is False
+
+    def test_a_fresh_reader_answered_by_a_newer_entry_says_fresh(self, both_routes):
+        """The barrier may answer a fresh read from an ordinary entry built
+        after the reader asked: that build read the row inside the reader's
+        request, so the reader's copy is fresh. The entry stays cached."""
+        both_routes.cache.clear()
+        both_routes.detail(_ClockedSession(_now(), _window(T0)))
+        built_at = both_routes.cache[CANON_ID][0]
+
+        async def _no_build():
+            raise AssertionError("a newer entry answers; nothing is built")
+
+        answered = asyncio.run(
+            events_route._coalesced_fresh_detail(CANON_ID, built_at - 1.0, _no_build)
+        )
+        assert answered[STATE_READ_FRESH_KEY] is True
+        assert both_routes.cache[CANON_ID][2][STATE_READ_FRESH_KEY] is False
+
+    def test_an_older_entry_never_answers_a_fresh_read_as_fresh(self, both_routes):
+        both_routes.cache.clear()
+        both_routes.detail(_ClockedSession(_now(), _window(T0)))
+        built_at = both_routes.cache[CANON_ID][0]
+        later = _window(T0 + timedelta(seconds=40))
+
+        async def _build():
+            return await get_event(CANON_ID, db=_ClockedSession(_now(), later), fresh=True)
+
+        try:
+            answered = asyncio.run(
+                events_route._coalesced_fresh_detail(CANON_ID, built_at, _build)
+            )
+        finally:
+            events_route._DETAIL_FRESH_BUILDS.clear()
+        # A tie is "before": the entry did not answer, a new build did.
+        assert _served_window(answered) == _keys(later)
+        assert answered[STATE_READ_FRESH_KEY] is True
+
+    def test_the_uncoalesced_build_says_fresh_and_publishes_nothing(self, both_routes):
+        both_routes.cache.clear()
+        detail = asyncio.run(
+            build_event_detail_uncoalesced(_ClockedSession(_now(), _window(T0)), CANON_ID)
+        )
+        assert detail[STATE_READ_FRESH_KEY] is True
+        assert CANON_ID not in both_routes.cache
+
+    @pytest.mark.parametrize("failure", [None, RuntimeError("db went away")], ids=["no-row", "raises"])
+    def test_no_window_means_no_flag_built_or_cached(self, both_routes, failure):
+        both_routes.cache.clear()
+        built = both_routes.detail(_ClockedSession(_now(), failure))
+        polled = both_routes.detail(_ClockedSession(_now(), _window(T0)))
+        assert STATE_READ_FRESH_KEY not in built
+        assert STATE_READ_FRESH_KEY not in polled
+        assert STATE_READ_FRESH_KEY not in both_routes.cache[CANON_ID][2]
