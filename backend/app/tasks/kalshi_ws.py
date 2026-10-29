@@ -216,6 +216,31 @@ class _KalshiHeadlineEvents(Mapping[int, int]):
             raise KeyError(outcome_id)
         return self.events[outcome_id]
 
+    # #10090 — the same answers as `Mapping.get` / `in`, without raising and
+    # catching a KeyError per miss. The flush reads this view per buffered
+    # outcome, several times per phase, and most of the buffer is open
+    # contracts with no event (production 2026-10-29: tens of thousands
+    # buffered), so the exception path was most of the flush's CPU.
+    def get(self, outcome_id, default=None):
+        if outcome_id in self.non_speakers:
+            return default
+        return self.events.get(outcome_id, default)
+
+    def __contains__(self, outcome_id) -> bool:
+        return outcome_id not in self.non_speakers and outcome_id in self.events
+
+    def events_of(self, outcome_ids) -> set[int]:
+        """`event_ids_for_outcomes(self, outcome_ids)`, the same set. A flush's
+        unfinished outcomes are the whole buffer, many times the admitted
+        outcomes, so a set larger than the owner map is matched from the map."""
+        if isinstance(outcome_ids, (set, frozenset)) and len(outcome_ids) > len(self.events):
+            return {
+                event for oid, event in self.events.items()
+                if event is not None and oid in outcome_ids
+                and oid not in self.non_speakers
+            }
+        return {event for event in map(self.get, outcome_ids) if event is not None}
+
     def __iter__(self) -> Iterator[int]:
         return (oid for oid in self.events if oid not in self.non_speakers)
 
@@ -1559,10 +1584,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 prices.short_probe_refused.intersection_update(batch)
             else:
                 outcomes, events, markets = beside
+                # The owner's unfinished outcomes are most of the buffer:
+                # reject them first, before any per-outcome event lookup.
                 batch = {
                     oid: entry for oid, entry in price_buffer.items()
-                    if cohort_event_ids.get(oid) in live_event_ids
-                    and oid not in outcomes
+                    if oid not in outcomes
+                    and cohort_event_ids.get(oid) in live_event_ids
                     and cohort_event_ids.get(oid) not in events
                     and market_id_by_outcome.get(oid) not in markets
                 }
@@ -1730,8 +1757,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             unfinished = frozenset(unfinished_price_ids)
             excluded = (
                 unfinished,
-                frozenset(event_ids_for_outcomes(cohort_event_ids, unfinished)),
-                frozenset(market_id_by_outcome.get(oid) for oid in unfinished) - {None},
+                frozenset(cohort_event_ids.events_of(unfinished)),
+                frozenset(map(market_id_by_outcome.get, unfinished)) - {None},
             )
             while not beside_stop:
                 prices.input_wake.clear()
@@ -1796,9 +1823,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             nonlocal queued_refresh
             count_work()
             stamping_fresh = set(queued_events)
-            unfinished_events = event_ids_for_outcomes(
-                cohort_event_ids, unfinished_price_ids,
-            )
+            unfinished_events = cohort_event_ids.events_of(unfinished_price_ids)
             # refresh takes implicit debt too. Capture before its first turn.
             # Excluded cohorts remain owed but cannot read a partially written
             # board or hold unrelated whole-game price transactions together.
@@ -1829,9 +1854,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 queued_events,
                 flush_started=flush_started,
                 marks=list(queued_marks.values()),
-                defer_event_ids=event_ids_for_outcomes(
-                    cohort_event_ids, unfinished_price_ids,
-                ),
+                defer_event_ids=cohort_event_ids.events_of(unfinished_price_ids),
             )
             if not admitted:
                 return
