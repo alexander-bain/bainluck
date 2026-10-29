@@ -1718,6 +1718,9 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 try:
                     await resolve_session.rollback()  # read-only: ends its transaction
                 except Exception:
+                    # Nothing was written on this session, so a failed rollback
+                    # loses nothing; a broken connection fails the next read,
+                    # which the grounding step above already tolerates.
                     pass
 
                 subjects, subject_ref, subject_entity_id, subject_resolved = (
