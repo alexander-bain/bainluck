@@ -19,7 +19,9 @@ Pins:
 * the script never commits mid-batch, so `alembic/env.py` keeps its lock retry;
 * the table lock is requested only at a quiet moment, never when there is
   nothing to change, and a run that finds no quiet moment ends inside the
-  release-phase budget with an error env.py does not retry (v5958).
+  release-phase budget with an error env.py does not retry (v5958);
+* every gate read follows a fresh `pg_stat_activity` copy, and an ALTER that
+  times out holding the table ends as that same unretried error (#11757 review).
 """
 
 from __future__ import annotations
@@ -54,6 +56,7 @@ MIGRATION = _load(NAME)
 PARENT_MIGRATION = _load(PARENT)
 
 LOCK_EVENTS = "LOCK TABLE events IN ACCESS EXCLUSIVE MODE"
+CLEAR = "SELECT pg_stat_clear_snapshot()"
 
 #: Every GIN index on production's `events` (db-query, 2026-10-29 19:45Z,
 #: artifacts/latency-10090-fts-gin-20261029T1945Z/idxdef.json), plus the
@@ -117,8 +120,9 @@ class _Result:
 class _Bind:
     """Answers the migration's catalogue reads from a script; records every statement."""
 
-    def __init__(self, state, gate=(), refusals=0):
+    def __init__(self, state, gate=(), refusals=0, alter_refusals=0):
         self.state, self.gate, self.refusals = state, list(gate), refusals
+        self.alter_refusals = alter_refusals
         self.sql: list[str] = []
 
     def execute(self, clause, params=None):
@@ -131,6 +135,9 @@ class _Bind:
             return _Result(self.gate.pop(0) if self.gate else 0)
         if sql == LOCK_EVENTS and self.refusals:
             self.refusals -= 1
+            raise _LockNotAvailable("canceling statement due to lock timeout")
+        if sql.startswith("ALTER") and self.alter_refusals:
+            self.alter_refusals -= 1
             raise _LockNotAvailable("canceling statement due to lock timeout")
         return _Result(None)
 
@@ -177,8 +184,11 @@ def test_the_lock_is_requested_only_once_no_old_holder_remains(monkeypatch, dire
     assert bind.sql == [
         MIGRATION.STATE_SQL,
         f"SET LOCAL lock_timeout = '{MIGRATION.LOCK_TRY_TIMEOUT_MS}ms'",
+        CLEAR,
         MIGRATION.GATE_SQL,
+        CLEAR,
         MIGRATION.GATE_SQL,
+        CLEAR,
         MIGRATION.GATE_SQL,
         "SAVEPOINT events_lock",
         LOCK_EVENTS,
@@ -196,7 +206,9 @@ def test_a_refused_request_is_rolled_back_and_waits_for_the_next_quiet_moment(mo
         "SAVEPOINT events_lock",
         LOCK_EVENTS,
         "ROLLBACK TO SAVEPOINT events_lock",
+        CLEAR,
         MIGRATION.GATE_SQL,
+        CLEAR,
         MIGRATION.GATE_SQL,
         "SAVEPOINT events_lock",
         LOCK_EVENTS,
@@ -221,6 +233,11 @@ def test_no_quiet_moment_ends_at_the_budget_without_a_request(monkeypatch):
     bind = _Bind((0, 2), gate=[1] * 100_000)
     _assert_not_taken_and_not_retried(monkeypatch, bind, clock)
     assert LOCK_EVENTS not in bind.sql
+    gates = [i for i, s in enumerate(bind.sql) if s == MIGRATION.GATE_SQL]
+    assert len(gates) > 200 and all(bind.sql[i - 1] == CLEAR for i in gates), (
+        "a gate read without a fresh pg_stat_activity copy joins live locks "
+        "against ages frozen at the first poll"
+    )
     assert MIGRATION.GATE_BUDGET_S <= clock.t <= MIGRATION.GATE_BUDGET_S + MIGRATION.GATE_POLL_S
 
 
@@ -229,6 +246,19 @@ def test_refusals_stop_at_the_request_cap(monkeypatch):
     _assert_not_taken_and_not_retried(monkeypatch, bind, _Clock())
     assert bind.sql.count(LOCK_EVENTS) == MIGRATION.MAX_LOCK_TRIES
     assert bind.sql.count("ROLLBACK TO SAVEPOINT events_lock") == MIGRATION.MAX_LOCK_TRIES
+
+
+def test_an_alter_timing_out_holding_the_table_ends_unretried(monkeypatch):
+    bind = _Bind((0, 2), alter_refusals=1)
+    with pytest.raises(MIGRATION.EventsLockNotTaken) as caught:
+        _run(monkeypatch, "upgrade", bind)
+    assert not is_lock_timeout(caught.value), (
+        "a bare 55P03 here lets env.py rerun the whole gate up to six times, "
+        "past the release-phase budget"
+    )
+    assert bind.sql.count(LOCK_EVENTS) == 1
+    assert "RELEASE SAVEPOINT events_lock" in bind.sql
+    assert [s for s in bind.sql if s.startswith("ALTER")] == [MIGRATION.UPGRADE_SQL[1]]
 
 
 def test_the_worst_case_fits_the_release_phase_and_each_stall_is_short():

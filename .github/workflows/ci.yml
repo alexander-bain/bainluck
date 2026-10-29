@@ -7869,8 +7869,8 @@ jobs:
             echo "::error::#10090 GIN backlog gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]14 passed[,[:space:]]" /tmp/ginbacklog10090.txt || {
-            echo "::error::#10090 GIN backlog gate did not run all fourteen cases"
+          grep -qE "[^0-9]16 passed[,[:space:]]" /tmp/ginbacklog10090.txt || {
+            echo "::error::#10090 GIN backlog gate did not run all sixteen cases"
             exit 1
           }
 

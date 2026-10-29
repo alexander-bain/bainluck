@@ -153,11 +153,17 @@ def _state(bind) -> tuple[int, int]:
 
 
 def take_events_lock(bind, sleep=time.sleep, clock=time.monotonic) -> int:
-    """Take statement 0 at a quiet moment; return the number of requests made."""
+    """Take statement 0 at a quiet moment; return the number of requests made.
+
+    Alembic runs the batch in one transaction, and `pg_stat_activity` keeps the
+    copy taken at its first read in a transaction, while `pg_locks` is live; so
+    every poll first discards that copy, as its own statement (#11757 review).
+    """
     bind.execute(text(f"SET LOCAL lock_timeout = '{int(LOCK_TRY_TIMEOUT_MS)}ms'"))
     deadline = clock() + GATE_BUDGET_S
     tries = 0
     while True:
+        bind.execute(text("SELECT pg_stat_clear_snapshot()"))
         busy = bind.execute(text(GATE_SQL), {"age": GATE_HOLDER_AGE_S}).scalar_one()
         if not busy:
             tries += 1

@@ -44,6 +44,10 @@ could not see them. These arms read the census from `pg_index` instead:
 * undo: the follow-up's downgrade restores the two and leaves the parent's.
 * no deadlock: the full-text pair is created away-first, as a REINDEX of the
   home index would leave it, so a query locks them against the batch's order.
+* gate freshness (#11757 review): the batch is one transaction, and
+  `pg_stat_activity` keeps its first copy for the transaction. A holder that
+  was idle at the first poll must still keep the gate shut, and connections
+  that were old once must not keep it shut after they turn quiet.
 
 The table lives in its own schema with only the columns the writes touch. The
 statements under test name the indexes unqualified, as production's do, and
@@ -634,3 +638,113 @@ async def test_an_already_applied_revision_takes_no_lock_even_beside_a_holder(co
     assert result["took_s"] < 0.5, (
         f"an already-applied revision waited {result['took_s']:.2f} s beside a holder"
     )
+
+
+async def _gate_has_polled(c, gate_sql: str) -> None:
+    """Wait until a session has finished at least one gate read and sits between polls.
+
+    Matched on the statement's head: psycopg2 binds `:age` into the text it sends.
+    """
+    for _ in range(400):
+        polled = (
+            await c.execute(
+                text(
+                    "SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid() "
+                    "AND state = 'idle in transaction' AND starts_with(query, :q)"
+                ),
+                {"q": gate_sql.split(" WHERE ")[0]},
+            )
+        ).scalar_one()
+        await c.commit()
+        if polled:
+            return
+        await asyncio.sleep(0.02)
+    pytest.fail("the revision never polled the gate")
+
+
+async def test_a_holder_idle_at_the_first_poll_still_keeps_the_gate_shut(conn, monkeypatch):
+    """K1: the first holder ends; a second, idle at the first poll, began after it.
+
+    A frozen `pg_stat_activity` copy holds the second session with no
+    transaction, so the gate read it as quiet and queued requests behind it.
+    """
+    await _add_full_text_indexes(conn)
+    await _upgrade(conn)
+    monkeypatch.setattr(FTS_MIGRATION, "GATE_HOLDER_AGE_S", 0.2, raising=False)
+    engine = create_async_engine(DB_URL)
+    first = await _hold_events(engine)
+    second = await engine.connect()
+    migration = None
+    try:
+        await second.execute(text(f"SET search_path TO {SCHEMA}, public"))
+        await second.commit()
+        await asyncio.sleep(0.5)
+        migration = asyncio.create_task(
+            asyncio.to_thread(_migrate_on_a_sync_connection, "upgrade", monkeypatch)
+        )
+        await _gate_has_polled(conn, FTS_MIGRATION.GATE_SQL)
+        await second.execute(text("SELECT count(*) FROM events"))
+        await asyncio.sleep(0.5)
+        await first.commit()
+        requests = []
+        for _ in range(16):
+            await asyncio.sleep(0.25)
+            requests.append(await _access_exclusive_requests(conn))
+        assert not migration.done(), "the revision did not wait for the second holder"
+        await second.commit()
+        result = await asyncio.wait_for(migration, timeout=30)
+    finally:
+        for holder in (first, second):
+            await holder.rollback()
+            await holder.close()
+        if migration is not None and not migration.done():
+            await asyncio.wait([migration], timeout=30)
+        await conn.rollback()
+        await engine.dispose()
+    assert requests == [0] * len(requests), (
+        f"the revision requested the events lock behind a holder that began "
+        f"after its first poll: {requests}"
+    )
+    assert _fastupdate_on(await _gin_census(conn)) == set()
+    assert result["took_s"] < FTS_MIGRATION.GATE_BUDGET_S
+
+
+async def test_connections_old_at_the_first_poll_do_not_shut_the_gate_once_quiet(conn, monkeypatch):
+    """K2: pooled connections old at the first poll, then only short transactions.
+
+    A frozen copy keeps their first transaction's start, so the gate read busy
+    until the budget ran out and a release that should pass failed.
+    """
+    await _add_full_text_indexes(conn)
+    await _upgrade(conn)
+    monkeypatch.setattr(FTS_MIGRATION, "GATE_BUDGET_S", 6.0, raising=False)
+    engine = create_async_engine(DB_URL)
+    stop = asyncio.Event()
+
+    async def pooled():
+        c = await engine.connect()
+        try:
+            await c.execute(text(f"SET search_path TO {SCHEMA}, public"))
+            await c.execute(text("SELECT count(*) FROM events"))
+            await asyncio.sleep(1.6)
+            while not stop.is_set():
+                await c.commit()
+                await c.execute(text("SELECT count(*) FROM events"))
+                await asyncio.sleep(0.2)
+            await c.commit()
+        finally:
+            await c.close()
+
+    pool = [asyncio.create_task(pooled()) for _ in range(3)]
+    try:
+        await asyncio.sleep(1.2)
+        result = await asyncio.wait_for(
+            asyncio.to_thread(_migrate_on_a_sync_connection, "upgrade", monkeypatch), timeout=30
+        )
+    finally:
+        stop.set()
+        await asyncio.gather(*pool, return_exceptions=True)
+        await conn.rollback()
+        await engine.dispose()
+    assert _fastupdate_on(await _gin_census(conn)) == set()
+    assert result["took_s"] < FTS_MIGRATION.GATE_BUDGET_S
