@@ -990,3 +990,636 @@ struct OriginalMarketChooserView9483: View {
         .contentShape(shape)
     }
 }
+
+// MARK: - Set and game handicaps (tennis, final only) (#10868)
+
+/// #10868 — the tennis-final "Set and game handicaps" card: panels under the
+/// owner's unit headings (two set panels under "Win at least one set", then a
+/// game panel under "Finish level or ahead on games"). Each panel shows ONE
+/// original's own pre-match chance on its own hollow 0–100% rail, the owner's
+/// separately admitted actual (a set count with blocks, or a named game pair)
+/// and that original's own result, and opens that exact original.
+///
+/// Presentation only, from the approved `TennisHandicapStory.tsx` +
+/// `tennisHandicapStory.css`. It composes the original-market Details above
+/// rather than a second model: a panel's chance and result are exactly what
+/// `OriginalMarketDetails9483.content(catalogue:selection:)` resolves for its
+/// original in `.result` mode, and a panel acts only through
+/// `OriginalMarketChooser9483.action`. The outcomes overlap and stay separate:
+/// nothing is normalised, complemented, multiplied or combined.
+///
+/// The owner supplies the phase, the catalogue, each panel's exact original,
+/// the subject and predicate words (proved for this match's format — never
+/// parsed from a title or a handicap), the actual with its own provenance and
+/// spoken words, the block states, the explanation and any result decoration.
+/// This file parses no title, does no score arithmetic, elects no baseline,
+/// reads no later quote, formats no number or date and infers no grade: a
+/// result decoration shows only beside the original's own supplied grade.
+///
+/// Before and during play the card shows nothing. Selection, Details, Back,
+/// focus, held refresh and withdrawal, and the explanation's disclosure stay
+/// with the host; with no callback the panels are static and no tap is asked
+/// for. The Details and chooser above are unchanged.
+enum OriginalHandicapCard9483 {
+    typealias Details = OriginalMarketDetails9483
+    typealias Chooser = OriginalMarketChooser9483
+
+    /// The game's phase as the owner holds it — not the market's mode.
+    enum Phase: Equatable { case before, during, final }
+
+    /// The owner's set count for a set panel.
+    struct Count: Equatable {
+        /// "2" — the owner's figure, verbatim.
+        let figure: String
+        /// "sets won · final"
+        let unit: String
+        /// Display geometry only, one block per set slot, filled for a set
+        /// won. Blocks count wins; they do not show playing order.
+        let blocks: [Bool]
+        /// The actual's own provenance; nil stays unknown.
+        let provenance: String?
+        /// "Fokina won 2 sets, final"
+        let spoken: String
+    }
+
+    struct PairSide: Equatable {
+        /// "18"
+        let figure: String
+        /// The player's name, verbatim.
+        let name: String
+    }
+
+    /// The owner's named score pair for a game panel.
+    struct Pair: Equatable {
+        /// "Final games"
+        let caption: String
+        let first: PairSide
+        /// The owner's relation word between the figures ("level").
+        let relation: String
+        let second: PairSide
+        let provenance: String?
+        /// "Final games: Fokina 18, Tiafoe 18, level"
+        let spoken: String
+    }
+
+    /// Context, never a grade: it neither selects nor settles an original.
+    enum Actual: Equatable {
+        case count(Count)
+        case pair(Pair)
+        /// The owner's words for no admitted actual.
+        case missing(String)
+    }
+
+    /// The owner's explicit decoration for an original's own result.
+    /// Supplementary to the result words, which carry the meaning.
+    enum ResultMark: Equatable {
+        case positive, negative
+
+        var symbol: String {
+            switch self {
+            case .positive: return "checkmark.circle.fill"
+            case .negative: return "xmark.circle.fill"
+            }
+        }
+    }
+
+    struct Panel: Equatable {
+        /// The exact original this panel shows; nil when the owner has none.
+        let original: Details.Identity?
+        /// "Fokina" — the panel's name.
+        let subject: String
+        /// "Fokina to win at least one set" — the owner-proved predicate.
+        let predicate: String
+        /// "+1.5 sets" — the original's own condition, verbatim.
+        let condition: String
+        let actual: Actual
+        /// Shown only beside the original's own supplied grade.
+        let resultMark: ResultMark?
+        /// "Opens the original +1.5 sets prop." — only when the panel acts.
+        let openHint: String
+    }
+
+    struct Group: Equatable {
+        /// "Win at least one set"
+        let heading: String
+        /// In the owner's order — never sorted by chance or result.
+        let panels: [Panel]
+    }
+
+    struct Words: Equatable {
+        let eyebrow: String
+        let title: String
+        /// "How these props work"
+        let explanationTitle: String
+        /// The owner's paragraphs, verbatim.
+        let explanation: [String]
+        /// Shown only when a displayed panel can act.
+        let tapInvitation: String
+        /// In place of every panel when the catalogue's scope is unusable.
+        let scopeUnavailable: String
+        /// A panel whose original cannot be named exactly.
+        let panelUnavailable: String
+        /// A panel whose original is not in result mode.
+        let comparisonUnavailable: String
+    }
+
+    struct Input: Equatable {
+        let phase: Phase
+        let catalogue: Details.Catalogue?
+        /// The host's held selection; only marked, never changed here.
+        let held: Details.Selection?
+        let groups: [Group]
+        let words: Words
+    }
+
+    /// A placed panel's final readings, from the Details' own content.
+    struct Shown: Equatable {
+        /// The original's pregame reading (hollow) or its own missing words.
+        let chance: Details.ShownReading
+        /// The original's own result words and settlement provenance.
+        let result: Details.ShownResult
+        let mark: ResultMark?
+    }
+
+    enum State: Equatable {
+        case shown(Shown)
+        /// The exact original resolves but is not in result mode; it still opens.
+        case comparisonUnavailable(String)
+        /// No exact original; nothing attaches and nothing opens.
+        case unavailable(String)
+    }
+
+    enum ExplanationStyle: Equatable {
+        case none
+        /// The host's disclosure binding drives it.
+        case disclosure
+        /// No binding: the content shows in full, never an inert control.
+        case expanded
+    }
+
+    static let actualLabel = "Actual"
+
+    /// Final only. Before and during play no panel, chance, result or action exists.
+    static func isShown(_ input: Input) -> Bool {
+        input.phase == .final
+    }
+
+    /// The catalogue, on the final, with a nonblank scope; else no panel resolves.
+    static func catalogue(_ input: Input) -> Details.Catalogue? {
+        guard isShown(input), let catalogue = input.catalogue, nonBlank(catalogue.scope) != nil else { return nil }
+        return catalogue
+    }
+
+    static func panels(_ input: Input) -> [Panel] {
+        input.groups.flatMap(\.panels)
+    }
+
+    /// The panel's exact selection — the catalogue's scope and the panel's
+    /// identity, unchanged — when that identity opens its own Details, the
+    /// panel has its predicate and no other panel names the same original.
+    /// Membership is the Details' exact-identity match, never a whole-payload
+    /// comparison, so an ignored value (NaN included) cannot close an original.
+    static func selection(_ panel: Panel, in input: Input) -> Details.Selection? {
+        guard let catalogue = catalogue(input), let identity = panel.original, nonBlank(panel.predicate) != nil,
+              panels(input).filter({ $0.original == identity }).count == 1 else { return nil }
+        let candidate = Details.Selection(scope: catalogue.scope, identity: identity)
+        return Details.content(catalogue: catalogue, selection: candidate) == nil ? nil : candidate
+    }
+
+    /// Nil when the card shows no panels. A result-mode original shows its
+    /// pregame reading and its own result; any other mode keeps the comparison
+    /// unavailable rather than reading a later chance as final.
+    static func state(_ panel: Panel, in input: Input) -> State? {
+        guard let catalogue = catalogue(input) else { return nil }
+        guard let selection = selection(panel, in: input),
+              let original = Details.original(in: catalogue, selection: selection),
+              let content = Details.content(catalogue: catalogue, selection: selection) else {
+            return .unavailable(nonBlank(input.words.panelUnavailable) ?? Details.unavailable)
+        }
+        guard original.mode == .result, let chance = content.readings.first, let result = content.result else {
+            return .comparisonUnavailable(nonBlank(input.words.comparisonUnavailable) ?? Details.unavailable)
+        }
+        let graded = original.grade.flatMap { nonBlank($0.words) } != nil
+        return .shown(Shown(chance: chance, result: result, mark: graded ? panel.resultMark : nil))
+    }
+
+    static func isSelected(_ panel: Panel, in input: Input) -> Bool {
+        guard let selection = selection(panel, in: input) else { return false }
+        return selection == input.held
+    }
+
+    /// The only way a panel acts: the chooser's own action with the panel's
+    /// exact selection. Nil — static content, never an inert button — before
+    /// the final, without a callback, or when the panel's original does not
+    /// open. The view's buttons run exactly this closure.
+    static func action(_ panel: Panel, in input: Input,
+                       onSelect: ((Details.Selection) -> Void)?) -> (() -> Void)? {
+        let choice = Chooser.Choice(label: panel.predicate, selection: selection(panel, in: input),
+                                    isSelected: isSelected(panel, in: input), status: nil)
+        return Chooser.action(choice, onSelect: onSelect)
+    }
+
+    /// True only when a displayed panel carries a real action.
+    static func showsTapInvitation(_ input: Input, onSelect: ((Details.Selection) -> Void)?) -> Bool {
+        nonBlank(input.words.tapInvitation) != nil
+            && panels(input).contains { action($0, in: input, onSelect: onSelect) != nil }
+    }
+
+    /// Blank paragraphs drop.
+    static func explanation(_ input: Input) -> [String] {
+        input.words.explanation.filter { nonBlank($0) != nil }
+    }
+
+    static func explanationStyle(_ input: Input, hasBinding: Bool) -> ExplanationStyle {
+        guard !explanation(input).isEmpty else { return .none }
+        return hasBinding && nonBlank(input.words.explanationTitle) != nil ? .disclosure : .expanded
+    }
+
+    /// "Won · +1.5 sets" — the original's own result words beside its condition.
+    static func resultLine(_ result: Details.ShownResult, condition: String) -> String {
+        nonBlank(condition).map { "\(result.words) · \($0)" } ?? result.words
+    }
+
+    static func actualProvenance(_ provenance: String?) -> String {
+        nonBlank(provenance) ?? Details.timeUnknown
+    }
+
+    /// The predicate, the original's chance with its provenance, the actual
+    /// with its own provenance, then the original's result — each named.
+    static func spoken(_ panel: Panel, in input: Input) -> String {
+        guard let state = state(panel, in: input) else { return "" }
+        var parts = [nonBlank(panel.predicate) ?? nonBlank(input.words.panelUnavailable) ?? Details.unavailable]
+        if case .shown(let shown) = state {
+            let chance = shown.chance
+            parts.append(chance.provenance.map { "\(chance.label) \(chance.text), \($0)" } ?? "\(chance.label): \(chance.text)")
+        }
+        parts.append(spokenActual(panel.actual))
+        switch state {
+        case .shown(let shown):
+            parts.append("\(Details.resultLabel): \(shown.result.words)"
+                         + (shown.result.provenance.map { ", \($0)" } ?? ""))
+        case .comparisonUnavailable(let words), .unavailable(let words):
+            parts.append(words)
+        }
+        return parts.joined(separator: ". ") + "."
+    }
+
+    static func spokenActual(_ actual: Actual) -> String {
+        switch actual {
+        case .count(let count):
+            return "\(actualLabel): \(nonBlank(count.spoken) ?? "\(count.figure) \(count.unit)"), \(actualProvenance(count.provenance))"
+        case .pair(let pair):
+            return "\(actualLabel): \(nonBlank(pair.spoken) ?? pair.caption), \(actualProvenance(pair.provenance))"
+        case .missing(let words):
+            return "\(actualLabel): \(nonBlank(words) ?? Details.unavailable)"
+        }
+    }
+
+    /// Stable ids so the host can return focus to the originating panel.
+    static func accessibilityID(_ panel: Panel, group: Int, index: Int) -> String {
+        guard let id = panel.original else { return "originalHandicap9483.slot.\(group).\(index)" }
+        return "originalHandicap9483.panel.\(id.source).\(id.market).\(id.side)"
+    }
+
+    static func nonBlank(_ text: String?) -> String? {
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return text
+    }
+}
+
+/// Internal only so tests can read the layout decision.
+enum OriginalHandicapLayout9483 {
+    static let minimumTarget: CGFloat = 44
+
+    /// The equal width at which a group's panels share one row, or nil to
+    /// stack them at full width. They share only when that width still holds
+    /// every panel's whole ideal width (and a 44 pt target); a lone panel,
+    /// accessibility sizes and malformed input always stack.
+    static func sharedWidth(available: CGFloat, ideals: [CGFloat], spacing: CGFloat,
+                            accessibilitySize: Bool) -> CGFloat? {
+        guard ideals.count > 1, !accessibilitySize, ideals.allSatisfy({ $0.isFinite && $0 >= 0 }),
+              spacing.isFinite, spacing >= 0, !available.isNaN, available >= 0 else { return nil }
+        let widest = max(ideals.max() ?? 0, minimumTarget)
+        guard available.isFinite else { return widest }
+        let share = (available - spacing * CGFloat(ideals.count - 1)) / CGFloat(ideals.count)
+        return share >= widest ? share : nil
+    }
+}
+
+/// One group's panels: side by side at an equal width when every panel fits
+/// whole, else stacked at full width. The size it reports is what it places.
+private struct OriginalHandicapPanelsLayout9483: Layout {
+    let spacing: CGFloat
+    let accessibilitySize: Bool
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        plan(width: proposal.width, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let frames = plan(width: bounds.width, subviews: subviews).frames
+        for (subview, frame) in zip(subviews, frames) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                          anchor: .topLeading, proposal: ProposedViewSize(frame.size))
+        }
+    }
+
+    private func plan(width: CGFloat?, subviews: Subviews) -> (frames: [CGRect], size: CGSize) {
+        let minimum = OriginalHandicapLayout9483.minimumTarget
+        let ideals = subviews.map { $0.sizeThatFits(.unspecified).width }
+        if let share = OriginalHandicapLayout9483.sharedWidth(available: width ?? .infinity, ideals: ideals,
+                                                               spacing: spacing, accessibilitySize: accessibilitySize) {
+            let tallest = subviews.map { $0.sizeThatFits(ProposedViewSize(width: share, height: nil)).height }.max() ?? 0
+            let height = max(tallest, minimum)
+            let frames = subviews.indices.map { index in
+                CGRect(x: CGFloat(index) * (share + spacing), y: 0, width: share, height: height)
+            }
+            let count = CGFloat(subviews.count)
+            return (frames, CGSize(width: count * share + (count - 1) * spacing, height: height))
+        }
+        let full = width.flatMap { $0.isFinite ? $0 : nil } ?? max(ideals.max() ?? 0, minimum)
+        var frames: [CGRect] = []
+        var y: CGFloat = 0
+        for subview in subviews {
+            let height = max(subview.sizeThatFits(ProposedViewSize(width: full, height: nil)).height, minimum)
+            frames.append(CGRect(x: 0, y: y, width: full, height: height))
+            y += height + spacing
+        }
+        return (frames, CGSize(width: full, height: max(y - spacing, 0)))
+    }
+}
+
+/// The handicap card inside the host's container; the host keeps scrolling,
+/// held updates, Details, Back and focus.
+struct OriginalHandicapCardView9483: View {
+    let input: OriginalHandicapCard9483.Input
+    let tint: Color
+    /// The host's disclosure state for the explanation; nil shows it expanded.
+    var explanationExpanded: Binding<Bool>? = nil
+    var onSelect: ((OriginalMarketDetails9483.Selection) -> Void)? = nil
+
+    private typealias Model = OriginalHandicapCard9483
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .title) private var countSize: CGFloat = 25
+    @ScaledMetric(relativeTo: .title) private var gameSize: CGFloat = 30
+    @ScaledMetric(relativeTo: .caption) private var blockWidth: CGFloat = 24
+    @ScaledMetric(relativeTo: .caption) private var blockHeight: CGFloat = 9
+
+    var body: some View {
+        if Model.isShown(input) {
+            VStack(alignment: .leading, spacing: 18) {
+                header
+                if Model.catalogue(input) != nil {
+                    ForEach(Array(input.groups.enumerated()), id: \.offset) { index, group in
+                        groupView(group, index: index)
+                    }
+                    if Model.showsTapInvitation(input, onSelect: onSelect) {
+                        Text(input.words.tapInvitation)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    explanation
+                } else {
+                    Text(Model.nonBlank(input.words.scopeUnavailable) ?? OriginalMarketDetails9483.unavailable)
+                        .font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let eyebrow = Model.nonBlank(input.words.eyebrow) {
+                Text(eyebrow).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            }
+            Text(input.words.title)
+                .font(.title3.weight(.bold))
+                .accessibilityAddTraits(.isHeader)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func groupView(_ group: Model.Group, index: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let heading = Model.nonBlank(group.heading) {
+                Text(heading)
+                    .font(.subheadline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            OriginalHandicapPanelsLayout9483(spacing: 10, accessibilitySize: typeSize.isAccessibilitySize) {
+                ForEach(Array(group.panels.enumerated()), id: \.offset) { offset, panel in
+                    control(panel, group: index, index: offset)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func control(_ panel: Model.Panel, group: Int, index: Int) -> some View {
+        let selected = Model.isSelected(panel, in: input)
+        if let action = Model.action(panel, in: input, onSelect: onSelect) {
+            Button(action: action) {
+                face(panel, selected: selected, acts: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Model.spoken(panel, in: input))
+            .accessibilityHint(Model.nonBlank(panel.openHint) ?? "")
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityIdentifier(Model.accessibilityID(panel, group: group, index: index))
+        } else {
+            face(panel, selected: selected, acts: false)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Model.spoken(panel, in: input))
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityIdentifier(Model.accessibilityID(panel, group: group, index: index))
+        }
+    }
+
+    /// Selected: a heavier tinted outline and fill, not colour alone.
+    private func face(_ panel: Model.Panel, selected: Bool, acts: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 14)
+        return VStack(alignment: .leading, spacing: 10) {
+            if let subject = Model.nonBlank(panel.subject) {
+                Text(subject).font(.headline)
+            }
+            switch Model.state(panel, in: input) {
+            case .shown(let shown)?:
+                chance(shown.chance)
+                actual(panel.actual)
+                result(shown, condition: panel.condition, acts: acts)
+            case .comparisonUnavailable(let words)?, .unavailable(let words)?:
+                actual(panel.actual)
+                Text(words)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            case nil:
+                EmptyView()
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: OriginalHandicapLayout9483.minimumTarget, alignment: .topLeading)
+        .background(shape.fill(selected ? tint.opacity(0.10) : Color.clear))
+        .overlay(shape.strokeBorder(selected ? tint : Color.secondary.opacity(0.35), lineWidth: selected ? 2 : 1))
+        .contentShape(shape)
+    }
+
+    /// The original's own figure and its rail, reusing the Details' pieces.
+    /// Provenance stays in the spoken summary and the original's Details, out
+    /// of the compact panel.
+    private func chance(_ reading: OriginalMarketDetails9483.ShownReading) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ProbabilityDetailsFigures9483(figures: [
+                ProbabilityDetailsFigure9483(label: reading.label, marker: reading.marker, text: reading.text,
+                                             isValue: reading.isValue, dateLine: nil),
+            ], tint: tint)
+            if let placement = reading.placement {
+                ProbabilityDetailsRail9483(marks: [
+                    ProbabilityDetailsRailMark9483(id: reading.label, marker: reading.marker, value: placement),
+                ], tint: tint)
+            }
+        }
+    }
+
+    /// The actual's provenance is spoken, not printed in the compact panel.
+    @ViewBuilder
+    private func actual(_ actual: Model.Actual) -> some View {
+        switch actual {
+        case .count(let count):
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(count.figure).font(.system(size: countSize, weight: .bold).monospacedDigit())
+                    Text(count.unit).font(.footnote).foregroundStyle(.secondary)
+                }
+                if !count.blocks.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(Array(count.blocks.enumerated()), id: \.offset) { _, won in
+                            block(won)
+                        }
+                    }
+                    .accessibilityHidden(true)
+                }
+            }
+        case .pair(let pair):
+            VStack(alignment: .leading, spacing: 6) {
+                Text(pair.caption).font(.footnote).foregroundStyle(.secondary)
+                gamePair(pair)
+            }
+        case .missing(let words):
+            Text(Model.nonBlank(words) ?? OriginalMarketDetails9483.unavailable)
+                .font(.subheadline.weight(.semibold))
+        }
+    }
+
+    /// Filled for a set won, outlined otherwise — shape, not colour alone.
+    private func block(_ won: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 2)
+        return shape
+            .fill(won ? Color.primary : Color.clear)
+            .overlay(shape.strokeBorder(Color.secondary.opacity(0.5), lineWidth: 1))
+            .frame(width: blockWidth, height: blockHeight)
+    }
+
+    /// Each figure stays over its player's name; the relation word sits between
+    /// them in a row, or between them in a stack when the row does not fit.
+    @ViewBuilder
+    private func gamePair(_ pair: Model.Pair) -> some View {
+        if typeSize.isAccessibilitySize {
+            stackedPair(pair)
+        } else {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 8) {
+                    pairSide(pair.first).fixedSize()
+                    Spacer(minLength: 8)
+                    Text(pair.relation).font(.footnote).foregroundStyle(.secondary).fixedSize()
+                    Spacer(minLength: 8)
+                    pairSide(pair.second).fixedSize()
+                }
+                stackedPair(pair)
+            }
+        }
+    }
+
+    private func stackedPair(_ pair: Model.Pair) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            pairSide(pair.first)
+            Text(pair.relation).font(.footnote).foregroundStyle(.secondary)
+            pairSide(pair.second)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func pairSide(_ side: Model.PairSide) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(side.figure).font(.system(size: gameSize, weight: .bold).monospacedDigit())
+            Text(side.name).font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    /// The settlement provenance is spoken and stays in the original's Details.
+    private func result(_ shown: Model.Shown, condition: String, acts: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(OriginalMarketDetails9483.resultLabel).font(.caption).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                if let mark = shown.mark {
+                    Image(systemName: mark.symbol)
+                        .foregroundStyle(mark == .positive ? tint : Color.primary)
+                        .accessibilityHidden(true)
+                }
+                Text(Model.resultLine(shown.result, condition: condition))
+                    .font(.subheadline.weight(.semibold))
+                if acts {
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private var explanation: some View {
+        let paragraphs = Model.explanation(input)
+        switch Model.explanationStyle(input, hasBinding: explanationExpanded != nil) {
+        case .none:
+            EmptyView()
+        case .disclosure:
+            if let binding = explanationExpanded {
+                DisclosureGroup(isExpanded: binding) {
+                    explanationText(paragraphs).padding(.top, 6)
+                } label: {
+                    Text(input.words.explanationTitle)
+                        .font(.subheadline.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, minHeight: OriginalHandicapLayout9483.minimumTarget,
+                               alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+            }
+        case .expanded:
+            VStack(alignment: .leading, spacing: 6) {
+                if let title = Model.nonBlank(input.words.explanationTitle) {
+                    Text(title).font(.subheadline.weight(.semibold))
+                }
+                explanationText(paragraphs)
+            }
+        }
+    }
+
+    private func explanationText(_ paragraphs: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
+                Text(paragraph).font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
