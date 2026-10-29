@@ -10,7 +10,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from sqlalchemy.orm import selectinload
 
 from app.models import Event, OddsSnapshot, Sport
@@ -19,21 +19,64 @@ from app.tasks.base import get_task_session, run_async
 logger = logging.getLogger(__name__)
 
 
+#: One statement writes every live game's EI, over the rows no other writer
+#: holds right now. EI is recomputed on the next scores pass, so a skipped row
+#: costs one pass of staleness and never a wait. A write that never waits
+#: cannot be one side of a lock-order cycle (#10090: 00:45:41Z 10/29, the EI
+#: flush and the score writer each waited on the other's events row).
+#: NO KEY UPDATE is the lock the UPDATE itself takes. Plain FOR UPDATE would
+#: also clash with the key-share lock every snapshot INSERT takes through its
+#: foreign key: an open price write would make EI skip that game, and a price
+#: write arriving mid-statement would wait on EI.
+LIVE_EI_WRITE_SQL = """
+    WITH v AS (
+        SELECT *
+        FROM unnest(
+            CAST(:ids AS integer[]),
+            CAST(:raw_ei AS numeric[]),
+            CAST(:ei_metadata AS text[])
+        ) AS v(id, raw_ei, ei_metadata)
+    ),
+    held AS (
+        SELECT e.id
+        FROM events e
+        WHERE e.id = ANY(CAST(:ids AS integer[]))
+        ORDER BY e.id
+        FOR NO KEY UPDATE OF e SKIP LOCKED
+    )
+    UPDATE events
+    SET raw_ei = v.raw_ei,
+        ei_metadata = v.ei_metadata,
+        ei_computed_at = :now
+    FROM held JOIN v ON v.id = held.id
+    WHERE events.id = held.id
+    RETURNING events.id
+"""
+
+
 async def update_live_ei(session) -> int:
     """
-    Compute and update EI for all currently live events.
+    Compute and update EI for all currently live events, and COMMIT.
 
-    Returns the number of events updated.
+    Returns the number of events written.
+
+    #10090: this used to set ``raw_ei`` on each live ``Event`` and leave the
+    write to the caller's commit, which flushed one UPDATE per live game and
+    held every row it had reached until COMMIT. A row held elsewhere stalled
+    the flush with the earlier games still locked, and on 10/29 it deadlocked
+    with the score writer. Now the reads are plain columns (no ORM rows to
+    flush or to outlive the commit, gotcha #6), the write is one Core statement
+    that skips held rows (gotcha #4), and it commits at once. The caller must
+    commit its own writes BEFORE calling this, or they ride this commit.
     """
     from app.utils.excitement_index import calculate_ei, EIDataPoint
 
     # Get all live events
-    result = await session.execute(
-        select(Event)
-        .options(selectinload(Event.sport))
+    live_events = (await session.execute(
+        select(Event.id, Event.commence_time, Sport.key)
+        .outerjoin(Sport, Sport.id == Event.sport_id)
         .where(Event.status == "live")
-    )
-    live_events = result.scalars().all()
+    )).all()
 
     if not live_events:
         return 0
@@ -41,15 +84,21 @@ async def update_live_ei(session) -> int:
     # Batch-load all snapshots for live events in a single query
     event_ids = [e.id for e in live_events]
     all_snaps_result = await session.execute(
-        select(OddsSnapshot)
+        select(
+            OddsSnapshot.event_id,
+            OddsSnapshot.captured_at,
+            OddsSnapshot.home_win_probability,
+            OddsSnapshot.bookmaker,
+            OddsSnapshot.valid_until,
+        )
         .where(OddsSnapshot.event_id.in_(event_ids))
         .order_by(OddsSnapshot.event_id, OddsSnapshot.captured_at)
     )
     snaps_by_event: dict[int, list] = defaultdict(list)
-    for snap in all_snaps_result.scalars().all():
+    for snap in all_snaps_result.all():
         snaps_by_event[snap.event_id].append(snap)
 
-    updated = 0
+    computed: dict[int, tuple[float, str]] = {}
     now = datetime.now(timezone.utc)
 
     for event in live_events:
@@ -71,7 +120,7 @@ async def update_live_ei(session) -> int:
             ]
 
             # Calculate EI
-            sport_key = event.sport.key if event.sport else "unknown"
+            sport_key = event.key or "unknown"
             ei_result = calculate_ei(
                 snapshots=data_points,
                 game_start=event.commence_time,
@@ -82,16 +131,37 @@ async def update_live_ei(session) -> int:
             if ei_result:
                 # Store EI score (1-100) in raw_ei field
                 # We divide by 100 to fit the existing decimal field format
-                event.raw_ei = ei_result.score / 100.0
-                event.ei_metadata = ei_result.metadata.to_json()
-                event.ei_computed_at = now
-                updated += 1
+                computed[event.id] = (ei_result.score / 100.0, ei_result.metadata.to_json())
 
         except Exception as e:
             logger.error(f"Error computing EI for event {event.id}: {e}")
             continue
 
-    return updated
+    # End the read transaction, so the write below starts one that holds
+    # nothing else and lasts one statement.
+    await session.commit()
+    if not computed:
+        return 0
+
+    ids = sorted(computed)
+    written = (await session.execute(
+        text(LIVE_EI_WRITE_SQL),
+        {
+            "ids": ids,
+            "raw_ei": [computed[i][0] for i in ids],
+            "ei_metadata": [computed[i][1] for i in ids],
+            "now": now,
+        },
+    )).all()
+    await session.commit()
+
+    skipped = len(ids) - len(written)
+    if skipped:
+        logger.info(
+            "live EI: wrote %d, skipped %d row(s) held by another writer (recomputed next pass)",
+            len(written), skipped,
+        )
+    return len(written)
 
 
 # Legacy aliases
