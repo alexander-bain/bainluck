@@ -51,6 +51,21 @@ The CU v2 failure arm is the one behaviour that moves on purpose: on the
 parent, a failed LLM call rolled back the whole batch, discarding every market
 already written. The market is now the transaction unit, so the failure rolls
 back only its own market.
+
+THE SAME SHAPE IN THE OTHER ENRICH LOOPS
+----------------------------------------
+At 00:58Z the same watch caught pid 2702791 idle in transaction 171.9 s, last
+statement ``UPDATE futures_markets SET image_url=..., image_width=...,
+image_height=..., updated_at=now() WHERE futures_markets.id = $4``, blocking a
+market writer. ``enrich_market_images`` (a Pexels request per market),
+``enrich_market_hooks`` and ``enrich_snippet_angles`` (an LLM call per market)
+each wrote every market in one transaction committed at the end, so each row
+written stayed locked across every later market's outside call. Their arms
+below probe from the second market's call, the same way. These writes do not
+touch ``event_id`` and are each the first UPDATE of their row, so the game row
+is free on the parent too; the first market's row is the one that was held.
+(``evaluate_discover_with_llm`` makes one call, before any write, and commits
+once after it: nothing is written across a call, so it is unchanged.)
 """
 
 import contextlib
@@ -230,8 +245,14 @@ def _probe():
                 except errors.LockNotAvailable:
                     out[name] = "held"
                 conn.rollback()
-            cur.execute("SELECT market_metadata FROM futures_markets WHERE id = %s", (M1,))
-            out["first_market_metadata"] = cur.fetchone()[0] or {}
+            cur.execute(
+                "SELECT market_metadata, image_url, hook_description FROM futures_markets WHERE id = %s",
+                (M1,),
+            )
+            metadata, image_url, hook = cur.fetchone()
+            out["first_market_metadata"] = metadata or {}
+            out["first_market_image_url"] = image_url
+            out["first_market_hook"] = hook
             cur.execute(
                 "SELECT count(*) FROM pg_stat_activity "
                 "WHERE application_name = %s AND state LIKE 'idle in transaction%%'",
@@ -411,3 +432,117 @@ async def test_discover_metadata_holds_nothing_while_it_waits_on_the_next_market
     assert probe["event_row"] == "free", probe
     assert probe["first_market_row"] == "free", probe
     assert (stub.calls, stats["processed"]) == (2, 2)
+
+
+# ---------------------------------------------------------------------------
+# enrich_market_images, enrich_market_hooks, enrich_snippet_angles
+# ---------------------------------------------------------------------------
+
+PEXELS_URL = "https://images.pexels.com/photos/10090/pexels-photo-10090.jpeg"
+HOOK = "The Falcons host the Ravens tonight."
+SNIPPET = "Falcons lead the Ravens"
+
+
+def _assert_nothing_held(probe):
+    assert probe, "the stub never reached the second market"
+    assert probe["first_market_row"] == "free", f"the first market's row was locked across the next outside call: {probe}"
+    assert probe["idle_in_transaction"] == 0, f"the task session sat idle in a transaction across the outside call: {probe}"
+    assert probe["event_row"] == "free", probe
+
+
+async def test_images_hold_nothing_while_they_wait_on_the_next_markets_pexels_request(pg_engine, monkeypatch):
+    from app.tasks import enrich_markets
+
+    queries, probe = [], {}
+
+    async def _fetch(query):
+        queries.append(query)
+        if len(queries) == 2:
+            probe.update(_probe())
+        return PEXELS_URL, 1200, 800
+
+    monkeypatch.setattr(enrich_markets, "get_task_session", _tagged_task_session)
+    monkeypatch.setattr(enrich_markets, "PEXELS_API_KEY", "pexels-10090-gate")
+    monkeypatch.setattr(enrich_markets, "_fetch_pexels_image", _fetch)
+
+    stats = await enrich_markets.enrich_market_images(limit=2)
+
+    _assert_nothing_held(probe)
+    assert probe["first_market_image_url"] is not None, (
+        f"the first market's picture was not committed before the next request: {probe}"
+    )
+    assert (len(queries), stats["found"], stats["errors"]) == (2, 2, 0)
+    async with pg_engine.connect() as conn:
+        urls = (await conn.execute(
+            text("SELECT image_url FROM futures_markets WHERE id = ANY(:ids)"), {"ids": list(MARKET_IDS)}
+        )).scalars().all()
+    assert len(urls) == 2 and all(urls)
+
+
+async def test_hooks_hold_nothing_while_they_wait_on_the_next_markets_llm_call(pg_engine, monkeypatch):
+    from app.tasks import enrich_markets
+
+    # The hook queue only asks about a fixture that has not started, and ranks
+    # Discover's feed categories first; both markets are made eligible and first.
+    async with pg_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE events SET status = 'scheduled', commence_time = :c WHERE id = :i"),
+            {"c": datetime.now(timezone.utc) + timedelta(hours=3), "i": EVENT_ID},
+        )
+        await conn.execute(
+            text("UPDATE futures_markets SET llm_sport_category = 'politics' WHERE id = ANY(:ids)"),
+            {"ids": list(MARKET_IDS)},
+        )
+
+    calls, probe = [], {}
+
+    def _chat(_kind, _client, **kwargs):
+        calls.append(kwargs["messages"][0]["content"])
+        if len(calls) == 2:
+            probe.update(_probe())
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=HOOK))])
+
+    monkeypatch.setattr(enrich_markets, "get_task_session", _tagged_task_session)
+    monkeypatch.setattr(enrich_markets, "complete_chat", _chat)
+    monkeypatch.setattr("app.services.llm._get_client", lambda: object())
+
+    stats = await enrich_markets.enrich_market_hooks(limit=2)
+
+    _assert_nothing_held(probe)
+    assert probe["first_market_hook"] == HOOK, f"the first market's hook was not committed before the next call: {probe}"
+    assert (len(calls), stats["generated"], stats["errors"]) == (2, 2, 0)
+    async with pg_engine.connect() as conn:
+        hooks = (await conn.execute(
+            text("SELECT hook_description FROM futures_markets WHERE id = ANY(:ids)"), {"ids": list(MARKET_IDS)}
+        )).scalars().all()
+    assert sorted(hooks) == [HOOK, HOOK]
+
+
+async def test_snippets_hold_nothing_while_they_wait_on_the_next_markets_llm_call(pg_engine, monkeypatch):
+    from app.tasks import enrich_markets
+
+    calls, probe = [], {}
+
+    async def _rephrase(market_name, raw_snippet, angle_type):
+        calls.append(market_name)
+        if len(calls) == 2:
+            probe.update(_probe())
+        return SNIPPET
+
+    monkeypatch.setattr(enrich_markets, "get_task_session", _tagged_task_session)
+    monkeypatch.setattr(enrich_markets, "_llm_rephrase_snippet", _rephrase)
+    # An angle for every market, so each one reaches the call.
+    monkeypatch.setattr(
+        "app.utils.snippet_angles.select_angle",
+        lambda ctx: SimpleNamespace(angle_type="leader", template="Falcons are favoured"),
+    )
+
+    stats = await enrich_markets.enrich_snippet_angles(limit=2)
+
+    _assert_nothing_held(probe)
+    assert probe["first_market_metadata"].get("snippet_v2", {}).get("snippet_text") == SNIPPET, (
+        f"the first market's snippet was not committed before the next call: {probe}"
+    )
+    assert (len(calls), stats["processed"], stats["angles_found"], stats["errors"]) == (2, 2, 2, 0)
+    rows = await _rows(pg_engine)
+    assert all(rows[m]["market_metadata"]["snippet_v2"]["snippet_text"] == SNIPPET for m in MARKET_IDS)

@@ -655,6 +655,13 @@ async def enrich_market_images(limit: int = 50):
             .limit(limit)
         )
         markets = result.all()
+        # #10090: no transaction stays open across a Pexels request. The read
+        # ends here (plain tuples), and each market's write commits on its
+        # own below. This loop used to commit once at the end, so every
+        # written row stayed locked across every later market's request: the
+        # 2026-10-29 00:58Z lock watch caught it idle in transaction 172 s,
+        # holding up a market writer of the same row.
+        await session.commit()
 
         for market_id, name, category, event_id in markets:
             candidates = _image_query_candidates(
@@ -692,6 +699,7 @@ async def enrich_market_images(limit: int = 50):
                     .where(FuturesMarket.id == market_id)
                     .values(image_url=url, image_width=width, image_height=height)
                 )
+                await session.commit()
                 stats["found"] += 1
             else:
                 stats["errors"] += 1
@@ -987,6 +995,13 @@ async def enrich_market_hooks(limit: int = 50):
                 evidence=evidence,
             )
 
+            # #10090: end the transaction the reads above opened BEFORE the LLM
+            # call, and commit each market's write before the next one's call.
+            # This loop used to commit once at the end, so every hook written
+            # kept its row locked across every later market's call. Commit
+            # does not expire `candidates` (`expire_on_commit=False`).
+            await session.commit()
+
             try:
                 response = complete_chat(
                     "hooks", client, max_output_tokens=150, temperature=0.7,
@@ -1056,6 +1071,7 @@ async def enrich_market_hooks(limit: int = 50):
                         market_metadata=next_metadata,
                     )
                 )
+                await session.commit()
                 stats["generated"] += 1
                 if was_regen:
                     stats["regenerated"] += 1
@@ -2359,6 +2375,12 @@ async def enrich_snippet_angles(limit: int = 125):
             .limit(limit * 3)
         )
         candidates = result.scalars().all()
+        # #10090: each market's write commits on its own below, so the
+        # failure path's rollback now discards one market, not the batch. A
+        # rollback expires every object the session holds (gotcha #6), and
+        # this loop reads the next candidate's attributes after it; detached
+        # rows keep what they loaded.
+        session.expunge_all()
 
         for market in candidates:
             if stats["processed"] >= limit:
@@ -2406,6 +2428,11 @@ async def enrich_snippet_angles(limit: int = 125):
 
             angle = select_angle(ctx)
 
+            # #10090: end the read transaction before the LLM call. This loop
+            # used to commit once at the end, so every written row stayed
+            # locked across every later market's call.
+            await session.commit()
+
             phrased_text = None
             if angle:
                 phrased_text = await _llm_rephrase_snippet(
@@ -2427,6 +2454,7 @@ async def enrich_snippet_angles(limit: int = 125):
                     .where(FuturesMarket.id == market.id)
                     .values(market_metadata=next_metadata)
                 )
+                await session.commit()
                 if angle:
                     stats["angles_found"] += 1
             except Exception as exc:
