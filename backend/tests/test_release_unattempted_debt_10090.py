@@ -19,6 +19,7 @@ Off (today, and any switch error) is today's behaviour.
 """
 
 import asyncio
+import contextlib
 
 import pytest
 
@@ -287,7 +288,7 @@ async def test_a_call_cancelled_after_the_early_release_leaves_its_live_first_pi
 async def test_the_early_read_waits_unless_a_session_is_free_beyond_the_fresh_stamps(
         monkeypatch, trial, on):
     trial["value"] = on
-    x = rig(monkeypatch, count=6, statuses={
+    x = rig(monkeypatch, count=6, block=True, blocked=(5, 6), statuses={
         1: "scheduled", 2: "scheduled", 3: "live", 4: "scheduled", 5: "live", 6: "live",
     })
     x.r._lock_retry = {1, 2, 3, 4}
@@ -303,12 +304,15 @@ async def test_the_early_read_waits_unless_a_session_is_free_beyond_the_fresh_st
     other = x.r._session_slots
     await other.acquire()                   # another owner's session (history, recovery)
     task = asyncio.create_task(x.r.refresh([5, 6], flush_started=1000))
-    for _ in range(50):
-        await asyncio.sleep(0)
-    # Both fresh stamps commit while the old population's read is held.
-    fresh_done = sorted(e for e in x.committed if e in (5, 6))
+    # Both fresh stamps hold their sessions at once, none queued behind the old
+    # population's read. Bounded in time: each stamp's preview read opens a socket.
+    with contextlib.suppress(TimeoutError):
+        await settle_until(lambda: stamping(x, 5) and stamping(x, 6))
+    both_stamping = stamping(x, 5) and stamping(x, 6)
     gate.set()
+    x.release.set()
     other.release()
     async with asyncio.timeout(2):
         await task
-    assert fresh_done == [5, 6]
+    assert both_stamping
+    assert {5, 6} <= set(x.committed)
