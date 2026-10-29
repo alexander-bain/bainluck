@@ -49,6 +49,22 @@ SUBSCRIPTION_REFRESH_SECONDS = int(
 #: this is how long after the failure the price waits for the next attempt.
 PRICE_FLUSH_SECONDS = float(os.getenv("WS_PRICE_FLUSH_SECONDS", "2"))
 
+
+def _base_price_flush_seconds(default: float | None = None) -> float:
+    """The worker's `WS_PRICE_FLUSH_SECONDS` setting, or ``default`` when unset."""
+    import math
+
+    fallback = PRICE_FLUSH_SECONDS if default is None else default
+    raw = os.getenv("WS_PRICE_FLUSH_SECONDS")
+    if raw is not None:
+        try:
+            seconds = float(raw)
+            if math.isfinite(seconds) and seconds > 0:
+                return seconds
+        except ValueError:
+            pass
+    return fallback
+
 # #10737: leave one of the task engine's existing 3+2 slots outside this
 # grade class. Other consumer operations can still contend for that slot.
 OPEN_CONTRACT_GRADE_CONCURRENCY = 4
@@ -129,9 +145,10 @@ def kalshi_flush_cadence():
 
     from app.tasks.live_blend_refresh import DEFAULT_MIN_REFRESH_INTERVAL_S
 
+    base = _base_price_flush_seconds(PRICE_FLUSH_SECONDS)
     override = os.getenv(KALSHI_FLUSH_PERIOD_ENV)
     if override is None:
-        return PRICE_FLUSH_SECONDS, DEFAULT_MIN_REFRESH_INTERVAL_S, None, None
+        return base, DEFAULT_MIN_REFRESH_INTERVAL_S, None, None
     try:
         period = float(override)
     except ValueError as invalid:
@@ -140,7 +157,7 @@ def kalshi_flush_cadence():
         ) from invalid
     if not math.isfinite(period) or period <= 0:
         raise ValueError(f"{KALSHI_FLUSH_PERIOD_ENV} must be a positive finite number")
-    return period, period, PRICE_FLUSH_SECONDS, None
+    return period, period, base, None
 
 #: #10090 — the most rows one non-live phase packs. Pre-game games are packed
 #: whole, several per transaction, and futures/props whole MARKETS at a time, so
@@ -3395,7 +3412,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     async def flush_loop():
         # #10090: an accepted winner quote after an empty probe starts the
         # unused period now; actual work still starts at most once per period.
-        idle_wake = dict(wake=flush_wake, work_count=lambda: prices.flush_work)
+        idle_wake = dict(
+            wake=flush_wake,
+            work_count=lambda: prices.flush_work,
+            switch_period=True,
+        )
         if failed_retry is None:
             await run_flush_cadence(
                 timed_flush, flush_period, stop=loops_stop, **idle_wake,

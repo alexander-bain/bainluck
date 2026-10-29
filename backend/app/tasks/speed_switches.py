@@ -90,6 +90,11 @@ SPECS = {
     # drain or door admission has a lock retry deferred only by a buffered
     # withdrawal: whether that retry (and its due prompt) is taken past it.
     "lock_retry_past_withdrawal": {"modes": ("alternate",), "values": (0, 1), "today": 0},
+    # `kalshi_ws.kalshi_flush_cadence` / `polymarket_ws.pm_flush_cadence` game
+    # flush interval in ms, read at each switched flush-loop wait
+    # (`_price_flush_period_s`). Its "today" is the shared interval in ms across
+    # the switched loops, `today()`.
+    "price_flush_ms": {"modes": ("alternate",), "values": (100, 2000), "today": 2000},
 }
 SWITCHES = tuple(SPECS)
 MODES = ("off", "ab", "alternate")
@@ -144,7 +149,7 @@ def key(name: str) -> str:
     return KEY_PREFIX + name
 
 
-#: Switches whose "today" is a worker env setting in `live_blend_refresh`.
+#: Switches whose "today" is a worker env setting.
 _TODAY_SETTINGS = {
     "pending_attempts": "FRESH_FLUSH_PENDING_ATTEMPTS",
     "admitted_debt_slots": "ADMITTED_DEBT_SLOTS",
@@ -156,7 +161,11 @@ _TODAY_SETTINGS = {
 TODAY_ENV_PREFIX = "SPEED_SWITCH_TODAY_"
 #: Switches that already have their own worker setting: that setting is their
 #: only knob and wins; their ``SPEED_SWITCH_TODAY_<NAME>`` is ignored (warned).
-_OWN_SETTING = {**_TODAY_SETTINGS, "abandon_optional_db": "LIVE_BLEND_ABANDON_OPTIONAL_DB"}
+_OWN_SETTING = {
+    **_TODAY_SETTINGS,
+    "abandon_optional_db": "LIVE_BLEND_ABANDON_OPTIONAL_DB",
+    "price_flush_ms": "WS_PRICE_FLUSH_SECONDS",
+}
 _WARNED_TODAY_ENV: set = set()
 
 
@@ -205,11 +214,42 @@ def today_env_in_force() -> dict:
     return out
 
 
-def today(name: str) -> int:
+def _loop_period_ms(resolver: Callable[[], tuple]) -> Optional[int]:
+    try:
+        seconds = float(resolver()[0])
+    except Exception:  # noqa: BLE001 — invalid env override refuses a trial
+        return None
+    if not math.isfinite(seconds) or seconds <= 0:
+        return None
+    return round(seconds * 1000)
+
+
+def _switched_price_flush_ms() -> dict[str, Optional[int]]:
+    """Each switched flush loop's in-force interval in milliseconds."""
+    from app.tasks import kalshi_ws, polymarket_ws
+
+    return {
+        "kalshi": _loop_period_ms(kalshi_ws.kalshi_flush_cadence),
+        "polymarket_game": _loop_period_ms(polymarket_ws.pm_flush_cadence),
+    }
+
+
+def _today_price_flush_ms() -> Optional[int]:
+    """The shared price-flush interval in ms when every switched loop agrees, else None."""
+    periods = _switched_price_flush_ms()
+    values = set(periods.values())
+    if None in values or len(values) != 1:
+        return None
+    return next(iter(values))
+
+
+def today(name: str) -> Optional[int]:
     """A switch's value with no trial running: `pending_attempts`,
-    `admitted_debt_slots` and `admitted_stamp_batch` read the worker's own
-    setting and any other switch its ``SPEED_SWITCH_TODAY_<NAME>``, so an
-    alternation always keeps the value actually in force on one arm."""
+    `admitted_debt_slots`, `admitted_stamp_batch` and `price_flush_ms` read the
+    worker's own setting and any other switch its ``SPEED_SWITCH_TODAY_<NAME>``,
+    so an alternation always keeps the value actually in force on one arm."""
+    if name == "price_flush_ms":
+        return _today_price_flush_ms()
     setting = _TODAY_SETTINGS.get(name)
     if setting is not None:
         from app.tasks import live_blend_refresh
@@ -237,6 +277,17 @@ def validate(name: str, mode: str, half=0, a=None, b=None, period_s=None,
     low, high = spec["values"]
     if not (_int(a) and _int(b) and low <= a <= high and low <= b <= high):
         return f"a and b must be integers in {low}..{high}"
+    if name == "price_flush_ms":
+        periods = _switched_price_flush_ms()
+        if None in periods.values() or len(set(periods.values())) != 1:
+            per_loop = ", ".join(
+                f"{loop}={ms}ms" if ms is not None else f"{loop}=invalid"
+                for loop, ms in periods.items()
+            )
+            return (
+                "price_flush_ms requires every switched loop to share one today "
+                f"interval ({per_loop})"
+            )
     if today(name) not in (a, b) or a == b:
         return f"one of a/b must be today's {today(name)} and the other must differ"
     if not (_int(period_s) and PERIOD_MIN_S <= period_s <= PERIOD_MAX_S

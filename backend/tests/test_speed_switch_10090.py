@@ -42,6 +42,13 @@ def _todays_setting(monkeypatch):
     setting; pinned at 1 here."""
     monkeypatch.setattr(blend_mod, "FRESH_FLUSH_PENDING_ATTEMPTS", 1)
     monkeypatch.setattr(blend_mod, "ADMITTED_DEBT_SLOTS", 1)
+    for env in (
+        "WS_PRICE_FLUSH_SECONDS",
+        "KALSHI_WS_PRICE_FLUSH_SECONDS",
+        "PM_WS_PRICE_FLUSH_SECONDS",
+        "PM_WS_GAME_FLUSH_SECONDS",
+    ):
+        monkeypatch.delenv(env, raising=False)
 
 
 class _Clock:
@@ -1190,3 +1197,410 @@ def test_the_release_arm_is_off_on_any_switch_error(monkeypatch):
 
     monkeypatch.setattr(blend_mod, "_optional_db_trial", broken)
     assert blend_mod._release_unattempted_debt() is False
+
+
+# ── price_flush_ms: read at each venue flush wait (#10090) ───────────────────
+
+FLUSH_MS = "price_flush_ms"
+VENUES = pytest.mark.parametrize("venue", ["kalshi", "polymarket"])
+FLUSH_WALL = [START + 10, START + 59, START + 60, START + 119, START + 120, START + 180]
+
+
+async def _drive_venue_flush_waits(
+    monkeypatch,
+    venue: str,
+    wall_times: list[float],
+    clock: _Clock,
+    *,
+    loop_name: str | None = None,
+):
+    """Run the real venue consumer's flush loop across ``wall_times`` and
+    return the flush-to-flush wait intervals (in seconds) it scheduled."""
+    from tests.test_ws_admission_mapped_legs_9462 import (
+        _arm,
+        _install_quiet_socket,
+        _timing,
+    )
+    from tests.test_ws_flush_cadence_10090 import _install_cadence_session
+
+    target_loop = loop_name or ("timed_flush" if venue == "kalshi" else "flush_prices")
+    module, consumer, slate = _arm(monkeypatch, venue)
+    _install_quiet_socket(monkeypatch)
+    _install_cadence_session(monkeypatch, slate)
+    _timing(monkeypatch, module, refresh=0.05, check=60.0)
+
+    async def _noop_claim(self):
+        return None
+
+    monkeypatch.setattr(blend_mod.LiveBlendRefresher, "claim_preview_display", _noop_claim)
+
+    real_mono = blend_mod._mono
+    real_sleep = asyncio.sleep
+    real_cadence = blend_mod.run_flush_cadence
+    mono = {"t": 1_000.0}
+    cadence_task = {"task": None}
+
+    async def _sleep(seconds):
+        if asyncio.current_task() is cadence_task["task"] and seconds > 0:
+            mono["t"] += seconds
+            await real_sleep(0)
+            return
+        await real_sleep(seconds)
+
+    waits: list[float] = []
+
+    async def cadence(
+        flush, period, stop=None, *, failed_retry_interval_s=None,
+        wake=None, work_count=None, wake_coalesce_s=None, switch_period=False,
+    ):
+        if getattr(flush, "__name__", None) != target_loop:
+            await stop.wait()
+            return
+        cadence_task["task"] = asyncio.current_task()
+        try:
+            clock.t = wall_times[0]
+            prev = mono["t"]
+
+            async def step(started):
+                nonlocal prev
+                waits.append(round(started - prev, 6))
+                prev = started
+                if len(waits) >= len(wall_times):
+                    stop.set()
+                    return True
+                clock.t = wall_times[len(waits)]
+                return True
+
+            await real_cadence(
+                step, period, stop=stop,
+                failed_retry_interval_s=failed_retry_interval_s,
+                switch_period=switch_period,
+            )
+        finally:
+            cadence_task["task"] = None
+            stop.set()
+
+    monkeypatch.setattr(blend_mod, "_mono", lambda: mono["t"])
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+    monkeypatch.setattr(blend_mod, "run_flush_cadence", cadence)
+    try:
+        await asyncio.wait_for(consumer(), timeout=3)
+    finally:
+        monkeypatch.setattr(blend_mod, "_mono", real_mono)
+        monkeypatch.setattr(asyncio, "sleep", real_sleep)
+        monkeypatch.setattr(blend_mod, "run_flush_cadence", real_cadence)
+    return waits
+
+
+@pytest.mark.parametrize("body, detail", [
+    ({"name": FLUSH_MS, "mode": "ab", "ttl_s": 600, "half": 0}, "price_flush_ms allows modes ['alternate']"),
+    ({"name": FLUSH_MS, "mode": "alternate", "ttl_s": 600, "a": 50, "b": 250, "period_s": 60}, "100..2000"),
+    ({"name": FLUSH_MS, "mode": "alternate", "ttl_s": 600, "a": 99, "b": 250, "period_s": 60}, "100..2000"),
+    ({"name": FLUSH_MS, "mode": "alternate", "ttl_s": 600, "a": 250, "b": 2001, "period_s": 60}, "100..2000"),
+    ({"name": FLUSH_MS, "mode": "alternate", "ttl_s": 600, "a": 100, "b": 500, "period_s": 60}, "today's 250"),
+    ({"name": FLUSH_MS, "mode": "alternate", "ttl_s": 600, "a": 250, "b": 250, "period_s": 60}, "today's 250"),
+    ({"name": FLUSH_MS, "mode": "alternate", "ttl_s": 600, "a": True, "b": 250, "period_s": 60}, "100..2000"),
+    ({"name": FLUSH_MS, "mode": "alternate", "ttl_s": 600, "a": 250, "b": 100, "period_s": 30}, "60..900"),
+])
+def test_setter_refuses_price_flush_ms_values_outside_the_bounded_range(
+    admin, monkeypatch, body, detail,
+):
+    monkeypatch.setenv("WS_PRICE_FLUSH_SECONDS", "0.25")
+    client, fake = admin
+    out = client.post("/api/admin/speed-switch", json=body, headers=AUTH)
+    assert out.status_code == 422
+    assert detail in out.text
+    assert fake.values == {}
+
+
+def test_price_flush_ms_keeps_the_workers_own_ws_price_flush_seconds_on_one_arm(
+    admin, monkeypatch,
+):
+    monkeypatch.setenv("WS_PRICE_FLUSH_SECONDS", "0.25")
+    assert sw.today(FLUSH_MS) == 250
+    assert sw.validate(FLUSH_MS, "alternate", a=2000, b=100, period_s=60) is not None
+    assert sw.parse(_alternation(a=2000, b=100), NOW, FLUSH_MS) == OFF
+    assert sw.validate(FLUSH_MS, "alternate", a=250, b=100, period_s=60) is None
+    assert sw.parse(_alternation(a=250, b=100), NOW, FLUSH_MS).mode == "alternate"
+    client, fake = admin
+    out = client.post("/api/admin/speed-switch", headers=AUTH, json={
+        "name": FLUSH_MS, "mode": "alternate", "ttl_s": 600,
+        "a": 250, "b": 100, "period_s": 60,
+    })
+    assert out.status_code == 200, out.text
+    assert sw.key(FLUSH_MS) in fake.values
+
+
+@VENUES
+async def test_without_a_trial_both_venues_wait_todays_flush_interval(monkeypatch, venue):
+    monkeypatch.setenv("WS_PRICE_FLUSH_SECONDS", "0.25")
+    stored = [None for _ in sw.SWITCHES]
+    s, store, clock, _ = _switches(stored, wall=START + 10)
+    await _refreshed(s)
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: s)
+    assert sw.today(FLUSH_MS) == 250
+    waits = await _drive_venue_flush_waits(
+        monkeypatch, venue, [START + 10, START + 20, START + 70], clock,
+    )
+    assert waits == pytest.approx([0.25, 0.25, 0.25])
+    assert store["reads"] == 1
+
+
+@VENUES
+async def test_alternate_trial_flips_both_venues_flush_wait_in_alternating_minutes(
+    monkeypatch, venue,
+):
+    monkeypatch.setenv("WS_PRICE_FLUSH_SECONDS", "0.25")
+    trial_raw = _alternation(a=250, b=100, period_s=60, start=START, span_s=240.0)
+    stored = [trial_raw if name == FLUSH_MS else None for name in sw.SWITCHES]
+    s, store, clock, _ = _switches(stored, wall=START + 5)
+    await _refreshed(s)
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: s)
+    waits = await _drive_venue_flush_waits(
+        monkeypatch,
+        venue,
+        FLUSH_WALL,
+        clock,
+    )
+    assert waits == pytest.approx([0.25, 0.25, 0.10, 0.10, 0.25, 0.10])
+    assert store["reads"] == 1, "no extra Redis round trip per flush wait"
+
+
+@VENUES
+async def test_expired_price_flush_ms_trial_returns_both_venues_to_the_env_value(
+    monkeypatch, venue,
+):
+    monkeypatch.setenv("WS_PRICE_FLUSH_SECONDS", "0.25")
+    trial_raw = _alternation(a=250, b=100, period_s=60, start=START, span_s=120.0)
+    stored = [trial_raw if name == FLUSH_MS else None for name in sw.SWITCHES]
+    s, store, clock, _ = _switches(stored, wall=START + 5)
+    await _refreshed(s)
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: s)
+    waits = await _drive_venue_flush_waits(
+        monkeypatch,
+        venue,
+        [START + 10, START + 70, START + 120, START + 150],
+        clock,
+    )
+    assert waits == pytest.approx([0.25, 0.10, 0.25, 0.25])
+    assert s.state(FLUSH_MS) == OFF
+    assert store["reads"] == 1
+
+
+# ── lane1 review R1/R2 controls (C1-C5) and wake-path cadence ────────────────
+
+
+async def test_disagreeing_kalshi_250ms_and_pm_1s_refuses_trial_and_runs_pm_game_at_1s(
+    admin, monkeypatch,
+):
+    # lane1 C1: KALSHI_WS_PRICE_FLUSH_SECONDS=0.25, PM_WS_PRICE_FLUSH_SECONDS=1.
+    monkeypatch.setenv("KALSHI_WS_PRICE_FLUSH_SECONDS", "0.25")
+    monkeypatch.setenv("PM_WS_PRICE_FLUSH_SECONDS", "1")
+    assert sw.today(FLUSH_MS) is None
+    client, fake = admin
+    out = client.post("/api/admin/speed-switch", headers=AUTH, json={
+        "name": FLUSH_MS, "mode": "alternate", "ttl_s": 600,
+        "a": 250, "b": 100, "period_s": 60,
+    })
+    assert out.status_code == 422
+    assert "kalshi=250ms, polymarket_game=1000ms" in out.text
+    assert fake.values == {}
+    trial_raw = _alternation(a=250, b=100, period_s=60, start=START, span_s=240.0)
+    assert sw.parse(trial_raw, NOW, FLUSH_MS) == OFF
+    s, _, clock, _ = _switches(
+        [trial_raw if name == FLUSH_MS else None for name in sw.SWITCHES], wall=START + 5,
+    )
+    await _refreshed(s)
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: s)
+    assert s.state(FLUSH_MS) == OFF
+    waits = await _drive_venue_flush_waits(monkeypatch, "polymarket", FLUSH_WALL, clock)
+    assert waits == pytest.approx([1.0] * 6)
+    s._stored[FLUSH_MS] = SwitchState("alternate", 0, NOW + 600, 250, 100, 60, START)
+    assert blend_mod._price_flush_period_s(1.0) == 1.0
+
+
+async def test_disagreeing_pm_fast_game_25ms_refuses_trial_and_runs_pm_game_at_25ms(
+    admin, monkeypatch,
+):
+    # lane1 C2: KALSHI=0.25, PM_WS_PRICE_FLUSH_SECONDS=0.25, PM_WS_GAME_FLUSH_SECONDS=0.025.
+    monkeypatch.setenv("KALSHI_WS_PRICE_FLUSH_SECONDS", "0.25")
+    monkeypatch.setenv("PM_WS_PRICE_FLUSH_SECONDS", "0.25")
+    monkeypatch.setenv("PM_WS_GAME_FLUSH_SECONDS", "0.025")
+    assert sw.today(FLUSH_MS) is None
+    client, fake = admin
+    out = client.post("/api/admin/speed-switch", headers=AUTH, json={
+        "name": FLUSH_MS, "mode": "alternate", "ttl_s": 600,
+        "a": 250, "b": 100, "period_s": 60,
+    })
+    assert out.status_code == 422
+    assert "kalshi=250ms, polymarket_game=25ms" in out.text
+    assert fake.values == {}
+    trial_raw = _alternation(a=250, b=100, period_s=60, start=START, span_s=240.0)
+    assert sw.parse(trial_raw, NOW, FLUSH_MS) == OFF
+    s, _, clock, _ = _switches(
+        [trial_raw if name == FLUSH_MS else None for name in sw.SWITCHES], wall=START + 5,
+    )
+    await _refreshed(s)
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: s)
+    assert s.state(FLUSH_MS) == OFF
+    waits = await _drive_venue_flush_waits(monkeypatch, "polymarket", FLUSH_WALL, clock)
+    assert waits == pytest.approx([0.025] * 6)
+    s._stored[FLUSH_MS] = SwitchState("alternate", 0, NOW + 600, 250, 100, 60, START)
+    assert blend_mod._price_flush_period_s(0.025) == 0.025
+
+
+async def test_disagreeing_ws_2s_with_kalshi_250ms_override_refuses_trial_and_runs_kalshi_at_250ms(
+    admin, monkeypatch,
+):
+    # lane1 C3: WS_PRICE_FLUSH_SECONDS=2, KALSHI_WS_PRICE_FLUSH_SECONDS=0.25.
+    monkeypatch.setenv("WS_PRICE_FLUSH_SECONDS", "2")
+    monkeypatch.setenv("KALSHI_WS_PRICE_FLUSH_SECONDS", "0.25")
+    assert sw.today(FLUSH_MS) is None
+    client, fake = admin
+    out = client.post("/api/admin/speed-switch", headers=AUTH, json={
+        "name": FLUSH_MS, "mode": "alternate", "ttl_s": 600,
+        "a": 2000, "b": 100, "period_s": 60,
+    })
+    assert out.status_code == 422
+    assert "kalshi=250ms, polymarket_game=2000ms" in out.text
+    assert fake.values == {}
+    trial_raw = _alternation(a=2000, b=100, period_s=60, start=START, span_s=240.0)
+    assert sw.parse(trial_raw, NOW, FLUSH_MS) == OFF
+    s, _, clock, _ = _switches(
+        [trial_raw if name == FLUSH_MS else None for name in sw.SWITCHES], wall=START + 5,
+    )
+    await _refreshed(s)
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: s)
+    assert s.state(FLUSH_MS) == OFF
+    waits = await _drive_venue_flush_waits(monkeypatch, "kalshi", FLUSH_WALL, clock)
+    assert waits == pytest.approx([0.25] * 6)
+    s._stored[FLUSH_MS] = SwitchState("alternate", 0, NOW + 600, 2000, 100, 60, START)
+    assert blend_mod._price_flush_period_s(0.25) == 0.25
+
+
+async def test_pm_prop_loop_ignores_running_price_flush_ms_trial(monkeypatch):
+    # lane1 C4: linked props stay on flush_period (#10090), never switched by price_flush_ms.
+    monkeypatch.setenv("WS_PRICE_FLUSH_SECONDS", "0.25")
+    trial_raw = _alternation(a=250, b=100, period_s=60, start=START, span_s=240.0)
+    s, _, clock, _ = _switches(
+        [trial_raw if name == FLUSH_MS else None for name in sw.SWITCHES], wall=START + 5,
+    )
+    await _refreshed(s)
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: s)
+    assert s.state(FLUSH_MS).mode == "alternate"
+    waits = await _drive_venue_flush_waits(
+        monkeypatch, "polymarket", FLUSH_WALL, clock, loop_name="flush_props",
+    )
+    assert waits == pytest.approx([0.25] * 6)
+
+
+async def test_pm_standalone_and_any_unopted_cadence_caller_ignore_running_trial(monkeypatch):
+    # lane1 C5: opt-in keyword on run_flush_cadence, not function-name exclusion.
+    monkeypatch.setenv("WS_PRICE_FLUSH_SECONDS", "0.25")
+    trial_raw = _alternation(a=250, b=100, period_s=60, start=START, span_s=240.0)
+    s, _, clock, _ = _switches(
+        [trial_raw if name == FLUSH_MS else None for name in sw.SWITCHES], wall=START + 5,
+    )
+    await _refreshed(s)
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: s)
+    assert s.state(FLUSH_MS).mode == "alternate"
+    standalone_waits = await _drive_venue_flush_waits(
+        monkeypatch, "polymarket", FLUSH_WALL, clock, loop_name="flush_standalone",
+    )
+    assert standalone_waits == pytest.approx([0.25] * 6)
+
+    mono = {"t": 1_000.0}
+    monkeypatch.setattr(blend_mod, "_mono", lambda: mono["t"])
+    real_sleep = asyncio.sleep
+
+    async def _sleep(seconds):
+        if seconds > 0:
+            mono["t"] += seconds
+        await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+    for opt_in, expected in ((False, [0.25, 0.25]), (True, [0.25, 0.10])):
+        stop = asyncio.Event()
+        seen: list[float] = []
+        times = [START + 10, START + 70]
+        clock.t = times[0]
+        prev = mono["t"]
+
+        async def custom_flush(started):
+            nonlocal prev
+            seen.append(round(started - prev, 6))
+            prev = started
+            if len(seen) >= len(times):
+                stop.set()
+                return True
+            clock.t = times[len(seen)]
+            return True
+
+        await blend_mod.run_flush_cadence(
+            custom_flush, 0.25, stop=stop, switch_period=opt_in,
+        )
+        assert seen == pytest.approx(expected)
+
+
+async def test_woken_flush_cadence_switches_budget_wait_and_wakes_early_after_empty_probe(
+    monkeypatch,
+):
+    # lane1 item 5: cover the wake + work_count + wake_coalesce_s branch of run_flush_cadence.
+    monkeypatch.setenv("WS_PRICE_FLUSH_SECONDS", "0.25")
+    trial_raw = _alternation(a=250, b=100, period_s=60, start=START, span_s=240.0)
+    s, _, clock, _ = _switches(
+        [trial_raw if name == FLUSH_MS else None for name in sw.SWITCHES], wall=START + 5,
+    )
+    await _refreshed(s)
+    monkeypatch.setattr(blend_mod, "_optional_db_trial", lambda: s)
+    assert s.state(FLUSH_MS).mode == "alternate"
+
+    mono = {"t": 1_000.0}
+    monkeypatch.setattr(blend_mod, "_mono", lambda: mono["t"])
+    real_sleep = asyncio.sleep
+
+    async def _sleep(seconds):
+        if seconds > 0:
+            mono["t"] += seconds
+        await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+    wake = asyncio.Event()
+    wake.set()
+    work = {"n": 0}
+    stop = asyncio.Event()
+    waits: list[float] = []
+    clock.t = FLUSH_WALL[0]
+    prev = mono["t"]
+
+    async def busy_Then_idle_flush(started):
+        nonlocal prev
+        waits.append(round(started - prev, 6))
+        prev = started
+        idx = len(waits)
+        if idx < len(FLUSH_WALL):
+            work["n"] += 1
+            wake.set()
+            clock.t = FLUSH_WALL[idx]
+            return True
+        if idx == len(FLUSH_WALL):
+            # Empty probe: work["n"] does not advance, so a new wake fires after coalesce.
+            wake.set()
+            return True
+        stop.set()
+        return True
+
+    await blend_mod.run_flush_cadence(
+        busy_Then_idle_flush,
+        0.25,
+        stop=stop,
+        wake=wake,
+        work_count=lambda: work["n"],
+        wake_coalesce_s=0.005,
+        switch_period=True,
+    )
+    # First flush wakes immediately on initial input (0.005s coalesce), then 5 busy waits
+    # follow the switched arm intervals across FLUSH_WALL, then the empty probe wakes after 0.005s.
+    assert waits == pytest.approx([0.005, 0.25, 0.10, 0.10, 0.25, 0.10, 0.005])
+
+
