@@ -835,6 +835,12 @@ async def _unit(session: AsyncSession, stats: dict, label: str):
     Rolled back to here, a failure costs its own unit. Its counts go back to
     what they were before it, so the result reports only what landed, and
     ``units_rolled_back`` names it.
+
+    A unit that lands is committed on the spot (#10090). Its UPDATEs lock the
+    ``futures_outcomes`` rows the venue price writers lock, and held to the end
+    of the drain they outlived every later unit's LLM calls: measured 00:13Z
+    10/29, the drain sat ``idle in transaction`` 145 s and a price chunk queued
+    behind it until its lock timeout.
     """
     counts = {k: v for k, v in stats.items() if type(v) is int}
     try:
@@ -844,6 +850,8 @@ async def _unit(session: AsyncSession, stats: dict, label: str):
         stats.update(counts)
         stats["units_rolled_back"].append(label)
         stats["errors"].append(f"{label}: {str(e)}")
+        return
+    await session.commit()
 
 
 async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
@@ -1068,6 +1076,10 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
             ticker_league_cache: dict[str, list[dict]] = {}
             for category, cat_outcomes in category_outcomes.items():
                 async with _unit(session, stats, f"Category '{category}'"):
+                    # #10090: a link is an UPDATE and a row lock once anything
+                    # autoflushes it, and the LLM step below is a network call.
+                    # Decide every link first; write them after the last call.
+                    links: list[tuple] = []
                     # Load teams for this sport category
                     sport_keys = get_sport_keys_for_category(category)
                     teams = await _load_teams_by_sport(session, sport_keys)
@@ -1112,7 +1124,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                             # CERT-3801's follow-up): "Los Angeles D" on the AL
                             # champion board is the Dodgers by city and an NL club.
                             if _admit(outcome, team_id):
-                                outcome.team_id = team_id
+                                links.append((outcome, team_id))
                                 stats["outcomes_linked"] += 1
                                 stats["outcomes_linked_by_league"] += 1
                                 continue
@@ -1128,7 +1140,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                             team_id = match_outcome_to_team(outcome.name, teams)
 
                             if _admit(outcome, team_id):
-                                outcome.team_id = team_id
+                                links.append((outcome, team_id))
                                 stats["outcomes_linked"] += 1
                                 stats["outcomes_linked_by_name"] += 1
                                 continue
@@ -1138,7 +1150,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                                 outcome.name, team_rosters
                             )
                             if _admit(outcome, team_id):
-                                outcome.team_id = team_id
+                                links.append((outcome, team_id))
                                 stats["outcomes_linked"] += 1
                                 stats["outcomes_linked_by_roster"] += 1
                                 continue
@@ -1154,7 +1166,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                                     use_llm=True,
                                 )
                                 if _admit(outcome, team_id):
-                                    outcome.team_id = team_id
+                                    links.append((outcome, team_id))
                                     stats["outcomes_linked"] += 1
                                     stats["outcomes_linked_by_llm"] += 1
 
@@ -1166,6 +1178,9 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                             stats["errors"].append(
                                 f"Outcome {outcome.id} '{outcome.name}': {str(e)}"
                             )
+
+                    for outcome, team_id in links:
+                        outcome.team_id = team_id
 
             # --- Phase 3: stored links outside their market's league (#5119) ---
             async with _unit(session, stats, "Market-league relink"):
