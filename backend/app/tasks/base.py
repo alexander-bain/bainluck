@@ -19,6 +19,7 @@ def _get_task_engine(
     statement_timeout_ms: int | None = None,
     lock_timeout_ms: int | None = None,
     retain_full_pool: bool = False,
+    pool_pre_ping: bool = True,
 ):
     """Create a fresh async engine for Celery task execution.
 
@@ -41,6 +42,9 @@ def _get_task_engine(
     With three concurrent event stamps plus a price writer, retaining only
     three closes a connection after each overlapping batch and makes the next
     batch connect again. Other tasks retain their existing 3 + 2 pool.
+
+    #10090: ``pool_pre_ping`` is False only for a socket consumer whose
+    ``WS_CONSUMER_POOL_PRE_PING`` is off (``app.tasks.ws_consumer_sessions``).
     """
     connect_args = build_connect_args(
         DATABASE_URL,
@@ -50,7 +54,7 @@ def _get_task_engine(
 
     return create_async_engine(
         DATABASE_URL,
-        pool_pre_ping=True,
+        pool_pre_ping=pool_pre_ping,
         pool_size=5 if retain_full_pool else 3,
         max_overflow=0 if retain_full_pool else 2,
         pool_recycle=1800,

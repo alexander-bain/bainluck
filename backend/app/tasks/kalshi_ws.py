@@ -331,11 +331,19 @@ class _FlushTimings:
     re-rank execute. `unknown` is `db` minus those three: session enter, the
     buffer re-read, exit and commit, and anything else. It is not commit. A
     final drain sets no lock timeout, so its checkout lands in `save`.
+
+    INSIDE `set_lock` (#10090): its bracket splits the same span by the
+    consumer engine's own pool events (`ws_consumer_sessions.checkout_probe`):
+    `checkout` until the pool handed the connection over (queue wait, any
+    connect, the pre-ping), `set` the rest (BEGIN and the SET). `full_at_start`
+    is K of the flush's P set_lock spans that began with every pool slot out;
+    `connects` and `connect` are the connects inside them, part of `checkout`.
     """
 
     BUCKETS = ("save", "publish", "stamp")
     WAITS = ("db", "publish", "stamp_wait")
     WITHIN_DB = ("set_lock", "save", "rerank")
+    LOCK_SPLIT = ("checkout", "full", "spans", "connects", "connect", "set")
 
     def __init__(self):
         self.in_flight = dict.fromkeys(self.BUCKETS, 0.0)
@@ -343,6 +351,7 @@ class _FlushTimings:
         self.waiting = dict.fromkeys(self.WAITS, 0.0)
         self.waiting_phase = None
         self.waiting_db = dict.fromkeys(self.WITHIN_DB, 0.0)
+        self.waiting_lock = dict.fromkeys(self.LOCK_SPLIT, 0)
         self.reset()
 
     def reset(self):
@@ -354,6 +363,7 @@ class _FlushTimings:
         self.spent = dict.fromkeys(self.BUCKETS, 0.0)
         self.slowest = None
         self.slowest_db = None
+        self.slowest_lock = None
 
     def add(self, bucket, seconds, *, phase=False):
         self.in_flight[bucket] += seconds
@@ -362,6 +372,38 @@ class _FlushTimings:
     @contextlib.asynccontextmanager
     async def waited(self, bucket, *, rows=0, live=False):
         """The current flush awaiting ``bucket``; joins `slowest` at `flushed`."""
+        if bucket == "set_lock":
+            async with self._split_set_lock():
+                async with self._waited(bucket, rows=rows, live=live):
+                    yield
+            return
+        async with self._waited(bucket, rows=rows, live=live):
+            yield
+
+    @contextlib.asynccontextmanager
+    async def _split_set_lock(self):
+        from app.tasks.ws_consumer_sessions import checkout_probe
+
+        started = time.monotonic()
+        with checkout_probe(time.monotonic) as probe:
+            try:
+                yield
+            finally:
+                seconds = time.monotonic() - started
+                checkout = (
+                    0.0 if probe.checked_out_at is None
+                    else max(0.0, min(seconds, probe.checked_out_at - started))
+                )
+                split = self.waiting_lock
+                split["checkout"] += checkout
+                split["set"] += seconds - checkout
+                split["spans"] += 1
+                split["full"] += int(probe.full_at_start)
+                split["connects"] += probe.connects
+                split["connect"] += probe.connect_s
+
+    @contextlib.asynccontextmanager
+    async def _waited(self, bucket, *, rows, live):
         started = time.monotonic()
         try:
             yield
@@ -384,9 +426,11 @@ class _FlushTimings:
         if self.slowest is None or seconds > self.longest:
             self.slowest = (self.waiting, self.waiting_phase)
             self.slowest_db = self.waiting_db
+            self.slowest_lock = self.waiting_lock
         self.waiting = dict.fromkeys(self.WAITS, 0.0)
         self.waiting_phase = None
         self.waiting_db = dict.fromkeys(self.WITHIN_DB, 0.0)
+        self.waiting_lock = dict.fromkeys(self.LOCK_SPLIT, 0)
         self.flushes += 1
         self.total += seconds
         self.longest = max(self.longest, seconds)
@@ -434,7 +478,17 @@ class _FlushTimings:
             )
         inside = self.slowest_db
         unknown = max(0.0, waits["db"] - sum(inside.values()))
-        nested = " ".join(f"db.{name}={inside[name]:.2f}s" for name in self.WITHIN_DB)
+        lock = self.slowest_lock
+        nested = " ".join(
+            f"db.{name}={inside[name]:.2f}s" + (
+                f"[checkout={lock['checkout']:.2f}s "
+                f"full_at_start={lock['full']}/{lock['spans']} "
+                f"connects={lock['connects']} connect={lock['connect']:.2f}s "
+                f"set={lock['set']:.2f}s]"
+                if name == "set_lock" else ""
+            )
+            for name in self.WITHIN_DB
+        )
         return f"{split} {nested} db.unknown={unknown:.2f}s"
 
 

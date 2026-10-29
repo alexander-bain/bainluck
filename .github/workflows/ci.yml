@@ -4558,6 +4558,7 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_ws_consumer_session_lifetime_2471_pg.py \
+            tests/integration/test_ws_consumer_preping_10090_pg.py \
             -v -s -rs 2>&1 | tee /tmp/consumer2471.txt
           if grep -qiE "[0-9]+ skipped" /tmp/consumer2471.txt; then
             echo "::error::#2471 consumer-engine gate SKIPPED — the gate did not run"
