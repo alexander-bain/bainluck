@@ -32,6 +32,19 @@ Arms:
   answered. Without the table lock first, it held the duplicates while waiting
   on `event_tags` and was killed by the deadlock detector.
 
+The follow-up, `events_fts_gin_fastupdate_off`, covers the two full-text GIN
+indexes production built outside any migration (`ix_events_fts_{home,away}`,
+read 2026-10-29 19:45Z). The parent's census came from the migrations, so it
+could not see them. These arms read the census from `pg_index` instead:
+* parent only (production at v5955): the census finds exactly the two
+  full-text indexes without `fastupdate=off`, and writes leave pages on them.
+* both revisions: every GIN on `events` in `pg_index` has `fastupdate=off`,
+  writes leave zero pages on every one, and full-text search still answers
+  through its index.
+* undo: the follow-up's downgrade restores the two and leaves the parent's.
+* no deadlock: the full-text pair is created away-first, as a REINDEX of the
+  home index would leave it, so a query locks them against the batch's order.
+
 The table lives in its own schema with only the columns the writes touch. The
 statements under test name the indexes unqualified, as production's do, and
 `search_path` resolves them here.
@@ -83,6 +96,18 @@ def _load(name: str):
 
 
 MIGRATION = _load("events_gin_fastupdate_off")
+FTS_MIGRATION = _load("events_fts_gin_fastupdate_off")
+#: Production's full-text GIN indexes, which no migration creates: the DDL
+#: `pg_get_indexdef` printed on 2026-10-29 19:45Z, schema dropped.
+FTS_DDL = {
+    side: (
+        f"CREATE INDEX ix_events_fts_{side} ON events USING gin "
+        f"(to_tsvector('english'::regconfig, "
+        f"(COALESCE({side}_team_name, ''::character varying))::text))"
+    )
+    for side in ("home", "away")
+}
+FTS_INDEXES = tuple(f"ix_events_fts_{side}" for side in FTS_DDL)
 #: The five GIN indexes production's `events` carries (step 0 receipt). Fixed
 #: here, not read from the migration, so a migration that skips one fails the
 #: ship arm instead of shrinking the table under test.
@@ -299,30 +324,25 @@ async def test_the_downgrade_restores_the_parent(conn):
     assert all(pages > 0 for pages in pending.values()), pending
 
 
-async def test_a_query_arriving_mid_batch_is_queued_never_deadlocked(conn):
-    for name in INDEXES:
-        await conn.execute(text(f"DROP INDEX {name}"))
-    for name in PRODUCTION_CREATION_ORDER:
-        await conn.execute(text(_original_index_ddl(name)))
-    await conn.commit()
+async def _oid_order(c, names) -> list[str]:
     oids = dict(
         (
-            await conn.execute(
+            await c.execute(
                 text(
                     "SELECT c.relname, c.oid::bigint FROM pg_class c "
                     "JOIN pg_namespace n ON n.oid = c.relnamespace "
                     "WHERE n.nspname = :s AND c.relname = ANY(:names)"
                 ),
-                {"s": SCHEMA, "names": list(INDEXES)},
+                {"s": SCHEMA, "names": list(names)},
             )
         ).all()
     )
-    await conn.commit()
-    assert sorted(oids, key=oids.get) == list(PRODUCTION_CREATION_ORDER), (
-        f"the fixture is not in production's OID order, so it cannot see the "
-        f"deadlock: {oids}"
-    )
+    await c.commit()
+    return sorted(oids, key=oids.get)
 
+
+async def _assert_a_reader_mid_batch_is_queued_then_answered(conn, statements) -> None:
+    """Run statement 0, start a reader, wait until it queues, run the rest."""
     engine = create_async_engine(DB_URL)
     try:
         async with engine.connect() as migration, engine.connect() as reader:
@@ -333,7 +353,6 @@ async def test_a_query_arriving_mid_batch_is_queued_never_deadlocked(conn):
             reader_pid = (await reader.execute(text("SELECT pg_backend_pid()"))).scalar_one()
             await reader.commit()
 
-            statements = list(MIGRATION.UPGRADE_SQL)
             await migration.execute(text(statements[0]))
             read = asyncio.create_task(
                 reader.execute(text("SELECT count(*) FROM events WHERE id = 1"))
@@ -361,3 +380,134 @@ async def test_a_query_arriving_mid_batch_is_queued_never_deadlocked(conn):
             await reader.rollback()
     finally:
         await engine.dispose()
+
+
+async def test_a_query_arriving_mid_batch_is_queued_never_deadlocked(conn):
+    for name in INDEXES:
+        await conn.execute(text(f"DROP INDEX {name}"))
+    for name in PRODUCTION_CREATION_ORDER:
+        await conn.execute(text(_original_index_ddl(name)))
+    await conn.commit()
+    order = await _oid_order(conn, INDEXES)
+    assert order == list(PRODUCTION_CREATION_ORDER), (
+        f"the fixture is not in production's OID order, so it cannot see the "
+        f"deadlock: {order}"
+    )
+    await _assert_a_reader_mid_batch_is_queued_then_answered(conn, MIGRATION.UPGRADE_SQL)
+
+
+async def _add_full_text_indexes(c, sides=("home", "away")) -> None:
+    for side in sides:
+        await c.execute(text(FTS_DDL[side]))
+    await c.commit()
+
+
+async def _gin_census(c) -> dict[str, list[str] | None]:
+    """Every GIN index on the `events` under test, read from `pg_index`."""
+    rows = await c.execute(
+        text(
+            "SELECT c.relname, c.reloptions FROM pg_index i "
+            "JOIN pg_class c ON c.oid = i.indexrelid "
+            "JOIN pg_am a ON a.oid = c.relam "
+            "WHERE i.indrelid = 'events'::regclass AND a.amname = 'gin'"
+        )
+    )
+    census = {r[0]: r[1] for r in rows}
+    await c.commit()
+    return census
+
+
+async def _drain(c, names) -> dict[str, int]:
+    pages = {}
+    for name in names:
+        pages[name] = (
+            await c.execute(text(f"SELECT gin_clean_pending_list('{name}'::regclass)"))
+        ).scalar_one()
+    await c.commit()
+    return pages
+
+
+async def _fts_upgrade(c) -> None:
+    for statement in FTS_MIGRATION.UPGRADE_SQL:
+        await c.execute(text(statement))
+    await c.commit()
+
+
+def _fastupdate_on(census) -> set[str]:
+    return {name for name, opts in census.items() if "fastupdate=off" not in (opts or [])}
+
+
+async def test_after_the_parent_only_the_full_text_pair_keeps_a_backlog(conn):
+    await _add_full_text_indexes(conn)
+    await _upgrade(conn)
+    census = await _gin_census(conn)
+    assert set(census) == set(INDEXES) | set(FTS_INDEXES)
+    assert _fastupdate_on(census) == set(FTS_INDEXES)
+    assert set((await _drain(conn, census)).values()) == {0}
+    await _live_writes(conn)
+    pending = await _drain(conn, census)
+    assert all(pending[name] > 0 for name in FTS_INDEXES), (
+        f"a full-text index left no pending pages, so the zero after the "
+        f"follow-up would prove nothing: {pending}"
+    )
+    assert {name: pending[name] for name in INDEXES} == {name: 0 for name in INDEXES}
+
+
+async def test_after_both_revisions_no_events_gin_keeps_a_backlog(conn):
+    await _add_full_text_indexes(conn)
+    await _upgrade(conn)
+    await _fts_upgrade(conn)
+    census = await _gin_census(conn)
+    assert set(census) >= set(FTS_INDEXES), f"the census cannot see the full-text pair: {census}"
+    assert _fastupdate_on(census) == set(), (
+        f"a GIN index on events still takes a pending list: {census}"
+    )
+    assert set((await _drain(conn, census)).values()) == {0}
+    await _live_writes(conn)
+    pending = await _drain(conn, census)
+    assert pending == {name: 0 for name in census}, (
+        f"an events write still appended to a GIN pending list, so some later "
+        f"write will pay to merge it: {pending}"
+    )
+    await conn.execute(text("SET enable_seqscan = off"))
+    search = (
+        "SELECT count(*) FROM events WHERE to_tsvector('english', "
+        "coalesce(home_team_name, '')) @@ websearch_to_tsquery('english', :q)"
+    )
+    plan = "\n".join(
+        r[0]
+        for r in await conn.execute(text("EXPLAIN " + search), {"q": "c4ca4238a0b923820dcc509a6f75849b"})
+    )
+    found = (
+        await conn.execute(text(search), {"q": "c4ca4238a0b923820dcc509a6f75849b"})
+    ).scalar_one()
+    await conn.rollback()
+    assert "ix_events_fts_home" in plan, plan
+    assert found == 1, "the full-text index must still answer a search"
+
+
+async def test_the_full_text_downgrade_restores_the_two_and_keeps_the_parent(conn):
+    await _add_full_text_indexes(conn)
+    await _upgrade(conn)
+    await _fts_upgrade(conn)
+    for statement in FTS_MIGRATION.DOWNGRADE_SQL:
+        await conn.execute(text(statement))
+    await conn.commit()
+    census = await _gin_census(conn)
+    assert {name: census[name] for name in FTS_INDEXES} == {name: None for name in FTS_INDEXES}
+    assert _fastupdate_on(census) == set(FTS_INDEXES)
+    await _drain(conn, census)
+    await _live_writes(conn)
+    pending = await _drain(conn, census)
+    assert all(pending[name] > 0 for name in FTS_INDEXES), pending
+    assert all(pending[name] == 0 for name in INDEXES), pending
+
+
+async def test_a_query_arriving_mid_full_text_batch_is_queued_never_deadlocked(conn):
+    await _add_full_text_indexes(conn, sides=("away", "home"))
+    order = await _oid_order(conn, FTS_INDEXES)
+    assert order == ["ix_events_fts_away", "ix_events_fts_home"], (
+        f"the pair must be in the order opposite the batch's, or the gate "
+        f"cannot see the deadlock: {order}"
+    )
+    await _assert_a_reader_mid_batch_is_queued_then_answered(conn, FTS_MIGRATION.UPGRADE_SQL)
