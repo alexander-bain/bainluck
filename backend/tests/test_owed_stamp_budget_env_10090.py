@@ -136,7 +136,8 @@ def test_effective_values_are_logged_once_per_process(monkeypatch, caplog):
     assert lines == [
         "live_blend_refresh[kalshi]: owed-stamp budget "
         f"FRESH_FLUSH_PENDING_ATTEMPTS={lbr.FRESH_FLUSH_PENDING_ATTEMPTS} "
-        f"PENDING_STAMP_BUDGET_S={lbr.PENDING_STAMP_BUDGET_S:.3g}"
+        f"PENDING_STAMP_BUDGET_S={lbr.PENDING_STAMP_BUDGET_S:.3g} "
+        f"ADMITTED_DEBT_SLOTS={lbr.ADMITTED_DEBT_SLOTS}"
     ]
 
 
