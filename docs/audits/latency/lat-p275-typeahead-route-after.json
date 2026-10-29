@@ -1,0 +1,290 @@
+{
+ "label": "lat-p289 live real-route /typeahead reading, AFTER the events FTS index",
+ "issue": "#4140",
+ "cert_repair": "4140-SEARCH-DROPDOWN-INDEX-LIVE-AND-GREEN (CERT-2324)",
+ "captured_utc": "2026-09-09T18:51:20.200557",
+ "method": "GET /api/events/typeahead?q=...&debug_timing=1 against production. debug_timing bypasses the response cache in BOTH directions (routes/events.py :3692-3693, :4032), so every sample is the UNCACHED keystroke path -- the worst case a reader hits, not a warmed head.",
+ "reading": {
+  "label": "after-index-live-route",
+  "rounds": 5,
+  "note": "debug_timing=1 bypasses the response cache; uncached keystroke path",
+  "terms": {
+   "yank": {
+    "n": 5,
+    "events_query_median_ms": 33,
+    "events_query_max_ms": 89,
+    "total_median_ms": 140,
+    "total_max_ms": 293,
+    "wall_median_ms": 377.2,
+    "events_query_all": [
+     33,
+     56,
+     21,
+     27,
+     89
+    ]
+   },
+   "yankees": {
+    "n": 5,
+    "events_query_median_ms": 34,
+    "events_query_max_ms": 58,
+    "total_median_ms": 156,
+    "total_max_ms": 226,
+    "wall_median_ms": 452.2,
+    "events_query_all": [
+     34,
+     49,
+     23,
+     24,
+     58
+    ]
+   },
+   "celt": {
+    "n": 5,
+    "events_query_median_ms": 29,
+    "events_query_max_ms": 134,
+    "total_median_ms": 117,
+    "total_max_ms": 364,
+    "wall_median_ms": 403.8,
+    "events_query_all": [
+     29,
+     72,
+     28,
+     26,
+     134
+    ]
+   },
+   "celtics": {
+    "n": 5,
+    "events_query_median_ms": 25,
+    "events_query_max_ms": 214,
+    "total_median_ms": 90,
+    "total_max_ms": 454,
+    "wall_median_ms": 319.4,
+    "events_query_all": [
+     19,
+     214,
+     20,
+     25,
+     30
+    ]
+   },
+   "red sox": {
+    "n": 5,
+    "events_query_median_ms": 28,
+    "events_query_max_ms": 33,
+    "total_median_ms": 764,
+    "total_max_ms": 891,
+    "wall_median_ms": 1008.2,
+    "events_query_all": [
+     28,
+     33,
+     32,
+     25,
+     28
+    ]
+   },
+   "dodg": {
+    "n": 5,
+    "events_query_median_ms": 26,
+    "events_query_max_ms": 46,
+    "total_median_ms": 118,
+    "total_max_ms": 164,
+    "wall_median_ms": 384.4,
+    "events_query_all": [
+     26,
+     43,
+     25,
+     22,
+     46
+    ]
+   },
+   "chi": {
+    "n": 5,
+    "events_query_median_ms": 32,
+    "events_query_max_ms": 79,
+    "total_median_ms": 518,
+    "total_max_ms": 930,
+    "wall_median_ms": 800.0,
+    "events_query_all": [
+     32,
+     27,
+     34,
+     31,
+     79
+    ]
+   },
+   "nfl": {
+    "n": 5,
+    "events_query_median_ms": 44,
+    "events_query_max_ms": 67,
+    "total_median_ms": 132,
+    "total_max_ms": 388,
+    "wall_median_ms": 423.9,
+    "events_query_all": [
+     61,
+     36,
+     44,
+     41,
+     67
+    ]
+   },
+   "lakers": {
+    "n": 5,
+    "events_query_median_ms": 30,
+    "events_query_max_ms": 81,
+    "total_median_ms": 214,
+    "total_max_ms": 331,
+    "wall_median_ms": 453.6,
+    "events_query_all": [
+     81,
+     24,
+     30,
+     22,
+     56
+    ]
+   }
+  }
+ },
+ "stage_census": {
+  "red sox": [
+   {
+    "setup": 1,
+    "teams_query": 34,
+    "teams_assemble": 1,
+    "events_query": 58,
+    "events_assemble": 0,
+    "futures_outcome_arm": 43,
+    "futures_query": 49,
+    "headline_contenders": 569,
+    "futures_assemble": 1,
+    "fuzzy_and_concepts": 0,
+    "rank": 0,
+    "echo": 0,
+    "total_ms": 756
+   },
+   {
+    "setup": 1,
+    "teams_query": 64,
+    "teams_assemble": 1,
+    "events_query": 65,
+    "events_assemble": 0,
+    "futures_outcome_arm": 83,
+    "futures_query": 71,
+    "headline_contenders": 1503,
+    "futures_assemble": 2,
+    "fuzzy_and_concepts": 0,
+    "rank": 1,
+    "echo": 0,
+    "total_ms": 1791
+   },
+   {
+    "setup": 2,
+    "teams_query": 31,
+    "teams_assemble": 2,
+    "events_query": 32,
+    "events_assemble": 1,
+    "futures_outcome_arm": 42,
+    "futures_query": 42,
+    "headline_contenders": 461,
+    "futures_assemble": 1,
+    "fuzzy_and_concepts": 0,
+    "rank": 0,
+    "echo": 0,
+    "total_ms": 614
+   }
+  ],
+  "chi": [
+   {
+    "setup": 1,
+    "teams_query": 82,
+    "teams_assemble": 1,
+    "events_query": 51,
+    "events_assemble": 0,
+    "futures_outcome_arm": 265,
+    "futures_query": 98,
+    "futures_assemble": 2,
+    "fuzzy_and_concepts": 0,
+    "rank": 1,
+    "echo": 0,
+    "total_ms": 501
+   },
+   {
+    "setup": 1,
+    "teams_query": 49,
+    "teams_assemble": 1,
+    "events_query": 38,
+    "events_assemble": 1,
+    "futures_outcome_arm": 246,
+    "futures_query": 184,
+    "futures_assemble": 2,
+    "fuzzy_and_concepts": 0,
+    "rank": 1,
+    "echo": 0,
+    "total_ms": 523
+   },
+   {
+    "setup": 1,
+    "teams_query": 111,
+    "teams_assemble": 1,
+    "events_query": 69,
+    "events_assemble": 1,
+    "futures_outcome_arm": 349,
+    "futures_query": 89,
+    "futures_assemble": 2,
+    "fuzzy_and_concepts": 0,
+    "rank": 1,
+    "echo": 0,
+    "total_ms": 624
+   }
+  ],
+  "yank": [
+   {
+    "setup": 1,
+    "teams_query": 18,
+    "teams_assemble": 1,
+    "events_query": 24,
+    "events_assemble": 0,
+    "futures_outcome_arm": 13,
+    "futures_query": 28,
+    "headline_contenders": 12,
+    "futures_assemble": 1,
+    "fuzzy_and_concepts": 0,
+    "rank": 0,
+    "echo": 0,
+    "total_ms": 98
+   },
+   {
+    "setup": 1,
+    "teams_query": 32,
+    "teams_assemble": 1,
+    "events_query": 51,
+    "events_assemble": 0,
+    "futures_outcome_arm": 74,
+    "futures_query": 49,
+    "headline_contenders": 24,
+    "futures_assemble": 1,
+    "fuzzy_and_concepts": 0,
+    "rank": 0,
+    "echo": 0,
+    "total_ms": 233
+   },
+   {
+    "setup": 1,
+    "teams_query": 55,
+    "teams_assemble": 1,
+    "events_query": 68,
+    "events_assemble": 0,
+    "futures_outcome_arm": 13,
+    "futures_query": 73,
+    "headline_contenders": 28,
+    "futures_assemble": 1,
+    "fuzzy_and_concepts": 0,
+    "rank": 0,
+    "echo": 0,
+    "total_ms": 240
+   }
+  ]
+ },
+ "finding": "events_query is 23-44 ms median on every term sampled and is never the dominant stage; headline_contenders (615 ms on 'red sox') and futures_outcome_arm (160-195 ms on 'chi') own the slow keystroke. #4140's headline 'yank 127-263 ms' measured the recall arm WITHOUT the route's scope conditions; the real route reads 33 ms median there, and read that before the index too (see the counterfactual table in the spec)."
+}
