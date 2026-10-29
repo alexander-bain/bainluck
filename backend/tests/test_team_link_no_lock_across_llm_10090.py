@@ -8,21 +8,26 @@ its lock timeout and retried.
 
 WHY. ``_backfill_team_links`` was one transaction. A category's links are ORM
 assignments; its savepoint release flushes them as ``UPDATE futures_outcomes``,
-and those row locks lasted until the drain committed at the very end — across
-every later category's ``llm.classify_player_team_cached``, a synchronous
-OpenAI call that also blocks the event loop. Inside one category the same thing
-happened sooner: the identity lookup before the LLM step autoflushed the links
-already decided.
+and those row locks lasted until the drain committed at the very end, across
+every later category's slow step. With the LLM on, that step includes
+``llm.classify_player_team_cached``, a synchronous OpenAI call that also blocks
+the event loop, and inside one category the identity lookup before it
+autoflushed the links already decided.
+
+The beat runs the drain with ``use_llm=False, limit=2000``, so in production the
+slow step is the name/roster matching itself, in Python, over every team of a
+category's sports (the 4-key team load is the watch's last statement). Either
+way the earlier categories' links were held across it.
 
 THE RIG. The #7307 sqlite rig on a FILE database, so a second connection is a
-second session. The LLM stub is the slow step. In it, (1) the statements the
-drain has run since its last COMMIT must hold no ``UPDATE futures_outcomes``,
-and (2) another connection must take the write lock on an outcome row within
-500 ms, as the venue writer's ``lock_timeout`` would. sqlite's write lock covers
-the whole file, so (2) is stricter than Postgres' row lock: it passes only when
-the drain holds no write at all. Both are red on the pre-#10090 code: the hockey
-link from the earlier category is flushed and uncommitted when basketball's LLM
-call runs.
+second session. The slow step is the LLM stub, or with ``use_llm=False`` the
+name matcher. In it, (1) the statements the drain has run since its last
+COMMIT must hold no ``UPDATE futures_outcomes``, and (2) another connection
+must take the write lock on an outcome row within 500 ms, as the venue writer's
+``lock_timeout`` would. sqlite's write lock covers the whole file, so (2) is
+stricter than Postgres' row lock: it passes only when the drain holds no write
+at all. Both are red on the pre-#10090 code: the hockey link from the earlier
+category is flushed and uncommitted when basketball's slow step runs.
 """
 
 from __future__ import annotations
@@ -120,7 +125,7 @@ def _second_session_takes_the_row(path: str) -> str:
         conn.close()
 
 
-def _drain(engine, path: str):
+def _drain(engine, path: str, *, use_llm: bool = True):
     seen: list[dict] = []
     log = _record_statements(engine)
     session = Session(engine)
@@ -142,24 +147,38 @@ def _drain(engine, path: str):
         await session.execute(select(Team.id).limit(1))
         return None
 
-    def _slow_llm(player_name, sport_category=None, market_name=None):
+    def _probe(name):
         seen.append({
-            "player": player_name,
+            "player": name,
             "uncommitted_outcome_writes": _uncommitted_outcome_writes(log),
             "second_session": _second_session_takes_the_row(path),
         })
+
+    def _slow_llm(player_name, sport_category=None, market_name=None):
+        _probe(player_name)
         return "Boston Celtics"
+
+    from app.utils import team_linking as matchers
+    real_match = matchers.match_outcome_to_team
+
+    def _slow_match(name, teams, *a, **k):
+        # The beat runs ``use_llm=False`` with ``limit=2000``: there the slow
+        # step is this matching itself, run in Python over the category's teams.
+        if not use_llm and name == "Jaylen Brown":
+            _probe(name)
+        return real_match(name, teams, *a, **k)
 
     async def _run():
         with mock.patch.object(team_linking, "get_task_session", _task_session), \
                 mock.patch.object(team_linking, "_cursor_store", _FakeCursorStore), \
                 mock.patch.object(llm, "is_available", lambda: True), \
                 mock.patch.object(llm, "classify_player_team_cached", _slow_llm), \
+                mock.patch.object(matchers, "match_outcome_to_team", _slow_match), \
                 mock.patch(
                     "app.services.team_identity.team_identity_service.resolve_team",
                     _no_identity,
                 ):
-            return await team_linking._backfill_team_links(limit=100, use_llm=True)
+            return await team_linking._backfill_team_links(limit=100, use_llm=use_llm)
 
     return asyncio.run(_run()), seen
 
@@ -191,6 +210,21 @@ def test_another_session_can_lock_an_outcome_row_during_the_llm_step(tmp_path):
     stats, seen = _drain(engine, path)
 
     assert seen[0]["second_session"] == "locked"
+
+
+def test_the_beats_no_llm_run_holds_no_outcome_write_while_it_matches(tmp_path):
+    """Production's configuration: the slow step is Python matching, not the LLM."""
+    engine, path = _file_engine(tmp_path)
+    _seed(engine)
+
+    stats, seen = _drain(engine, path, use_llm=False)
+
+    assert [s["player"] for s in seen] == ["Jaylen Brown"]
+    assert seen[0]["uncommitted_outcome_writes"] == []
+    assert seen[0]["second_session"] == "locked"
+    assert _committed_links(engine) == {
+        HOCKEY_LEG: BRUINS, CELTICS_LEG: CELTICS, PLAYER_LEG: None,
+    }
 
 
 def test_the_links_still_land_and_count(tmp_path):
