@@ -577,6 +577,11 @@ COVERED = (
     # #10090: seeds `sports`, `teams`, two live `events` rows and five
     # `odds_snapshots` each by raw INSERT, enough for EI to score both games.
     "test_the_live_ei_write_holds_no_live_row_10090_pg.py",
+    # #10090: seeds `sports`, `teams`, two live NFL and two scheduled MLB
+    # `events` rows and one team-id-less NFL row by raw INSERT. `external_id` is
+    # the reach, as above; the unlinked row's NULL team ids are the team block's
+    # whole subject.
+    "test_discovery_and_mlb_pregame_release_each_game_10090_pg.py",
     # #10305: the anchor-schedule rail's one-row mode (lock, fence, reach).
     "test_reconcile_anchor_schedule_member_10305_pg.py",
     # #837 follow-up: seeds two invented sports, their teams and four `events`
