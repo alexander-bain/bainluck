@@ -132,7 +132,8 @@ class _PMCatalogFlushBoundary:
         # #10090: the linked props' own loop (`flush_props`).
         self.prop_wake = asyncio.Event()
         self.prop_work = 0
-        self.side_writer = asyncio.Lock()
+        # #10090: `PM_BRIDGED_SIDE_FIRST` off keeps today's FIFO lock.
+        self.side_writer = _PMSideWriter() if PM_BRIDGED_SIDE_FIRST else asyncio.Lock()
         #: #10090: bridged open cohorts written beside the game flush.
         self.bridges = _PMBridgeWriter(wake=self.flush_wake)
 
@@ -528,6 +529,103 @@ class _PMStampOwner:
 PM_BRIDGE_QUEUE_LIMIT = 2
 
 
+def _bridged_side_first_env() -> bool:
+    """#10090 — env `PM_BRIDGED_SIDE_FIRST`, read once at import.
+
+    Missing, blank, "0"/"false"/"off"/"no" is off (today's FIFO side
+    connection, the same `asyncio.Lock`); "1"/"true"/"on"/"yes" is on;
+    anything else is off with one warning.
+    """
+    raw = os.environ.get("PM_BRIDGED_SIDE_FIRST")
+    if raw is None or not raw.strip():
+        return False
+    value = raw.strip().lower()
+    if value in ("1", "true", "on", "yes"):
+        return True
+    if value not in ("0", "false", "off", "no"):
+        logger.warning(
+            "Polymarket WS: PM_BRIDGED_SIDE_FIRST=%r is not on/off; using off", raw,
+        )
+    return False
+
+
+#: #10090: a pure bridged cohort feeds its event's blend; a standalone leg and
+#: a linked prop feed none, yet all three take turns on the one side connection
+#: (`side_writer`) in arrival order. Production 2026-10-28 23:16Z: 24 pre-game
+#: events' prices received 23:16:24.6-35.2 were written in ONE bridged cohort
+#: that read the buffer after 35.2 s, while live games' prices committed and
+#: stamped 0.3-2.2 s after arrival. On, the bridged writer takes the side
+#: connection ahead of any side loop waiting for it: it waits for the one side
+#: transaction in flight, never for the queue behind it. Off is today.
+PM_BRIDGED_SIDE_FIRST = _bridged_side_first_env()
+
+_PM_BRIDGE_TIMING_KEYS = (
+    "bridged_cohorts", "bridged_side_wait_s", "bridged_side_wait_max_s",
+    "bridged_write_s", "bridged_write_max_s",
+)
+
+
+class _PMSideWriter:
+    """#10090 — the one side connection, with a bridged-first turn.
+
+    `async with writer:` waits in arrival order, as `asyncio.Lock`;
+    `async with writer.first():` goes ahead of every waiter that is not itself
+    first, behind the transaction in flight (never pre-empted). Release is
+    synchronous (a hand-over to the next waiter), so a cancellation can never
+    leave the connection marked held.
+    """
+
+    def __init__(self) -> None:
+        self._held = False
+        self._waiters: list[tuple[bool, asyncio.Future]] = []
+
+    def locked(self) -> bool:
+        return self._held
+
+    async def acquire(self, first: bool = False) -> bool:
+        if not self._held and not self._waiters:
+            self._held = True
+            return True
+        waiter = (first, asyncio.get_running_loop().create_future())
+        if first:
+            ahead = sum(1 for is_first, _ in self._waiters if is_first)
+            self._waiters.insert(ahead, waiter)
+        else:
+            self._waiters.append(waiter)
+        try:
+            await waiter[1]
+        except asyncio.CancelledError:
+            if waiter[1].done() and not waiter[1].cancelled():
+                # Handed the connection, then cancelled before running.
+                self.release()
+            elif waiter in self._waiters:
+                self._waiters.remove(waiter)
+            raise
+        return True
+
+    def release(self) -> None:
+        while self._waiters:
+            _first, future = self._waiters.pop(0)
+            if not future.done():
+                future.set_result(True)  # handed over; stays held
+                return
+        self._held = False
+
+    async def __aenter__(self):
+        await self.acquire()
+
+    async def __aexit__(self, *exc):
+        self.release()
+
+    @contextlib.asynccontextmanager
+    async def first(self):
+        await self.acquire(first=True)
+        try:
+            yield
+        finally:
+            self.release()
+
+
 def _pm_pure_bridged_legs(
     batch_ids,
     open_outcome_ids,
@@ -617,6 +715,22 @@ class _PMBridgeWriter:
         #: Retry-held events' last offer (`_flush_prices` rotates them).
         self.retry_offered: dict[int, float] = {}
         self._entry: Optional[dict] = None
+        #: #10090: per cohort, seconds waiting for the side connection and
+        #: seconds in its own write; sums since start, maxima since the last
+        #: minute line (`take_timing`).
+        self.timing = dict.fromkeys(_PM_BRIDGE_TIMING_KEYS, 0.0)
+
+    def take_timing(self) -> dict:
+        """The open-contract minute line's bridged fields; resets the maxima."""
+        timing = dict(self.timing)
+        self.timing["bridged_side_wait_max_s"] = 0.0
+        self.timing["bridged_write_max_s"] = 0.0
+        return timing
+
+    def _note_timing(self, name: str, seconds: float) -> None:
+        self.timing[f"bridged_{name}_s"] += seconds
+        key = f"bridged_{name}_max_s"
+        self.timing[key] = max(self.timing[key], seconds)
 
     def busy(self) -> bool:
         return self.task is not None and not self.task.done()
@@ -696,8 +810,14 @@ class _PMBridgeWriter:
                 "events": events, "committed": None, "marks": {}, "exposed": False,
             }
             publishing = None
+            # #10090: bridged-first when the side connection offers the turn.
+            first = getattr(side_writer, "first", None)
+            asked = time.monotonic()
             try:
-                async with side_writer:
+                async with first() if first is not None else side_writer:
+                    took = time.monotonic()
+                    self.timing["bridged_cohorts"] += 1
+                    self._note_timing("side_wait", took - asked)
                     async with buffer_lock:
                         chunk = {oid: price_buffer[oid] for oid in ids if oid in price_buffer}
                         entry["marks"] = {
@@ -716,7 +836,10 @@ class _PMBridgeWriter:
                             publish(session), name="polymarket-bridged-market-publish",
                         )
 
-                    wrote = await write(chunk, start_market_publish=committed)
+                    try:
+                        wrote = await write(chunk, start_market_publish=committed)
+                    finally:
+                        self._note_timing("write", time.monotonic() - took)
                     if wrote and entry["committed"] is not None:
                         entry["committed"] = list(getattr(wrote, "written_ids", chunk))
                     elif wrote is False:
@@ -2801,11 +2924,15 @@ def _log_open_contract_line(stats: dict, open_stats: dict) -> None:
     flush left buffered for the next one — non-zero is a backlog, not a loss.
     `bridged` is #10091's legs/events whose flushed price re-stamps the event
     blend (0/0 with no `bridge_error` = no such contract this run).
+    `bridged_writes` (#10090) is the bridged writer's cohorts since start, then
+    the seconds they waited for the shared side connection and spent in their
+    own write: sum since start / the minute's longest, each.
     """
     logger.info(
         "Polymarket WS open contracts: assets=%d shards=%d/%d served=%d/%d "
         "msgs=%d snapshot_quotes=%d written=%d deferred=%d "
-        "bridged=%d/%d%s",
+        "bridged=%d/%d bridged_writes=%d side_wait=%.1f/%.2fs "
+        "write=%.1f/%.2fs%s",
         stats.get("open_contract_assets", 0),
         open_stats.get("shards_connected", 0), open_stats.get("shards", 0),
         open_stats.get("assets_served", 0),
@@ -2816,6 +2943,11 @@ def _log_open_contract_line(stats: dict, open_stats: dict) -> None:
         stats.get("open_contract_flush_deferred", 0),
         stats.get("open_contract_bridged_outcomes", 0),
         stats.get("open_contract_bridged_events", 0),
+        int(stats.get("bridged_cohorts", 0)),
+        stats.get("bridged_side_wait_s", 0.0),
+        stats.get("bridged_side_wait_max_s", 0.0),
+        stats.get("bridged_write_s", 0.0),
+        stats.get("bridged_write_max_s", 0.0),
         " bridge_error" if stats.get("open_contract_bridge_error") else "",
     )
 
@@ -5952,6 +6084,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             _log_stats_line(stats, ws_stats, blend)
             open_connected = any(s.is_connected for s in open_sockets)
             if open_sockets:
+                stats.update(catalog_boundary.bridges.take_timing())
                 _log_open_contract_line(stats, open_sockets[0].stats)
             _report_liveness(
                 "polymarket",
