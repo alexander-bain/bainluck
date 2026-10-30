@@ -2,8 +2,8 @@
   "status": "PREPARED_RETURN",
   "at": "2026-10-30T00:59:11.221200+00:00",
   "source_parent": "c80beaa7115ff89c85656f0e98ffa1bd850b4fe5",
-  "source_head": "d7dce508bd8f2e056ff245724255dd079e9763f3",
-  "source_tree": "dd3f58a2a63fe1b4fbdf5c3b881691e34eb06675",
+  "source_head": "55ebbd81f10f9f5ef99e12dcc5b11939f01cc592",
+  "source_tree": "6912d4c98094fb759a0a9a361571bff8b38c16fc",
   "first_source": "7d3c449c686561660310ac21d93e6f90e332fbe3",
   "accepted_original_parent": "2f55cc13e912765dc2b099f78b896278cf85247c",
   "branch": "codex/dot-event-design-source",
@@ -12,8 +12,8 @@
     "ios/Bain Luck/BainLuckTests/LadderOriginalProbabilityDetails9483Tests.swift"
   ],
   "sha256": {
-    "ios/Bain Luck/Bain Luck/Components/LadderOriginalProbabilityDetails9483.swift": "9361102ea68e8f667a1e7f55e49c194b1f60db8a9a2edcb3c468091d4ba9b5cf",
-    "ios/Bain Luck/BainLuckTests/LadderOriginalProbabilityDetails9483Tests.swift": "f6f97b49f353be76c8e40bdfb4b6a51f8b59d886f917c99b78639b53a9f38956"
+    "ios/Bain Luck/Bain Luck/Components/LadderOriginalProbabilityDetails9483.swift": "90f3caca75920d935febf18eb18ca68f0f7c705b98be7c91d4ac5771b4c1606b",
+    "ios/Bain Luck/BainLuckTests/LadderOriginalProbabilityDetails9483Tests.swift": "bb304fabb9d11dbb2643d6465241ff9b4752a625853e15802065370222277915"
   },
   "prepared_tests": {
     "preserved": 72,
@@ -60,5 +60,22 @@
   },
   "design_acceptance": "PENDING",
   "remote_publication": "PENDING; exact historical seed not on remote and local authenticated executor disconnected",
-  "next_action": "Send both immutable returns to Design for intake and automatically request next pinned contribution. Do not start third until intake/capacity permits."
+  "next_action": "Send both immutable returns to Design for intake and automatically request next pinned contribution. Do not start third until intake/capacity permits.",
+  "initial_source_head": "d7dce508bd8f2e056ff245724255dd079e9763f3",
+  "correction_parent": "c1ac8e342a741b717a0f1b4998178aa5d00818c1",
+  "correction": {
+    "at": "2026-10-30T01:41:39.459233+00:00",
+    "requested_by": "Design intake via existing coordinator",
+    "change": "Exactly three text replacements: Pregame presentation unavailable -> Only pre-match information shown",
+    "portable_diff_check_exit": 0,
+    "core_prefix_preserved": true,
+    "live_test_prefix_preserved": true,
+    "fresh_syntax_parse": "NOT_RUN in cloud; owner recheck pending"
+  },
+  "owner_prior_head_evidence": {
+    "head": "c1ac8e342a741b717a0f1b4998178aa5d00818c1",
+    "syntax": "Design reports local syntax parse PASS for both files",
+    "compile_XCTest": "NOT_RUN",
+    "source_acceptance": "copy correction requested"
+  }
 }
