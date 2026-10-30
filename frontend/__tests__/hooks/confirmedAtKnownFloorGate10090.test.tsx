@@ -353,6 +353,28 @@ describe("#10090 J C1 live's catching sequence", () => {
     expect(page.last()).toMatchObject({ confirmedAt: T, label: "Connected" });
     await page.unmount();
   });
+
+  // R2 (lane1 Q5): the restore is an effect, so the render that re-adds the row
+  // must already owe its parked floor — no commit of the stale rejoin confirms.
+  test("no commit of a stale rejoin load claims the confirmation, before or after the restore", async () => {
+    const page = await confirmedPage();
+    await page.emit(["fold_preview_floor", floorPacket({ "2": 24 })]);
+    await page.load(held({ "1": 12 }));
+    await page.emit(["open"]);
+    expect(page.last()).toMatchObject({ confirmedAt: T, label: "Connected" });
+    const mark = page.mark();
+    await page.load(held({ "1": 12, "2": 22 }));
+    expect(page.since(mark).length).toBeGreaterThan(0);
+    // The membership change replaces the controller, so a later commit may
+    // honestly read "Connecting"; none may read "Connected" or carry the claim.
+    for (const c of page.since(mark)) {
+      expect(c.confirmedAt).toBeNull();
+      expect(c.ageClock).toBe(c.shownClock);
+      expect(c.label).not.toBe("Connected");
+      expect(details(c)).not.toContain("Probability confirmed");
+    }
+    await page.unmount();
+  });
 });
 
 describe("#10090 J C1 the gate suppresses only what it must", () => {

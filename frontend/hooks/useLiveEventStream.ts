@@ -416,6 +416,14 @@ export function useLiveEventStream(
     return () => clearTimeout(timer);
   }, [previewExpiresAt]);
 
+  // #10090 J C1 R2: a parked row back in the committed revision owes its floor
+  // on THIS render. The membership effect restores it a commit late, and that
+  // one commit would claim the confirmation over the stale rejoin.
+  let gateFloors = gate.floors;
+  for (const key of memberKeys ? memberKeys.split(',') : []) {
+    if (key in gate.parked) gateFloors = { ...gateFloors, [key]: Math.max(gateFloors[key] ?? -1, gate.parked[key]) };
+  }
+
   return {
     frame,
     connected,
@@ -424,7 +432,7 @@ export function useLiveEventStream(
     blendPreview: enabled && preview?.eventId === eventId ? preview : null,
     blendPreviewNow: previewNow,
     confirmedAt: enabled && confirmed.eventId === eventId
-      && !confirmationOwed(gate.eventId === eventId ? gate.floors : {}, authoritativeMembership)
+      && !confirmationOwed(gate.eventId === eventId ? gateFloors : {}, authoritativeMembership)
       ? confirmed.at : null,
     // Before this event's controller has said anything, it is connecting if
     // it is going to try at all — never the last event's word.
