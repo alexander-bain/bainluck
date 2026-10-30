@@ -23,13 +23,24 @@ source's prior entry put back, both computed at COMMIT. ``-`` when it did not;
 ``?`` when the prior entry or the receipt instant is unknown here (an unmapped
 event, a producer that does not time its fetch). The comparison is against the
 stored bag, not against a venue preview another process may be showing.
+
+#10090 item 4: the venue REST writers (the two-minute poll's stamp, the
+15-minute matcher's) committed Kalshi/Polymarket moves and published nothing;
+the move reached open pages only when some other writer next published the
+whole bag. `queue_committed_rest_frame` puts their frame on this same
+commit-confirmed queue. It is not `write_nonvenue_probability`, which still
+refuses venue sources: the caller keeps its own UPDATE and RETURNS
+`rest_stamp_returning()`. Its frame is dated by the write clock, never the
+entry's observation clock, and carries the refresher's `source_snapshot`. It
+reaches neither the #4971 recording nor the writer receipt, both of which
+describe nonvenue writes.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from types import SimpleNamespace
 
 from sqlalchemy import (
@@ -49,7 +60,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 from app.models.models import Event
 from app.tasks.live_blend_refresh import atomic_stamp_expression
 from app.utils.aggregation import compute_aggregate_probability
-from app.utils.live_push import build_frame, publish_frame
+from app.utils.live_push import build_frame, build_source_snapshot, publish_frame
 from app.utils.nonvenue_trace import nonvenue_trace
 
 logger = logging.getLogger(__name__)
@@ -59,6 +70,10 @@ _HOOKS = "nonvenue_probability_hooks"
 _CLIENT_SCOPE = "nonvenue_probability_client_scope"
 _RECEIPTS = "nonvenue_probability_receipts"
 NONVENUE_SOURCES = frozenset({"betting", "stat_model", "mlb", "espn"})
+#: #10090 item 4: the venue REST writers allowed onto this queue, by call site
+#: in `prediction_market_matching.py`, and the sources they stamp.
+REST_VENUE_WRITERS = frozenset({"live_poll", "matcher"})
+REST_VENUE_SOURCES = frozenset({"kalshi", "polymarket"})
 #: #10090 field 3: one line per committed live frame (module doc).
 WRITER_RECEIPT_FORMAT = "nonvenue_live_push[%s]: writer-receipt writer=%s event=%s stamps=%s"
 _ABSENT = object()  # the source had no entry before this transaction wrote it
@@ -154,7 +169,8 @@ def _before_commit(session):
 
     if not recording_enabled():
         return
-    pending = session.info.get(_PENDING, [])
+    # A REST venue frame (observation None) is not a nonvenue publication.
+    pending = [entry for entry in session.info.get(_PENDING, []) if entry[4] is not None]
     if not pending:
         return
     latest = {frame["event_id"]: frame for _, frame, _, _, _ in pending}
@@ -341,6 +357,72 @@ def _queue(session, frame, event, previous, observation):
     )
 
 
+def rest_stamp_returning():
+    """What a REST venue stamp's UPDATE RETURNS for `queue_committed_rest_frame`."""
+    return (
+        Event.win_probability_sources,
+        Event.status,
+        Event.espn_win_prob_home,
+        Event.opening_home_probability,
+        Event.win_probability_sources_rev,
+        func.clock_timestamp().label("written_at"),
+    )
+
+
+def queue_committed_rest_frame(session, result, *, writer, event_id, source, value) -> bool:
+    """#10090 item 4: queue a venue REST stamp's frame for after its COMMIT.
+
+    ``result`` is the stamp UPDATE's own result, RETURNING
+    `rest_stamp_returning()`, so ``p``, ``rev`` and the source snapshot all
+    describe the one write being reported. ``value`` is the home probability it
+    stamped, oriented as the refresher's ``source_value`` is.
+
+    ``updated_at`` is the database clock at the write. The bag's own entry is
+    dated by the observation (`stamp_source_reading`'s ``now``), which can be
+    minutes old, and `event_stream._frame_is_fresh` drops a frame older than
+    30 s. Publication is decided at COMMIT on the RETURNED status, as for every
+    frame here: only a live row is sent; a rollback sends nothing.
+
+    Returns whether a frame was queued. Never raises past the allowlist: the
+    price write must not be lost to its fanout.
+    """
+    if writer not in REST_VENUE_WRITERS:
+        raise ValueError(f"not a REST venue writer: {writer}")
+    if source not in REST_VENUE_SOURCES:
+        raise ValueError(f"not a REST venue source: {source}")
+    try:
+        row = result.first()
+        if row is None:
+            return False
+        sources, status, espn, opening, rev, written_at = row
+        shim = SimpleNamespace(
+            win_probability_sources=sources,
+            status=status,
+            espn_win_prob_home=espn,
+            opening_home_probability=opening,
+        )
+        frame = build_frame(
+            event_id=event_id,
+            probability=compute_aggregate_probability(shim, status),
+            source=source,
+            source_value=value,
+            updated_at=written_at.isoformat(),
+            status=status,
+            rev=rev,
+        )
+        snapshot = build_source_snapshot(event_id, frame["rev"], sources)
+        if snapshot is not None:
+            frame["source_snapshot"] = snapshot
+        _queue(session, frame, None, None, None)
+        return True
+    except Exception:
+        logger.warning(
+            "REST venue frame not queued: writer=%s event=%s source=%s",
+            writer, event_id, source, exc_info=True,
+        )
+        return False
+
+
 async def write_nonvenue_probability(
     session,
     event,
@@ -512,6 +594,15 @@ async def nonvenue_publication_scope(session):
     finally:
         info.pop(_CLIENT_SCOPE, None)
         await _close_publication_client(holder["client"])
+
+
+def rest_publication_scope(session):
+    """#10090 item 4: `nonvenue_publication_scope` for a REST venue writer's
+    session, or nothing when a scope already owns it or it is not a session."""
+    info = getattr(session, "info", None)
+    if not isinstance(info, dict) or _CLIENT_SCOPE in info:
+        return nullcontext()
+    return nonvenue_publication_scope(session)
 
 
 async def publish_committed_nonvenue_frames(session):
