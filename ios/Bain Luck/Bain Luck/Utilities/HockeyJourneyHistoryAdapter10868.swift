@@ -223,36 +223,52 @@ enum HockeyJourneyHistoryAdapter10868 {
                                 drawn: home, phase: phase, kickoff: kickoff, host: host)
         let awaySeries = series(awayID, side: .away, name: event.awayTeam, shape: .square, tint: tints.away,
                                 drawn: away, phase: phase, kickoff: kickoff, host: host)
+        // Each part on its own line, so the one large initializer below stays
+        // cheap to type-check.
+        let caption: String = phase == .before ? Words.beforeCaption : Words.gameCaption
+        let plotted = FieldHistoryDomain10868(lower: domain.lowerBound.timeIntervalSince1970,
+                                              upper: domain.upperBound.timeIntervalSince1970)
+        let placedGuides: [FieldHistoryGuide10868] = phase == .before || kickoff == nil
+            ? [] : guides(response, event: event, from: domain.lowerBound, through: last)
+        let readout: FieldHistoryReadoutIntent10868
+        if kickoff == nil {
+            readout = .singleBefore(label: Words.unconfirmedStart)
+        } else if phase == .live {
+            readout = .beforeAndRecorded(beforeLabel: Words.pregame, recordedLabel: Words.recorded)
+        } else {
+            readout = .singleBefore(label: Words.pregame)
+        }
+        let hollow: String? = kickoff == nil ? nil : Words.hollowKey
+        var notes: [String] = [sourceWords(line)]
+        if let complement { notes.append(complement) }
+        notes.append(Words.gapsNote)
+        var said: String = summary([(event.homeTeam, !home.runs.isEmpty), (event.awayTeam, !away.runs.isEmpty)])
+        if let complement { said += " \(complement)" }
+        let inspect: FieldHistoryAction10868? = phase == .live
+            ? action(inspectActionID, Words.inspect, available: false) : nil
         return FieldHistoryInput10868(
             title: Words.title,
-            caption: phase == .before ? Words.beforeCaption : Words.gameCaption,
+            caption: caption,
             series: [homeSeries, awaySeries],
             selection: .none,
-            domain: FieldHistoryDomain10868(lower: domain.lowerBound.timeIntervalSince1970,
-                                            upper: domain.upperBound.timeIntervalSince1970),
+            domain: plotted,
             ceiling: 1,
             yTicks: yTicks(),
             xTicks: xTicks(domain, host: host),
-            guides: phase == .before || kickoff == nil
-                ? [] : guides(response, event: event, from: domain.lowerBound, through: last),
+            guides: placedGuides,
             breaks: [],
-            readout: kickoff == nil
-                ? .singleBefore(label: Words.unconfirmedStart)
-                : phase == .live
-                    ? .beforeAndRecorded(beforeLabel: Words.pregame, recordedLabel: Words.recorded)
-                    : .singleBefore(label: Words.pregame),
-            markKey: FieldHistoryMarkKey10868(hollow: kickoff == nil ? nil : Words.hollowKey, filled: nil),
+            readout: readout,
+            markKey: FieldHistoryMarkKey10868(hollow: hollow, filled: nil),
             comparisonExplanation: nil,
-            notes: [sourceWords(line)] + (complement.map { [$0] } ?? []) + [Words.gapsNote],
-            summary: summary([(event.homeTeam, !home.runs.isEmpty), (event.awayTeam, !away.runs.isEmpty)])
-                + (complement.map { " \($0)" } ?? ""),
+            notes: notes,
+            summary: said,
             plotHeight: plotHeight,
             unboundReadingWords: Words.notRecorded,
             plotUnavailableWords: nil,
             windows: nil, scale: nil, moreOriginals: nil,
             details: action(detailsActionID, Words.details, available: false),
             expand: action(expandActionID, Words.expand, spoken: Words.expandSpoken),
-            inspect: phase == .live ? action(inspectActionID, Words.inspect, available: false) : nil,
+            inspect: inspect,
             previous: nil, next: nil, inspection: nil)
     }
 
