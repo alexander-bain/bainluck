@@ -2902,7 +2902,7 @@ struct OddsChartView: View {
         // #10090 — the committed headline re-values an older pin (web's #8749
         // `appendHeroObservation`): the marker is never drawn, and the pin keeps
         // its time. Re-checked against THIS payload, like the preview.
-        var revaluedAt: Date?
+        var revalued: (date: Date, value: Double)?
         if let marker = frames.last, let authority = marker.headlineOverPin {
             frames.removeLast()
             if let edge = BlendPreview.olderPinUnderHeadline(
@@ -2917,7 +2917,7 @@ struct OddsChartView: View {
                 rendered.removeAll {
                     $0.source == "aggregate" && $0.date >= marker.date && $0.date < edgeAt && carried.contains($0.date)
                 }
-                revaluedAt = marker.date
+                revalued = (marker.date, marker.homeProbability)
             }
         }
         if let preview = frames.last, let authority = preview.previewAuthority {
@@ -2945,7 +2945,8 @@ struct OddsChartView: View {
             // A re-valued pin caps the relabel at the headline's clock, so no
             // bucket moves onto the pin past the value that replaced it.
             rendered = servedBlendAtEvidenceTime(
-                rendered, history: history, previewAt: replacedPin ? frames.last?.date : revaluedAt)
+                rendered, history: history, previewAt: replacedPin ? frames.last?.date : nil,
+                headline: revalued, frames: frames)
         }
         let publishedEdge = rendered
             .filter { $0.source == "aggregate" }
@@ -3000,24 +3001,47 @@ struct OddsChartView: View {
     /// contains the read moves to the pin, so the pin still ends the line and
     /// the published edge does not move. When a preview replaced the pin,
     /// `previewAt` is the cap and that bucket stays where it was, because the
-    /// preview must stay strictly newer than every committed point. An
-    /// unpinned payload proves no read time, so it is returned unchanged: a
-    /// minute's end could sit past the live edge.
+    /// preview must stay strictly newer than every committed point.
+    ///
+    /// When the committed headline re-valued the pin, its clock is the cap,
+    /// and that bucket moves to the latest instant in its minute, up to the
+    /// headline, where the line already shows the bucket's value: the
+    /// headline's clock when the bucket prints the headline (the commit's own
+    /// reading), else the latest held frame that printed it. So a commit
+    /// inside the minute is never drawn before the headline showed it, and a
+    /// bucket that predates the commit never takes the headline's instant.
+    /// With no such instant it stays at its minute start. The headline's
+    /// revision covers the pin's (`BlendPreview.olderPinUnderHeadline`), so no
+    /// bucket's evidence is later than the headline's clock.
+    ///
+    /// An unpinned payload proves no read time, so it is returned unchanged:
+    /// a minute's end could sit past the live edge.
     ///
     /// A relabelling in time only: the same values, the same order, no point
     /// added or removed. A chart with no frames never reaches this.
     static func servedBlendAtEvidenceTime(
         _ points: [ChartDataPoint],
         history: EventHistoryResponse,
-        previewAt: Date?
+        previewAt: Date?,
+        headline: (date: Date, value: Double)? = nil,
+        frames: [LiveBlendPoint] = []
     ) -> [ChartDataPoint] {
         guard history.blendEdgePinned == true,
               let pinAt = history.aggregateLine?.last?.timestamp.asDate else { return points }
-        let cap = previewAt.map { min($0, pinAt) } ?? pinAt
+        let cap = [previewAt, headline?.date].compactMap { $0 }.reduce(pinAt, min)
         return points.map { point in
             guard point.source == "aggregate", point.date < cap else { return point }
             let end = point.date.addingTimeInterval(60)
-            let date = end < cap ? end : (previewAt == nil ? cap : point.date)
+            let date: Date
+            if end < cap {
+                date = end
+            } else if let headline {
+                date = headline.value == point.probability ? cap : frames
+                    .filter { $0.date >= point.date && $0.date < cap && $0.homeProbability == point.probability }
+                    .map(\.date).max() ?? point.date
+            } else {
+                date = previewAt == nil ? cap : point.date
+            }
             return ChartDataPoint(date: date, probability: point.probability, source: point.source)
         }
     }

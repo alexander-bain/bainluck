@@ -185,7 +185,8 @@ final class TheChartEndsOnTheCommittedHeadlineOverAnOlderPin10090Tests: XCTestCa
                       "the commit stays at its own time")
         // Before the commit the line is master's, plus the read's 20:03:00
         // bucket, which stays at its minute instead of moving onto the pin past
-        // the value that replaced it (`servedBlendAtEvidenceTime`).
+        // the value that replaced it: a carry-forward minute holds no reading
+        // (`servedBlendAtEvidenceTime`).
         func early(_ points: [ChartDataPoint]) -> [String] {
             points.filter { $0.source == "aggregate" && $0.date < Self.date(Self.commitAt) }
                 .map { "\($0.date.timeIntervalSince1970)=\($0.probability)" }.sorted()
@@ -209,6 +210,57 @@ final class TheChartEndsOnTheCommittedHeadlineOverAnOlderPin10090Tests: XCTestCa
         XCTAssertEqual(blend.last?.probability, 0.71)
         XCTAssertEqual(blend.filter { $0.date >= Self.date(early) }.map(\.probability), [0.71, 0.71],
                        "the commit, then the pin; no dip through the carried minute")
+    }
+
+    /// Latency's case A on 58729fb2 (#11105's out-and-back, in the headline's
+    /// own minute): the read's 20:03:00 bucket is a REAL minute that already
+    /// holds the 71% commit, and the stream pushed 62% and 66% inside that
+    /// minute before the commit at +52.5 s; the pin at 20:04:15 still carries
+    /// the 63% observed before it. Left at its minute start, the bucket drew
+    /// 71% 52.5 s early and the line dipped back through 62/66%, with the
+    /// 20:02:00 bucket's end on the same instant. It moves to the headline's
+    /// clock instead, which its evidence cannot be later than: the pin's
+    /// revision is covered by the headline's (`olderPinUnderHeadline`).
+    func testARealBucketInTheHeadlinesMinuteMeetsTheHeadlineAtItsClock() throws {
+        let blend = try Self.inMinute(bucket: 0.71)
+        XCTAssertEqual(blend.map(\.text), ["0.0=0.6", "10.0=0.62", "30.0=0.66", "52.5=0.71", "75.0=0.71"],
+                       "no 71% before the commit, no dip back, one point per instant")
+        XCTAssertFalse(blend.contains { $0.point.probability == 0.71 && $0.offset < 52.5 },
+                       "the line never shows the commit before the headline did")
+    }
+
+    /// The same minute when the read's bucket holds 66%, a value the stream
+    /// pushed at +30 s before the commit: it meets that frame. At its minute
+    /// start it drew the out-and-back 66 → 62 → 66; at the headline's clock it
+    /// would win the tie and draw the commit 22.5 s late.
+    func testABucketThatPredatesTheCommitMeetsTheFrameThatPrintedIt() throws {
+        let blend = try Self.inMinute(bucket: 0.66)
+        XCTAssertEqual(blend.map(\.text), ["0.0=0.6", "10.0=0.62", "30.0=0.66", "52.5=0.71", "75.0=0.71"])
+    }
+
+    private static func inMinute(bucket: Double) throws -> [(offset: TimeInterval, text: String, point: ChartDataPoint)] {
+        let minute = date("2026-10-29T20:03:00+00:00")
+        func at(_ seconds: TimeInterval) -> String {
+            [-60: "20:02:00", -30: "20:02:30", -20: "20:02:40", 0: "20:03:00", 30: "20:03:30",
+             52.5: "20:03:52.500000", 75: "20:04:15"].mapValues { "2026-10-29T\($0)+00:00" }[seconds]!
+        }
+        // The bucket's own reading: the commit's input, or the 66% pushed at +30 s.
+        let reading = at(bucket == 0.71 ? 52.5 : 30)
+        let sources = ["kalshi", "polymarket"].reduce(into: [String: [[String: Any]]]()) {
+            $0[$1] = [["timestamp": at(-30), "home_probability": 0.6],
+                      ["timestamp": reading, "home_probability": bucket],
+                      ["timestamp": at(75), "home_probability": bucket, "live_edge": true]]
+        }
+        let read = try served([(at(-60), 0.60), (at(0), bucket), (at(75), 0.63)],
+                              observed: at(-20), rev: 2, sources: sources)
+        let event = try committed(observed: at(52.5))
+        let pushed = [LiveBlendPoint(date: minute.addingTimeInterval(10), homeProbability: 0.62),
+                      LiveBlendPoint(date: minute.addingTimeInterval(30), homeProbability: 0.66),
+                      LiveBlendPoint(date: minute.addingTimeInterval(52.5), homeProbability: 0.71)]
+        return drawnBlend(read, frames(read, event, nil, now: 52.415, pushed: pushed)).map {
+            let offset = $0.date.timeIntervalSince(minute)
+            return (offset, "\(offset)=\($0.probability)", $0)
+        }
     }
 
     /// The page over 0–70 s: the preview, its commit at +30 s, and each history
