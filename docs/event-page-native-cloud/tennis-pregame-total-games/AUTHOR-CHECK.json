@@ -1,0 +1,96 @@
+{
+  "status": "PREPARED_RETURN",
+  "at": "2026-10-30T02:15:33.579117+00:00",
+  "source_parent": "6784f80c046c8f1941ecfc2de8ab2e6d8fd5861e",
+  "source_head": "4cc80b63b7ee3f2aea0f3ac5b2ae10806e8b9b4d",
+  "source_tree": "4ffe922f8561fc493c184f4f338ceac1a49b0ab5",
+  "original_checkpoint": "370751a9d86599e3292f2a68b050aba4694f675c",
+  "original_checkpoint_ancestry_claim": false,
+  "frozen_base": "6c73734af6d7f83f252ace8ed921eb0fcae766e3",
+  "branch": "codex/dot-event-design-source",
+  "native_changed_paths": [
+    "ios/Bain Luck/Bain Luck/Components/TotalMilestonePresentation10868.swift",
+    "ios/Bain Luck/BainLuckTests/TotalMilestonePresentation10868Tests.swift"
+  ],
+  "sha256": {
+    "ios/Bain Luck/Bain Luck/Components/TotalMilestonePresentation10868.swift": "c322c5f5ceeb4669ffd8cd10f3ea994c795708918b9bff2a863d994bd7e9ad41",
+    "ios/Bain Luck/BainLuckTests/TotalMilestonePresentation10868Tests.swift": "64dfebda7baf16b9ff73e559d62cdd5e2f04533984dd079ddf2576787b2422ba"
+  },
+  "prepared_tests": {
+    "preserved": 107,
+    "added": 15,
+    "total": 122,
+    "execution": "NOT_RUN"
+  },
+  "checks": [
+    {
+      "name": "52 input files and manifest",
+      "exit_code": 0
+    },
+    {
+      "name": "exact original source/test Git blobs and SHA256",
+      "exit_code": 0
+    },
+    {
+      "name": "30 protected bindings at frozen base and shared HEAD",
+      "exit_code": 0
+    },
+    {
+      "name": "immutable129780-byte core",
+      "exit_code": 0
+    },
+    {
+      "name": "immutable212080-byte107-test parent prefix",
+      "exit_code": 0
+    },
+    {
+      "name": "exact two-native-path source delta",
+      "exit_code": 0
+    },
+    {
+      "name": "unique prepared test names",
+      "exit_code": 0
+    },
+    {
+      "name": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "name": "remote expected-head publication and exact readback",
+      "exit_code": 0
+    },
+    {
+      "name": "local fast-forward tree identity",
+      "exit_code": 0
+    }
+  ],
+  "review": {
+    "kind": "independent manual source review",
+    "initial_finding": "Computed0.55*200 geometry compared with exact equality; prepared test would reject binary rounding. No XCTest was run.",
+    "resolution": "Two non-endpoint bar-width assertions use XCTUnwrap and accuracy0.001; reviewer verified correction.",
+    "result": "no remaining blocking source issue found",
+    "native_qualification": false
+  },
+  "source_publication": {
+    "method": "GitHub blob/tree/commit and expected-head non-force ref update",
+    "verified_remote_head": "4cc80b63b7ee3f2aea0f3ac5b2ae10806e8b9b4d"
+  },
+  "design_acceptance": "PENDING",
+  "native_checks": {
+    "Swift syntax": "NOT_RUN",
+    "typecheck": "NOT_RUN",
+    "SwiftUI compile": "NOT_RUN",
+    "XCTest": "NOT_RUN",
+    "native render": "NOT_RUN",
+    "VoiceOver": "NOT_RUN",
+    "device": "NOT_RUN",
+    "TestFlight": "NOT_RUN"
+  },
+  "unpaid": [
+    "Real owner event/original/threshold associations and phase-specific copy",
+    "Native fit and44pt interaction/accessibility qualification",
+    "Production mounting and live/held Details/Back/focus integration",
+    "Whole phase/route acceptance and identified TestFlight build"
+  ],
+  "next_action": "Design intake of exact source and receipts; automatically request next pinned unclaimed outcome subject to actual permission and WIP. No self-assigned fourth outcome."
+}
