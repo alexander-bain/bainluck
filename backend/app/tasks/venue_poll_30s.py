@@ -100,8 +100,9 @@ pass with the cursor PAST the failed group (``groups_failed``), so one group
 that keeps failing costs one read per rotation instead of stopping the rotation
 there. A timeout the pass's own clock cut short keeps the group's place only
 when an earlier group in the same pass used up the time; the pass's FIRST group
-had all the time there was, so its timeout counts as a failure and moves on. A Kalshi market with more legs than a whole pass's budget can read is
-skipped and counted (``units_oversize``), never left at the head. The population
+had all the time there was, so its timeout counts as a failure and moves on. A
+Kalshi market with more legs than a whole pass's budget can read is skipped and
+counted (``units_oversize``), never left at the head. The population
 is re-read at most every ``POPULATION_TTL_S`` per worker process. Single-flight
 in the task wrapper means a slow pass declines the next tick rather than
 overlapping it.
