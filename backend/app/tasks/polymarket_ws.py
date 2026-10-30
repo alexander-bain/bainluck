@@ -2688,13 +2688,59 @@ async def _apply_ws_resolution(session, market_id, outcomes, verdict):
 #: three weeks finished. 24 h is the widest margin that still costs nothing.
 SLATE_MAX_AGE_HOURS = 24
 
+#: The scheduled arm's upper bound, and its bounds when the env is set.
+PM_WS_UPCOMING_HOURS_DEFAULT = 6
+PM_WS_UPCOMING_HOURS_MIN = 1
+PM_WS_UPCOMING_HOURS_MAX = 6
+
+
+def _upcoming_hours_env() -> int:
+    """#10090 — env `PM_WS_UPCOMING_HOURS`, read once at import.
+
+    Missing or blank is the default, 6 (the window as it always was). A whole
+    number is clamped to 1..6 with one warning when it moves; anything else is
+    the default with one warning. The setting can narrow the window, never
+    widen it past where it has always been.
+
+    A changed value reaches the socket on RESTART ONLY: it is read at import,
+    and every slate read after that (startup, admission, each recycle) uses it.
+    A Heroku config change restarts the dyno, so setting it is enough.
+    """
+    raw = os.environ.get("PM_WS_UPCOMING_HOURS")
+    if raw is None or not raw.strip():
+        return PM_WS_UPCOMING_HOURS_DEFAULT
+    try:
+        hours = int(raw.strip())
+    except ValueError:
+        logger.warning(
+            "Polymarket WS: PM_WS_UPCOMING_HOURS=%r is not a whole number of "
+            "hours; using %d", raw, PM_WS_UPCOMING_HOURS_DEFAULT,
+        )
+        return PM_WS_UPCOMING_HOURS_DEFAULT
+    clamped = min(max(hours, PM_WS_UPCOMING_HOURS_MIN), PM_WS_UPCOMING_HOURS_MAX)
+    if clamped != hours:
+        logger.warning(
+            "Polymarket WS: PM_WS_UPCOMING_HOURS=%r is outside %d..%d; using %d",
+            raw, PM_WS_UPCOMING_HOURS_MIN, PM_WS_UPCOMING_HOURS_MAX, clamped,
+        )
+    return clamped
+
+
+#: #10090: how far ahead a `scheduled` event joins the socket. At 13:40Z on
+#: 2026-10-30 the PM venue process was CPU-bound (loop cpu 0.95) on a slate of
+#: 354 markets on live games against 1,633 on games 2-6 h away; the 2-minute
+#: poll already covers live plus the next 3 h. Live, the 24 h floor and the
+#: suspended arm do not read this.
+PM_WS_UPCOMING_HOURS = _upcoming_hours_env()
+
 
 def _slate_event_window():
     """The event window the socket subscribes to — the scheduled arm bounded
     at BOTH ends, the live arm at neither.
 
-    The upper bound (start within 6 h) was always here. The floor was not, and
-    without it ``status='scheduled'`` is not a statement about the future: it is
+    The upper bound (start within 6 h; ``PM_WS_UPCOMING_HOURS`` since #10090)
+    was always here. The floor was not, and without it ``status='scheduled'``
+    is not a statement about the future: it is
     whatever the status updater last managed to write. Every event that never
     left ``scheduled`` stayed in the subscription forever, so the slate silently
     accumulated months of finished sport.
@@ -2786,7 +2832,10 @@ def _slate_event_window():
             Event.commence_time >= text(
                 f"NOW() - INTERVAL '{int(SLATE_MAX_AGE_HOURS)} hours'"
             ),
-            Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
+            # Same int() rendering as the floor; #10090 made it a setting.
+            Event.commence_time <= text(
+                f"NOW() + INTERVAL '{int(PM_WS_UPCOMING_HOURS)} hours'"
+            ),
         ),
         # #9484: an open market on a recently suspended event. Floored like the
         # scheduled arm, because nothing advances a suspended row out; this arm
