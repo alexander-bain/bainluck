@@ -198,15 +198,43 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
         // window and when the popover goes, measured from the push.
         let coveredPage = topPage(host)
         let pushedAt = Date()
-        var leftWindowAt: TimeInterval?, closedAt: TimeInterval?
+        var leftWindowAt: TimeInterval?, closedAt: TimeInterval?, disappearedAt: TimeInterval?
+        let coveredModel = try XCTUnwrap(pages[Self.first])
+        XCTAssertTrue(coveredModel.streamDelivering, "control: the covered page is streaming before the push")
         func mark() {
             let t = Date().timeIntervalSince(pushedAt)
             if leftWindowAt == nil, coveredPage.window == nil { leftWindowAt = t }
+            // `onDisappear` ends with `vm.stopRefresh()`, which drops delivery.
+            if disappearedAt == nil, !coveredModel.streamDelivering { disappearedAt = t }
             if closedAt == nil, host.presentedViewController == nil { closedAt = t }
         }
         router.path.append(Self.second)
         await settle(host, timeout: 1.5) { mark(); return router.path.count == 1 && host.presentedViewController == nil }
         let leftOver = host.presentedViewController
+        // CONTROL11703 staged probes (DO NOT MERGE): which kind of update lets a
+        // still-presented popover go. Each stage keeps the previous ones.
+        if leftOver != nil {
+            var closedBy = "none"
+            let stages: [(String, () -> Void)] = [
+                ("root-layout", { host.view.setNeedsLayout(); host.view.layoutIfNeeded() }),
+                ("window-layout", { window.setNeedsLayout(); window.layoutIfNeeded() }),
+                ("presented-layout", { host.presentedViewController?.view.setNeedsLayout()
+                                       host.presentedViewController?.view.layoutIfNeeded() }),
+                ("ca-flush", { CATransaction.flush() }),
+            ]
+            var active: [() -> Void] = []
+            stageLoop: for (name, step) in stages {
+                active.append(step)
+                let until = Date().addingTimeInterval(0.6)
+                while Date() < until {
+                    active.forEach { $0() }
+                    mark()
+                    if host.presentedViewController == nil { closedBy = name; break stageLoop }
+                    try? await Task.sleep(nanoseconds: 20_000_000)
+                }
+            }
+            print("CONTROL11703 probe closedBy=\(closedBy) at=\(String(format: "%.2f", Date().timeIntervalSince(pushedAt)))s disappeared=\(disappearedAt.map { String(format: "%.2f", $0) } ?? "never")")
+        }
         _ = try onScreenText(window, "after-link-to-second-game")
         XCTAssertNil(leftOver,
             "#11703: the first game's freshness details (\(leftOver.map { String(describing: type(of: $0)) } ?? "-")) "
@@ -216,7 +244,7 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
         print("CONTROL11703 t=1.5s presented=\(leftOver.map { String(describing: type(of: $0)) } ?? "nil") path=\(router.path.count)")
         await settle(host, timeout: 8.5) { mark(); return closedAt != nil && leftWindowAt != nil }
         print("CONTROL11703 t=\(String(format: "%.2f", Date().timeIntervalSince(pushedAt)))s presented=\(host.presentedViewController.map { String(describing: type(of: $0)) } ?? "nil") path=\(router.path.count)")
-        print("CONTROL11703 timeline coveredPageLeftWindow=\(leftWindowAt.map { String(format: "%.2f", $0) } ?? "never") popoverClosed=\(closedAt.map { String(format: "%.2f", $0) } ?? "never")")
+        print("CONTROL11703 timeline coveredPageLeftWindow=\(leftWindowAt.map { String(format: "%.2f", $0) } ?? "never") popoverClosed=\(closedAt.map { String(format: "%.2f", $0) } ?? "never") onDisappear=\(disappearedAt.map { String(format: "%.2f", $0) } ?? "never")")
 
         // The reader's own reveal still works on the page they are now on.
         var secondControl: NSObject?
