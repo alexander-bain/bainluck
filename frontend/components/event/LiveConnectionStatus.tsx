@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { HeroFact } from '@/lib/event/heroFreshness';
 import {
   formatObservationClock,
+  priceAgeClock,
   type ConnectionPresentation,
   type ConnectionTone,
 } from '@/lib/event/liveConnectionStatus';
@@ -30,6 +31,12 @@ interface LiveConnectionStatusProps {
   observation?: { eventId: number; count: number; delivery: ObservationDelivery };
   /** The accepted price clock — the same one the tracker keys receipts on. */
   priceObservedAt: string | null | undefined;
+  /**
+   * #10090 decision J = A — the stream's `confirmed_at`: the newest venue input
+   * that agreed with the published price. Shown as its own row only when it is
+   * newer than the observation; `data-observation-at` stays the observation.
+   */
+  priceConfirmedAt?: string | null;
   /** True when a score is on screen, so its confirmation time is a fact worth giving. */
   scoreShown: boolean;
   /** The clock of the score tuple actually drawn (#4571). */
@@ -89,6 +96,7 @@ export default function LiveConnectionStatus({
   presentation,
   observation,
   priceObservedAt,
+  priceConfirmedAt = null,
   scoreShown,
   scoreConfirmedAt,
   oldestFact,
@@ -123,6 +131,8 @@ export default function LiveConnectionStatus({
   }, [open]);
 
   const { label, tone, breathes, announcement } = presentation;
+  const confirmedClock = priceAgeClock(priceObservedAt, priceConfirmedAt);
+  const priceConfirmedShown = confirmedClock !== null && confirmedClock !== priceObservedAt;
 
   return (
     <div ref={root} className="min-w-0" data-testid="live-connection-status" data-status={label}
@@ -170,6 +180,14 @@ export default function LiveConnectionStatus({
               <Clock iso={priceObservedAt} now={now} milliseconds />
             </dd>
           </div>
+          {priceConfirmedShown ? (
+            <div>
+              <dt className="font-medium text-text-primary">Probability confirmed</dt>
+              <dd>
+                <Clock iso={confirmedClock} now={now} />
+              </dd>
+            </div>
+          ) : null}
           {observation ? (
             <>
               <div>
