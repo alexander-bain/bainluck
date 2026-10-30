@@ -12,18 +12,21 @@ disposable database. Proven here, not in the unit rig:
 * past the memory bound every owed point, the quiet final included, is paid
   at its own observation time once the hold ends;
 * replay after a lost COMMIT acknowledgement, a restart, and two drains
-  overlapping on the same rows each write every point exactly once.
+  overlapping on the same rows each write every point exactly once;
+* (#10090) the ordered writer's series lookups read one index entry, not the
+  whole (event, source) series, so the writer keeps up with the stamps.
 """
 
 import asyncio
 import contextlib
+import json
 import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, event, func, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.models import (
@@ -624,3 +627,155 @@ async def test_a_failed_commit_of_a_retirement_keeps_the_row_and_counts_nothing(
     assert fresh.stats.get("history_event_gone", 0) == 1
     assert await _owed(rig) == []
     assert (await _event_points(rig, 2))[-1] == (0.7, _at(frames[2]))
+
+
+# ── #10090: the chart writer's series lookups read one row, not the series ───
+#
+# Production 2026-10-30 ~21:04Z, `pg_stat_statements` over 21.8 s: the ordered
+# writer's previous-row lookup (`captured_at <= $3 ORDER BY captured_at DESC
+# LIMIT 1 FOR UPDATE`) took 237 ms per call, 226 ms of it disk reads (167
+# blocks), and every other statement of the point's transaction took under
+# 1 ms. The only index that leads with the event was `(event_id, source)`, so
+# each lookup fetched the event's whole series from the heap and sorted it.
+# One Polymarket chart point cost ~310 ms, the writer paid ~3.2 a second, the
+# stamps owed about as many, and `owed_chart_points` held 17,1xx Polymarket
+# rows: its live chart points landed ~95 minutes after their stamps.
+
+LONG_SERIES = 3000
+LATER_ROWS = 20000
+
+
+def _rows_examined(plan) -> int:
+    """Rows the plan's leaf scans produced or discarded, over all loops."""
+    if "Plans" in plan:
+        return sum(_rows_examined(child) for child in plan["Plans"])
+    loops = plan.get("Actual Loops", 1)
+    return loops * (
+        plan.get("Actual Rows", 0)
+        + plan.get("Rows Removed by Filter", 0)
+        + plan.get("Rows Removed by Index Recheck", 0)
+    )
+
+
+async def _seed_long_series(rig):
+    """Event 1: a pre-game Polymarket line, one point a minute for two days,
+    last moved two hours ago. Since then the table kept growing on other
+    events, so neither the event's rows nor the newest rows are a short scan."""
+    await seed(rig, 3)
+    last_move = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=2)
+    async with rig.maker() as session:
+        await session.execute(
+            text(
+                "INSERT INTO win_prob_snapshots (event_id, source, captured_at,"
+                " home_win_probability, away_win_probability, reading_count)"
+                " SELECT 1, 'polymarket', CAST(:at AS timestamptz) - make_interval(mins => g), 0.5, 0.5, 1"
+                " FROM generate_series(0, CAST(:n AS integer) - 1) g"
+            ),
+            {"at": last_move, "n": LONG_SERIES},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO win_prob_snapshots (event_id, source, captured_at,"
+                " home_win_probability, away_win_probability, reading_count)"
+                " SELECT 2 + g % 2, CASE WHEN g % 3 = 0 THEN 'kalshi' ELSE 'polymarket' END,"
+                " CAST(:at AS timestamptz) + make_interval(secs => g * 0.25), 0.4, 0.6, 1"
+                " FROM generate_series(1, CAST(:n AS integer)) g"
+            ),
+            {"at": last_move, "n": LATER_ROWS},
+        )
+        await session.execute(text("ANALYZE win_prob_snapshots"))
+        await session.commit()
+    return last_move
+
+
+@contextlib.contextmanager
+def _captured_series_lookups(rig):
+    seen = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        if "FROM win_prob_snapshots" in statement and "LIMIT" in statement:
+            seen.append((statement, parameters))
+
+    event.listen(rig.engine.sync_engine, "before_cursor_execute", capture)
+    try:
+        yield seen
+    finally:
+        event.remove(rig.engine.sync_engine, "before_cursor_execute", capture)
+
+
+async def _examined(rig, statement, parameters) -> int:
+    async with rig.engine.connect() as conn:
+        raw = (
+            await conn.exec_driver_sql(
+                "EXPLAIN (ANALYZE, FORMAT JSON) " + statement, parameters
+            )
+        ).scalar_one()
+        await conn.rollback()
+    plan = json.loads(raw) if isinstance(raw, str) else raw
+    return _rows_examined(plan[0]["Plan"])
+
+
+async def _write_capturing_lookups(rig, *, commit, **kwargs):
+    """Run the real chart helper once; return its series lookups. Uncommitted
+    (`commit=False`) the table is left exactly as seeded, so a lookup can be
+    measured against the rows it actually faced."""
+    from app.tasks.snapshots import _create_or_update_win_prob_snapshot
+
+    with _captured_series_lookups(rig) as seen:
+        async with rig.maker() as session:
+            point, is_new = await _create_or_update_win_prob_snapshot(
+                session, event_id=1, source="polymarket",
+                home_win_probability=0.55, away_win_probability=0.45,
+                max_gap_seconds=60, **kwargs,
+            )
+            assert is_new
+            if commit:
+                session.add(point)
+                await session.commit()
+            else:
+                await session.rollback()
+    return seen
+
+
+async def test_the_ordered_writers_previous_row_lookup_reads_one_row_not_the_series(rig):
+    last_move = await _seed_long_series(rig)
+    observed_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    seen = await _write_capturing_lookups(
+        rig, commit=False, observed_at=observed_at,
+        game_state={"poll_type": "ws_fast_lane"},
+    )
+    previous = [s for s in seen if "captured_at <=" in s[0]]
+    following = [s for s in seen if "captured_at >" in s[0]]
+    assert len(previous) == 1 and len(following) == 1, seen
+    # The cost: one index entry per lookup. Without an index that ends in
+    # captured_at behind (event_id, source), the cheapest plan still walks the
+    # event's 3,000 rows (and sorts them) or the 20,000 newer rows of others.
+    assert await _examined(rig, *previous[0]) <= 2
+    assert await _examined(rig, *following[0]) <= 2
+
+    # The write itself is unchanged: the two-hour-old point is closed at the
+    # observation and the new point sits at its own time.
+    await _write_capturing_lookups(
+        rig, commit=True, observed_at=observed_at,
+        game_state={"poll_type": "ws_fast_lane"},
+    )
+    async with rig.maker() as session:
+        tail = (
+            await session.execute(
+                select(WinProbSnapshot.captured_at, WinProbSnapshot.valid_until)
+                .where(WinProbSnapshot.event_id == 1)
+                .order_by(WinProbSnapshot.captured_at.desc())
+                .limit(2)
+            )
+        ).all()
+    assert [tuple(r) for r in tail] == [(observed_at, None), (last_move, observed_at)]
+
+
+async def test_the_polls_latest_row_lookup_reads_one_row_not_the_series(rig):
+    """The same index serves the unordered (poll) path's newest-row read."""
+    await _seed_long_series(rig)
+    seen = await _write_capturing_lookups(
+        rig, commit=False, game_state={"poll_type": "live_fast"},
+    )
+    assert len(seen) == 1, seen
+    assert await _examined(rig, *seen[0]) <= 2

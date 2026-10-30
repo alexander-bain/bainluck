@@ -1,0 +1,1 @@
+{"columns":["db","v","long_xacts"],"rows":[["108 GB","PostgreSQL 17.10 (Ubuntu 17.10-1.pgdg20.04+heroku2) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 9.4.0-1ubuntu1~20.04.2) 9.4.0, 64-bit",2]],"row_count":1,"truncated":false,"duration_ms":97.5,"sql_fingerprint":"a897769f459d8d8c"}

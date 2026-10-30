@@ -542,6 +542,16 @@ class WinProbSnapshot(Base):
     # Relationships
     event: Mapped["Event"] = relationship()
 
+    __table_args__ = (
+        # #10090: the chart writers' series lookups (newest row, and the row
+        # before/after an observation) read one entry here instead of the
+        # event's whole series. Built by hand with CREATE INDEX CONCURRENTLY
+        # (attended, gotcha #31); no migration builds it.
+        Index(
+            "ix_winprob_event_source_captured", "event_id", "source", "captured_at"
+        ),
+    )
+
 
 class OwedChartPoint(Base):
     """#11181: one committed live stamp's chart observation, owed until written.
