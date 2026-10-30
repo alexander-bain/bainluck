@@ -613,7 +613,9 @@ async def _stream(
         if confirmations is not None:
             # Starts the shared read, concurrent with sending the replay; the
             # loop's next passes pick its value up (FRAME_WAIT_S apart when
-            # idle). Nothing waits for it.
+            # idle). Nothing waits for it, and until it lands the cache gives
+            # nothing: an entry another stream left minutes ago is not current
+            # (`confirmed_at.READ_FRESH_S`).
             confirmations.peek(members)
         last_beat = confirmed_beat
         recovery_generation = 0
