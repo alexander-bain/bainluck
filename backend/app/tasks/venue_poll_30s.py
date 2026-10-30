@@ -98,7 +98,9 @@ stays before the group so it is read first once the back-off ends. Any other
 failed read (an error, or a timeout on the full ``REQUEST_TIMEOUT_S``) stops the
 pass with the cursor PAST the failed group (``groups_failed``), so one group
 that keeps failing costs one read per rotation instead of stopping the rotation
-there. A Kalshi market with more legs than a whole pass's budget can read is
+there. A timeout the pass's own clock cut short keeps the group's place only
+when an earlier group in the same pass used up the time; the pass's FIRST group
+had all the time there was, so its timeout counts as a failure and moves on. A Kalshi market with more legs than a whole pass's budget can read is
 skipped and counted (``units_oversize``), never left at the head. The population
 is re-read at most every ``POPULATION_TTL_S`` per worker process. Single-flight
 in the task wrapper means a slow pass declines the next tick rather than
@@ -911,9 +913,11 @@ async def poll_venue(venue: str, *, deadline: float) -> dict:
                 try:
                     found = await _fetch_group(venue, service, chunks, stats, wall)
                 except asyncio.TimeoutError:
-                    if wall < REQUEST_TIMEOUT_S:
-                        # The pass's clock cut the read short: the group never
-                        # had its full wall, so it is first next pass.
+                    if wall < REQUEST_TIMEOUT_S and gi > 0:
+                        # An earlier group used up the pass's clock: this one
+                        # never had its full wall, so it is first next pass.
+                        # The FIRST group had all the time the pass could give
+                        # it, so it fails and moves on like a full-wall timeout.
                         stats["stopped"] = "budget"
                         break
                     stats["groups_failed"] = stats.get("groups_failed", 0) + 1

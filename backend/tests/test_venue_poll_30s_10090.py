@@ -440,16 +440,58 @@ async def test_a_group_that_keeps_failing_never_wedges_the_rotation(monkeypatch,
 
 @pytest.mark.asyncio
 async def test_a_read_the_pass_clock_cut_short_keeps_its_place(monkeypatch):
-    # A timeout under a wall shorter than REQUEST_TIMEOUT_S is the pass's budget,
-    # not the group's failure: the group was never given its full read.
+    # A timeout under a wall shorter than REQUEST_TIMEOUT_S, AFTER an earlier
+    # group in the same pass used up the clock, is the pass's budget, not the
+    # group's failure: group 2 never had its full read, so it is first next pass.
+    import asyncio
+    import time
+
+    units = [v.Unit(str(k), {k: [(k * 10, f"c{k}")]}) for k in (1, 2, 3)]
+    store, visited = _wire_rotation(monkeypatch, units=units, fail_key="2", exc=asyncio.TimeoutError)
+    stats = await v.poll_venue("polymarket", deadline=time.monotonic() + v.REQUEST_TIMEOUT_S - 1)
+    assert stats["stopped"] == "budget" and "groups_failed" not in stats
+    assert stats["units_done"] == 1 and store["cursor"] == "1"
+    assert visited == [("1",), ("2",)]
+    await v.poll_venue("polymarket", deadline=time.monotonic() + 20)
+    # Pass 2 starts at the clipped group.
+    assert visited[2] == ("2",)
+
+
+@pytest.mark.asyncio
+async def test_a_first_group_the_pass_clock_always_clips_never_wedges(monkeypatch):
+    # lane1's R5 probe (`test_l1rev_probe_clipped_wedge.py`), inverted: with a
+    # 9 s pass budget every wall is under REQUEST_TIMEOUT_S, and on 1a10e4e9 the
+    # fetch log read [1, 1, 1, 1, 1] with `budget` x5 and a `complete` terminal.
+    # The pass's FIRST group had all the time there was: it fails and moves on.
+    import asyncio
+    import time
+
+    units = [v.Unit(str(k), {k: [(k * 10, f"c{k}")]}) for k in (1, 2, 3)]
+    store, visited = _wire_rotation(monkeypatch, units=units, fail_key="1", exc=asyncio.TimeoutError)
+    first = await v.poll_venue("polymarket", deadline=time.monotonic() + 9)
+    assert first["stopped"] == "timeout" and first["groups_failed"] == 1
+    assert store["cursor"] == "1"
+    await v.poll_venue("polymarket", deadline=time.monotonic() + 9)
+    assert visited[:3] == [("1",), ("2",), ("3",)]
+
+
+@pytest.mark.asyncio
+async def test_a_clipped_first_group_makes_the_terminal_partial(monkeypatch):
+    # The R5 probe's terminal read `complete`; a failed first group is loud.
     import asyncio
     import time
 
     units = [v.Unit(str(k), {k: [(k * 10, f"c{k}")]}) for k in (1, 2)]
-    store, visited = _wire_rotation(monkeypatch, units=units, fail_key="1", exc=asyncio.TimeoutError)
-    stats = await v.poll_venue("polymarket", deadline=time.monotonic() + v._MIN_REQUEST_S + 1)
-    assert stats["stopped"] == "budget" and "groups_failed" not in stats
-    assert store["cursor"] is None and visited == [("1",)]
+    _wire_rotation(monkeypatch, units=units, fail_key="1", exc=asyncio.TimeoutError)
+    real = v.poll_venue
+
+    async def _short(venue, *, deadline):
+        return await real(venue, deadline=time.monotonic() + 9)
+
+    monkeypatch.setattr(v, "poll_venue", _short)
+    summary = await v.poll_venue_prices({"polymarket"})
+    assert summary["polymarket"]["stopped"] == "timeout"
+    assert summary["terminal"] == "partial"
 
 
 @pytest.mark.asyncio

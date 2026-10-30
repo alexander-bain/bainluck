@@ -2529,8 +2529,10 @@ def poll_live_prediction_markets(self):
 def poll_venue_prices_30s(self):
     """#10090 — 30-second price poll of shown markets off the venue sockets.
 
-    Off unless ``VENUE_POLL_30S_ENABLED`` names a venue; off, it returns before
-    touching Redis or the database. See :mod:`app.tasks.venue_poll_30s`.
+    Off unless ``VENUE_POLL_30S_ENABLED`` names a venue; off, the task body
+    returns before it touches Redis or the database (Celery's own broker publish
+    and task-counter signals still run each tick). See
+    :mod:`app.tasks.venue_poll_30s`.
     """
     from app.tasks.venue_poll_30s import LEASE_TTL_S, enabled_venues, poll_venue_prices
     from app.utils.single_flight import single_flight
