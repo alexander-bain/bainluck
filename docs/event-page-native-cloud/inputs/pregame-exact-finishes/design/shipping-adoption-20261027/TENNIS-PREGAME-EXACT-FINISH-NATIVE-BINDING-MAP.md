@@ -1,0 +1,9 @@
+# FORMATTING / TRUTH — pre-match finish-lane binding
+
+Ship: four exact original finish chances remain visible and actionable before play.
+
+Reuse package25's existing ExactScoreMapInput/scope/original/pregame/current/result/observation/action and ExactScoreFinishLane inputs, fixed bars, channel/view/layout types. Native supplies actual .before, exact event/scope/original associations, owner order/tones, admitted pre-match readings and independent provenance clocks, formatted pregame title/intro/eyebrow/note and genuine original Details callback. This bounded source work neither parses raw models nor creates a parallel adapter/policy/formatter/router/subscription.
+
+Retained Fils–van de Zandschulp event15327807, exact-match-score market65176060: originals245059339/245059341/245059340/245059338 map to23.5/10/10.5/56%at09:20:32.003997Z before10:55verified start. Constructed opaque scope/action labels in the cases are source fixtures, not real membership wiring. Later set0–1/5–7/3–3actual, last quotes24.38/66.67/7.96/1%, opening54/10.5/11%, result and physical availability are retained only as suppression controls in before. No later channel, status, dimming/hatch, context note or speech may appear.
+
+Preserve the generic map/final core and all89parent tests. Before use is opt-in; live/default/final behavior stays source-compatible. Native retains reader selection/refresh/withdrawal, phase-specific production words, exact original Details/Back/focus, catalogue and real input mounting. Before acceptance still owes type compatibility/compilation, XCTest, matched compact/wide/AX frames, visual density/contrast, VoiceOver and interactions, full phase composition, independent review and identified carrying TestFlight acceptance. No qualification/resource/release/route-stage grant follows this preparation.

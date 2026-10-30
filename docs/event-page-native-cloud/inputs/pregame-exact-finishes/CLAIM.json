@@ -1,0 +1,56 @@
+{
+  "at": "2026-10-30T01:59:27.650577+00:00",
+  "status": "PREPARED_FOLLOW_ON_NOT_RESERVED_OR_ASSIGNED",
+  "pillar": [
+    "FORMATTING",
+    "TRUTH"
+  ],
+  "ship": "Before play, all four original finish chances are visible without later score/elimination leakage.",
+  "route": "tennis-live",
+  "phase": "pregame",
+  "issue": 10868,
+  "source_branch": "codex/dot-event-design-source",
+  "expected_shared_head_at_preparation": "a1f88d0586f6a513841ba0f31a564c51b84d6dea",
+  "sole_publisher": "Wee-Bey",
+  "design_coordinator": "01a12896-9785-71a2-ac39-9d2ae351e0ec",
+  "relay": "01a18a2a-483f-7614-9937-8549d69ed01b",
+  "original_checkpoint": "48945d4146caa7f97989b4780fcca94abfb2ca0f",
+  "native_base": "6c73734af6d7f83f252ace8ed921eb0fcae766e3",
+  "write_paths": [
+    "ios/Bain Luck/Bain Luck/Components/ExactScoreMapPresentation10868.swift",
+    "ios/Bain Luck/BainLuckTests/ExactScoreMapPresentation10868Tests.swift"
+  ],
+  "parent_file_hashes": [
+    {
+      "path": "ios/Bain Luck/Bain Luck/Components/ExactScoreMapPresentation10868.swift",
+      "blob": "23b0cf050959872d46a84f62ee3ab22856f7d7d0",
+      "sha256": "d832e5c7703606cd1027c8f2a492a16c40c1766e3ab1c92c720eb8715dd29f2a"
+    },
+    {
+      "path": "ios/Bain Luck/BainLuckTests/ExactScoreMapPresentation10868Tests.swift",
+      "blob": "7827615d8bf69651b1300689a9d544f8ccc1a4d2",
+      "sha256": "e53b71339d6cbde81eeb5e069a256e8138215c06512011c845934178c9e6990e"
+    }
+  ],
+  "preserve_core_bytes": 101860,
+  "preserve_core_sha256": "c4d3a2b0cfb92920c4e7dbe15175712fd453ec67f36e8ae58b277ce241184413",
+  "preserve_whole_tests": 89,
+  "preserve_whole_tests_bytes": 193074,
+  "preserve_whole_tests_sha256": "e53b71339d6cbde81eeb5e069a256e8138215c06512011c845934178c9e6990e",
+  "local_competing_claim": false,
+  "native_or_integrator_path_transfer": false,
+  "activation": "Coordinator must refresh current claims/ref and confirm current total-games return parked/safe before assigning; this packet alone does not reserve or start an outcome.",
+  "input_import": "If both target paths absent, import exact unchanged checkpoint files in a labelled provenance commit; record actual import commit as implementation parent. Retain original bundle, never falsely claim original Git ancestry. Unexpected existing target or protected mismatch requires resolution before writes.",
+  "allowed_docs": [
+    "docs/event-page-native-cloud/inputs/pregame-exact-finishes/",
+    "docs/event-page-native-cloud/tennis-pregame-exact-finishes/RETURN.md",
+    "docs/event-page-native-cloud/tennis-pregame-exact-finishes/AUTHOR-CHECK.json"
+  ],
+  "permitted_checks": "Source/hash/diff/ancestry; syntax only if available. Prepare tests, no native typecheck/build/XCTest/render/device or production operations.",
+  "offline_sequence": "One bounded source contribution after explicit coordinator activation; ordinary fast-forward source commits without per-commit Mac approval; return immutable output/receipts and request next pinned gap automatically.",
+  "active_outcome_limit": 3,
+  "no_downstream_grant": true,
+  "no_route_phase_credit": true,
+  "no_production_integration": true,
+  "publication_attempted": false
+}

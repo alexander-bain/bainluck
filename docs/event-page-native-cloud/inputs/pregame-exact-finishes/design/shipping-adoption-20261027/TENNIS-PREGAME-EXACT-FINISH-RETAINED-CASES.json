@@ -1,0 +1,372 @@
+{
+  "at": "2026-10-30T01:59:27.650577+00:00",
+  "status": "PREPARED_PINNED_NEXT_CONTRIBUTION_NOT_ASSIGNED",
+  "route": "tennis-live",
+  "phase": "pregame",
+  "required_card": "Exact set finishes",
+  "reuse_candidate": {
+    "ship": "Shared exact-score map and final tennis finish tiles with original pre-match chances",
+    "source_base": "6c73734af6d7f83f252ace8ed921eb0fcae766e3",
+    "head": "48945d4146caa7f97989b4780fcca94abfb2ca0f",
+    "contribution_commits_in_order": [
+      "4c8225a66968b4da20ddd1dbdf5869aa07dc91c7",
+      "830ea403708969fe3e182da1e59ac94fe70cdd80",
+      "08596953a4589fe38cd253f95594147b908cdec1",
+      "80290ca095d2f1c65a35163791c1c40671f46a44",
+      "eba61af836b754df6e8064fa041db19f9e6bd800",
+      "8f9818d1c2c7c4f102009e1c7802cc6ec1d144a8",
+      "48945d4146caa7f97989b4780fcca94abfb2ca0f"
+    ],
+    "files": [
+      {
+        "path": "ios/Bain Luck/Bain Luck/Components/ExactScoreMapPresentation10868.swift",
+        "blob": "23b0cf050959872d46a84f62ee3ab22856f7d7d0",
+        "sha256": "d832e5c7703606cd1027c8f2a492a16c40c1766e3ab1c92c720eb8715dd29f2a"
+      },
+      {
+        "path": "ios/Bain Luck/BainLuckTests/ExactScoreMapPresentation10868Tests.swift",
+        "blob": "7827615d8bf69651b1300689a9d544f8ccc1a4d2",
+        "sha256": "e53b71339d6cbde81eeb5e069a256e8138215c06512011c845934178c9e6990e"
+      }
+    ],
+    "design_intake": "shipping-adoption-20261027/TENNIS-LIVE-EXACT-FINISH-48945D41-DESIGN-INTAKE.md",
+    "stage": "SOURCE_ACCEPTED_PARKED",
+    "compiled": false,
+    "tests_executed": false,
+    "independently_reviewed": false,
+    "integrated": false,
+    "carrying_testflight": false,
+    "phone_accepted": false,
+    "prior_design_intakes": [
+      "shipping-adoption-20261027/EXACT-SCORE-4C8225A6-DESIGN-INTAKE.md"
+    ]
+  },
+  "preserve_tests": 89,
+  "source_receipts": [
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/LiveTennis.tsx",
+      "sha256": "50561474469e614c51d058107b2a312180376c5a554171bc5dc1a478dce51568"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/liveTennis.css",
+      "sha256": "93adee379697ec1c20ea3f9d743e70f5b35ec03bcbdfc762feaceef6a7589dc3"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/liveTennis.json",
+      "sha256": "99d3b5d26f5d49a9d0e45ffcbd192d04dd28031e569545dff5f7ccbc656ac96b"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/tennisFocus.ts",
+      "sha256": "5b01f01bfdc84f79cb32ce0a255aa5a8a42807038409173d60739c4645dba41c"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/tennisMomentStories.ts",
+      "sha256": "db37f1360d0d572be2f1f7b18366150a9090979fd2365bf848d9d3bb562cc97d"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/live-tennis-source-binding-20261026/README.md",
+      "sha256": "4bc6156813aa3220a7bb1394e527e39392add39bb9b91dbfba82c3c4e680d03c"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/tennis-finish-comparison-v272/NATIVE-ADOPTION.md",
+      "sha256": "d059d485e3554ec75677f0a01bd12a2181321322d8cba574dd7a4853013377ce"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/tennis-finish-comparison-v272/native-candidate/ADOPTION-BRIEF.md",
+      "sha256": "039bb75b06315a100141ee28cc55a81c440145ccb169e75c2b19ad29f3470075"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/TENNIS-EXACT-FINISH-08596953-DESIGN-INTAKE.md",
+      "sha256": "6e01c0883b342a7bfbc128055ae1604a158db96bb9516d9a05e8ba4a7d3ee100"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/TENNIS-LIVE-EXACT-FINISH-48945D41-DESIGN-INTAKE.md",
+      "sha256": "0efa1eb320b96b67f15160f385aa801f7968cce4bbeec586db5680d42bab1b06"
+    }
+  ],
+  "retained": {
+    "event_id": 15327807,
+    "verified_start": "2026-10-12T10:55:00+00:00",
+    "score_capture_at": "2026-10-12T12:20:44.471140+00:00",
+    "sets": [
+      [
+        5,
+        7
+      ],
+      [
+        3,
+        3
+      ]
+    ],
+    "match_sets": [
+      0,
+      1
+    ],
+    "originals_in_approved_lane_order": [
+      {
+        "key": "65176060:245059339",
+        "marketID": 65176060,
+        "outcomeID": 245059339,
+        "label": "Fils 2\u20131",
+        "category": "Exact finish",
+        "baseline": {
+          "value": 0.235,
+          "at": "2026-10-12T09:20:32.003997+00:00"
+        },
+        "lastQuote": {
+          "value": 0.2438,
+          "at": "2026-10-12T12:23:56.174931+00:00"
+        },
+        "current": null,
+        "currentLabel": "No recent price",
+        "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+        "impossible": false,
+        "result": "Result pending",
+        "original": {
+          "market_name": "Arthur Fils vs Botic Van de Zandschulp: Exact Match Score",
+          "outcome_name": "Arthur Fils wins 2-1",
+          "observed_at": "2026-10-12T12:23:56.174931+00:00",
+          "contributor_outcome_ids": [
+            245059339
+          ],
+          "probability": 0.2438,
+          "source": "kalshi",
+          "is_winner": null,
+          "resolution_source": null,
+          "_market_id": 65176060
+        },
+        "laterDetail": {
+          "id": 245059339,
+          "name": "Arthur Fils wins 2-1",
+          "probability": 0.11,
+          "american_odds": 292,
+          "rank": 2,
+          "rank_change_24h": null,
+          "probability_change_24h": null,
+          "opening_probability": 0.235,
+          "opening_american_odds": 326,
+          "is_winner": null,
+          "resolution_source": null,
+          "last_updated": "2026-10-12T12:26:26.162423+00:00",
+          "price_changed_at": "2026-10-12T12:26:26.162423+00:00"
+        }
+      },
+      {
+        "key": "65176060:245059341",
+        "marketID": 65176060,
+        "outcomeID": 245059341,
+        "label": "Zandschulp 2\u20130",
+        "category": "Exact finish",
+        "baseline": {
+          "value": 0.1,
+          "at": "2026-10-12T09:20:32.003997+00:00"
+        },
+        "lastQuote": {
+          "value": 0.6667,
+          "at": "2026-10-12T12:23:56.174931+00:00"
+        },
+        "current": null,
+        "currentLabel": "No recent price",
+        "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+        "impossible": false,
+        "result": "Result pending",
+        "original": {
+          "market_name": "Arthur Fils vs Botic Van de Zandschulp: Exact Match Score",
+          "outcome_name": "Botic Van de Zandschulp wins 2-0",
+          "observed_at": "2026-10-12T12:23:56.174931+00:00",
+          "contributor_outcome_ids": [
+            245059341
+          ],
+          "probability": 0.6667,
+          "source": "kalshi",
+          "is_winner": null,
+          "resolution_source": null,
+          "_market_id": 65176060
+        },
+        "laterDetail": {
+          "id": 245059341,
+          "name": "Botic Van de Zandschulp wins 2-0",
+          "probability": 0.85,
+          "american_odds": 1329,
+          "rank": 1,
+          "rank_change_24h": null,
+          "probability_change_24h": null,
+          "opening_probability": 0.105,
+          "opening_american_odds": 852,
+          "is_winner": null,
+          "resolution_source": null,
+          "last_updated": "2026-10-12T12:26:26.162423+00:00",
+          "price_changed_at": "2026-10-12T12:26:18.334213+00:00"
+        }
+      },
+      {
+        "key": "65176060:245059340",
+        "marketID": 65176060,
+        "outcomeID": 245059340,
+        "label": "Zandschulp 2\u20131",
+        "category": "Exact finish",
+        "baseline": {
+          "value": 0.105,
+          "at": "2026-10-12T09:20:32.003997+00:00"
+        },
+        "lastQuote": {
+          "value": 0.0796,
+          "at": "2026-10-12T12:23:56.174931+00:00"
+        },
+        "current": null,
+        "currentLabel": "No recent price",
+        "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+        "impossible": false,
+        "result": "Result pending",
+        "original": {
+          "market_name": "Arthur Fils vs Botic Van de Zandschulp: Exact Match Score",
+          "outcome_name": "Botic Van de Zandschulp wins 2-1",
+          "observed_at": "2026-10-12T12:23:56.174931+00:00",
+          "contributor_outcome_ids": [
+            245059340
+          ],
+          "probability": 0.0796,
+          "source": "kalshi",
+          "is_winner": null,
+          "resolution_source": null,
+          "_market_id": 65176060
+        },
+        "laterDetail": {
+          "id": 245059340,
+          "name": "Botic Van de Zandschulp wins 2-1",
+          "probability": 0.035,
+          "american_odds": 900,
+          "rank": 3,
+          "rank_change_24h": null,
+          "probability_change_24h": null,
+          "opening_probability": 0.11,
+          "opening_american_odds": 809,
+          "is_winner": null,
+          "resolution_source": null,
+          "last_updated": "2026-10-12T12:26:26.162423+00:00",
+          "price_changed_at": "2026-10-12T12:26:26.162423+00:00"
+        }
+      },
+      {
+        "key": "65176060:245059338",
+        "marketID": 65176060,
+        "outcomeID": 245059338,
+        "label": "Fils 2\u20130",
+        "category": "Exact finish",
+        "baseline": {
+          "value": 0.56,
+          "at": "2026-10-12T09:20:32.003997+00:00"
+        },
+        "lastQuote": {
+          "value": 0.01,
+          "at": "2026-10-12T11:55:06.745445+00:00"
+        },
+        "current": null,
+        "currentLabel": "No recent price",
+        "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+        "impossible": true,
+        "result": "Result pending",
+        "original": {
+          "market_name": "Arthur Fils vs Botic Van de Zandschulp: Exact Match Score",
+          "outcome_name": "Arthur Fils wins 2-0",
+          "observed_at": "2026-10-12T11:55:06.745445+00:00",
+          "contributor_outcome_ids": [
+            245059338
+          ],
+          "probability": 0.01,
+          "source": "kalshi",
+          "is_winner": null,
+          "resolution_source": null,
+          "_market_id": 65176060
+        },
+        "laterDetail": {
+          "id": 245059338,
+          "name": "Arthur Fils wins 2-0",
+          "probability": 0.01,
+          "american_odds": -133,
+          "rank": 4,
+          "rank_change_24h": null,
+          "probability_change_24h": null,
+          "opening_probability": 0.54,
+          "opening_american_odds": -117,
+          "is_winner": null,
+          "resolution_source": null,
+          "last_updated": "2026-10-12T12:15:08.721687+00:00",
+          "price_changed_at": "2026-10-12T11:55:06.745445+00:00"
+        }
+      }
+    ],
+    "captured_outcomes": 12,
+    "captured_distinct_markets": 7,
+    "source_listed_markets": 14
+  },
+  "constructed_owner_presentation": {
+    "scope_id": "constructed:15327807:kalshi:65176060:exact-finishes",
+    "original_action_ids": {
+      "245059339": "constructed:15327807:kalshi:65176060:245059339",
+      "245059341": "constructed:15327807:kalshi:65176060:245059341",
+      "245059340": "constructed:15327807:kalshi:65176060:245059340",
+      "245059338": "constructed:15327807:kalshi:65176060:245059338"
+    },
+    "fixed_probability_scale": [
+      0,
+      1
+    ],
+    "availability_words": [
+      "Still possible",
+      "Still possible",
+      "Still possible",
+      "No longer possible"
+    ],
+    "unavailable_current_words": "Current probability unavailable",
+    "result_words": "Result pending",
+    "hatching_is_physical_status_not_settlement": true,
+    "production_binding_proved": false,
+    "availability_words_visible": false,
+    "unavailable_current_words_visible": false,
+    "result_words_visible": false,
+    "actual_visible": false,
+    "owner_phase_title": "How might the match finish?",
+    "owner_phase_intro": "Pre-match chances for each original finish",
+    "context_note": null,
+    "historical_live_fields": "Retained as hostile later-channel controls only; not pregame display or speech."
+  },
+  "source_assignment": false,
+  "new_package_or_path": false,
+  "active_outcome_created": false,
+  "downstream_grant": false,
+  "whole_route_or_phase_credit": false,
+  "implementation_parent": "48945d4146caa7f97989b4780fcca94abfb2ca0f",
+  "source_base": "6c73734af6d7f83f252ace8ed921eb0fcae766e3",
+  "implementation_worktree": "/tmp/wt-ux-10868-exact-score-map",
+  "implementation_branch": "ux/10868-exact-score-map",
+  "preserve_core_bytes": 101860,
+  "preserve_core_sha256": "c4d3a2b0cfb92920c4e7dbe15175712fd453ec67f36e8ae58b277ce241184413",
+  "preserve_whole_tests_bytes": 193074,
+  "preserve_whole_tests_sha256": "e53b71339d6cbde81eeb5e069a256e8138215c06512011c845934178c9e6990e",
+  "implementation_notes": {
+    "reuse_gap": "Generic map already supports before; finish-lane composition is during-only. Reuse one finish-lane view and its existing map pregame comparison, not a new renderer or forced during phase.",
+    "parent_lines": {
+      "phase_gate": 2471,
+      "two_comparison_readings": 2544,
+      "channels": 2560,
+      "spoken_availability": 2636,
+      "tone_dimming": 2892,
+      "context_note": 2840
+    },
+    "default_behavior": "Existing initializers/during behavior/final-only tile gates remain unchanged; before is default-off.",
+    "before_suppression": [
+      "actual",
+      "current",
+      "later quote",
+      "result",
+      "pending result",
+      "physical availability words",
+      "hatching",
+      "ruled-out dimming",
+      "later context note",
+      "spoken later channels"
+    ],
+    "owner_copy": "Phase-specific map title/intro and lane eyebrow/context note are owner-formatted. Never borrow Three finishes remain, set-loss reason or after-start clocks for before."
+  }
+}

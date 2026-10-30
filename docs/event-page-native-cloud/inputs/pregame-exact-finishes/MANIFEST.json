@@ -1,0 +1,335 @@
+{
+  "at": "2026-10-30T01:59:27.650577+00:00",
+  "status": "PREPARED_FOLLOW_ON_NOT_UPLOADED_RESERVED_OR_ASSIGNED",
+  "pillar": [
+    "FORMATTING",
+    "TRUTH"
+  ],
+  "ship": "Before play, all four original finish chances are visible without later score/elimination leakage.",
+  "frozen_base": "6c73734af6d7f83f252ace8ed921eb0fcae766e3",
+  "repository": "https://github.com/alexander-bain/bainluck.git",
+  "shared_branch": "codex/dot-event-design-source",
+  "source_checkpoint": "48945d4146caa7f97989b4780fcca94abfb2ca0f",
+  "shared_head_at_preparation": "a1f88d0586f6a513841ba0f31a564c51b84d6dea",
+  "shared_branch_already_published": true,
+  "files": [
+    {
+      "archive_path": "CLAIM.json",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/cloud-exact-before-source-handoff-20261030/CLAIM.json",
+      "bytes": 3157,
+      "sha256": "067a351a2494610e2b443cf5963fd644b3196bcb6436ba5d3aba6511cdb27a18"
+    },
+    {
+      "archive_path": "README.md",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/cloud-exact-before-source-handoff-20261030/README.md",
+      "bytes": 2392,
+      "sha256": "1a5ba18944dfd6faf0c91f4c12c2b3cbf5ae204b97c049347462fb3f6dbf06b0"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck.xcodeproj/project.pbxproj",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck.xcodeproj/project.pbxproj",
+      "bytes": 62715,
+      "sha256": "5d162ef221b8296e88832b5226135824559f2c40197738feb38f77fbb45ee800"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Components/DesignSystem.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Components/DesignSystem.swift",
+      "bytes": 10952,
+      "sha256": "3ab804ee7ffe72d94eef2eb84e63847546b64f3d01704a5550ac5172a4878aea"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Components/EventQuestionMatrixSection10238.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Components/EventQuestionMatrixSection10238.swift",
+      "bytes": 18255,
+      "sha256": "737c85e312cb17ba1ef1f3bda38b102149d8d1ac5bf8b54fc2ee9c5940a7dcf8"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Components/NBAEventCards9483.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Components/NBAEventCards9483.swift",
+      "bytes": 21441,
+      "sha256": "9a47eff687a50ca40c7a141f2bbabb27495c8e7489a0a8adb79ed8c77409d056"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Components/NBAScoringPresentation9483.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Components/NBAScoringPresentation9483.swift",
+      "bytes": 12472,
+      "sha256": "5adb9457c2d010ad0a311f6dec8f5eb3344eaa736e1a87bcbeffc1ef6d66ac74"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Components/NFLCardReader9483.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Components/NFLCardReader9483.swift",
+      "bytes": 23572,
+      "sha256": "6e56f4eeade77b96979941f3e61b965ef442bdbb9fcd1d75f32c363101240bf9"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Components/NFLEventCards9483.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Components/NFLEventCards9483.swift",
+      "bytes": 42610,
+      "sha256": "e9357d289fcb2626b4e80b0f8ef790ad2fdd636173ec6689787f387696c175a4"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Components/SourceAgeText.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Components/SourceAgeText.swift",
+      "bytes": 1246,
+      "sha256": "246cd637c3eded5ec4808c5a7c897bd9bbca5bdf3728728ab30ac468be99dc8c"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Models/CommonTypes.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Models/CommonTypes.swift",
+      "bytes": 23132,
+      "sha256": "ec2e1a248ec98cd84d508b27ebe48f1a99403c59ed18f199099b58fb67dceca1"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Models/EventModels.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Models/EventModels.swift",
+      "bytes": 9347,
+      "sha256": "1fae8f58a6d787e4e5180170a045dba4cec33759b9bcd22f3ecd9a76c8766e38"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Models/EventPropsMatrixModels.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Models/EventPropsMatrixModels.swift",
+      "bytes": 12694,
+      "sha256": "54e6cb7f21380cb2f10886a0866db74c941619d0fd01dd2486b5df33bd06f9cc"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Models/EventQuestionMatrixModels.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Models/EventQuestionMatrixModels.swift",
+      "bytes": 15060,
+      "sha256": "479e069c30e7057969dce35867c246381df6a49c5ce240963fda5998f4f6c323"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Models/FuturesModels.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Models/FuturesModels.swift",
+      "bytes": 28073,
+      "sha256": "9a707f37cb4b1ddf628562d8b39cef37ab8485ca958aeecce9697d479f6f25b8"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Utilities/ColorExtensions.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Utilities/ColorExtensions.swift",
+      "bytes": 2746,
+      "sha256": "115fc1809ca7fc544cba1a15c2f633d3b70b4f7716cd5a9213369999ea58df14"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Utilities/EventQuestionMatrixAdapter.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Utilities/EventQuestionMatrixAdapter.swift",
+      "bytes": 9466,
+      "sha256": "c377945479439fd4546c8538daaede3f6f430904aea82f27265625a8f95cb56d"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Utilities/EventQuestionMatrixCurrentnessActivation10238.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Utilities/EventQuestionMatrixCurrentnessActivation10238.swift",
+      "bytes": 9783,
+      "sha256": "2c6b2b94076e2d96f43794203b1457d0ca81707d6043d94ca50b03ff90366e2f"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Utilities/FlowLayout.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Utilities/FlowLayout.swift",
+      "bytes": 2960,
+      "sha256": "9305035b010f4c19bceb4bdca9b8cd378d46a4764ca4bd07eac175d431219557"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Utilities/FormattingUtilities.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Utilities/FormattingUtilities.swift",
+      "bytes": 11271,
+      "sha256": "053b79a97d95d5d4e002140f8465f80064858913f7fe6a3966ad1843febc8c96"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Utilities/FuturesDetailRowValue.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Utilities/FuturesDetailRowValue.swift",
+      "bytes": 3088,
+      "sha256": "1eb723692f223c6b041be1a80fd1fc01c78ddb36974c886116e58577d9760a99"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Utilities/NBALadderCard9483.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Utilities/NBALadderCard9483.swift",
+      "bytes": 15507,
+      "sha256": "d8886db66920edda5eb876645509cbbaf9ac444fceddfd8e3c5d224f67f636cc"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Utilities/NFLEventCardDeck9483.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Utilities/NFLEventCardDeck9483.swift",
+      "bytes": 26305,
+      "sha256": "047f1dfcf39d22781d33ccfab2291853eefab25eac3d18f3f648d3c8a47ef16e"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Utilities/QuestionMatrixSelection.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Utilities/QuestionMatrixSelection.swift",
+      "bytes": 2614,
+      "sha256": "56b8a7c1ea9442ec44ebe30c071b3d883484135ccc1405ad5596c7f47ed56c06"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Utilities/SourceAge.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Utilities/SourceAge.swift",
+      "bytes": 9011,
+      "sha256": "880ff05bc3d3806eccf7e1f3ddeefd15be28be603b965f35d69b539d987f219e"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Utilities/SourceLabels.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Utilities/SourceLabels.swift",
+      "bytes": 6142,
+      "sha256": "5538e8bb6835d9f22eb743becd13b2e1b8d62da423bb7fb0b29582a10c9a4deb"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Utilities/StoredLineScore.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Utilities/StoredLineScore.swift",
+      "bytes": 11189,
+      "sha256": "e6d0770c133f4ec98256f372b1577bd5e96e00d5e70aa9c1434ce3a199929b1a"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/Bain Luck/Views/EventDetailView.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/Bain Luck/Views/EventDetailView.swift",
+      "bytes": 261060,
+      "sha256": "8670b6d4d678a57ccfd9b3dd5ab6eb788d3d4077ab2dab2d8b87219e6b8d503e"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/BainLuckTests/Fixtures/event-15320337-game-matrix-9483-nba-final.20261015.json",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/BainLuckTests/Fixtures/event-15320337-game-matrix-9483-nba-final.20261015.json",
+      "bytes": 75685,
+      "sha256": "47119b3df6d13296d3ad800c2579c6d5aa05ee2b97fd9915a1b724bbfbd9c505"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/BainLuckTests/Fixtures/event-15327183-game-matrix-9483-nba-pregame.20261015.json",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/BainLuckTests/Fixtures/event-15327183-game-matrix-9483-nba-pregame.20261015.json",
+      "bytes": 72871,
+      "sha256": "41eac86208c8c9506e6b1e059ef71474865ec53a69e71e9b825a38927ec44be0"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/BainLuckTests/NBAEventCards9483Tests.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/BainLuckTests/NBAEventCards9483Tests.swift",
+      "bytes": 30241,
+      "sha256": "6803ec87e70a3f95dac7cbc2daac88d1bd6e9d03aa2999894cddd8d0ca4b4d3f"
+    },
+    {
+      "archive_path": "bindings/ios/Bain Luck/BainLuckTests/NBAScoringPresentation9483Tests.swift",
+      "original": "6c73734af6d7f83f252ace8ed921eb0fcae766e3:ios/Bain Luck/BainLuckTests/NBAScoringPresentation9483Tests.swift",
+      "bytes": 12510,
+      "sha256": "fcdc39c0da55d97cbe938c00d260bd924dbf7f15935e3b1841c8d72581244fb5"
+    },
+    {
+      "archive_path": "design/live-tennis-source-binding-20261026/README.md",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/live-tennis-source-binding-20261026/README.md",
+      "bytes": 2562,
+      "sha256": "4bc6156813aa3220a7bb1394e527e39392add39bb9b91dbfba82c3c4e680d03c"
+    },
+    {
+      "archive_path": "design/shipping-adoption-20261027/TENNIS-EXACT-FINISH-08596953-DESIGN-INTAKE.md",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/TENNIS-EXACT-FINISH-08596953-DESIGN-INTAKE.md",
+      "bytes": 4307,
+      "sha256": "6e01c0883b342a7bfbc128055ae1604a158db96bb9516d9a05e8ba4a7d3ee100"
+    },
+    {
+      "archive_path": "design/shipping-adoption-20261027/TENNIS-LIVE-EXACT-FINISH-48945D41-DESIGN-INTAKE.md",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/TENNIS-LIVE-EXACT-FINISH-48945D41-DESIGN-INTAKE.md",
+      "bytes": 4763,
+      "sha256": "0efa1eb320b96b67f15160f385aa801f7968cce4bbeec586db5680d42bab1b06"
+    },
+    {
+      "archive_path": "design/shipping-adoption-20261027/TENNIS-PREGAME-EXACT-FINISH-BINDING-SOURCES.json",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/TENNIS-PREGAME-EXACT-FINISH-BINDING-SOURCES.json",
+      "bytes": 11596,
+      "sha256": "ca150a2a76bd0810909e640098de4ae52d98bed5370ea93b42ce9eaf2053d955"
+    },
+    {
+      "archive_path": "design/shipping-adoption-20261027/TENNIS-PREGAME-EXACT-FINISH-NATIVE-BINDING-MAP.md",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/TENNIS-PREGAME-EXACT-FINISH-NATIVE-BINDING-MAP.md",
+      "bytes": 1835,
+      "sha256": "fbd8306779b728569506b4910b25b349bc5fcf50e694d677ad97e8a43422ae60"
+    },
+    {
+      "archive_path": "design/shipping-adoption-20261027/TENNIS-PREGAME-EXACT-FINISH-NEXT-SOURCE.md",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/TENNIS-PREGAME-EXACT-FINISH-NEXT-SOURCE.md",
+      "bytes": 4654,
+      "sha256": "c4577ec8b7973b6c0fe2cabbbf1d5674b84b1aa29b0997114cbe1319c76ccf4a"
+    },
+    {
+      "archive_path": "design/shipping-adoption-20261027/TENNIS-PREGAME-EXACT-FINISH-RETAINED-CASES.json",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/TENNIS-PREGAME-EXACT-FINISH-RETAINED-CASES.json",
+      "bytes": 14838,
+      "sha256": "94085d820236452a2e72351d838da7d0fe3a6ede066584affabd092cee469a05"
+    },
+    {
+      "archive_path": "design/shipping-adoption-20261027/TENNIS-PREGAME-EXACT-FINISH-REUSE-CASES.json",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/TENNIS-PREGAME-EXACT-FINISH-REUSE-CASES.json",
+      "bytes": 14647,
+      "sha256": "a1cb2810b7c38d87da5ef6089b50a0b4e9462a5bc48c0558d01e8dd63778f28a"
+    },
+    {
+      "archive_path": "design/shipping-adoption-20261027/TENNIS-PREGAME-EXACT-FINISH-REUSE-PROPOSAL.md",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/TENNIS-PREGAME-EXACT-FINISH-REUSE-PROPOSAL.md",
+      "bytes": 4754,
+      "sha256": "8f307bb1e6ccd643241c225515a1ba815368e52506cf6d587b6a4c2ce668daa2"
+    },
+    {
+      "archive_path": "design/tennis-finish-comparison-v272/NATIVE-ADOPTION.md",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/tennis-finish-comparison-v272/NATIVE-ADOPTION.md",
+      "bytes": 1029,
+      "sha256": "d059d485e3554ec75677f0a01bd12a2181321322d8cba574dd7a4853013377ce"
+    },
+    {
+      "archive_path": "design/tennis-finish-comparison-v272/native-candidate/ADOPTION-BRIEF.md",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/tennis-finish-comparison-v272/native-candidate/ADOPTION-BRIEF.md",
+      "bytes": 2062,
+      "sha256": "039bb75b06315a100141ee28cc55a81c440145ccb169e75c2b19ad29f3470075"
+    },
+    {
+      "archive_path": "design/totals-final-forecast-binding-20261024/prototype/src/LiveTennis.tsx",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/LiveTennis.tsx",
+      "bytes": 19815,
+      "sha256": "50561474469e614c51d058107b2a312180376c5a554171bc5dc1a478dce51568"
+    },
+    {
+      "archive_path": "design/totals-final-forecast-binding-20261024/prototype/src/liveTennis.css",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/liveTennis.css",
+      "bytes": 12160,
+      "sha256": "93adee379697ec1c20ea3f9d743e70f5b35ec03bcbdfc762feaceef6a7589dc3"
+    },
+    {
+      "archive_path": "design/totals-final-forecast-binding-20261024/prototype/src/liveTennis.json",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/liveTennis.json",
+      "bytes": 29996,
+      "sha256": "99d3b5d26f5d49a9d0e45ffcbd192d04dd28031e569545dff5f7ccbc656ac96b"
+    },
+    {
+      "archive_path": "design/totals-final-forecast-binding-20261024/prototype/src/tennisFocus.ts",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/tennisFocus.ts",
+      "bytes": 532,
+      "sha256": "5b01f01bfdc84f79cb32ce0a255aa5a8a42807038409173d60739c4645dba41c"
+    },
+    {
+      "archive_path": "design/totals-final-forecast-binding-20261024/prototype/src/tennisMomentStories.ts",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/tennisMomentStories.ts",
+      "bytes": 1208,
+      "sha256": "db37f1360d0d572be2f1f7b18366150a9090979fd2365bf848d9d3bb562cc97d"
+    },
+    {
+      "archive_path": "git/pregame-exact-finishes-parents.bundle",
+      "original": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/cloud-exact-before-source-handoff-20261030/pregame-exact-finishes-parents.bundle",
+      "bytes": 73593,
+      "sha256": "85bff8415df89e28437a955e2b3059afd198682424bb7bc51bd7ed06f53eadf1"
+    },
+    {
+      "archive_path": "parents/pregame-exact-finishes/ios/Bain Luck/Bain Luck/Components/ExactScoreMapPresentation10868.swift",
+      "original": "48945d4146caa7f97989b4780fcca94abfb2ca0f:ios/Bain Luck/Bain Luck/Components/ExactScoreMapPresentation10868.swift",
+      "bytes": 140889,
+      "sha256": "d832e5c7703606cd1027c8f2a492a16c40c1766e3ab1c92c720eb8715dd29f2a"
+    },
+    {
+      "archive_path": "parents/pregame-exact-finishes/ios/Bain Luck/BainLuckTests/ExactScoreMapPresentation10868Tests.swift",
+      "original": "48945d4146caa7f97989b4780fcca94abfb2ca0f:ios/Bain Luck/BainLuckTests/ExactScoreMapPresentation10868Tests.swift",
+      "bytes": 193074,
+      "sha256": "e53b71339d6cbde81eeb5e069a256e8138215c06512011c845934178c9e6990e"
+    }
+  ],
+  "checks": {
+    "source_hashes_clean_parent": true,
+    "whole89tests_preserved_input": true,
+    "core101860preserved_input": true,
+    "protected_paths": 30,
+    "native_compilation": false,
+    "native_tests": false,
+    "native_visuals": false,
+    "cloud_consumer_verified": false,
+    "production_bindings": false
+  },
+  "scope": "Enumerated source/input/reference snapshots only; no secrets, environments, unrelated artifacts or runtime data access."
+}

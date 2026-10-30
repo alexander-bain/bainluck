@@ -1,0 +1,210 @@
+import Foundation
+
+// MARK: - Event Detail
+
+/// Full event-detail payload for the iOS game detail screen.
+nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
+    let id: Int
+    let externalId: String?
+    let sport: String?
+    let homeTeam: String
+    let awayTeam: String
+    let commenceTime: String?
+    /// #8841 — the server's word that `commenceTime` is a PLACEHOLDER the venue
+    /// has not announced (StatPal lists MLB postseason games on the hour before
+    /// MLB sets a time; the Red Sox @ Yankees Wild Card games sat at 20:00Z and
+    /// printed "Sep 29 1:00 PM"). The day is real, the clock is not. Optional
+    /// because an older server or cache omits it; absent reads as `false` — read
+    /// it as `startIsTbd == true`, never as a third state.
+    let startIsTbd: Bool?
+    /// #10880 — the server's word that `commenceTime` was written by a sports
+    /// schedule provider (ESPN, StatPal, The Odds API), decoded from
+    /// `start_is_from_schedule`. False for a market's time and for a held row's
+    /// StatPal session start. Absent (an older server or cache) reads as false.
+    /// "Add to Calendar" is offered only on `true` (`CalendarEntry10880`).
+    var startIsFromSchedule: Bool? = nil
+    // #2687 — a `closed` frame means the match ended under the stream; the
+    // status has to be able to follow it without a full refetch.
+    var status: String?
+    // #10866 — the score pair and its provenance move together when a held
+    // live page retains a provably newer observation over an older response.
+    var homeScore: Int?
+    var awayScore: Int?
+    /// The producer's clock and attribution for this response's score tuple.
+    /// Missing on older servers/caches; never replace with receipt or price time.
+    var scoreSource: String?
+    var scoreObservedAt: String?
+    let homeTeamData: TeamData?
+    let awayTeamData: TeamData?
+    let metadata: EventMetadata?
+    let standingsContext: StandingsContext?
+    // #2687 — `var` so a pushed SSE frame can write the fresher blend into the
+    // model every native surface already reads. See `CurrentOdds`.
+    var currentOdds: CurrentOdds?
+    let openingOdds: OpeningOdds?
+    /// #8622 — see `PrematchOdds`. Read through `PrematchReading.resolve`.
+    let prematchOdds: PrematchOdds?
+    /// #11296 — the same two settled-row fields the feed card decodes
+    /// (`FeedEventData.pregameProjection` / `.finalScorePeriod`), so the
+    /// headline compares a final with the forecast before it by the cards' one
+    /// rule. Absent (an older server, a cached payload) or unreadable prints
+    /// nothing and fails nothing: the projection never throws, and the period
+    /// is lenient.
+    var pregameProjection: PregameProjection? = nil
+    @LenientDecode var finalScorePeriod: String? = nil
+    let bookmakerOdds: [BookmakerOdds]?
+    let highlight: Highlight?
+    let espn: ESPNData?
+    var winProbabilitySources: [String: WinProbSource]?
+    /// #9051 — the blend the server's hero resolved to, its source vocabulary
+    /// (`"blend"` on a live multi-source page), the observation clock that dates
+    /// it and the fold revision it was computed from. The revision dates THIS
+    /// value, so it is read only while `currentOdds` prints the same number
+    /// (`LiveEventPriceReconciliation.pairedFoldRevision`). `var` on the fields a
+    /// pushed frame or a kept headline replaces, so value, clock and revision
+    /// always move together. All optional: an older server or cache omits them.
+    var heroProbability: Double?
+    var heroProbabilitySource: String?
+    /// #9470 — the away side of the hero pair (`printable_away`, so absent on a
+    /// draw-priced sport). Read only where the hero prints the server's pair
+    /// (`OpeningLineHero`).
+    var heroProbabilityAway: Double?
+    var heroProbabilityObservedAt: String?
+    var blendFoldRevision: ServedFoldRevision?
+    let ei: EIData?
+    let pulse: EIData?
+    let eventTags: [String]?
+    /// #4915 — the server's own verdict on a settled game: `"home" | "away" |
+    /// "draw"`, decoded from `hero_settled_result` by `.convertFromSnakeCase`.
+    ///
+    /// The route OMITS the key on a game it cannot grade (`resolve_settled_hero`
+    /// returns nothing), so absent is an ordinary state and this is optional
+    /// rather than defaulted. Read it through `EventOutcome.resolve` — never
+    /// branch on the raw string, or the third outcome goes missing again.
+    let heroSettledResult: String?
+    /// #6381 — whether the VENUE has already graded this event, decoded from
+    /// `venue_settled`. Three states and they are three different answers:
+    /// absent (this build's server never asked), `false` (we asked and the
+    /// venue said nothing), `true` (it graded this event).
+    ///
+    /// It is NOT a status and it never becomes one. `status`, the scores and
+    /// `started_without_result` are byte-identical beside it — the producer
+    /// (`app/utils/venue_settlement.py`) reads `futures_outcomes` rows where
+    /// `is_winner IS TRUE AND resolution_source = 'api_settlement'` and writes
+    /// nothing. Read it through ``EventState/showsVenueSettledVerdict(_:venueSettled:commenceTime:now:)``.
+    let venueSettled: Bool?
+    /// #6381 — the graded FULL-CONTEST score, as an outcome NAME and verbatim:
+    /// `"Draw 0-0"`, `"Brighton & Hove Albion wins 5-0"`, `"Aryna Sabalenka
+    /// wins 2-0"`. `nil` whenever the venue graded only props, which is 370 of
+    /// the 426 rows in the issue's own sample.
+    ///
+    /// 🔴 DO NOT PARSE IT. Its shape differs by sport (soccer names a scoreline,
+    /// tennis names sets) and the producer's own contract note says the same
+    /// thing to the web half: render it as given. A `nil` here is not a missing
+    /// value to fill in — it is the state where saying "settled" without
+    /// inventing a score is the whole answer (#6381 acceptance 4).
+    let venueSettledResult: String?
+    /// #5811 — the venue CLOSED this contest with no winner (a draw, a no
+    /// contest, a split settlement), decoded from `venue_closed_no_winner`.
+    /// PRESENT ONLY WHEN TRUE: absent means "not established", never "still
+    /// going". Read it through ``EventState/showsVenueClosedNoWinner(_:venueSettled:venueClosedNoWinner:commenceTime:now:)``.
+    let venueClosedNoWinner: Bool?
+    /// #9067 — ESPN's per-period scores, decoded from `box_score_data`. Absent
+    /// on a server that still serves only `players`; Game Segments then keeps
+    /// its `espn_history` inference. See `EventBoxScoreData`.
+    let boxScoreData: EventBoxScoreData?
+}
+
+// MARK: - Standings Context
+
+/// Short standings and stakes summary shown alongside an event matchup.
+nonisolated struct StandingsContext: Decodable, Sendable {
+    let home: String?
+    let away: String?
+    let stakes: String?
+}
+
+// MARK: - EI Rankings
+
+/// Response containing the highest- and lowest-interest events for EI rankings.
+nonisolated struct EIRankingsResponse: Decodable, Sendable {
+    let highest: [EIRankedEvent]
+    let lowest: [EIRankedEvent]
+    let filters: EIRankingsFilters?
+}
+
+/// Compact event row used in EI ranking lists.
+nonisolated struct EIRankedEvent: Decodable, Identifiable, Sendable {
+    let id: Int
+    let externalId: String?
+    let sport: String?
+    let homeTeam: String
+    let awayTeam: String
+    let commenceTime: String?
+    let status: String?
+    let homeScore: Int?
+    let awayScore: Int?
+    let metadata: EventMetadata?
+    let ei: EIData?
+    let pulse: EIData?
+    let rank: Int
+}
+
+/// Filters echoed by the EI rankings endpoint.
+nonisolated struct EIRankingsFilters: Decodable, Sendable {
+    let sport: String?
+    let limit: Int?
+}
+
+// MARK: - Line Movement
+
+/// Cached odds movement explanation for an event detail page.
+nonisolated struct LineMovementResponse: Decodable, Sendable {
+    let eventId: Int
+    let movements: [LineMovement]
+    let explanation: String?
+    let disagreementExplanation: String?
+    let disagreementData: LineMovementDisagreement?
+    let context: LineMovementContext?
+    let cached: Bool?
+    let createdAt: String?
+
+    var hasDisplayContent: Bool {
+        hasText(explanation) || hasText(disagreementExplanation)
+    }
+
+    private func hasText(_ value: String?) -> Bool {
+        guard let value else { return false }
+        return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+/// One sustained odds move detected from sportsbook snapshots.
+nonisolated struct LineMovement: Decodable, Sendable {
+    let timestampStart: String
+    let timestampEnd: String
+    let homeProbBefore: Double
+    let homeProbAfter: Double
+    let change: Double
+    let magnitude: Double
+    let direction: String
+    let context: String?
+    let isMajor: Bool
+}
+
+/// Prediction-market disagreement against sportsbook consensus.
+nonisolated struct LineMovementDisagreement: Decodable, Sendable {
+    let sportsbookHomeProb: Double
+    let predictionMarketHomeProb: Double
+    let source: String
+    let divergence: Double
+}
+
+/// Metadata about evidence used to generate the movement explanation.
+nonisolated struct LineMovementContext: Decodable, Sendable {
+    let injuriesCount: Int?
+    let newsCount: Int?
+    let hasGameState: Bool?
+    let hasTeamStats: Bool?
+    let scoringPlaysCount: Int?
+}
