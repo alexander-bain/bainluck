@@ -198,3 +198,37 @@ def rerank_market_field_stmt(market_id: int):
     healthy pays one indexed scan and zero row writes.
     """
     return rerank_market_fields_stmt([market_id])
+
+
+def rerank_market_field_skip_locked_stmt(market_id: int):
+    """The same re-derivation for one market, skipping legs another writer holds.
+
+    For the 30-second venue poll (#10090), which must never wait on a price row
+    a socket holds while it holds this market's other legs. Only the legs whose
+    stored rank disagrees with the field are locked — ``FOR NO KEY UPDATE OF``
+    the table, ``SKIP LOCKED`` — and updated; a held leg keeps its rank until
+    the next pass. The ordering is :func:`field_rank_expr`, the guard is
+    ``IS DISTINCT FROM``, so this is the rule above and not a second opinion.
+    """
+    ranked = (
+        select(
+            FuturesOutcome.id.label("id"),
+            field_rank_expr().label("rnk"),
+        )
+        .where(FuturesOutcome.market_id == market_id)
+        .subquery("field_rank")
+    )
+    held = FuturesOutcome.__table__.alias("rank_lockable")
+    todo = (
+        select(held.c.id.label("id"), ranked.c.rnk)
+        .join(ranked, ranked.c.id == held.c.id)
+        .where(held.c.rank.is_distinct_from(ranked.c.rnk))
+        .with_for_update(of=held, skip_locked=True, key_share=True)
+        .cte("rank_todo")
+    )
+    return (
+        update(FuturesOutcome)
+        .where(FuturesOutcome.id == todo.c.id)
+        .values(rank=todo.c.rnk)
+        .execution_options(synchronize_session=False)
+    )

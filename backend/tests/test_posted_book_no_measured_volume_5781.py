@@ -476,6 +476,9 @@ class TestEverySiteBindsTheNewParameters:
             "app/routes/admin_source_health.py": DEFINES,
             "tests/integration/test_futures_price_refresh_writes_pg.py": EXECUTES,
             "tests/integration/test_kalshi_delisted_leg_retirement_pg.py": EXECUTES,
+            # #10090 — the 30-second venue poll's population SQL interpolates
+            # `HIGH_VALUE_SQL` and runs it every population read.
+            "app/tasks/venue_poll_30s.py": EXECUTES,
             # Counts interpolation tokens in a source scan; never runs them.
             "tests/test_futures_price_refresh.py": MENTIONS,
             # Reads the strings to assert their shape; never runs them.
@@ -524,7 +527,7 @@ class TestEverySiteBindsTheNewParameters:
             "reach one — drop them, a stale entry hides a deletion"
         )
         executors = [r for r, k in classified.items() if k == EXECUTES]
-        assert len(executors) == 2
+        assert len(executors) == 3
         for rel in executors:
             assert "pool_bind_params()" in (root / rel).read_text(encoding="utf-8"), (
                 f"{rel} executes a pool statement without taking the bind set whole"

@@ -214,6 +214,17 @@ class PolymarketSport(BaseModel):
     image: Optional[str] = None
 
 
+def _book_side(raw) -> Optional[float]:
+    """One side of a CLOB ``/prices`` answer: a price in (0, 1), else no quote."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and 0 < value < 1 else None
+
+
 class PolymarketAPIService:
     """Service for interacting with Polymarket's public APIs."""
 
@@ -609,6 +620,34 @@ class PolymarketAPIService:
         except Exception as e:
             logger.warning("Failed to get price for token %s: %s", token_id, e)
             return None
+
+    async def get_book_tops(
+        self, token_ids: list[str]
+    ) -> dict[str, tuple[Optional[float], Optional[float]]]:
+        """Best bid and best ask for many tokens in one read (#10090 30-second poll).
+
+        ``POST /prices`` with a ``BUY`` and a ``SELL`` item per token; the CLOB
+        caps a request at 500 items, so a caller sends at most 250 tokens.
+        Measured against production CLOB 2026-10-30 on 45 two-sided books read
+        both ways: ``BUY`` is the book's best BID and ``SELL`` its best ASK in
+        every one. A side with no resting order comes back ``"0"``, so any value
+        outside (0, 1) is read as no quote on that side (None). A token the CLOB
+        does not know is absent from the answer, never an error; callers count
+        it. 429 and server errors re-raise (gotcha #36).
+        """
+        body = [
+            {"token_id": token, "side": side}
+            for token in token_ids
+            for side in ("BUY", "SELL")
+        ]
+        response = await self.clob_client.post("/prices", json=body)
+        response.raise_for_status()
+        payload = response.json()
+        out: dict[str, tuple[Optional[float], Optional[float]]] = {}
+        for token, sides in (payload.items() if isinstance(payload, dict) else ()):
+            if isinstance(sides, dict):
+                out[str(token)] = (_book_side(sides.get("BUY")), _book_side(sides.get("SELL")))
+        return out
 
     async def get_midpoint(self, token_id: str) -> Optional[float]:
         """Get mid-market price for a token."""
