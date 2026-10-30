@@ -1246,7 +1246,7 @@ enum OriginalHandicapCard9483 {
         }
         if isBefore(input) {
             return .before(BeforeShown(chance: content.readings.first { $0.label == Details.pregameLabel },
-                                       unavailable: original.mode == .pregame ? nil : "Pregame presentation unavailable"))
+                                       unavailable: original.mode == .pregame ? nil : "Only pre-match information shown"))
         }
         if isLive(input) {
             let pending: String?

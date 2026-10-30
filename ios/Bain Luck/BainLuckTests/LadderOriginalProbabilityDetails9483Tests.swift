@@ -2104,12 +2104,12 @@ final class OriginalPregameHandicapCard9483Tests: XCTestCase {
             let before = try shown(panel(), card)
             let details = try XCTUnwrap(M.content(catalogue: card.catalogue, selection: H.selection(panel(), in: card)))
             XCTAssertEqual(before.chance, details.readings.first)
-            XCTAssertEqual(before.unavailable, "Pregame presentation unavailable")
+            XCTAssertEqual(before.unavailable, "Only pre-match information shown")
             XCTAssertEqual(card.catalogue?.originals.first?.mode, mode)
             XCTAssertNotNil(H.action(panel(), in: card, onSelect: { _ in }))
             let spoken = H.spoken(panel(), in: card)
             XCTAssertTrue(spoken.contains("43.5%"))
-            XCTAssertTrue(spoken.contains("Pregame presentation unavailable"))
+            XCTAssertTrue(spoken.contains("Only pre-match information shown"))
             assertNoLaterChannels(spoken)
         }
     }
