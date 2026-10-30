@@ -543,6 +543,17 @@ READ_SIDE_CONSUMERS = {
         "the same price, since a moved price still stamps. No wrong number; "
         "the guard only loses its ability to tell a repeat from silence."
     ),
+    "app/tasks/venue_poll_pm_tail.py": (
+        "POLLER ALIVE — #10090's 3-minute Polymarket tail rotation, its P4 "
+        "agreement counters only. A row stamped within 60 s of the book read is "
+        "the reference the sweep is graded against (`tail_agree` / "
+        "`tail_disagree`); an older one is `tail_unreferenced`. Its WRITES are "
+        "gated by `_write_prices`' own `fetched_at` guard, read as in the "
+        "30-second poll's entry above. Under option 1 a socket quote that "
+        "repeats would not advance the stamp, so a leg the socket is holding "
+        "steady reads as unreferenced: fewer graded legs, no wrong number and "
+        "no write decided by it."
+    ),
 }
 
 _GATE = re.compile(r"last_updated\s*(?:<|>=|<=|>)\s*")

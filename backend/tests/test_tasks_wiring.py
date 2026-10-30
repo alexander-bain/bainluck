@@ -485,6 +485,8 @@ class TestBeatScheduleCompleteness:
         # #12: this allowlist is the reason a new beat entry cannot land
         # silently.
         "poll-venue-prices-30s",
+        # #10090 — the 3-minute Polymarket tail rotation, dark by default.
+        "poll-venue-prices-tail",
     }
 
     def test_no_missing_entries(self):
