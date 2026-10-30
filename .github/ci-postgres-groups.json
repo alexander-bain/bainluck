@@ -157,6 +157,7 @@
     "/api/calibration/rescue runs Part C, not a private copy (real Postgres)",
     "#5355 a DataGolf opening first read after the start is not scored (real Postgres)",
     "#994 a DataGolf bucket drill-in returns the rows the published chain admits (real Postgres)",
+    "#994 a DataGolf bucket opens the published curve's own members (real Postgres)",
     "#1853 a settled Kalshi event's archived legs are graded by an attended, undoable repair (real Postgres)",
     "#938 a Kalshi golf round price no stored time places before the round is not scored (real Postgres)",
     "#2722 the nine archived Kalshi questions settle through an attended, undoable first repair (real Postgres)",

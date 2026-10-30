@@ -169,6 +169,20 @@ def _clean_cache():
     cal._examples_cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _no_published_membership(monkeypatch):
+    """Every test here is about the LIVE path — the fallback when no published
+    membership can answer. The published path has its own file
+    (``test_calibration_examples_membership_994.py``); here it reports absent
+    without touching the fake session, so the statement and budget accounting
+    below stays the live path's alone."""
+
+    async def _absent(db, **kwargs):
+        return None, None, "absent"
+
+    monkeypatch.setattr(cal, "_published_membership_examples", _absent)
+
+
 @pytest.fixture
 def clock(monkeypatch):
     c = _Clock()

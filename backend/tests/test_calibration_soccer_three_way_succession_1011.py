@@ -124,7 +124,9 @@ class TestThisTree:
     def test_futures_unit_reuse_is_unaffected(self):
         # #938 moved the unit digest (``dec3026b…`` -> ``5de54fd2…``) with a
         # per-outcome flag in ``_calibration_population_ctes``; this rule did not.
-        assert pc.staged_unit_fingerprint() == "5de54fd27524df3c6af470d7f3c15bb9"
+        # #994 then moved it ON PURPOSE (``5de54fd2…`` -> ``74356774…``): Stage B
+        # emits each DataGolf cell's members. This rule still does not touch it.
+        assert pc.staged_unit_fingerprint() == "7435677428a14a4ecebfe02c9310e101"
 
 
 class TestTheCensus:
