@@ -163,9 +163,27 @@ def test_parent_executes_once_with_fresh_nonce_and_ignores_existing_receipt(
 ):
     observation, result, payloads = sample
     calls = []
+    monkeypatch.setenv("HEROKU_API_KEY", "fake-platform-token")
+    monkeypatch.setenv("SSL_CERT_FILE", "/fake/approved-ca.pem")
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    for name in (
+        "DATABASE_URL",
+        "REDIS_URL",
+        "DNPL_COMMAND_DATABASE_URL",
+        "DNPL_COMMAND_REDIS_URL",
+        "HTTPS_PROXY",
+        "PYTHONPATH",
+        "HOME",
+    ):
+        monkeypatch.setenv(name, "must-not-reach-child")
 
     def child(argv, **kwargs):
         calls.append(argv)
+        assert kwargs["env"] == {
+            "HEROKU_API_KEY": "fake-platform-token",
+            "SSL_CERT_FILE": "/fake/approved-ca.pem",
+        }
+        assert kwargs["timeout"] == 100
         assert argv[1:3] == ["-I", str(observations.VERIFIER)]
         binding = json.loads(argv[4])
         directory = observation.directory / ("verify-" + binding["nonce"])
