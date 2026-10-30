@@ -36,7 +36,7 @@ import math
 import os
 import socket
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -50,6 +50,7 @@ from app.utils.calibration_phase_ledger import (
     CHECKPOINT_REASON_LEASE_HELD,
     CHECKPOINT_REASON_READ_FAILED,
     DONE_STATUSES,
+    ELASTIC_PRE_UNIT_STAGES,
     FAILED,
     FEASIBILITY_INDETERMINATE,
     FEASIBILITY_NO_DATA,
@@ -64,6 +65,7 @@ from app.utils.calibration_phase_ledger import (
     PHASE_FUTURES,
     PHASE_LEDGER_SCHEMA,
     PHASE_OUTPUT_KEYS,
+    PRE_UNIT_MS_KEY,
     REFUSE,
     RESUMABLE_PHASES,
     RESUMED,
@@ -1561,6 +1563,11 @@ class PhaseCarryover:
     #: true for a row we HAVE: a genuinely absent row is knowledge, and so is a
     #: torn, wrong-version or expired one.
     unknown: bool = False
+    #: #10983. The prior beat's per-read cost of each elastic phase's pre-unit
+    #: stage (:data:`ELASTIC_PRE_UNIT_STAGES`), a lower bound. PLAN-only: it is
+    #: folded into the unit costs by :func:`load_phase_carryover` and never by
+    #: the save, so it is re-measured every beat rather than carried as a level.
+    pre_unit_ms: dict[str, int] = field(default_factory=dict)
 
 
 async def read_phase_carryover() -> PhaseCarryover:
@@ -1616,7 +1623,33 @@ async def read_phase_carryover() -> PhaseCarryover:
         costs,
         ring,
         status=read.status,
+        pre_unit_ms=_pre_unit_from(payload),
     )
+
+
+def _pre_unit_from(payload: dict) -> dict[str, int]:
+    """Per-read cost of each elastic phase's pre-unit stage on the prior beat — #10983.
+
+    ``stages`` sums every observation of a stage, completed or cancelled, and
+    ``stage_counts`` counts them, so the mean is a lower bound on what one read
+    costs: a completed read cost exactly its elapsed time, a cancelled one more.
+    That is the direction :func:`~app.utils.calibration_phase_ledger._elastic_cut`
+    reasons in — it only DECLINES a cut on it. A beat that carried the phase ran
+    no such read and yields nothing, which leaves the cut as it was.
+    """
+    stages = payload.get("stages")
+    counts = payload.get("stage_counts")
+    if not isinstance(stages, dict) or not isinstance(counts, dict):
+        return {}
+    out: dict[str, int] = {}
+    for phase, stage in ELASTIC_PRE_UNIT_STAGES.items():
+        total, n = stages.get(stage), counts.get(stage)
+        if isinstance(total, bool) or not isinstance(total, (int, float)):
+            continue
+        if isinstance(n, bool) or not isinstance(n, int) or n <= 0 or total <= 0:
+            continue
+        out[phase] = int(total // n)
+    return out
 
 
 async def load_phase_carryover() -> tuple[
@@ -1631,7 +1664,14 @@ async def load_phase_carryover() -> tuple[
     save calls the classified reader.
     """
     carry = await read_phase_carryover()
-    return carry.history, carry.floors, carry.unit_costs, carry.worst_history
+    costs = carry.unit_costs
+    if carry.pre_unit_ms:
+        # #10983. Copied, never written into the carry: the save folds onto
+        # ``carry.unit_costs`` and must not persist a per-beat reading as a level.
+        costs = {name: dict(cost) for name, cost in costs.items() if isinstance(cost, dict)}
+        for name, ms in carry.pre_unit_ms.items():
+            costs.setdefault(name, {})[PRE_UNIT_MS_KEY] = ms
+    return carry.history, carry.floors, costs, carry.worst_history
 
 
 async def load_phase_measurements() -> tuple[
