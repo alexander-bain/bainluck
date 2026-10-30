@@ -1,3 +1,4 @@
+// #11703 candidate (draft): this comment only runs the hosted Watch MVP suite on this branch; drop before merge.
 import Combine
 import SwiftUI
 import XCTest
