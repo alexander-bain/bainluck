@@ -48,9 +48,10 @@ process's. The gap between them is CPU spent on other threads; those samples
 are charged to whatever the loop was doing. ``self_cpu`` is the sampler's own
 cost (handler time on the loop, plus the thread), so every line carries it.
 
-BOUNDS. The handler reads frame objects, bumps counters and re-arms one timer,
-tens of µs per sample. It takes no application lock, does no I/O, and never
-raises. The line is built on the thread from atomic ``dict()`` copies. The
+BOUNDS. The handler reads frame objects, bumps counters and re-arms one timer:
+about 0.1 ms per sample on the rig's 40-60-frame stacks (measured: 0.28 s over
+2,899 samples), so ~0.1% of a core at 10 Hz. It takes no application lock,
+does no I/O, and never raises. The line is built on the thread from atomic ``dict()`` copies. The
 handler is installed with SA_RESTART (``siginterrupt(False)``), and Python
 retries a selector wait the signal interrupts (PEP 475). Once installed, the
 handler stays installed; stopping disarms the timer and makes the handler
