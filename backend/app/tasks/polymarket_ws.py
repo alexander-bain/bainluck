@@ -2003,7 +2003,8 @@ async def _publish_committed_withdrawals(refresher, frames):
 
     previews = []
     # #10090 field 3: a committed withdrawal advances the revision readers
-    # adopt; the delivery receipt credits it to its writer.
+    # adopt; the delivery receipt credits it to its writer. Logged before
+    # `_publish(frames)`: it means "committed, being published".
     note_revision = getattr(getattr(refresher, 'receipts', None), 'note_writer_revision', None)
     for frame in frames:
         if frame.get('reconcile_only'):
