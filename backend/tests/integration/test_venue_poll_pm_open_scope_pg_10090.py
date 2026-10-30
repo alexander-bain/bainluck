@@ -8,6 +8,10 @@ dependencies, so that rendering would claim markets nobody streams, and they
 would wait up to an hour for the hourly refresh. The rendering now follows the
 flag: tokened AND the market's own event in the game socket's window.
 
+Fixture 12: a market a reader holds (by the market, or by its event) is in
+the population at any distance, linked or not, high-value or not, unless the
+game socket carries it; nobody holding it, it is not.
+
 Fixture 8: a market the scope drops (a linked game beyond the window; an
 unlinked high-value market; a game in the hand-off band) is in the population
 on the next read, and a slate market is not. Fixture 7: such a silent market
@@ -137,7 +141,7 @@ async def _seed(maker):
     return ids
 
 
-async def _population(maker, open_arm, scope):
+async def _population(maker, open_arm, scope, held=None):
     from sqlalchemy import text
 
     from app.tasks import venue_poll_30s as v
@@ -146,10 +150,94 @@ async def _population(maker, open_arm, scope):
         rows = (
             await session.execute(
                 text(v.polymarket_population_sql(open_arm, scope)),
-                v.population_binds([]),
+                v.population_binds([], held),
             )
         ).fetchall()
     return {row[0] for row in rows}
+
+
+async def _extra_market(maker, n, *, hours, volume):
+    """A tokened market; on an event ``hours`` ahead (None: event-less)."""
+    from app.models.models import Event, FuturesMarket, Sport
+    from sqlalchemy import select
+
+    now = datetime.now(timezone.utc)
+    async with maker() as session:
+        sport_id = (await session.execute(select(Sport.id))).scalars().first()
+        event_id = None
+        if hours is not None:
+            event = Event(
+                sport_id=sport_id,
+                home_team_name=f"x{n} Home",
+                away_team_name=f"x{n} Away",
+                commence_time=now + timedelta(hours=hours),
+                status="scheduled",
+            )
+            session.add(event)
+            await session.flush()
+            event_id = event.id
+        market = FuturesMarket(
+            source="polymarket",
+            external_id=_cid(n),
+            name=f"x{n} market",
+            category="futures",
+            status="open",
+            event_id=event_id,
+            volume=volume,
+            resolution_date=now + timedelta(days=30),
+            market_metadata={
+                "polymarket_event_id": str(9100 + n),
+                "clob_token_ids": [f"x{n}-yes", f"x{n}-no"],
+            },
+        )
+        session.add(market)
+        await session.flush()
+        from app.models.models import FuturesOutcome
+
+        session.add(
+            FuturesOutcome(
+                market_id=market.id,
+                external_id=_cid(n),
+                name="Yes",
+                is_winner=False,
+                current_probability=0.5,
+            )
+        )
+        await session.commit()
+        return market.id, event_id
+
+
+async def test_a_held_market_is_in_the_population_at_any_distance(maker):
+    """12. Held by market or by event: polled under `slate` (and with the open
+    arm off) wherever its event is, unless the game socket carries it."""
+    from app.utils.reader_presence import ReaderPresence
+
+    ids = await _seed(maker)
+    market = {case: mid for case, (mid, _legs) in ids.items()}
+    far_mid, far_event = await _extra_market(maker, 41, hours=200, volume=50_000)
+    quiet_mid, _ = await _extra_market(maker, 42, hours=None, volume=10)
+    by_event_mid, by_event = await _extra_market(maker, 43, hours=400, volume=10)
+
+    nobody = await _population(maker, True, "slate")
+    assert not {far_mid, quiet_mid, by_event_mid} & nobody  # beyond 168 h / low value
+
+    held = ReaderPresence(
+        frozenset({far_mid, quiet_mid, market["slate"]}), frozenset({by_event})
+    )
+    polled = await _population(maker, True, "slate", held)
+    assert {far_mid, quiet_mid, by_event_mid} <= polled
+    assert market["slate"] not in polled  # the game socket carries it
+    assert polled - {far_mid, quiet_mid, by_event_mid} == nobody
+
+    # Open arm off: the same held arm. `all`: the open arm streams every
+    # tokened market, so a held tokened market is not polled.
+    off = await _population(maker, False, "all", held)
+    assert {far_mid, quiet_mid, by_event_mid} <= off
+    assert market["slate"] not in off  # held, but the game socket carries it
+    assert not {far_mid, quiet_mid, by_event_mid} & await _population(
+        maker, True, "all", held
+    )
+    assert far_event is not None
 
 
 async def test_the_population_takes_what_the_slate_scope_drops(maker):
@@ -229,6 +317,7 @@ async def test_a_descoped_silent_market_is_repriced_by_a_real_pass(maker, monkey
     monkeypatch.setattr(fpr, "_fetch_polymarket_prices", fetch)
     monkeypatch.setattr(v, "_new_service", lambda _venue: _Service())
     monkeypatch.setattr(v, "shown_market_ids", lambda: [])
+    monkeypatch.setattr(v, "held_presence", lambda: None)
     monkeypatch.setattr(v, "backoff_remaining", lambda _venue: 0)
     monkeypatch.setattr(v, "read_cursor", lambda _name: None)
     monkeypatch.setattr(v, "write_cursor", lambda _name, _key: None)

@@ -25,7 +25,12 @@ WHAT IS POLLED: shown, minus socket
   signals ``futures_price_refresh`` reads);
 * a market linked to an event that is ``scheduled`` and has not kicked off, up to
   ``GAME_HORIZON_HOURS`` ahead. A linked market further out is not polled here,
-  high-value or served or not: it stays on the hourly refresh.
+  high-value or served or not: it stays on the hourly refresh;
+* #10090: a market a reader holds right now, by the market or by its event,
+  linked or not, at any distance (``utils/reader_presence``: the SSE hub's
+  ``live:market:*`` / ``live:event:*`` channels, the signal the Polymarket
+  socket's ``slate`` scope seeds from). An unreadable held set reuses the last
+  one read (:func:`held_presence`).
 
 All under ``LIVE_MARKET_SQL`` (open, unresolved, not venue-settled), and only
 legs ``_write_prices`` itself would accept (not crowned, not ``api_settlement``).
@@ -280,7 +285,10 @@ def _pool_sql(venue: str, window_sql: str) -> str:
       served id;
     * linked: events ``scheduled`` and not yet started, within
       ``GAME_HORIZON_HOURS`` (a range on ``ix_events_commence_time``), minus the
-      game socket's window and plus its hand-off band.
+      game socket's window and plus its hand-off band;
+    * held (#10090): the held markets and the markets of held events, by
+      primary key and ``ix_futures_markets_event_id``, minus the game socket's
+      window (NULL-safe: an event-less market is never in it).
     """
     from app.tasks.futures_price_refresh import HIGH_VALUE_SQL
 
@@ -305,10 +313,27 @@ def _pool_sql(venue: str, window_sql: str) -> str:
                AND e.commence_time <= NOW() + make_interval(hours => :game_horizon_hours)
                AND NOT {_socket_game_sql(window_sql)}
         ),
+        held AS MATERIALIZED (
+            SELECT fm.id
+              FROM futures_markets fm
+              LEFT JOIN events e ON e.id = fm.event_id
+             WHERE fm.id IN (
+                       SELECT unnest(CAST(:held_market_ids AS integer[]))
+                       UNION
+                       SELECT h.id
+                         FROM futures_markets h
+                        WHERE h.event_id = ANY(CAST(:held_event_ids AS integer[]))
+                   )
+               AND fm.status = 'open'
+               AND fm.source = '{venue}'
+               AND NOT {_socket_game_sql(window_sql)}
+        ),
         pool AS (
             SELECT id FROM unlinked
             UNION
             SELECT id FROM linked
+            UNION
+            SELECT id FROM held
         )
     """
 
@@ -408,28 +433,40 @@ def shown_market_ids() -> list[int]:
     """Markets a page is serving now: Discover page one, category pages, registers.
 
     Best-effort: each signal that cannot be read contributes nothing, and the
-    high-value class still stands.
+    high-value class still stands. #10090: the one definition is
+    ``reader_presence.served_market_ids``, which the Polymarket socket's
+    ``slate`` scope seeds from too.
     """
-    ids: set[int] = set()
-    try:
-        from app.utils.feed_served_markets import served_signal
+    from app.utils.reader_presence import served_market_ids
 
-        ids.update(int(i) for i in served_signal().ids)
-    except Exception as exc:  # noqa: BLE001 — a missing signal narrows, never fails
-        logger.warning("venue_poll_30s: served signal unreadable: %s", exc)
-    try:
-        from app.utils.category_served_markets import category_served_market_ids
+    return served_market_ids()
 
-        ids.update(int(i) for i in category_served_market_ids().ids)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("venue_poll_30s: category signal unreadable: %s", exc)
-    try:
-        from app.utils.tournament_register import registered_market_ids
 
-        ids.update(int(i) for i in registered_market_ids())
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("venue_poll_30s: register signal unreadable: %s", exc)
-    return sorted(ids)
+#: #10090: the last held set read; an unreadable read reuses it, so a Redis
+#: blip never drops a held market from the poll. Plain frozensets.
+_LAST_PRESENCE = None
+
+
+def held_presence():
+    """The markets and events a reader holds now (``reader_presence``).
+
+    An unreadable read narrows nothing: the last one read stands in (none read
+    yet: nobody is held, and the rest of *shown* still stands).
+    """
+    global _LAST_PRESENCE
+    from app.utils.reader_presence import (
+        PresenceUnreadable,
+        ReaderPresence,
+        read_reader_presence,
+    )
+
+    try:
+        _LAST_PRESENCE = read_reader_presence()
+    except PresenceUnreadable as exc:
+        logger.warning(
+            "venue_poll_30s: held set unreadable (%s); using the last one read", exc
+        )
+    return _LAST_PRESENCE if _LAST_PRESENCE is not None else ReaderPresence()
 
 
 # ── population and rotation ───────────────────────────────────────────────────
@@ -494,7 +531,7 @@ async def load_population(session, venue: str, *, now_mono: float) -> list[Unit]
     rows = (
         await session.execute(
             text(sql),
-            population_binds(shown_market_ids()),
+            population_binds(shown_market_ids(), held_presence()),
         )
     ).fetchall()
     units = build_units(venue, rows)
@@ -502,16 +539,19 @@ async def load_population(session, venue: str, *, now_mono: float) -> list[Unit]
     return units
 
 
-def population_binds(shown_ids: list[int]) -> dict:
+def population_binds(shown_ids: list[int], held=None) -> dict:
     """Every bind the population SQL needs. ``HIGH_VALUE_SQL``'s come from
     ``pool_bind_params()`` taken whole (#5781: a site that picks keys out of it
-    is how a new arm's bind goes missing in production only)."""
+    is how a new arm's bind goes missing in production only). ``held``: a
+    ``ReaderPresence`` (None: nobody held)."""
     from app.tasks.futures_price_refresh import pool_bind_params
 
     return {
         **pool_bind_params(),
         "shown_ids": shown_ids,
         "game_horizon_hours": GAME_HORIZON_HOURS,
+        "held_market_ids": sorted(held.market_ids) if held is not None else [],
+        "held_event_ids": sorted(held.event_ids) if held is not None else [],
     }
 
 
