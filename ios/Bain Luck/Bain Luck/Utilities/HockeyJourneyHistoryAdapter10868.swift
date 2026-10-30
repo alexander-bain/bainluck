@@ -156,6 +156,8 @@ enum HockeyJourneyHistoryAdapter10868 {
         static let lastPregame = "Last pregame"
         static let notRecorded = "Not recorded"
         static let noHistory = "No recorded history"
+        /// No history response at all: says nothing about whether rows exist or why.
+        static let historyUnavailable = "History unavailable"
         static let hollowKey = "Hollow · last pregame"
         static let gapsNote = "Gaps remain blank."
         static let blendSource = "Source: Bain Luck"
@@ -657,5 +659,42 @@ enum HockeyJourneyHistoryAdapter10868 {
             details: action(detailsActionID, Words.details, available: false),
             expand: nil, inspect: nil, previous: nil, next: nil, inspection: nil,
             plotAbsence: plot)
+    }
+
+    /// No history response at all — not arrived yet, or failed; the host does
+    /// not say which, so neither is claimed. The chart slot says "History
+    /// unavailable" through the plot-absence channel, names no source, draws
+    /// nothing and offers no working control (Details unavailable, no Full
+    /// chart, no Inspect). The rest of the page composes from its own inputs.
+    /// The real load/error/retry contract stays Native's.
+    static func unavailable(event: EventDetail, phase: HockeyJourneyPagePhase10868) -> FieldHistoryInput10868 {
+        let tints = TeamTextContrast.cardColors(awayHex: event.awayTeamData?.primaryColor,
+                                                homeHex: event.homeTeamData?.primaryColor)
+        func empty(_ side: Side, _ name: String, _ shape: FieldHistoryShape10868, _ tint: Color) -> FieldHistorySeries10868 {
+            FieldHistorySeries10868(id: seriesID(line: .blend, eventId: event.id, side: side), name: name,
+                                    shape: shape, tint: tint, runs: [], links: [], labelPointID: nil,
+                                    before: .absent(words: Words.historyUnavailable),
+                                    recorded: .absent(words: Words.historyUnavailable),
+                                    absentWords: Words.historyUnavailable, choose: nil)
+        }
+        return FieldHistoryInput10868(
+            title: Words.title,
+            caption: phase == .before ? Words.beforeCaption : Words.gameCaption,
+            series: [empty(.home, event.homeTeam, .circle, tints.home), empty(.away, event.awayTeam, .square, tints.away)],
+            selection: .none,
+            domain: FieldHistoryDomain10868(lower: 0, upper: 1),
+            ceiling: 1, yTicks: [], xTicks: [], guides: [], breaks: [],
+            readout: .singleBefore(label: Words.historyUnavailable),
+            markKey: FieldHistoryMarkKey10868(hollow: nil, filled: nil),
+            comparisonExplanation: nil,
+            notes: [],
+            summary: Words.historyUnavailable,
+            plotHeight: plotHeight,
+            unboundReadingWords: Words.historyUnavailable,
+            plotUnavailableWords: nil,
+            windows: nil, scale: nil, moreOriginals: nil,
+            details: action(detailsActionID, Words.details, available: false),
+            expand: nil, inspect: nil, previous: nil, next: nil, inspection: nil,
+            plotAbsence: FieldHistoryPlotAbsence10868(title: Words.historyUnavailable, words: nil))
     }
 }

@@ -53,7 +53,7 @@ final class HockeyJourneyEventPageHostAdapter10868Tests: XCTestCase {
     }
 
     private func build(_ event: EventDetail, box: [String: [String: Double]]?,
-                       history: EventHistoryResponse?, reading: Host.Reading = .init()) throws -> Host.Built? {
+                       history: EventHistoryResponse?, reading: Host.Reading = .init()) throws -> Host.Built {
         let markets = try decoder().decode(GameMarketsResponse.self, from: Data(Fixtures.wildBruinsMarkets.utf8))
         return Host.build(event: event, history: history, markets: markets, boxScore: box,
                           probabilityObservedAt: event.heroProbabilityObservedAt?.asDate,
@@ -71,8 +71,8 @@ final class HockeyJourneyEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertEqual(moved.count, box.count)
 
         let reading = Host.Reading(assistsPlayer: "player:quinn hughes")
-        let before = try XCTUnwrap(try build(event, box: box, history: try emptyHistory(), reading: reading))
-        let after = try XCTUnwrap(try build(event, box: moved, history: try emptyHistory(), reading: reading))
+        let before = try build(event, box: box, history: try emptyHistory(), reading: reading)
+        let after = try build(event, box: moved, history: try emptyHistory(), reading: reading)
         XCTAssertNotNil(before.input.assists)
         XCTAssertNotEqual(before.input.assists, after.input.assists)
         XCTAssertEqual(before.input.headline, after.input.headline)
@@ -92,14 +92,38 @@ final class HockeyJourneyEventPageHostAdapter10868Tests: XCTestCase {
         XCTAssertEqual(first.scoreObservedAt, second.scoreObservedAt)
         XCTAssertEqual(first.heroProbabilityObservedAt, second.heroProbabilityObservedAt)
 
-        let a = try XCTUnwrap(try build(first, box: nil, history: try emptyHistory()))
-        let b = try XCTUnwrap(try build(second, box: nil, history: try emptyHistory()))
+        let a = try build(first, box: nil, history: try emptyHistory())
+        let b = try build(second, box: nil, history: try emptyHistory())
         XCTAssertEqual(a.input.phase, .live)
         XCTAssertNotEqual(a.input.headline, b.input.headline)
     }
 
-    func testNoHistoryYetBuildsNoPageSoTheSlotKeepsThePagesLoadingMark() throws {
-        XCTAssertNil(try build(try detail(try detailObject()), box: nil, history: nil))
+    /// No `/history` response (not arrived, or failed): the chances, both
+    /// stories and All props are exactly what they are beside an answered
+    /// history; only the chart slot says "History unavailable", draws nothing,
+    /// names no source and offers no working control.
+    func testNoHistoryResponseLeavesOnlyTheChartUnavailable() throws {
+        let event = try detail(try detailObject())
+        let box = try decoder().decode(BoxBody.self, from: Data(Fixtures.wildBruinsDetail.utf8)).boxScoreData?.players
+        let answered = try build(event, box: box, history: try emptyHistory())
+        let missing = try build(event, box: box, history: nil)
+
+        XCTAssertEqual(missing.input.headline, answered.input.headline)
+        XCTAssertNotNil(missing.input.points)
+        XCTAssertEqual(missing.input.points, answered.input.points)
+        XCTAssertEqual(missing.input.assists, answered.input.assists)
+        XCTAssertEqual(missing.input.copy, answered.input.copy)
+        XCTAssertNotNil(missing.input.copy.allPropsLabel)
+        XCTAssertEqual(missing.originals.catalogue?.originals.count, answered.originals.catalogue?.originals.count)
+
+        let chart = missing.input.history
+        XCTAssertEqual(chart.plotAbsence?.title, "History unavailable")
+        XCTAssertEqual(chart.summary, "History unavailable")
+        XCTAssertTrue(chart.series.allSatisfy { $0.runs.isEmpty })
+        XCTAssertTrue(chart.notes.isEmpty)
+        XCTAssertNil(chart.expand)
+        XCTAssertNil(chart.inspect)
+        XCTAssertEqual(chart.details?.isAvailable, false)
     }
 
     func testOnlyNHLEventsTakeTheScreen() throws {

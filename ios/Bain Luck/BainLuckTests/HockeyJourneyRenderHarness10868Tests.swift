@@ -31,6 +31,8 @@ import XCTest
 /// cases decode that copy here into the host's `boxScore` contract. That is a
 /// harness envelope, not the app's binding: the related-futures caller is
 /// unproven. `box: missing` cases pass nil, as a page before that payload.
+/// One case passes no history at all (`history-missing`): the page keeps its
+/// chances, stories and All props, and only the chart says it is unavailable.
 ///
 /// HARNESS CALLBACKS. Every callback is a no-op closure so the controls
 /// render in their live state; tapping them in an image proves nothing. The
@@ -51,6 +53,8 @@ final class HockeyJourneyRenderHarness10868Tests: XCTestCase {
         /// The capture instant the page is read at.
         let now: String
         let box: Box
+        /// False renders the page as if `/history` never answered.
+        var history = true
     }
 
     private static let cases = [
@@ -58,6 +62,7 @@ final class HockeyJourneyRenderHarness10868Tests: XCTestCase {
         Case(name: "nhl-15169793", now: "2026-10-11T04:56:41Z", box: .missing),
         Case(name: "nhl-15338034", now: "2026-10-30T20:13:55Z", box: .detailCopy),
         Case(name: "nhl-15338496", now: "2026-10-30T20:13:55Z", box: .missing),
+        Case(name: "nhl-15338034", now: "2026-10-30T20:13:55Z", box: .detailCopy, history: false),
     ]
 
     private static let pacific: Calendar = {
@@ -93,14 +98,15 @@ final class HockeyJourneyRenderHarness10868Tests: XCTestCase {
                        reading: Host.Reading = .init()) throws -> Host.Built {
         let detailURL = fixtures.appendingPathComponent("\(c.name)-detail.json")
         let event = try decode(EventDetail.self, detailURL)
-        let history = try decode(EventHistoryResponse.self, fixtures.appendingPathComponent("\(c.name)-history.json"))
+        let history = c.history
+            ? try decode(EventHistoryResponse.self, fixtures.appendingPathComponent("\(c.name)-history.json")) : nil
         let markets = try decode(GameMarketsResponse.self, fixtures.appendingPathComponent("\(c.name)-game-markets.json"))
         let box = c.box == .detailCopy ? try decode(BoxBody.self, detailURL).boxScoreData?.players : nil
-        return try XCTUnwrap(Host.build(
+        return Host.build(
             event: event, history: history, markets: markets, boxScore: box,
             probabilityObservedAt: event.heroProbabilityObservedAt?.asDate,
             now: try XCTUnwrap(c.now.asDate), reading: reading,
-            calendar: Self.pacific, locale: Self.locale))
+            calendar: Self.pacific, locale: Self.locale)
     }
 
     /// The presentation with harness no-op callbacks, so offered controls are live.
@@ -176,7 +182,7 @@ final class HockeyJourneyRenderHarness10868Tests: XCTestCase {
             if plain.input.assists != nil { modes.append(.reader(.assists)) }
             if plain.originals.catalogue != nil { modes.append(.catalogue) }
             if first != nil { modes.append(.original) }
-            let stem = "\(c.name)-box-\(c.box.rawValue)-\(plain.input.phase)"
+            let stem = "\(c.name)-box-\(c.box.rawValue)\(c.history ? "" : "-history-missing")-\(plain.input.phase)"
 
             for (sizeName, size) in [("default", DynamicTypeSize.large), ("ax3", DynamicTypeSize.accessibility3)] {
                 for (styleName, style) in [("light", UIUserInterfaceStyle.light), ("dark", UIUserInterfaceStyle.dark)] {
@@ -197,7 +203,7 @@ final class HockeyJourneyRenderHarness10868Tests: XCTestCase {
                     }
                     let screenURL = try write(firstScreen, "\(stem)-page-\(variant)-screen", to: dirs.renders)
                     window.isHidden = true
-                    manifest.append(["case": c.name, "box": c.box.rawValue, "phase": "\(plain.input.phase)",
+                    manifest.append(["case": c.name, "box": c.box.rawValue, "history": c.history ? "served" : "missing", "phase": "\(plain.input.phase)",
                                      "mode": "page-first-screen", "screen_points": points, "text_size": sizeName,
                                      "appearance": styleName, "png": screenURL.lastPathComponent,
                                      "height_pt": "\(Int(firstScreen.size.height))"])
@@ -206,7 +212,7 @@ final class HockeyJourneyRenderHarness10868Tests: XCTestCase {
                         let source = mode == .original ? chosen : plain
                         let image = try whole(page(source, mode: mode), width: screen.width, size: size, style: style)
                         let url = try write(image, "\(stem)-\(Self.modeName(mode))-\(variant)", to: dirs.renders)
-                        manifest.append(["case": c.name, "box": c.box.rawValue, "phase": "\(plain.input.phase)",
+                        manifest.append(["case": c.name, "box": c.box.rawValue, "history": c.history ? "served" : "missing", "phase": "\(plain.input.phase)",
                                          "mode": Self.modeName(mode), "screen_points": points,
                                          "text_size": sizeName, "appearance": styleName,
                                          "png": url.lastPathComponent, "height_pt": "\(Int(image.size.height))"])

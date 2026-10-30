@@ -40,9 +40,11 @@ import SwiftUI
 /// ```
 /// Backout is that switch off; no data or route is touched by either state.
 ///
-/// Until the first history payload arrives the slot shows the page's own
-/// loading mark. The history owner has no words for a history that failed to
-/// load, so none are invented here (routed, #10868 gap).
+/// Without a history response (not arrived, or failed) the page still shows
+/// its chances, stories and All props; only the chart slot says "History
+/// unavailable" (`HockeyJourneyHistoryAdapter10868.unavailable`), with no
+/// working chart control and no retry. The real load/error/retry contract is
+/// Native's.
 ///
 /// History controls: only Full chart opens anything (the full-size history
 /// reader). The history adapter offers Details and Inspect as unavailable
@@ -112,19 +114,11 @@ struct HockeyJourneyEventPageHost10868: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
-        let built = make()
-        Group {
-            if let built {
-                page(built, mode: .page)
-            } else {
-                ProgressView()
-                    .frame(maxWidth: .infinity, minHeight: 120)
-            }
-        }
+        page(make(), mode: .page)
         .sheet(item: $presented) { shown in
             NavigationStack {
                 ScrollView {
-                    if let built = make() { page(built, mode: shown.mode).padding(.horizontal, 16) }
+                    page(make(), mode: shown.mode).padding(.horizontal, 16)
                 }
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
@@ -183,7 +177,7 @@ struct HockeyJourneyEventPageHost10868: View {
         }
     }
 
-    private func make() -> Built? {
+    private func make() -> Built {
         Self.build(event: event, history: history, markets: markets, boxScore: boxScore,
                    probabilityObservedAt: probabilityObservedAt, deliveryInterrupted: deliveryInterrupted,
                    ladderHome: ladderHome, ladderAway: ladderAway, now: now,
@@ -194,22 +188,22 @@ struct HockeyJourneyEventPageHost10868: View {
     }
 
     /// The page input and originals from the passed values alone — pure, so
-    /// every changed value reaches the screen on the next pass. Nil until the
-    /// first history payload: the history owner has no loading or failed-load
-    /// state, and the page input requires one.
+    /// every changed value reaches the screen on the next pass. A missing
+    /// history response leaves only the chart slot unavailable.
     static func build(event: EventDetail, history: EventHistoryResponse?, markets: GameMarketsResponse?,
                       boxScore: [String: [String: Double]]?, probabilityObservedAt: Date?,
                       deliveryInterrupted: Bool = false, ladderHome: Double? = nil, ladderAway: Double? = nil,
                       now: Date, reading: Reading = Reading(),
-                      calendar: Calendar = .current, locale: Locale = .current) -> Built? {
-        guard let history else { return nil }
+                      calendar: Calendar = .current, locale: Locale = .current) -> Built {
         let host = HockeyJourneyPageAdapter10868.Host(
             probabilityObservedAt: probabilityObservedAt, deliveryInterrupted: deliveryInterrupted,
             ladderHome: ladderHome, ladderAway: ladderAway, now: now, calendar: calendar, locale: locale)
         let phase = HockeyJourneyPageAdapter10868.phase(event, now: now)
-        let historyInput = HockeyJourneyHistoryAdapter10868.history(
-            history, event: event, phase: phase,
-            host: HockeyJourneyHistoryAdapter10868.Host(now: now, calendar: calendar, locale: locale))
+        let historyInput = history.map {
+            HockeyJourneyHistoryAdapter10868.history(
+                $0, event: event, phase: phase,
+                host: HockeyJourneyHistoryAdapter10868.Host(now: now, calendar: calendar, locale: locale))
+        } ?? HockeyJourneyHistoryAdapter10868.unavailable(event: event, phase: phase)
         let people = HockeyJourneyContributionAdapter10868.Host(
             boxScore: boxScore, now: now, calendar: calendar, locale: locale)
         let points = HockeyJourneyContributionAdapter10868.points(
