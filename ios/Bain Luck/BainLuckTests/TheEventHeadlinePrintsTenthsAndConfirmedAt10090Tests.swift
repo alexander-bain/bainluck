@@ -394,6 +394,125 @@ final class TheEventHeadlinePrintsTenthsAndConfirmedAt10090Tests: XCTestCase {
         XCTAssertEqual(vm.liveUpdateStatus, .awaitingUpdate, "as today while a preview shows")
     }
 
+    // MARK: - (2b) Build 94 — the b93 Legia hold (speed 2031Z findings 1 and 2)
+
+    /// Finding 1. Production's connect, read 2026-10-30 20:37Z: `open`, the
+    /// replay of the revision the page just read, a heartbeat, then the
+    /// `reconcile` naming that same revision — and its pair read took up to 4 s
+    /// on the phone. The page opened ON the reconcile's revision, so a newer
+    /// price is not owed: the confirmation ends "Waiting for update" and dates
+    /// the number at the first heartbeat, while that pair is still in flight.
+    /// Red on 58ce6f3c (the unpaid floor and the in-flight read both refused).
+    func testTheConnectConfirmsThePagesOwnRevisionBeforeTheReconcilePairLands() async throws {
+        let client = Client(try event()), handle = Handle(), vm = model(client, handle)
+        defer { vm.stopRefresh() }
+        await vm.load()
+        let gate = Client.Gate()
+        client.gate = gate
+        handle.fire("open")
+        handle.push(p: 0.6, at: "2026-09-25T17:00:00Z", rev: #"{"4242":10}"#)
+        XCTAssertFalse(vm.streamHasPushedPrice, "the replay is not newer: no receipt, no green")
+        handle.beat("2026-09-25T17:05:00.000+00:00")
+        handle.fire("reconcile", #"{"event_id":4242,"custody_id":"connect","removal_rev":{"4242":10}}"#)
+        await settle { gate.waiting != nil }
+        XCTAssertNotNil(gate.waiting, "the reconcile's pair is in flight")
+        XCTAssertNotNil(vm.reconcileOwedSince, "and its floor is unpaid")
+        let shown = try XCTUnwrap(vm.event)
+        XCTAssertEqual(vm.confirmedAtCoveringShown(shown), "2026-09-25T17:05:00Z".asDate)
+        XCTAssertEqual(vm.liveUpdateStatus, .live)
+        XCTAssertEqual(vm.displayedConfirmation(shown), "2026-09-25T17:05:00Z".asDate)
+        XCTAssertNil(vm.priceActivity, "a confirmation is never a receipt")
+        gate.waiting?.resume()
+        gate.waiting = nil
+        client.gate = nil
+    }
+
+    /// Finding 1's truth bar: a reconcile floor NEWER than the shown revision
+    /// still owes its pair before any confirmation (live's C1), and so does a
+    /// frame the page could not order — until a pair started after it lands.
+    func testAFloorPastTheShownRevisionOrAnUnorderedFrameStillOwesThePair() async throws {
+        let client = Client(try event()), handle = Handle(), vm = model(client, handle)
+        defer { vm.stopRefresh() }
+        await vm.load()
+        let gate = Client.Gate()
+        client.gate = gate
+        // The pair (captured when it starts) brings the floor's revision.
+        client.response = try event(p: 0.61, revision: #"{"4242":11}"#, observedAt: "2026-09-25T17:01:00Z")
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        client.freshHistory = try decoder.decode(EventHistoryResponse.self, from: Data("""
+        {"event_id":4242,"home_team":"Red Sox","away_team":"Cubs","status":"live","history":[],
+         "blend_edge_pinned":true,"blend_edge_fold_revision":{"4242":11},"blend_edge_observed_at":"2026-09-25T17:01:00Z",
+         "aggregate_line":[{"timestamp":"2026-09-25T17:01:00Z","home_probability":0.61}]}
+        """.utf8))
+        handle.fire("open")
+        handle.beat("2026-09-25T17:05:00.000+00:00")
+        handle.fire("reconcile", #"{"event_id":4242,"custody_id":"connect","removal_rev":{"4242":11}}"#)
+        await settle { gate.waiting != nil }
+        XCTAssertNil(vm.confirmedAtCoveringShown(try XCTUnwrap(vm.event)), "the floor names a newer commit")
+        XCTAssertEqual(vm.liveUpdateStatus, .awaitingUpdate)
+        gate.waiting?.resume()
+        gate.waiting = nil
+        await settle { vm.reconcileOwedSince == nil }
+        XCTAssertNil(vm.reconcileOwedSince)
+        XCTAssertEqual(vm.confirmedAtCoveringShown(try XCTUnwrap(vm.event)), "2026-09-25T17:05:00Z".asDate)
+        // An incomparable frame (another row's write on a one-row fold) owes a pair.
+        clock += 2
+        client.gate = gate
+        handle.push(p: 0.7, at: "2026-09-25T17:02:00Z", rev: #"{"999":3}"#)
+        await settle { gate.waiting != nil }
+        XCTAssertNotNil(gate.waiting, "the unordered frame's pair is in flight")
+        XCTAssertNil(vm.confirmedAtCoveringShown(try XCTUnwrap(vm.event)), "a newer price may be on its way")
+        gate.waiting?.resume()
+        gate.waiting = nil
+        client.gate = nil
+        await settle { vm.confirmedAtCoveringShown(vm.event!) != nil }
+        XCTAssertEqual(vm.confirmedAtCoveringShown(try XCTUnwrap(vm.event)), "2026-09-25T17:05:00Z".asDate,
+                       "the pair that answered it lands")
+    }
+
+    /// Finding 2. The b93 hold: previews kept arriving at the committed 40.6%
+    /// and the open popover never said J. A preview that prints the committed
+    /// number it rides on is the confirmed number: J shows with the age of the
+    /// newer of preview and confirmation. A preview printing another number
+    /// keeps its own clock (`testAShownPreviewKeepsItsOwnClock`).
+    func testAPreviewPrintingTheCommittedNumberKeepsTheConfirmation() async throws {
+        let both = #""kalshi":{"value":0.6,"updated_at":"2026-09-25T17:00:00Z"},"polymarket":{"value":0.6,"updated_at":"2026-09-25T17:00:00Z"}"#
+        let client = Client(try event(sources: both)), handle = Handle(), vm = model(client, handle)
+        defer { vm.stopRefresh() }
+        await vm.load()
+        handle.fire("open")
+        try await reconcile(handle, client, vm)
+        let session = V3PageWire.nextSession()
+        handle.fire("preview_open_v3", V3PageWire.open(4242, members: [4242], session: session))
+        handle.fire("preview_v3", V3PageWire.preview("""
+        {"event_id":4242,"p":0.6002,"status":"live","source":"kalshi","source_value":0.6,
+         "observed_at":"2026-09-25T17:04:30+00:00","display_observed_at":"2026-09-25T17:04:00+00:00","provisional":true,
+         "preview":{"kind":"blend","epoch":1,"seq":1,"base_rev":10,"ttl_ms":60000,"pending":{"kalshi":0.6}}}
+        """, eventId: 4242, session: session))
+        handle.beat("2026-09-25T17:05:00.000+00:00")
+        let shown = try XCTUnwrap(vm.event)
+        XCTAssertTrue(vm.displaysPreview(shown), "the preview is up")
+        XCTAssertEqual(LivePriceActivity.displayedLabels(in: vm.headline(shown)).home, "60.0%")
+        let five = "2026-09-25T17:05:00Z".asDate!
+        XCTAssertEqual(vm.confirmedAtCoveringShown(shown), five)
+        XCTAssertEqual(vm.displayedConfirmation(shown), five, "the popover says J")
+        XCTAssertEqual(vm.displayedProbabilityAgeClock(shown), five)
+        XCTAssertEqual(vm.liveUpdateStatus, .live)
+        // The next preview prints another number: no confirmation claims it.
+        handle.fire("preview_v3", V3PageWire.preview("""
+        {"event_id":4242,"p":0.64,"status":"live","source":"kalshi","source_value":0.68,
+         "observed_at":"2026-09-25T17:05:10+00:00","display_observed_at":"2026-09-25T17:05:10+00:00","provisional":true,
+         "preview":{"kind":"blend","epoch":1,"seq":2,"base_rev":10,"ttl_ms":60000,"pending":{"kalshi":0.68}}}
+        """, eventId: 4242, session: session))
+        handle.beat("2026-09-25T17:05:20.000+00:00")
+        let moved = try XCTUnwrap(vm.event)
+        XCTAssertEqual(LivePriceActivity.displayedLabels(in: vm.headline(moved)).home, "64.0%")
+        XCTAssertNil(vm.confirmedAtCoveringShown(moved))
+        XCTAssertNil(vm.displayedConfirmation(moved))
+        XCTAssertEqual(vm.displayedProbabilityAgeClock(moved), "2026-09-25T17:05:10Z".asDate)
+    }
+
     // MARK: - (1b) Which way a tenths move slides (lane1 #11772 R2)
 
     /// The hero and the tip print tenths, so a move inside one whole point

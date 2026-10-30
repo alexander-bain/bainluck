@@ -336,6 +336,13 @@ final class EventDetailViewModel: ObservableObject {
     /// connection that requested it even if the first pair clears its proof.
     private var pendingResyncGeneration: Int?
     private var lastRevisionRefetchAt: TimeInterval?
+    /// #10090 decision J — pairs asked because the page could not order what
+    /// arrived (an incomparable fold, a resync), and the newest of those asks a
+    /// completed pair has answered. Until one started after the last ask lands,
+    /// a newer price may be on its way. A reconcile's or the chart's own pair
+    /// asks nothing here: each owes its own state, never an unseen price.
+    private var priceReadAsks = 0
+    private var priceReadAnswered = 0
     /// The held revision the chart last asked history to catch up to, so one
     /// accepted fold asks once (`chartRevisionRefreshKey`).
     private var requestedChartRevisionKey: String?
@@ -998,6 +1005,7 @@ final class EventDetailViewModel: ObservableObject {
         // losing delivery during that wait cannot turn it into an unowned read.
         let requestedGeneration = resyncGeneration ?? streamRefetchGeneration
         let pushesAtRequest = acceptedPushCount
+        let answersAsks = priceReadAsks
         async let detailRead = client.fetchFreshEvent(id: id)
         async let historyRead = client.fetchFreshEventHistory(id: id, hours: 168)
         do {
@@ -1015,6 +1023,7 @@ final class EventDetailViewModel: ObservableObject {
             let served = LiveEventPriceReconciliation.pairedFoldRevision(in: fetched)
             adopt(fetched, recordsPriceActivity: recordsActivity)
             history = h
+            priceReadAnswered = max(priceReadAnswered, answersAsks)
             // #10090 — an ordinary history read issued before this pair landed
             // is refused after it (`applyOptional`). On a live page it is a build
             // from before the pair, and at the same edge the chart would take it
@@ -1324,6 +1333,7 @@ final class EventDetailViewModel: ObservableObject {
                     self.pendingResyncGeneration = nil
                     self.provenanceRefetchFrame = nil
                     self.trailingProvenanceFrame = nil
+                    self.priceReadAnswered = self.priceReadAsks
                     self.awaitingFoldedResult = false
                     self.endFloorHandover()
                     // The dot and fast polling reflect the outage immediately.
@@ -1347,6 +1357,7 @@ final class EventDetailViewModel: ObservableObject {
                 // A resync has no price/revision to adopt or acknowledge. The
                 // existing coalesced fresh pair keeps last-good on failure and
                 // acknowledges only a newer price for this delivery generation.
+                self.priceReadAsks += 1
                 self.requestRevisionRefetch(resyncGeneration: self.deliveryGeneration)
             },
             onReconcile: { [weak self] control in self?.receiveReconcile(control) },
@@ -1410,6 +1421,7 @@ final class EventDetailViewModel: ObservableObject {
         pendingResyncGeneration = nil
         provenanceRefetchFrame = nil
         trailingProvenanceFrame = nil
+        priceReadAnswered = priceReadAsks
         owedInvalidation = nil
         owedInvalidationRetriedAt = nil
         awaitingFoldedResult = false
@@ -1472,15 +1484,22 @@ final class EventDetailViewModel: ObservableObject {
     ///     frame, a withdrawal, a reconcile floor or a commit floor the shown
     ///     revision does not cover means the confirmed price is not yet the
     ///     one on screen;
-    ///   * no preview is showing: previews carry no confirmation and keep
-    ///     their own clock (live's contract, "previews are not covered").
+    ///   * no preview is showing a different number: previews carry no
+    ///     confirmation of their own (live's contract, "previews are not
+    ///     covered"), so a preview that prints the committed number it rides on
+    ///     is the confirmed number, and any other preview keeps its own clock
+    ///     (build 94: J vanished whenever a preview was up, which is exactly
+    ///     while prices keep arriving — Alex's decision J).
     /// Never moved back (a 20 s beat may repeat an older value); cleared with
     /// the delivery that carried it.
     @MainActor
     func confirmedAtCoveringShown(_ event: EventDetail) -> Date? {
-        guard let streamConfirmedAt, connectReconcileSeen, !owesNewerPrice,
-              BlendPreview.displayed(blendPreview, held: event, now: previewNow()) == nil
-        else { return nil }
+        guard let streamConfirmedAt, connectReconcileSeen, !owesNewerPrice else { return nil }
+        if BlendPreview.displayed(blendPreview, held: event, now: previewNow()) != nil {
+            let shown = LivePriceActivity.displayedLabels(in: headline(event))
+            let committed = LivePriceActivity.displayedLabels(in: event)
+            guard shown.home != nil, shown.home == committed.home, shown.away == committed.away else { return nil }
+        }
         return streamConfirmedAt
     }
 
@@ -1503,10 +1522,24 @@ final class EventDetailViewModel: ObservableObject {
     }
 
     /// #10090 decision J — a newer price than the one shown is still on its way.
+    ///
+    /// Build 94 (b93 hold): a read in flight is not itself owed: only one
+    /// asked because a frame could not be ordered (`priceReadAsks`). And a
+    /// reconcile floor the shown revision already covers owes its rail and
+    /// history proof (still paid by its pair), not a price — the page opened
+    /// on that revision. Web's `confirmationOwed` reads floors the same way.
     private var owesNewerPrice: Bool {
-        awaitingFoldedResult || revisionRefetchTask != nil || revisionRefetchPending
+        awaitingFoldedResult || priceReadAsks > priceReadAnswered
             || provenanceRefetchFrame != nil || trailingProvenanceFrame != nil
-            || owedInvalidation != nil || reconcileFloor != nil || owesCommitFloor
+            || owedInvalidation != nil || owesReconcileFloorPrice || owesCommitFloor
+    }
+
+    /// A reconcile floor the shown paired revision does not cover (or no
+    /// revision shown): the served price may be older than the floor.
+    private var owesReconcileFloorPrice: Bool {
+        guard let floor = reconcileFloor else { return false }
+        guard let shown = event.flatMap(LiveEventPriceReconciliation.pairedFoldRevision(in:)) else { return true }
+        return !shown.covers(floor)
     }
 
     /// #10090 C1 — a commit floor (a `fold_preview_floor`, or a reconcile's
@@ -1798,6 +1831,7 @@ final class EventDetailViewModel: ObservableObject {
             priceIsNotNewer = foldOrder != .newer || unpricedSnapshot
             if foldOrder == .incomparable {
                 streamRefetchGeneration = deliveryGeneration
+                priceReadAsks += 1
                 requestRevisionRefetch()
             } else if foldOrder == .newer, frame.p == nil || unpricedSnapshot, let revision = frame.rev?.revision {
                 // #11253 — a newer write with no price: the row's fold changed
