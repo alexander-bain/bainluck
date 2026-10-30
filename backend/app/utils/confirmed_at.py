@@ -19,7 +19,9 @@ only when ALL of these hold:
   (rounded to 6 places, as the observation path compares);
 * no refresh batch holding the event is open (a preview or stamp may be
   about to publish), and no preview a failed stamp left on readers can still
-  be showing (``frozen_until``, the preview's own uncommitted lifetime);
+  be showing (``frozen_until``, the preview's own uncommitted lifetime),
+  nor one proposed outside any batch (`previewed`, ``preview_from_commit``)
+  that no later batch has superseded;
 * the stamp's frame has been ACKNOWLEDGED by the publisher
   (`LiveBlendRefresher._publish_prices` → `published`): a committed stamp
   whose frame is still queued, failed to build, or failed to publish is a
@@ -138,7 +140,7 @@ class _Event:
     __slots__ = ("pub", "latest", "confirmed", "held_since", "unknown_since",
                  "busy_until", "previewing", "frozen_until", "touched",
                  "written", "written_at", "awaiting", "awaiting_until",
-                 "awaiting_wall", "last_input")
+                 "awaiting_wall", "last_input", "begun", "outside", "outside_until")
 
     def __init__(self) -> None:
         #: None = this run has not published a reading; `_SILENT` = the last
@@ -163,6 +165,12 @@ class _Event:
         self.awaiting_wall: Optional[float] = None
         #: The newest input's receipt (wall), whatever it agreed with.
         self.last_input: Optional[float] = None
+        #: Order (`ConfirmedAt._order`) of the newest batch that took this
+        #: event, and of the newest preview proposed outside any batch
+        #: (`previewed`) with that preview's lifetime (mono).
+        self.begun: Optional[int] = None
+        self.outside: Optional[int] = None
+        self.outside_until: Optional[float] = None
 
 
 class ConfirmedAt:
@@ -199,6 +207,8 @@ class ConfirmedAt:
         self._dirty: set[int] = set()
         #: Events whose entry just went INTO a hold: written at once.
         self._urgent: set[int] = set()
+        #: Orders `begin` against `previewed` (a counter, not a clock).
+        self._order = 0
         self._wake: Optional[asyncio.Event] = None
         self._task: Optional[asyncio.Task] = None
         self._closed = False
@@ -255,6 +265,25 @@ class ConfirmedAt:
                 continue
             state.busy_until = now + BUSY_MAX_S
             state.previewing = event_id in previewing
+            self._order += 1
+            state.begun = self._order
+            self._settle(event_id, state, None, wall)
+
+    def previewed(self, event_ids: Iterable[int]) -> None:
+        """A preview of this source was proposed OUTSIDE any refresh batch
+        (`preview_from_commit`). Readers may see it until a batch that began
+        after it resolves agreeing (its stamp or own proposal supersedes it, or
+        its settlement retires it) or its uncommitted lifetime ends. A batch
+        already in flight commits an OLDER proposal, which leaves this one on
+        readers' screens (lane1 on #11774)."""
+        if self._closed:
+            return
+        now, wall = self._mono(), self._wall()
+        for event_id in event_ids:
+            state = self._state(event_id)
+            self._order += 1
+            state.outside = self._order
+            state.outside_until = now + self.preview_ttl_s
             self._settle(event_id, state, None, wall)
 
     def note_basis(self, event_id: int, rows: Iterable[Any]) -> None:
@@ -288,6 +317,9 @@ class ConfirmedAt:
             state = self._state(event_id)
         now, wall = self._mono(), self._wall()
         previewing, state.previewing, state.busy_until = state.previewing, False, None
+        if (kind in AGREEING and state.outside is not None
+                and state.begun is not None and state.begun > state.outside):
+            state.outside = state.outside_until = None
         published = None
         if kind in AGREEING and basis:
             pub = {int(oid): _p6(p) for oid, p in basis.items()}
@@ -439,6 +471,10 @@ class ConfirmedAt:
             if now < state.frozen_until:
                 return False
             state.frozen_until = None
+        if state.outside_until is not None:
+            if now < state.outside_until:
+                return False
+            state.outside = state.outside_until = None
         if state.awaiting is not None:
             if state.awaiting_until is not None and now < state.awaiting_until:
                 return False
@@ -506,6 +542,8 @@ class ConfirmedAt:
         if not isinstance(state.pub, dict):
             return False
         if state.frozen_until is not None and self._mono() < state.frozen_until:
+            return True
+        if state.outside_until is not None and self._mono() < state.outside_until:
             return True
         for oid, p in state.pub.items():
             seen = state.latest.get(oid)

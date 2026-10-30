@@ -6757,6 +6757,11 @@ class LiveBlendRefresher:
                 plans.append((event_id, *plan))
         if not plans:
             return
+        confirmed = getattr(self.receipts, "confirmed", None)
+        if confirmed is not None:
+            # #10090 decision J: no batch holds these events (`begin`), yet
+            # readers may see this preview until a later batch's stamp.
+            self._receipt_call(confirmed.previewed, [plan[0] for plan in plans])
         preview = registry()
         frames = preview.expire()
         for event_id, event, reading, value, contributing in plans:
