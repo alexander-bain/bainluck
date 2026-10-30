@@ -968,16 +968,16 @@ async def test_a_catalog_handover_waits_for_the_held_bridged_write_and_keeps_its
 async def test_a_locked_bridged_event_never_rolls_back_a_retried_neighbour(
     rig, consumer, monkeypatch,
 ):
-    """#10090 bridged retry isolation (Root's BRIDGE-RETRY-ISOLATION). Events 2
-    and 3 are bridged open legs written together; a second transaction holds
-    event 2's futures_outcomes row, so their joint UPDATE times out and both
-    are left retry-held. After the cooldown each is its own transaction: event
-    3 commits, stamps and is acknowledged from its committed row while event
-    2's row is still held, and event 2 recovers once its holder lets go. Packed
-    together again, every NOWAIT refusal on 2 rolled 3 back with it."""
+    """#10090 bridged retry isolation, now in the FIRST attempt. Events 2 and 3
+    are bridged open legs written together while a second transaction holds
+    event 2's futures_outcomes row. Before, their joint UPDATE timed out and
+    rolled event 3 back with it until a later, separate attempt. Now the joint
+    statement skips the held row: event 3 commits, stamps and publishes in
+    that same transaction while event 2's row is still held; event 2 stays
+    buffered, never waits on the lock, and lands once its holder lets go."""
     t = await build(rig, consumer, monkeypatch, trace=False, lock_ms=2000)
     t.p.ns["open_outcome_ids"].update({PEER_OUTCOME, HELD_SIBLING_OUTCOME})
-    t.p.ns["PRICE_CHUNK_LOCK_TIMEOUT_MS"] = 300  # times out inside the hold
+    t.p.ns["PRICE_CHUNK_LOCK_TIMEOUT_MS"] = 300  # a wait would time out inside the hold
     t.p.ns["PRICE_STATEMENT_LOCK_TIMEOUT_MS"] = 300
     attempts: list[tuple] = []
     inner = t.p.ns["write_chunk"]
@@ -993,13 +993,19 @@ async def test_a_locked_bridged_event_never_rolls_back_a_retried_neighbour(
     t.accept(HELD_SIBLING_OUTCOME, 0.55)
     cadence = start_cadence(t, stop)
     ev3_before_release = ev2_before_release = False
+    waiters_seen = 0
     try:
-        await wait_for_lock_waiters(rig, 1, holder_pid)
-        with contextlib.suppress(TimeoutError):  # the asserts below say so
-            await wait_for(
-                lambda: any(eid == 3 for _, eid, _, _ in t.pubs),
-                pm.PRICE_FLUSH_SECONDS + 2.0,
-            )
+        deadline = time.monotonic() + pm.PRICE_FLUSH_SECONDS + 2.0
+        while time.monotonic() < deadline and not any(
+            eid == 3 for _, eid, _, _ in t.pubs
+        ):
+            waiters_seen = max(waiters_seen, await lock_waiters(rig, holder_pid))
+            await asyncio.sleep(0.005)
+        # A few more flushes with the row still held: event 2 is retried and
+        # still never waits on the lock.
+        for _ in range(40):
+            waiters_seen = max(waiters_seen, await lock_waiters(rig, holder_pid))
+            await asyncio.sleep(0.005)
         ev3_before_release = any(eid == 3 and v == 0.55 for _, eid, v, _ in t.pubs)
         ev2_before_release = any(eid == 2 for _, eid, _, _ in t.pubs)
         await tx.rollback()
@@ -1016,6 +1022,8 @@ async def test_a_locked_bridged_event_never_rolls_back_a_retried_neighbour(
         ev2_published_before_release=ev2_before_release,
         ev2_values=[v for _, eid, v, _ in t.pubs if eid == 2],
         ev3_values=[v for _, eid, v, _ in t.pubs if eid == 3],
+        lock_waiters_seen=waiters_seen,
+        skipped_locked=t.p.ns["stats"].get("price_rows_skipped_locked", 0),
         probes_refused=t.p.ns["stats"].get("price_lock_probes_refused", 0),
         errors=t.r.stats["errors"],
         price_errors=t.p.ns["stats"]["errors"],
@@ -1025,14 +1033,18 @@ async def test_a_locked_bridged_event_never_rolls_back_a_retried_neighbour(
     )
     evidence(out)
     joint = (PEER_OUTCOME, HELD_SIBLING_OUTCOME)
-    # The first attempt was the joint one; every retry kept them apart.
+    # The joint attempt committed event 3; every retry was event 2 alone.
     assert attempts[0] == joint, out
     assert joint not in attempts[1:], out
+    assert all(a == (PEER_OUTCOME,) for a in attempts[1:]), out
     assert out["ev3_published_before_release"], out
     assert not out["ev2_published_before_release"], out
     assert out["ev3_values"] == [0.55] and out["ev2_values"] == [0.75], out
-    # The one joint lock timeout is the only counted price error.
-    assert out["price_errors"] == 1 and out["errors"] == 0, out
+    # Skipped and counted once, in the joint statement; nothing waited on the
+    # lock and no price error was logged.
+    assert out["skipped_locked"] == 1, out
+    assert out["lock_waiters_seen"] == 0, out
+    assert out["price_errors"] == 0 and out["errors"] == 0, out
     assert out["pending_after"] == [] and out["buffer_after"] == {}, out
     assert out["reserved_after"] == [], out
 

@@ -853,7 +853,7 @@ class _PMBridgeWriter:
         ids = entry["committed"] or []
         self._complete(
             ids, {oid: entry["marks"][oid] for oid in ids if oid in entry["marks"]},
-            entry["events"],
+            entry["events"] - entry.get("held_events", set()),
         )
 
     def _complete(self, ids, marks, events) -> None:
@@ -924,6 +924,12 @@ class _PMBridgeWriter:
                         self._note_timing("write", time.monotonic() - took)
                     if wrote and entry["committed"] is not None:
                         entry["committed"] = list(getattr(wrote, "written_ids", chunk))
+                        # #10090: an event a row lock held back wrote no leg
+                        # here (`skip_units`); its rows stay buffered and it
+                        # owes no stamp until a later cohort lands them.
+                        held_events = getattr(wrote, "skipped_events", None)
+                        if held_events:
+                            entry["held_events"] = events & held_events
                     elif wrote is False:
                         self.hold_until = time.monotonic() + PRICE_FLUSH_SECONDS
                     # The event's stamp goes ahead of its market notification,
@@ -2046,11 +2052,19 @@ async def _publish_committed_withdrawals(refresher, frames):
 
 
 class _PMPriceWriteResult:
-    """A committed acknowledgement; only written rows may stage fresh receipts."""
+    """A committed acknowledgement; only written rows may stage fresh receipts.
 
-    def __init__(self, written_ids, *, clock_owner=None):
+    #10090 ``skipped_ids``: buffered rows this commit held back because a row
+    of their unit was locked elsewhere (`chunk_price_update_stmt`
+    ``skip_units``). They are NOT acknowledged: still buffered, retried by the
+    next flush, and handled by callers exactly as a lock-held chunk's rows.
+    """
+
+    def __init__(self, written_ids, *, clock_owner=None, skipped_ids=(), skipped_events=()):
         self.written_ids = tuple(written_ids)
         self.clock_owner = clock_owner
+        self.skipped_ids = frozenset(skipped_ids)
+        self.skipped_events = frozenset(skipped_events)
 
 
 PM_QUOTE_LIVENESS_SECONDS = 30.0
@@ -2114,7 +2128,7 @@ def is_price_statement_timeout(exc: BaseException) -> bool:
     return False
 
 
-def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False):
+def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False, skip_units=None):
     """#10664: a flush chunk's price writes as ONE UPDATE ... RETURNING.
 
     ``write_chunk`` awaited one UPDATE per outcome — 500 round trips for a full
@@ -2138,9 +2152,24 @@ def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False):
     #10090 ``nowait``: take the row locks ``NOWAIT``. A refusal raises the same
     ``lock_not_available`` (55P03) as a lock timeout, so the caller's retained
     rows, cooldown and rollback boundary are unchanged; only the wait is gone.
+
+    #10090 ``skip_units`` — ONE LOCKED ROW HOLDS ONLY ITS OWN UNIT. Without it
+    a single row another transaction holds refused the WHOLE chunk (up to 500
+    prices) until the holder let go (production v5973: 4.5 min and 3.3 min).
+    Given ``{outcome_id: event_id or None}``, the row locks are taken ``SKIP
+    LOCKED`` in the same ``ORDER BY ord`` and behind the same change filter
+    (an unchanged row still takes no lock). A changed row the lock skipped
+    holds back its unit — its event when the mapping names one (so no event is
+    written half and no stamp reads a torn board) and always its question
+    (``market_id``, so a binary's legs still commit together, CERT-3868) —
+    and every other unit writes in this statement. Held-back rows are
+    RETURNED with ``skipped`` true (``ord``, ``id``, ``market_id``; the rest
+    NULL), never inferred from absence: an unchanged row returns nothing too.
+    Written rows carry ``skipped`` false and the columns above, unchanged.
     """
     from sqlalchemy import (
         ARRAY,
+        BigInteger,
         Boolean,
         Float,
         Integer,
@@ -2148,9 +2177,13 @@ def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False):
         bindparam,
         cast,
         column,
+        exists,
+        false,
         func,
+        null,
         or_,
         select,
+        true,
         update,
     )
     from app.models.models import FuturesOutcome
@@ -2159,42 +2192,84 @@ def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False):
     table = FuturesOutcome.__table__
     prices = list(chunk.values())
     forced = set(chunk) if force_ids is None else force_ids
+    arrays = [
+        bindparam("chunk_ids", list(chunk), type_=ARRAY(Integer)),
+        bindparam("chunk_prices", prices, type_=ARRAY(Numeric(7, 6))),
+        bindparam("chunk_compare", prices, type_=ARRAY(Float)),
+        bindparam("chunk_force", [oid in forced for oid in chunk], type_=ARRAY(Boolean)),
+    ]
+    columns = [
+        column("id", Integer),
+        column("price", Numeric(7, 6)),
+        column("compared", Float),
+        column("force_write", Boolean),
+    ]
+    if skip_units is not None:
+        arrays.append(bindparam(
+            "chunk_unit_event", [skip_units.get(oid) for oid in chunk],
+            type_=ARRAY(BigInteger),
+        ))
+        columns.append(column("unit_event", BigInteger))
     given = (
-        func.unnest(
-            bindparam("chunk_ids", list(chunk), type_=ARRAY(Integer)),
-            bindparam("chunk_prices", prices, type_=ARRAY(Numeric(7, 6))),
-            bindparam("chunk_compare", prices, type_=ARRAY(Float)),
-            bindparam("chunk_force", [oid in forced for oid in chunk], type_=ARRAY(Boolean)),
-        )
-        .table_valued(
-            column("id", Integer),
-            column("price", Numeric(7, 6)),
-            column("compared", Float),
-            column("force_write", Boolean),
-            with_ordinality="ord",
-        )
+        func.unnest(*arrays)
+        .table_valued(*columns, with_ordinality="ord")
         .render_derived(name="given")
     )
+    # Compare against the DATABASE value at its stored precision. A local
+    # repeated tick still repairs a price changed by another writer. Put this
+    # before LockRows so an unchanged row does not acquire a lock.
+    changed = or_(
+        given.c.force_write,
+        table.c.current_probability.is_distinct_from(
+            cast(given.c.price, table.c.current_probability.type)
+        ),
+    )
+    # The unit a skipped row holds back. Events are negated, so an event key
+    # can never equal a market key (positive serial ids).
+    unit = (
+        func.coalesce(-given.c.unit_event, table.c.market_id).label("unit")
+        if skip_units is not None else None
+    )
     locked = (
-        select(table.c.id, given.c.ord, given.c.price, given.c.compared)
+        select(
+            table.c.id, given.c.ord, given.c.price, given.c.compared,
+            *(() if unit is None else (table.c.market_id, unit)),
+        )
         .join_from(given, table, table.c.id == given.c.id)
-        # Compare against the DATABASE value at its stored precision. A local
-        # repeated tick still repairs a price changed by another writer. Put
-        # this before LockRows so an unchanged row does not acquire a lock.
-        .where(or_(
-            given.c.force_write,
-            table.c.current_probability.is_distinct_from(
-                cast(given.c.price, table.c.current_probability.type)
-            ),
-        ))
+        .where(changed)
         .order_by(given.c.ord)
-        .with_for_update(of=table, nowait=nowait)
+        .with_for_update(
+            of=table,
+            **({"nowait": nowait} if unit is None else {"skip_locked": True}),
+        )
         .cte("locked")
         .prefix_with("MATERIALIZED")
     )
-    return (
-        update(table)
-        .where(table.c.id == locked.c.id)
+    write = update(table).where(table.c.id == locked.c.id)
+    held = None
+    if unit is not None:
+        # What the change filter asked for, read without a lock: a wanted row
+        # the SKIP LOCKED pass did not lock is held, and holds its unit.
+        wanted = (
+            select(table.c.id, table.c.market_id, given.c.ord, unit)
+            .join_from(given, table, table.c.id == given.c.id)
+            .where(changed)
+            .cte("wanted")
+            .prefix_with("MATERIALIZED")
+        )
+        held = (
+            select(wanted.c.unit, wanted.c.market_id)
+            .where(~exists().where(locked.c.id == wanted.c.id))
+            .cte("held")
+            .prefix_with("MATERIALIZED")
+        )
+        # Its market is held too, so no question is written half even if its
+        # legs ever named two events (or one leg none).
+        write = write.where(~exists().where(or_(
+            held.c.unit == locked.c.unit, held.c.market_id == locked.c.market_id,
+        )))
+    write = (
+        write
         .values(
             current_probability=locked.c.price,
             last_updated=func.now(),
@@ -2215,6 +2290,29 @@ def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False):
             table.c.is_winner,
             table.c.resolution_source,
         )
+    )
+    if held is None:
+        return write
+    written = write.cte("written")
+
+    def absent(col, type_):
+        return cast(null(), type_).label(col)
+
+    return select(*written.c, false().label("skipped")).union_all(
+        select(
+            wanted.c.ord,
+            wanted.c.id,
+            wanted.c.market_id,
+            absent("last_updated", table.c.last_updated.type),
+            absent("quote_moved", Boolean()),
+            absent("database_clock", table.c.last_updated.type),
+            absent("current_probability", table.c.current_probability.type),
+            absent("is_winner", table.c.is_winner.type),
+            absent("resolution_source", table.c.resolution_source.type),
+            true().label("skipped"),
+        ).where(exists().where(or_(
+            held.c.unit == wanted.c.unit, held.c.market_id == wanted.c.market_id,
+        )))
     )
 
 
@@ -3029,7 +3127,7 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
         "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d "
         "| held withdrawn=%d lock_probes_refused=%d fenced=%d stamp_wait_s=%.1f "
-        "lock_timeouts=%d",
+        "lock_timeouts=%d skipped_locked=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
         ws_stats.get("messages", 0),
@@ -3062,6 +3160,10 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         # already known-held. Kept out of `errors`, so a sustained table lock
         # shows here rather than as one error and then silence.
         stats.get("price_lock_timeouts", 0),
+        # #10090: price rows a row lock elsewhere held back (with their unit)
+        # while the rest of their chunk committed. Counted, never logged per
+        # flush; each stays buffered and is retried by the next flush.
+        stats.get("price_rows_skipped_locked", 0),
     )
 
 
@@ -3679,6 +3781,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # #10090: a known-held cohort's price statement timed out again (a
         # table lock, or an unrecognised refusal). Not `errors`, same reason.
         "price_lock_timeouts": 0,
+        # #10090: buffered price rows held back (with their event or question)
+        # because another transaction held one of their rows, while the rest
+        # of the chunk committed. Retried by the next flush, never dropped.
+        "price_rows_skipped_locked": 0,
     }
 
     # Buffered price updates
@@ -3915,11 +4021,37 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     held_price_quotes.begin_write_clock()
                     if game_chunk and not final and held_price_quotes is not None else None
                 )
+                # #10090: a row another transaction holds keeps back only its
+                # own unit — its event if it is a speaking event leg, else its
+                # question — and the rest of the chunk commits now. Before,
+                # one held row refused the whole chunk (up to 500 prices) for
+                # as long as the holder kept it (v5973: 4.5 and 3.3 minutes).
+                # A chunk of one unit holds back only itself already, so it
+                # keeps the existing wait/probe; the final drain still waits.
+                skip_units = None
+                # Row locks (and SKIP LOCKED) are PostgreSQL's: a session bound
+                # to anything else (SQLite unit rigs) keeps the waiting form.
+                bind = getattr(session, "bind", None)
+                if not final and getattr(getattr(bind, "dialect", None), "name", None) == "postgresql":
+                    units = {
+                        oid: (
+                            event_id_by_outcome.get(oid)
+                            if oid not in non_blend_outcome_ids else None
+                        )
+                        for oid in chunk
+                    }
+                    if len({
+                        ("event", eid) if eid is not None else ("row", oid)
+                        for oid, eid in units.items()
+                    }) > 1:
+                        skip_units = units
                 try:
                     if stage_trace is not None:
                         stage_trace.write_stage(chunk, "STATEMENT_START")
                     result = await session.execute(
                         chunk_price_update_stmt(chunk, force_ids=forced, nowait=probe)
+                        if skip_units is None else
+                        chunk_price_update_stmt(chunk, force_ids=forced, skip_units=skip_units)
                     )
                 except Exception as exc:
                     # Only the probe's own statement, and only PostgreSQL's
@@ -3950,7 +4082,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         SET_LOCK_TIMEOUT_SQL,
                         {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
                     )
-                written_rows = sorted(result.all(), key=lambda r: r.ord)
+                returned_rows = result.all()
+                # Explicit, never inferred: an unchanged row returns nothing too.
+                held_back = {
+                    row.id for row in returned_rows if getattr(row, "skipped", False)
+                }
+                written_rows = sorted(
+                    (row for row in returned_rows if not getattr(row, "skipped", False)),
+                    key=lambda r: r.ord,
+                )
                 if clock_ticket is not None:
                     clocks = [getattr(row, "database_clock", None) for row in written_rows]
                     write_clock = max((value for value in clocks if value is not None), default=None)
@@ -4101,6 +4241,22 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 return None
             return False
 
+        if held_back:
+            # #10090: counted, never logged per flush (`skipped_locked=` on the
+            # minute line). Each held row stays buffered and known-held, due at
+            # once (no cooldown: that would hold its whole next chunk), and its
+            # event stays retry-isolated and unstamped until its write lands.
+            stats["price_rows_skipped_locked"] = (
+                stats.get("price_rows_skipped_locked", 0) + len(held_back)
+            )
+            lock_retry_until.update({oid: lock_retry_until.get(oid, 0) for oid in held_back})
+            lock_retry_events.update(event_ids_for_outcomes(event_id_by_outcome, held_back))
+            if held_back.issuperset(chunk):
+                # Nothing acknowledged: exactly a lock-held chunk to callers.
+                if stage_trace is not None:
+                    stage_trace.write_stage(chunk, "FAILED", reason="LOCK_SKIPPED")
+                return None
+
         # Only a successful session exit proves this price write committed.
         # Adopt before publication/cleanup can yield; accepted inputs keep their
         # frozen bounds. A replaced owner cannot inherit this proof.
@@ -4112,7 +4268,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         if stage_trace is not None:
             stage_trace.write_stage(chunk, "COMMITTED", rows=written_rows)
         for oid in chunk:
-            lock_retry_until.pop(oid, None)
+            if oid not in held_back:
+                lock_retry_until.pop(oid, None)
         successful_price_write_at.update(dict.fromkeys(
             (row.id for row in written_rows), _mono(),
         ))
@@ -4136,18 +4293,24 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # while this write was in flight, and that newer value is the truth, so
         # it must survive to the next flush rather than be dropped as "already
         # written". Same contract, enforced at removal instead of at re-queue.
+        # #10090: a held-back row is not written: it stays buffered (Q491)
+        # and its held quote stays held until its own write lands.
         async with buffer_lock:
             for outcome_id, prob in chunk.items():
-                if price_buffer.get(outcome_id) == prob:
+                if price_buffer.get(outcome_id) == prob and outcome_id not in held_back:
                     del price_buffer[outcome_id]
             # #11138: the row now holds a price at least this new.
             held_quotes = getattr(blend_refresher, "held_quotes", None)
             if held_quotes is not None:
-                held_quotes.release(chunk)
+                held_quotes.release(oid for oid in chunk if oid not in held_back)
         # A zero-return statement still acknowledged the unchanged inputs.
         # Clear only matching buffered values, but never stamp those inputs as
         # a new database observation or rerank their unchanged markets.
-        return _PMPriceWriteResult((row.id for row in written_rows), clock_owner=clock_owner)
+        return _PMPriceWriteResult(
+            (row.id for row in written_rows), clock_owner=clock_owner,
+            skipped_ids=held_back,
+            skipped_events=event_ids_for_outcomes(event_id_by_outcome, held_back),
+        )
 
     async def flush_withdrawals(
         *,
@@ -5083,6 +5246,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     )
                     if traced is not None:
                         stage_trace.chunk_end(traced, wrote)
+                    # #10090: units a lock elsewhere held back of a committed
+                    # chunk (`skipped_ids`). They take the lock-held (None)
+                    # path below, alone; the rest of the chunk is committed.
+                    skipped = (
+                        getattr(wrote, "skipped_ids", None) or frozenset()
+                        if wrote else frozenset()
+                    )
                     # A proven returned clock already bounds future inputs.
                     # Otherwise start a completed cohort's display work before
                     # the optional sample. So does a lock-held chunk (None):
@@ -5104,6 +5274,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     if (not final and observation_tokens
                             and getattr(wrote, "written_ids", None) is not None):
                         written_events = event_ids_for_outcomes(headline_event_ids, wrote.written_ids)
+                        # A held-back unit acknowledged nothing.
+                        written_events |= event_ids_for_outcomes(headline_event_ids, skipped)
                         async with buffer_lock:
                             for oid, value in current_chunk.items():
                                 eid = headline_event_ids.get(oid)
@@ -5125,10 +5297,17 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # Only a changed quote is owed again, so a long hold costs
                     # no stamp per flush.
                     held_ready: list[int] = []
-                    if wrote is None and not final and held_quotes is not None:
+                    # #10090: a committed chunk's held-back units are held as a
+                    # refused chunk's legs are: whole event or none, from the
+                    # same snapshot (their event wrote no leg in this chunk).
+                    held_chunk = (
+                        current_chunk if wrote is None
+                        else {oid: current_chunk[oid] for oid in current_chunk if oid in skipped}
+                    )
+                    if held_chunk and not final and held_quotes is not None:
                         async with buffer_lock:
                             legs_of: dict[int, list[int]] = {}
-                            for oid in current_chunk:
+                            for oid in held_chunk:
                                 event_id = headline_event_ids.get(oid)
                                 if event_id is not None:
                                     legs_of.setdefault(event_id, []).append(oid)
@@ -5196,8 +5375,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             headline_event_ids, withdraw_buffer,
                         )
                     if wrote:
-                        unfinished_price_ids.difference_update(chunk_ids)
+                        unfinished_price_ids.difference_update(
+                            oid for oid in chunk_ids if oid not in skipped
+                        )
                         owed.extend(getattr(wrote, "written_ids", chunk_ids))
+                        if skipped:
+                            # Unfinished and lock-deferred, as a refused chunk:
+                            # no stamp reads its event until the row lands
+                            # (or the overlay holds it, below), and its
+                            # withdrawals wait for it.
+                            skipped_events = event_ids_for_outcomes(event_id_by_outcome, skipped)
+                            lock_deferred_events.update(skipped_events)
+                            failed_price_events.update(skipped_events)
                     else:
                         if wrote is False:
                             wrote_all = False
@@ -5617,6 +5806,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 elif wrote is None:
                     lock_deferred_events.update(
                         event_ids_for_outcomes(event_id_by_outcome, chunk)
+                    )
+                elif getattr(wrote, "skipped_ids", None):
+                    # #10090: only the held-back questions' withdrawals wait.
+                    lock_deferred_events.update(
+                        event_ids_for_outcomes(event_id_by_outcome, wrote.skipped_ids)
                     )
         async with catalog_boundary.side_writer:
             withdrawn = await flush_withdrawals(

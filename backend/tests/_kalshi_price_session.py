@@ -61,12 +61,40 @@ def consumer_engine():
     return create_async_engine("postgresql+asyncpg://fake-kalshi-consumer/none")
 
 
+def is_skip_locked_pass(stmt) -> bool:
+    """#10090: the phase's SKIP LOCKED pre-pass (`kalshi_skip_locked_stmt`)."""
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.sql.selectable import Select
+
+    if not isinstance(stmt, Select):
+        return False
+    try:
+        return "skip_ids" in stmt.compile(dialect=postgresql.dialect()).params
+    except Exception:
+        return False
+
+
 def bind_session(session, engine):
-    """Bind one fake session to ``engine``; leave a fake's own bind alone."""
+    """Bind one fake session to ``engine``; leave a fake's own bind alone.
+
+    #10090: bound to the lent (PostgreSQL) engine, a multi-game phase first
+    runs its SKIP LOCKED pre-pass. A fake holds no row locks, so it answers
+    "nothing skipped" — unless it models row locks itself
+    (``models_row_locks = True``) and answers the pre-pass on its own.
+    """
     if getattr(session, "bind", None) is None:
         session.bind = engine
     if not hasattr(session, "connection"):
         session.connection = _no_driver_connection
+    if not getattr(session, "models_row_locks", False):
+        execute = session.execute
+
+        async def unlocked(stmt, *args, **kwargs):
+            if is_skip_locked_pass(stmt):
+                return SimpleNamespace(all=lambda: [], rowcount=0)
+            return await execute(stmt, *args, **kwargs)
+
+        session.execute = unlocked
     return session
 
 
