@@ -129,6 +129,35 @@ def open_contract_receiver_process_enabled() -> bool:
     return os.getenv("POLYMARKET_WS_OPEN_RECEIVER_PROCESS", "0").strip() == "1"
 
 
+#: #10090: ``POLYMARKET_WS_OPEN_SCOPE`` values. ``all`` is the arm as it is.
+OPEN_SCOPE_ALL = "all"
+OPEN_SCOPE_SLATE = "slate"
+
+
+def open_contract_scope() -> str:
+    """#10090: which open contracts the open arm keeps on the socket.
+
+    ``all`` (the default, and anything unrecognised, with one warning) keeps
+    every admitted contract, as before. ``slate`` keeps only what a market on
+    a live or near-start event needs (:func:`scope_open_contract_admission`);
+    everything else is left to the polls. Read at every catalog refresh, so
+    moving back to ``all`` restores the full arm through the same handover.
+    """
+    raw = os.getenv("POLYMARKET_WS_OPEN_SCOPE")
+    if raw is None or not raw.strip():
+        return OPEN_SCOPE_ALL
+    value = raw.strip().lower()
+    if value in (OPEN_SCOPE_ALL, OPEN_SCOPE_SLATE):
+        return value
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "Polymarket WS: POLYMARKET_WS_OPEN_SCOPE=%r is not all|slate; using all",
+        raw,
+    )
+    return OPEN_SCOPE_ALL
+
+
 def book_snapshot_prices_enabled() -> bool:
     """#9733: price open contracts from the venue's subscribe snapshot.
 
@@ -185,6 +214,28 @@ def open_contract_markets_stmt():
         case((bridged, FuturesMarket.name)).label("name"),
         case((bridged, FuturesMarket.external_id)).label("external_id"),
     ).where(*_open_market_clauses())
+
+
+def open_contract_scope_markets_stmt():
+    """#10090: the open markets whose OWN event the socket slate holds.
+
+    The seed of ``POLYMARKET_WS_OPEN_SCOPE=slate``: the open-market clauses
+    above, joined to the market's own event under the game slate's event
+    predicate (``polymarket_ws._slate_event_window``: clock-free live, the
+    bounded scheduled arm, the recent-suspended arm). Every market class —
+    props included — since membership is the market's event, not its class.
+    Read only under ``slate``.
+    """
+    from sqlalchemy import select
+
+    from app.models.models import Event, FuturesMarket
+    from app.tasks.polymarket_ws import _slate_event_window
+
+    return (
+        select(FuturesMarket.id)
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(*_open_market_clauses(), _slate_event_window())
+    )
 
 
 def open_contract_outcomes_stmt(market_ids: Iterable[int] = ()):
@@ -306,6 +357,10 @@ class OpenContractAdmission:
     #: #9733 follow-on — leg → the other leg of its binary, both admitted
     #: (``complement_pairs``). A price accepted for one also prices the other.
     complement_of: dict[int, int] = field(default_factory=dict)
+    #: #10090: ``slate`` once :func:`scope_open_contract_admission` has cut it.
+    #: The consumer keeps its catalog-refresh loop for an installed slate
+    #: scope even when nothing is left in it.
+    scope: str = OPEN_SCOPE_ALL
     counts: dict[str, int] = field(
         default_factory=lambda: {
             "markets": 0,
@@ -613,6 +668,129 @@ def _complement_pairs_steps(legs_by_market, admitted, graded, excluded=frozenset
             continue
         out[a] = b
         out[b] = a
+    return out
+
+
+# ── the slate scope (#10090, ``POLYMARKET_WS_OPEN_SCOPE=slate``) ─────────────
+#
+# The open arm streams every open contract, and its callbacks, writes and
+# backlog share one saturated core with the live games. Under ``slate`` it
+# keeps only what a live or near-start market depends on. Catalog discovery
+# and pairing are unchanged and run first: a plain event-window filter before
+# pairing would lose the distant or event-less binary whose token prices a
+# live board (#9736), so the cut is made on the finished admission.
+
+
+def scope_open_contract_admission(
+    admission: OpenContractAdmission,
+    eligible_market_ids: Iterable[int],
+    taken_assets: Iterable[str] = (),
+) -> OpenContractAdmission:
+    """The part of ``admission`` a slate market depends on, to a fixed point.
+
+    Seeds: every token the game socket carries (``taken_assets``) that an open
+    leg mirrors, and every owned or mirrored token whose leg's OWN market is in
+    ``eligible_market_ids`` (:func:`open_contract_scope_markets_stmt`, every
+    market class). Closure: a kept token keeps its owner leg and every leg
+    that mirrors it; a kept leg's binary complement (``complement_of``) keeps
+    the token that leg prices from, and so on until nothing is added. So the
+    event-less binary behind a live board stays, with its other leg and that
+    leg's own token and mirrors.
+
+    Nothing is re-owned or re-paired: kept entries are the admission's own,
+    in its order, so a token the game socket carries is still never
+    subscribed here, and ``_no``/``_side1`` attribution is the pairing's. The
+    counts are the full catalog's, plus ``scope_*``: assets kept/dropped, the
+    seeds, and mirrored legs kept/dropped.
+    """
+    return _finish(
+        _scope_open_contract_admission_steps(
+            admission, eligible_market_ids, taken_assets
+        )
+    )
+
+
+async def scope_open_contract_admission_cooperatively(
+    admission: OpenContractAdmission,
+    eligible_market_ids: Iterable[int],
+    taken_assets: Iterable[str] = (),
+) -> OpenContractAdmission:
+    """:func:`scope_open_contract_admission` with loop turns. Same result."""
+    return await _finish_cooperatively(
+        _scope_open_contract_admission_steps(
+            admission, eligible_market_ids, taken_assets
+        )
+    )
+
+
+def _scope_open_contract_admission_steps(admission, eligible_market_ids, taken_assets):
+    eligible = set(eligible_market_ids)
+    taken = set(taken_assets)
+    owner_of = admission.asset_to_outcome
+    market_of = admission.asset_to_market
+    mirrors_of = admission.asset_mirrors
+    complement_of = admission.complement_of
+
+    # leg -> the token(s) it prices from (one, by construction; a list so a
+    # shape the pairing never makes still closes rather than drops).
+    tokens_of: dict[int, list[str]] = {}
+    frontier: list[str] = []
+    for i, (token, oid) in enumerate(owner_of.items()):
+        if _pause(i):
+            yield
+        tokens_of.setdefault(oid, []).append(token)
+        if market_of.get(token) in eligible:
+            frontier.append(token)
+    for i, (token, legs) in enumerate(mirrors_of.items()):
+        if _pause(i):
+            yield
+        seed = token in taken
+        for oid, mid in legs:
+            tokens_of.setdefault(oid, []).append(token)
+            seed = seed or mid in eligible
+        if seed:
+            frontier.append(token)
+    seeds = len(set(frontier))
+
+    kept: set[str] = set()
+    steps = 0
+    while frontier:
+        token = frontier.pop()
+        if token in kept:
+            continue
+        kept.add(token)
+        steps += 1
+        if _pause(steps):
+            yield
+        legs = [oid for oid, _mid in mirrors_of.get(token, ())]
+        if token in owner_of:
+            legs.append(owner_of[token])
+        for oid in legs:
+            other = complement_of.get(oid)
+            if other is None:
+                continue
+            frontier.extend(t for t in tokens_of.get(other, ()) if t not in kept)
+
+    out = OpenContractAdmission(scope=OPEN_SCOPE_SLATE)
+    out.asset_to_outcome = {t: o for t, o in owner_of.items() if t in kept}
+    out.asset_to_market = {t: market_of[t] for t in out.asset_to_outcome}
+    out.asset_mirrors = {
+        t: list(legs) for t, legs in mirrors_of.items() if t in kept
+    }
+    kept_legs = set(out.asset_to_outcome.values()) | set(out.mirrored_outcomes())
+    out.complement_of = {
+        a: b for a, b in complement_of.items() if a in kept_legs and b in kept_legs
+    }
+    mirrored_all = sum(len(legs) for legs in mirrors_of.values())
+    mirrored_kept = sum(len(legs) for legs in out.asset_mirrors.values())
+    out.counts = dict(admission.counts)
+    out.counts.update(
+        scope_assets_kept=len(out.asset_to_outcome),
+        scope_assets_dropped=len(owner_of) - len(out.asset_to_outcome),
+        scope_seed_tokens=seeds,
+        scope_mirrored_legs_kept=mirrored_kept,
+        scope_mirrored_legs_dropped=mirrored_all - mirrored_kept,
+    )
     return out
 
 
