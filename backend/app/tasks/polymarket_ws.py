@@ -2002,10 +2002,20 @@ async def _publish_committed_withdrawals(refresher, frames):
     import asyncio
 
     previews = []
+    # #10090 field 3: a committed withdrawal advances the revision readers
+    # adopt; the delivery receipt credits it to its writer. Logged before
+    # `_publish(frames)`: it means "committed, being published".
+    note_revision = getattr(getattr(refresher, 'receipts', None), 'note_writer_revision', None)
     for frame in frames:
         if frame.get('reconcile_only'):
             continue  # old control cannot invalidate a newer writer cache
         event_id = frame['event_id']
+        if note_revision is not None:
+            try:
+                note_revision('polymarket_withdrawal', event_id,
+                              (frame.get('rev') or {}).get(str(event_id)), frame.get('updated_at'))
+            except Exception:
+                logger.warning('polymarket withdrawal receipt failed', exc_info=True)
         refresher._last_written_value.pop(event_id, None)
         refresher._last_refresh_at.pop(event_id, None)
         refresher._last_snapshot_at.pop(event_id, None)
@@ -3688,6 +3698,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         "polymarket", client=getattr(blend_refresher, "_client", None),
         refutes=_withdrawal_refutes,
     )
+    # #10090 R1: venue-refused props never join the trail (the live set,
+    # refilled in place on a re-slate). Bridged open legs stay: each is its
+    # own game-winner market's leg, which the headline read includes.
+    tail_receipts.trail_excluded = (non_blend_outcome_ids,)
     # #10090 stage trace: OFF unless 1-4 events (a fold's members), their
     # explicit outcomes and an absolute expiry <=600 s away are configured
     # (`app/utils/pm_stage_trace.py`).

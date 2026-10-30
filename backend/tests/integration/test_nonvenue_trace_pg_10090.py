@@ -311,7 +311,11 @@ async def test_disarmed_and_armed_issue_the_same_sql_frames_and_app_logs(
                   "EVENT" if k == "event_id" else v) for k, v in frame.items()})
             for channel, frame in sink[start:]
         ]
-        logs = [(r.name, r.levelno, r.getMessage().replace(str(event_id), "EVENT"))
+        # #10090: the writer receipt names this run's revision and DB clock,
+        # normalized like the frames' `rev` and `updated_at` above.
+        logs = [(r.name, r.levelno, re.sub(
+                    r"stamps=\d+@\S+?@", "stamps=REV@CLOCK@",
+                    r.getMessage().replace(str(event_id), "EVENT")))
                 for r in caplog.records if r.name != nt.logger.name]
         return traced, sql, frames, logs
 

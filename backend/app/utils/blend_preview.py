@@ -1396,6 +1396,9 @@ class LedgerRegistry(PreviewRegistry):
         #: (source, status) -> refusals since this registry was built; read
         #: only by the per-minute preview receipt (`app.utils.preview_receipt`).
         self.refusal_counts: dict[tuple[str, str], int] = {}
+        #: (source, phase) -> `read_required` refusals by ledger phase; the
+        #: preview receipt's propose/retire split. Read only by it.
+        self.read_required_phases: dict[tuple[str, str], int] = {}
         self._capacity_registry_id = uuid.uuid4().hex
         self._capacity_pid = os.getpid()
         self._capacity_sample_seq = 0
@@ -2127,6 +2130,9 @@ class LedgerRegistry(PreviewRegistry):
         key = "fenced" if status == "fenced" else "ledger_refused"
         stats[key] = stats.get(key, 0) + 1
         self.refusal_counts[(source, status)] = self.refusal_counts.get((source, status), 0) + 1
+        if status == "read_required":
+            key = (source, phase)
+            self.read_required_phases[key] = self.read_required_phases.get(key, 0) + 1
         self._alarm(status, phase, source, event_id)
 
     def _alarm(self, status: str, phase: str, source: str,

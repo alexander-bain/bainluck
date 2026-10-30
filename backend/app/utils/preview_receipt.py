@@ -25,11 +25,41 @@ WHAT ONE LINE SAYS (``PREVIEW_RECEIPT_FORMAT``):
 * ``worst=`` up to three ``event:ms`` of the slowest;
 * preview capacity passes by ``end`` (``capacity_error`` is ``end=error``).
 
+THE SHIP'S SUBSETS (appended after ``capacity_end``; every field above keeps
+its meaning so earlier lines stay comparable):
+
+* ``observation_timeouts`` — observation-preview reads that ran past their
+  budget (they preview only unchanged repeats); no longer in ``publish_errors``;
+* ``read_required=`` the ``read_required`` refusals by ledger phase
+  (``propose``, ``retire``, ``retire_idle``, ...; ``-`` when none);
+* ``first`` / ``repeat`` — charged blends with no earlier published blend for
+  the event this run, or carrying the same value as the last one: excluded
+  from ``moved_*``, still in ``measured`` and the unprefixed percentiles;
+* ``live_*`` — the charged blends whose frame said ``status=live``;
+  ``moved_*`` — those whose blend value moved from the last published blend
+  for that event; ``live_moved_*`` — both, the population a live-game reader
+  waits on. Each: ``_measured`` and p50/p90/p99/max in ms; ``live_moved_worst``
+  up to three ``event:ms``. Pre-game, suspended, first and repeat blends are
+  counted above, never dropped;
+* ``live_moved_late`` — live, moved blends whose charge was purged as older
+  than ``PREVIEW_RECEIPT_AWAIT_S`` (also in ``unpreviewed``; never timed).
+  Marks purged at the minute close had no blend and stay unclassified.
+
 ATTRIBUTION. A published blend for an event is charged to the newest committed
 revision of that event not yet charged, at most once. A blend composed before
-a newer revision was noted is charged to the newer one (understates). Counters
-read at the close are those up to the closing flush, at most one flush past the
-boundary.
+a newer revision was noted is charged to the newer one (understates). A
+revision already older than ``PREVIEW_RECEIPT_AWAIT_S`` when a blend would
+charge it is purged as ``unpreviewed`` instead, so no charge exceeds it. A
+moved value is charged to the newest committed input of the event (any
+outcome, repeats included). It understates when an earlier input moved the
+value and a newer one replaced it before the blend published; it overstates
+only when the move came from an input not yet noted (the other arm). So
+``moved_*`` is neither bound on the reader's wait, and it does not identify
+the input that moved the blend. A live, moved blend whose charge is purged
+counts in ``live_moved_late`` (and ``unpreviewed``), so a wait pushed past
+``PREVIEW_RECEIPT_AWAIT_S`` never reads as a lower ``live_moved_max``.
+Counters read at the close are those up to the closing flush, at most one
+flush past the boundary.
 
 VOLUME. One fixed-size line per arm per minute the refresher flushed in — a
 ZERO line when nothing happened, so a missing line means nothing rolled it (no
@@ -57,11 +87,15 @@ PREVIEW_RECEIPT_AWAIT_S = 60.0
 #: Latency samples kept per minute; past it only `max` and the count move.
 PREVIEW_RECEIPT_MAX_SAMPLES = 8192
 PREVIEW_RECEIPT_WORST = 3
+#: Events whose last published blend value is remembered; past it the memory
+#: restarts and the next blend of each event counts as ``first``.
+PREVIEW_RECEIPT_MAX_EVENTS = 50_000
 #: The cumulative counters a minute line reports as deltas, in line order.
 PREVIEW_RECEIPT_COUNTS = (
     "published", "revoked", "ledger_recomposed", "ledger_superseded", "withdrawn",
     "fenced", "authority_refused", "publish_errors", "no_reading",
 )
+
 #: The 5-minute readout's matcher keys on this shape.
 PREVIEW_RECEIPT_FORMAT = (
     "blend_preview[%s]: preview-receipt run=%s window_start=%s window_s=%.3f "
@@ -69,7 +103,12 @@ PREVIEW_RECEIPT_FORMAT = (
     "authority_refused=%d publish_errors=%d no_reading=%d refused=%s "
     "committed=%d measured=%d coalesced=%d unpreviewed=%d latency_clock=mono "
     "p50_ms=%s p90_ms=%s p99_ms=%s max_ms=%s latency_dropped=%d worst=%s "
-    "capacity_passes=%d capacity_error=%d capacity_end=%s"
+    "capacity_passes=%d capacity_error=%d capacity_end=%s "
+    "observation_timeouts=%d read_required=%s first=%d repeat=%d "
+    "live_measured=%d live_p50_ms=%s live_p90_ms=%s live_p99_ms=%s live_max_ms=%s "
+    "moved_measured=%d moved_p50_ms=%s moved_p90_ms=%s moved_p99_ms=%s moved_max_ms=%s "
+    "live_moved_measured=%d live_moved_p50_ms=%s live_moved_p90_ms=%s "
+    "live_moved_p99_ms=%s live_moved_max_ms=%s live_moved_worst=%s live_moved_late=%d"
 )
 
 
@@ -85,6 +124,47 @@ def _rank(ordered: list, p: float) -> str:
     if not ordered:
         return "-"
     return str(int(round(ordered[max(0, math.ceil(p * len(ordered)) - 1)] * 1000)))
+
+
+def _ms(latency: Optional[float]) -> str:
+    return "-" if latency is None else str(int(round(latency * 1000)))
+
+
+def _worst(samples: list, top: Optional[tuple]) -> str:
+    worst = sorted(samples, key=lambda s: (-s[0], s[1]))[:PREVIEW_RECEIPT_WORST]
+    if top is not None and top not in worst:
+        worst = [top, *worst][:PREVIEW_RECEIPT_WORST]
+    return ",".join(f"{eid}:{int(round(lat * 1000))}" for lat, eid in worst) or "-"
+
+
+class _Subset:
+    """One charged population's latencies for the minute (capped like the
+    unprefixed samples; ``top`` stays exact past the cap)."""
+
+    def __init__(self) -> None:
+        self.count = 0
+        self.samples: list[tuple[float, int]] = []
+        self.top: Optional[tuple[float, int]] = None
+
+    def add(self, latency: float, event_id: int) -> None:
+        self.count += 1
+        if self.top is None or latency > self.top[0]:
+            self.top = (latency, event_id)
+        if len(self.samples) < PREVIEW_RECEIPT_MAX_SAMPLES:
+            self.samples.append((latency, event_id))
+
+    def fields(self) -> tuple:
+        ordered = sorted(latency for latency, _eid in self.samples)
+        return (self.count, _rank(ordered, 0.50), _rank(ordered, 0.90),
+                _rank(ordered, 0.99), _ms(None if self.top is None else self.top[0]))
+
+
+def _value(p: Any) -> Optional[float]:
+    """A blend frame's value, rounded past float noise; ``None`` if absent."""
+    try:
+        return None if p is None else round(float(p), 6)
+    except (TypeError, ValueError):
+        return None
 
 
 class PreviewReceipt:
@@ -108,6 +188,8 @@ class PreviewReceipt:
         self._base: dict = {}
         #: event id -> the newest committed input mark no blend carried yet.
         self._awaiting: dict[int, Any] = {}
+        #: event id -> the value of the last blend this arm published for it.
+        self._last_value: dict[int, Optional[float]] = {}
         self.lines = 0
         self._reset()
 
@@ -116,6 +198,8 @@ class PreviewReceipt:
         self._samples: list[tuple[float, int]] = []
         self._dropped = 0
         self._max: Optional[tuple[float, int]] = None
+        self._purged = self._first = self._repeat = self._live_moved_late = 0
+        self._live, self._moved, self._live_moved = _Subset(), _Subset(), _Subset()
 
     # ── the refresher's side ─────────────────────────────────────────────────
 
@@ -143,10 +227,22 @@ class PreviewReceipt:
         now = self._mono()
         self._roll(self._wall())
         event_id = frame.get("event_id")
+        value = _value(frame.get("p"))
+        known = event_id in self._last_value
+        before = self._last_value.get(event_id)
+        if not known and len(self._last_value) >= PREVIEW_RECEIPT_MAX_EVENTS:
+            self._last_value.clear()
+        self._last_value[event_id] = value
         mark = self._awaiting.pop(event_id, None)
         if mark is None:
             return
         latency = max(0.0, now - mark.recv_mono)
+        live = frame.get("status") == "live"
+        moved = known and value is not None and before is not None and value != before
+        if latency > PREVIEW_RECEIPT_AWAIT_S:
+            self._purged += 1  # no blend carried it in time: unpreviewed
+            self._live_moved_late += live and moved
+            return
         self._measured += 1
         if self._max is None or latency > self._max[0]:
             self._max = (latency, event_id)
@@ -154,6 +250,16 @@ class PreviewReceipt:
             self._samples.append((latency, event_id))
         else:
             self._dropped += 1
+        if not known:
+            self._first += 1
+        elif not moved:
+            self._repeat += 1
+        if live:
+            self._live.add(latency, event_id)
+        if moved:
+            self._moved.add(latency, event_id)
+            if live:
+                self._live_moved.add(latency, event_id)
 
     def roll(self) -> None:
         """Close the minute if the clock has left it; every flush calls this."""
@@ -189,6 +295,8 @@ class PreviewReceipt:
         self._base = current
         refused = {k.split(":", 1)[1]: v for k, v in delta.items() if k.startswith("refused:")}
         capacity = {k.split(":", 1)[1]: v for k, v in delta.items() if k.startswith("capacity:")}
+        read_required = {k.split(":", 1)[1]: v for k, v in delta.items()
+                         if k.startswith("read_required:")}
         ordered = sorted(latency for latency, _eid in self._samples)
         worst = sorted(self._samples, key=lambda s: (-s[0], s[1]))[:PREVIEW_RECEIPT_WORST]
         if self._max is not None and self._dropped and self._max not in worst:
@@ -197,12 +305,17 @@ class PreviewReceipt:
             PREVIEW_RECEIPT_FORMAT, self.source, self.run, _iso(self._from),
             max(0.0, window_end - self._from),
             *(delta.get(key, 0) for key in PREVIEW_RECEIPT_COUNTS), _pairs(refused),
-            self._committed, self._measured, self._coalesced, len(unpreviewed),
+            self._committed, self._measured, self._coalesced, len(unpreviewed) + self._purged,
             _rank(ordered, 0.50), _rank(ordered, 0.90), _rank(ordered, 0.99),
             "-" if self._max is None else str(int(round(self._max[0] * 1000))),
             self._dropped,
             ",".join(f"{eid}:{int(round(lat * 1000))}" for lat, eid in worst) or "-",
             sum(capacity.values()), capacity.get("error", 0), _pairs(capacity),
+            delta.get("observation_timeouts", 0), _pairs(read_required),
+            self._first, self._repeat,
+            *self._live.fields(), *self._moved.fields(), *self._live_moved.fields(),
+            _worst(self._live_moved.samples, self._live_moved.top),
+            self._live_moved_late,
         )
         self.lines += 1
         self._reset()
