@@ -5047,8 +5047,8 @@ jobs:
             echo "::error::#11181 owed chart custody gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/owed-chart11181.txt || {
-            echo "::error::#11181 owed chart custody gate did not run all twelve cases"
+          grep -qE "[^0-9]14 passed[,[:space:]]" /tmp/owed-chart11181.txt || {
+            echo "::error::#11181 owed chart custody gate did not run all 14 cases"
             exit 1
           }
 
