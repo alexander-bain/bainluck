@@ -44,11 +44,12 @@ import type {
   HockeyJourneySlot,
   HockeyJourneyTeam,
 } from "@/lib/eventPage10868/hockeyJourneyTypes";
+import { ACCESSIBILITY_ROOT_FONT_PX } from "./useFrameMeasure";
 
 export type HockeyJourneyMatrixArrangement = "grid" | "shortGrid" | "pairs";
 
-/** Root font size, in CSS px, from which text counts as an accessibility size (150% of 16 px). */
-export const ACCESSIBILITY_ROOT_FONT_PX = 24;
+// One threshold for the whole screen (the card's rail and chooser, the chart's axis use it too).
+export { ACCESSIBILITY_ROOT_FONT_PX };
 
 /** The arrangements to try, in order (native `arrangements(accessibilitySize:)`). */
 export function matrixArrangements(accessibilitySize: boolean): HockeyJourneyMatrixArrangement[] {

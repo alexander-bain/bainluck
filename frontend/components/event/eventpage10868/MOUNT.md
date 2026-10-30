@@ -44,7 +44,9 @@ const hockeyJourney = hockeyJourneyApplies(event.sport)
       gameMarkets,                   // the page's own memo (:1403), event moneyline already removed
       host: {
         nowMs: Date.now(),
-        // The hero's own pair, BEFORE page.tsx:2169's printableAway (the builder applies it).
+        // REQUIRED: the hero's own pair, BEFORE page.tsx:2169's printableAway (the builder applies it).
+        // Passing null is not a safe default: the matrix then (correctly) withholds the before/live
+        // chance as "No recorded chance" while the history beside it shows "Pregame 51%".
         hero: resolvedProbability
           ? {
               homeProb: resolvedProbability.homeProb,
@@ -96,7 +98,12 @@ const hockeyJourney = hockeyJourneyApplies(event.sport)
    for the life of the mounted section. Keep the section mounted across refreshes: never give it a
    React `key` that changes per refresh (that remounts it and drops the choice).
    `SectionErrorBoundary`'s `resetKey` only retries a failed section and does not remount it.
-7. **Checks under grant I.** `npm run build`, `npm run typecheck`, the 10868 jest files, then real
+7. **Pass the resolved hero pair.** `host.hero` MUST be the page's `resolvedProbability` pair
+   (homeProb / awayProb / homePct / awayPct / probSourceLabel), with `probabilityObservedAt` its
+   accepted clock. The browser lab (2026-10-30) showed that with `hero: null` the before and live
+   matrix print "No recorded chance" while the history shows "Pregame 51%". The matrix's
+   withholding is correct and is not changed; the mount must feed it.
+8. **Checks under grant I.** `npm run build`, `npm run typecheck`, the 10868 jest files, then real
    browser views at 375 px and 393 px with normal text and with 200% text. Pass means: no clipped
    value, no tiny type, no horizontal page scroll, and the matrix arrangement steps
    grid → short names → labelled pairs only when the wider one does not fit.

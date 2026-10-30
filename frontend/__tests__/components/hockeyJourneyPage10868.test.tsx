@@ -33,6 +33,10 @@ import HockeyJourneyPage from "@/components/event/eventpage10868/HockeyJourneyPa
 import HockeyJourneyAllProps from "@/components/event/eventpage10868/HockeyJourneyAllProps";
 import HockeyJourneyContributionCard from "@/components/event/eventpage10868/HockeyJourneyContributionCard";
 import HockeyJourneyMatrix, { matrixArrangements } from "@/components/event/eventpage10868/HockeyJourneyMatrix";
+import HockeyJourneyHistoryChart, {
+  axisLabelSlots,
+  estimateLabelWidth,
+} from "@/components/event/eventpage10868/HockeyJourneyHistoryChart";
 
 const journey = buildHockeyJourney({
   event: fixtures.finalDetail as unknown as EventDetailResponse,
@@ -404,5 +408,143 @@ it("reflows the page's matrix from before to live without remounting or losing t
     expect(select().value).toBe("player:jack hughes");
     expect(host.querySelector('[aria-label="Jack Hughes milestones"]')).not.toBeNull();
     expect(host.textContent).not.toContain("Selected player unavailable.");
+  });
+});
+
+// ─── Browser-lab regressions (2026-10-30, 200% root font on phones) ──────────
+
+/** CONSTRUCTED reader setting: the root font at `px` (the lab's 200% is 32 px); every other element 16 px. */
+function withRootFont(px: number) {
+  jest.spyOn(window, "getComputedStyle").mockImplementation(((el: Element) =>
+    ({ fontSize: el === document.documentElement ? `${px}px` : "16px" }) as unknown as CSSStyleDeclaration) as typeof window.getComputedStyle);
+}
+
+const pregamePointsCard = () =>
+  hockeyJourneyContribution(
+    "points",
+    fixtures.pregameDetail as unknown as EventDetailResponse,
+    fixtures.pregameMarkets as unknown as GameMarketsResponse,
+    Date.parse("2026-10-30T20:13:55Z"),
+  )!;
+
+it("the player chooser can never be wider than its container", () => {
+  act(() => root.render(<HockeyJourneyContributionCard card={pregamePointsCard()} held={NO_HELD_CHOICE} onHold={() => {}} />));
+  const select = host.querySelector("select")!;
+  for (const cls of ["w-full", "min-w-0", "max-w-full", "min-h-11"]) expect(select.classList.contains(cls)).toBe(true);
+  // Label above, not a shrink-proof flex item beside it.
+  expect(select.parentElement?.classList.contains("flex-col")).toBe(true);
+  expect(select.parentElement?.classList.contains("flex-wrap")).toBe(false);
+  // Every option keeps its whole "name · team" text for the open list.
+  expect(Array.from(select.options).map((o) => o.textContent)).toEqual(
+    pregamePointsCard().players.map((p) => (p.team ? `${p.name} · ${p.team}` : p.name)),
+  );
+});
+
+it("points columns give way to stacked rows at an accessibility text size — every milestone kept, nothing sideways", () => {
+  const card = pregamePointsCard();
+  act(() => root.render(<HockeyJourneyContributionCard card={card} held={NO_HELD_CHOICE} onHold={() => {}} />));
+  expect(host.querySelector("[data-milestone-form]")?.getAttribute("data-milestone-form")).toBe("columns");
+  act(() => root.unmount());
+
+  withRootFont(32);
+  root = createRoot(host);
+  const onHold = jest.fn();
+  act(() => root.render(<HockeyJourneyContributionCard card={card} held={NO_HELD_CHOICE} onHold={onHold} />));
+  const rail = host.querySelector("[data-milestone-form]")!;
+  expect(rail.getAttribute("data-milestone-form")).toBe("bars");
+  expect(rail.querySelector(".overflow-x-auto")).toBeNull();
+  // Every milestone keeps its button, its line and its pregame chance (or the words for none) …
+  const shown = card.players[0];
+  const buttons = Array.from(rail.querySelectorAll("button"));
+  expect(buttons).toHaveLength(shown.milestones.length);
+  expect(shown.milestones.length).toBeGreaterThan(1);
+  shown.milestones.forEach((m, i) => {
+    expect(buttons[i].textContent).toContain(m.target);
+    expect(buttons[i].textContent).toContain(m.before ? m.before.text : m.beforeMissing);
+  });
+  // … the default milestone is still the pressed one …
+  expect(buttons.map((b) => b.getAttribute("aria-pressed"))).toEqual(
+    shown.milestones.map((m) => String(m.id === shown.defaultMilestoneId)),
+  );
+  // … and every other milestone can still be chosen.
+  const last = shown.milestones.length - 1;
+  click(buttons[last]);
+  expect(onHold).toHaveBeenCalledWith({ playerId: shown.id, milestoneId: shown.milestones[last].id });
+});
+
+it("points columns that do not fit their frame give way to stacked rows at standard text too", () => {
+  const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+  Object.defineProperty(proto, "clientWidth", { configurable: true, get: () => 261 });
+  Object.defineProperty(proto, "scrollWidth", {
+    configurable: true,
+    get(this: HTMLElement) {
+      // CONSTRUCTED layout: the lab's 464 px columns rail in a 261 px card.
+      return this.tagName === "UL" && this.closest('[data-milestone-form="columns"]') ? 464 : 0;
+    },
+  });
+  try {
+    act(() => root.render(<HockeyJourneyContributionCard card={pregamePointsCard()} held={NO_HELD_CHOICE} onHold={() => {}} />));
+    expect(host.querySelector("[data-milestone-form]")?.getAttribute("data-milestone-form")).toBe("bars");
+  } finally {
+    delete proto.clientWidth;
+    delete proto.scrollWidth;
+  }
+});
+
+describe("axis labels never collide (native labelSlots: lanes, nothing dropped, ticks unmoved)", () => {
+  const collide = (slots: { start: number; lane: number }[], lengths: number[], gap: number) =>
+    slots.some((a, i) =>
+      slots.some((b, j) => j > i && a.lane === b.lane && a.start < b.start + lengths[j] + gap && b.start < a.start + lengths[i] + gap),
+    );
+
+  it("keeps separate labels in one lane, centred, and slides edge labels inward", () => {
+    expect(axisLabelSlots([50, 150, 250], [40, 40, 40], 300, 6)).toEqual([
+      { start: 30, lane: 0 },
+      { start: 130, lane: 0 },
+      { start: 230, lane: 0 },
+    ]);
+    expect(axisLabelSlots([0, 300], [40, 40], 300, 6)).toEqual([
+      { start: 0, lane: 0 },
+      { start: 260, lane: 0 },
+    ]);
+  });
+
+  it("moves a label that would overlap its neighbour to the next lane, dropping none", () => {
+    // CONSTRUCTED: three date-and-time labels 100 px apart in a 261 px plot at a 24 px axis font (200% text).
+    const lengths = ["Oct 3, 5:00 PM", "Oct 3, 6:00 PM", "Oct 3, 7:00 PM"].map((t) => estimateLabelWidth(t, 24));
+    const slots = axisLabelSlots([20, 120, 220], lengths, 261, 6);
+    expect(slots).toHaveLength(3);
+    expect(collide(slots, lengths, 6)).toBe(false);
+    slots.forEach((slot, i) => {
+      expect(slot.start).toBeGreaterThanOrEqual(0);
+      expect(slot.start + Math.min(lengths[i], 261)).toBeLessThanOrEqual(261 + 1e-9);
+    });
+    expect(new Set(slots.map((s) => s.lane)).size).toBeGreaterThan(1);
+  });
+
+  it("the rendered chart at 200% keeps every x label clear of its lane neighbours and of the y labels", () => {
+    withRootFont(32);
+    const { history } = finalJourney(finalMarkets);
+    act(() => root.render(<HockeyJourneyHistoryChart history={history} colors={{ home: "var(--series-1)", away: "var(--series-2)" }} />));
+    const svg = host.querySelector('svg[role="img"]')!;
+    const xLabels = Array.from(svg.querySelectorAll("text[data-axis-lane]"));
+    // Nothing dropped: one label per tick, in tick order.
+    expect(xLabels.map((el) => el.textContent)).toEqual(history.xTicks.map((tick) => tick.label));
+    expect(xLabels.length).toBeGreaterThan(1);
+    const fontPx = 24; // text-xs (12 px) at a 32 px root
+    const placed = xLabels.map((el) => ({
+      start: Number(el.getAttribute("x")),
+      lane: Number(el.getAttribute("data-axis-lane")),
+      length: estimateLabelWidth(el.textContent ?? "", fontPx),
+    }));
+    expect(collide(placed, placed.map((p) => p.length), 6)).toBe(false);
+    // The y labels end at their anchor (text-anchor end); every x label starts to its right …
+    const yLabels = Array.from(svg.querySelectorAll('text[text-anchor="end"]'));
+    expect(yLabels.length).toBeGreaterThan(0);
+    const yAnchor = Math.max(...yLabels.map((el) => Number(el.getAttribute("x"))));
+    for (const p of placed) expect(p.start).toBeGreaterThan(yAnchor);
+    // … and below the lowest y label (centred on its line), so "0%" and the first x label cannot touch.
+    const lowestYLabelBottom = Math.max(...yLabels.map((el) => Number(el.getAttribute("y")))) + fontPx / 2;
+    for (const el of xLabels) expect(Number(el.getAttribute("y"))).toBeGreaterThan(lowestYLabelBottom);
   });
 });

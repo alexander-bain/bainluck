@@ -15,9 +15,18 @@
  * before play there is no count, progress, in-game or result block at all
  * (native `PlayerContributionInput10868.actualPresentation` / `currentReading`
  * / `result`).
+ *
+ * Nothing scrolls sideways (native `PlayerContributionOrientation10868.forms`
+ * and its accessibility-size stacking): points try their columns first and fall
+ * back to the stacked bar rows — every milestone, its figure and its pressed
+ * state kept — at an accessibility text size or whenever the columns do not fit
+ * their frame (measured before paint, re-measured when the width, text size or
+ * milestones change). The player chooser never exceeds its container: it takes
+ * the full width under its label and the closed control truncates; the open
+ * list keeps every name whole.
  */
 
-import { useId } from "react";
+import { useId, useRef, useState } from "react";
 import { propVerdictLabel } from "@/lib/propGrade";
 import {
   CONTRIBUTION_WORDS,
@@ -28,6 +37,7 @@ import {
   type HockeyJourneyMilestone,
   type HockeyJourneyPhase,
 } from "@/lib/eventPage10868/hockeyJourney";
+import { useFrameMeasure, useIsomorphicLayoutEffect } from "./useFrameMeasure";
 
 function currentWords(current: HockeyJourneyCurrent): { text: string; strong: boolean } {
   if (current.kind === "recorded") return { text: current.observation.text, strong: true };
@@ -77,7 +87,26 @@ export default function HockeyJourneyContributionCard({
   const noticeId = useId();
 
   const { player, selected, notice } = resolveContributionChoice(card, held);
-  const columns = card.orientation === "columns";
+
+  // Columns first (points only), then the stacked bar rows when columns do not fit.
+  const frame = useRef<HTMLElement>(null);
+  const rail = useRef<HTMLDivElement>(null);
+  const measure = useFrameMeasure(frame);
+  const railKey = JSON.stringify([
+    player?.id ?? null,
+    (player?.milestones ?? []).map((m) => [m.id, m.target, m.before?.text ?? m.beforeMissing, m.current, m.result?.kind ?? null]),
+    card.phase,
+    measure.width,
+    measure.accessibilitySize,
+  ]);
+  const [railFit, setRailFit] = useState({ key: railKey, overflowed: false });
+  const overflowed = railFit.key === railKey && railFit.overflowed;
+  const columns = card.orientation === "columns" && !measure.accessibilitySize && !overflowed;
+  useIsomorphicLayoutEffect(() => {
+    const el = rail.current?.querySelector("ul");
+    if (!columns || !el) return;
+    if (el.scrollWidth > el.clientWidth + 1) setRailFit({ key: railKey, overflowed: true });
+  }, [columns, railKey]);
   // A held player no longer served keeps the chooser reachable even if fewer than two remain.
   const chooserLabel = card.chooserTitle ?? (player ? null : card.chooseLabel);
   // Choosing a milestone also pins the player shown, so a refresh that reorders
@@ -87,7 +116,7 @@ export default function HockeyJourneyContributionCard({
   };
 
   return (
-    <article aria-labelledby={titleId} className="space-y-3">
+    <article ref={frame} aria-labelledby={titleId} className="min-w-0 space-y-3">
       <header>
         <p className="text-xs font-semibold tracking-wide text-text-secondary">{card.eyebrow}</p>
         <h4 id={titleId} className="text-lg font-bold">
@@ -97,10 +126,12 @@ export default function HockeyJourneyContributionCard({
       </header>
 
       {chooserLabel ? (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-col items-stretch gap-1">
           <label htmlFor={chooserId} className="text-sm font-medium">
             {chooserLabel}
           </label>
+          {/* Never wider than its container: full width under the label, the closed control
+              truncating a long "name · team"; the open list shows every option whole. */}
           <select
             id={chooserId}
             value={player ? player.id : ""}
@@ -108,7 +139,7 @@ export default function HockeyJourneyContributionCard({
             onChange={(e) => {
               if (e.target.value) onHold({ playerId: e.target.value, milestoneId: null });
             }}
-            className="min-h-11 rounded-md border border-surface-border bg-surface-card px-2 text-base"
+            className="min-h-11 w-full min-w-0 max-w-full truncate rounded-md border border-surface-border bg-surface-card px-2 text-base"
           >
             {/* The held player is no longer served: the chooser says so rather than showing someone else. */}
             {!player && notice && (
@@ -156,7 +187,7 @@ export default function HockeyJourneyContributionCard({
 
       {player && <p className="text-sm font-medium text-text-secondary">{card.chartTitle}</p>}
       {player && (
-        <div role="group" aria-label={`${player.name} milestones`}>
+        <div ref={rail} role="group" aria-label={`${player.name} milestones`} data-milestone-form={columns ? "columns" : "bars"}>
           {columns ? (
             <ul className="flex items-end gap-2 overflow-x-auto pb-1">
               {player.milestones.map((m) => {
@@ -213,7 +244,10 @@ export default function HockeyJourneyContributionCard({
                         {m.before && (
                           <span
                             className="absolute inset-y-0 left-0 block rounded-sm"
-                            style={{ width: `${m.before.probability * 100}%`, background: "var(--series-2)" }}
+                            style={{
+                              width: `${m.before.probability * 100}%`,
+                              background: card.orientation === "columns" ? "var(--series-1)" : "var(--series-2)",
+                            }}
                           />
                         )}
                       </span>

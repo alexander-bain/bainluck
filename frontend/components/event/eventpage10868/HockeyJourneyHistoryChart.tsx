@@ -13,17 +13,65 @@
  * Inspect control: neither has a destination on web yet.
  */
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type {
   HockeyJourneyHistory,
   HockeyJourneyHistoryPoint,
   HockeyJourneyHistorySeries,
   HockeyJourneyReading,
 } from "@/lib/eventPage10868/hockeyJourneyTypes";
+import { DEFAULT_ROOT_FONT_PX, useFrameMeasure, useIsomorphicLayoutEffect } from "./useFrameMeasure";
 
 const PLOT_HEIGHT = 230;
-const AXIS_HEIGHT = 26;
-const MARGIN = { top: 22, right: 14, bottom: 6, left: 44 };
+/** `text-xs` at the default root size. Axis text scales with the reader's root font. */
+const AXIS_FONT_PX = 12;
+/** Average advance of an axis glyph, in em — an estimate used only until the real text is measured. */
+const GLYPH_EM = 0.62;
+/** Clear space kept between two axis labels in one lane. */
+const LABEL_GAP_PX = 6;
+
+/** A label's width before it can be measured: its glyph count at the axis size. */
+export function estimateLabelWidth(text: string, fontPx: number): number {
+  return text.length * fontPx * GLYPH_EM;
+}
+
+export interface AxisLabelSlot {
+  /** Left edge, from the start of the plot. */
+  start: number;
+  /** 0 is the row nearest the plot. */
+  lane: number;
+}
+
+/**
+ * Native `FieldHistoryGeometry10868.labelSlots` (FieldProbabilityHistoryPresentation10868
+ * .swift:1094): each label centred on its tick, slid inward to stay inside
+ * `extent` (the plot's width, so no x label can reach the y-axis labels in the
+ * left margin), and placed in the first lane where it keeps `gap` clear of
+ * every label already there. NOTHING IS DROPPED and no tick moves — a label
+ * that would collide takes the next lane down.
+ */
+export function axisLabelSlots(centers: number[], lengths: number[], extent: number, gap: number): AxisLabelSlot[] {
+  const span = Math.max(0, Number.isFinite(extent) ? extent : 0);
+  const clear = Math.max(0, gap);
+  const lanes: Array<Array<[number, number]>> = [];
+  const slots: AxisLabelSlot[] = [];
+  const count = Math.min(centers.length, lengths.length);
+  for (let i = 0; i < count; i += 1) {
+    const length = Math.min(Math.max(0, Number.isFinite(lengths[i]) ? lengths[i] : 0), span);
+    const middle = Number.isFinite(centers[i]) ? centers[i] : 0;
+    const start = Math.min(Math.max(0, middle - length / 2), span - length);
+    const lo = start - clear;
+    const hi = start + length + clear;
+    let lane = lanes.findIndex((taken) => !taken.some(([a, b]) => a <= hi && lo <= b));
+    if (lane < 0) {
+      lane = lanes.length;
+      lanes.push([]);
+    }
+    lanes[lane].push([start, start + length]);
+    slots.push({ start, lane });
+  }
+  return slots;
+}
 
 export interface HockeyJourneyLineColors {
   home: string;
@@ -81,24 +129,23 @@ export default function HockeyJourneyHistoryChart({
   colors: HockeyJourneyLineColors;
 }) {
   const frame = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(600);
+  const { width, rootFontPx } = useFrameMeasure(frame, 600);
   const titleId = useId();
   const detailsId = useId();
   const [detailsOpen, setDetailsOpen] = useState(false);
 
-  useEffect(() => {
-    const el = frame.current;
-    if (!el) return;
-    const measure = () => {
-      const w = el.clientWidth;
-      if (w > 0) setWidth(w);
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
+  // Axis text follows the reader's text size; so do the margins and the label band that hold it.
+  const fontPx = (AXIS_FONT_PX * rootFontPx) / DEFAULT_ROOT_FONT_PX;
+  const xLabelRefs = useRef<Array<SVGTextElement | null>>([]);
+  const [measured, setMeasured] = useState<Record<string, number>>({});
+  const lengthOf = (text: string) => measured[`${fontPx}|${text}`] ?? estimateLabelWidth(text, fontPx);
+  const yLabelWidth = Math.max(0, ...history.yTicks.map((tick) => lengthOf(tick.label)));
+  const MARGIN = {
+    top: Math.max(22, Math.ceil(fontPx + 10)),
+    right: 14,
+    bottom: 6,
+    left: Math.max(44, Math.ceil(yLabelWidth + 12)),
+  };
 
   const [home, away] = history.series;
   const shapes: Record<string, "circle" | "square"> = { home: "circle", away: "square" };
@@ -114,6 +161,39 @@ export default function HockeyJourneyHistoryChart({
   const y = (p: number) => MARGIN.top + (1 - p) * plotH;
   const path = (run: HockeyJourneyHistoryPoint[]) =>
     run.map((pt, i) => `${i === 0 ? "M" : "L"} ${x(pt.t).toFixed(1)} ${y(pt.p).toFixed(1)}`).join(" ");
+
+  // X labels: kept clear of each other and of the y labels (lanes, nothing dropped).
+  const slots = axisLabelSlots(
+    history.xTicks.map((tick) => x(tick.t) - MARGIN.left),
+    history.xTicks.map((tick) => lengthOf(tick.label)),
+    plotW,
+    LABEL_GAP_PX,
+  );
+  const laneCount = slots.reduce((n, slot) => Math.max(n, slot.lane + 1), 0);
+  const laneHeight = Math.ceil(fontPx * 1.25);
+  // The first lane starts below the lower half of the "0%" label, which is centred on the plot's floor.
+  const labelBandTop = PLOT_HEIGHT - MARGIN.bottom + Math.ceil(fontPx / 2) + 4;
+  const svgHeight = Math.max(PLOT_HEIGHT + 26, labelBandTop + laneCount * laneHeight + 4);
+
+  // Real text lengths replace the estimate once the browser can measure them (not in jsdom/SSR).
+  const labelSignature = `${fontPx}|${history.xTicks.map((tick) => tick.label).join("\u0001")}|${history.yTicks
+    .map((tick) => tick.label)
+    .join("\u0001")}`;
+  useIsomorphicLayoutEffect(() => {
+    const next: Record<string, number> = {};
+    let changed = false;
+    xLabelRefs.current.forEach((el, i) => {
+      const label = history.xTicks[i]?.label;
+      if (!el || label === undefined || typeof el.getComputedTextLength !== "function") return;
+      const length = el.getComputedTextLength();
+      if (!Number.isFinite(length) || length <= 0) return;
+      const key = `${fontPx}|${label}`;
+      next[key] = length;
+      if (Math.abs((measured[key] ?? -1) - length) > 0.5) changed = true;
+    });
+    if (changed) setMeasured((prev) => ({ ...prev, ...next }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-measure only when the labels or their size change
+  }, [labelSignature]);
 
   return (
     <section aria-labelledby={titleId} className="space-y-3">
@@ -153,8 +233,8 @@ export default function HockeyJourneyHistoryChart({
             role="img"
             aria-label={history.summary}
             width={width}
-            height={PLOT_HEIGHT + AXIS_HEIGHT}
-            viewBox={`0 0 ${width} ${PLOT_HEIGHT + AXIS_HEIGHT}`}
+            height={svgHeight}
+            viewBox={`0 0 ${width} ${svgHeight}`}
             className="block max-w-full overflow-visible"
           >
             {history.yTicks.map((tick) => (
@@ -221,13 +301,18 @@ export default function HockeyJourneyHistoryChart({
                   )),
               ),
             )}
-            {history.xTicks.map((tick) => (
+            {history.xTicks.map((tick, i) => (
               <text
                 key={tick.t}
-                x={Math.min(Math.max(x(tick.t), MARGIN.left), MARGIN.left + plotW)}
-                y={PLOT_HEIGHT + AXIS_HEIGHT - 6}
-                textAnchor="middle"
+                ref={(el) => {
+                  xLabelRefs.current[i] = el;
+                }}
+                x={MARGIN.left + (slots[i]?.start ?? 0)}
+                y={labelBandTop + (slots[i]?.lane ?? 0) * laneHeight}
+                textAnchor="start"
+                dominantBaseline="hanging"
                 className="fill-text-secondary text-xs"
+                data-axis-lane={slots[i]?.lane ?? 0}
               >
                 {tick.label}
               </text>
