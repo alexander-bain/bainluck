@@ -237,10 +237,9 @@ async def test_existing_plain_cache_and_unrelated_eval_stay_intact(guarded_rig, 
     call = LiveBlendRefresher._preview_call(connection)
     if script == LEDGER_SCRIPT:
         await client.script_load(script)
-        # Missing ledger arguments may return an error; transport must still be cached.
-        with pytest.raises(ResponseError):
-            await call("EVAL", script, 0)
-        assert connection.commands[0][0] == "EVALSHA"
+        # Missing ledger arguments get the ledger's own refusal; only transport is asserted.
+        await call("EVAL", script, 0)
+        assert [command[0] for command in connection.commands] == ["EVALSHA"]
     else:
         assert await call("EVAL", script, 0) == ["unrelated"]
         assert connection.commands == [("EVAL", script, 0)]
