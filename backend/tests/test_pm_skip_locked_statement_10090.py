@@ -27,8 +27,8 @@ def test_rows_are_locked_skip_locked_in_chunk_order_behind_the_change_filter():
     locked = text[text.index("locked AS MATERIALIZED"):text.index("wanted AS MATERIALIZED")]
     # Deadlock avoidance: chunk order. An unchanged row is filtered BEFORE
     # LockRows, so it takes no lock.
-    assert "ORDER BY given.ord FOR UPDATE OF futures_outcomes SKIP LOCKED" in locked
-    assert locked.index("WHERE given.force_write OR") < locked.index("FOR UPDATE")
+    assert "ORDER BY given.ord FOR NO KEY UPDATE OF futures_outcomes SKIP LOCKED" in locked
+    assert locked.index("WHERE given.force_write OR") < locked.index("FOR NO KEY UPDATE")
     # The unlocked read uses the same filter, so a skip is a wanted row.
     wanted = text[text.index("wanted AS MATERIALIZED"):text.index("held AS MATERIALIZED")]
     assert "WHERE given.force_write OR" in wanted and "FOR UPDATE" not in wanted

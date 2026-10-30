@@ -5069,8 +5069,8 @@ jobs:
             echo "::error::#10090 PM release-wake gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]20 passed[,[:space:]]" /tmp/release-wake10090.txt || {
-            echo "::error::#10090 PM release-wake gate did not run all twenty cases"
+          grep -qE "[^0-9]21 passed[,[:space:]]" /tmp/release-wake10090.txt || {
+            echo "::error::#10090 PM release-wake gate did not run all twenty-one cases"
             exit 1
           }
 
@@ -5443,8 +5443,8 @@ jobs:
             echo "::error::#10661 price lock budget gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]11 passed[,[:space:]]" /tmp/pricelock10661.txt || {
-            echo "::error::#10661 price lock budget gate did not run all eleven cases"
+          grep -qE "[^0-9]13 passed[,[:space:]]" /tmp/pricelock10661.txt || {
+            echo "::error::#10661 price lock budget gate did not run all thirteen cases"
             exit 1
           }
 

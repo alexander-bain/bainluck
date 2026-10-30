@@ -239,7 +239,7 @@ def kalshi_skip_locked_stmt(rows) -> Select:
         .join_from(given, table, table.c.id == given.c.id)
         .where(wanted_rows)
         .order_by(given.c.ord)
-        .with_for_update(of=table, skip_locked=True)
+        .with_for_update(of=table, skip_locked=True, key_share=True)
         .cte("locked")
         .prefix_with("MATERIALIZED")
     )

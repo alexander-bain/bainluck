@@ -2240,7 +2240,8 @@ def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False, skip_unit
         .order_by(given.c.ord)
         .with_for_update(
             of=table,
-            **({"nowait": nowait} if unit is None else {"skip_locked": True}),
+            **({"nowait": nowait} if unit is None
+               else {"skip_locked": True, "key_share": True}),
         )
         .cte("locked")
         .prefix_with("MATERIALIZED")

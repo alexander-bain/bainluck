@@ -107,9 +107,9 @@ def test_the_pre_pass_locks_in_phase_order_behind_the_updates_predicate():
     # Deadlock avoidance: phase order. The settled refusal and the repeat
     # predicate run before LockRows, so a row the UPDATE would not write
     # takes no lock.
-    assert "ORDER BY given.ord FOR UPDATE OF futures_outcomes SKIP LOCKED" in locked
-    assert locked.index("resolution_source IS NULL") < locked.index("FOR UPDATE")
-    assert locked.index("given.force OR") < locked.index("FOR UPDATE")
+    assert "ORDER BY given.ord FOR NO KEY UPDATE OF futures_outcomes SKIP LOCKED" in locked
+    assert locked.index("resolution_source IS NULL") < locked.index("FOR NO KEY UPDATE")
+    assert locked.index("given.force OR") < locked.index("FOR NO KEY UPDATE")
 
 
 async def test_a_held_row_holds_back_its_whole_question_even_across_events(monkeypatch):

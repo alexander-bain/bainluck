@@ -28,8 +28,10 @@ does in production. A second connection holds game A's PRICE row.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 import pytest
+from sqlalchemy import text
 
 from tests.integration.test_kalshi_price_lock_budget_pg_10661 import (  # noqa: F401
     DB_URL,
@@ -199,3 +201,87 @@ async def test_the_final_drain_waits_for_a_held_row_and_never_skips(pg):
     assert stats["final_flush_dropped"] == 0 and not batch
     stored = await _prices(side, ids)
     assert stored["a1"][0] == 0.7 and stored["b1"][0] == 0.6
+
+
+# ── lane1 review R1 (#11797): a foreign-key share lock is not a held row ──────
+#
+# A snapshot INSERT (`futures_odds_snapshots.outcome_id` → `futures_outcomes.id`)
+# takes FOR KEY SHARE on its outcome row until it commits: that is the lock
+# PostgreSQL's FK check (RI_FKey_check) takes, held here explicitly. The price
+# UPDATE itself takes FOR NO KEY UPDATE, which does not conflict with it, so the
+# base per-row Kalshi UPDATE writes straight through such an insert. The SKIP
+# LOCKED passes must lock no harder than that UPDATE (as the live EI write does,
+# bceb3637): with FOR UPDATE they skip the row — holding back its whole game —
+# and, while they hold it, make every concurrent snapshot INSERT wait.
+
+
+@contextlib.asynccontextmanager
+async def _key_sharing(side, outcome_id):
+    """An open transaction holding the FK check's lock on one outcome row."""
+    conn = await side.connect()
+    tx = await conn.begin()
+    await conn.execute(
+        text("SELECT 1 FROM futures_outcomes WHERE id = :id FOR KEY SHARE"),
+        {"id": outcome_id},
+    )
+    try:
+        yield tx
+    finally:
+        if tx.is_active:
+            await tx.rollback()
+        await conn.close()
+
+
+async def _run(side, stmt):
+    async with side.connect() as conn:
+        tx = await conn.begin()
+        await conn.execute(text("SET LOCAL lock_timeout = '300ms'"))
+        rows = (await conn.execute(stmt)).all()
+        await tx.rollback()
+    return rows
+
+
+async def test_a_key_share_holder_is_not_a_held_row_for_either_venue(pg):
+    from app.tasks.polymarket_ws import chunk_price_update_stmt
+    from app.utils.kalshi_price_statement import kalshi_skip_locked_stmt
+
+    _, side, ids = pg
+    legs, events = ids["legs"], ids["events"]
+    a1, a2, b1 = legs["a1"], legs["a2"], legs["b1"]
+    chunk = {a1: 0.61, a2: 0.39, b1: 0.62}
+    units = {a1: events["a"], a2: events["a"], b1: events["b"]}
+    kalshi = [(oid, value, None, None, False) for oid, value in chunk.items()]
+    async with _key_sharing(side, a1):
+        pm = await _run(side, chunk_price_update_stmt(chunk, skip_units=units))
+        assert sorted((r.id, r.skipped) for r in pm) == sorted(
+            (oid, False) for oid in chunk
+        )
+        assert await _run(side, kalshi_skip_locked_stmt(kalshi)) == []
+    # Control: a real writer's row lock is still skipped, with its unit.
+    async with _holding(side, a1):
+        pm = await _run(side, chunk_price_update_stmt(chunk, skip_units=units))
+        assert {r.id for r in pm if r.skipped} == {a1, a2}
+        assert {r.id for r in pm if not r.skipped} == {b1}
+        assert {r.id for r in await _run(side, kalshi_skip_locked_stmt(kalshi))} == {a1}
+
+
+async def test_the_kalshi_pre_pass_never_makes_a_snapshot_insert_wait(pg):
+    from app.utils.kalshi_price_statement import kalshi_skip_locked_stmt
+
+    _, side, ids = pg
+    a1 = ids["legs"]["a1"]
+    async with side.connect() as writer:
+        tx = await writer.begin()
+        assert (await writer.execute(kalshi_skip_locked_stmt(
+            [(a1, 0.61, None, None, False), (ids["legs"]["b1"], 0.62, None, None, False)]
+        ))).all() == []
+        # The phase transaction is still open, holding the pre-pass's locks.
+        async with side.connect() as other:
+            other_tx = await other.begin()
+            await other.execute(text("SET LOCAL lock_timeout = '300ms'"))
+            await other.execute(
+                text("SELECT 1 FROM futures_outcomes WHERE id = :id FOR KEY SHARE"),
+                {"id": a1},
+            )
+            await other_tx.rollback()
+        await tx.rollback()
