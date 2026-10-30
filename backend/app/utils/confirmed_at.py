@@ -53,6 +53,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Optional
@@ -87,6 +88,12 @@ WRITE_DEADLINE_S = 1.0
 READ_DEADLINE_MS = 250
 #: The reader's per-event cache lifetime (seconds).
 READ_TTL_S = 1.0
+#: A stream sends a value only when every member's last SUCCESSFUL read is
+#: younger than this: one cache lifetime plus an idle stream pass
+#: (`event_stream.FRAME_WAIT_S`) plus margin. An entry a stream that left
+#: minutes ago read last, or one a failed read kept, is not current (a page
+#: opened at 19:25Z on #10090 was sent a 385 s-old ``confirmed_at``).
+READ_FRESH_S = 3.0
 
 #: Dispositions whose reading equals what this source has published: a stamp
 #: published it; the others compared equal to the last stamp and published
@@ -754,6 +761,8 @@ class ConfirmedReads:
         self._mono = mono
         self._wall = wall
         self._entries: dict[int, tuple[float, list]] = {}
+        #: When each event's last read that SUCCEEDED finished (mono).
+        self._fetched: dict[int, float] = {}
         self._inflight: dict[int, asyncio.Task] = {}
         self._loop = None
 
@@ -765,7 +774,7 @@ class ConfirmedReads:
         except RuntimeError:
             return False
         if loop is not self._loop:
-            self._loop, self._entries, self._inflight = loop, {}, {}
+            self._loop, self._entries, self._fetched, self._inflight = loop, {}, {}, {}
         return True
 
     def _stale(self, event_ids) -> list[int]:
@@ -791,9 +800,12 @@ class ConfirmedReads:
             if len(self._entries) > self.MAX_EVENTS:
                 self._entries = {eid: v for eid, v in self._entries.items()
                                  if now - v[0] < 60.0}
+                self._fetched = {eid: at for eid, at in self._fetched.items()
+                                 if eid in self._entries}
             for eid in event_ids:
                 if got is not None:
                     self._entries[eid] = (now, got.get(eid, []))
+                    self._fetched[eid] = now
                 else:
                     # A failed read is still an attempt (lane1 S2): what was
                     # known stays, and the next read waits READ_TTL_S, not
@@ -810,6 +822,13 @@ class ConfirmedReads:
                     del self._inflight[eid]
 
     def value(self, event_ids) -> Optional[float]:
+        """None unless EVERY event was read successfully within
+        ``READ_FRESH_S``: a stale entry is not current, and combining only the
+        members read so far could miss another member's hold."""
+        now = self._mono()
+        if any(now - self._fetched.get(eid, -math.inf) >= READ_FRESH_S
+               for eid in event_ids):
+            return None
         entries = []
         for eid in event_ids:
             cached = self._entries.get(eid)
