@@ -8133,6 +8133,10 @@ async def _backfill_kalshi_pregame_openings(limit: int = 500):
             logger.info(
                 "Kalshi pregame-opening backfill: %d outcomes in scope", len(rows)
             )
+            # #10090: no transaction spans a network call. These candidates are
+            # games already under way — the rows the live socket writes — and
+            # `rows` are plain tuples, so end the read before the first request.
+            await session.commit()
 
             service = KalshiAPIService()
             try:
@@ -8189,41 +8193,51 @@ async def _backfill_kalshi_pregame_openings(limit: int = 500):
                         int(last["t"]), tz=timezone.utc
                     )
 
-                    upd = await session.execute(
-                        text("""
-                            UPDATE futures_outcomes fo
-                            SET opening_probability = :prob,
-                                opening_captured_at = :ts,
-                                opening_source = :src
-                            FROM futures_markets fm, events e
-                            WHERE fo.id = :id
-                              AND fo.market_id = fm.id
-                              AND fm.event_id = e.id
-                              -- PROVENANCE: re-stated here, not inherited from
-                              -- the SELECT. The only opening this rail may
-                              -- overwrite is one the row itself still says is
-                              -- in-play (or absent). A postponement that moved
-                              -- commence_time under us fails this and is left.
-                              AND (
-                                  fo.opening_probability IS NULL
-                                  OR fo.opening_captured_at IS NULL
-                                  OR fo.opening_captured_at > e.commence_time
-                              )
-                        """),
-                        {
-                            "prob": round(price, 6),
-                            "ts": captured,
-                            "src": KALSHI_PREGAME_OPENING_SOURCE,
-                            "id": row.outcome_id,
-                        },
-                    )
+                    # #10090: this outcome's UPDATE commits before the next
+                    # candle request. Committing every 50 outcomes held its row
+                    # lock across 50 HTTP round trips. A failed write rolls back
+                    # this outcome alone; its siblings stand (Hot List #42).
+                    try:
+                        upd = await session.execute(
+                            text("""
+                                UPDATE futures_outcomes fo
+                                SET opening_probability = :prob,
+                                    opening_captured_at = :ts,
+                                    opening_source = :src
+                                FROM futures_markets fm, events e
+                                WHERE fo.id = :id
+                                  AND fo.market_id = fm.id
+                                  AND fm.event_id = e.id
+                                  -- PROVENANCE: re-stated here, not inherited from
+                                  -- the SELECT. The only opening this rail may
+                                  -- overwrite is one the row itself still says is
+                                  -- in-play (or absent). A postponement that moved
+                                  -- commence_time under us fails this and is left.
+                                  AND (
+                                      fo.opening_probability IS NULL
+                                      OR fo.opening_captured_at IS NULL
+                                      OR fo.opening_captured_at > e.commence_time
+                                  )
+                            """),
+                            {
+                                "prob": round(price, 6),
+                                "ts": captured,
+                                "src": KALSHI_PREGAME_OPENING_SOURCE,
+                                "id": row.outcome_id,
+                            },
+                        )
+                        await session.commit()
+                    except Exception as e:
+                        await session.rollback()
+                        stats["errors"].append(f"{row.ticker}: write: {str(e)[:80]}")
+                        await asyncio.sleep(0.05)
+                        continue
                     if upd.rowcount:
                         stats["openings_written"] += 1
                         if row.existing_opening is not None:
                             stats["openings_overwritten"] += 1
 
                     if stats["outcomes_processed"] % 50 == 0:
-                        await session.commit()
                         logger.info(
                             "Kalshi pregame openings: %d/%d processed, "
                             "%d written (%d overwritten), %d unrecoverable",
@@ -8234,8 +8248,6 @@ async def _backfill_kalshi_pregame_openings(limit: int = 500):
                             stats["unrecoverable"],
                         )
                     await asyncio.sleep(0.05)
-
-                await session.commit()
             finally:
                 await service.close()
 

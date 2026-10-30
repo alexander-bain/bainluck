@@ -233,3 +233,79 @@ def test_kalshi_one_bad_write_leaves_its_siblings_committed(monkeypatch):
     assert stats["snapshots_created"] == 2
     assert [e for e in stats["errors"] if e.startswith("KX-2: write:")]
     assert not any(e.startswith("task_error") for e in stats["errors"])
+
+
+# ── Kalshi pregame_gap (lane1 R1 on b7f13bb3) ────────────────────────────────
+# The third mode of the same task. Its candidates are games already under way,
+# so its opening UPDATEs lock exactly the rows the live socket writes.
+
+PregameRow = namedtuple(
+    "PregameRow",
+    "outcome_id ticker commence_time existing_opening existing_opening_at",
+)
+
+
+class _PregameService:
+    def __init__(self, session):
+        self.session = session
+        self.calls_in_txn: list[str] = []
+
+    async def get_market_candlesticks(
+        self, ticker, period_interval, start_ts=None, end_ts=None
+    ):
+        if self.session.in_txn:
+            self.calls_in_txn.append(ticker)
+        return [{"t": end_ts - 3600, "yes_price": 0.4}]
+
+    async def close(self):
+        pass
+
+
+def _pregame_rows(n):
+    started = datetime.now(timezone.utc) - timedelta(minutes=30)
+    return [PregameRow(i, f"KX-{i}", started, None, None) for i in range(1, n + 1)]
+
+
+def _run_pregame(monkeypatch, rows, fail_update_for=()):
+    import app.tasks.redis_state as redis_state
+
+    session = _TxnSession(rows, fail_update_for)
+    service = _PregameService(session)
+    _patch_common(monkeypatch, kalshi_tasks, session)
+    monkeypatch.setattr(kalshi_api, "KalshiAPIService", lambda: service)
+
+    def no_redis():
+        raise RuntimeError("no redis in this test")
+
+    monkeypatch.setattr(redis_state, "get_redis_client", no_redis)
+    stats = asyncio.run(
+        kalshi_tasks._backfill_kalshi_price_history(limit=10, mode="pregame_gap")
+    )
+    return stats, session, service
+
+
+def test_pregame_gap_no_network_call_runs_inside_an_open_transaction(monkeypatch):
+    stats, session, service = _run_pregame(monkeypatch, _pregame_rows(3))
+    assert service.calls_in_txn == []
+    assert stats["openings_written"] == 3
+    assert session.in_txn is False
+
+
+def test_pregame_gap_each_outcome_commits_its_own_update(monkeypatch):
+    stats, session, _ = _run_pregame(monkeypatch, _pregame_rows(3))
+    # The read, then one commit per outcome.
+    assert session.commits == 1 + 3
+    assert session.committed == [("opening", 1), ("opening", 2), ("opening", 3)]
+
+
+def test_pregame_gap_one_bad_write_leaves_its_siblings_committed(monkeypatch):
+    stats, session, service = _run_pregame(
+        monkeypatch, _pregame_rows(3), fail_update_for={2}
+    )
+    assert service.calls_in_txn == []
+    assert session.rollbacks == 1
+    assert session.committed == [("opening", 1), ("opening", 3)]
+    # Stats count only what committed.
+    assert stats["openings_written"] == 2
+    assert [e for e in stats["errors"] if e.startswith("KX-2: write:")]
+    assert not any(e.startswith("task_error") for e in stats["errors"])
