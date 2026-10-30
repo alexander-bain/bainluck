@@ -194,8 +194,18 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
         XCTAssertTrue(opened, "control: a reader who opens the details sees them")
         _ = try onScreenText(window, "first-page-details-open")
 
+        // CONTROL11703 timeline (DO NOT MERGE): when the covered page leaves its
+        // window and when the popover goes, measured from the push.
+        let coveredPage = topPage(host)
+        let pushedAt = Date()
+        var leftWindowAt: TimeInterval?, closedAt: TimeInterval?
+        func mark() {
+            let t = Date().timeIntervalSince(pushedAt)
+            if leftWindowAt == nil, coveredPage.window == nil { leftWindowAt = t }
+            if closedAt == nil, host.presentedViewController == nil { closedAt = t }
+        }
         router.path.append(Self.second)
-        await settle(host, timeout: 1.5) { router.path.count == 1 && host.presentedViewController == nil }
+        await settle(host, timeout: 1.5) { mark(); return router.path.count == 1 && host.presentedViewController == nil }
         let leftOver = host.presentedViewController
         _ = try onScreenText(window, "after-link-to-second-game")
         XCTAssertNil(leftOver,
@@ -204,8 +214,9 @@ final class TheFreshnessDetailsFollowTheirPage11703Tests: XCTestCase {
         // #11703 hosted base control (DO NOT MERGE): characterizes "closes late"
         // vs "never closes" without touching the assertion or its 1.5 s deadline.
         print("CONTROL11703 t=1.5s presented=\(leftOver.map { String(describing: type(of: $0)) } ?? "nil") path=\(router.path.count)")
-        await settle(host, timeout: 3.5) { host.presentedViewController == nil }
-        print("CONTROL11703 t=5s presented=\(host.presentedViewController.map { String(describing: type(of: $0)) } ?? "nil") path=\(router.path.count)")
+        await settle(host, timeout: 8.5) { mark(); return closedAt != nil && leftWindowAt != nil }
+        print("CONTROL11703 t=\(String(format: "%.2f", Date().timeIntervalSince(pushedAt)))s presented=\(host.presentedViewController.map { String(describing: type(of: $0)) } ?? "nil") path=\(router.path.count)")
+        print("CONTROL11703 timeline coveredPageLeftWindow=\(leftWindowAt.map { String(format: "%.2f", $0) } ?? "never") popoverClosed=\(closedAt.map { String(format: "%.2f", $0) } ?? "never")")
 
         // The reader's own reveal still works on the page they are now on.
         var secondControl: NSObject?
