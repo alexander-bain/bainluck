@@ -90,12 +90,21 @@ logger = logging.getLogger(__name__)
 #: `idle_attempted` counts idle reclaims tried (each re-proved under a row
 #: lock, so a busy or protected row retires nothing). `end=deadline` means
 #: the pass's one-second budget ran out before the next idle reclaim could
-#: start. `attempted` stays the missing + retirable count. Report only:
-#: nothing here changes admission, retirement, cap or TTL.
+#: start. `attempted` stays the missing + retirable count.
+#: `policy_attempted` counts idle residents offered to full-bucket policy
+#: retirement, and `reclaimed` counts the idle + policy retirements Redis
+#: acknowledged this pass, so a reclaim that never lands is visible. Report
+#: only: nothing here changes admission, retirement, cap or TTL.
 PREVIEW_CAPACITY_RECEIPT_FORMAT = (
     "live_blend_refresh[%s]: preview capacity pass end=%s candidates=%d missing=%d "
     "retirable=%d attempted=%d live=%d scheduled=%d suspended=%d other=%d "
-    "live_over_6h=%d oldest_live_h=%s idle=%d idle_attempted=%d")
+    "live_over_6h=%d oldest_live_h=%s idle=%d idle_attempted=%d "
+    "policy_attempted=%d reclaimed=%d")
+#: Most idle residents one capacity pass offers each retirement path (#10090).
+#: Each path proves its whole batch in ONE locked DB statement and sends it on
+#: ONE Redis connection; one statement and one lock wait per resident spent
+#: the pass's one-second budget before the pass reached most of them.
+PREVIEW_CAPACITY_BATCH = 32
 PREVIEW_CAPACITY_LIVE_OLD_HOURS = 6.0
 
 
@@ -6454,7 +6463,8 @@ class LiveBlendRefresher:
         from app.tasks.base import get_task_session
         from app.utils.blend_preview import registry
 
-        end, attempted, idle_attempted = None, 0, 0
+        end, attempted, idle_attempted, policy_attempted = None, 0, 0, 0
+        reclaimed_before = self.preview_stats.get("capacity_reclaimed", 0)
         counts = self._preview_capacity_counts((), (), None)
         try:
             async with asyncio.timeout(1) as budget:
@@ -6484,12 +6494,10 @@ class LiveBlendRefresher:
                 if ticket is None:
                     end = "ticket_lost"
                     return
-                for eid in [eid for eid in candidates if eid in idle][:8]:
-                    await self._retire_policy_preview_event(eid, ticket, deadline_ms, when)
-                    ticket, _ = await self._preview_ticket()
-                    if ticket is None:
-                        end = "ticket_lost"
-                        return
+                policy = [eid for eid in candidates if eid in idle][:PREVIEW_CAPACITY_BATCH]
+                if policy:
+                    policy_attempted = len(policy)
+                    await self._retire_policy_preview_events(policy, ticket, deadline_ms, when)
                 # Policy retirement changed the barrier and resident hints.
                 ticket, candidates, idle, _ = await self._preview_ticket(include_candidates=True)
                 if ticket is None or not candidates:
@@ -6537,11 +6545,15 @@ class LiveBlendRefresher:
                 targets = sorted((eid for eid in candidates
                                   if eid not in present or present[eid][2]
                                   or (eid in idle and idle_target(present[eid]))),
-                                 key=priority)[:32]
+                                 key=priority)[:PREVIEW_CAPACITY_BATCH]
+                idle_targets = [eid for eid in targets
+                                if eid in present and not present[eid][2]]
+                lifecycle = [eid for eid in targets if eid not in idle_targets]
                 # Reclaim a bounded batch rather than allowing just one new
                 # event per cadence. Every deletion advances the barrier;
-                # each next proof therefore needs a new ticket AND DB read.
-                for index, eid in enumerate(targets):
+                # each next lifecycle proof therefore needs a new ticket AND
+                # DB read. Missing/retirable rows sort first.
+                for index, eid in enumerate(lifecycle):
                     row = present.get(eid)
                     if index:
                         ticket, _ = await self._preview_ticket()
@@ -6576,11 +6588,18 @@ class LiveBlendRefresher:
                         async with self._session_slot():
                             await self._retire_preview_event(eid, row[1], ticket)
                     elif eid in idle and idle_target(row):
-                        if deadline_ms is None or deadline_ms <= redis_now:
-                            end = "deadline"
+                        # A reread turned this row future-idle: the batch
+                        # below proves it again under its own row lock.
+                        idle_targets.append(eid)
+                if idle_targets:
+                    if attempted:
+                        # Lifecycle retirements moved the barrier.
+                        ticket, _ = await self._preview_ticket()
+                        if ticket is None:
+                            end = "ticket_lost"
                             return
-                        idle_attempted += 1
-                        await self._retire_idle_preview_event(eid, ticket, deadline_ms, when)
+                    idle_attempted = len(idle_targets)
+                    await self._retire_idle_preview_events(idle_targets, ticket, deadline_ms, when)
                 end = "done"
         except Exception:
             end = "error"
@@ -6590,15 +6609,18 @@ class LiveBlendRefresher:
         finally:
             # A cancelled pass (shutdown) leaves end unset and logs nothing.
             if end is not None:
-                self._log_preview_capacity_receipt(end, counts, attempted, idle_attempted)
+                self._log_preview_capacity_receipt(
+                    end, counts, attempted, idle_attempted, policy_attempted,
+                    self.preview_stats.get("capacity_reclaimed", 0) - reclaimed_before)
 
     def _log_preview_capacity_receipt(self, end: str, c: dict, attempted: int,
-                                      idle_attempted: int) -> None:
+                                      idle_attempted: int, policy_attempted: int = 0,
+                                      reclaimed: int = 0) -> None:
         self._capacity_ends[end] = self._capacity_ends.get(end, 0) + 1
         logger.info(PREVIEW_CAPACITY_RECEIPT_FORMAT, self.source, end, c["candidates"],
                     c["missing"], c["retirable"], attempted, c["live"], c["scheduled"],
                     c["suspended"], c["other"], c["live_over_6h"], c["oldest_live_h"],
-                    c["idle"], idle_attempted)
+                    c["idle"], idle_attempted, policy_attempted, reclaimed)
 
     @staticmethod
     def _reservation_context_query(event_ids):
@@ -6648,6 +6670,11 @@ class LiveBlendRefresher:
     async def _retire_policy_preview_event(
         self, event_id: int, ticket: int, deadline_ms: int, when: float,
     ) -> None:
+        await self._retire_policy_preview_events([event_id], ticket, deadline_ms, when)
+
+    async def _retire_policy_preview_events(
+        self, event_ids: list[int], ticket: int, deadline_ms: int, when: float,
+    ) -> None:
         """Fresh locked policy proof, separate from future-idle lifecycle proof.
 
         Redis checks every contributor's owner/deadline atomically and only
@@ -6655,50 +6682,64 @@ class LiveBlendRefresher:
         An uncertain reply keeps the proof locked through the pass deadline;
         Redis refuses retirement at/after its paired cutoff. Clock changes and
         involuntary lock loss retain the same residuals as idle retirement.
+        The whole batch is one locked statement after ``ticket`` and one
+        Redis connection (`LedgerRegistry.prepare_retirements`).
         """
         from types import SimpleNamespace
         from app.tasks.base import get_task_session
         from app.utils.blend_preview import registry
 
         factory = self._session_factory or get_task_session
+        order = {eid: index for index, eid in enumerate(event_ids)}
 
         async def retire(gate):
             async with self._session_slot():
                 if gate is not None:
                     gate.reading = True
                 async with factory() as session:
-                    row = (await session.execute(
-                        self._reservation_context_query([event_id]))).first()
+                    rows = (await session.execute(
+                        self._reservation_context_query(event_ids))).all()
                     # A read the pass deadline outlived proves nothing now.
-                    if gate is not None and gate.read_done() or row is None:
+                    if gate is not None and gate.read_done() or not rows:
                         return None
-                    context = SimpleNamespace(**dict(row._mapping))
-                    op = registry().retire_policy(event_id, self.source, context,
-                                                 context.preview_rev, ticket, deadline_ms)
-                    if op is None:
+                    ops = []
+                    for row in sorted(rows, key=lambda row: order[row.id]):
+                        context = SimpleNamespace(**dict(row._mapping))
+                        op = registry().retire_policy(context.id, self.source, context,
+                                                     context.preview_rev, ticket, deadline_ms)
+                        if op is not None:
+                            op["send_before"] = when
+                            ops.append(op)
+                    if not ops:
                         return []
-                    op["send_before"] = when
                     try:
-                        return await self._prepare_ledger_previews([op])
+                        return await self._prepare_ledger_previews(ops)
                     except BaseException as exc:
                         await self._hold_idle_proof_until(when, exc)
 
         frames = await self._optional_db_in_pass("preview_capacity", retire,
-                                                 _optional_db_key([event_id]))
+                                                 _optional_db_key(event_ids))
         if frames is not None:
             await self._publish_previews(frames)
 
     async def _retire_idle_preview_event(
         self, event_id: int, ticket: int, deadline_ms: int, when: float,
     ) -> None:
+        await self._retire_idle_preview_events([event_id], ticket, deadline_ms, when)
+
+    async def _retire_idle_preview_events(
+        self, event_ids: list[int], ticket: int, deadline_ms: int, when: float,
+    ) -> None:
         """Skip busy rows; hold fresh future-scheduled proof through mutation.
 
         An absent locked result means protected, missing or locked; none authorizes
-        missing-row retirement. Publication happens after releasing the row.
-        An uncertain outcome keeps the lock until the pass deadline; Redis
+        missing-row retirement. Publication happens after releasing the rows.
+        An uncertain outcome keeps the locks until the pass deadline; Redis
         refuses execution at/after its paired cutoff. Redis clock rollback,
         rate drift/failover and involuntary DB lock loss remain residuals:
-        this is not distributed atomicity across the two stores.
+        this is not distributed atomicity across the two stores. The whole
+        batch is one locked statement after ``ticket`` and one Redis
+        connection (`LedgerRegistry.prepare_retirements`).
         """
         from sqlalchemy import func, select
         from app.models.models import Event
@@ -6706,27 +6747,31 @@ class LiveBlendRefresher:
         from app.utils.blend_preview import registry
 
         factory = self._session_factory or get_task_session
+        order = {eid: index for index, eid in enumerate(event_ids)}
 
         async def retire(gate):
             async with self._session_slot():
                 if gate is not None:
                     gate.reading = True
                 async with factory() as session:
-                    row = (await session.execute(select(
-                        Event.status, Event.win_probability_sources_rev,
+                    rows = (await session.execute(select(
+                        Event.id, Event.win_probability_sources_rev,
                     ).where(
-                        Event.id == event_id, Event.status == "scheduled",
+                        Event.id.in_(event_ids), Event.status == "scheduled",
                         Event.commence_time.is_not(None), Event.commence_time > func.now(),
                         Event.completed_at.is_(None),
-                    ).with_for_update(read=True, skip_locked=True))).first()
+                    ).with_for_update(read=True, skip_locked=True))).all()
                     # A read the pass deadline outlived proves nothing now.
-                    if gate is not None and gate.read_done() or row is None:
+                    if gate is not None and gate.read_done() or not rows:
                         return None
-                    operation = registry().retire_idle(event_id, self.source, row[1], ticket,
-                                                       deadline_ms)
-                    operation["send_before"] = when
+                    operations = []
+                    for event_id, rev in sorted(rows, key=lambda row: order[row[0]]):
+                        operation = registry().retire_idle(event_id, self.source, rev, ticket,
+                                                           deadline_ms)
+                        operation["send_before"] = when
+                        operations.append(operation)
                     try:
-                        return await self._prepare_ledger_previews([operation])
+                        return await self._prepare_ledger_previews(operations)
                     except BaseException as exc:
                         # Before session rollback releases FOR SHARE, including on
                         # shutdown, transport errors and repeated cancellation from
@@ -6734,7 +6779,7 @@ class LiveBlendRefresher:
                         await self._hold_idle_proof_until(when, exc)
 
         frames = await self._optional_db_in_pass("preview_capacity", retire,
-                                                 _optional_db_key([event_id]))
+                                                 _optional_db_key(event_ids))
         if frames is not None:
             await self._publish_previews(frames)
 
@@ -6875,6 +6920,10 @@ class LiveBlendRefresher:
                             await self._claim_preview_epoch(connection, preview)
                         call = (self._preview_call(connection, send_before=send_before)
                                 if idle else self._preview_call(connection))
+                        if idle and len(idle) == len(items):
+                            # One capacity batch, proved by one locked read.
+                            return await preview.prepare_retirements(items, call,
+                                                                     self.preview_stats)
                         return await preview.prepare(items, call, self.preview_stats)
                     except BaseException as exc:
                         first_error = exc
