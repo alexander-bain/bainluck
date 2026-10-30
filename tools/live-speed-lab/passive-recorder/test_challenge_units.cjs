@@ -7,17 +7,19 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {createChallengeDriver, validateChallenge, CEILINGS, SCHEMA} = require('./challenge.cjs');
+const crypto = require('crypto');
+const {createChallengeDriver, validateChallenge, CEILINGS, SCHEMA, SCHEMA_SHA256, compact} = require('./challenge.cjs');
 const {createJournal} = require('./journal.cjs');
 
 const T0_MONO = 100000; // collector mono at T0 in the virtual clock
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'challenge-test-'));
 const tok = i => i.toString(16).padStart(16, '0');
-const OP = 'fedcba9876543210';
+const CASE = 'case20261030a';
+const REPLY = `cmr_${CASE}`;
 
 function cfgFor(n, {count = 760, first = -5000, slot = 250, deadline = 150, limits = {}} = {}) {
-  return {operation: OP, reply_channel: `bl_cr_${OP}`,
-    roster: Array.from({length: n}, (_, i) => ({token: tok(i + 1), channel: `bl_cc_${tok(i + 1)}`, run: `run${i}`, pid: 100 + i, role: i ? 'polymarket' : 'kalshi'})),
+  return {case: CASE, reply_channel: REPLY,
+    roster: Array.from({length: n}, (_, i) => ({token: tok(i + 1), channel: `cm_${CASE}_${tok(i + 1)}`, run: `run${i}`, pid: 100 + i, role: i ? 'polymarket' : 'kalshi'})),
     slots: {first_offset_ms: first, slot_ms: slot, count}, deadline_ms: deadline,
     limits: {connect_timeout_ms: 2000, max_wire_bytes_per_incarnation: CEILINGS.max_wire_bytes_per_incarnation, max_wire_bytes_session: CEILINGS.max_wire_bytes_session,
       max_read_overshoot_bytes: 65536, max_journal_bytes_per_incarnation: CEILINGS.max_journal_bytes_per_incarnation, ...limits}};
@@ -58,10 +60,12 @@ function fakeConnection(h, {behave = () => ({delay: 5}), connectDelay = 10, fail
       notify: (ch, payload) => {
         log.notifies.push({ch, payload, at: h.st.t});
         const req = JSON.parse(payload);
-        const b = behave(req) || {};
-        const send = (delay, obj) => h.setTimer(() => api.onNotification(`bl_cr_${OP}`, typeof obj === 'string' ? obj : JSON.stringify(obj)), delay);
-        const rosterPid = 100 + parseInt(req.t, 16) - 1;
-        const reply = {p: SCHEMA.protocol, o: req.o, t: req.t, r: req.r, pid: rosterPid, k: req.k, n: req.n, q: req.k + 1, m: [5000000 + req.k, 5000001 + req.k]};
+        const b = behave({...req, k: req.slot}) || {};
+        const send = (delay, obj) => h.setTimer(() => api.onNotification(REPLY, typeof obj === 'string' ? obj : compact(obj)), delay);
+        const rosterPid = 100 + parseInt(req.tok, 16) - 1;
+        // A clock_marker/1 reply, as the producer writes it (sorted compact JSON).
+        const reply = {v: 1, k: 'm', case: req.case, tok: req.tok, run: req.run, pid: rosterPid, slot: req.slot, nonce: req.nonce,
+          i: req.slot + 1, rx: req.slot + 1, lo: 86400.123456 + req.slot, hi: 86400.123519 + req.slot, q: 1e-06, f: {big: 0, bad: 0, foreign: 0, dup: 0, ord: 0, q: 0, drop: 0}};
         if (b.delay !== null && b.delay !== undefined) {
           const out = b.mutate ? b.mutate({...reply}) : reply;
           if (out !== null) send(b.delay, out);
@@ -95,7 +99,7 @@ test('validate: a full 16-incarnation, 760-slot challenge is accepted', () => {
 });
 
 for (const [name, mut, re] of [
-  ['17 incarnations', c => { c.roster.push({...c.roster[0], token: tok(99), channel: `bl_cc_${tok(99)}`}); for (let i = 0; i < 16; i++) c.roster.push({...c.roster[0], token: tok(200 + i), channel: `bl_cc_${tok(200 + i)}`}); }, /1\.\.16 incarnations/],
+  ['17 incarnations', c => { for (let i = 0; i < 16; i++) c.roster.push({...c.roster[0], token: tok(200 + i), channel: `cm_${CASE}_${tok(200 + i)}`}); }, /1\.\.16 incarnations/],
   ['761 slots', c => { c.slots.count = 761; }, /at most 760/],
   ['slot faster than 250 ms', c => { c.slots.slot_ms = 100; }, /at least 250/],
   ['deadline not below the slot', c => { c.deadline_ms = 250; }, /below slot_ms/],
@@ -103,8 +107,9 @@ for (const [name, mut, re] of [
   ['a slot before the acquisition start', c => { c.slots.first_offset_ms = -5250; }, /inside the acquisition window/],
   ['wire per incarnation above the ceiling', c => { c.limits.max_wire_bytes_per_incarnation = CEILINGS.max_wire_bytes_per_incarnation + 1; }, /at most 2097152/],
   ['connect bound above 2 s', c => { c.limits.connect_timeout_ms = 2001; }, /at most 2000/],
-  ['channel not derived from the token', c => { c.roster[0].channel = `bl_cc_${tok(7)}`; }, /must be bl_cc_<token>/],
-  ['reply channel not derived from the operation', c => { c.reply_channel = 'bl_cr_0000000000000000'; }, /must be bl_cr_<operation>/],
+  ['channel not derived from case and token', c => { c.roster[0].channel = `cm_${CASE}_${tok(7)}`; }, /must be cm_<case>_<token>/],
+  ['reply channel not derived from the case', c => { c.reply_channel = 'cmr_othercase1'; }, /must be cmr_<case>/],
+  ['case outside the producer pattern', c => { c.case = 'Bad-Case'; c.reply_channel = 'cmr_Bad-Case'; }, /grant.challenge.case/],
   ['duplicate token', c => { c.roster[1] = {...c.roster[0]}; }, /duplicate/],
   ['unknown key', c => { c.retry = 1; }, /unknown retry/],
   ['missing limit', c => { delete c.limits.max_read_overshoot_bytes; }, /missing max_read_overshoot_bytes/],
@@ -135,12 +140,14 @@ test('driver: 2 incarnations x 760 slots, timely replies -> COMPLETE, S < R on C
   // Slots sit on the predeclared grid, T0-5 s .. T0+184.75 s, never after +185 s.
   assert.strictEqual(Math.min(...ex.map(e => e.s_since_t0_ms[0])), -5000);
   assert.strictEqual(Math.max(...ex.map(e => e.s_since_t0_ms[0])), 184750);
-  assert.ok(fc.log.notifies.every(x => Buffer.byteLength(x.payload) <= 256));
-  assert.deepStrictEqual(fc.log.listened, [`bl_cr_${OP}`]);
+  assert.ok(fc.log.notifies.every(x => Buffer.byteLength(x.payload) <= SCHEMA.request.max_bytes));
+  // Each request is exactly the producer's request shape.
+  assert.ok(fc.log.notifies.every(x => JSON.stringify(Object.keys(JSON.parse(x.payload))) === JSON.stringify(SCHEMA.request.keys)));
+  assert.deepStrictEqual(fc.log.listened, [REPLY]);
   assert.strictEqual(fc.log.connectArgs.max_pending, 2);
   assert.strictEqual(fc.log.connectArgs.wire_cap_bytes, 2 * 2097152 + 1048576);
   // Raw reply retained verbatim, with the producer marker untouched.
-  assert.deepStrictEqual(JSON.parse(ex[0].raw).m, [5000000, 5000001]);
+  assert.deepStrictEqual([JSON.parse(ex[0].raw).lo, JSON.parse(ex[0].raw).hi], [86400.123456, 86400.123519]);
 });
 
 test('driver: a reply after the 150 ms deadline is retained as late, never as timely coverage', async () => {
@@ -170,20 +177,23 @@ test('driver: a reply late but before expiry is still late, not timely', async (
 
 test('driver: spoofed, replayed, wrong-binding, malformed and oversize replies are counted drops, never exchanges', async () => {
   const bad = [
-    [1, r => ({...r, n: 'f'.repeat(32)})], // wrong nonce
+    [1, r => ({...r, nonce: 'f'.repeat(32)})], // wrong nonce
     [1, r => ({...r, pid: 999})], // wrong pid
-    [1, r => ({...r, r: 'other'})], // stale run
-    [1, r => ({...r, t: tok(42)})], // unknown token
-    [1, r => ({...r, o: '0000000000000000'})], // other operation
-    [1, r => ({...r, m: [9, 3]})], // inverted marker
-    [1, r => ({...r, m: [1.5, 2]})], // non-integer marker
-    [1, r => ({...r, q: 0})], // bad sequence
-    [1, r => ({...r, k: 5})], // a slot never sent
-    [1, r => JSON.stringify(r).replace('"q"', '"x"')], // wrong keys
-    [1, r => '{"p":"bl-cc/1","p":"bl-cc/1"}'], // duplicate key
+    [1, r => ({...r, run: 'other'})], // stale run
+    [1, r => ({...r, tok: tok(42)})], // unrostered token
+    [1, r => ({...r, case: 'othercase1'})], // other case
+    [1, r => ({...r, lo: 9, hi: 3})], // inverted marker
+    [1, r => ({...r, q: 1e-3})], // wrong quantum
+    [1, r => ({...r, i: 0})], // bad ordinal
+    [1, r => ({...r, f: {...r.f, nope: 1}})], // unknown fault counter
+    [1, r => ({...r, slot: 5})], // a slot never sent
+    [1, r => { const x = {...r}; delete x.rx; return x; }], // wrong keys
+    [1, r => ({...r, k: 'zz'})], // unknown kind
+    [1, () => '{"v":1,"v":1}'], // duplicate key
     [1, () => '{not json'],
-    [1, r => JSON.stringify({...r, n: r.n + 'x'.repeat(600)})], // oversize
+    [1, r => compact({...r, nonce: r.nonce + 'x'.repeat(600)})], // oversize
   ];
+
   const {h, driver, lines} = setup(1, {count: 3, first: 0}, {behave: req => (req.k === 0 ? {delay: 20, extra: [...bad, [30, r => r] /* replay after accept */]} : {delay: 5})});
   const started = driver.start();
   await h.runUntil(T0_MONO + 1500);
@@ -192,9 +202,11 @@ test('driver: spoofed, replayed, wrong-binding, malformed and oversize replies a
   const s = driver.summary();
   const ex = exchanges(lines());
   assert.deepStrictEqual(ex.map(e => [e.k, e.outcome]), [[0, 'reply'], [1, 'reply'], [2, 'reply']]);
+  // The accepted slot-0 exchange is the genuine reply (20 ms), not any earlier bad one (1 ms).
+  assert.strictEqual(ex[0].R - ex[0].S, 20);
   const totalDrops = Object.values(s.drops).reduce((a, b) => a + b, 0);
   assert.strictEqual(totalDrops, bad.length + 1);
-  for (const k of ['reply-unmatched', 'reply-wrong-binding', 'reply-unknown-token', 'reply-wrong-operation', 'reply-bad-marker', 'reply-wrong-keys', 'reply-malformed', 'reply-oversize', 'reply-duplicate']) assert.ok(s.drops[k] >= 1, k);
+  for (const k of ['reply-unmatched', 'reply-wrong-binding', 'reply-unrostered', 'reply-wrong-case', 'reply-bad-marker', 'reply-wrong-keys', 'reply-unknown-kind', 'reply-malformed', 'reply-oversize', 'reply-duplicate']) assert.ok(s.drops[k] >= 1, k);
   assert.strictEqual(s.status, 'INCOMPLETE', 'any drop keeps the challenge from COMPLETE');
 });
 
@@ -203,7 +215,7 @@ test('driver: a foreign channel is dropped; the collector receipt R is the clock
   const started = driver.start();
   await h.runUntil(T0_MONO + 100);
   await started;
-  driver.onNotification('bl_cr_0000000000000000', '{}');
+  driver.onNotification('cmr_othercase1', '{}');
   await h.runUntil(T0_MONO + 1000);
   await driver.stop('deadline');
   assert.strictEqual(driver.summary().drops['foreign-channel'], 1);
@@ -224,7 +236,7 @@ test('driver: a late timer never sends the slots it missed (no catch-up burst)',
   await h.runUntil(T0_MONO + 10500);
   await driver.stop('deadline');
   const s = driver.summary();
-  const sentKs = fc.log.notifies.map(x => JSON.parse(x.payload).k);
+  const sentKs = fc.log.notifies.map(x => JSON.parse(x.payload).slot);
   assert.deepStrictEqual(sentKs, [...new Set(sentKs)].sort((a, b) => a - b), 'each slot at most once, in order');
   assert.ok(s.domains[0].gaps.some(g => g[2] === 'timer-late'));
   assert.strictEqual(s.domains[0].sent + s.domains[0].skipped, 40);
@@ -314,4 +326,30 @@ test('driver: stop expires outstanding requests, sends nothing after, and does n
   assert.ok(s.counters.after_stop >= 1);
   const ex = exchanges(lines());
   assert.strictEqual(ex[ex.length - 1].outcome, 'no-reply-at-stop');
+});
+
+test('schema: the vendored clock_marker/1 fixture is byte-identical to Authority\'s pinned one', () => {
+  const bytes = fs.readFileSync(path.join(__dirname, 'clock_marker_10090_schema.json'));
+  assert.strictEqual(crypto.createHash('sha256').update(bytes).digest('hex'), SCHEMA_SHA256);
+  assert.strictEqual(SCHEMA.schema, 'clock_marker/1');
+});
+
+test('driver: a rostered bind is journaled; an unrostered bind is a coverage hole; a producer end stops that incarnation', async () => {
+  const bind = r => ({v: 1, k: 'bind', case: CASE, tok: r.tok, run: r.run, pid: r.pid, ch: `cm_${CASE}_${r.tok}`, listen: 1, clock: 'time.monotonic', mono: 86400.5,
+    exp: 1.8e9, slots: 760, dyno: 'worker-ws.1', rel: 'v1', commit: 'c'.repeat(40), boot: 'b'});
+  const end = r => ({v: 1, k: 'end', case: CASE, tok: r.tok, run: r.run, pid: r.pid, why: 'MARKER_CAP', i: 3, rx: 3, f: {big: 0}, pb: 1, wb: 2});
+  const {h, driver, lines, fc} = setup(1, {count: 12, first: 0}, {behave: req => (req.slot === 0 ? {delay: 5, extra: [[1, r => bind(r)], [2, r => bind({...r, tok: tok(77)})]]} : req.slot === 3 ? {delay: 5, extra: [[20, r => end(r)]]} : {delay: 5})});
+  const started = driver.start();
+  await h.runUntil(T0_MONO + 3500);
+  await started;
+  await driver.stop('deadline');
+  const s = driver.summary();
+  const ls = lines();
+  assert.strictEqual(ls.filter(l => l.kind === 'challenge-bind').length, 1);
+  assert.strictEqual(ls.filter(l => l.kind === 'challenge-end').length, 1);
+  assert.strictEqual(s.drops['bind-unrostered'], 1);
+  assert.ok(s.holes.includes('challenge-unrostered-incarnation'));
+  assert.deepStrictEqual(s.domains[0].stopped.reason, 'producer-end:MARKER_CAP');
+  assert.strictEqual(s.domains[0].sent, 4, 'no request after the producer said it ended');
+  assert.strictEqual(fc.log.notifies.length, 4);
 });

@@ -29,7 +29,7 @@ const SAMPLE_GAP_HOLE_MS = 300;
 const CHECKPOINT_EVERY_MS = 15000;
 const TEARDOWN_BUDGET_MS = 20000;
 const RECORDER_FILES = ['passive_case_recorder.cjs', 'contract.cjs', 'transport.cjs', 'journal.cjs', 'clock.cjs',
-  'page_hooks.cjs', 'primary_recorder.cjs', 'challenge.cjs', 'challenge_schema.json'];
+  'page_hooks.cjs', 'primary_recorder.cjs', 'challenge.cjs', 'clock_marker_10090_schema.json'];
 // Page acks awaiting the next record; the in-page buffer refuses (and counts) beyond this.
 const PAGE_ACK_PENDING_CAP = 512;
 const QUAL_ENV = 'PASSIVE_RECORDER_QUAL_FAULT';

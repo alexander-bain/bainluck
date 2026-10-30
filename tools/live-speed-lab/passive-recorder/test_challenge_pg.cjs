@@ -16,36 +16,38 @@ const os = require('os');
 const path = require('path');
 const tls = require('tls');
 const {createPgConnectionFactory} = require('./pg_transport.cjs');
-const {createChallengeDriver, CEILINGS, SCHEMA} = require('./challenge.cjs');
+const {createChallengeDriver, CEILINGS, SCHEMA, compact} = require('./challenge.cjs');
 const {createJournal} = require('./journal.cjs');
 
 const PG_MODULE = process.env.CHALLENGE_PG_MODULE, PG_URL = process.env.CHALLENGE_PG_URL;
 const skip = !PG_MODULE || !PG_URL ? 'CHALLENGE_PG_MODULE and CHALLENGE_PG_URL (loopback) are required' : false;
 const pg = skip ? null : require(path.resolve(PG_MODULE));
-const OP = crypto.randomBytes(8).toString('hex');
-const REPLY = `bl_cr_${OP}`;
+const CASE = `pgctl${crypto.randomBytes(5).toString('hex')}`;
+const REPLY = `cmr_${CASE}`;
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'challenge-pg-'));
 const LIMITS = {connect_timeout_ms: 2000, max_wire_bytes_per_incarnation: CEILINGS.max_wire_bytes_per_incarnation,
   max_wire_bytes_session: CEILINGS.max_wire_bytes_session, max_read_overshoot_bytes: 65536, max_journal_bytes_per_incarnation: CEILINGS.max_journal_bytes_per_incarnation};
 const connArgs = (over = {}) => ({onNotification: () => {}, onClose: () => {}, wire_cap_bytes: 1 << 20, max_pending: 4, statement_timeout_ms: 150,
   connect_timeout_ms: 2000, read_overshoot_bytes: 65536, ...over});
 
-// A stand-in producer incarnation: LISTENs on its request channel and replies
-// per the schema, stamping its marker with its own monotonic clock.
+// A stand-in producer incarnation speaking clock_marker/1: LISTENs on its
+// request channel and replies with lo/hi from its own monotonic clock.
 async function producer({url = PG_URL, token, run, pid, delayFor = () => 0}) {
   const c = new pg.Client({connectionString: url});
   await c.connect();
-  let q = 0;
+  let i = 0, rx = 0;
   c.on('notification', m => {
-    const lo = process.hrtime.bigint();
+    const lo = performance.now() / 1000;
+    rx++;
     const r = JSON.parse(m.payload);
-    if (r.t !== token || r.r !== run) return;
-    const hi = process.hrtime.bigint();
-    const reply = JSON.stringify({p: SCHEMA.protocol, o: r.o, t: token, r: run, pid, k: r.k, n: r.n, q: ++q,
-      m: [Number(lo / 1000n), Number((hi + 999n) / 1000n)]});
-    setTimeout(() => c.query('SELECT pg_notify($1, $2)', [`bl_cr_${r.o}`, reply]).catch(() => {}), delayFor(r.k));
+    if (r.case !== CASE || r.tok !== token || r.run !== run) return;
+    setTimeout(() => {
+      const reply = compact({v: 1, k: 'm', case: CASE, tok: token, run, pid, slot: r.slot, nonce: r.nonce, i: ++i, rx,
+        lo: Math.round(lo * 1e6) / 1e6, hi: Math.round(performance.now() / 1000 * 1e6) / 1e6, q: 1e-06, f: {big: 0, bad: 0, foreign: 0, dup: 0, ord: 0, q: 0, drop: 0}});
+      c.query('SELECT pg_notify($1, $2)', [REPLY, reply]).catch(() => {});
+    }, delayFor(r.slot));
   });
-  await c.query(`LISTEN bl_cc_${token}`);
+  await c.query(`LISTEN cm_${CASE}_${token}`);
   return c;
 }
 
@@ -64,7 +66,7 @@ test('pg driver: two incarnations over one real connection, every slot answered,
   const prods = await Promise.all(tokens.map((t, i) => producer({token: t, run: `run${i}`, pid: 4000 + i})));
   const dir = tmp();
   const journal = createJournal({dir, limits: {max_record_bytes: 262144, max_saved_bytes: 50_000_000, reserved_stop_bytes: 65536}, onExhausted: () => {}});
-  const cfg = {operation: OP, reply_channel: REPLY, roster: tokens.map((t, i) => ({token: t, channel: `bl_cc_${t}`, run: `run${i}`, pid: 4000 + i, role: 'standin'})),
+  const cfg = {case: CASE, reply_channel: REPLY, roster: tokens.map((t, i) => ({token: t, channel: `cm_${CASE}_${t}`, run: `run${i}`, pid: 4000 + i, role: 'standin'})),
     slots: {first_offset_ms: 0, slot_ms: 250, count: 12}, deadline_ms: 150, limits: LIMITS};
   const driver = createChallengeDriver({cfg, connect: createPgConnectionFactory({pgModuleDir: PG_MODULE, connectionString: PG_URL}), clock: realClock(), journal, setTimer: setTimeout});
   assert.strictEqual(await driver.start(), 'RUNNING');
@@ -88,7 +90,7 @@ test('pg driver: a producer reply later than the deadline is retained as late', 
   const prod = await producer({token, run: 'late', pid: 4100, delayFor: k => (k === 2 ? 320 : 0)});
   const dir = tmp();
   const journal = createJournal({dir, limits: {max_record_bytes: 262144, max_saved_bytes: 50_000_000, reserved_stop_bytes: 65536}, onExhausted: () => {}});
-  const cfg = {operation: OP, reply_channel: REPLY, roster: [{token, channel: `bl_cc_${token}`, run: 'late', pid: 4100, role: 'standin'}],
+  const cfg = {case: CASE, reply_channel: REPLY, roster: [{token, channel: `cm_${CASE}_${token}`, run: 'late', pid: 4100, role: 'standin'}],
     slots: {first_offset_ms: 0, slot_ms: 250, count: 6}, deadline_ms: 150, limits: LIMITS};
   const driver = createChallengeDriver({cfg, connect: createPgConnectionFactory({pgModuleDir: PG_MODULE, connectionString: PG_URL}), clock: realClock(), journal, setTimer: setTimeout});
   await driver.start();
@@ -108,7 +110,7 @@ test('pg transport: a write that would cross the cap is refused before it is sen
   const w0 = conn.wire();
   let refused = null;
   for (let i = 0; i < 50 && !refused; i++) {
-    try { await conn.notify(`bl_cc_${'0'.repeat(16)}`, 'x'.repeat(200)); } catch (e) { refused = e; }
+    try { await conn.notify(`cm_${CASE}_${'0'.repeat(16)}`, 'x'.repeat(200)); } catch (e) { refused = e; }
   }
   const w = conn.wire();
   await conn.close();
@@ -162,11 +164,11 @@ test('pg transport over TLS: handshake, records and framing are counted at the s
   const conn = await connect(connArgs({onNotification: (c, p) => notes.push(p)}));
   const hs = conn.wire();
   await conn.listen(REPLY);
-  const payload = k => JSON.stringify({p: SCHEMA.protocol, o: OP, t: token, r: 'tls', k, n: crypto.randomBytes(16).toString('hex')});
-  await conn.notify(`bl_cc_${token}`, payload(0));
+  const payload = k => compact({v: 1, case: CASE, tok: token, run: 'tls', slot: k, nonce: crypto.randomBytes(16).toString('hex')});
+  await conn.notify(`cm_${CASE}_${token}`, payload(0));
   await new Promise(r => setTimeout(r, 100));
   const w0 = conn.wire();
-  for (let k = 1; k <= 40; k++) { await conn.notify(`bl_cc_${token}`, payload(k)); await new Promise(r => setTimeout(r, 10)); }
+  for (let k = 1; k <= 40; k++) { await conn.notify(`cm_${CASE}_${token}`, payload(k)); await new Promise(r => setTimeout(r, 10)); }
   await new Promise(r => setTimeout(r, 200));
   const w1 = conn.wire();
   await conn.close();

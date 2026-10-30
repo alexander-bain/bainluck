@@ -20,8 +20,9 @@ const path = require('path');
 const {Duplex} = require('stream');
 const {LOOPBACK} = require('./contract.cjs');
 
-const REPLY_CHANNEL_RE = /^bl_cr_[0-9a-f]{16}$/;
-const REQUEST_CHANNEL_RE = /^bl_cc_[0-9a-f]{16}$/;
+// clock_marker/1 channels (Authority's schema): request cm_<case>_<tok>, reply cmr_<case>.
+const REPLY_CHANNEL_RE = /^cmr_[a-z0-9]{8,24}$/;
+const REQUEST_CHANNEL_RE = /^cm_[a-z0-9]{8,24}_[0-9a-f]{16}$/;
 const NOTIFY_STATEMENT = 'SELECT pg_notify($1, $2)';
 
 class MeteredSocket extends Duplex {

@@ -21,7 +21,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const {receiptBounds} = require('./receipt_bounds_reference.cjs');
-const {CEILINGS, SCHEMA} = require('./challenge.cjs');
+const {CEILINGS, compact} = require('./challenge.cjs');
 
 const args = {};
 for (let i = 2; i < process.argv.length; i += 2) args[process.argv[i].slice(2)] = process.argv[i + 1];
@@ -103,18 +103,21 @@ function runRecorder(recorderDir, c, scen0) {
   });
 }
 
-async function producer(token, run, pid) {
+// A stand-in producer speaking clock_marker/1 (Authority's real producer is PR #11775).
+async function producer(caseId, token, run, pid) {
   const c = new pg.Client({connectionString: args['pg-url']});
   await c.connect();
-  let q = 0;
+  let i = 0, rx = 0;
   c.on('notification', msg => {
-    const lo = process.hrtime.bigint();
+    const lo = performance.now() / 1000;
+    rx++;
     const r = JSON.parse(msg.payload);
-    if (r.t !== token || r.r !== run) return;
-    const hi = process.hrtime.bigint();
-    c.query('SELECT pg_notify($1, $2)', [`bl_cr_${r.o}`, JSON.stringify({p: SCHEMA.protocol, o: r.o, t: token, r: run, pid, k: r.k, n: r.n, q: ++q, m: [Number(lo / 1000n), Number((hi + 999n) / 1000n)]})]).catch(() => {});
+    if (r.case !== caseId || r.tok !== token || r.run !== run) return;
+    const hi = performance.now() / 1000;
+    c.query('SELECT pg_notify($1, $2)', [`cmr_${caseId}`, compact({v: 1, k: 'm', case: caseId, tok: token, run, pid, slot: r.slot, nonce: r.nonce, i: ++i, rx,
+      lo: Math.round(lo * 1e6) / 1e6, hi: Math.round(hi * 1e6) / 1e6, q: 1e-06, f: {big: 0, bad: 0, foreign: 0, dup: 0, ord: 0, q: 0, drop: 0}})]).catch(() => {});
   });
-  await c.query(`LISTEN bl_cc_${token}`);
+  await c.query(`LISTEN cm_${caseId}_${token}`);
   return c;
 }
 
@@ -164,21 +167,21 @@ function checkBrackets(caseName, run, scen, {expectHeadlineProvable}) {
 }
 
 (async () => {
-  const opA = crypto.randomBytes(8).toString('hex');
+  const caseA = `lifea${crypto.randomBytes(5).toString('hex')}`;
   const tokens = [crypto.randomBytes(8).toString('hex'), crypto.randomBytes(8).toString('hex')];
-  const challengeA = {operation: opA, reply_channel: `bl_cr_${opA}`, roster: tokens.map((t, i) => ({token: t, channel: `bl_cc_${t}`, run: `run${i}`, pid: 5001 + i, role: i ? 'polymarket-standin' : 'kalshi-standin'})),
+  const challengeA = {case: caseA, reply_channel: `cmr_${caseA}`, roster: tokens.map((t, i) => ({token: t, channel: `cm_${caseA}_${t}`, run: `run${i}`, pid: 5001 + i, role: i ? 'polymarket-standin' : 'kalshi-standin'})),
     slots: {first_offset_ms: -5000, slot_ms: 250, count: 760}, deadline_ms: 150,
     limits: {connect_timeout_ms: 2000, max_wire_bytes_per_incarnation: CEILINGS.max_wire_bytes_per_incarnation, max_wire_bytes_session: CEILINGS.max_wire_bytes_session,
       max_read_overshoot_bytes: 65536, max_journal_bytes_per_incarnation: CEILINGS.max_journal_bytes_per_incarnation}};
-  const opC = crypto.randomBytes(8).toString('hex');
-  const challengeC = {...challengeA, operation: opC, reply_channel: `bl_cr_${opC}`};
+  const caseC = `lifec${crypto.randomBytes(5).toString('hex')}`;
+  const challengeC = {...challengeA, case: caseC, reply_channel: `cmr_${caseC}`, roster: challengeA.roster.map(r => ({...r, channel: `cm_${caseC}_${r.token}`}))};
   const A = buildCase('A', {challenge: challengeA, connection: `module.exports.connect = require(${JSON.stringify(path.join(HERE, 'pg_transport.cjs'))}).createPgConnectionFactory({pgModuleDir: ${JSON.stringify(path.resolve(args['pg-module']))}, connectionString: ${JSON.stringify(args['pg-url'])}});\n`});
   const B = buildCase('B', {});
   const C = buildCase('C', {challenge: challengeC, connection: "module.exports.connect = async () => { throw Object.assign(new Error('refused by the lifecycle control'), {code: 'ECONNREFUSED'}); };\n"});
   const D = buildCase('D', {});
   const scen = {A: scenario({}), B: scenario({d1_ms: [50, 400], d2_ms: [50, 300], stall: {at_ms: INPUT + 1150, ms: 600}, never_resolve_after_ms: 183500}),
     C: scenario({replace_document_at_ms: 90000}), D: scenario({})};
-  const prods = await Promise.all(tokens.map((t, i) => producer(t, `run${i}`, 5001 + i)));
+  const prods = await Promise.all(tokens.map((t, i) => producer(caseA, t, `run${i}`, 5001 + i)));
   console.log(`T0 ${iso(T0)}; four recorders start now; done about ${iso(T0 + 200000)}`);
   const [rA, rB, rC, rD] = await Promise.all([runRecorder(HERE, A, scen.A), runRecorder(HERE, B, scen.B), runRecorder(HERE, C, scen.C), runRecorder(path.resolve(args['old-recorder']), D, scen.D)]);
   await Promise.all(prods.map(p => p.end()));

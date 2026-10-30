@@ -157,8 +157,8 @@ function bundle(dir, {scope = 'local', challenge = undefined} = {}) {
   fs.writeFileSync(gPath, JSON.stringify(g));
   return {manifest: mPath, manifestSha256: mSha, grant: gPath, grantSha256: sha(fs.readFileSync(gPath)), scope, now: Date.now()};
 }
-const goodChallenge = () => ({operation: 'fedcba9876543210', reply_channel: 'bl_cr_fedcba9876543210',
-  roster: [{token: '0123456789abcdef', channel: 'bl_cc_0123456789abcdef', run: 'a1b2c3d4', pid: 11, role: 'kalshi'}],
+const goodChallenge = () => ({case: 'case20261030a', reply_channel: 'cmr_case20261030a',
+  roster: [{token: '0123456789abcdef', channel: 'cm_case20261030a_0123456789abcdef', run: 'a1b2c3d4', pid: 11, role: 'kalshi'}],
   slots: {first_offset_ms: -5000, slot_ms: 250, count: 760}, deadline_ms: 150,
   limits: {connect_timeout_ms: 2000, max_wire_bytes_per_incarnation: CEILINGS.max_wire_bytes_per_incarnation, max_wire_bytes_session: CEILINGS.max_wire_bytes_session,
     max_read_overshoot_bytes: 65536, max_journal_bytes_per_incarnation: CEILINGS.max_journal_bytes_per_incarnation}});
