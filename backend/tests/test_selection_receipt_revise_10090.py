@@ -41,7 +41,8 @@ from tests.test_preview_state_join_10090 import (
     registry, stage, wire,
 )
 from tests.test_selection_receipt_10090 import (  # noqa: F401
-    FakeLedger, _legacy_registry, attach, refresher_for, select, selector, speaker, traced,
+    FakeLedger, _legacy_registry, _no_hostname_lookup, attach, no_admission_socket, refresher_for,
+    select, selector, speaker, traced,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -101,6 +102,7 @@ def batch_rig(monkeypatch, events=(1, 2)):
     attach(r, trace)
     selector(monkeypatch, speaker())
     monkeypatch.setattr(blend_preview, "_REGISTRY", FakeLedger())
+    no_admission_socket(monkeypatch, r)
     return r, session, lines
 
 
@@ -210,6 +212,7 @@ async def test_a_compose_error_is_named(monkeypatch):
             raise RuntimeError("compose failed")
 
     monkeypatch.setattr(blend_preview, "_REGISTRY", Broken())
+    no_admission_socket(monkeypatch, r)
     _capture_previews(monkeypatch, r, session)
     await r.refresh([1])
     (selected,) = stage(lines, "SELECTED")
@@ -224,6 +227,7 @@ async def test_a_recheck_that_changed_is_named(monkeypatch):
     trace, lines = traced(event=1, outcome=rows[0].id)
     attach(r, trace)
     monkeypatch.setattr(blend_preview, "_REGISTRY", FakeLedger())
+    no_admission_socket(monkeypatch, r)
     monkeypatch.setattr(r, "_current_reading_proof", lambda *a, **k: {"proof": True})
     import app.utils.live_blend as live_blend
 
@@ -250,6 +254,7 @@ async def test_the_observation_routes_error_closer_names_open_selections(monkeyp
     trace, lines = traced(event=1, outcome=rows[0].id)
     attach(r, trace)
     monkeypatch.setattr(blend_preview, "_REGISTRY", FakeLedger())
+    no_admission_socket(monkeypatch, r)
 
     async def broken(initial, *, prepare_frames=None):
         await prepare_frames()
