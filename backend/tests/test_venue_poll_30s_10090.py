@@ -127,13 +127,12 @@ def test_items_for_a_polymarket_market_are_its_own_conditions_only():
 # ── the history bound ─────────────────────────────────────────────────────────
 
 
-def _poll(last_point=None, stored=None, now=None):
+def _poll(stored=None, now=None):
     now = now or datetime(2026, 10, 30, 14, 0, tzinfo=timezone.utc)
     return v.PollWrite(
         fetched_at=now,
         now=now,
         stored=stored or {},
-        last_point=last_point or {},
         allowed=frozenset({1, 2}),
     )
 
@@ -156,31 +155,79 @@ def test_history_points_on_change_at_most_one_per_interval_unless_the_move_is_bi
     now = datetime(2026, 10, 30, 14, 0, tzinfo=timezone.utc)
     recent = now - timedelta(seconds=10)
     old = now - timedelta(seconds=v.HISTORY_MIN_INTERVAL_S + 1)
-    stats = {}
-    assert _poll(now=now).history(1, 0.5, stats) is True  # no point yet
-    assert _poll({1: (recent, 0.5)}, now=now).history(1, 0.5, stats) is False  # no change
-    assert _poll({1: (recent, 0.5)}, now=now).history(1, 0.51, stats) is False  # deferred
-    assert stats["history_deferred"] == 1
-    assert _poll({1: (recent, 0.5)}, now=now).history(1, 0.5 + v.HISTORY_BIG_MOVE, stats) is True
-    assert _poll({1: (old, 0.5)}, now=now).history(1, 0.51, stats) is True
+    poll = _poll(now=now)
+    assert poll.point_due(None, 0.5) == "first"
+    assert poll.point_due((recent, 0.5), 0.5) is None  # no change
+    assert poll.point_due((recent, 0.5), 0.51) == "deferred"
+    assert poll.point_due((recent, 0.5), 0.5 + v.HISTORY_BIG_MOVE) == "big_move"
+    assert poll.point_due((old, 0.5), 0.51) == "interval"
 
 
-def test_a_deferred_move_gains_its_point_once_the_interval_passes():
-    now = datetime(2026, 10, 30, 14, 0, tzinfo=timezone.utc)
-    poll = _poll({1: (now - timedelta(seconds=10), 0.50)}, stored={1: (0.51, 0.5, 0.52)}, now=now)
-    poll.admit(1, 0.51, 0.5, 0.52, {})
-    assert poll.trailing() == []  # still inside the interval
-    later = _poll({1: (now - timedelta(seconds=10), 0.50)}, stored={1: (0.51, 0.5, 0.52)},
-                  now=now + timedelta(seconds=v.HISTORY_MIN_INTERVAL_S))
-    later.admit(1, 0.51, 0.5, 0.52, {})
-    assert later.trailing() == [(1, (0.51, 0.5, 0.52))]
-    assert later.trailing() == []  # once
+class _FakeRedis:
+    def __init__(self):
+        self.sets: dict = {}
+        self.hashes: dict = {}
+
+    def smismember(self, key, ids):
+        held = self.sets.get(key, set())
+        return [1 if i in held else 0 for i in ids]
+
+    def sadd(self, key, *ids):
+        self.sets.setdefault(key, set()).update(ids)
+
+    def srem(self, key, *ids):
+        self.sets.setdefault(key, set()).difference_update(ids)
+
+    def expire(self, *_a):
+        return True
+
+    def hmget(self, key, fields):
+        return [self.hashes.get(key, {}).get(f) for f in fields]
+
+    def hset(self, key, mapping):
+        self.hashes.setdefault(key, {}).update(mapping)
 
 
-def test_an_unchanged_leg_with_no_history_gains_no_point_just_for_being_read():
-    poll = _poll(stored={1: (0.4, 0.39, 0.41)})
-    poll.admit(1, 0.4, 0.39, 0.41, {})
-    assert poll.trailing() == []
+def test_deferred_points_round_trip_through_redis(monkeypatch):
+    fake = _FakeRedis()
+    monkeypatch.setattr(v, "_redis", lambda: fake)
+    first = v.DeferredPoints.read([1, 2])
+    assert first.members == set()
+    first.add |= {1, 2}
+    first.save()
+    second = v.DeferredPoints.read([1, 2, 3])
+    assert second.members == {1, 2}
+    second.remove.add(1)
+    second.save()
+    assert v.DeferredPoints.read([1, 2]).members == {2}
+
+
+def test_unreadable_deferred_points_read_as_none(monkeypatch):
+    def boom():
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(v, "_redis", boom)
+    points = v.DeferredPoints.read([1])
+    assert points.members == set()
+    points.add.add(1)
+    points.save()  # logged, never raised
+
+
+def test_a_polymarket_market_is_skipped_only_when_every_priced_leg_is_unchanged():
+    item = {
+        "external_id": "0xa", "probability": 0.46, "yes_bid": 0.42, "yes_ask": 0.5,
+        "no": {"probability": 0.54, "yes_bid": 0.5, "yes_ask": 0.58},
+    }
+    legs = [(1, "0xa_yes"), (2, "0xa_no"), (3, "0xb")]  # 0xb: not priced, not judged
+    stored = {1: (0.46, 0.42, 0.5), 2: (0.54, 0.5, 0.58)}
+    none = v.DeferredPoints()
+    assert v._pm_market_unchanged(legs, [item], stored, none) is True
+    # the second leg takes item["no"] — `_write_prices`' own `_legs` convention
+    assert v._pm_market_unchanged(legs, [item], {**stored, 2: (0.46, 0.42, 0.5)}, none) is False
+    assert v._pm_market_unchanged([(4, "0xa"), (5, "0xa_side1")], [item],
+                                  {4: (0.46, 0.42, 0.5), 5: (0.54, 0.5, 0.58)}, none) is True
+    assert v._pm_market_unchanged(legs, [item], {1: stored[1]}, none) is False  # no row
+    assert v._pm_market_unchanged(legs, [item], stored, v.DeferredPoints(frozenset({2}))) is False
 
 
 # ── hand-off: the sockets' own windows ────────────────────────────────────────

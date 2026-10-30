@@ -71,7 +71,10 @@ PRICING: the existing rules, by reuse
 * Polymarket: ``futures_price_refresh._fetch_polymarket_prices`` unchanged —
   Gamma events by id, the resolver (gotcha 19), field coherence (#1527), the
   parent-book refusal (#10298), the complementary book for a ``_no`` leg, and a
-  closed event as settled.
+  closed event as settled. Under ``VENUE_POLL_30S_PM_SOURCE=clob`` the pass
+  reads CLOB token prices first under the socket's own book rule
+  (:mod:`app.tasks.venue_poll_pm_clob`), and this Gamma rotation prices only
+  the legs that read gave no usable book.
 * Both write through ``futures_price_refresh._write_prices`` with a
   :class:`PollWrite`: its out-of-range, empty-book (#6676/#9083), unknown-leg and
   settled-leg refusals all hold, plus write-only-if-changed, the newer-writer
@@ -84,8 +87,11 @@ A chart point (``futures_odds_snapshots``, the table and writer every futures
 chart reads) is written when the price differs from the outcome's last point
 AND either ``HISTORY_MIN_INTERVAL_S`` has passed since it or the move is at
 least ``HISTORY_BIG_MOVE``. A move inside the interval updates the row now and
-gains its point on the first pass after the interval (:meth:`PollWrite.trailing`),
+gains its point on the first pass after the interval (:class:`DeferredPoints`),
 so the chart's tail never disagrees with the row for longer than the interval.
+The decision is taken after the write, on the last points of only the legs that
+moved or hold a deferred point: that lateral read measured 3.0 s per 1,000 legs
+on production (2026-10-30, cold), the stored-price read 4.5 ms.
 Points are only ever written on a change, so ``collapse_snapshots``' equal-run
 pass finds nothing extra to delete, and #10955's retention and settlement rules
 are untouched.
@@ -555,22 +561,68 @@ def _same(a, b, eps: float) -> bool:
     return abs(float(a) - float(b)) < eps
 
 
+class DeferredPoints:
+    """Outcomes whose chart point the history bound deferred, shared by passes.
+
+    A Redis set, because the pass that deferred a point and the pass that is due
+    to write it can run in different worker processes. Fail-open both ways: an
+    unreadable set reads as empty (the deferred point then waits for the leg's
+    next move), and an unsaved change is logged, never raised.
+    """
+
+    KEY = f"{_KEY_PREFIX}:deferred_points"
+    TTL_S = 3600
+
+    def __init__(self, members: frozenset = frozenset()):
+        self.members = set(members)
+        self.add: set[int] = set()
+        self.remove: set[int] = set()
+
+    @classmethod
+    def read(cls, outcome_ids) -> "DeferredPoints":
+        ids = list(outcome_ids)
+        if not ids:
+            return cls()
+        try:
+            flags = _redis().smismember(cls.KEY, ids)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("venue_poll_30s: deferred points unreadable: %s", exc)
+            return cls()
+        return cls(frozenset(i for i, flag in zip(ids, flags) if flag))
+
+    def save(self) -> None:
+        add, remove = self.add - self.remove, self.remove - self.add
+        if not add and not remove:
+            return
+        try:
+            rc = _redis()
+            if add:
+                rc.sadd(self.KEY, *add)
+            if remove:
+                rc.srem(self.KEY, *remove)
+            rc.expire(self.KEY, self.TTL_S)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("venue_poll_30s: deferred points not saved: %s", exc)
+        self.members = (self.members | add) - remove
+        self.add, self.remove = set(), set()
+
+
 @dataclass
 class PollWrite:
     """What ``_write_prices`` consults for one market when the poll writes.
 
     ``stored``: outcome_id → (probability, yes_bid, yes_ask) as the row holds
-    them. ``last_point``: outcome_id → (captured_at, probability) of its newest
-    chart point. ``allowed``: the legs this pass polls — a leg outside it (a
-    socket's, or one the population did not admit) is never written.
+    them. ``allowed``: the legs this pass polls — a leg outside it (a socket's,
+    or one the population did not admit) is never written. ``moved``: the legs
+    ``_write_prices`` updated, ``(outcome_id, side)``, for the history bound to
+    judge after the write (:func:`write_market`).
     """
 
     fetched_at: datetime
     now: datetime
     stored: dict[int, tuple]
-    last_point: dict[int, tuple]
     allowed: frozenset[int]
-    rows_updated: int = 0
+    moved: list[tuple[int, dict]] = field(default_factory=list)
     #: outcome_id → (probability, yes_bid, yes_ask) read unchanged.
     unchanged: dict[int, tuple] = field(default_factory=dict)
 
@@ -590,8 +642,13 @@ class PollWrite:
             return False
         return True
 
-    def _point_due(self, outcome_id, prob) -> Optional[str]:
-        last = self.last_point.get(outcome_id)
+    def point_due(self, last, prob) -> Optional[str]:
+        """The history bound for one leg against its newest chart point.
+
+        ``last`` is ``(captured_at, probability)`` or None. ``first`` (no
+        point yet), ``big_move``, ``interval`` → write a point; ``deferred`` →
+        moved inside the interval; None → the point already says this price.
+        """
         if last is None or last[1] is None:
             return "first"
         moved = abs(float(prob) - float(last[1]))
@@ -606,36 +663,23 @@ class PollWrite:
             return "interval"
         return "deferred"
 
-    def history(self, outcome_id, prob, stats=None) -> bool:
-        due = self._point_due(outcome_id, prob)
-        if due in (None, "deferred"):
-            if due == "deferred" and stats is not None:
-                stats["history_deferred"] = stats.get("history_deferred", 0) + 1
-            return False
-        self.last_point[outcome_id] = (self.now, prob)
-        return True
 
-    def trailing(self) -> list[tuple[int, tuple]]:
-        """Unchanged legs whose chart tail still shows an older price, now due.
-
-        Only a leg that HAS a point and disagrees with it: a leg with no chart
-        history gains its first point when its price next moves, not because a
-        pass read it.
-        """
-        due = []
-        for outcome_id, values in self.unchanged.items():
-            if self._point_due(outcome_id, values[0]) in ("big_move", "interval"):
-                self.last_point[outcome_id] = (self.now, values[0])
-                due.append((outcome_id, values))
-        return due
-
-
-_STATE_SQL = text(
+_STORED_SQL = text(
     """
-    SELECT fo.id, fo.current_probability, fo.current_yes_bid, fo.current_yes_ask,
-           s.captured_at, s.probability
+    SELECT fo.id, fo.current_probability, fo.current_yes_bid, fo.current_yes_ask
       FROM futures_outcomes fo
-      LEFT JOIN LATERAL (
+     WHERE fo.id = ANY(CAST(:ids AS integer[]))
+    """
+)
+
+#: Only for legs that moved or carry a deferred point — never for every polled
+#: leg: this lateral read measured 3.0 s per 1,000 legs on production
+#: (2026-10-30, cold buffers), the primary-key read above 4.5 ms.
+_LAST_POINT_SQL = text(
+    """
+    SELECT fo.id, s.captured_at, s.probability
+      FROM futures_outcomes fo
+      JOIN LATERAL (
             SELECT captured_at, probability
               FROM futures_odds_snapshots
              WHERE outcome_id = fo.id
@@ -647,16 +691,23 @@ _STATE_SQL = text(
 )
 
 
-async def load_state(session, outcome_ids: list[int]) -> tuple[dict, dict]:
+async def load_state(session, outcome_ids: list[int]) -> dict:
+    """outcome_id → (probability, yes_bid, yes_ask) as stored."""
     stored: dict[int, tuple] = {}
-    last_point: dict[int, tuple] = {}
     if not outcome_ids:
-        return stored, last_point
-    for row in (await session.execute(_STATE_SQL, {"ids": outcome_ids})).fetchall():
+        return stored
+    for row in (await session.execute(_STORED_SQL, {"ids": outcome_ids})).fetchall():
         stored[row[0]] = (row[1], row[2], row[3])
-        if row[4] is not None:
-            last_point[row[0]] = (row[4], row[5])
-    return stored, last_point
+    return stored
+
+
+async def load_last_points(session, outcome_ids) -> dict:
+    """outcome_id → (captured_at, probability) of its newest chart point."""
+    ids = sorted(set(outcome_ids))
+    if not ids:
+        return {}
+    rows = (await session.execute(_LAST_POINT_SQL, {"ids": ids})).fetchall()
+    return {row[0]: (row[1], row[2]) for row in rows}
 
 
 async def db_clock(session) -> datetime:
@@ -670,9 +721,14 @@ async def write_market(
     market_id: int,
     priced: list[dict],
     poll: PollWrite,
+    deferred: DeferredPoints,
     stats: dict,
 ) -> None:
-    """One market: changed legs, its rank, its due trailing points; one commit."""
+    """One market: changed legs, its rank, then its due chart points; one commit.
+
+    The history bound runs after the write, on the last points of only the legs
+    that moved plus the unchanged legs holding a deferred point.
+    """
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     from app.models.models import FuturesOddsSnapshot
@@ -680,27 +736,59 @@ async def write_market(
     from app.utils.futures_rank import rerank_market_field_skip_locked_stmt
     from app.utils.odds_math import probability_to_american
 
-    before = poll.rows_updated
-    points = await _write_prices(session, market_id, venue, priced, stats, poll=poll)
-    stats["history_points"] = stats.get("history_points", 0) + points
-    if poll.rows_updated > before:
-        stats["rows_updated"] = stats.get("rows_updated", 0) + poll.rows_updated - before
+    await _write_prices(session, market_id, venue, priced, stats, poll=poll)
+    if poll.moved:
+        stats["rows_updated"] = stats.get("rows_updated", 0) + len(poll.moved)
         await session.execute(rerank_market_field_skip_locked_stmt(market_id))
         stats["markets_moved"] = stats.get("markets_moved", 0) + 1
-    for outcome_id, (prob, bid, ask) in poll.trailing():
+    carrying = [oid for oid in poll.unchanged if oid in deferred.members]
+    #: merged into `deferred` only once this market's commit has landed
+    defer: set[int] = set()
+    undefer: set[int] = set()
+    last = await load_last_points(session, [oid for oid, _s in poll.moved] + carrying)
+
+    async def point(outcome_id, side, counter):
+        prob = side["probability"]
         await session.execute(
             pg_insert(FuturesOddsSnapshot).values(
                 outcome_id=outcome_id,
                 bookmaker=venue,
                 probability=prob,
                 american_odds=probability_to_american(prob),
-                yes_bid=bid,
-                yes_ask=ask,
+                yes_bid=side.get("yes_bid"),
+                yes_ask=side.get("yes_ask"),
+                last_price=side.get("last_price"),
                 captured_at=poll.now,
             )
         )
-        stats["history_trailing_points"] = stats.get("history_trailing_points", 0) + 1
+        stats[counter] = stats.get(counter, 0) + 1
+
+    for outcome_id, side in poll.moved:
+        due = poll.point_due(last.get(outcome_id), side["probability"])
+        if due == "deferred":
+            stats["history_deferred"] = stats.get("history_deferred", 0) + 1
+            defer.add(outcome_id)
+            continue
+        undefer.add(outcome_id)
+        if due is not None:
+            await point(outcome_id, side, "history_points")
+    for outcome_id in carrying:
+        prob, bid, ask = poll.unchanged[outcome_id]
+        due = poll.point_due(last.get(outcome_id), prob)
+        if due == "deferred":
+            continue
+        undefer.add(outcome_id)
+        # A leg with no chart history gains its first point when its price
+        # next moves, not because a pass read it.
+        if due in ("big_move", "interval"):
+            await point(
+                outcome_id,
+                {"probability": prob, "yes_bid": bid, "yes_ask": ask},
+                "history_trailing_points",
+            )
     await session.commit()
+    deferred.add |= defer
+    deferred.remove |= undefer
 
 
 # ── venue reads ───────────────────────────────────────────────────────────────
@@ -742,55 +830,74 @@ def kalshi_items(service, raw_markets: list[dict], stats: dict) -> dict[str, dic
     return items
 
 
-def kalshi_requests(
-    units: list[Unit], budget: int, stats: Optional[dict] = None
+def pack_requests(
+    units: list[Unit],
+    keys_of,
+    per_request: int,
+    budget: int,
+    stats: Optional[dict] = None,
+    oversize_key: str = "units_oversize",
 ) -> list[tuple[list[Unit], list[list[str]]]]:
-    """Pack units into request groups: (units, ticker chunks), within ``budget``.
+    """Pack units into request groups: (units, key chunks), within ``budget``.
 
-    A unit is never split across groups, so its legs are written after every
-    one of its reads; a unit with more legs than one request is its own group.
-    A unit needing more reads than the whole ``budget`` can never be read, so it
-    is skipped and counted (``units_oversize``) rather than stopping the pack —
-    at the head of the rotation it would otherwise stop every pass there.
+    ``keys_of(unit)`` is the list of keys one read names for that unit (Kalshi
+    tickers, CLOB tokens). A unit is never split across groups, so its legs are
+    written after every one of its reads; a unit with more keys than one
+    request is its own group. A unit with no keys is skipped. A unit needing
+    more reads than the whole ``budget`` can never be read, so it is skipped and
+    counted (``stats[oversize_key]``) rather than stopping the pack — at the
+    head of the rotation it would otherwise stop every pass there.
     """
     groups: list[tuple[list[Unit], list[list[str]]]] = []
     used = 0
     current: list[Unit] = []
-    tickers: list[str] = []
+    keys: list[str] = []
 
     def flush():
-        nonlocal current, tickers, used
+        nonlocal current, keys, used
         if current:
-            groups.append((current, [tickers]))
+            groups.append((current, [keys]))
             used += 1
-        current, tickers = [], []
+        current, keys = [], []
 
     for unit in units:
-        legs = [ext for legs in unit.legs.values() for _oid, ext in legs]
-        if len(legs) > KALSHI_TICKERS_PER_REQUEST:
+        legs = keys_of(unit)
+        if not legs:
+            continue
+        if len(legs) > per_request:
             flush()
-            chunks = [
-                legs[i : i + KALSHI_TICKERS_PER_REQUEST]
-                for i in range(0, len(legs), KALSHI_TICKERS_PER_REQUEST)
-            ]
+            chunks = [legs[i : i + per_request] for i in range(0, len(legs), per_request)]
             if len(chunks) > budget:
                 if stats is not None:
-                    stats["units_oversize"] = stats.get("units_oversize", 0) + 1
+                    stats[oversize_key] = stats.get(oversize_key, 0) + 1
                 continue
             if used + len(chunks) > budget:
                 break
             groups.append(([unit], chunks))
             used += len(chunks)
             continue
-        if len(tickers) + len(legs) > KALSHI_TICKERS_PER_REQUEST:
+        if len(keys) + len(legs) > per_request:
             flush()
         if used >= budget:
             break
         current.append(unit)
-        tickers.extend(legs)
+        keys.extend(legs)
     if used < budget:
         flush()
     return groups
+
+
+def kalshi_requests(
+    units: list[Unit], budget: int, stats: Optional[dict] = None
+) -> list[tuple[list[Unit], list[list[str]]]]:
+    """Kalshi request groups: a unit's tickers, ``KALSHI_TICKERS_PER_REQUEST`` a read."""
+    return pack_requests(
+        units,
+        lambda unit: [ext for legs in unit.legs.values() for _oid, ext in legs],
+        KALSHI_TICKERS_PER_REQUEST,
+        budget,
+        stats,
+    )
 
 
 def polymarket_requests(
@@ -872,7 +979,12 @@ def _new_service(venue: str):
 
 
 async def poll_venue(venue: str, *, deadline: float) -> dict:
-    """One venue's pass. Never raises: a failure is a counted stop."""
+    """One venue's pass. Never raises: a failure is a counted stop.
+
+    Polymarket under ``VENUE_POLL_30S_PM_SOURCE=clob`` reads CLOB token prices
+    first (:mod:`app.tasks.venue_poll_pm_clob`); the Gamma rotation below then
+    runs over only the legs that read gave no usable book, on its own cursor.
+    """
     from app.tasks.base import get_task_session
 
     #: `unknown_outcomes` is incremented bare by `_write_prices`.
@@ -896,15 +1008,30 @@ async def poll_venue(venue: str, *, deadline: float) -> dict:
             if not units:
                 stats["stopped"] = "empty"
                 return stats
-            cursor = read_cursor(venue)
-            ordered = rotate(units, cursor)
-            pack = kalshi_requests if venue == "kalshi" else polymarket_requests
-            groups = pack(ordered, budget, stats)
             # Local clock read AFTER the database answers: `fetched_at` then
             # errs early by the reply's latency, so the newer-writer guard yields.
             db_now = await db_clock(session)
             offset = time.time() - db_now.timestamp()
             await session.commit()
+            cursor_name = venue
+            if venue == "polymarket":
+                from app.tasks.venue_poll_pm_clob import GAMMA_RESERVE_S, clob_pass, pm_source
+
+                if pm_source() == "clob":
+                    units = await clob_pass(
+                        session, service, units, deadline=deadline - GAMMA_RESERVE_S,
+                        offset=offset, stats=stats,
+                    )
+                    cursor_name = "polymarket_gamma"
+                    stats["gamma_fallback_units"] = len(units)
+                    if not units:
+                        stats.setdefault("stopped", "done")
+                        stats["covered_share"] = 1.0
+                        return stats
+            cursor = read_cursor(cursor_name)
+            ordered = rotate(units, cursor)
+            pack = kalshi_requests if venue == "kalshi" else polymarket_requests
+            groups = pack(ordered, budget, stats)
             last_key = None
             for gi, (group_units, chunks) in enumerate(groups):
                 left = deadline - time.monotonic()
@@ -945,7 +1072,7 @@ async def poll_venue(venue: str, *, deadline: float) -> dict:
                 stats["units_done"] = stats.get("units_done", 0) + len(group_units)
             else:
                 stats.setdefault("stopped", "done")
-            write_cursor(venue, last_key)
+            write_cursor(cursor_name, last_key)
             if stats.get("stopped") != "rate_limited":
                 clear_backoff(venue)
             done = stats.get("units_done", 0)
@@ -967,12 +1094,13 @@ async def _write_group(session, venue, group_units, found, fetched_at, stats) ->
         oid for u in group_units for legs in u.legs.values() for oid, _ext in legs
     ]
     try:
-        stored, last_point = await load_state(session, outcome_ids)
+        stored = await load_state(session, outcome_ids)
         await session.commit()
     except Exception as exc:  # noqa: BLE001
         await session.rollback()
         stats["errors"].append(f"state: {str(exc)[:200]}")
         return
+    deferred = DeferredPoints.read(outcome_ids)
     now = datetime.now(timezone.utc)
     for unit in group_units:
         unit_found = found if venue == "kalshi" else found.get(unit.key)
@@ -982,22 +1110,60 @@ async def _write_group(session, venue, group_units, found, fetched_at, stats) ->
             priced = _items_for_market(venue, legs, unit_found)
             if not priced:
                 continue
+            if venue == "polymarket" and _pm_market_unchanged(legs, priced, stored, deferred):
+                # Nothing to write and no deferred point to carry: skip the
+                # writer's per-market read and commit (~6,600 markets a pass
+                # on the CLOB path, ~0.8% of whose legs move per minute).
+                stats["markets_unchanged"] = stats.get("markets_unchanged", 0) + 1
+                continue
             poll = PollWrite(
                 fetched_at=fetched_at,
                 now=now,
                 stored=stored,
-                last_point=last_point,
                 allowed=frozenset(oid for oid, _ext in legs),
             )
             try:
                 await write_market(
                     session, venue=venue, market_id=market_id, priced=priced,
-                    poll=poll, stats=stats,
+                    poll=poll, deferred=deferred, stats=stats,
                 )
             except Exception as exc:  # noqa: BLE001 — gotcha 42: one market, not the pass
                 await session.rollback()
                 stats["market_errors"] = stats.get("market_errors", 0) + 1
                 stats["errors"].append(f"market {market_id}: {str(exc)[:160]}")
+    deferred.save()
+
+
+_SECOND_LEG = re.compile(r"_(no|side1)$")
+
+
+def _pm_market_unchanged(legs, priced, stored, deferred: DeferredPoints) -> bool:
+    """True when every leg the items price equals its stored row, none deferred.
+
+    The side each leg takes is ``_write_prices``' own convention (``_legs``): a
+    bare or ``_yes`` leg the item, a ``_no`` or ``_side1`` leg ``item["no"]``.
+    Conservative by construction: any leg it cannot judge as equal (a missing
+    row, a missing side, a changed value) sends the market to the writer, which
+    decides exactly.
+    """
+    by_condition = {item.get("external_id"): item for item in priced}
+    for oid, ext in legs:
+        item = by_condition.get(_LEG_SUFFIX.sub("", ext))
+        if item is None:
+            continue
+        if oid in deferred.members:
+            return False
+        side = item.get("no") if _SECOND_LEG.search(ext) else item
+        held = stored.get(oid)
+        if side is None or held is None:
+            return False
+        if not (
+            _same(side.get("probability"), held[0], _PROB_EPS)
+            and _same(side.get("yes_bid"), held[1], _BOOK_EPS)
+            and _same(side.get("yes_ask"), held[2], _BOOK_EPS)
+        ):
+            return False
+    return True
 
 
 async def poll_venue_prices(venues) -> dict:
@@ -1014,6 +1180,11 @@ async def poll_venue_prices(venues) -> dict:
         any(s in ("error", "fetch_error", "rate_limited", "timeout") for s in stops)
         or any(r.get("errors") for r in results)
         or any(r.get("units_oversize") for r in results)
+        # lane1 R3 on #11793: a CLOB rotation stopped by a timeout or a 429
+        # leaves the rest of the book to Gamma's ~14-minute rotation, which is
+        # the staleness this poll removes; `backoff` stays not-partial, like
+        # the venue-level backoff.
+        or any(r.get("clob_stopped") in ("timeout", "rate_limited") for r in results)
     ):
         summary["terminal"] = "partial"
     else:
