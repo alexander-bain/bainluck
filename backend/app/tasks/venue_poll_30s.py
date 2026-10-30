@@ -677,6 +677,10 @@ class PollWrite:
     moved: list[tuple[int, dict]] = field(default_factory=list)
     #: outcome_id → (probability, yes_bid, yes_ask) read unchanged.
     unchanged: dict[int, tuple] = field(default_factory=dict)
+    #: The history bound. The defaults are this poll's; the 3-minute
+    #: Polymarket tail rotation passes its own.
+    min_interval_s: float = field(default_factory=lambda: HISTORY_MIN_INTERVAL_S)
+    big_move: float = field(default_factory=lambda: HISTORY_BIG_MOVE)
 
     def admit(self, outcome_id, prob, bid, ask, stats) -> bool:
         if outcome_id not in self.allowed:
@@ -706,12 +710,12 @@ class PollWrite:
         moved = abs(float(prob) - float(last[1]))
         if moved < _PROB_EPS:
             return None
-        if moved >= HISTORY_BIG_MOVE:
+        if moved >= self.big_move:
             return "big_move"
         captured_at = last[0]
         if captured_at is not None and captured_at.tzinfo is None:
             captured_at = captured_at.replace(tzinfo=timezone.utc)
-        if captured_at is None or (self.now - captured_at).total_seconds() >= HISTORY_MIN_INTERVAL_S:
+        if captured_at is None or (self.now - captured_at).total_seconds() >= self.min_interval_s:
             return "interval"
         return "deferred"
 
@@ -1147,7 +1151,11 @@ async def poll_venue(venue: str, *, deadline: float) -> dict:
     return stats
 
 
-async def _write_group(session, venue, group_units, found, fetched_at, stats) -> None:
+async def _write_group(
+    session, venue, group_units, found, fetched_at, stats, *, history=None
+) -> None:
+    """``history``: ``(min_interval_s, big_move)`` for a caller with its own
+    history bound (the tail rotation); None is this poll's."""
     outcome_ids = [
         oid for u in group_units for legs in u.legs.values() for oid, _ext in legs
     ]
@@ -1180,6 +1188,8 @@ async def _write_group(session, venue, group_units, found, fetched_at, stats) ->
                 stored=stored,
                 allowed=frozenset(oid for oid, _ext in legs),
             )
+            if history is not None:
+                poll.min_interval_s, poll.big_move = history
             try:
                 await write_market(
                     session, venue=venue, market_id=market_id, priced=priced,
