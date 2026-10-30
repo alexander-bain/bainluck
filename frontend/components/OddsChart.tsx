@@ -535,7 +535,7 @@ interface OddsChartProps {
   publications?: EventPublicationsResponse | null;
   /**
    * #10090 — the end label prints one decimal, from the same derived pair the
-   * hero prints (`lib/tenthsOptIn.ts`). The page's one opt-in decision; a
+   * hero prints (`lib/tenthsOptIn.ts`). The page's one tenths decision; a
    * closed/completed chart ignores it and keeps its whole-number ending.
    * Absent means today's label.
    */
@@ -2658,7 +2658,7 @@ export default function OddsChart({
           // (`teamAxisTick`). Both ends come from the one resolved pair, so it
           // is still the hero's number for that side. A draw-priced market has
           // no away side to name (#10318) and keeps the home side's.
-          // #10090 — an opted-in reader's label is the same side, in tenths
+          // #10090 — with tenths on, the label is the same side, in tenths
           // from the pair the hero derives (`tenthsSideLabel`).
           label: tenthsLabel
             ? tenthsSideLabel(chartAxisToHomeProb(delta), !(awayWithheld || delta >= 50 || percents.awayLabel === null))

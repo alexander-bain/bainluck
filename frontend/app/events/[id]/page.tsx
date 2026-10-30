@@ -281,8 +281,8 @@ export default function EventPage({ params }: EventPageProps) {
   const sharedMedium = searchParams.get("utm_medium") || undefined;
   const sharedCampaign = searchParams.get("utm_campaign") || undefined;
   const isSharedLink = sharedSource === "share";
-  // #10090 — one-decimal headlines for a reader who opened `?tenths=fit`; OFF
-  // (today's page, unchanged) for everyone else. One decision for the hero and
+  // #10090 — one-decimal headlines, ON by default; a reader who opened
+  // `?tenths=off` gets today's whole numbers. One decision for the hero and
   // both charts' end labels, so the three can never print different digits.
   const tenthsOptIn = useTenthsOptIn();
   const [countdown, setCountdown] = useState<number>(0);
