@@ -1003,6 +1003,13 @@ def _opening_baseline_at(outcomes: Iterable[Any]) -> Any:
 # which outcome a card talks about. The bank is a separate, differently-named
 # value that answers a different question: not "is this market interesting"
 # but "may this card print a number and call it today's".
+#
+# #2408 SINCE: the column's meaning moved UPSTREAM to the same answer. Statement
+# A11 stores `current - basis` on this bank's own basis (or NULL), and the
+# writers carry it (`app.utils.movement_basis`), so outside DataGolf the column
+# and the bank now agree on the move by construction. The bank still decides
+# what a card may SAY (its age bounds are the stopped-sweep fail-closed); the
+# column decides what ranks, now on a dated number.
 
 #: The `market_metadata` key the sweep banks the dated observations under.
 #:
@@ -1211,12 +1218,17 @@ def dated_movement_points(
 
     ═══ IT NARROWS WHAT MAY BE SAID, NEVER WHAT IS SHOWN OR CHOSEN ═══
 
-    🔴 `stored_change` is the gate on whether there is a claim AT ALL, on its
-    truthiness, exactly as every serving site tests it today. A row the writers
-    left NULL stays silent even when the bank can date a large move for it —
-    promoting it would be a new selection policy, and the `US bank failure`
-    specimen (a real -9.0 point day with a NULL delta) is deliberately still
-    silent after this. The column keeps every reader it has: `/api/futures/movers`
+    🔴 `stored_change` is the gate on whether there is a claim AT ALL. Since
+    #2408 that test is `is None` (a stored 0 is a measured flat day — see the
+    gate's comment), except on an unmarked DataGolf bank, whose column is still
+    per-write. A row the column leaves NULL stays silent even when the bank can
+    date a large move for it —
+    promoting it HERE would be a second selection policy beside the column's.
+    (Since #2408 the selection is made once, upstream: statement A11 writes a
+    dated move into a NULL column whenever the bank's basis qualifies, so the
+    `US bank failure` specimen — a real -9.0 point day with a NULL per-write
+    delta — now carries -0.09 in the column itself and is no longer silent.)
+    The column keeps every reader it has: `/api/futures/movers`
     ranking, `compute_futures_highlight`'s choice of subject, the confidence
     signal's liveness test, and the archetype classifier's format choice all go
     on reading the stored value.
@@ -1240,13 +1252,22 @@ def dated_movement_points(
     refreshes only ever gets older, so it leaves the window by itself and the
     badges go quiet without anything having to detect the outage.
     """
-    if dated_basis_admits_zero(market):
-        # #10248 D4: the DataGolf arm banks every priced leg with a previous
-        # price, so a stored 0 is an unchanged poll, not a missing claim. NULL
-        # (a new or revived leg) still refuses.
-        if stored_change is None:
-            return None
-    elif not stored_change:
+    if stored_change is None:
+        return None
+    if (
+        not stored_change
+        and _is_datagolf(market)
+        and not dated_basis_admits_zero(market)
+    ):
+        # #10248 D4: DataGolf still stores a PER-WRITE delta, so on an unmarked
+        # golf bank a stored 0 is an unchanged poll, not a claim. The marked
+        # arm banks every priced leg with a previous price and admits it.
+        #
+        # #2408: every other source now stores a DATED move (statement A11 +
+        # `app.utils.movement_basis`), so a stored 0 there is a measured flat
+        # day — a claim, and one a reader must be able to tell apart from
+        # missing evidence (NULL). The old shared `if not stored_change`
+        # refusal would have served a real dated zero as `null`.
         return None
     if current_probability is None or outcome_id is None:
         return None
@@ -1266,6 +1287,12 @@ def dated_movement_points(
 
 #: `FuturesMarket.source` for every DataGolf market (`tasks/datagolf.py`).
 DATAGOLF_MARKET_SOURCE = "datagolf"
+
+
+def _is_datagolf(market: Any) -> bool:
+    """`source == 'datagolf'`, read through `__dict__` (gotcha #42)."""
+    state = _instance_dict(market)
+    return state is not None and state.get("source") == DATAGOLF_MARKET_SOURCE
 
 
 def reader_change_24h(

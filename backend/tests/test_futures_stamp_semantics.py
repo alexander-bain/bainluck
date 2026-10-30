@@ -519,6 +519,20 @@ READ_SIDE_CONSUMERS = {
         "number, a missing one), but it is the same shape as the defect the "
         "`>=` repaired."
     ),
+    "app/utils/movement_basis.py": (
+        "POLLER ALIVE — #2408's carried change. Every delta writer (kalshi, "
+        "polymarket x2, futures) sets `probability_change_24h` to `change + "
+        "(new - current)` only when the row's previous `last_updated` is inside "
+        "the movement window, otherwise NULL: a row nothing wrote for a day "
+        "cannot hold a basis from inside it, so the fresh-row/old-prior write "
+        "(outcome 1597099: 0.985 on 08-18, 0.270 on 08-28) must not carry a "
+        "ten-day step into 'the last 24 hours'. The stamp is read as 'did "
+        "anything write this row inside the window' — statement A's reading. "
+        "Under option 1 a merely-STABLE price would age past the window while "
+        "still polled and its next move would write NULL instead of a carried "
+        "dated move; the sweep's A11 re-states it within one run, so the cost "
+        "is a badge missing for up to ten minutes, never a wrong number."
+    ),
     "app/utils/kalshi_price_statement.py": (
         "POLLER ALIVE — 29b2c2ea9b's repeat skip. The Kalshi socket's typed "
         "price UPDATE writes a row only when the run forces its first "

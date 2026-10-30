@@ -31,6 +31,7 @@ from app.utils.content_understanding import (  # CU-1 clause (2), #5273
     CONTENT_UNDERSTANDING_KEY,
     build_content_understanding,
 )
+from app.utils.movement_basis import carried_change_value  # #2408
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.polymarket_evidence import PMEvidence  # #1870
 from app.utils.settled_price import (  # #5246 / #7767
@@ -3566,8 +3567,12 @@ async def _process_event_batch(
                         # freshness stamp on an absence. Both keys are therefore
                         # omitted on refusal, leaving the prior values untouched.
                         if sub_price_ok:
-                            over_update["probability_change_24h"] = (
-                                prob - FuturesOutcome.current_probability
+                            # #2408: a dated move, carried (`movement_basis`).
+                            over_update["probability_change_24h"] = carried_change_value(
+                                FuturesOutcome.probability_change_24h,
+                                FuturesOutcome.current_probability,
+                                FuturesOutcome.last_updated,
+                                prob,
                             )
                             over_update["price_changed_at"] = price_changed_at_value(  # #2024
                                 FuturesOutcome.current_probability,
@@ -3938,7 +3943,13 @@ async def _process_event_batch(
                         "current_yes_bid": od["yes_bid"],
                         "current_yes_ask": od["yes_ask"],
                         "rank": rank,
-                        "probability_change_24h": prob - FuturesOutcome.current_probability,
+                        # #2408: a dated move, carried (`movement_basis`).
+                        "probability_change_24h": carried_change_value(
+                            FuturesOutcome.probability_change_24h,
+                            FuturesOutcome.current_probability,
+                            FuturesOutcome.last_updated,
+                            prob,
+                        ),
                         "rank_change_24h": FuturesOutcome.rank - rank,
                         "last_updated": func.now(),
                         "price_changed_at": price_changed_at_value(  # #2024

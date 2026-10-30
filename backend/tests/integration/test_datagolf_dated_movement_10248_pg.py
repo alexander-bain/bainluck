@@ -781,13 +781,6 @@ def _jordan_served(monkeypatch) -> float | None:
     return _served(monkeypatch, mid)[outcomes[(mid, f"dg_{JORDAN}")]]
 
 
-SHARED_A8_MARK = (
-    "jsonb_build_object('dated_movement_basis', bank.payload)",
-    "jsonb_build_object('dated_movement_basis', bank.payload, "
-    "'dated_movement_basis_eligibility', 'priced_leg')",
-)
-
-
 def _r7(monkeypatch, rewrite=None):
     """A Kalshi leg banked by the SHARED arm (its 0.05 cleared the floor), then
     an unchanged Kalshi poll stores 0 before the next sweep. The direct UPDATE
@@ -810,7 +803,15 @@ def _r7(monkeypatch, rewrite=None):
     return _served(monkeypatch, mid)[oid], metadata[mid] or {}
 
 
-def test_r7_a_shared_bank_keeps_the_zero_refusal(monkeypatch) -> None:
+def test_r7_a_shared_bank_admits_a_dated_zero_2408(monkeypatch) -> None:
+    """#2408 AMENDS R7. It was `test_r7_a_shared_bank_keeps_the_zero_refusal`:
+    a stored 0 on a Kalshi leg was an unchanged PER-WRITE poll, so the reader
+    refused it. Since #2408 the shared writers carry a DATED move (an unchanged
+    poll keeps the dated 0.05; it never stores 0) and statement A11 states the
+    column on this bank's own basis, so a stored 0 outside DataGolf is a
+    measured flat day — a claim. The reader dates it off the bank; only NULL
+    refuses. DataGolf's own zero rule (R-series above, the unmarked-bank
+    strawman) is untouched."""
     from app.utils.futures_market_snapshot import (
         DATED_BASIS_ELIGIBILITY_METADATA_KEY,
         DATED_BASIS_METADATA_KEY,
@@ -819,17 +820,21 @@ def test_r7_a_shared_bank_keeps_the_zero_refusal(monkeypatch) -> None:
     served, metadata = _r7(monkeypatch)
     assert DATED_BASIS_METADATA_KEY in metadata, "the shared arm must have banked the leg"
     assert DATED_BASIS_ELIGIBILITY_METADATA_KEY not in metadata
-    assert served is None, f"a non-DataGolf stored 0 must still refuse; got {served}"
+    assert served is not None and abs(served - 0.05) < 1e-6, (
+        f"a non-DataGolf stored 0 is a dated claim since #2408; got {served}")
 
 
-def test_strawman_w5_a_mark_on_a_shared_bank_serves_a_zero(monkeypatch) -> None:
-    def _rewrite(sql):
-        if SHARED_A8_MARK[0] in sql:
-            return sql.replace(*SHARED_A8_MARK)
-        return sql
+def test_strawman_w5_the_old_shared_zero_refusal_silences_a_dated_zero(monkeypatch) -> None:
+    """#2408 AMENDS W5 with R7. It was `..._a_mark_on_a_shared_bank_serves_a_zero`,
+    the strawman for the refusal R7 no longer asserts (with the shared zero
+    admitted, a mark changes nothing, so it could not fail). Now it strawmans
+    #2408's reader change itself: put the pre-#2408 shared refusal back — every
+    market read as an unmarked golf bank — and the dated zero goes silent."""
+    import app.utils.futures_market_snapshot as fms
 
-    served, _ = _r7(monkeypatch, rewrite=_rewrite)
-    assert served is not None and abs(served - 0.05) < 1e-6, served
+    monkeypatch.setattr(fms, "_is_datagolf", lambda _market: True)
+    served, _ = _r7(monkeypatch)
+    assert served is None, served
 
 
 def _bank_then_starve(monkeypatch, rewrite=None):

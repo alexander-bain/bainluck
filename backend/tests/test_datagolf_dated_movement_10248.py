@@ -56,11 +56,23 @@ def test_a_marked_bank_still_refuses_a_leg_with_no_previous_price() -> None:
     assert dated_movement_points(_market(), 7, 0.15, None, now=NOW) is None
 
 
-def test_an_unmarked_bank_keeps_the_shared_zero_refusal() -> None:
-    """Shared banks and every other source keep `if not stored_change`."""
-    market = _market(source="polymarket", marked=False)
+def test_an_unmarked_datagolf_bank_keeps_the_zero_refusal() -> None:
+    """DataGolf's column is still per-write: unmarked, a stored 0 is no claim."""
+    market = _market(source="datagolf", marked=False)
     assert dated_movement_points(market, 7, 0.15, Decimal("0"), now=NOW) is None
     assert dated_movement_points(market, 7, 0.15, 0.0, now=NOW) is None
+    assert dated_movement_points(market, 7, 0.15, 0.05, now=NOW) == pytest.approx(0.13)
+
+
+def test_a_shared_bank_admits_a_dated_zero_2408() -> None:
+    """#2408: outside DataGolf the column is a DATED move (A11), so a stored 0
+    is a measured flat day — a claim — and only NULL refuses. Before #2408 this
+    test was `test_an_unmarked_bank_keeps_the_shared_zero_refusal`, written when
+    every shared writer stored a per-write delta and 0 meant "unchanged poll"."""
+    market = _market(source="polymarket", marked=False)
+    assert dated_movement_points(market, 7, 0.15, Decimal("0"), now=NOW) == pytest.approx(0.13)
+    assert dated_movement_points(market, 7, 0.15, 0.0, now=NOW) == pytest.approx(0.13)
+    assert dated_movement_points(market, 7, 0.15, None, now=NOW) is None
     assert dated_movement_points(market, 7, 0.15, 0.05, now=NOW) == pytest.approx(0.13)
 
 
@@ -134,10 +146,12 @@ class _Recording:
         self.calls.append((sql, params or {}))
         # The lock-free A4/A7 prepare reads (f44c689c88) select ids, none
         # prepared here; the retirement clock reads the transaction's time.
+        # #2408's A11 prepare reads `(id, basis)` ROWS (`.all()`), none here.
         clock = NOW if sql == "SELECT transaction_timestamp()" else None
         return SimpleNamespace(
             rowcount=0,
             scalars=lambda: SimpleNamespace(all=lambda: []),
+            all=lambda: [],
             scalar_one=lambda: clock,
         )
 

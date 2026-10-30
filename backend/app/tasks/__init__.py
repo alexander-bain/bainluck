@@ -3757,6 +3757,86 @@ A7_CONTRADICTED_PREDICATE = """                        FROM futures_outcomes fo
 """
 
 
+#: Outcomes statement A11 re-anchors per run, largest correction first (#2408).
+#:
+#: A ceiling on WRITES, not on the read: A11's prepare evaluates its snapshot
+#: lateral over the whole in-scope population (open, ungraded, priced, written
+#: inside the window) and only the rows whose stored change differs from the
+#: dated one survive into this batch. In the steady state that is the rows whose
+#: basis aged out since the last run plus the rows a delta-blind price writer
+#: moved, which is far below this. The first run after deploy is the exception:
+#: every live per-write value disagrees with its dated move, and this bound keeps
+#: that run from rewriting the whole open book in one transaction — the biggest
+#: lies go first (gotcha #41) and the tail drains over the next runs.
+#:
+#: UNMEASURED, and named as such: the in-scope population and the prepare's cost
+#: on production are the Measurement read #2408's deploy gate requires (the
+#: issue's `last_updated` and capacity gates). Size this from that read, not
+#: from this comment.
+REANCHOR_BATCH = 20_000
+
+#: A11's lateral and evidentiary bar (#2408), ONE text shared by its lock-free
+#: prepare. It is A8's shared-arm basis VERBATIM — the oldest in-window
+#: observation whose book was a price, one source, same scale, at least
+#: `DATED_BASIS_MIN_AGE_HOURS` old — because the column and the bank must be the
+#: same answer to "what did this cost a day ago": the ladder and the Discover
+#: card read the bank, every other reader reads the column, and two bars would
+#: print two numbers for one move. `tests/test_movement_window.py` holds this
+#: text and A8's lateral equal.
+#:
+#: `basis` is NULL when nothing qualifies, which A11 writes as NULL: no dated
+#: evidence, no dated move.
+A11_REANCHOR_SELECT = """
+                    SELECT q.id, q.basis
+                    FROM (
+                        SELECT fo.id,
+                               fo.probability_change_24h AS change,
+                               fo.current_probability AS current,
+                               CASE WHEN obs.basis IS NOT NULL
+                                         AND obs.foreign_scale IS FALSE
+                                         AND obs.sources = 1
+                                         AND obs.basis_at
+                                             <= now()
+                                                - (:basis_age_hours * interval '1 hour')
+                                    THEN obs.basis::numeric
+                               END AS basis
+                        FROM futures_outcomes fo
+                        JOIN futures_markets m ON m.id = fo.market_id
+                        CROSS JOIN LATERAL (
+                                    SELECT (array_agg(
+                                                s.probability ORDER BY s.captured_at
+                                            ) FILTER (WHERE {priced}))[1] AS basis,
+                                           min(s.captured_at)
+                                               FILTER (WHERE {priced}) AS basis_at,
+                                           count(DISTINCT s.bookmaker) AS sources,
+                                           bool_or(
+                                               s.bookmaker <> ALL(:scale_identical)
+                                           ) AS foreign_scale
+                                    FROM futures_odds_snapshots s
+                                    WHERE s.outcome_id = fo.id
+                                      AND s.captured_at
+                                          > now() - (:window_hours * interval '1 hour')
+                        ) obs
+                        WHERE m.status = 'open'
+                          -- DataGolf's dated move is its own arm end to end
+                          -- (#10248: per-write writer, A8-DG bank, the
+                          -- `reader_change_24h` reader); A11 does not reinterpret
+                          -- its column. `IS DISTINCT FROM` keeps a NULL source.
+                          AND m.source IS DISTINCT FROM 'datagolf'
+                          AND fo.resolution_source IS NULL
+                          AND fo.current_probability IS NOT NULL
+                          -- Statement A's population is not A11's: a row nothing
+                          -- wrote inside the window is cleared by A, and stating
+                          -- a move on it here would undo A on every run.
+                          AND fo.last_updated
+                              >= now() - (:window_hours * interval '1 hour')
+                    ) q
+                    WHERE q.change IS DISTINCT FROM (q.current - q.basis)
+                    ORDER BY abs(coalesce(q.change, 0) - coalesce(q.current - q.basis, 0)) DESC
+                    LIMIT :batch
+"""
+
+
 def _opening_book_slice(epoch_seconds: float) -> int:
     """The slice statement A10 judges on a run starting at `epoch_seconds`."""
     return int(epoch_seconds // 600) % OPENING_BOOK_SLICES
@@ -3851,6 +3931,16 @@ def update_max_movement(self):
     and A4 keeps 143 of them — nearly disjoint populations. Four were movement
     chips on the served feed that minute, two of them telling a reader an
     outcome that had risen forty points was down seven.
+
+    Statement A11 exists because every statement above it DELETES, and deleting
+    can bound how long a lie survives but cannot make the survivors mean a day
+    (#2408). A fresh row's per-write delta spans however long separated its last
+    two writes — the issue's specimen served a ten-day step (0.985 on 08-18,
+    0.270 on 08-28) as "the last 24 hours". A11 states the column instead:
+    `current - basis` on A8's dated basis, or NULL where no basis qualifies,
+    and the writers carry that basis between runs (`app.utils.movement_basis`).
+    It is upstream of every reader and re-runs B/C for what it changed, so the
+    pooled-movers identity holds exactly as it does after A-A7.
 
     Statement C exists because statement B structurally cannot lower a market.
     B drives off `GROUP BY market_id` over non-null deltas, so a market whose
@@ -4390,6 +4480,10 @@ def update_max_movement(self):
             #     served book and rewrite `/api/futures/movers`' ranking input —
             #     the change `futures_price_refresh` considered and refused at its
             #     own write. Every reader already treats NULL as "no movement".
+            #     (#2408 later made that conversion deliberately, in ONE place:
+            #     A11 re-states the column on A8's dated basis after this runs,
+            #     so a row retired here gets its dated move back the same run
+            #     when one is evidenced. This statement still only retires.)
             #     THE RANK CLAIM GOES WITH IT, exactly as in A3: the same writer
             #     wrote both columns in one statement, so a delta the series
             #     refutes carries a rank change from the same unobserved instant.
@@ -4585,6 +4679,8 @@ def update_max_movement(self):
             #     already treats NULL as "no movement", so the card loses a
             #     wrong word rather than gaining a new kind of number — the
             #     honest-unavailable claim, in the vocabulary that already ships.
+            #     (#2408: A11 now makes that conversion on purpose, after this
+            #     statement, from A8's basis — see A4's note.)
             #
             #     COST, EXPLAIN ANALYZE of this selection on production
             #     2026-09-19 07:51Z, quoted as the RANGE two consecutive runs
@@ -4666,6 +4762,116 @@ def update_max_movement(self):
                     a7_updated, a7_cleared = await recompute_maxima(contradicted_market_ids)
                     core_updated += a7_updated
                     core_cleared += a7_cleared
+                await session.commit()
+
+                # A11. RE-ANCHOR EVERY CHANGE ON A DATED BASIS (#2408).
+                #
+                #     Every statement above DELETES a claim that cannot be true.
+                #     None of them makes the surviving claims mean a day: a fresh
+                #     row's `new - previous write` is a per-write delta over
+                #     whatever interval separated the writes, and the issue's
+                #     specimen (outcome 1597099, 0.985 on 08-18 -> 0.270 on
+                #     08-28) served a ten-day step as "the last 24 hours" for the
+                #     whole day after the second write — statement A only clears
+                #     a row nothing has written for a day.
+                #
+                #     So this statement STATES the column: `current - basis` for
+                #     every open, ungraded, priced outcome written inside the
+                #     window, where the basis is A8's — the oldest in-window
+                #     observation whose book was a price, one source, same scale,
+                #     at least `DATED_BASIS_MIN_AGE_HOURS` old (see
+                #     `A11_REANCHOR_SELECT`). Where no basis qualifies it writes
+                #     NULL: an honest unknown, which every reader already treats
+                #     as "no movement". The writers carry the same basis between
+                #     sweeps (`app.utils.movement_basis`), so the column stays a
+                #     dated move from one run to the next instead of decaying back
+                #     into a per-write one.
+                #
+                #     WHY THIS DOES NOT BREAK THE POOLED-MOVERS BOUND. That bound
+                #     (`routes/futures.py`, `_MOVERS_POOLED`) holds while
+                #     `max_movement_24h == MAX(ABS(probability_change_24h))`.
+                #     A11 changes the column upstream and then recomputes the
+                #     maxima of exactly the markets it changed, in its own
+                #     transaction, and the full recompute below follows — the
+                #     identity is re-established exactly as it is after A-A7. No
+                #     reader is filtered.
+                #
+                #     ORDER. After A7, so a claim A4 or A7 just retired is
+                #     re-stated here from evidence rather than left silent, and
+                #     the final value each run is the dated one. Before the full
+                #     recompute and the bank, so B/C and A8's `|change| >= floor`
+                #     scope both read the dated column.
+                #
+                #     LOCKS, #10090's discipline. The snapshot lateral runs as a
+                #     plain read that takes no row lock and returns `(id, basis)`
+                #     pairs. The write never re-scans snapshots: it re-checks the
+                #     row's own scope under `FOR UPDATE ... SKIP LOCKED` and sets
+                #     `current_probability - basis` from the LOCKED row, so a
+                #     poll that landed between the read and the write is honoured
+                #     (its carried change already equals the dated one and the
+                #     `IS DISTINCT FROM` leaves it), and a row a writer holds is
+                #     skipped to the next run rather than waited on.
+                reanchor_prepared = (await session.execute(
+                    text(
+                        "/* movement prepare: A11 */"
+                        + A11_REANCHOR_SELECT.replace("{priced}", priced)
+                    ),
+                    {
+                        "window_hours": MOVEMENT_WINDOW_HOURS,
+                        "basis_age_hours": DATED_BASIS_MIN_AGE_HOURS,
+                        "batch": REANCHOR_BATCH,
+                        "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
+                        "max_spread": max_spread,
+                    },
+                )).all()
+                reanchor_ids = [row[0] for row in reanchor_prepared]
+                reanchor_bases = [row[1] for row in reanchor_prepared]
+
+                await session.execute(
+                    SET_LOCK_TIMEOUT_SQL,
+                    {"ms": lock_timeout_value(MOVEMENT_CORE_LOCK_TIMEOUT_MS)},
+                )
+                reanchored = await session.execute(
+                    text("""
+                        UPDATE futures_outcomes fo
+                        SET probability_change_24h = fo.current_probability - b.basis
+                        FROM unnest(
+                            CAST(:ids AS bigint[]), CAST(:bases AS numeric[])
+                        ) AS b(id, basis)
+                        WHERE fo.id = b.id
+                          AND fo.id IN (
+                              SELECT t.id
+                              FROM futures_outcomes t
+                              JOIN futures_markets m ON m.id = t.market_id
+                              JOIN unnest(
+                                  CAST(:ids AS bigint[]), CAST(:bases AS numeric[])
+                              ) AS c(id, basis) ON c.id = t.id
+                              WHERE m.status = 'open'
+                                AND m.source IS DISTINCT FROM 'datagolf'
+                                AND t.resolution_source IS NULL
+                                AND t.current_probability IS NOT NULL
+                                AND t.last_updated
+                                    >= now() - (:window_hours * interval '1 hour')
+                                AND t.probability_change_24h
+                                    IS DISTINCT FROM (t.current_probability - c.basis)
+                              FOR UPDATE OF t SKIP LOCKED
+                          )
+                        RETURNING fo.market_id
+                    """),
+                    {
+                        "ids": reanchor_ids,
+                        "bases": reanchor_bases,
+                        "window_hours": MOVEMENT_WINDOW_HOURS,
+                    },
+                )
+                reanchored_market_ids = sorted({
+                    market_id for market_id in reanchored.scalars().all()
+                    if market_id is not None
+                })
+                if reanchored_market_ids:
+                    a11_updated, a11_cleared = await recompute_maxima(reanchored_market_ids)
+                    core_updated += a11_updated
+                    core_cleared += a11_cleared
                 await session.commit()
 
                 # Preserve the original full B/C maintenance for markets whose
@@ -4906,6 +5112,12 @@ def update_max_movement(self):
                 #     stating direction: the basis must have been a price, not a
                 #     last trade across an empty book — see the #8594 note below.
                 #
+                #     #2408 AMENDS THE NEXT PARAGRAPH: A11 (before B) now stores
+                #     `current - basis` on THIS statement's basis, so the column
+                #     and the bank agree outside DataGolf. A8 itself still never
+                #     writes the column — the paragraph's rule for this statement
+                #     stands; its claim about the column's meaning does not.
+                #
                 #     🔴 IT DOES NOT TOUCH `probability_change_24h`, AND THAT IS THE
                 #     POINT. The column keeps its per-write meaning and every
                 #     reader it has — B and C below, `/api/futures/movers`' ranking,
@@ -5131,6 +5343,7 @@ def update_max_movement(self):
             impossible_rows = impossible.rowcount
             unobserved_rows = unobserved.rowcount
             contradicted_rows = contradicted.rowcount
+            reanchored_rows = reanchored.rowcount
             banked_markets = banked.rowcount
             unbanked_markets = unbanked.rowcount
             banked_dg_markets = banked_dg.rowcount
@@ -5175,6 +5388,17 @@ def update_max_movement(self):
                 # under them. Same writers, opposite failures, and only
                 # separate counters can tell an operator which one is running.
                 "contradicted_retired": contradicted_rows,
+                # #2408 / A11. Rows whose change was RE-STATED from a dated basis
+                # (or cleared for want of one), not retired: its own counter for
+                # the reason each above has one. A steady state of a few hundred
+                # is bases ageing out and delta-blind price writers being caught
+                # up; a run at `REANCHOR_BATCH` means the drain is still running
+                # (the first runs after deploy), tri-state for `SKIP LOCKED`'s
+                # reason like the flags below.
+                "reanchored": reanchored_rows,
+                "reanchor_drained": (
+                    False if reanchored_rows >= REANCHOR_BATCH else None
+                ),
                 # #4079 / A8 + A9. The only counters in this result that report
                 # a PUBLICATION rather than a retirement, which is why they are
                 # not folded into any of the four above: a run that retires
