@@ -55,8 +55,9 @@ announces it once (``bind``) on the case's reply channel ``cmr_<case>``. Each
 valid request ``{v, case, tok, run, slot, nonce}`` is answered on the same
 connection, between P's own statements, with ``lo`` (this pid's
 ``time.monotonic`` when its callback ran, after receipt) and ``hi`` (read just
-before the reply is sent): every stamp of this pid below ``lo`` came before
-the request was received, and every stamp above ``hi`` after the reply left.
+before the reply is sent): every stamp of this pid above ``lo`` came after the
+request was received, and every stamp below ``hi`` before the reply left
+(each expanded by ``q`` first).
 No marker line goes to the log and no marker spends P's ``MAX_LINES``. Caps,
 counters and the pinned schema: ``MARKER_*`` below and
 ``tests/fixtures/clock_marker_10090_schema.json``. Dark, the run makes exactly
@@ -523,6 +524,8 @@ class _Markers:
             return False
 
     async def listen(self, conn):
+        if self.halted is not None and conn is not None and conn is self.conn:
+            return await self.stop(conn, self.halted)  # a cap hit during P's statement
         if self.halted is not None or conn is self.conn:
             return conn
         if self.bridge.wall() >= self.expires:
@@ -592,10 +595,11 @@ class _Markers:
         self.faults["drop"] += len(self.pending)
         self.pending.clear()
         self.halt(reason)
+        why = self.halted  # the FIRST reason markers stopped, not this caller's
         self.conn = None
-        end = self.message("end", why=reason, i=self.accepted, rx=self.received,
+        end = self.message("end", why=why, i=self.accepted, rx=self.received,
                            f=dict(self.faults), pb=self.payload_b, wb=self.wire_b)
-        if reason in ("BYTE_CAP", "REPLY_TOO_BIG", "REPLY_FAILED"):
+        if why in ("BYTE_CAP", "REPLY_TOO_BIG", "REPLY_FAILED"):
             end = None
         if end is not None and not await self.notify(conn, end):
             return await self.bridge._abandon(conn)

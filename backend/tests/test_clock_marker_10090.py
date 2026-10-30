@@ -184,17 +184,23 @@ def notify_now(markers, conn, payload, channel=None):
 
 # ── dark: P's exact calls ───────────────────────────────────────────────────
 
-@pytest.mark.parametrize("env", [
-    {},
-    {"CLOCK_MARKER_CASE": CASE},  # no expiry
-    {"CLOCK_MARKER_EXPIRES_AT": str(time.time() + 60)},  # no case
-    {"CLOCK_MARKER_CASE": CASE, "CLOCK_MARKER_EXPIRES_AT": str(time.time() - 1)},
-    {"CLOCK_MARKER_CASE": CASE, "CLOCK_MARKER_EXPIRES_AT": str(time.time() + 7300)},
-    {"CLOCK_MARKER_CASE": CASE, "CLOCK_MARKER_EXPIRES_AT": "soon"},
-    {"CLOCK_MARKER_CASE": "Case-With-Dash", "CLOCK_MARKER_EXPIRES_AT": str(time.time() + 60)},
-    {"CLOCK_MARKER_CASE": "short", "CLOCK_MARKER_EXPIRES_AT": str(time.time() + 60)},
+@pytest.mark.parametrize("case, expires_in", [
+    (None, None),
+    (CASE, None),  # no expiry
+    (None, 60.0),  # no case
+    (CASE, -1.0),
+    (CASE, cb.MARKER_ARM_MAX_S + 100),
+    (CASE, "soon"),
+    ("Case-With-Dash", 60.0),
+    ("short", 60.0),
 ])
-def test_without_an_admitted_case_an_armed_run_makes_only_ps_calls(monkeypatch, env):
+def test_without_an_admitted_case_an_armed_run_makes_only_ps_calls(monkeypatch, case, expires_in):
+    # The expiry is read from the clock HERE, never at collection: a CI shard
+    # reaches this test minutes after collecting it (+7300 s became +6700 s).
+    env = {} if case is None else {"CLOCK_MARKER_CASE": case}
+    if expires_in is not None:
+        env["CLOCK_MARKER_EXPIRES_AT"] = (
+            expires_in if isinstance(expires_in, str) else str(time.time() + expires_in))
     conn = MarkerConn()
     bridge, lines, _ = make_bridge([conn], {"DYNO": "worker-ws.1", **env})
     waits = []
