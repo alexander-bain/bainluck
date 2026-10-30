@@ -42,6 +42,11 @@ aliases rather than restated (:func:`_render`), so the two cannot drift:
   is Python over the whole catalog; a tokened market it cannot pair
   (``markets_unpaired`` on the socket's own counter) is NOT polled here — that
   is the one known gap, and it is the socket's counter that measures it.
+  Under ``POLYMARKET_WS_OPEN_SCOPE=slate`` (``open_contract_scope()``) the open
+  arm keeps only a slate market's dependencies, so it claims a tokened market
+  only when the game socket's own window holds its event: everything it
+  descoped is polled here, and a dependency it keeps outside the window is
+  polled AND streamed (overlap, below).
 
 HAND-OFF AT KICKOFF, without a gap or a race
 --------------------------------------------
@@ -345,18 +350,28 @@ def kalshi_population_sql(open_arm: bool) -> str:
     """
 
 
-def polymarket_population_sql(open_arm: bool) -> str:
-    from app.tasks.polymarket_open_contracts import OUTCOME_TOKEN_METADATA_KEY
+def polymarket_population_sql(open_arm: bool, open_scope: str = "all") -> str:
+    from app.tasks.polymarket_open_contracts import (
+        OPEN_SCOPE_SLATE, OUTCOME_TOKEN_METADATA_KEY,
+    )
     from app.tasks.polymarket_ws import _slate_event_window
     from app.utils.futures_liveness import LIVE_MARKET_SQL
     from app.utils.polymarket_settlement_scan import GAMMA_EVENT_ID_EXPR
 
     window = _render(_slate_event_window())
-    open_market = (
-        "AND NOT " + _PM_TOKEN_KEYS_SQL.format(key=OUTCOME_TOKEN_METADATA_KEY)
-        if open_arm
-        else ""
-    )
+    tokened = _PM_TOKEN_KEYS_SQL.format(key=OUTCOME_TOKEN_METADATA_KEY)
+    if not open_arm:
+        open_market = ""
+    elif open_scope == OPEN_SCOPE_SLATE:
+        # #10090: the slate-scoped open arm streams a tokened market only when
+        # its own event is in the game socket's window (hand-off band
+        # excluded, as for the game arm). Every other tokened market is polled.
+        open_market = (
+            f"AND NOT ({tokened} AND EXISTS (SELECT 1 FROM events e "
+            f"WHERE e.id = fm.event_id AND {_socket_game_sql(window)}))"
+        )
+    else:
+        open_market = "AND NOT " + tokened
     return f"""
         WITH {_pool_sql("polymarket", window)}
         SELECT fm.id, {GAMMA_EVENT_ID_EXPR} AS gamma_event_id, fo.id, fo.external_id
@@ -381,6 +396,12 @@ def _polymarket_open_arm() -> bool:
     from app.tasks.polymarket_open_contracts import open_contract_prices_enabled
 
     return open_contract_prices_enabled()
+
+
+def _polymarket_open_scope() -> str:
+    from app.tasks.polymarket_open_contracts import open_contract_scope
+
+    return open_contract_scope()
 
 
 def shown_market_ids() -> list[int]:
@@ -467,7 +488,9 @@ async def load_population(session, venue: str, *, now_mono: float) -> list[Unit]
     if venue == "kalshi":
         sql = kalshi_population_sql(_kalshi_open_arm())
     else:
-        sql = polymarket_population_sql(_polymarket_open_arm())
+        sql = polymarket_population_sql(
+            _polymarket_open_arm(), _polymarket_open_scope()
+        )
     rows = (
         await session.execute(
             text(sql),
