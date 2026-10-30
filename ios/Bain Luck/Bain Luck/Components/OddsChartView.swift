@@ -3993,27 +3993,27 @@ struct OddsChartView: View {
     /// miter join (limit 10) turns a tiny real reversal between two close
     /// vertices into a needle many times taller than the move; a round join
     /// draws each wiggle at its true height, as the live tail
-    /// (`LiveChartEdgeMarker`) already does. Solid lines also cap round so
-    /// the line meets that tail without a square shoulder. Dashed (model)
-    /// lines keep butt caps: a round cap lengthens every dash by the line's
-    /// width and would eat the gaps the legend swatch draws.
+    /// (`LiveChartEdgeMarker`) already does. Every line keeps the default
+    /// BUTT cap: a round cap pushes each run half a line width past its end,
+    /// closing short capture holes (#7878) and starting the line before its
+    /// first observation; the live tail already rounds its own end.
     static func strokeStyle(source: String, isModel: Bool, hasAggregate: Bool) -> StrokeStyle {
         if source == "aggregate" {
             // Meta-aggregate across all sources — boldest line
-            return StrokeStyle(lineWidth: 3.0, lineCap: .round, lineJoin: .round)
+            return StrokeStyle(lineWidth: 3.0, lineJoin: .round)
         }
         if source == "consensus" {
             // If aggregate exists, consensus is secondary: regular weight,
             // same as other sources. Sportsbooks-only: consensus is the
             // primary line.
-            return StrokeStyle(lineWidth: hasAggregate ? 1.5 : 2.5, lineCap: .round, lineJoin: .round)
+            return StrokeStyle(lineWidth: hasAggregate ? 1.5 : 2.5, lineJoin: .round)
         }
         // Model sources get dashed lines, thinner
         if isModel {
             return StrokeStyle(lineWidth: 1.5, lineJoin: .round, dash: [5, 3])
         }
         // Market sources (Kalshi, Polymarket) — thin solid
-        return StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
+        return StrokeStyle(lineWidth: 1.5, lineJoin: .round)
     }
 
     private func displayNameForSource(_ source: String, sources: [String: WinProbSourceInfo]) -> String {

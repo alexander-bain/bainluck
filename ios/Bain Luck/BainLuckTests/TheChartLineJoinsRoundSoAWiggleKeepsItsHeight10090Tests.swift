@@ -11,7 +11,8 @@ import SwiftUI
 /// reversal inside 0.4–2 s sits on two vertices a fraction of a point apart, and
 /// the miter at that sharp angle points far past the vertex: a spike several
 /// times taller than the move. The live tail (`LiveChartEdgeMarker`) already
-/// joins round; the plot's own line now does too.
+/// joins round; the plot's own line now does too. It keeps the butt cap, so a
+/// run still ends at its last observation and a real capture hole stays open.
 final class TheChartLineJoinsRoundSoAWiggleKeepsItsHeight10090Tests: XCTestCase {
 
     private func style(_ source: String, isModel: Bool = false, hasAggregate: Bool = true) -> StrokeStyle {
@@ -20,21 +21,21 @@ final class TheChartLineJoinsRoundSoAWiggleKeepsItsHeight10090Tests: XCTestCase 
 
     // MARK: - The pinned styles
 
-    func testTheBainLuckLineJoinsAndCapsRound() {
+    func testTheBainLuckLineJoinsRoundAndKeepsAButtCap() {
         let s = style("aggregate")
         XCTAssertEqual(s.lineWidth, 3.0)
         XCTAssertEqual(s.lineJoin, .round, "a miter join draws a small reversal as a needle")
-        XCTAssertEqual(s.lineCap, .round, "the line meets the round live tail without a square shoulder")
+        XCTAssertEqual(s.lineCap, .butt, "a round cap runs the line past its first and last observation")
         XCTAssertTrue(s.dash.isEmpty)
     }
 
-    func testEverySolidLineJoinsAndCapsRound() {
+    func testEverySolidLineJoinsRoundAndKeepsAButtCap() {
         for (source, width, hasAggregate) in [("consensus", 1.5, true), ("consensus", 2.5, false),
                                               ("kalshi", 1.5, true), ("polymarket", 1.5, true)] {
             let s = style(source, hasAggregate: hasAggregate)
             XCTAssertEqual(s.lineWidth, CGFloat(width), source)
             XCTAssertEqual(s.lineJoin, .round, source)
-            XCTAssertEqual(s.lineCap, .round, source)
+            XCTAssertEqual(s.lineCap, .butt, source)
             XCTAssertTrue(s.dash.isEmpty, source)
         }
     }
@@ -75,5 +76,39 @@ final class TheChartLineJoinsRoundSoAWiggleKeepsItsHeight10090Tests: XCTestCase 
         // Control: the pre-fix style on the same path is the needle.
         let miter = StrokeStyle(lineWidth: 3.0)
         XCTAssertGreaterThan(peakY - top(miter), 5, "the control must reproduce the needle")
+    }
+
+    /// Two Bain Luck runs split by a short capture hole (#7878: no line where
+    /// there was no data). 2.5 pt is a ~1.1-minute hole on a 2.5 h game across
+    /// a ~340 pt plot. The strokes must stay apart, and no run may begin left
+    /// of its first observation (Alex 9/14: the line stays inside the game).
+    func testAShortCaptureHoleStaysOpenAndARunStartsAtItsFirstPoint() {
+        let hole: CGFloat = 2.5
+        let before = CGMutablePath()
+        before.move(to: CGPoint(x: -20, y: 10))
+        before.addLine(to: CGPoint(x: 0, y: 10))
+        let after = CGMutablePath()
+        after.move(to: CGPoint(x: hole, y: 10))
+        after.addLine(to: CGPoint(x: hole + 20, y: 10))
+
+        func box(_ path: CGPath, _ s: StrokeStyle) -> CGRect {
+            path.copy(strokingWithWidth: s.lineWidth, lineCap: s.lineCap, lineJoin: s.lineJoin,
+                      miterLimit: s.miterLimit).boundingBoxOfPath
+        }
+
+        let drawn = style("aggregate")
+        let gap = box(after, drawn).minX - box(before, drawn).maxX
+        XCTAssertGreaterThan(gap, 0, "a \(hole) pt capture hole drew as \(gap) pt — closed")
+
+        let firstRun = CGMutablePath()
+        firstRun.move(to: CGPoint(x: 0, y: 10))
+        firstRun.addLine(to: CGPoint(x: 20, y: 10))
+        let startX = box(firstRun, drawn).minX
+        XCTAssertGreaterThanOrEqual(startX, -0.01, "the line starts \(-startX) pt before its first observation")
+
+        // Control: a round cap on the same paths closes the hole.
+        let roundCap = StrokeStyle(lineWidth: drawn.lineWidth, lineCap: .round, lineJoin: .round)
+        XCTAssertLessThan(box(after, roundCap).minX - box(before, roundCap).maxX, 0,
+                          "the control must reproduce the closed hole")
     }
 }
