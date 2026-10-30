@@ -2564,3 +2564,106 @@ def test_a_market_row_held_past_the_budget_rolls_the_whole_core_back() -> None:
         "A2 cleared the outcome but C never recomputed its market — the core "
         "must roll back whole when its lock budget fires."
     )
+
+
+def test_a_quote_writer_waits_for_one_chunk_not_for_the_whole_sweep() -> None:
+    """#10090 part 2: a retired row is released when ITS chunk commits.
+
+    Speed's capture (16:38Z, 2026-10-30): a poller's write into
+    `futures_outcomes` waited 15 -> 47 s behind statement A, because A's
+    100 k-row UPDATE and every statement after it shared one transaction.
+    Here A retires three rows in chunks of one. A trigger holds the SECOND
+    chunk for three seconds; while it sleeps, a second connection updates the
+    FIRST chunk's row. Chunked, that write lands at once. In one transaction it
+    waits for the whole sweep.
+    """
+    import threading
+    import time
+
+    import psycopg2
+
+    import app.tasks as tasks_mod
+
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("first", "open", 48, 0.40, 0.40),
+                ("second", "open", 48, 0.30, 0.30),
+                ("third", "open", 48, 0.20, 0.20),
+            ]
+        )
+    )
+    dsn = DB_URL.replace("+asyncpg", "")
+    setup = psycopg2.connect(dsn)
+    setup.autocommit = True
+    with setup.cursor() as cur:
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION movement_test_hold_chunk() RETURNS trigger
+            LANGUAGE plpgsql AS $$
+            BEGIN
+                PERFORM pg_sleep(3);
+                RETURN NEW;
+            END $$
+        """)
+        cur.execute(f"""
+            CREATE TRIGGER movement_test_hold_chunk
+            BEFORE UPDATE ON futures_outcomes FOR EACH ROW
+            WHEN (OLD.id = {int(ids["second"][1])}
+                  AND NEW.probability_change_24h IS NULL)
+            EXECUTE FUNCTION movement_test_hold_chunk()
+        """)
+    setup.close()
+
+    seen: dict[str, float] = {}
+
+    def _quote_writer() -> None:
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            cur.execute("SET statement_timeout = '20s'")
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                cur.execute(
+                    "SELECT count(*) FROM pg_stat_activity "
+                    "WHERE wait_event = 'PgSleep' AND pid <> pg_backend_pid()"
+                )
+                conn.rollback()
+                if cur.fetchone()[0]:
+                    break
+                time.sleep(0.02)
+            else:
+                return
+            started = time.monotonic()
+            cur.execute(
+                "UPDATE futures_outcomes SET current_probability = 0.51 WHERE id = %s",
+                (ids["first"][1],),
+            )
+            conn.commit()
+            seen["write_s"] = time.monotonic() - started
+            seen["write_done"] = time.monotonic()
+        finally:
+            conn.close()
+
+    writer = threading.Thread(target=_quote_writer)
+    real_chunk = getattr(tasks_mod, "MOVEMENT_RETIRE_CHUNK", None)
+    tasks_mod.MOVEMENT_RETIRE_CHUNK = 1
+    try:
+        writer.start()
+        result = _run_task()
+        task_done = time.monotonic()
+        writer.join(30)
+    finally:
+        if real_chunk is None:
+            del tasks_mod.MOVEMENT_RETIRE_CHUNK
+        else:
+            tasks_mod.MOVEMENT_RETIRE_CHUNK = real_chunk
+
+    assert result["expired"] == 3, result
+    assert "write_s" in seen, "the held chunk never slept, so nothing was measured"
+    assert seen["write_s"] < 1.0, (
+        "a quote write on a row the sweep had already retired waited "
+        f"{seen['write_s']:.2f} s — the row stayed locked past its own chunk."
+    )
+    assert seen["write_done"] < task_done, seen
+    after = asyncio.run(_read(ids))
+    assert after == {label: (None, None) for label in ("first", "second", "third")}, after

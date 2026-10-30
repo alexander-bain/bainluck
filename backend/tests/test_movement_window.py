@@ -22,8 +22,9 @@ Measured on production 2026-08-31, before the fix:
 
 It pins the WIRING, because the wiring is where every version of this bug has
 lived: which stamp is consulted, that the sweep is bounded, that it is ordered
-so the visible strip converges first, and that retirements plus their actually affected maxima land in ONE
-transaction, before the full recompute releases unrelated-market scan work.
+so the visible strip converges first, and that each retirement chunk lands in
+ONE transaction with the maxima of exactly its own markets, before the full
+recompute releases unrelated-market scan work (#10090 part 2).
 
 It does NOT pin the row-level semantics — "a stale row is cleared, a fresh one
 is not, and a market with nothing left goes NULL". Those need real Postgres
@@ -106,12 +107,15 @@ class _RecordingSession:
         # of `events`/`calls`/`rowcounts` so the phase-indexed controls below
         # keep reading A..C; its own control pins where it lands.
         self.lock_budgets: list[tuple[int, dict]] = []
-        # (position in `events`, sql, params) per A4/A7 lock-free prepare read
-        # (#10090), kept out of `events` for the lock budget's reason. Each
-        # answers `prepared_ids[label]`, so a control can follow the ids into
-        # the core's locking write.
+        # (position in `events`, sql, params) per lock-free prepare read
+        # (#10090: A4/A7, then A/A2/A5/A6 in part 2), kept out of `events` for
+        # the lock budget's reason. Each answers `prepared_ids[label]`, so a
+        # control can follow the ids into the locking write. One id each keeps
+        # every statement to ONE chunk, so phase-indexed controls read A..A7.
         self.prepares: list[tuple[int, str, dict]] = []
-        self.prepared_ids = {"A4": [41, 42], "A7": [71]}
+        self.prepared_ids = {
+            "A": [11], "A2": [12], "A4": [41, 42], "A5": [15], "A6": [16], "A7": [71],
+        }
         # Relative order of the two out-of-band kinds above.
         self.out_of_band: list[str] = []
 
@@ -126,7 +130,7 @@ class _RecordingSession:
             return _Result(0)
         if "/* movement prepare:" in sql:
             self.prepares.append((len(self.events), sql, params or {}))
-            label = "A4" if "movement prepare: A4" in sql else "A7"
+            label = re.search(r"movement prepare: (\w+)", sql).group(1)
             self.out_of_band.append(f"PREPARE {label}")
             return _Result(0, self.prepared_ids[label])
         self.calls.append((sql, params or {}))
@@ -136,7 +140,7 @@ class _RecordingSession:
         if "SET max_movement_24h" in sql:
             targeted = bool((params or {}).get("market_ids"))
             unit = ("a7" if self.retirement_index == 7 else "core") if targeted else "full"
-            if self.fail_maxima == unit:
+            if self.fail_maxima in (unit, f"core@{self.retirement_index}"):
                 raise RuntimeError("maxima failed")
             if targeted:
                 return _Result(self.core_max_counts["= NULL" in sql])
@@ -205,18 +209,55 @@ def run_task(monkeypatch):
     return _run
 
 
+def _units(session: _RecordingSession) -> list[list[str]]:
+    """The run's transactions in order, each ending at its COMMIT.
+
+    With one prepared id per statement: [0] A10, [1..6] A1-A6, [7] A7,
+    [8] the full B/C recompute, [9] the four bank arms.
+    """
+    units, current = [], []
+    for event in session.events:
+        current.append(event)
+        if event == "COMMIT":
+            units.append(current)
+            current = []
+    if current:
+        units.append(current)
+    return units
+
+
+def _unit_calls(session: _RecordingSession) -> list[list[tuple[str, dict]]]:
+    """`_units`, but each statement with its params (COMMITs dropped)."""
+    calls = iter(session.calls)
+    units, current = [], []
+    for event in session.events:
+        if event in ("COMMIT", "ROLLBACK"):
+            units.append(current)
+            current = []
+        else:
+            current.append(next(calls))
+    if current:
+        units.append(current)
+    return units
+
+
 def _movement_events(session: _RecordingSession) -> list[str]:
-    """A10 and banks commit separately; delta/rank/max core stays atomic."""
+    """A10 commits alone, then A1-A6 commit one transaction each (#10090)."""
     events = session.events
     commits = [i for i, event in enumerate(events) if event == "COMMIT"]
-    assert len(commits) == 5, events
+    assert len(commits) == 10, events
     assert commits[0] == 1, events
     assert "unpriced_opening_ids" in events[0], events
     assert "probability_change_24h" not in events[0], events[0]
     assert "rank_change_24h" not in events[0], events[0]
     assert commits[-1] == len(events) - 1, events
-    core = events[2:commits[1] + 1]
+    core = events[2:commits[6] + 1]
     assert "jsonb_object_agg" not in " ".join(core), core
+    for unit in _units(session)[1:8]:
+        # Each A1-A7 transaction is ONE outcome write, then only the maxima of
+        # its own markets — never a second retirement.
+        assert unit[0].startswith("UPDATE futures_outcomes"), unit
+        assert all("SET max_movement_24h" in sql for sql in unit[1:-1]), unit
     return core
 
 
@@ -230,9 +271,10 @@ def test_the_core_yields_quote_rows_instead_of_waiting_for_them(run_task):
     """#10090: maintenance never queues behind a quote writer holding outcomes.
 
     Every outcome target is taken with SKIP LOCKED (a skipped row qualifies
-    again next run), and the core's remaining waits — B/C market rows — are
-    bounded by a transaction-local lock budget issued as the core's FIRST
-    statement, after A10 commits and before any outcome lock is taken.
+    again next run), and the remaining waits — B/C market rows — are bounded by
+    a transaction-local lock budget issued as the FIRST statement of every
+    retirement transaction (A1-A7, one each) and of the full recompute, after
+    A10 commits and before any outcome lock is taken.
     """
     from app.tasks import MOVEMENT_CORE_LOCK_TIMEOUT_MS
 
@@ -240,9 +282,8 @@ def test_the_core_yields_quote_rows_instead_of_waiting_for_them(run_task):
     core = _movement_events(session)
     commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
     assert session.lock_budgets == [
-        (commits[0] + 1, {"ms": f"{MOVEMENT_CORE_LOCK_TIMEOUT_MS}ms"}),
-        (commits[1] + 1, {"ms": f"{MOVEMENT_CORE_LOCK_TIMEOUT_MS}ms"}),
-        (commits[2] + 1, {"ms": f"{MOVEMENT_CORE_LOCK_TIMEOUT_MS}ms"}),
+        (commits[i] + 1, {"ms": f"{MOVEMENT_CORE_LOCK_TIMEOUT_MS}ms"})
+        for i in range(8)
     ], session.lock_budgets
     assert MOVEMENT_CORE_LOCK_TIMEOUT_MS < 1000  # under deadlock_timeout
 
@@ -260,31 +301,39 @@ def test_the_core_yields_quote_rows_instead_of_waiting_for_them(run_task):
 
 
 def test_only_actual_retirement_markets_are_recomputed_before_quote_locks_release(run_task):
+    """Each retirement transaction recomputes exactly ITS rows' markets.
+
+    #10090 part 2: A1-A7 commit one transaction each, so the maxima riding a
+    commit must be the markets of the rows that commit retired — not the union
+    of the run, which would make a transaction wait on markets it never touched.
+    """
     ids = [[101, 102], [102], [], [104], [105], [106], [107]]
     result, session = run_task(retired_ids=ids)
     core = _movement_events(session)
     writes = [s for s in core if s.startswith("UPDATE futures_outcomes")]
     assert len(writes) == 6 and all("RETURNING market_id" in s for s in writes)
-    # Neither prepared candidates (41,42,71) nor a predicted rowcount supplies
-    # this set. It is exactly the markets of rows the UPDATE actually kept.
-    targets = [(sql, p) for sql, p in session.calls if p.get("market_ids")]
-    assert len(targets) == 4
-    for _, params in targets[:2]:
-        assert params == {"market_ids": [101, 102, 104, 105, 106]}
-    for _, params in targets[2:]:
-        assert params == {"market_ids": [107]}
-    aggregate, clear = [sql for sql, _ in targets[:2]]
-    assert "fo.market_id = ANY(:market_ids) GROUP BY fo.market_id" in aggregate
-    assert "fm.id = ANY(:market_ids) AND NOT EXISTS" in clear
-    assert all(sql in core for sql, _ in targets[:2])
-    assert all("fm.status IN ('open', 'active')" in sql for sql, _ in targets)
+    # Neither prepared candidates nor a predicted rowcount supplies this set.
+    # It is exactly the markets of rows the UPDATE actually kept.
+    units = _units(session)[1:8]
+    for unit_ids, unit, calls in zip(ids, units, _unit_calls(session)[1:8]):
+        targets = [(sql, params) for sql, params in calls if params.get("market_ids")]
+        if not unit_ids:
+            assert len(unit) == 2, unit  # the write, then its commit
+            continue
+        assert len(unit) == 4, unit
+        aggregate, clear = unit[1:3]
+        assert "fo.market_id = ANY(:market_ids) GROUP BY fo.market_id" in aggregate
+        assert "fm.id = ANY(:market_ids) AND NOT EXISTS" in clear
+        assert all("fm.status IN ('open', 'active')" in sql for sql in (aggregate, clear))
+        assert {tuple(p["market_ids"]) for _, p in targets} == {tuple(sorted(set(unit_ids)))}
     commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
-    full_scan = session.events[commits[2] + 1:commits[3]]
+    full_scan = session.events[commits[7] + 1:commits[8]]
     assert len(full_scan) == 2
     assert all("SET max_movement_24h" in sql and "ANY(:market_ids)" not in sql
                for sql in full_scan)
     assert not any("UPDATE futures_outcomes" in sql for sql in full_scan)
-    assert result["updated"] == 6 and result["cleared_markets"] == 4
+    # Six units retired something; each targeted pair answers (3, 2).
+    assert result["updated"] == 18 and result["cleared_markets"] == 12
 
 
 def test_no_retirements_skip_targeted_scan_but_keep_full_market_maintenance(run_task):
@@ -300,7 +349,7 @@ def test_full_scan_failure_propagates_after_coherent_core_and_warms_it(run_task)
     with pytest.raises(RuntimeError, match="maxima failed"):
         run_task(retired_ids=[[101], [], [], [], [], [], []], fail_maxima="full")
     session = run_task.last_session
-    assert session.events.count("COMMIT") == 3  # opening, prefix, A7
+    assert session.events.count("COMMIT") == 8  # opening, A1-A6, A7
     assert session.events[-1] == "ROLLBACK"
     assert session.warm_snapshots == [session.events]
     commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
@@ -316,11 +365,28 @@ def test_targeted_scan_failure_never_commits_retirement_without_its_maxima(run_t
     assert not session.warm_snapshots
 
 
+def test_a_later_retirement_failure_keeps_earlier_commits_and_warms_them(run_task):
+    """#10090 part 2: A committed before A2 failed, so A's retirement stands
+    with its maxima, A2 rolls back whole, and the movers payload is refreshed
+    for what committed before the failure propagates."""
+    with pytest.raises(RuntimeError, match="maxima failed"):
+        run_task(retired_ids=[[101], [102], [], [], [], [], []], fail_maxima="core@2")
+    session = run_task.last_session
+    units = _units(session)
+    assert units[1][0].startswith("UPDATE futures_outcomes"), units
+    assert sum("ANY(:market_ids)" in sql for sql in units[1]) == 2, units[1]
+    assert units[1][-1] == "COMMIT", units
+    assert units[2][0].startswith("UPDATE futures_outcomes"), units
+    assert units[2][-1] == "ROLLBACK", units
+    assert session.events.count("COMMIT") == 2  # opening + A
+    assert session.warm_snapshots == [session.events]
+
+
 def test_a7_is_a_separate_coherent_unit_after_all_prefix_quote_locks_release(run_task):
     result, session = run_task(retired_ids=[[101], [], [], [], [], [], [707]])
     commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
-    prefix = session.events[commits[0] + 1:commits[1]]
-    a7 = session.events[commits[1] + 1:commits[2]]
+    prefix = session.events[commits[0] + 1:commits[6]]
+    a7 = session.events[commits[6] + 1:commits[7]]
     assert sum(s.startswith("UPDATE futures_outcomes") for s in prefix) == 6
     assert sum(s.startswith("UPDATE futures_outcomes") for s in a7) == 1
     assert "SET probability_change_24h = NULL" in a7[0]
@@ -335,7 +401,7 @@ def test_a7_maxima_failure_rolls_back_only_a7_and_warms_committed_prefix(run_tas
     with pytest.raises(RuntimeError, match="maxima failed"):
         run_task(retired_ids=[[101], [], [], [], [], [], [707]], fail_maxima="a7")
     session = run_task.last_session
-    assert session.events.count("COMMIT") == 2  # opening + coherent A1–A6 prefix
+    assert session.events.count("COMMIT") == 7  # opening + A1-A6, one each
     assert session.events[-1] == "ROLLBACK"
     assert session.warm_snapshots == [session.events]
     commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
@@ -358,9 +424,12 @@ def test_snapshot_scans_run_before_any_outcome_lock(run_task):
     commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
     assert session.out_of_band == [
         "PREPARE A4", "PREPARE A7", "RETIREMENT CLOCK",
-        "LOCK BUDGET", "LOCK BUDGET", "LOCK BUDGET",
+        "PREPARE A", "LOCK BUDGET", "PREPARE A2", "LOCK BUDGET",
+        "LOCK BUDGET", "LOCK BUDGET",
+        "PREPARE A5", "LOCK BUDGET", "PREPARE A6", "LOCK BUDGET",
+        "LOCK BUDGET", "LOCK BUDGET",
     ], session.out_of_band
-    assert [p[0] for p in session.prepares] == [commits[0] + 1] * 2
+    assert [p[0] for p in session.prepares[:2]] == [commits[0] + 1] * 2
 
     core = _movement_events(session)
     for (_, prep_sql, prep_params), predicate, label in zip(
@@ -369,7 +438,9 @@ def test_snapshot_scans_run_before_any_outcome_lock(run_task):
         ("A4", "A7"),
     ):
         shared = " ".join(predicate.split())
-        write_shared = shared.replace("now()", "CAST(:retirement_asof AS timestamptz)") if label == "A7" else shared
+        # Both now commit apart from their prepare read, so both judge the
+        # prepare read's instant (#10090 part 2).
+        write_shared = shared.replace("now()", "CAST(:retirement_asof AS timestamptz)")
         assert "FOR UPDATE" not in prep_sql, prep_sql
         assert prep_sql.startswith(f"/* movement prepare: {label} */ SELECT fo.id {shared} ORDER BY"), prep_sql
         writes = [
@@ -383,9 +454,89 @@ def test_snapshot_scans_run_before_any_outcome_lock(run_task):
         assert params["prepared_ids"] == session.prepared_ids[label], params
         assert params["batch"] == prep_params["batch"], (params, prep_params)
         assert {k: v for k, v in params.items() if k not in {"prepared_ids", "retirement_asof"}} == prep_params
-        if label == "A7":
-            assert params["retirement_asof"] == session.retirement_asof
-            assert sql.count("CAST(:retirement_asof AS timestamptz)") == 2
+        assert params["retirement_asof"] == session.retirement_asof
+        assert sql.count("CAST(:retirement_asof AS timestamptz)") == (
+            2 if label == "A7" else 1
+        )
+
+
+@pytest.mark.parametrize("label, phase", [("A", 0), ("A2", 1), ("A5", 4), ("A6", 5)])
+def test_a_chunked_sweep_reads_its_targets_lock_free_then_rechecks_them(
+    run_task, label, phase,
+):
+    """#10090 part 2: A, A2, A5 and A6 read their targets first, with no lock.
+
+    The read is the statement's own predicate, order and LIMIT. It runs after
+    the previous retirement committed, so it cannot select a row that one
+    already cleared. The locking write re-checks the SAME predicate on exactly
+    those ids, under SKIP LOCKED, and the statement keeps its own batch.
+    """
+    _, session = run_task()
+    commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
+    (position, prep_sql, prep_params), = [
+        p for p in session.prepares if f"movement prepare: {label} */" in p[1]
+    ]
+    assert position == commits[phase] + 1, (position, commits)
+    assert "FOR UPDATE" not in prep_sql, prep_sql
+    match = re.fullmatch(
+        rf"/\* movement prepare: {label} \*/ SELECT id (FROM .*?)"
+        r"( ORDER BY abs\(probability_change_24h\) DESC)? LIMIT :batch",
+        prep_sql,
+    )
+    assert match, prep_sql
+    predicate, order = match.group(1), match.group(2) or ""
+    writes = [
+        (sql, params) for sql, params in session.calls
+        if sql.startswith("UPDATE futures_outcomes")
+    ]
+    sql, params = writes[phase]
+    assert (
+        f"SELECT id {predicate} AND id = ANY(:prepared_ids){order} "
+        "LIMIT :batch FOR UPDATE SKIP LOCKED )"
+    ) in sql, sql
+    assert params["prepared_ids"] == session.prepared_ids[label], params
+    assert {k: v for k, v in params.items() if k != "prepared_ids"} == prep_params
+    # A and A5 judge the prepare read's instant, never a later one per chunk.
+    if "last_updated" in predicate:
+        assert "CAST(:retirement_asof AS timestamptz)" in predicate, predicate
+        assert "now()" not in predicate, predicate
+        assert params["retirement_asof"] == session.retirement_asof
+
+
+def test_a_sweep_retires_its_prepared_ids_in_chunks_each_committed_with_its_maxima(
+    run_task, monkeypatch,
+):
+    """#10090 part 2: a 100 k-row UPDATE held every row it took for 68-93 s.
+
+    Five prepared ids at a chunk of two are three transactions. Each is one
+    locking write over its own slice of ids, its markets' maxima, and a COMMIT,
+    so no row stays locked past its own chunk. The counter is the sum.
+    """
+    import app.tasks as tasks_mod
+
+    monkeypatch.setattr(tasks_mod, "MOVEMENT_RETIRE_CHUNK", 2)
+    # Five prepared ids for A; every other statement keeps its one.
+    real_init = _RecordingSession.__init__
+
+    def _init(self, *a, **k):
+        real_init(self, *a, **k)
+        self.prepared_ids["A"] = [1, 2, 3, 4, 5]
+
+    monkeypatch.setattr(_RecordingSession, "__init__", _init)
+    retired = [[901], [902], [903]] + [[] for _ in range(6)]
+    result, session = run_task([2, 2, 1], retired_ids=retired)
+
+    units = _units(session)[1:4]
+    unit_calls = _unit_calls(session)[1:4]
+    for unit, calls, ids, market in zip(
+        units, unit_calls, ([1, 2], [3, 4], [5]), (901, 902, 903),
+    ):
+        assert "last_updated" in unit[0] and "probability_change_24h = NULL" in unit[0], unit
+        assert calls[0][1]["prepared_ids"] == ids, calls[0]
+        assert len(unit) == 4 and unit[-1] == "COMMIT", unit
+        assert [p["market_ids"] for _, p in calls[1:]] == [[market], [market]], calls
+    assert "resolution_source IS NOT NULL" in _units(session)[4][0]  # then A2
+    assert result["expired"] == 5, result
 
 
 def _statements(session: _RecordingSession) -> list[str]:
@@ -627,23 +778,24 @@ def test_the_sweep_runs_before_both_market_statements(run_task) -> None:
     )
 
 
-def test_all_three_statements_share_one_transaction(run_task) -> None:
-    """Between the sweep and the recompute the superset bound is FALSE.
+def test_a_retirement_and_its_markets_maxima_share_one_transaction(run_task) -> None:
+    """Between a sweep and its recompute the superset bound is FALSE.
 
     `/api/futures/movers` ranks a candidate pool by `max_movement_24h` and
-    trusts it to be a superset of the true answer. A reader landing between A
-    and C sees cleared outcomes against un-recomputed markets, where that is not
-    true. One commit, at the end, is the guarantee.
+    trusts it to be a superset of the true answer. A reader landing between a
+    retirement and its markets' recompute sees cleared outcomes against
+    un-recomputed markets, where that is not true. So each retirement commits
+    WITH its markets' maxima — and, since #10090 part 2, with nothing else, so
+    its outcome rows are not held across the statements after it.
     """
     _, session = run_task(retired_ids=[[701], [], [], [], [], [], []])
     events = _movement_events(session)
-    assert sum("SET max_movement_24h" in event for event in events) == 2
-
-    assert events.count("COMMIT") == 1, (
-        f"expected exactly one commit; got {events.count('COMMIT')}: {events}"
-    )
-    assert events[-1] == "COMMIT", (
-        f"a statement ran after the commit, outside the transaction: {events}"
+    unit = _units(session)[1]
+    assert unit[0].startswith("UPDATE futures_outcomes"), unit
+    assert sum("SET max_movement_24h" in event for event in unit) == 2, unit
+    assert unit[-1] == "COMMIT", unit
+    assert events.count("COMMIT") == 6, (
+        f"expected one commit per A1-A6 retirement; got {events}"
     )
 
 
@@ -920,27 +1072,35 @@ def test_both_sweeps_run_before_either_market_statement(run_task) -> None:
     The count is the half that catches a DROPPED sweep, which is why it is
     pinned here rather than left to the per-statement `_phase_*` helpers.
     """
-    events = _movement_events(run_task(retired_ids=[[101], [102], [], [], [], [], []])[1])
+    _, session = run_task(retired_ids=[[101], [102], [], [], [], [], []])
+    events = _movement_events(session)
     outcome_idx = [i for i, s in enumerate(events) if "UPDATE futures_outcomes" in s]
-    market_idx = [i for i, s in enumerate(events) if "UPDATE futures_markets" in s]
 
     assert len(outcome_idx) == 6, (
         f"expected the six prefix sweeps, saw {len(outcome_idx)}: {events}"
     )
-    assert max(outcome_idx) < min(market_idx), (
-        "a market statement ran before an outcome sweep, so it recomputed over "
-        f"rows that were about to be retired: {events}"
-    )
+    # A targeted recompute follows ITS sweep inside its transaction (#10090
+    # part 2); the full B/C recompute follows every sweep.
+    for unit in _units(session)[1:8]:
+        market_idx = [i for i, s in enumerate(unit) if "UPDATE futures_markets" in s]
+        assert all(i > 0 for i in market_idx), (
+            "a market statement ran before its outcome sweep, so it recomputed "
+            f"over rows that were about to be retired: {unit}"
+        )
+    full = _units(session)[8]
+    assert not any("UPDATE futures_outcomes" in s for s in full), full
+    assert sum("SET max_movement_24h" in s for s in full) == 2, full
 
 
-def test_all_four_statements_share_one_transaction(run_task) -> None:
-    """A2 joins the existing transaction; it does not open a second one."""
-    events = _movement_events(run_task()[1])
-
-    assert events.count("COMMIT") == 1, (
-        f"the graded sweep added a commit; got {events.count('COMMIT')}: {events}"
-    )
-    assert events[-1] == "COMMIT", f"a statement ran after the commit: {events}"
+def test_the_graded_sweep_commits_apart_from_the_age_sweep(run_task) -> None:
+    """#10090 part 2: A2 opens its own transaction, after A's commit, so A's
+    rows are not held while A2 runs."""
+    _, session = run_task()
+    _movement_events(session)
+    a_unit, a2_unit = _units(session)[1:3]
+    assert "last_updated" in a_unit[0] and a_unit[-1] == "COMMIT", a_unit
+    assert "resolution_source IS NOT NULL" in a2_unit[0], a2_unit
+    assert a2_unit[-1] == "COMMIT", a2_unit
 
 
 def test_a_full_graded_batch_reports_the_backlog_as_undrained(run_task) -> None:
@@ -1196,7 +1356,10 @@ def test_the_unobserved_sweep_windows_the_observations(run_task) -> None:
     sql, params = _phase_a4(run_task()[1])
     flat = " ".join(sql.split())
 
-    assert "s.captured_at > now() - (:window_hours * interval '1 hour')" in flat, (
+    assert (
+        "s.captured_at > CAST(:retirement_asof AS timestamptz)"
+        " - (:window_hours * interval '1 hour')"
+    ) in flat, (
         f"the observation window is not bounded by the named constant: {flat}"
     )
     assert params.get("window_hours") == MOVEMENT_WINDOW_HOURS, (
@@ -1483,19 +1646,20 @@ def test_the_fresh_row_sweeps_retire_the_rank_claim_too(run_task) -> None:
         )
 
 
-def test_all_eight_statements_share_one_transaction(run_task) -> None:
-    """A5/A6 join the existing transaction; they do not open a second one.
+def test_the_rank_sweeps_commit_after_the_delta_sweeps(run_task) -> None:
+    """A5/A6 run, and commit, after A-A4 (#10090 part 2: one transaction each).
 
-    Not for the superset bound — they touch no aggregate — but for the card: a
-    commit landing between the delta sweeps and the rank sweeps would serve, for
-    that window, exactly the "New favorite with no movement" this ship ends.
+    A commit between the delta and the rank sweeps can serve a NULL delta beside
+    a live rank claim for the seconds between them. That window existed before
+    any rank sweep did and closes on the same run; holding every quote row a
+    whole run to hide it is what #10090 measured at 68-93 s.
     """
-    events = _movement_events(run_task()[1])
-
-    assert events.count("COMMIT") == 1, (
-        f"a rank sweep added a commit; got {events.count('COMMIT')}: {events}"
-    )
-    assert events[-1] == "COMMIT", f"a statement ran after the commit: {events}"
+    _, session = run_task()
+    _movement_events(session)
+    a5_unit, a6_unit = _units(session)[5:7]
+    for unit in (a5_unit, a6_unit):
+        assert unit[0].startswith("UPDATE futures_outcomes SET rank_change_24h = NULL"), unit
+        assert unit[-1] == "COMMIT", unit
 
 
 def test_the_rank_counters_are_reported_separately(run_task) -> None:
@@ -1796,7 +1960,7 @@ def test_bank_failure_rolls_back_and_warms_committed_core_then_propagates(run_ta
         run_task(fail_bank=True)
     session = run_task.last_session
     events = session.events
-    assert events.count("COMMIT") == 4, events
+    assert events.count("COMMIT") == 9, events
     assert events[-1] == "ROLLBACK", events
     core_commit = max(i for i, event in enumerate(events) if event == "COMMIT")
     assert "SET max_movement_24h = NULL" in events[core_commit - 1], events
