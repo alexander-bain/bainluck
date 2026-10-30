@@ -332,6 +332,9 @@ const PAIR_PRINTERS: Array<[string, string]> = [
   // win-probability chart read "Final · Final". `RAW_JOIN_RENAMED` below is the
   // tell that makes the rename unable to hide the ninth site.
   [join(IOS_ROOT, "Components/GamePlayCardView.swift"), "the play card under the chart"],
+  // #10868. The hockey journey screen's live state (`HockeyJourneyPageAdapter10868.stateWords`)
+  // delegates the join and adds no rule of its own.
+  [join(IOS_ROOT, "Utilities/HockeyJourneyPageAdapter10868.swift"), "the hockey journey screen's live state"],
 ];
 
 /**
