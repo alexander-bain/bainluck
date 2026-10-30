@@ -31,10 +31,14 @@ HOW IT DECIDES, one consumer process, one source, per LIVE event:
   validation (a Polymarket trade prints at the bid, the midpoint returns, the
   stored row never moves, yet the next publication that did move credited the
   print from its own receipt) — an input is RETIRED, never credited, when:
-  a newer input of its outcome committed (``superseded``); a committed flush's
-  staged mark reached it and its price was never stored (``flushed``,
-  `note_flushed`); or a reading that changed nothing readers see blended its
-  committed price (``settled``, `settle`). Each is counted;
+  its own price never committed and a newer input of its outcome did
+  (``superseded``); a committed flush's staged mark reached it and its price
+  was never stored (``flushed``, `note_flushed`); or a reading that changed
+  nothing readers see blended its committed price, or a newer committed price
+  of its outcome (``settled``, `settle`), while readers held no preview of an
+  unstamped price of that outcome. Each is counted. An input whose own price
+  committed stays through a newer commit: a throttle-held or refused write
+  that finally reaches readers is credited from its own receipt;
 * a published PREVIEW blend carries every committed input not yet shown; a
   STAMP carries every committed input up to its staged mark (or, with no mark,
   every committed one), and retires them;
@@ -67,8 +71,13 @@ LIMITS, stated so a reader of the number can bound it:
 * a leg refused by a row lock inside a flush that committed other legs of the
   event is retired as ``flushed``: its eventual commit is not credited
   (understates; the lock receipts count those holds);
-* a newer committed price superseding an unshown one is credited from the
-  newer receipt (understates by the gap between them);
+* an unshown input whose own price never committed, superseded by a newer
+  one that did, is credited from the newer receipt: whether it would have
+  moved ``p`` is unknown, so readers may have lacked it from its own receipt
+  (understates by the gap between them; counted ``superseded``);
+* readings that settle nothing (``no_reading``, a row lock) keep every
+  committed input, so the next carrying publication credits from the oldest
+  of them: a lock is a real hold, a missing reading may over-credit;
 * the first input of a run is never credited, even when it differs from the
   stored row (understates by at most one flush: it is written promptly);
 * a preview published after a LATER flush's commit was noted covers that
@@ -221,8 +230,8 @@ class ReaderTrail:
         """A price write's committed RETURNING rows (``id``,
         ``current_probability``): per row, the newest trail input of that
         outcome at the stored price is committed, and every older unshown
-        input of the outcome is retired (``superseded``). A row matching no
-        input commits nothing."""
+        input of the outcome whose own price never committed is retired
+        (``superseded``). A row matching no input commits nothing."""
         for row in rows:
             oid = getattr(row, "id", None)
             price = _float(getattr(row, "current_probability", None))
@@ -241,7 +250,8 @@ class ReaderTrail:
             match.committed = True
             self._retire(trail, [
                 item for item in trail.inputs
-                if item.outcome_id == oid and item.seq < match.seq and not item.shown
+                if item.outcome_id == oid and item.seq < match.seq
+                and not item.shown and not item.committed
             ], "superseded")
 
     def note_flushed(self, event_id: int, seq: int) -> None:
@@ -258,9 +268,12 @@ class ReaderTrail:
     def settle(self, event_id: int, rows: Iterable) -> None:
         """A reading that changed nothing readers see (the arm's value equals
         the one it last wrote or the row stores) blended these rows (``id``,
-        ``current_probability``): every committed, unshown input whose own
-        price is its row's is retired (``settled``). An input committed after
-        the reading took its rows does not match them, and stays."""
+        ``current_probability``): per outcome, the newest committed, unshown
+        input whose own price is its row's, and every committed, unshown one
+        older than it, are retired (``settled``). An outcome readers still hold
+        a preview of (a shown input) settles nothing: the stored value is not
+        what they see. An input committed after the reading took its rows does
+        not match them, and stays."""
         trail = self._events.get(event_id)
         if trail is None:
             return
@@ -269,10 +282,20 @@ class ReaderTrail:
             price = _float(getattr(row, "current_probability", None))
             if price is not None:
                 read[getattr(row, "id", None)] = price
+        # Readers still hold a preview of an unstamped price of these outcomes:
+        # the stored value is not what they see, so nothing of theirs settles.
+        for item in trail.inputs:
+            if item.shown:
+                read.pop(item.outcome_id, None)
+        upto: dict = {}
+        for item in trail.inputs:
+            price = read.get(item.outcome_id)
+            if (price is not None and item.committed and not item.shown
+                    and abs(item.probability - price) <= COMMITTED_PRICE_TOLERANCE):
+                upto[item.outcome_id] = item.seq
         self._retire(trail, [
             item for item in trail.inputs
-            if item.committed and not item.shown and item.outcome_id in read
-            and abs(item.probability - read[item.outcome_id]) <= COMMITTED_PRICE_TOLERANCE
+            if item.committed and not item.shown and item.seq <= upto.get(item.outcome_id, -1)
         ], "settled")
 
     # ── publications ─────────────────────────────────────────────────────────

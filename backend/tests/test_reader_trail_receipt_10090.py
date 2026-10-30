@@ -869,6 +869,106 @@ def test_F2_a_newer_committed_price_supersedes_the_older_unshown_one(clock, capl
     assert sum(_retired(line)[0]["superseded"] for line in lines) == 1
 
 
+# ── R1-R3 (lane1 1813Z review of 5694f7cc): a committed input stays through a ─
+# newer commit, settle sweeps what it read, and never under a shown preview.
+# P1, P2 and P5 are red on 5694f7cc.
+
+
+def test_R1_P1_two_commits_inside_one_throttle_hold_credit_the_first(clock, caplog):
+    # The throttle-held stamp above, but the outcome commits AGAIN before the
+    # held stamp goes out: readers lacked the first commit all along.
+    r = _receipts()
+    m0 = _input(r, clock, 0.0, A, 0.50)
+    _stamp(r, clock, 0.3, 0.60, 100, m0)
+    m1 = _input(r, clock, 1.0, A, 0.55)
+    _commit(r, (A, 0.55))
+    clock.t = 1.2
+    r.observe({E: m1}, EPOCH + 1.2, set(), 1.2)   # committed, not due: held
+    m2 = _input(r, clock, 2.0, A, 0.56)
+    _commit(r, (A, 0.56))
+    clock.t = 2.2
+    r.observe({E: m2}, EPOCH + 2.2, set(), 2.2)   # still held
+    _stamp(r, clock, 6.0, 0.64, 101, m2, commit=False)
+    lines = _close(r, caplog)
+    assert [s[5] for s in _stamps(lines)] == [_iso(0.0), _iso(1.0)]
+    assert sum(_retired(line)[0]["superseded"] for line in lines) == 0
+
+
+def test_R1_P2_a_refused_preview_then_a_newer_commit_credit_the_first(clock, caplog):
+    # Latency's item-#3 lead: the moved reading was refused (`stale`), so
+    # nothing was published and nothing settled; the leg commits again 11 s
+    # later and the next preview carries both. An 11 s hold, not 1 s.
+    r = _receipts()
+    m0 = _input(r, clock, 0.0, A, 0.50)
+    _stamp(r, clock, 0.3, 0.60, 100, m0)
+    _input(r, clock, 1.0, A, 0.55)
+    _commit(r, (A, 0.55))
+    _input(r, clock, 12.0, A, 0.56)
+    _commit(r, (A, 0.56))
+    _preview(r, clock, 13.0, 0.64, seq=1, base_rev=100)
+    assert [p[2] for p in _previews(_close(r, caplog))] == [_iso(1.0)]
+
+
+def test_R1_P3_a_flicker_committed_twice_then_read_unchanged_is_never_credited(clock, caplog):
+    # A bid print commits, the midpoint commits back, the reading is unchanged:
+    # settle sweeps the older committed print with the newer one it read.
+    r = _receipts()
+    m0 = _input(r, clock, 0.0, A, 0.50)
+    _stamp(r, clock, 0.3, 0.60, 100, m0)
+    _input(r, clock, 1.0, A, 0.48)
+    _commit(r, (A, 0.48))
+    m2 = _input(r, clock, 1.1, A, 0.50)
+    _commit(r, (A, 0.50))
+    clock.t = 1.5
+    r.observe({E: m2}, EPOCH + 1.5, {E}, 1.5)
+    r.settle(E, [SimpleNamespace(id=A, current_probability=0.50)])
+    r.resolve([E], {E: ("unchanged", 0.60)}, {E: m2}, EPOCH + 1.5, 1.5)
+    m3 = _input(r, clock, 30.0, A, 0.55)
+    _stamp(r, clock, 30.4, 0.63, 101, m3)
+    lines = _close(r, caplog)
+    assert [s[5] for s in _stamps(lines)] == [_iso(0.0), _iso(30.0)]
+    assert sum(_retired(line)[0]["settled"] for line in lines) == 2
+
+
+def test_R3_P4_a_held_uncommitted_input_superseded_is_the_labelled_understatement(clock, caplog):
+    # Reporting chat's case: readers show A; B arrives at 0 and its write is
+    # held (no flush of the event commits it); C supersedes it at 10 and
+    # commits; C first reaches readers at 11. Whether B would have moved the
+    # blend is unknown (it never committed), so the trail credits from C:
+    # 1 s, understating by up to 10 s (module LIMITS; counted `superseded`).
+    r = _receipts()
+    m0 = _input(r, clock, -1.0, A, 0.50)
+    _stamp(r, clock, -0.7, 0.60, 100, m0)
+    _input(r, clock, 0.0, A, 0.55)
+    clock.t = 3.0
+    r.observe({}, EPOCH + 3.0, set(), 3.0)
+    _input(r, clock, 10.0, A, 0.57)
+    _commit(r, (A, 0.57))
+    _preview(r, clock, 11.0, 0.65, seq=1, base_rev=100)
+    lines = _close(r, caplog)
+    assert [p[2] for p in _previews(lines)] == [_iso(10.0)]
+    assert sum(_retired(line)[0]["superseded"] for line in lines) == 1
+
+
+def test_R2_P5_settle_never_retires_what_readers_lack_behind_a_shown_preview(clock, caplog):
+    # Readers hold a PREVIEW of B (never stamped). C returns the leg to the
+    # stored price; the reading equals the stored entry, but readers still
+    # show B's preview, so C is news to them until a publication carries it.
+    r = _receipts()
+    m0 = _input(r, clock, 0.0, A, 0.50)
+    _stamp(r, clock, 0.3, 0.60, 100, m0)
+    _input(r, clock, 1.0, A, 0.55)
+    _commit(r, (A, 0.55))
+    _preview(r, clock, 1.3, 0.64, seq=1, base_rev=100)     # readers see B
+    _input(r, clock, 2.0, A, 0.50)
+    _commit(r, (A, 0.50))
+    r.settle(E, [SimpleNamespace(id=A, current_probability=0.50)])  # unchanged vs stored
+    _preview(r, clock, 9.0, 0.60, seq=2, base_rev=100)     # readers get C at last
+    lines = _close(r, caplog)
+    assert [p[2] for p in _previews(lines)] == [_iso(1.0), _iso(2.0)]
+    assert sum(_retired(line)[0]["settled"] for line in lines) == 0
+
+
 def test_F2_the_receipt_line_prints_every_retirement_reason(clock, caplog):
     r = _receipts()
     m0 = _input(r, clock, 0.0, A, 0.50)
@@ -938,7 +1038,24 @@ def test_the_parser_reads_retired_fields_and_lines_without_them():
              f"outcomes_dropped=0 sw=preview_from_commit:on")
     out = trailing([_wrapped(before), _wrapped(after)])
     assert out["unretired_lines"] == 1 and out["retired_lines"] == 1
-    assert out["trail_retired"] == {"superseded": 3, "flushed": 5, "settled": 2,
-                                    "first_skipped": 4}
+    assert out["trail_retired"] == {"superseded": 3, "flushed": 5, "settled": 2}
+    # A first input is not a retire reason: its eligibility is unknown (N3).
+    assert out["first_skipped_eligibility_unknown"] == 4
     assert out["items"] == 2 and out["events"]["7"]["total_s"] == pytest.approx(4.0)
     assert trailing([after])["unretired_lines"] == 0
+
+
+def test_the_parser_never_reads_a_cut_or_malformed_retired_line_as_predating():
+    from app.utils.trailing_readout import trailing
+
+    head = (f"live_blend_refresh[polymarket]: delivery-receipt run=c event=7 "
+            f"window_start={_t(0)} stamps=- stamps_dropped=0 "
+            f"writer=polymarket previews=- previews_dropped=0 trail_dropped=0 ")
+    lost = head + "trail_retired=superseded:3"            # cut before the final field
+    gone = head                                            # cut before trail_retired
+    bad = head + "trail_retired=superseded:x trail_first_skipped=1 outcomes_dropped=0"
+    out = trailing([_wrapped(lost), _wrapped(gone.replace("run=c", "run=d")),
+                    _wrapped(bad)])
+    assert out["retired_cut_lines"] == 2 and out["retired_malformed_lines"] == 1
+    assert out["unretired_lines"] == 0 and out["retired_lines"] == 0
+    assert out["trail_retired"] == {} and out["first_skipped_eligibility_unknown"] == 0
