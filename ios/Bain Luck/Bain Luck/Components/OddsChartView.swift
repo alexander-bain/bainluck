@@ -2302,7 +2302,7 @@ struct OddsChartView: View {
                     LiveChartEdgeMarker(
                         selection: selection, proxy: proxy, plotFrame: plotFrame,
                         tail: liveSplit.tail, label: "\(homeShort) \(liveEdge.homeLabel)",
-                        rising: priceActivity?.homeDelta.map { $0 > 0 },
+                        rising: priceActivity?.homeRising,
                         lineColor: colorForSource(liveSplit.source, sources: sources),
                         lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
                         activity: priceActivity, pulseColor: colorForSource(liveSplit.source, sources: sources))

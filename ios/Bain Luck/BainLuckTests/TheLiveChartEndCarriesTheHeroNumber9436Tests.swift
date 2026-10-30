@@ -86,7 +86,9 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         let event = try event(p: 0.445)
         let pair = LivePriceActivity.displayedLabels(in: event)
         XCTAssertEqual(LiveEdgeReading.current(in: event)?.homeLabel, pair.home)
-        XCTAssertEqual(pair.home.flatMap { Int($0.dropLast()) }.map { $0 + Int(pair.away!.dropLast())! }, 100)
+        // #10090 — in tenths, the pair still sums to 100.0 (44.5 + 55.5).
+        XCTAssertEqual(pair.home, "44.5%")
+        XCTAssertEqual(pair.away, "55.5%")
     }
 
     func testCurrentQuoteReadingFollowsPriceEligibilityNotSportsLive() throws {
