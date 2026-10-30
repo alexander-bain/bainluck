@@ -76,6 +76,7 @@ import os
 import time
 from dataclasses import dataclass, replace as _replace
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Any, Awaitable, Callable, Container, Iterable, Optional
 
 logger = logging.getLogger(__name__)
@@ -7108,13 +7109,25 @@ class LiveBlendRefresher:
         )
 
     @staticmethod
-    def _preview_call(connection, *, send_before: Optional[float] = None):
+    @lru_cache(maxsize=2)
+    def _preview_script_sha(script: str) -> str:
         from hashlib import sha1
+
+        # Redis's program identity only; authority is checked inside the Lua.
+        return sha1(script.encode(), usedforsecurity=False).hexdigest()
+
+    @staticmethod
+    def _preview_call(connection, *, send_before: Optional[float] = None):
         from redis.exceptions import NoScriptError
         from app.utils.blend_preview import LEDGER_SCRIPT
+        from app.utils.dnpl_redis_authority import GUARDED_LEDGER_SCRIPT
 
-        # Redis identifies cached Lua by SHA-1. No security decision uses it.
-        ledger_sha = sha1(LEDGER_SCRIPT.encode(), usedforsecurity=False).hexdigest()
+        script_shas = {LEDGER_SCRIPT: LiveBlendRefresher._preview_script_sha(LEDGER_SCRIPT)}
+        # Rollback changes transport only: DNPL still executes the complete guard.
+        if os.getenv("DNPL_GUARDED_LEDGER_EVALSHA", "1") != "0":
+            script_shas[GUARDED_LEDGER_SCRIPT] = LiveBlendRefresher._preview_script_sha(
+                GUARDED_LEDGER_SCRIPT
+            )
 
         async def send(*args):
             if send_before is not None and asyncio.get_running_loop().time() >= send_before:
@@ -7123,9 +7136,14 @@ class LiveBlendRefresher:
             return await connection.read_response()
 
         async def call(*args):
-            if len(args) >= 3 and args[0] == "EVAL" and args[1] == LEDGER_SCRIPT:
+            script_sha = (
+                script_shas.get(args[1])
+                if len(args) >= 3 and args[0] == "EVAL" and isinstance(args[1], str)
+                else None
+            )
+            if script_sha is not None:
                 try:
-                    return await send("EVALSHA", ledger_sha, *args[2:])
+                    return await send("EVALSHA", script_sha, *args[2:])
                 except NoScriptError:
                     # NOSCRIPT proves nothing ran. Load and execute the exact
                     # program once; never replay a timeout or ambiguous write.
