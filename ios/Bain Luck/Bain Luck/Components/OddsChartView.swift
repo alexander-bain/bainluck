@@ -3984,27 +3984,36 @@ struct OddsChartView: View {
     }
 
     private func strokeStyleForSource(_ source: String, sources: [String: WinProbSourceInfo]) -> StrokeStyle {
+        Self.strokeStyle(source: source,
+                         isModel: sources[source]?.type == "model",
+                         hasAggregate: vm.history?.aggregateLine != nil && isMultiSource(vm.history!))
+    }
+
+    /// #10090 / #11105 — every line joins its segments ROUND. The default
+    /// miter join (limit 10) turns a tiny real reversal between two close
+    /// vertices into a needle many times taller than the move; a round join
+    /// draws each wiggle at its true height, as the live tail
+    /// (`LiveChartEdgeMarker`) already does. Solid lines also cap round so
+    /// the line meets that tail without a square shoulder. Dashed (model)
+    /// lines keep butt caps: a round cap lengthens every dash by the line's
+    /// width and would eat the gaps the legend swatch draws.
+    static func strokeStyle(source: String, isModel: Bool, hasAggregate: Bool) -> StrokeStyle {
         if source == "aggregate" {
             // Meta-aggregate across all sources — boldest line
-            return StrokeStyle(lineWidth: 3.0)
+            return StrokeStyle(lineWidth: 3.0, lineCap: .round, lineJoin: .round)
         }
         if source == "consensus" {
-            // Check if aggregate exists — if so, consensus is secondary
-            let hasAggregate = vm.history?.aggregateLine != nil && isMultiSource(vm.history!)
-            if hasAggregate {
-                // Regular weight, same as other sources
-                return StrokeStyle(lineWidth: 1.5)
-            }
-            // Sportsbooks-only: consensus is the primary line
-            return StrokeStyle(lineWidth: 2.5)
+            // If aggregate exists, consensus is secondary: regular weight,
+            // same as other sources. Sportsbooks-only: consensus is the
+            // primary line.
+            return StrokeStyle(lineWidth: hasAggregate ? 1.5 : 2.5, lineCap: .round, lineJoin: .round)
         }
         // Model sources get dashed lines, thinner
-        let isModel = sources[source]?.type == "model"
         if isModel {
-            return StrokeStyle(lineWidth: 1.5, dash: [5, 3])
+            return StrokeStyle(lineWidth: 1.5, lineJoin: .round, dash: [5, 3])
         }
         // Market sources (Kalshi, Polymarket) — thin solid
-        return StrokeStyle(lineWidth: 1.5)
+        return StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
     }
 
     private func displayNameForSource(_ source: String, sources: [String: WinProbSourceInfo]) -> String {
