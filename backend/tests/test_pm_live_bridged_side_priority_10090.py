@@ -316,6 +316,115 @@ async def test_live_events_are_offered_first_and_never_packed_with_pre_game(monk
     assert not p.ns["price_buffer"]
 
 
+# ── a pre-game cohort under a live stream (lane1, #11769 review) ──────────
+
+
+async def test_a_pre_game_cohort_has_its_own_bound_and_goes_first_once_it_has_waited(
+    monkeypatch,
+):
+    """RED at 0b4954ed: pre-game admission counted live cohorts, and a queued
+    live cohort was always popped first. Now two live cohorts outstanding leave
+    a pre-game cohort room, and one that has waited its bound is written next."""
+    monkeypatch.setattr(pm, "PM_PREGAME_BRIDGE_MAX_WAIT_S", 0.05, raising=False)
+    boundary = _boundary(monkeypatch)
+    bridges = boundary.bridges
+    order = []
+    buffer = {700: 0.4, 701: 0.5, 800: 0.6, 801: 0.7}
+    standalone_in, standalone_go = asyncio.Event(), asyncio.Event()
+    standalone = asyncio.create_task(_hold(
+        boundary.side_writer, "standalone", order, standalone_in, standalone_go,
+    ))
+    await asyncio.wait_for(standalone_in.wait(), 1)
+    _offer(boundary, order, buffer, [800], {3}, live=True)
+    _offer(boundary, order, buffer, [801], {5}, live=True)
+    assert not bridges.accepting(live=True)
+    assert bridges.accepting(), "live cohorts kept a pre-game cohort out"
+    _offer(boundary, order, buffer, [700], {2})
+    await asyncio.sleep(0.06)  # the pre-game cohort waits past its bound
+    _offer(boundary, order, buffer, [701], {4})  # this one has not
+    assert not bridges.accepting()
+    standalone_go.set()
+    await asyncio.wait_for(asyncio.gather(standalone, bridges.join()), 1)
+    assert order == ["standalone", [700], [800], [801], [701]]
+    assert not buffer and not bridges.reserved
+
+
+@pytest.mark.parametrize("withdraw", [False, True], ids=["price", "withdrawal"])
+async def test_a_pre_game_event_repriced_under_a_saturating_live_stream_is_written(
+    monkeypatch, withdraw,
+):
+    """RED at 0b4954ed (lane1's scratch case; base 4351e94f GREEN): live events
+    2, 3 and 5 reprice every 2 ms flush and each bridged write takes 15 ms, so
+    a live cohort is always queued and the writer never idles. Pre-game event 4 reprices once (``withdrawal``: and a
+    wide book refutes its held price, a withdrawal that waits with that price).
+    At 0b4954ed it was refused or passed over on every flush (lane1's rig: 0
+    pre-game writes after 48 live ones). Now it is written once it has waited
+    the shipped bound, and its withdrawal follows, while the stream keeps going."""
+    monkeypatch.setattr(pm, "PM_BRIDGED_SIDE_FIRST", False)
+    bound = getattr(pm, "PM_PREGAME_BRIDGE_MAX_WAIT_S", 0.5)
+    assert bound <= 0.5
+    p, x = _bridges(monkeypatch, events=(2, 3, 4, 5), live=(2, 3, 5))
+    boundary = p.ns["catalog_boundary"]
+    written = []
+    original = p.ns["write_chunk"]
+
+    async def write(chunk, **kwargs):
+        written.append(sorted(chunk))
+        await asyncio.sleep(0.015)  # several flushes: the writer never idles
+        return await original(chunk, **kwargs)
+
+    p.ns["write_chunk"] = write
+    seq = 100
+
+    async def live_flush():
+        nonlocal seq
+        for eid, (yes, no) in ((2, (900, 901)), (3, (902, 903)), (5, (906, 907))):
+            seq += 1
+            value = round(0.2 + (seq % 500) / 1000, 3)
+            for oid, v in ((yes, value), (no, round(1 - value, 3))):
+                p.ns["price_buffer"][oid] = v
+                p.ns["input_marks"][oid] = _mark(oid, eid, v, seq)
+        await asyncio.wait_for(
+            p.ns["_flush_prices"](flush_started=time.monotonic()), 2,
+        )
+        await asyncio.sleep(0.002)
+
+    def done():
+        if withdraw:
+            return any(
+                kind == "withdraw" and ids and 904 in ids for kind, ids in p.trace
+            )
+        return any(904 in chunk for chunk in written[tick:])
+
+    try:
+        for _ in range(20):
+            await live_flush()
+        tick, ticked = len(written), time.monotonic()
+        for oid, v in ((904, 0.61), (905, 0.39)):
+            p.ns["price_buffer"][oid] = v
+            p.ns["input_marks"][oid] = _mark(oid, 4, v, 99999)
+        if withdraw:
+            p.ns["withdraw_buffer"][904] = (0.1, 0.9)
+        while not done() and time.monotonic() - ticked < bound + 1.5:
+            await live_flush()
+        waited = time.monotonic() - ticked
+        after = written[tick:]
+    finally:
+        await _drain(boundary)
+    pregame = [n for n, chunk in enumerate(after) if 904 in chunk]
+    assert pregame, (
+        f"pre-game event 4 unwritten {waited:.2f} s after its reprice, behind "
+        f"{len(after)} live writes"
+    )
+    assert done(), "its withdrawal never followed the written price"
+    # The stream really kept the writer busy: live cohorts went first until
+    # the pre-game cohort's bound, then it took one turn.
+    assert pregame[0] >= 10, after[:pregame[0] + 1]
+    assert len(pregame) == 1
+    assert 904 not in p.ns["price_buffer"]
+    assert p.ns["stats"]["errors"] == 0
+
+
 # ── ordering: one writer per outcome, newest value last ───────────────────
 
 
@@ -368,6 +477,10 @@ async def test_randomized_ticks_liveness_and_side_load_keep_every_outcome_in_ord
     events = (2, 3, 4)
     p, x = _bridges(monkeypatch, events=events, live=(3,))
     p.ns["FLUSH_CHUNK_ROWS"] = rnd.choice((2, 4, 250))
+    # A pre-game cohort past its bound jumps the live ones (0 s: every time).
+    monkeypatch.setattr(
+        pm, "PM_PREGAME_BRIDGE_MAX_WAIT_S", rnd.choice((0.0, 0.002, 0.5)), raising=False,
+    )
     boundary = p.ns["catalog_boundary"]
     legs = {eid: (900 + 2 * n, 901 + 2 * n) for n, eid in enumerate(events)}
     seq_of = {}  # (oid, value) -> input seq
