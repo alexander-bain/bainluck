@@ -94,8 +94,11 @@ async def test_off_is_todays_arrival_order(monkeypatch):
     assert order == ["standalone", "prop", "bridged"]
 
 
-async def test_off_keeps_the_same_asyncio_lock(monkeypatch):
-    assert type(_boundary(monkeypatch, False).side_writer) is asyncio.Lock
+async def test_both_settings_share_the_one_side_writer(monkeypatch):
+    # Off, a plain waiter keeps `asyncio.Lock`'s arrival order (below); a live
+    # bridged cohort still takes the first turn
+    # (test_pm_live_bridged_side_priority_10090.py).
+    assert type(_boundary(monkeypatch, False).side_writer) is pm._PMSideWriter
     assert type(_boundary(monkeypatch, True).side_writer) is pm._PMSideWriter
 
 

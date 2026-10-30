@@ -1950,7 +1950,8 @@ class LedgerRegistry(PreviewRegistry):
             "_ledger": {"gen": gen, "seq": seq},
         }, excluded
 
-    async def _mutate(self, op: dict, call, stats: dict) -> list[dict]:
+    async def _mutate(self, op: dict, call, stats: dict,
+                      outcome: Optional[list] = None) -> list[dict]:
         source, event_id = op["source"], op["event_id"]
         kind = op["ledger_op"]
         claim = self.claims.get(source)
@@ -2011,6 +2012,8 @@ class LedgerRegistry(PreviewRegistry):
             reply = await self._eval(call, "terminal", *common, op["ctx_rev"],
                                      self.policy.cap, op.get("read_ticket"))
         status = reply[0]
+        if outcome is not None:
+            outcome.append(status)
         if trace is not None:
             _readset_replied(trace, receipt, op, reply)
             if status not in ("ok", "expired"):
@@ -2213,6 +2216,38 @@ class LedgerRegistry(PreviewRegistry):
                     frames.extend(await self._mutate(item, call, stats))
                 elif "_ledger" in item:
                     frames.append(item)
+        return frames
+
+    def _ticket_after(self, ticket: int, acknowledged: int) -> int:
+        """``ticket`` as it reads after ``acknowledged`` retirements of its own batch."""
+        return ticket + acknowledged
+
+    async def prepare_retirements(self, items: list, call, stats: dict) -> list[dict]:
+        """Run one capacity batch (retire_idle/retire_policy); return its revokes.
+
+        Every item carries the ticket read before the caller's ONE locked DB
+        statement, and the caller holds those rows until this returns. Each
+        acknowledged retirement advances the barrier by exactly one, so the
+        next item is sent with the ticket plus this batch's acknowledgements:
+        it matches only if no OTHER retirement moved the barrier, exactly as
+        a fresh ticket would. ``read_required`` or ``late`` ends the batch;
+        every later item would be refused the same way.
+        """
+        if len({item["read_ticket"] for item in items}) > 1:
+            raise ValueError("a retirement batch is proved after one ticket")
+        frames: list[dict] = []
+        acknowledged = 0
+        with self._alarm_batch():
+            for item in items:
+                outcome: list = []
+                frames.extend(await self._mutate(
+                    {**item, "read_ticket": self._ticket_after(item["read_ticket"], acknowledged)},
+                    call, stats, outcome))
+                if outcome == ["ok"]:
+                    acknowledged += 1
+                    stats["capacity_reclaimed"] = stats.get("capacity_reclaimed", 0) + 1
+                elif outcome and outcome[0] in ("read_required", "late"):
+                    break
         return frames
 
     async def execute(self, items: list, call, channel, stats: dict, observe=None) -> None:

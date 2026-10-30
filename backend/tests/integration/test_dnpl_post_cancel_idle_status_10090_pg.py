@@ -8,7 +8,7 @@ Fable, test-only, base b37cd811ce10ae5e9cba0ea90904af616ce892cc.
 The unchanged residency assertion reproduced on b37cd811 at line 123.
 Successor controls also verify lock lifetime, repeated cancellation and read failure.
 
-Real: `LiveBlendRefresher._maintain_preview_capacity`, `_retire_idle_preview_event`,
+Real: `LiveBlendRefresher._maintain_preview_capacity`, `_retire_idle_preview_events`,
 `_prepare_ledger_previews`, the shipped Lua, redis-py's pooled connection,
 disposable Postgres, and a private Redis (existing `capacity` fixture).
 Controlled seam: a byte-faithful unix-socket relay between the worker's redis
@@ -101,7 +101,7 @@ async def test_post_cancel_late_retire_idle_does_not_remove_a_row_that_went_live
     if retirement == 'idle':
         async def no_policy(*args):
             return None
-        monkeypatch.setattr(worker, '_retire_policy_preview_event', no_policy)
+        monkeypatch.setattr(worker, '_retire_policy_preview_events', no_policy)
     for eid in [481]:  # Only one idle target; keep its existing upcoming reservation.
         await registry.execute(registry.committed(eid, 'kalshi', seq=registry.pending_seq(eid, 'kalshi'),
                                sources=BASE10, rev=10), client.execute_command, event_channel, worker.preview_stats)
@@ -111,11 +111,11 @@ async def test_post_cancel_late_retire_idle_does_not_remove_a_row_that_went_live
     monkeypatch.setattr(worker, '_client', lambda: relayed)
     timing = {}
     hold_entered = asyncio.Event()
-    retirement_method = '_retire_' + retirement + '_preview_event'
+    retirement_method = '_retire_' + retirement + '_preview_events'
     retire = getattr(worker, retirement_method)
-    async def record_deadline(eid, ticket, deadline_ms, when):
+    async def record_deadline(eids, ticket, deadline_ms, when):
         timing['deadline'] = when
-        return await retire(eid, ticket, deadline_ms, when)
+        return await retire(eids, ticket, deadline_ms, when)
     monkeypatch.setattr(worker, retirement_method, record_deadline)
     hold = worker._hold_idle_proof_until
     async def record_hold(when, error):

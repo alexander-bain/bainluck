@@ -90,12 +90,21 @@ logger = logging.getLogger(__name__)
 #: `idle_attempted` counts idle reclaims tried (each re-proved under a row
 #: lock, so a busy or protected row retires nothing). `end=deadline` means
 #: the pass's one-second budget ran out before the next idle reclaim could
-#: start. `attempted` stays the missing + retirable count. Report only:
-#: nothing here changes admission, retirement, cap or TTL.
+#: start. `attempted` stays the missing + retirable count.
+#: `policy_attempted` counts idle residents offered to full-bucket policy
+#: retirement, and `reclaimed` counts the idle + policy retirements Redis
+#: acknowledged this pass, so a reclaim that never lands is visible. Report
+#: only: nothing here changes admission, retirement, cap or TTL.
 PREVIEW_CAPACITY_RECEIPT_FORMAT = (
     "live_blend_refresh[%s]: preview capacity pass end=%s candidates=%d missing=%d "
     "retirable=%d attempted=%d live=%d scheduled=%d suspended=%d other=%d "
-    "live_over_6h=%d oldest_live_h=%s idle=%d idle_attempted=%d")
+    "live_over_6h=%d oldest_live_h=%s idle=%d idle_attempted=%d "
+    "policy_attempted=%d reclaimed=%d")
+#: Most idle residents one capacity pass offers each retirement path (#10090).
+#: Each path proves its whole batch in ONE locked DB statement and sends it on
+#: ONE Redis connection; one statement and one lock wait per resident spent
+#: the pass's one-second budget before the pass reached most of them.
+PREVIEW_CAPACITY_BATCH = 32
 PREVIEW_CAPACITY_LIVE_OLD_HOURS = 6.0
 
 
@@ -298,6 +307,34 @@ LOCK_RETRY_PROMPT_DELAYS_S = (1.0, 2.0, 4.0)
 #: on the busy wide-book games whose buffer never clears, so a due
 #: `lock_retry_prompt` stayed out flush after flush.
 LOCK_RETRY_PAST_WITHDRAWAL_SWITCH = "lock_retry_past_withdrawal"
+#: #10090 runtime trial (``ab``/``alternate`` 0/1, today 0), read per event when
+#: a committed price write hands its RETURNING rows over (`note_committed_rows`):
+#: on, a live event's preview is composed from those rows patched into the
+#: refresher's last read graph and proposed at once, with that read's ticket,
+#: revision and base, before the stamp's own session, ticket and SELECT. Redis
+#: refuses an open on a stale ticket (`read_required`) and an older context
+#: that would change the event's class (`stale_context`; a same-class one
+#: passes, `keep_class`); a continue is guarded by its chain, which every
+#: retire/terminal removes. The ordinary refresh runs behind it either way, so
+#: a refusal costs only the head start. Production 2026-10-29
+#: 23:28-23:52Z (discover): live recv->stamped_at p50 187 ms Kalshi / 279 ms PM,
+#: about half of it after the price commit.
+PREVIEW_FROM_COMMIT_SWITCH = "preview_from_commit"
+#: How old a cached read graph may be when a commit is composed onto it. The
+#: rows this process commits are patched in; a write by another process (a
+#: REST-poll price, a backfill or sweep settlement, an event status change) is
+#: unseen until the next read. This is a TRUTH window, not just a speed knob:
+#: for up to this long a preview may be composed over such a change, until the
+#: ordinary refresh behind it corrects it. Raising it needs a fresh review.
+PREVIEW_GRAPH_MAX_AGE_S = 3.0
+#: How long a committed row is noted for a read already in flight to patch in:
+#: past the graph age, so no graph young enough to compose can predate it.
+PREVIEW_NOTE_RETENTION_S = 2 * PREVIEW_GRAPH_MAX_AGE_S
+#: Live preview events whose last read graph is kept (oldest read dropped).
+PREVIEW_GRAPH_MAX_EVENTS = 512
+#: The outcome columns a committed price write returns and the patch replaces.
+#: A row missing any of them is not patched (its event is not composed).
+COMMIT_PATCH_FIELDS = ("current_probability", "last_updated", "is_winner", "resolution_source")
 
 
 def _optional_db_key(event_ids) -> Optional[int]:
@@ -376,6 +413,84 @@ def _lock_retry_past_withdrawal() -> bool:
     try:
         return bool(_optional_db_trial().value(LOCK_RETRY_PAST_WITHDRAWAL_SWITCH, 0))
     except Exception:  # noqa: BLE001 — a switch read never fails a flush
+        return False
+
+
+_NOT_RETURNED = object()
+
+
+def _field_ranks(prices) -> list:
+    """Each leg's `rank` under `field_rank_expr` (``rank()``, DESC NULLS LAST,
+    ties share a number): what a write's re-rank of the market stores."""
+    keys = [(0, 0.0) if price is None else (1, float(price)) for price in prices]
+    return [1 + sum(other > key for other in keys) for key in keys]
+
+
+def _patched_group(group, returned: dict) -> Optional[list]:
+    """``group`` with each committed row in ``returned`` (outcome id -> its
+    `COMMIT_PATCH_FIELDS`) newer than the graph's copy patched in. Rows are
+    replaced, never mutated. None when a patched market's cached `rank`s are
+    not what its write's re-rank (`rerank_market_fields_stmt`) stores."""
+    from types import SimpleNamespace
+
+    patched = []
+    for entry in group:
+        outcomes, changed = [], False
+        for row in entry.outcomes:
+            values = returned.get(row.id)
+            stored = getattr(row, "last_updated", None)
+            if values is None or (stored is not None and values["last_updated"] <= stored):
+                outcomes.append(row)
+            else:
+                outcomes.append(SimpleNamespace(**{**vars(row), **values}))
+                changed = True
+        if not changed:
+            patched.append(entry)
+            continue
+        if [row.rank for row in outcomes] != _field_ranks(
+                [row.current_probability for row in outcomes]):
+            return None
+        patched.append(_replace(entry, outcomes=outcomes))
+    return patched
+
+
+def _prune_notes(notes: dict, now: float, noted_at) -> None:
+    """Drop notes older than `PREVIEW_NOTE_RETENTION_S` (oldest first)."""
+    while notes:
+        key = next(iter(notes))
+        if now - noted_at(notes[key]) <= PREVIEW_NOTE_RETENTION_S:
+            break
+        del notes[key]
+
+
+def forget_preview_outcomes(refresher, outcome_ids) -> None:
+    """`LiveBlendRefresher.forget_preview_outcomes` on the refresher a writer
+    holds, for rows it changed outside a price write. Nothing for a refresher
+    without it. Never raises."""
+    forget = getattr(refresher, "forget_preview_outcomes", None)
+    if callable(forget):
+        with contextlib.suppress(Exception):
+            forget(list(outcome_ids))
+
+
+def _preview_from_commit_possible() -> bool:
+    """Whether any event may have `preview_from_commit` on now; False on error."""
+    try:
+        trial = _optional_db_trial()
+        return (trial.state(PREVIEW_FROM_COMMIT_SWITCH).mode != "off"
+                or bool(trial.value(PREVIEW_FROM_COMMIT_SWITCH, 0)))
+    except Exception:  # noqa: BLE001 — a switch read never fails a read or write
+        return False
+
+
+def _preview_from_commit(event_id) -> bool:
+    """This event's `preview_from_commit` arm; off on any switch error."""
+    try:
+        trial = _optional_db_trial()
+        if trial.state(PREVIEW_FROM_COMMIT_SWITCH).mode == "ab":
+            return trial.arm(PREVIEW_FROM_COMMIT_SWITCH, int(event_id))
+        return bool(trial.value(PREVIEW_FROM_COMMIT_SWITCH, 0))
+    except Exception:  # noqa: BLE001 — a switch read never fails a write
         return False
 
 
@@ -489,6 +604,25 @@ OPTIONAL_DB_HELD_MAX = FRESH_STAMP_WORKERS - 2
 # occupied worker. After this many live stamps in a row, a waiting non-live
 # event goes next, so pre-game prices keep progressing while live ones lead.
 ADMITTED_LIVE_RUN = 3
+
+# #10090 (Argon flush-loop Rank 2) — a due throttle-deferred LIVE event rides
+# a running call's door outside its debt slots, at most this many at a time.
+# Production 2026-10-30 00:18Z (Kalshi 15338515, origin=throttle,
+# lock_retries=0): the one debt slot is shared with pre-game debt, so a live
+# game's throttled price waited its turn behind it. Owed stamps riding the door
+# (debt slots plus this allowance) hold at most FRESH_STAMP_WORKERS - 1
+# admitted workers, so one always stays for a later fresh cohort: the
+# allowance is what the debt slots leave of that (`_admitted_live_debt_slots`;
+# 1 with today's one slot, none once a trial runs 2 or 3). A row-lock retry
+# keeps the shared slot's turn order: it may wait out a whole lock budget, and
+# Root's fairness case (a locked event due again at once) must not take a
+# worker every admission.
+ADMITTED_LIVE_DEBT_SLOTS = max(0, FRESH_STAMP_WORKERS - 1 - ADMITTED_DEBT_SLOTS)
+
+
+def _admitted_live_debt_slots(slots: int) -> int:
+    """The live allowance beside ``slots`` debt slots (this admission's)."""
+    return max(0, FRESH_STAMP_WORKERS - 1 - slots)
 
 # Includes the point currently writing and reservations before quote COMMIT.
 # The writer's ordinary backlog. Past it a newly due stamp does not wait
@@ -2162,6 +2296,10 @@ class _FreshAdmission:
         #: admitted cohorts: debt keeps progressing while a call lives on, but
         #: never holds more than ADMITTED_DEBT_SLOTS stamp workers (default 1).
         self.debts: set[int] = set()
+        #: #10090 — owed LIVE events stamped beside the cohorts outside
+        #: `debts` (ADMITTED_LIVE_DEBT_SLOTS): pre-game debt never holds a
+        #: live game's turn.
+        self.live_debts: set[int] = set()
         self.publish: Optional[Callable[[list[dict]], Awaitable[None]]] = None
         self.publish_inline: Optional[Callable[[list[dict]], Awaitable[None]]] = None
         #: #10090 — per event, how many of its attempts in this call have
@@ -2181,8 +2319,10 @@ class _FreshAdmission:
     @property
     def debt(self) -> Optional[int]:
         """The owed event in the door's slot, as with one slot (the default);
-        with more slots, the lowest-numbered of them."""
-        return min(self.debts) if self.debts else None
+        with more slots, or a live game riding its own allowance
+        (`live_debts`), the lowest-numbered of them."""
+        riding = self.debts | self.live_debts
+        return min(riding) if riding else None
 
     def next_queued(self) -> int:
         """The admitted event the next free worker stamps: the oldest live
@@ -2199,6 +2339,7 @@ class _FreshAdmission:
         """These events' stamps returned, or went back to debt unstamped."""
         self.holding.difference_update(event_ids)
         self.debts.difference_update(event_ids)
+        self.live_debts.difference_update(event_ids)
         for event_id in event_ids:
             self.released[event_id] = self.released.get(event_id, 0) + 1
         signal, self._released_signal = self._released_signal, None
@@ -2405,6 +2546,13 @@ class LiveBlendRefresher:
         #: cannot take every turn from a writable sibling.
         self._debt_rotation: list[int] = []
         self._last_refresh_at: dict[int, float] = {}
+        #: #10090 — the newest clock a caller has handed `_due`, and `_mono`
+        #: when it was handed: the floor's "now", whatever the caller's clock.
+        self._clock_high: Optional[tuple[float, float]] = None
+        #: #10090 — per event, that current clock when it was last stamped
+        #: (`_last_refresh_at` is the caller's clock, which may be a long
+        #: flush's start). Read only while `_last_refresh_at` holds the event.
+        self._last_refresh_current: dict[int, float] = {}
         #: Events whose last batch failed -> the monotonic time before which
         #: they are not due, whatever the throttle says.
         self._failed_hold_until: dict[int, float] = {}
@@ -2550,6 +2698,23 @@ class LiveBlendRefresher:
         self.observation_read_stats: dict[str, int] = {
             "detached": 0, "finished": 0, "capped": 0, "ceiling_cancelled": 0,
         }
+        #: #10090 `preview_from_commit` — each live preview event's last read
+        #: graph: event id -> (`_mono` of the read, event, group). Replaced, never
+        #: mutated: a committed row or stamp installs a patched copy.
+        self._preview_graphs: dict[int, tuple] = {}
+        #: Outcome id -> the cached event whose graph holds it.
+        self._preview_graph_outcomes: dict[int, int] = {}
+        #: Committed outcomes awaiting composition: event id -> {outcome id:
+        #: the `last_updated` its write returned}. One worker drains it.
+        self._commit_preview_due: dict[int, dict[int, Any]] = {}
+        #: Outcome id -> (`_mono` noted, its committed `COMMIT_PATCH_FIELDS`),
+        #: oldest note first, kept `PREVIEW_NOTE_RETENTION_S`.
+        self._noted_commits: dict[int, tuple] = {}
+        #: Outcome id -> `_mono` when this process last changed it outside a
+        #: price write (`forget_preview_outcomes`), oldest first, kept as long.
+        self._forgotten_outcomes: dict[int, float] = {}
+        self._commit_preview_task: Optional[asyncio.Task] = None
+        self.commit_preview_stats: dict[str, int] = {"proposed": 0, "errors": 0}
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -2560,9 +2725,44 @@ class LiveBlendRefresher:
                 return False
             del self._failed_hold_until[event_id]
         last = self._last_refresh_at.get(event_id)
-        return last is None or (
-            (now - last) >= self.min_refresh_interval_s - FLUSH_CLOCK_SLACK_S
-        )
+        current = self._current_clock(now)
+        if last is None:
+            return True
+        floor = self.min_refresh_interval_s - FLUSH_CLOCK_SLACK_S
+        if now - last >= floor:  # the caller's clock on both sides, as before
+            return True
+        # #10090 (Argon flush-loop Rank 2): or a floor after the stamp on the
+        # current clock, on both sides. A Kalshi main flush hands its own start
+        # to every admission for its whole 3-7 s, so an event a LATER clock had
+        # stamped (a write beside it, a later flush's cohort) read as under the
+        # floor all that time and waited for the next flush. Never the current
+        # clock against `last` alone (lane1's R1 on 0b2a452d): a stamp taken on
+        # that flush's start is recorded at the start, and every admission past
+        # start + floor would stamp it again inside the floor.
+        stamped = self._last_refresh_current.get(event_id, last)
+        return current - max(stamped, last) >= floor
+
+    def _record_stamp_clock(self, event_ids: Iterable[int], now: float) -> None:
+        """#10090 — the current clock as these events' stamp starts (`_due`'s
+        second rule), never back in time. Every `_refresh_batch` caller calls
+        it first, beside the caller's clock that `_refresh_batch` records."""
+        current = self._current_clock(now)
+        for event_id in event_ids:
+            stamped = self._last_refresh_current.get(event_id)
+            if event_id not in self._last_refresh_at or stamped is None:
+                self._last_refresh_current[event_id] = current
+            else:
+                self._last_refresh_current[event_id] = max(stamped, current)
+
+    def _current_clock(self, now: float) -> float:
+        """#10090 — the newest clock any caller has handed this refresher,
+        advanced by the time since. Every caller's clock is a `_mono` reading,
+        so it never runs ahead of real time."""
+        mono = _mono()
+        high = self._clock_high
+        if high is None or now > high[0]:  # a repeated clock is not newer
+            self._clock_high = high = (now, mono)
+        return max(now, high[0] + max(0.0, mono - high[1]))
 
     # ── inversion orientation, cached ────────────────────────────────────────
 
@@ -2865,6 +3065,7 @@ class LiveBlendRefresher:
                     eid for eid in self._pending_continuation if eid not in due
                 ]
                 try:
+                    self._record_stamp_clock(due, clock)
                     await self._refresh_batch(due, clock)
                 except CancelledError as exc:
                     # #10090 review: a recycle can cancel this stamp after its
@@ -3085,6 +3286,7 @@ class LiveBlendRefresher:
                     if read_current:
                         reread_events.add(event_id)
                     try:
+                        self._record_stamp_clock(group_ids, clock)
                         await self._refresh_batch(
                             group_ids,
                             clock,
@@ -3780,11 +3982,20 @@ class LiveBlendRefresher:
             )
         slots = _admitted_debt_slots()
         free = slots - len(window.debts)
-        if free > 0:
+        # Live throttle debt only; a row-lock retry is never "live" here.
+        live = self._live_event_ids
+        live_owed = (live & self._throttle_deferred) - self._lock_retry
+        live_free = _admitted_live_debt_slots(slots) - len(window.live_debts)
+        if free > 0 or (live_free > 0 and live_owed):
             # #10090: a call that keeps admitting may outlive the moment a new
             # `refresh` would have taken the debt, so the oldest due owed events
             # ride along — at most this admission's `slots` at a time, behind
-            # the cohort, never fenced.
+            # the cohort, never fenced. Live games first, on their own allowance
+            # (Argon Rank 2): pre-game debt never holds a live turn. The shared
+            # slots keep turn order, where a live game takes only its own turn:
+            # sorted live-first there, a live game owed again at every admission
+            # took every shared turn from lock retries and pre-game debt
+            # (lane1's R3 on 0b2a452d).
             self._wake_book_refused(_mono())
             owed = self._lock_retry | self._throttle_deferred
             rotation = [eid for eid in self._debt_rotation if eid in owed]
@@ -3796,17 +4007,22 @@ class LiveBlendRefresher:
             debt_excluded = excluded.difference(
                 self._past_withdrawal(withdrawing_event_ids, event_ids)
             )
-            for eid in order:
-                if free <= 0:
-                    break
-                if eid in taken or eid in debt_excluded or eid in window.holding:
-                    continue
-                if self._due(eid, flush_started):
-                    taken.add(eid)
-                    window.debts.add(eid)
-                    free -= 1
-                    rotation.remove(eid)
-                    rotation.append(eid)
+            passes = (
+                (window.live_debts, live_free, [eid for eid in order if eid in live_owed]),
+                (window.debts, free, order),
+            )
+            for riding, room, candidates in passes:
+                for eid in candidates:
+                    if room <= 0:
+                        break
+                    if eid in taken or eid in debt_excluded or eid in window.holding:
+                        continue
+                    if self._due(eid, flush_started):
+                        taken.add(eid)
+                        riding.add(eid)
+                        room -= 1
+                        rotation.remove(eid)
+                        rotation.append(eid)
             self._debt_rotation = rotation
         if not taken:
             return frozenset()
@@ -3828,7 +4044,9 @@ class LiveBlendRefresher:
             for eid in taken:
                 self._stage_trace(
                     "stage_admission", "ADMIT",
-                    ("DEBT_" if eid in window.debts and eid not in cohort else "")
+                    ("DEBT_" if eid not in cohort and (
+                        eid in window.debts or eid in window.live_debts
+                    ) else "")
                     + ("ADMITTED" if eid in due else "THROTTLED"),
                     (eid,), flush_started=flush_started,
                 )
@@ -3869,11 +4087,11 @@ class LiveBlendRefresher:
             window.holding.update(due)
             window.clocks.update(dict.fromkeys(due, clock))
             window.retry.update(retry)
-            live = self._live_event_ids
-            if slots > 1:
+            if slots > 1 or not window.live_debts.isdisjoint(due):
                 # Debt rides behind the cohort that let it in: with more than
-                # one slot, owed events with lower ids would otherwise take
-                # every worker (and session slot) ahead of these fresh prices.
+                # one slot (or live debt beside it), owed events with lower ids
+                # would otherwise take every worker (and session slot) ahead of
+                # these fresh prices.
                 due = [eid for eid in due if eid in cohort] + [
                     eid for eid in due if eid not in cohort
                 ]
@@ -3968,6 +4186,7 @@ class LiveBlendRefresher:
                 )
 
         try:
+            self._record_stamp_clock(group_ids, clock)
             await self._refresh_batch(
                 group_ids, clock,
                 on_committed=committed, publish_committed=window.publish,
@@ -4149,6 +4368,8 @@ class LiveBlendRefresher:
         # does no admission read either (#10090).
         if stopped_waiting is not None and stopped_waiting():
             raise _ObservationReadAbandoned
+        # `preview_from_commit`: a kept graph is as old as its ticket.
+        read_started = _mono()
         with _observation_read_step("admission"):
             preview_ticket = (
                 await self._preview_admission_read() if preview_columns else None
@@ -4274,6 +4495,8 @@ class LiveBlendRefresher:
                 for entry in group:
                     for row in entry.outcomes:
                         row._primary_quote_overlaid = id(row) not in original_rows
+        if preview_ticket is not None:
+            self._remember_preview_graphs(grouped, original_rows, read_started)
         if preview_ticket is not None:
             # Marked so a caller whose deadline lands here cancels it as before:
             # a retirement writes Redis and the row, never after its caller left.
@@ -4492,6 +4715,10 @@ class LiveBlendRefresher:
         except asyncio.CancelledError as exc:
             interrupted = exc
         try:
+            await self._close_commit_preview()
+        except asyncio.CancelledError as exc:
+            interrupted = exc
+        try:
             await self._close_normal_recovery()
         except asyncio.CancelledError as exc:
             interrupted = exc
@@ -4586,7 +4813,11 @@ class LiveBlendRefresher:
         # so that event would query Postgres every 2-second flush, forever, to
         # discover the same nothing.
         for event_id in event_ids:
-            self._last_refresh_at[event_id] = now
+            # Never back in time: an older flush clock than the stamp already
+            # recorded would let the caller-clock floor pass early (the current
+            # clock's record is `_record_stamp_clock`, by every caller).
+            last = self._last_refresh_at.get(event_id)
+            self._last_refresh_at[event_id] = now if last is None else max(last, now)
 
         if self._session_factory is not None:
             get_task_session = self._session_factory  # #2471: the consumer's
@@ -5085,6 +5316,8 @@ class LiveBlendRefresher:
             self._last_write_at[event_id] = now
             self._last_written_value[event_id] = value
         self.stats["stamped"] += len(written)
+        for event_id, (new_sources, new_rev, _event) in committed_bags.items():
+            self._preview_graph_committed(event_id, new_sources, new_rev)
         if exact_trace is not None:
             for event_id, (basis, revision, stamped_at) in trace_bases.items():
                 with contextlib.suppress(Exception):
@@ -6182,6 +6415,302 @@ class LiveBlendRefresher:
                 self.source, exc_info=(type(error), error, error.__traceback__),
             )
 
+    # ── #10090 `preview_from_commit` ────────────────────────────────────────
+
+    def _remember_preview_graphs(self, grouped, original_rows, read_started) -> None:
+        """Keep each live preview event's graph exactly as this read returned it.
+
+        Committed rows only: an event with a held-quote overlay (#11138) is not
+        kept and drops any older graph, so nothing composed from the cache was
+        never stored. A row this process committed while the read was in flight
+        (`note_committed_rows`) is patched in, so a read that started before
+        that COMMIT never puts the row's older value back. A read older than the
+        kept one (a concurrent read that finished late) does not replace it.
+        ``read_started`` is taken before the read's ticket: the graph's age.
+        Never raises.
+        """
+        graphs = getattr(self, "_preview_graphs", None)
+        if graphs is None or not _preview_from_commit_possible():
+            return
+        try:
+            for event_id, (event, group) in grouped.items():
+                if event_id not in self.preview_events:
+                    continue
+                kept = graphs.get(event_id)
+                at = getattr(event, "preview_context_at", None)
+                if kept is not None:
+                    kept_at = getattr(kept[1], "preview_context_at", None)
+                    if isinstance(kept_at, datetime) and (
+                            not isinstance(at, datetime) or at < kept_at):
+                        continue
+                if (getattr(event, "status", None) != "live"
+                        or getattr(event, "completed_at", None) is not None
+                        or getattr(event, "preview_read_ticket", None) is None
+                        or any(id(row) not in original_rows
+                               for entry in group for row in entry.outcomes)):
+                    self._forget_preview_graph(event_id)
+                    continue
+                forgotten = self._forgotten_outcomes
+                if any(forgotten.get(row.id, -math.inf) >= read_started
+                       for entry in group for row in entry.outcomes):
+                    self._forget_preview_graph(event_id)
+                    continue
+                noted = self._noted_commits
+                patched = _patched_group(group, {
+                    row.id: noted[row.id][1]
+                    for entry in group for row in entry.outcomes if row.id in noted
+                })
+                if patched is None:
+                    self._forget_preview_graph(event_id)
+                    continue
+                self._install_preview_graph(event_id, (read_started, event, patched))
+            while len(graphs) > PREVIEW_GRAPH_MAX_EVENTS:
+                self._forget_preview_graph(min(graphs, key=lambda eid: graphs[eid][0]))
+        except Exception:
+            self.commit_preview_stats["errors"] += 1
+            logger.warning("live_blend_refresh[%s]: preview graph not kept", self.source,
+                           exc_info=True)
+
+    def _install_preview_graph(self, event_id: int, entry: tuple) -> None:
+        self._forget_preview_graph(event_id)
+        self._preview_graphs[event_id] = entry
+        for market in entry[2]:
+            for row in market.outcomes:
+                self._preview_graph_outcomes[row.id] = event_id
+
+    def _forget_preview_graph(self, event_id: int) -> None:
+        entry = self._preview_graphs.pop(event_id, None)
+        if entry is None:
+            return
+        for market in entry[2]:
+            for row in market.outcomes:
+                if self._preview_graph_outcomes.get(row.id) == event_id:
+                    del self._preview_graph_outcomes[row.id]
+
+    def note_committed_rows(self, rows) -> None:
+        """A committed price write's RETURNING rows. Never raises.
+
+        Called synchronously after the write's COMMIT, before its first await.
+        Each row is noted for `PREVIEW_NOTE_RETENTION_S` (a read in flight
+        patches it in); each cached graph holding a returned row gets a patched
+        copy, and a live event whose `preview_from_commit` arm is on is queued
+        for a preview composed from that copy (`_preview_from_commit_rows`).
+        """
+        graphs = getattr(self, "_preview_graphs", None)
+        if graphs is None or not _preview_from_commit_possible():
+            return
+        try:
+            now = _mono()
+            noted = self._noted_commits
+            patches: dict[int, dict[int, dict]] = {}
+            for row in rows:
+                oid = getattr(row, "id", None)
+                values = {name: getattr(row, name, _NOT_RETURNED) for name in COMMIT_PATCH_FIELDS}
+                if (oid is None or any(value is _NOT_RETURNED for value in values.values())
+                        or values["last_updated"] is None):
+                    continue
+                noted.pop(oid, None)
+                noted[oid] = (now, values)
+                event_id = self._preview_graph_outcomes.get(oid)
+                if event_id is not None:
+                    patches.setdefault(event_id, {})[oid] = values
+            _prune_notes(noted, now, lambda note: note[0])
+            for event_id, returned in patches.items():
+                read_at, event, group = graphs[event_id]
+                patched = _patched_group(group, returned)
+                if patched is None:
+                    # The write's re-rank moved a stored `rank` the resolver sorts by.
+                    self._forget_preview_graph(event_id)
+                    continue
+                self._install_preview_graph(event_id, (read_at, event, patched))
+                if _preview_from_commit(event_id):
+                    self._commit_preview_due.setdefault(event_id, {}).update(
+                        (oid, values["last_updated"]) for oid, values in returned.items()
+                    )
+            if self._commit_preview_due:
+                task = self._commit_preview_task
+                if task is None or task.done():
+                    self._commit_preview_task = asyncio.create_task(
+                        self._drain_commit_previews(), name=f"commit-preview-{self.source}",
+                    )
+        except Exception:
+            self.commit_preview_stats["errors"] += 1
+            logger.warning("live_blend_refresh[%s]: committed rows not noted", self.source,
+                           exc_info=True)
+
+    def forget_preview_outcomes(self, outcome_ids) -> None:
+        """Rows this process changed OUTSIDE a price write (a settlement, a
+        withdrawal): each cached graph holding one is dropped, and no read that
+        started before now is kept for them. Called after that write's COMMIT,
+        or when its outcome is unknown. Never raises."""
+        graphs = getattr(self, "_preview_graphs", None)
+        if graphs is None or not _preview_from_commit_possible():
+            return
+        try:
+            now = _mono()
+            forgotten = self._forgotten_outcomes
+            for oid in outcome_ids:
+                forgotten.pop(oid, None)
+                forgotten[oid] = now
+                event_id = self._preview_graph_outcomes.get(oid)
+                if event_id is not None:
+                    self._forget_preview_graph(event_id)
+            _prune_notes(forgotten, now, lambda at: at)
+        except Exception:
+            self.commit_preview_stats["errors"] += 1
+            logger.warning("live_blend_refresh[%s]: changed rows not forgotten", self.source,
+                           exc_info=True)
+
+    def _preview_graph_committed(self, event_id: int, sources, rev) -> None:
+        """A stamp committed this event's bag at ``rev``: the cached graph's
+        event carries it, so a later composition proposes on that revision and
+        judges an unchanged reading against it. Never raises."""
+        from copy import deepcopy
+        from types import SimpleNamespace
+
+        try:
+            entry = getattr(self, "_preview_graphs", {}).get(event_id)
+            if entry is None:
+                return
+            read_at, event, group = entry
+            current = getattr(event, "preview_rev", None)
+            if (type(rev) is not int or not isinstance(sources, dict)
+                    or (type(current) is int and current >= rev)):
+                return
+            self._preview_graphs[event_id] = (read_at, SimpleNamespace(**{
+                **vars(event),
+                "preview_sources": deepcopy(sources),
+                "preview_rev": rev,
+                "win_probability_sources": {self.source: deepcopy(sources.get(self.source))},
+            }), group)
+        except Exception:
+            self.commit_preview_stats["errors"] += 1
+            logger.warning("live_blend_refresh[%s]: committed bag not cached", self.source,
+                           exc_info=True)
+
+    async def _drain_commit_previews(self) -> None:
+        while self._commit_preview_due:
+            due, self._commit_preview_due = self._commit_preview_due, {}
+            try:
+                await self._preview_from_commit_rows(due)
+            except Exception:
+                self.commit_preview_stats["errors"] += 1
+                logger.warning("live_blend_refresh[%s]: preview from commit not sent",
+                               self.source, exc_info=True)
+
+    def _commit_preview_plan(self, event_id: int, written: dict, now: float):
+        """``(event, reading, value, contributing)`` the re-read path would
+        propose for this commit, from the cached graph; None to leave it there.
+
+        Only a live event whose graph is young, needs no current-book proof,
+        holds no held quote (the re-read would overlay it), is not held back
+        from refreshing, still holds exactly the rows this process committed
+        and resolves with a proven home orientation. Then the re-read path's
+        own no-new-observation gate (#5661) against the stored entry. A value
+        equal to the last written one is always left to the re-read path, even
+        when `_should_write` would re-stamp it as due: stricter than
+        `_should_write`, never looser.
+        """
+        from app.utils.aggregation import oldest_observation_time
+        from app.utils.live_blend import (
+            compute_source_home_probability, has_proven_home_orientation,
+        )
+        from app.utils.settledness import market_assigned_settled
+
+        cached = self._preview_graphs.get(event_id)
+        if cached is None:
+            return None
+        read_at, event, group = cached
+        held = self.held_quotes
+        if (now - read_at > PREVIEW_GRAPH_MAX_AGE_S
+                or event.status != "live" or event.completed_at is not None
+                or getattr(event, "preview_read_ticket", None) is None
+                or type(getattr(event, "preview_rev", None)) is not int
+                or event_id in self._lock_retry
+                or self._failed_hold_until.get(event_id, now) > now
+                or self._current_reading_proof(event_id, group, [], park_refused=False)
+                or (held is not None and any(row.id in held
+                                             for entry in group for row in entry.outcomes))):
+            return None
+        rows = {row.id: (entry, row) for entry in group for row in entry.outcomes}
+        if any(oid not in rows or rows[oid][1].last_updated != at
+               for oid, at in written.items()):
+            return None  # a newer read or write replaced a row since
+        reading = compute_source_home_probability(
+            group, event.home_team_name, event.away_team_name,
+        )
+        if reading is None or not has_proven_home_orientation(reading):
+            return None  # the stamp's own path owns the inversion fallback
+        contributing = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
+        ids = {getattr(row, "id", None) for row in contributing}
+        if ids.isdisjoint(written) or not ids.issubset(rows):
+            return None
+        if any(entry.market.status != "open"
+               or market_assigned_settled(entry.market, entry.outcomes)
+               or any(row.resolution_source is not None or row.is_winner is True
+                      for row in entry.outcomes)
+               for entry in {id(rows[oid][0]): rows[oid][0] for oid in ids}.values()):
+            return None
+        value = round(reading.home_probability, 4)
+        if (restamp_records_no_observation(
+                value, oldest_observation_time(contributing),
+                getattr(event, "win_probability_sources", None), self.source)
+                or self._last_written_value.get(event_id) == value):
+            return None
+        return event, reading, value, contributing
+
+    async def _preview_from_commit_rows(self, due: dict) -> None:
+        """Propose each queued event's preview from its cached graph, no read.
+
+        The proposal is the re-read path's (`_preview_before_stamp`) for the
+        plan `_commit_preview_plan` admits, carrying the cached read's ticket,
+        revision and base, so Redis refuses an open whose ticket is no longer
+        current (`read_required`) or an older context that would change the
+        event's class (`stale_context`), and the refused open is forgotten
+        locally. The ordinary refresh of the same commit runs
+        behind it whatever happens here.
+        """
+        from app.utils.aggregation import observation_basis
+        from app.utils.blend_preview import registry
+
+        now = _mono()
+        plans = []
+        for event_id, written in due.items():
+            plan = self._commit_preview_plan(event_id, written, now)
+            if plan is not None and observation_basis(plan[3]):
+                plans.append((event_id, *plan))
+        if not plans:
+            return
+        preview = registry()
+        frames = preview.expire()
+        for event_id, event, reading, value, contributing in plans:
+            frames.extend(preview.propose(
+                event_id, self.source, value=value, event=event,
+                row_sources=event.preview_sources, row_rev=event.preview_rev,
+                eligibility=getattr(reading, "eligibility", None),
+                observed_basis=observation_basis(contributing),
+            ))
+            self.commit_preview_stats["proposed"] += 1
+        await self._publish_previews(frames)
+
+    async def _close_commit_preview(self) -> None:
+        """Cancel and join the composition worker before the sessions close."""
+        task, self._commit_preview_task = getattr(self, "_commit_preview_task", None), None
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        interrupted = None
+        while not task.done():
+            try:
+                await asyncio.wait({task})
+            except CancelledError as exc:
+                interrupted = exc
+        if not task.cancelled():
+            task.exception()
+        if interrupted is not None:
+            raise interrupted
+
     async def _preview_before_stamp(self, grouped, plans, published_seq, *, observation_only=(),
                                     selections=None) -> None:
         """Publish every planned reading's preview, then let the UPDATEs run.
@@ -6454,7 +6983,8 @@ class LiveBlendRefresher:
         from app.tasks.base import get_task_session
         from app.utils.blend_preview import registry
 
-        end, attempted, idle_attempted = None, 0, 0
+        end, attempted, idle_attempted, policy_attempted = None, 0, 0, 0
+        reclaimed_before = self.preview_stats.get("capacity_reclaimed", 0)
         counts = self._preview_capacity_counts((), (), None)
         try:
             async with asyncio.timeout(1) as budget:
@@ -6484,12 +7014,10 @@ class LiveBlendRefresher:
                 if ticket is None:
                     end = "ticket_lost"
                     return
-                for eid in [eid for eid in candidates if eid in idle][:8]:
-                    await self._retire_policy_preview_event(eid, ticket, deadline_ms, when)
-                    ticket, _ = await self._preview_ticket()
-                    if ticket is None:
-                        end = "ticket_lost"
-                        return
+                policy = [eid for eid in candidates if eid in idle][:PREVIEW_CAPACITY_BATCH]
+                if policy:
+                    policy_attempted = len(policy)
+                    await self._retire_policy_preview_events(policy, ticket, deadline_ms, when)
                 # Policy retirement changed the barrier and resident hints.
                 ticket, candidates, idle, _ = await self._preview_ticket(include_candidates=True)
                 if ticket is None or not candidates:
@@ -6537,11 +7065,15 @@ class LiveBlendRefresher:
                 targets = sorted((eid for eid in candidates
                                   if eid not in present or present[eid][2]
                                   or (eid in idle and idle_target(present[eid]))),
-                                 key=priority)[:32]
+                                 key=priority)[:PREVIEW_CAPACITY_BATCH]
+                idle_targets = [eid for eid in targets
+                                if eid in present and not present[eid][2]]
+                lifecycle = [eid for eid in targets if eid not in idle_targets]
                 # Reclaim a bounded batch rather than allowing just one new
                 # event per cadence. Every deletion advances the barrier;
-                # each next proof therefore needs a new ticket AND DB read.
-                for index, eid in enumerate(targets):
+                # each next lifecycle proof therefore needs a new ticket AND
+                # DB read. Missing/retirable rows sort first.
+                for index, eid in enumerate(lifecycle):
                     row = present.get(eid)
                     if index:
                         ticket, _ = await self._preview_ticket()
@@ -6576,11 +7108,18 @@ class LiveBlendRefresher:
                         async with self._session_slot():
                             await self._retire_preview_event(eid, row[1], ticket)
                     elif eid in idle and idle_target(row):
-                        if deadline_ms is None or deadline_ms <= redis_now:
-                            end = "deadline"
+                        # A reread turned this row future-idle: the batch
+                        # below proves it again under its own row lock.
+                        idle_targets.append(eid)
+                if idle_targets:
+                    if attempted:
+                        # Lifecycle retirements moved the barrier.
+                        ticket, _ = await self._preview_ticket()
+                        if ticket is None:
+                            end = "ticket_lost"
                             return
-                        idle_attempted += 1
-                        await self._retire_idle_preview_event(eid, ticket, deadline_ms, when)
+                    idle_attempted = len(idle_targets)
+                    await self._retire_idle_preview_events(idle_targets, ticket, deadline_ms, when)
                 end = "done"
         except Exception:
             end = "error"
@@ -6590,15 +7129,18 @@ class LiveBlendRefresher:
         finally:
             # A cancelled pass (shutdown) leaves end unset and logs nothing.
             if end is not None:
-                self._log_preview_capacity_receipt(end, counts, attempted, idle_attempted)
+                self._log_preview_capacity_receipt(
+                    end, counts, attempted, idle_attempted, policy_attempted,
+                    self.preview_stats.get("capacity_reclaimed", 0) - reclaimed_before)
 
     def _log_preview_capacity_receipt(self, end: str, c: dict, attempted: int,
-                                      idle_attempted: int) -> None:
+                                      idle_attempted: int, policy_attempted: int = 0,
+                                      reclaimed: int = 0) -> None:
         self._capacity_ends[end] = self._capacity_ends.get(end, 0) + 1
         logger.info(PREVIEW_CAPACITY_RECEIPT_FORMAT, self.source, end, c["candidates"],
                     c["missing"], c["retirable"], attempted, c["live"], c["scheduled"],
                     c["suspended"], c["other"], c["live_over_6h"], c["oldest_live_h"],
-                    c["idle"], idle_attempted)
+                    c["idle"], idle_attempted, policy_attempted, reclaimed)
 
     @staticmethod
     def _reservation_context_query(event_ids):
@@ -6648,6 +7190,11 @@ class LiveBlendRefresher:
     async def _retire_policy_preview_event(
         self, event_id: int, ticket: int, deadline_ms: int, when: float,
     ) -> None:
+        await self._retire_policy_preview_events([event_id], ticket, deadline_ms, when)
+
+    async def _retire_policy_preview_events(
+        self, event_ids: list[int], ticket: int, deadline_ms: int, when: float,
+    ) -> None:
         """Fresh locked policy proof, separate from future-idle lifecycle proof.
 
         Redis checks every contributor's owner/deadline atomically and only
@@ -6655,50 +7202,64 @@ class LiveBlendRefresher:
         An uncertain reply keeps the proof locked through the pass deadline;
         Redis refuses retirement at/after its paired cutoff. Clock changes and
         involuntary lock loss retain the same residuals as idle retirement.
+        The whole batch is one locked statement after ``ticket`` and one
+        Redis connection (`LedgerRegistry.prepare_retirements`).
         """
         from types import SimpleNamespace
         from app.tasks.base import get_task_session
         from app.utils.blend_preview import registry
 
         factory = self._session_factory or get_task_session
+        order = {eid: index for index, eid in enumerate(event_ids)}
 
         async def retire(gate):
             async with self._session_slot():
                 if gate is not None:
                     gate.reading = True
                 async with factory() as session:
-                    row = (await session.execute(
-                        self._reservation_context_query([event_id]))).first()
+                    rows = (await session.execute(
+                        self._reservation_context_query(event_ids))).all()
                     # A read the pass deadline outlived proves nothing now.
-                    if gate is not None and gate.read_done() or row is None:
+                    if gate is not None and gate.read_done() or not rows:
                         return None
-                    context = SimpleNamespace(**dict(row._mapping))
-                    op = registry().retire_policy(event_id, self.source, context,
-                                                 context.preview_rev, ticket, deadline_ms)
-                    if op is None:
+                    ops = []
+                    for row in sorted(rows, key=lambda row: order[row.id]):
+                        context = SimpleNamespace(**dict(row._mapping))
+                        op = registry().retire_policy(context.id, self.source, context,
+                                                     context.preview_rev, ticket, deadline_ms)
+                        if op is not None:
+                            op["send_before"] = when
+                            ops.append(op)
+                    if not ops:
                         return []
-                    op["send_before"] = when
                     try:
-                        return await self._prepare_ledger_previews([op])
+                        return await self._prepare_ledger_previews(ops)
                     except BaseException as exc:
                         await self._hold_idle_proof_until(when, exc)
 
         frames = await self._optional_db_in_pass("preview_capacity", retire,
-                                                 _optional_db_key([event_id]))
+                                                 _optional_db_key(event_ids))
         if frames is not None:
             await self._publish_previews(frames)
 
     async def _retire_idle_preview_event(
         self, event_id: int, ticket: int, deadline_ms: int, when: float,
     ) -> None:
+        await self._retire_idle_preview_events([event_id], ticket, deadline_ms, when)
+
+    async def _retire_idle_preview_events(
+        self, event_ids: list[int], ticket: int, deadline_ms: int, when: float,
+    ) -> None:
         """Skip busy rows; hold fresh future-scheduled proof through mutation.
 
         An absent locked result means protected, missing or locked; none authorizes
-        missing-row retirement. Publication happens after releasing the row.
-        An uncertain outcome keeps the lock until the pass deadline; Redis
+        missing-row retirement. Publication happens after releasing the rows.
+        An uncertain outcome keeps the locks until the pass deadline; Redis
         refuses execution at/after its paired cutoff. Redis clock rollback,
         rate drift/failover and involuntary DB lock loss remain residuals:
-        this is not distributed atomicity across the two stores.
+        this is not distributed atomicity across the two stores. The whole
+        batch is one locked statement after ``ticket`` and one Redis
+        connection (`LedgerRegistry.prepare_retirements`).
         """
         from sqlalchemy import func, select
         from app.models.models import Event
@@ -6706,27 +7267,36 @@ class LiveBlendRefresher:
         from app.utils.blend_preview import registry
 
         factory = self._session_factory or get_task_session
+        order = {eid: index for index, eid in enumerate(event_ids)}
 
         async def retire(gate):
             async with self._session_slot():
                 if gate is not None:
                     gate.reading = True
                 async with factory() as session:
-                    row = (await session.execute(select(
-                        Event.status, Event.win_probability_sources_rev,
+                    rows = (await session.execute(select(
+                        Event.id, Event.win_probability_sources_rev,
                     ).where(
-                        Event.id == event_id, Event.status == "scheduled",
+                        Event.id.in_(event_ids), Event.status == "scheduled",
                         Event.commence_time.is_not(None), Event.commence_time > func.now(),
                         Event.completed_at.is_(None),
-                    ).with_for_update(read=True, skip_locked=True))).first()
+                    ).with_for_update(read=True, skip_locked=True))).all()
                     # A read the pass deadline outlived proves nothing now.
-                    if gate is not None and gate.read_done() or row is None:
+                    if gate is not None and gate.read_done() or not rows:
                         return None
-                    operation = registry().retire_idle(event_id, self.source, row[1], ticket,
-                                                       deadline_ms)
-                    operation["send_before"] = when
+                    operations = []
+                    for event_id, rev in sorted(rows, key=lambda row: order[row[0]]):
+                        operation = registry().retire_idle(event_id, self.source, rev, ticket,
+                                                           deadline_ms)
+                        # The authority registry refuses a ticket of another
+                        # owner or domain: no operation, as for policy.
+                        if operation is not None:
+                            operation["send_before"] = when
+                            operations.append(operation)
+                    if not operations:
+                        return []
                     try:
-                        return await self._prepare_ledger_previews([operation])
+                        return await self._prepare_ledger_previews(operations)
                     except BaseException as exc:
                         # Before session rollback releases FOR SHARE, including on
                         # shutdown, transport errors and repeated cancellation from
@@ -6734,7 +7304,7 @@ class LiveBlendRefresher:
                         await self._hold_idle_proof_until(when, exc)
 
         frames = await self._optional_db_in_pass("preview_capacity", retire,
-                                                 _optional_db_key([event_id]))
+                                                 _optional_db_key(event_ids))
         if frames is not None:
             await self._publish_previews(frames)
 
@@ -6875,6 +7445,10 @@ class LiveBlendRefresher:
                             await self._claim_preview_epoch(connection, preview)
                         call = (self._preview_call(connection, send_before=send_before)
                                 if idle else self._preview_call(connection))
+                        if idle and len(idle) == len(items):
+                            # One capacity batch, proved by one locked read.
+                            return await preview.prepare_retirements(items, call,
+                                                                     self.preview_stats)
                         return await preview.prepare(items, call, self.preview_stats)
                     except BaseException as exc:
                         first_error = exc

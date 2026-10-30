@@ -106,6 +106,11 @@ def _build_price_statement(has_book: bool) -> Update:
                     else None
                 ),
             ),
+            # #10090 `preview_from_commit`: the committed row's resolver
+            # inputs, so its preview is composed without reading it back.
+            FuturesOutcome.current_probability,
+            FuturesOutcome.is_winner,
+            FuturesOutcome.resolution_source,
         )
     )
 

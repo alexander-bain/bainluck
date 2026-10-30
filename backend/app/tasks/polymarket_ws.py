@@ -132,8 +132,10 @@ class _PMCatalogFlushBoundary:
         # #10090: the linked props' own loop (`flush_props`).
         self.prop_wake = asyncio.Event()
         self.prop_work = 0
-        # #10090: `PM_BRIDGED_SIDE_FIRST` off keeps today's FIFO lock.
-        self.side_writer = _PMSideWriter() if PM_BRIDGED_SIDE_FIRST else asyncio.Lock()
+        # #10090: arrival order for every side loop; a live bridged cohort
+        # (and, with `PM_BRIDGED_SIDE_FIRST`, every bridged one) takes the
+        # first turn (`_PMBridgeWriter`).
+        self.side_writer = _PMSideWriter()
         #: #10090: bridged open cohorts written beside the game flush.
         self.bridges = _PMBridgeWriter(wake=self.flush_wake)
 
@@ -528,6 +530,14 @@ class _PMStampOwner:
 #: reach an unrelated game through a full queue.
 PM_BRIDGE_QUEUE_LIMIT = 2
 
+#: #10090: a queued pre-game bridged cohort that has waited this long is the
+#: next one written, ahead of live cohorts. Live cohorts lead the queue, so
+#: without this a live stream at or above the writer's throughput left a
+#: pre-game event's price (and the withdrawal waiting with it) unwritten for
+#: as long as the load lasted (lane1, #11769 review). Two 0.25 s game flushes;
+#: a live cohort then waits at most one pre-game write (<=0.28 s measured).
+PM_PREGAME_BRIDGE_MAX_WAIT_S = 0.5
+
 
 def _bridged_side_first_env() -> bool:
     """#10090 — env `PM_BRIDGED_SIDE_FIRST`, read once at import.
@@ -556,12 +566,15 @@ def _bridged_side_first_env() -> bool:
 #: that read the buffer after 35.2 s, while live games' prices committed and
 #: stamped 0.3-2.2 s after arrival. On, the bridged writer takes the side
 #: connection ahead of any side loop waiting for it: it waits for the one side
-#: transaction in flight, never for the queue behind it. Off is today.
+#: transaction in flight, never for the queue behind it. Off, only a cohort of
+#: live events does (Argon rank 4: switch unset, live bridged writes waited up
+#: to 3.73 s for that connection behind standalone and prop chunks).
 PM_BRIDGED_SIDE_FIRST = _bridged_side_first_env()
 
 _PM_BRIDGE_TIMING_KEYS = (
     "bridged_cohorts", "bridged_side_wait_s", "bridged_side_wait_max_s",
     "bridged_write_s", "bridged_write_max_s",
+    "bridged_live_cohorts", "bridged_live_wait_s", "bridged_live_wait_max_s",
 )
 
 
@@ -570,28 +583,33 @@ class _PMSideWriter:
 
     `async with writer:` waits in arrival order, as `asyncio.Lock`;
     `async with writer.first():` goes ahead of every waiter that is not itself
-    first, behind the transaction in flight (never pre-empted). Release is
-    synchronous (a hand-over to the next waiter), so a cancellation can never
-    leave the connection marked held.
+    first, behind the transaction in flight (never pre-empted). A plain waiter
+    holding a ``ticket`` can be moved into the first turn while it waits
+    (`promote`). Release is synchronous (a hand-over to the next waiter), so a
+    cancellation can never leave the connection marked held.
     """
 
     def __init__(self) -> None:
         self._held = False
-        self._waiters: list[tuple[bool, asyncio.Future]] = []
+        #: [first, future, ticket], first turns ahead, each in arrival order.
+        self._waiters: list[list] = []
 
     def locked(self) -> bool:
         return self._held
 
-    async def acquire(self, first: bool = False) -> bool:
-        if not self._held and not self._waiters:
-            self._held = True
-            return True
-        waiter = (first, asyncio.get_running_loop().create_future())
-        if first:
-            ahead = sum(1 for is_first, _ in self._waiters if is_first)
+    def _insert(self, waiter: list) -> None:
+        if waiter[0]:
+            ahead = sum(1 for other in self._waiters if other[0])
             self._waiters.insert(ahead, waiter)
         else:
             self._waiters.append(waiter)
+
+    async def acquire(self, first: bool = False, ticket: object = None) -> bool:
+        if not self._held and not self._waiters:
+            self._held = True
+            return True
+        waiter = [first, asyncio.get_running_loop().create_future(), ticket]
+        self._insert(waiter)
         try:
             await waiter[1]
         except asyncio.CancelledError:
@@ -603,9 +621,21 @@ class _PMSideWriter:
             raise
         return True
 
+    def promote(self, ticket: object) -> bool:
+        """Move the plain waiter holding ``ticket`` to the back of the first
+        turn; False when no such waiter is still waiting."""
+        for waiter in self._waiters:
+            if waiter[2] is ticket and ticket is not None:
+                if not waiter[0] and not waiter[1].done():
+                    self._waiters.remove(waiter)
+                    waiter[0] = True
+                    self._insert(waiter)
+                return not waiter[1].done()
+        return False
+
     def release(self) -> None:
         while self._waiters:
-            _first, future = self._waiters.pop(0)
+            _first, future, _ticket = self._waiters.pop(0)
             if not future.done():
                 future.set_result(True)  # handed over; stays held
                 return
@@ -618,12 +648,15 @@ class _PMSideWriter:
         self.release()
 
     @contextlib.asynccontextmanager
-    async def first(self):
-        await self.acquire(first=True)
+    async def turn(self, first: bool = False, ticket: object = None):
+        await self.acquire(first=first, ticket=ticket)
         try:
             yield
         finally:
             self.release()
+
+    def first(self):
+        return self.turn(first=True)
 
 
 def _pm_pure_bridged_legs(
@@ -690,7 +723,12 @@ class _PMBridgeWriter:
     competes, and never stamps: each committed cohort is handed back as owed
     work (`take_completed`) that the next game flush stamps through the one
     existing stamp owner, before this writer waits for the cohort's market
-    notification.
+    notification. A cohort of live events (``live``) leads the queue and takes
+    the side connection's first turn, though never past a pre-game cohort that
+    has waited ``PM_PREGAME_BRIDGE_MAX_WAIT_S``; it is still this one serial
+    writer, and each cohort reads its prices from the buffer only once it holds
+    the turn, so no outcome is ever written by two writers or with an older
+    value after a newer one.
 
     ``reserved`` — events a queued or running cohort may still write or
     notify: game writes and withdrawals skip them, and no newer cohort of the
@@ -707,8 +745,12 @@ class _PMBridgeWriter:
         self.task: Optional[asyncio.Task] = None
         self.reserved: set[int] = set()
         self.unstamped: set[int] = set()
+        #: (ids, events, live, offered_at); live cohorts first, each part in
+        #: arrival order.
         self.queue: list[tuple] = []
         self.completed: list[tuple[list, dict, set]] = []
+        #: The side-connection ticket of a turn this writer is waiting for.
+        self._asking: Optional[object] = None
         #: A failed (non-lock) write leaves later cohorts buffered until this
         #: clock, as the game flush's own failure would: no retry storm.
         self.hold_until = 0.0
@@ -725,6 +767,7 @@ class _PMBridgeWriter:
         timing = dict(self.timing)
         self.timing["bridged_side_wait_max_s"] = 0.0
         self.timing["bridged_write_max_s"] = 0.0
+        self.timing["bridged_live_wait_max_s"] = 0.0
         return timing
 
     def _note_timing(self, name: str, seconds: float) -> None:
@@ -735,21 +778,45 @@ class _PMBridgeWriter:
     def busy(self) -> bool:
         return self.task is not None and not self.task.done()
 
-    def accepting(self) -> bool:
-        return (
-            time.monotonic() >= self.hold_until
-            and len(self.queue) + (self._entry is not None) < PM_BRIDGE_QUEUE_LIMIT
-        )
+    def accepting(self, live: bool = False) -> bool:
+        """Room for one more cohort. Live and pre-game cohorts each count only
+        their own kind outstanding against the bound (at most twice the bound
+        in all), so neither kind keeps the other out."""
+        if time.monotonic() < self.hold_until:
+            return False
+        outstanding = [queued[2] for queued in self.queue]
+        if self._entry is not None:
+            outstanding.append(self._entry["live"])
+        mine = sum(1 for is_live in outstanding if is_live == bool(live))
+        return mine < PM_BRIDGE_QUEUE_LIMIT
+
+    def _next_index(self, now: float) -> int:
+        """The queued cohort to write next: the head (a live cohort when one is
+        queued), unless the oldest pre-game cohort has waited
+        ``PM_PREGAME_BRIDGE_MAX_WAIT_S`` — so a live stream cannot starve it."""
+        for index, (_ids, _events, live, offered) in enumerate(self.queue):
+            if not live:
+                return index if now - offered >= PM_PREGAME_BRIDGE_MAX_WAIT_S else 0
+        return 0
 
     def offer(
         self, ids, events, *, write, publish,
-        side_writer, buffer_lock, price_buffer, input_marks,
+        side_writer, buffer_lock, price_buffer, input_marks, live=False,
     ) -> None:
-        """Queue one bridged cohort; reserves ``events`` before returning."""
+        """Queue one bridged cohort; reserves ``events`` before returning.
+        ``live``: it goes ahead of every queued pre-game cohort, and a plain
+        side-connection wait already under way moves to the first turn."""
         events = set(events)
         self.reserved.update(events)
         self.unstamped.update(events)
-        self.queue.append((list(ids), events))
+        queued = (list(ids), events, bool(live), time.monotonic())
+        if live:
+            self.queue.insert(sum(1 for other in self.queue if other[2]), queued)
+            promote = getattr(side_writer, "promote", None)
+            if self._asking is not None and promote is not None:
+                promote(self._asking)
+        else:
+            self.queue.append(queued)
         if not self.busy():
             self.task = asyncio.create_task(
                 self._run(write, publish, side_writer, buffer_lock, price_buffer, input_marks),
@@ -806,20 +873,33 @@ class _PMBridgeWriter:
             self.wake.set()
 
     async def _run(self, write, publish, side_writer, buffer_lock, price_buffer, input_marks):
+        turn = getattr(side_writer, "turn", None)
         while self.queue:
-            ids, events = self.queue.pop(0)
-            entry = self._entry = {
-                "events": events, "committed": None, "marks": {}, "exposed": False,
-            }
+            # #10090: the turn is taken BEFORE the cohort is chosen, so a live
+            # cohort offered during the wait is the one written next (unless a
+            # pre-game cohort has waited past its bound, `_next_index`), and
+            # its offer moves a plain wait to the first turn. A live cohort
+            # leads the queue, so its head says whether one is waiting.
+            go_first = PM_BRIDGED_SIDE_FIRST or self.queue[0][2]
+            entry = None
             publishing = None
-            # #10090: bridged-first when the side connection offers the turn.
-            first = getattr(side_writer, "first", None)
             asked = time.monotonic()
+            ticket = self._asking = object()
             try:
-                async with first() if first is not None else side_writer:
+                async with turn(go_first, ticket) if turn is not None else side_writer:
+                    self._asking = None
                     took = time.monotonic()
+                    ids, events, live, offered = self.queue.pop(self._next_index(took))
+                    entry = self._entry = {
+                        "events": events, "committed": None, "marks": {},
+                        "exposed": False, "live": live,
+                    }
                     self.timing["bridged_cohorts"] += 1
-                    self._note_timing("side_wait", took - asked)
+                    self._note_timing("side_wait", took - max(asked, offered))
+                    if live:
+                        # From hand-off to the turn: the bridged queue included.
+                        self.timing["bridged_live_cohorts"] += 1
+                        self._note_timing("live_wait", took - offered)
                     async with buffer_lock:
                         chunk = {oid: price_buffer[oid] for oid in ids if oid in price_buffer}
                         entry["marks"] = {
@@ -851,17 +931,20 @@ class _PMBridgeWriter:
                     # a held notification no longer holds the event frame.
                     self._expose(entry)
             finally:
-                try:
-                    if publishing is not None:
-                        # Committed but interrupted before `_expose` above (a
-                        # cancellation in write_chunk's buffer cleanup, after
-                        # its commit callback): the stamp is owed now, from
-                        # every chunk id, not after a held notification.
-                        self._expose(entry)
-                        await _join_publication(publishing)
-                finally:
-                    self._entry = None
-                    self._settle_entry(entry)
+                self._asking = None
+                if entry is not None:
+                    try:
+                        if publishing is not None:
+                            # Committed but interrupted before `_expose` above
+                            # (a cancellation in write_chunk's buffer cleanup,
+                            # after its commit callback): the stamp is owed
+                            # now, from every chunk id, not after a held
+                            # notification.
+                            self._expose(entry)
+                            await _join_publication(publishing)
+                    finally:
+                        self._entry = None
+                        self._settle_entry(entry)
 
     def _on_done(self, task: asyncio.Task) -> None:
         if self.task is not task:
@@ -2116,6 +2199,11 @@ def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False):
             table.c.last_updated,
             quote_moved_column(table),
             func.clock_timestamp().label("database_clock"),
+            # #10090 `preview_from_commit`: the committed row's resolver
+            # inputs, so its preview is composed without reading it back.
+            table.c.current_probability,
+            table.c.is_winner,
+            table.c.resolution_source,
         )
     )
 
@@ -2928,13 +3016,15 @@ def _log_open_contract_line(stats: dict, open_stats: dict) -> None:
     blend (0/0 with no `bridge_error` = no such contract this run).
     `bridged_writes` (#10090) is the bridged writer's cohorts since start, then
     the seconds they waited for the shared side connection and spent in their
-    own write: sum since start / the minute's longest, each.
+    own write: sum since start / the minute's longest, each. `live_writes` is
+    the cohorts of live events among them, then their wait from hand-off to
+    the side connection's turn (the bridged queue included), the same way.
     """
     logger.info(
         "Polymarket WS open contracts: assets=%d shards=%d/%d served=%d/%d "
         "msgs=%d snapshot_quotes=%d written=%d deferred=%d "
         "bridged=%d/%d bridged_writes=%d side_wait=%.1f/%.2fs "
-        "write=%.1f/%.2fs%s",
+        "write=%.1f/%.2fs live_writes=%d live_wait=%.1f/%.2fs%s",
         stats.get("open_contract_assets", 0),
         open_stats.get("shards_connected", 0), open_stats.get("shards", 0),
         open_stats.get("assets_served", 0),
@@ -2950,6 +3040,9 @@ def _log_open_contract_line(stats: dict, open_stats: dict) -> None:
         stats.get("bridged_side_wait_max_s", 0.0),
         stats.get("bridged_write_s", 0.0),
         stats.get("bridged_write_max_s", 0.0),
+        int(stats.get("bridged_live_cohorts", 0)),
+        stats.get("bridged_live_wait_s", 0.0),
+        stats.get("bridged_live_wait_max_s", 0.0),
         " bridge_error" if stats.get("open_contract_bridge_error") else "",
     )
 
@@ -3566,6 +3659,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # when the write lands. Reached through the refresher: no new name.
     blend_refresher.held_quotes = HeldRowQuotes()
     await blend_refresher.held_quotes.sample_database_clock(get_task_session)
+
     # #10090: withdrawals a previous run committed whose source removal it
     # never settled. A failed read is retried by the first withdrawal flush.
     blend_refresher.withdrawal_debt = PMWithdrawalDebt()
@@ -3945,6 +4039,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         successful_price_write_at.update(dict.fromkeys(
             (row.id for row in written_rows), _mono(),
         ))
+        note_committed = getattr(blend_refresher, "note_committed_rows", None)
+        if written_rows and not final and callable(note_committed):
+            # Before any await: the committed rows' own preview may go out
+            # ahead of the stamp's read (`note_committed_rows`).
+            note_committed(written_rows)
         # Register publication immediately after COMMIT, before buffer cleanup
         # can be interrupted. The game flush owns and joins its one sender so
         # event stamping can proceed while this separate notification awaits
@@ -3997,6 +4096,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         (`flush_props`), so a prop's withdrawal follows its price in one loop.
         ``before_write(books)`` sees the exact snapshot before its transaction.
         """
+        # #10090 `preview_from_commit`: a withdrawal (or its source removal)
+        # changes rows outside the price write; committed or maybe so, no
+        # cached read graph keeps them.
+        from app.tasks.live_blend_refresh import forget_preview_outcomes
         from app.tasks.live_blend_refresh import _mono
         from app.tasks.polymarket_ws import (
             PMWithdrawalMarketPublisher, PMWithdrawalOwnershipDeferred,
@@ -4125,6 +4228,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         })
                     withdrawal_commit_started = True
             except BaseException as exc:
+                forget_preview_outcomes(blend_refresher, books)
                 # The commit may have landed unacknowledged (a dropped
                 # connection, or cancellation during its await): the next
                 # flush re-reads every durable row memory does not hold.
@@ -4150,6 +4254,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     withdrawal_retry_until.update(dict.fromkeys(books, until))
                     return []
                 return None
+            forget_preview_outcomes(blend_refresher, books)
             if withdrawal_debt is not None:
                 withdrawal_debt.adopt(recorded)
                 # A leg whose newer quote arrived meanwhile waits for that write.
@@ -4187,6 +4292,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     )
                     removal_commit_started = True
             except BaseException as exc:
+                forget_preview_outcomes(blend_refresher, {debt.id for debt in debts + strays})
                 # Commit/close may have completed without acknowledgement.
                 # Reload the durable publication on the next flush or restart.
                 withdrawal_debt.require_reload(
@@ -4218,6 +4324,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     )
                     return []
                 return None
+            forget_preview_outcomes(blend_refresher, {debt.id for debt in debts + strays})
             # A resolver/CAS refusal settles too: a valid alternative, a newer
             # quote or a terminal result owns the source now.
             withdrawal_debt.publications.update(pending_publications)
@@ -4535,6 +4642,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             now = _mono()
             cohort: list[int] = []
             cohort_events: set[int] = set()
+            # #10090 (Argon rank 4): events whose latest stamp read said live.
+            # Their cohorts are offered first and never share a cohort with a
+            # pre-game event, so the bridged writer takes the side connection's
+            # first turn for them (`_PMBridgeWriter.offer`).
+            live_events = getattr(blend_refresher, "_live_event_ids", None) or set()
+            cohort_live = False
 
             def offer_cohort():
                 for eid in cohort_events.intersection(lock_retry_events):
@@ -4544,6 +4657,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     write=write_chunk, publish=blend_refresher.publish_market_changes,
                     side_writer=catalog_boundary.side_writer, buffer_lock=buffer_lock,
                     price_buffer=price_buffer, input_marks=input_marks,
+                    live=cohort_live,
                 )
                 stats["bridged_handed_off"] = (
                     stats.get("bridged_handed_off", 0) + len(cohort)
@@ -4566,6 +4680,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 (eid for eid in bridged if eid in lock_retry_events),
                 key=lambda eid: bridges.retry_offered.get(eid, 0.0),
             )
+            order = [eid for eid in order if eid in live_events] + [
+                eid for eid in order if eid not in live_events
+            ]
             for eid in order:
                 legs = bridged[eid]
                 if (
@@ -4579,16 +4696,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     len(cohort) + len(legs) > FLUSH_CHUNK_ROWS
                     or eid in lock_retry_events
                     or not cohort_events.isdisjoint(lock_retry_events)
+                    or (eid in live_events) != cohort_live
                 ):
-                    if bridges.accepting():
+                    if bridges.accepting(live=cohort_live):
                         offer_cohort()
                     else:
                         bridge_waiting.update(cohort_events)
                     cohort, cohort_events = [], set()
+                cohort_live = eid in live_events
                 cohort.extend(legs)
                 cohort_events.add(eid)
             if cohort:
-                if bridges.accepting():
+                if bridges.accepting(live=cohort_live):
                     offer_cohort()
                 else:
                     bridge_waiting.update(cohort_events)
@@ -5986,30 +6105,37 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         return gamma_verdict
 
     async def _write_resolution(condition_id, market_id, outcomes, verdict, msg):
-        async with get_task_session() as session:
-            written = await _apply_ws_resolution(
-                session, market_id, outcomes, verdict
-            )
-            # #9484: the terminal invalidation carries the `settled_at`
-            # this transaction stored, read back inside it — the market is
-            # resolved exactly as REST will now serve it.
-            settled_at = (
-                await session.execute(
-                    select(FuturesMarket.settled_at).where(
-                        FuturesMarket.id == market_id,
-                        FuturesMarket.status == "resolved",
+        try:
+            async with get_task_session() as session:
+                written = await _apply_ws_resolution(
+                    session, market_id, outcomes, verdict
+                )
+                # #9484: the terminal invalidation carries the `settled_at`
+                # this transaction stored, read back inside it — the market is
+                # resolved exactly as REST will now serve it.
+                settled_at = (
+                    await session.execute(
+                        select(FuturesMarket.settled_at).where(
+                            FuturesMarket.id == market_id,
+                            FuturesMarket.status == "resolved",
+                        )
                     )
-                )
-            ).scalar_one_or_none()
-            if settled_at is not None:
-                queue_market_change(
-                    session,
-                    market_id=market_id,
-                    source="polymarket",
-                    outcome_observed_at={},
-                    terminal=True,
-                    updated_at=settled_at,
-                )
+                ).scalar_one_or_none()
+                if settled_at is not None:
+                    queue_market_change(
+                        session,
+                        market_id=market_id,
+                        source="polymarket",
+                        outcome_observed_at={},
+                        terminal=True,
+                        updated_at=settled_at,
+                    )
+        finally:
+            # #10090 `preview_from_commit`: committed or not, no cached read
+            # graph keeps these legs' pre-resolution rows.
+            from app.tasks.live_blend_refresh import forget_preview_outcomes
+
+            forget_preview_outcomes(blend_refresher, (oid for oid, _ext in outcomes))
         await blend_refresher.publish_market_changes(session)
         logger.info(
             "Polymarket WS: %s resolved (verdict=%s, label=%s, %d/%d outcomes "
