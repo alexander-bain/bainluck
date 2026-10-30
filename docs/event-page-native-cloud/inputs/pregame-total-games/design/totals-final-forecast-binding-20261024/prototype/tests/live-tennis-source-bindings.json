@@ -1,0 +1,53 @@
+{
+  "origin": "tennis-live-evidence-v86: original captured responses and historical native receipt; no native execution by this test",
+  "files": {
+    "../../raw/tennis-15327807-game-markets.json": {
+      "path": "../../../tennis-live-evidence-v86/raw/tennis-15327807-game-markets.json",
+      "sha256": "b2e25ae1e2ecdb36c64129172b1b206f1129a87b1235a5fffb1425446c6371bf"
+    },
+    "../../raw/tennis-15327807-detail.json": {
+      "path": "../../../tennis-live-evidence-v86/raw/tennis-15327807-detail.json",
+      "sha256": "74a02fc6b8eddf2ca23cb7844e21cf1bf85cf2816a47db5fd77e857443116f03"
+    },
+    "../../raw/tennis-15327807-history.json": {
+      "path": "../../../tennis-live-evidence-v86/raw/tennis-15327807-history.json",
+      "sha256": "85e6881b43b33dbeb400fc3949c9fb5b6619ac4e463d37679384f772322a1ba9"
+    },
+    "../../raw/prop-65176060-history.json": {
+      "path": "../../../tennis-live-evidence-v86/raw/prop-65176060-history.json",
+      "sha256": "504efa25cb4f631c0c0453afbec671647527478478baabc2656a53a43d4d8e53"
+    },
+    "../../raw/prop-65197794-history.json": {
+      "path": "../../../tennis-live-evidence-v86/raw/prop-65197794-history.json",
+      "sha256": "e716f65d1d26d2a5363605b067b6c68e4a1fceb4abded4e7e952959c5ab5e366"
+    },
+    "../../raw/prop-65197795-history.json": {
+      "path": "../../../tennis-live-evidence-v86/raw/prop-65197795-history.json",
+      "sha256": "30d9c91b1bccdf2203ff132516aa7c14df68f09cceb4ddc7547f1aaec84c6a96"
+    },
+    "../../raw/prop-65197799-history.json": {
+      "path": "../../../tennis-live-evidence-v86/raw/prop-65197799-history.json",
+      "sha256": "19df9acce814a0174e6f825701c4c06d9328e3f9b5afc1e289fc91be97b1157c"
+    },
+    "../../raw/prop-65197800-history.json": {
+      "path": "../../../tennis-live-evidence-v86/raw/prop-65197800-history.json",
+      "sha256": "d398b5cebbe49c94a70b76641941076aea567355bdacdd43ce0f173986c41071"
+    },
+    "../../raw/prop-65197801-history.json": {
+      "path": "../../../tennis-live-evidence-v86/raw/prop-65197801-history.json",
+      "sha256": "a22def27b779df9975b1c3f857dfcfea45aa06e23f4a7e6f296e6191c8f05d2c"
+    },
+    "../../raw/prop-65212323-history.json": {
+      "path": "../../../tennis-live-evidence-v86/raw/prop-65212323-history.json",
+      "sha256": "adbc3f067ce841c8efed7f6a87a959435be385b8d0b474b4479ac647947fa45b"
+    },
+    "../../native/live-parity.json": {
+      "path": "../../../tennis-live-evidence-v86/native/live-parity.json",
+      "sha256": "1832d20f758811b43ded6626b94e3ec754b8cc3aae813bdf56315b755bd6b9cc"
+    },
+    "../src/liveTennis.json": {
+      "path": "../src/liveTennis.json",
+      "sha256": "99d3b5d26f5d49a9d0e45ffcbd192d04dd28031e569545dff5f7ccbc656ac96b"
+    }
+  }
+}

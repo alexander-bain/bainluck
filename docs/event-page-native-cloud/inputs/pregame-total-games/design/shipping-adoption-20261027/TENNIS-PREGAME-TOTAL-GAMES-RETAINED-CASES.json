@@ -1,0 +1,296 @@
+{
+  "at": "2026-10-30T01:50:14.305939+00:00",
+  "status": "RESERVED_NEXT_CLOUD_CONTRIBUTION_PENDING_VERIFIED_INPUT_ACK",
+  "route": "tennis-live",
+  "phase": "pregame",
+  "required_card": "Total-game milestones before play",
+  "reuse_candidate": {
+    "ship": "Shared total milestones, final opening-line comparison and live literal-threshold/actual axis with original chance panels",
+    "source_base": "6c73734af6d7f83f252ace8ed921eb0fcae766e3",
+    "head": "370751a9d86599e3292f2a68b050aba4694f675c",
+    "contribution_commits_in_order": [
+      "801962f8b2e984d398f07d2caec681b230b51009",
+      "3efe1ce64c0c6512916d23256606b45cc596b48c",
+      "c35228b905e910521eebbe4901194062f53122a6",
+      "269117a2bb40180edb57d6865fd5d26aaa9530ba",
+      "492fc2cd66d9a1bb03080d41871a26a704ced4bd",
+      "421ce1370fdc8f0db7d4324a0a9effbf7aa1b263",
+      "d15a8f916fce52a1913ef0dbf003ab4357d207b9",
+      "61f3b77731941844a17a4d58e9ba3d4ccd8c95f6",
+      "370751a9d86599e3292f2a68b050aba4694f675c"
+    ],
+    "files": [
+      {
+        "path": "ios/Bain Luck/Bain Luck/Components/TotalMilestonePresentation10868.swift",
+        "blob": "d6e9bb32fb61e82218fbc67b52420110c7f3c89e",
+        "sha256": "d7e99dbb14726c5453810bd046817d94e5c524b88582cc0fbef0d820add78570"
+      },
+      {
+        "path": "ios/Bain Luck/BainLuckTests/TotalMilestonePresentation10868Tests.swift",
+        "blob": "ccff588b21c76f0e2c9de5d0aa58422bca33171b",
+        "sha256": "7baad726fe4cafe5436e306626d94d8e084ec44f651827159656215f872c91d8"
+      }
+    ],
+    "design_intake": "shipping-adoption-20261027/TENNIS-LIVE-TOTAL-GAMES-370751A9-DESIGN-INTAKE.md",
+    "stage": "SOURCE_ACCEPTED_PARKED",
+    "compiled": false,
+    "tests_executed": false,
+    "independently_reviewed": false,
+    "integrated": false,
+    "carrying_testflight": false,
+    "phone_accepted": false,
+    "prior_design_intakes": [
+      "shipping-adoption-20261027/TOTAL-MILESTONE-421CE137-DESIGN-INTAKE.md",
+      "shipping-adoption-20261027/TENNIS-TOTAL-GAMES-61F3B777-DESIGN-INTAKE.md"
+    ]
+  },
+  "implementation_worktree": "/tmp/wt-ux-10868-total-milestones",
+  "implementation_branch": "ux/10868-total-milestone-lifecycle",
+  "preserve_tests": 107,
+  "source_receipts": [
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/LiveTennis.tsx",
+      "sha256": "50561474469e614c51d058107b2a312180376c5a554171bc5dc1a478dce51568"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/liveTennis.css",
+      "sha256": "93adee379697ec1c20ea3f9d743e70f5b35ec03bcbdfc762feaceef6a7589dc3"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/liveTennis.json",
+      "sha256": "99d3b5d26f5d49a9d0e45ffcbd192d04dd28031e569545dff5f7ccbc656ac96b"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/tennisFocus.ts",
+      "sha256": "5b01f01bfdc84f79cb32ce0a255aa5a8a42807038409173d60739c4645dba41c"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/live-tennis-source-binding-20261026/README.md",
+      "sha256": "4bc6156813aa3220a7bb1394e527e39392add39bb9b91dbfba82c3c4e680d03c"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/TENNIS-TOTAL-GAMES-61F3B777-DESIGN-INTAKE.md",
+      "sha256": "66c82b9bf34b0203856649fb932e5bb54a1163493eb93f2d36d6884d836c6f12"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/tests/live-tennis-source-bindings.json",
+      "sha256": "e18cbb25de19f8a105b09ba9393a3158c3712292729175da10f805d7926ec449"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/tennis-live-evidence-v86/raw/prop-65197799-history.json",
+      "sha256": "19df9acce814a0174e6f825701c4c06d9328e3f9b5afc1e289fc91be97b1157c"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/tennis-live-evidence-v86/raw/prop-65197800-history.json",
+      "sha256": "d398b5cebbe49c94a70b76641941076aea567355bdacdd43ce0f173986c41071"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/TENNIS-LIVE-TOTAL-GAMES-370751A9-DESIGN-INTAKE.md",
+      "sha256": "ee0f9e3def2727f37267be5a991ca58f753bb2bc36ab552c42ef2cd88cb4c09a"
+    }
+  ],
+  "constructed_owner_presentation": {
+    "phase": "True.before, explicit default-off option, owner pregame title/eyebrow/note; no renderer-derived phase copy",
+    "identity": "Exact original associations remain owner supplied and separately labelled constructed fixture inputs",
+    "quantity": "Literal22.5/23.5thresholds, never qualified Over counts23/24 or a forecast",
+    "visible": "Both original own pre-match readings/missing states and chance rails; genuine original actions",
+    "suppressed": "Actual/rule/subtotals/current/later/movement/performance/result/grade and corresponding speech, even with contradictory payloads"
+  },
+  "source_assignment": false,
+  "active_outcome_created": false,
+  "new_package_or_path": false,
+  "downstream_grant": false,
+  "whole_route_or_phase_credit": false,
+  "implementation_parent": "370751a9d86599e3292f2a68b050aba4694f675c",
+  "source_base": "6c73734af6d7f83f252ace8ed921eb0fcae766e3",
+  "raw_baseline_evidence": [
+    {
+      "market_id": 65197799,
+      "outcome_id": 245152784,
+      "name": "Under",
+      "last_retained_prestart_observation": {
+        "timestamp": "2026-10-12T07:54:53.005454+00:00",
+        "probability": 0.55,
+        "american_odds": null,
+        "bookmaker": "consensus"
+      },
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/tennis-live-evidence-v86/raw/prop-65197799-history.json"
+    },
+    {
+      "market_id": 65197800,
+      "outcome_id": 245152786,
+      "name": "Under",
+      "last_retained_prestart_observation": {
+        "timestamp": "2026-10-12T07:54:53.005454+00:00",
+        "probability": 0.605,
+        "american_odds": null,
+        "bookmaker": "consensus"
+      },
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/tennis-live-evidence-v86/raw/prop-65197800-history.json"
+    }
+  ],
+  "retained_later_controls": {
+    "event_id": 15327807,
+    "verified_start": "2026-10-12T10:55:00+00:00",
+    "score_capture_at": "2026-10-12T12:20:44.471140+00:00",
+    "sets": [
+      [
+        5,
+        7
+      ],
+      [
+        3,
+        3
+      ]
+    ],
+    "match_sets": [
+      0,
+      1
+    ],
+    "aggregate_games": [
+      8,
+      10
+    ],
+    "actual_total": 18,
+    "originals": [
+      {
+        "key": "65197799:245152784",
+        "marketID": 65197799,
+        "outcomeID": 245152784,
+        "label": "Under 22.5 games",
+        "category": "Total games",
+        "baseline": {
+          "value": 0.55,
+          "at": "2026-10-12T07:54:53.005454+00:00"
+        },
+        "lastQuote": {
+          "value": 0.535,
+          "at": "2026-10-12T12:23:57.848353+00:00"
+        },
+        "current": null,
+        "currentLabel": "No recent price",
+        "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+        "impossible": false,
+        "result": "Result pending",
+        "original": {
+          "threshold": 22.5,
+          "over_probability": 0.465,
+          "source": "polymarket",
+          "market_type": "game_total",
+          "market_name": "Fils vs. Zandschulp: Match O/U 22.5",
+          "outcome_name": "Under",
+          "observed_at": "2026-10-12T12:23:57.848353+00:00",
+          "contributor_outcome_ids": [
+            245152784
+          ],
+          "is_winner": null,
+          "resolution_source": null,
+          "movement": -0.01,
+          "period": null,
+          "_market_id": 65197799,
+          "_external_id": "0xa7fd4cc530a883d5c3246baa8284696c935d8649ce02241c4a18a023d67aa988"
+        },
+        "laterDetail": {
+          "id": 245152784,
+          "name": "Under",
+          "probability": 0.73,
+          "american_odds": -122,
+          "rank": 1,
+          "rank_change_24h": null,
+          "probability_change_24h": null,
+          "opening_probability": 0.545,
+          "opening_american_odds": -120,
+          "is_winner": null,
+          "resolution_source": null,
+          "last_updated": "2026-10-12T12:26:21.569917+00:00",
+          "price_changed_at": "2026-10-12T12:26:21.569917+00:00"
+        }
+      },
+      {
+        "key": "65197800:245152786",
+        "marketID": 65197800,
+        "outcomeID": 245152786,
+        "label": "Under 23.5 games",
+        "category": "Total games",
+        "baseline": {
+          "value": 0.605,
+          "at": "2026-10-12T07:54:53.005454+00:00"
+        },
+        "lastQuote": {
+          "value": 0.55,
+          "at": "2026-10-12T12:24:01.665942+00:00"
+        },
+        "current": null,
+        "currentLabel": "No recent price",
+        "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+        "impossible": false,
+        "result": "Result pending",
+        "original": {
+          "threshold": 23.5,
+          "over_probability": 0.45,
+          "source": "polymarket",
+          "market_type": "game_total",
+          "market_name": "Fils vs. Zandschulp: Match O/U 23.5",
+          "outcome_name": "Under",
+          "observed_at": "2026-10-12T12:24:01.665942+00:00",
+          "contributor_outcome_ids": [
+            245152786
+          ],
+          "is_winner": null,
+          "resolution_source": null,
+          "movement": -0.055,
+          "period": null,
+          "_market_id": 65197800,
+          "_external_id": "0x640f378707fe030b677dc74ea2e0a85bd2acbc1a3b6ce84e5c399e7ee9a25e89"
+        },
+        "laterDetail": {
+          "id": 245152786,
+          "name": "Under",
+          "probability": null,
+          "american_odds": null,
+          "rank": 1,
+          "rank_change_24h": null,
+          "probability_change_24h": null,
+          "opening_probability": 0.605,
+          "opening_american_odds": -153,
+          "is_winner": null,
+          "resolution_source": null,
+          "last_updated": "2026-10-12T12:24:42.083432+00:00",
+          "price_changed_at": "2026-10-12T12:24:47.192295+00:00"
+        }
+      }
+    ],
+    "projection": null
+  },
+  "retained": {
+    "event_id": 15327807,
+    "verified_start": "2026-10-12T10:55:00+00:00",
+    "originals": [
+      {
+        "key": "65197799:245152784",
+        "marketID": 65197799,
+        "outcomeID": 245152784,
+        "label": "Under 22.5 games",
+        "baseline": {
+          "value": 0.55,
+          "at": "2026-10-12T07:54:53.005454+00:00"
+        }
+      },
+      {
+        "key": "65197800:245152786",
+        "marketID": 65197800,
+        "outcomeID": 245152786,
+        "label": "Under 23.5 games",
+        "baseline": {
+          "value": 0.605,
+          "at": "2026-10-12T07:54:53.005454+00:00"
+        }
+      }
+    ],
+    "projection": null
+  },
+  "proposed_unchanged_component_prefix": {
+    "bytes": 129780,
+    "sha256": "52699ff983499981d282f6810e99599c0b727c9e43dc6b297a1126f440246335"
+  }
+}

@@ -1,0 +1,653 @@
+import Foundation
+
+// MARK: - Team Progression (Championship Path)
+
+/// Championship-path probabilities for both teams in an event.
+nonisolated struct TeamProgressionResponse: Decodable, Sendable {
+    let eventId: Int
+    let league: String?
+    let leagueName: String?
+    let homeTeam: TeamProgressionData?
+    let awayTeam: TeamProgressionData?
+}
+
+/// Team metadata and stage probabilities for a championship path.
+nonisolated struct TeamProgressionData: Decodable, Sendable {
+    let name: String
+    let shortName: String?
+    let logoUrl: String?
+    let record: String?
+    let conference: String?
+    let stages: [ProgressionStageData]
+}
+
+/// Probability and movement for one stage in a team's progression path.
+nonisolated struct ProgressionStageData: Decodable, Sendable {
+    let key: String
+    let label: String
+    let probability: Double?
+    /// `trend_24h`. See `TolerantNumeric` for why the key is spelled `trend24H`.
+    @TolerantNumeric var trend24h: Double?
+    /// #8691 — the grid cell's reader state (`won` / `eliminated` / `live` / …),
+    /// the same register `/api/playoffs/{league}` serves on every cell. Optional
+    /// because `/team-progression` does not carry it yet; read through
+    /// `ChampionshipRowLayout.display(for:)`, never directly.
+    let state: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case key, label, probability, state
+        case trend24h = "trend24H"
+    }
+}
+
+// MARK: - Game Markets Response
+
+/// Full set of prediction markets attached to a game detail page.
+nonisolated struct GameMarketsResponse: Decodable, Equatable, Sendable {
+    let eventId: Int
+    let homeTeam: String?
+    let awayTeam: String?
+    let status: String?
+    let homeScore: Int?
+    let awayScore: Int?
+    var playerProps: [GameMarketPlayerProp]?
+    var spreads: [GameMarketOutcome]?
+    var totals: [GameMarketOutcome]?
+    var teamTotals: [GameMarketOutcome]?
+    var periodMarkets: [GameMarketOutcome]?
+    /// #10850 — a live game's period rows whose window has closed and that the
+    /// venue has not graded yet: unpriced, beside the period's evidenced score.
+    /// Read only through ``ClosedHalfMarkets``. Absent before the server half
+    /// ships; a body the app cannot read is nil and costs only these cards.
+    @LenientDecode var closedPeriodMarkets: [ClosedPeriodOutcome]? = nil
+    var other: [GameMarketOther]?
+    let pace: GameMarketPace?
+    // Raw row revision orders projections; real observation remains separate.
+    var streamMarketIds: [Int]? = nil
+    var outcomeMarketIds: [String: Int]? = nil
+    var outcomeRevisionAt: [String: String?]? = nil
+    var outcomeObservedAt: [String: String?]? = nil
+    /// #10238 — typed Game questions (`10238.v1`); nil keeps today's sections.
+    @LenientDecode var gameQuestionMatrix: EventQuestionMatrix? = nil
+    /// Separate from the immutable final sport result and settled prop buckets.
+    var openWinnerQuote: FinalGameWinnerQuote? = nil
+    var closedWinnerMarketIds: [Int]? = nil
+    var matchups: [GameMarketMatchup]? = nil
+    /// #10236 — typed During player matrix; nil keeps the old props card.
+    var duringPlayerProps: DuringPlayerProps? = nil
+    /// #10237 — typed After comparison; a body the app cannot read is nil.
+    @LenientDecode var afterPlayerProps: AfterPlayerProps? = nil
+}
+
+/// A head-to-head/field bucket keeps every nested quote and grade identifiable.
+nonisolated struct GameMarketMatchup: Decodable, Equatable, Identifiable, Sendable {
+    var id: String { _marketId.map(String.init) ?? marketName }
+    let marketName: String
+    let type: String?
+    let source: String?
+    let outcomes: [GameMarketMatchupOutcome]
+    var _marketId: Int? = nil
+    var _marketIds: [Int]? = nil
+    var contributorOutcomeIds: [Int]? = nil
+}
+
+nonisolated struct GameMarketMatchupOutcome: Decodable, Equatable, Sendable {
+    let name: String
+    let probability: Double?
+    let observedAt: String?
+    var contributorOutcomeIds: [Int]? = nil
+    var isWinner: Bool? = nil
+    var resolutionSource: String? = nil
+}
+
+/// Miscellaneous game market outcome that does not fit a primary section.
+nonisolated struct GameMarketOther: Decodable, Equatable, Identifiable, Sendable {
+    // Leading underscores are retained by convertFromSnakeCase.
+    var _marketId: Int? = nil
+    var _marketIds: [Int]? = nil
+    var contributorOutcomeIds: [Int]? = nil
+    var isWinner: Bool? = nil
+    var resolutionSource: String? = nil
+    var id: String { "\(marketName)-\(outcomeName)" }
+    let marketName: String
+    let outcomeName: String
+    let probability: Double?
+    let source: String?
+    /// WHEN THIS LEG'S PRICE WAS LAST ACTUALLY OBSERVED — absolute ISO, never an
+    /// age (#4970 / D132).
+    ///
+    /// `_serialize_other` has shipped `observed_at` on every one of these rows
+    /// since #4970, whose own comment in `routes/events.py` says why: "so a
+    /// reader can see that the spread is eight minutes old while the moneyline
+    /// is thirty hours old… The client derives the age." Web derived it
+    /// (`SpecialEventMarkets` + `PriceAgeMark`); this model did not decode the
+    /// key at all, so the phone's Additional Markets card could not tell a leg
+    /// quoted a minute ago from one quoted three hours ago and drew both as
+    /// equal members of one distribution.
+    ///
+    /// Measured on production 2026-09-16 16:5xZ, live soccer: event 15310931's
+    /// "Second Half Result" served 0.9955 / 0.525 / 0.0045 — **153%** — with
+    /// leg ages of 2 / 43 / 25 minutes, and 15313067's "Halftime Result" 182%
+    /// at 2 / 115 / 115. The excess is the stale leg, to within a point.
+    ///
+    /// Optional because absent is absent (gotcha #53): a leg with no priced
+    /// snapshot is served `null`, and `SourceAge` answers "not stale" for a
+    /// stamp it cannot read rather than inventing a fresh one.
+    let observedAt: String?
+}
+
+/// Live scoring pace context for totals and in-game markets.
+nonisolated struct GameMarketPace: Decodable, Equatable, Sendable {
+    let totalScored: Int?
+    let projectedTotal: Double?
+    let fractionElapsed: Double?
+    let timeRemainingDisplay: String?
+}
+
+/// Player prop market with threshold, probability, and player metadata.
+nonisolated struct GameMarketPlayerProp: Decodable, Equatable, Identifiable, Sendable {
+    // Leading underscores are retained by convertFromSnakeCase.
+    var _marketId: Int? = nil
+    var _marketIds: [Int]? = nil
+    var contributorOutcomeIds: [Int]? = nil
+    var isWinner: Bool? = nil
+    var resolutionSource: String? = nil
+    var id: String { "\(marketName)-\(outcomeName)" }
+    let marketName: String
+    let outcomeName: String
+    let threshold: Double?
+    let overProbability: Double?
+    let source: String?
+    let movement: Double?
+    let playerHeadshot: String?
+    let playerTeam: String?
+    /// #4959 — THE GRADE THE SERVER ALREADY COMPUTED. Not decoding these is why a
+    /// finished game's props card drew a forward-looking chance and no verdict:
+    /// `_grade_settled_prop` (`routes/events.py`) joins the ESPN box score at serve
+    /// time and ships `actual`/`hit` per prop, and the app threw both away, then
+    /// re-derived the grade from `box_score_data` against an alias table of five
+    /// basketball stats — so every baseball rung failed closed.
+    ///
+    /// This is NOT the `is_winner`/`resolution_source` channel of #4788/#1638:
+    /// `hit` is computed from the box score and travels independently, so it is
+    /// sound on the rows where `resolution_source` is null.
+    ///
+    /// Both keys are ABSENT (not null) on live and scheduled payloads — the server
+    /// returns `{}` for an unfinished event — so optional is the decode, and the
+    /// box-score fallback still owns the live case.
+    let actual: Double?
+    let hit: Bool?
+    /// #4577 — THE SCRIPT's baseline, as an OVER probability. Served per prop by
+    /// `_resolve_pregame_mark` (`routes/events.py`) since #195 and thrown away
+    /// here until now, which is why no rung on the phone could show where its
+    /// market opened. ``PlayerPropsScript`` holds the rule for drawing it.
+    ///
+    /// ABSENT ON MOST ROWS, NULL ON OTHERS, AND THE TWO MEAN THE SAME THING: the
+    /// endpoint's two "rescue" prop builders omit the key entirely while its two
+    /// main builders send an explicit null. `decodeIfPresent` — what an optional
+    /// `let` compiles to — collapses both to nil, which is also what the web's
+    /// `pregame_mark == null` does, so the clients cannot disagree about a row.
+    ///
+    /// #4390: this number shares the OVER axis with ``overProbability``, so the
+    /// two are directly comparable on one track — the property the tick relies
+    /// on. No prop reaching this card is an inverted leg (measured: 0 of 141),
+    /// because the card only builds rungs from "Player: N+" outcomes.
+    let pregameMark: Double?
+    /// #9483 — the venue's observation clock and inverted-leg flag, served on
+    /// every prop row and read only by the All markets catalog
+    /// (`QuestionCatalog9483`), which applies web's freshness and side rules.
+    /// Absent on older payloads, decoding to `nil`.
+    var observedAt: String? = nil
+    var _inverted: Bool? = nil
+}
+
+/// Generic game market outcome used for spreads, totals, team totals, and periods.
+nonisolated struct GameMarketOutcome: Decodable, Equatable, Identifiable, Sendable {
+    // Leading underscores are retained by convertFromSnakeCase.
+    var _marketId: Int? = nil
+    var _marketIds: [Int]? = nil
+    var contributorOutcomeIds: [Int]? = nil
+    // isWinner / resolutionSource are declared below (#9108).
+    var id: String { "\(marketName)-\(outcomeName)" }
+    let marketName: String
+    let outcomeName: String
+    let probability: Double?
+    let source: String?
+    let threshold: Double?
+    let overProbability: Double?
+    let marketType: String?
+    let movement: Double?
+    let period: String?
+    /// `is_winner` / `resolution_source` (#9108): served on `period_markets`
+    /// rows. Read only through ``OutcomeVerdict`` and only by
+    /// ``HalfScoresFromGrades``; absent on older payloads, decoding to `nil`.
+    let isWinner: Bool?
+    let resolutionSource: String?
+    /// #9483 — as on ``GameMarketPlayerProp``: read only by the All markets
+    /// catalog. Absent on older payloads, decoding to `nil`.
+    var observedAt: String? = nil
+    var _inverted: Bool? = nil
+}
+
+/// #10850 — one `closed_period_markets` row: the period row as served, plus
+/// the two fields the contract adds. `probability` is null by contract and the
+/// row carries no other price.
+nonisolated struct ClosedPeriodOutcome: Decodable, Equatable, Sendable {
+    nonisolated struct PeriodScore: Decodable, Equatable, Sendable {
+        let home: Int
+        let away: Int
+    }
+
+    let row: GameMarketOutcome
+    let windowClosed: Bool?
+    let periodScore: PeriodScore?
+
+    private enum CodingKeys: String, CodingKey { case windowClosed, periodScore }
+
+    init(row: GameMarketOutcome, windowClosed: Bool?, periodScore: PeriodScore?) {
+        self.row = row
+        self.windowClosed = windowClosed
+        self.periodScore = periodScore
+    }
+
+    init(from decoder: Decoder) throws {
+        row = try GameMarketOutcome(from: decoder)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        windowClosed = try c.decodeIfPresent(Bool.self, forKey: .windowClosed)
+        periodScore = try c.decodeIfPresent(PeriodScore.self, forKey: .periodScore)
+    }
+}
+
+// MARK: - Futures Market Detail
+
+/// Detailed futures market response including metadata and all outcomes.
+nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
+    let id: Int
+    let name: String
+    let description: String?
+    let sport: String?
+    let sportName: String?
+    let category: String?
+    let llmSportCategory: String?
+    let status: String?
+    let source: String?
+    let externalId: String?
+    let mutuallyExclusive: Bool?
+    let commenceTime: String?
+    let resolutionDate: String?
+    let updatedAt: String?
+    let outcomeCount: Int?
+    let bookmakers: [String]?
+    let outcomes: [FuturesOutcome]
+    let hookDescription: String?
+    let imageUrl: String?
+    /// `lead_outcome_id` (#8892, served by #8894): on a game container, the id of
+    /// the one outcome that answers "who wins" — the match-winner leg — so the
+    /// hero stops leading with whichever leg is most lopsided. Null on every other
+    /// board, and absent from builds before #8894; both decode to `nil` and the
+    /// page keeps its highest-priced rule. See `futuresDetailHeroOutcome`.
+    let leadOutcomeId: Int?
+
+    // #9387 — `?representation=verified_title`. All four are additive and
+    // optional: a default (source) response carries none of them, and a
+    // malformed value decodes to nil rather than failing the page. Read through
+    // `VerifiedTitlePresentation`, never directly.
+    /// The EFFECTIVE representation of this response: `source` or `verified_title`.
+    @TolerantNumeric var representation: String? = nil
+    @TolerantNumeric var questionIdentity: FuturesQuestionIdentity? = nil
+    /// Union of the venues actually used by the outcomes (`odds_api`, `kalshi`,
+    /// `polymarket`). Metadata only — the hero names its OWN outcome's sources.
+    @TolerantNumeric var contributingSources: [String]? = nil
+    @TolerantNumeric var representationFallback: String? = nil
+}
+
+/// #9387 — the provider-backed question a verified response answers. Every field
+/// is a string on the wire, edition included ("2027").
+nonisolated struct FuturesQuestionIdentity: Codable, Sendable {
+    @TolerantNumeric var competition: String? = nil
+    @TolerantNumeric var edition: String? = nil
+    @TolerantNumeric var question: String? = nil
+}
+
+// MARK: - Futures Outcome
+
+/// Individual outcome within a futures market.
+nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
+    let id: Int
+    let name: String
+    let probability: Double?
+    let americanOdds: Int?
+    let rank: Int?
+    /// `rank_change_24h` / `probability_change_24h`. See `TolerantNumeric`.
+    @TolerantNumeric var rankChange24h: Int?
+    @TolerantNumeric var probabilityChange24h: Double?
+    let openingProbability: Double?
+    let openingAmericanOdds: Int?
+    let isWinner: Bool?
+    /// #10964: who wrote `is_winner`. Read only through
+    /// ``FuturesDetailRowValue`` / ``OutcomeVerdict`` — `is_winner` alone is not
+    /// a grade. `var` with a default so the memberwise init keeps its shape.
+    var resolutionSource: String? = nil
+    let lastUpdated: String?
+    /// #9387, verified responses only: this outcome's actual source keys, the
+    /// OLDEST included observation (ISO), and the resolver rule that combined
+    /// them. Absent on source responses; malformed values decode to nil.
+    @TolerantNumeric var contributingSources: [String]? = nil
+    @TolerantNumeric var observedAt: String? = nil
+    @TolerantNumeric var aggregationRule: String? = nil
+    /// #698, resolved Polymarket markets only: what this row may say about its
+    /// own result (`{"verdict","basis"}`). Absent on every other market and on
+    /// older servers. Read only through ``SettledResultDisplay698``.
+    @LenientDecode var settlementDisplay: SettlementDisplay698? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, probability, americanOdds, rank
+        case rankChange24h = "rankChange24H"
+        case probabilityChange24h = "probabilityChange24H"
+        case openingProbability, openingAmericanOdds, isWinner, resolutionSource, lastUpdated
+        case contributingSources, observedAt, aggregationRule
+        case settlementDisplay
+    }
+}
+
+// MARK: - Related Futures Response
+
+/// Outcome row for a series-level market related to an event.
+nonisolated struct SeriesMarketOutcome: Decodable, Identifiable, Sendable {
+    let outcomeId: Int
+    let name: String
+    let probability: Double?
+    /// `probability_change_24h`. See `TolerantNumeric`.
+    @TolerantNumeric var probabilityChange24h: Double?
+
+    var id: Int { outcomeId }
+
+    private enum CodingKeys: String, CodingKey {
+        case outcomeId, name, probability
+        case probabilityChange24h = "probabilityChange24H"
+    }
+}
+
+/// Series-level market related to an event detail page.
+nonisolated struct SeriesMarket: Decodable, Identifiable, Sendable {
+    let marketId: Int
+    let marketName: String
+    let source: String?
+    let status: String?
+    let resolutionDate: String?
+    let outcomes: [SeriesMarketOutcome]
+
+    var id: Int { marketId }
+}
+
+/// Related futures and context shown alongside a game event.
+nonisolated struct RelatedFuturesResponse: Decodable, Sendable {
+    let eventId: Int
+    let homeTeam: String
+    let awayTeam: String
+    let homeTeamFutures: [RelatedFuture]?
+    let awayTeamFutures: [RelatedFuture]?
+    let seriesMarkets: [SeriesMarket]?
+    /// #10238 — typed Series questions (`10238.v1`), read on their own:
+    /// never reconciled against the Game matrix.
+    @LenientDecode var seriesQuestionMatrix: EventQuestionMatrix? = nil
+    let sharedFutures: [RelatedFuture]?
+    let summary: String?
+    let eventStatus: String?
+    let boxScore: [String: [String: Double]]?
+    let gamePeriod: String?
+    let gameClock: String?
+}
+
+/// Team, player, or shared futures outcome related to a specific event.
+nonisolated struct RelatedFuture: Decodable, Identifiable, Sendable {
+    let marketId: Int
+    let marketName: String
+    let cleanLabel: String?
+    let displayCategory: String?
+    let mergeGroup: String?
+    let playoffStage: String?
+    let playoffStageType: String?
+    let stageOrder: Int?
+    let marketTier: Int?
+    let category: String?
+    let source: String?
+    let outcomeId: Int
+    let outcomeName: String
+    let probability: Double?
+    let americanOdds: Int?
+    /// `probability_change_24h`. See `TolerantNumeric`.
+    @TolerantNumeric var probabilityChange24h: Double?
+    let openingProbability: Double?
+    let rank: Int?
+    let relevanceScore: Double?
+    let relevanceReason: String?
+    let lastUpdated: String?
+    let nextUpdateExpected: String?
+    let resolutionDate: String?
+    let bookmakerCount: Int?
+    let allSources: [String]?
+    let matchedPlayer: MatchedPlayer?
+
+    var id: Int { outcomeId }
+
+    private enum CodingKeys: String, CodingKey {
+        case marketId, marketName, cleanLabel, displayCategory, mergeGroup
+        case playoffStage, playoffStageType, stageOrder, marketTier, category, source
+        case outcomeId, outcomeName, probability, americanOdds
+        case probabilityChange24h = "probabilityChange24H"
+        case openingProbability, rank, relevanceScore, relevanceReason
+        case lastUpdated, nextUpdateExpected, resolutionDate, bookmakerCount
+        case allSources, matchedPlayer
+    }
+}
+
+/// Matched player metadata attached to a related future.
+nonisolated struct MatchedPlayer: Decodable, Sendable {
+    let name: String?
+    let headshot: String?
+    let espnId: String?
+}
+
+// MARK: - Team Futures (My Stuff)
+
+/// Collection of futures tied to the user's followed teams.
+nonisolated struct TeamFuturesResponse: Decodable, Sendable {
+    let items: [TeamFutureItem]
+    let teamIds: [Int]
+    let totalCount: Int
+}
+
+/// Single futures outcome associated with one of the user's teams.
+nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
+    let outcomeId: Int
+    let outcomeName: String
+    let marketId: Int
+    let marketName: String
+    let marketTier: Int?
+    let category: String?
+    let source: String?
+    let probability: Double?
+    /// `probability_change_24h`. See `TolerantNumeric`.
+    @TolerantNumeric var probabilityChange24h: Double?
+    let rank: Int?
+    let totalOutcomes: Int?
+    let resolutionDate: String?
+    /// `is_winner` — a graded winner. Optional: `/api/me/teams/futures` may
+    /// omit it, and absence must read as "not settled", never as a result.
+    /// #9091: undecoded, the team page drew a settled market as a live 100%.
+    let isWinner: Bool?
+    let matchedTeam: TeamFutureTeam?
+    let canonicalMarketKey: String?
+    /// `state` — the championship grid's verdict for this club on this market
+    /// (#11493). Only `/api/teams/{id}` serves it, and only on a row whose market
+    /// a decided grid column lists. Read it through ``gridVerdict``.
+    let state: String?
+
+    var id: Int { outcomeId }
+
+    /// #11493 — the grid says the club is out of (or has won) this question.
+    var gridVerdict: TeamGridVerdict? { state.flatMap(TeamGridVerdict.init(rawValue:)) }
+
+    private enum CodingKeys: String, CodingKey {
+        case outcomeId, outcomeName, marketId, marketName, marketTier
+        case category, source, probability
+        case probabilityChange24h = "probabilityChange24H"
+        case rank, totalOutcomes, resolutionDate, isWinner, matchedTeam, canonicalMarketKey
+        case state
+    }
+}
+
+/// #11493 — the championship grid's verdict, republished on the team page.
+///
+/// The Braves' page said "Championship 0%" two weeks after the Dodgers put them
+/// out, beside a Division Race whose Champion cell already printed ✕: an
+/// eliminated club's leg keeps trading at 0.001 until the venue grades the
+/// series, so a price can never say "out". The server stamps the grid's own
+/// verdict as `state`; the probability is left exactly as it was.
+///
+/// Absent means undecided OR unknown — today's rendering, never a result. An
+/// unrecognised value decodes and is ignored, so a new server word cannot
+/// blank the page.
+nonisolated enum TeamGridVerdict: String, Sendable {
+    case eliminated
+    case won
+}
+
+/// Team metadata attached to a team futures item.
+nonisolated struct TeamFutureTeam: Decodable, Sendable {
+    let id: Int
+    let name: String
+    let logoSmall: String?
+    let primaryColor: String?
+}
+
+// MARK: - Probability Timeline
+
+/// Time-series probability response for a futures market.
+nonisolated struct ProbabilityTimelineResponse: Decodable, Sendable {
+    let marketId: Int
+    let marketName: String
+    let sportCategory: String?
+    let source: String?
+    let hours: Int
+    let top: Int
+    let bucketSeconds: Int
+    /// `var` only so `VerifiedTitleHistory.drawing(_:over:)` can put `/history`'s
+    /// consensus lines on a copy (#10244), with the coverage keys measured off them.
+    var timeline: [TimelineEntry]
+    let outcomes: [TimelineOutcomeMeta]
+
+    /// How much of the requested window this market was ACTUALLY observed for,
+    /// and on how many distinct instants (#7077, live/399's producer half).
+    ///
+    /// 🔴 `hours` AND `actual_hours` ARE BOTH THE WINDOW THE ROUTE SEARCHED, not
+    /// the data. Asked for 168 h, The Game Awards' 20 hours of prices came back
+    /// under `actual_hours: 168`, so a client that believes either of them draws
+    /// a week and plots one day into it. These two keys are measured from the
+    /// points actually served, so they are the only ones that can say so.
+    ///
+    /// Optional because an older server does not send them and because an empty
+    /// history sends nulls rather than zeros — an absence and an instant must not
+    /// share a shape (gotcha #53).
+    var coverageHours: Double?
+    var observationTimes: Int?
+
+    // #9387 — opt-in timeline. `timeline` stays the requested source's own
+    // history; only the CURRENT column of `outcomes` may carry verified values.
+    // `historyBasis` names whose history the lines are, and the chart labels
+    // itself from it — never from the detail request.
+    @TolerantNumeric var representation: String? = nil
+    @TolerantNumeric var questionIdentity: FuturesQuestionIdentity? = nil
+    @TolerantNumeric var contributingSources: [String]? = nil
+    @TolerantNumeric var historyBasis: TimelineHistoryBasis? = nil
+    /// #683 — only on a `range=full` read: where the drawn history begins and how
+    /// much of the venue's record was recovered (`EvolutionFullRange683.swift`).
+    /// `var` so a verified chart can carry `/history`'s block with its lines.
+    @LenientDecode var historyRange: FuturesHistoryRange? = nil
+}
+
+/// #9387 — `{kind: "single_source", source: "odds_api", market_id: 86832}`.
+nonisolated struct TimelineHistoryBasis: Codable, Sendable {
+    @TolerantNumeric var kind: String? = nil
+    @TolerantNumeric var source: String? = nil
+    @TolerantNumeric var marketId: Int? = nil
+}
+
+/// Probability snapshot for all tracked outcomes at one timestamp.
+nonisolated struct TimelineEntry: Decodable, Sendable {
+    let timestamp: String
+    let outcomes: [String: Double]
+    /// #683 — the values at this instant that are a recorded venue interval, not a
+    /// capture: `{"<outcome name>": {provenance, interval_start, period_minutes,
+    /// price_basis}}`, keyed like `outcomes`. Absent on every live entry. Tolerant,
+    /// so an unreadable block never costs the chart its lines.
+    @TolerantNumeric var archive: [String: TimelineArchiveMark]? = nil
+}
+
+/// #683 — what one archived value says about itself. Every field is tolerant: a
+/// mark that is present but unreadable still marks its value as archived, so the
+/// chart can never pass it off as a live reading.
+nonisolated struct TimelineArchiveMark: Codable, Equatable, Sendable {
+    @TolerantNumeric var provenance: String? = nil
+    @TolerantNumeric var intervalStart: String? = nil
+    @TolerantNumeric var periodMinutes: Int? = nil
+    @TolerantNumeric var priceBasis: String? = nil
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.provenance == rhs.provenance && lhs.intervalStart == rhs.intervalStart
+            && lhs.periodMinutes == rhs.periodMinutes && lhs.priceBasis == rhs.priceBasis
+    }
+}
+
+/// Display metadata for an outcome included in a probability timeline.
+nonisolated struct TimelineOutcomeMeta: Decodable, Identifiable, Sendable {
+    let id: Int?
+    let name: String
+    /// `var` only so `withholdingCurrent()` can blank it on a copy (#9387).
+    var currentProbability: Double?
+    let rank: Int?
+    /// `probability_change_24h`. See `TolerantNumeric`.
+    @TolerantNumeric var probabilityChange24h: Double?
+    let openingProbability: Double?
+    // Team enrichment
+    let teamId: Int?
+    let logoSmall: String?
+    let logoLarge: String?
+    let primaryColor: String?
+    let secondaryColor: String?
+    let abbreviation: String?
+    let record: String?
+    let location: String?
+    let espnId: String?
+    /// #9387 — the same per-outcome fields as `FuturesOutcome`, on the current
+    /// column of an opt-in timeline.
+    @TolerantNumeric var contributingSources: [String]? = nil
+    @TolerantNumeric var observedAt: String? = nil
+    @TolerantNumeric var aggregationRule: String? = nil
+
+    // Every plain camelCase property below does match its snake_case key via
+    // `.convertFromSnakeCase` — but a digits-plus-letters suffix does NOT, which
+    // is why `probabilityChange24h` needs an explicit key. See `TolerantNumeric`.
+    private enum CodingKeys: String, CodingKey {
+        case id, name, currentProbability, rank
+        case probabilityChange24h = "probabilityChange24H"
+        case openingProbability, teamId, logoSmall, logoLarge
+        case primaryColor, secondaryColor, abbreviation, record, location, espnId
+        case contributingSources, observedAt, aggregationRule
+    }
+}
+
+extension TimelineOutcomeMeta {
+    /// #9387 — this row with its CURRENT column withheld: no value, no 24h move,
+    /// no contributors. Name, id and team enrichment (and so the history key,
+    /// colour and order) are untouched. Lives beside the type because the
+    /// wrapped fields' backing storage is private to this file.
+    nonisolated func withholdingCurrent() -> TimelineOutcomeMeta {
+        var copy = self
+        copy.currentProbability = nil
+        copy._probabilityChange24h = TolerantNumeric(wrappedValue: nil)
+        copy._contributingSources = TolerantNumeric(wrappedValue: nil)
+        return copy
+    }
+}

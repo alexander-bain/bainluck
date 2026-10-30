@@ -1,0 +1,172 @@
+{
+  "at": "2026-10-30T01:50:14.305939+00:00",
+  "parent": "370751a9d86599e3292f2a68b050aba4694f675c",
+  "before": {
+    "event_id": 15327807,
+    "verified_start": "2026-10-12T10:55:00+00:00",
+    "originals": [
+      {
+        "key": "65197799:245152784",
+        "marketID": 65197799,
+        "outcomeID": 245152784,
+        "label": "Under 22.5 games",
+        "baseline": {
+          "value": 0.55,
+          "at": "2026-10-12T07:54:53.005454+00:00"
+        }
+      },
+      {
+        "key": "65197800:245152786",
+        "marketID": 65197800,
+        "outcomeID": 245152786,
+        "label": "Under 23.5 games",
+        "baseline": {
+          "value": 0.605,
+          "at": "2026-10-12T07:54:53.005454+00:00"
+        }
+      }
+    ],
+    "projection": null
+  },
+  "negative_later_controls": {
+    "event_id": 15327807,
+    "verified_start": "2026-10-12T10:55:00+00:00",
+    "score_capture_at": "2026-10-12T12:20:44.471140+00:00",
+    "sets": [
+      [
+        5,
+        7
+      ],
+      [
+        3,
+        3
+      ]
+    ],
+    "match_sets": [
+      0,
+      1
+    ],
+    "aggregate_games": [
+      8,
+      10
+    ],
+    "actual_total": 18,
+    "originals": [
+      {
+        "key": "65197799:245152784",
+        "marketID": 65197799,
+        "outcomeID": 245152784,
+        "label": "Under 22.5 games",
+        "category": "Total games",
+        "baseline": {
+          "value": 0.55,
+          "at": "2026-10-12T07:54:53.005454+00:00"
+        },
+        "lastQuote": {
+          "value": 0.535,
+          "at": "2026-10-12T12:23:57.848353+00:00"
+        },
+        "current": null,
+        "currentLabel": "No recent price",
+        "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+        "impossible": false,
+        "result": "Result pending",
+        "original": {
+          "threshold": 22.5,
+          "over_probability": 0.465,
+          "source": "polymarket",
+          "market_type": "game_total",
+          "market_name": "Fils vs. Zandschulp: Match O/U 22.5",
+          "outcome_name": "Under",
+          "observed_at": "2026-10-12T12:23:57.848353+00:00",
+          "contributor_outcome_ids": [
+            245152784
+          ],
+          "is_winner": null,
+          "resolution_source": null,
+          "movement": -0.01,
+          "period": null,
+          "_market_id": 65197799,
+          "_external_id": "0xa7fd4cc530a883d5c3246baa8284696c935d8649ce02241c4a18a023d67aa988"
+        },
+        "laterDetail": {
+          "id": 245152784,
+          "name": "Under",
+          "probability": 0.73,
+          "american_odds": -122,
+          "rank": 1,
+          "rank_change_24h": null,
+          "probability_change_24h": null,
+          "opening_probability": 0.545,
+          "opening_american_odds": -120,
+          "is_winner": null,
+          "resolution_source": null,
+          "last_updated": "2026-10-12T12:26:21.569917+00:00",
+          "price_changed_at": "2026-10-12T12:26:21.569917+00:00"
+        }
+      },
+      {
+        "key": "65197800:245152786",
+        "marketID": 65197800,
+        "outcomeID": 245152786,
+        "label": "Under 23.5 games",
+        "category": "Total games",
+        "baseline": {
+          "value": 0.605,
+          "at": "2026-10-12T07:54:53.005454+00:00"
+        },
+        "lastQuote": {
+          "value": 0.55,
+          "at": "2026-10-12T12:24:01.665942+00:00"
+        },
+        "current": null,
+        "currentLabel": "No recent price",
+        "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+        "impossible": false,
+        "result": "Result pending",
+        "original": {
+          "threshold": 23.5,
+          "over_probability": 0.45,
+          "source": "polymarket",
+          "market_type": "game_total",
+          "market_name": "Fils vs. Zandschulp: Match O/U 23.5",
+          "outcome_name": "Under",
+          "observed_at": "2026-10-12T12:24:01.665942+00:00",
+          "contributor_outcome_ids": [
+            245152786
+          ],
+          "is_winner": null,
+          "resolution_source": null,
+          "movement": -0.055,
+          "period": null,
+          "_market_id": 65197800,
+          "_external_id": "0x640f378707fe030b677dc74ea2e0a85bd2acbc1a3b6ce84e5c399e7ee9a25e89"
+        },
+        "laterDetail": {
+          "id": 245152786,
+          "name": "Under",
+          "probability": null,
+          "american_odds": null,
+          "rank": 1,
+          "rank_change_24h": null,
+          "probability_change_24h": null,
+          "opening_probability": 0.605,
+          "opening_american_odds": -153,
+          "is_winner": null,
+          "resolution_source": null,
+          "last_updated": "2026-10-12T12:24:42.083432+00:00",
+          "price_changed_at": "2026-10-12T12:24:47.192295+00:00"
+        }
+      }
+    ],
+    "projection": null
+  },
+  "expected_channels": {
+    "phase": "True.before, explicit default-off option, owner pregame title/eyebrow/note; no renderer-derived phase copy",
+    "identity": "Exact original associations remain owner supplied and separately labelled constructed fixture inputs",
+    "quantity": "Literal22.5/23.5thresholds, never qualified Over counts23/24 or a forecast",
+    "visible": "Both original own pre-match readings/missing states and chance rails; genuine original actions",
+    "suppressed": "Actual/rule/subtotals/current/later/movement/performance/result/grade and corresponding speech, even with contradictory payloads"
+  },
+  "prepared_only": true
+}

@@ -1,0 +1,3 @@
+# FORMATTING / TRUTH — extend the accepted total card into its required before phase
+
+One new before-card outcome in existing package22; not another renderer or route. Reuse the exact accepted370751a9source checkpoint and existing profile/threshold/axis/panel/action pieces. Add a default-off before option, preserve all existing during/final callers, freeze129780-byte original core and107tests. Before fields are own original baselines; all later sporting/current/result channels are absent. Real case: two Under thresholds22.5/23.5,55/60.5%before at07:54:53Z before10:55start. Rendering, production binding and TestFlight remain unpaid.

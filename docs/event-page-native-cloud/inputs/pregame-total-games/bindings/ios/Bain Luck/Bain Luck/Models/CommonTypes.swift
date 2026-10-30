@@ -1,0 +1,548 @@
+import Foundation
+
+// MARK: - Numeric-Suffix Decode Contract
+
+/// Why `…24h` / `…7d` properties need explicit `CodingKeys` everywhere.
+///
+/// The client decodes with `.convertFromSnakeCase`, which capitalises each
+/// underscore-separated component after the first. `"24h".capitalized` is
+/// `"24H"` — a digit is not a cased character, so ICU title-cases the `h` as if
+/// it were the word's first letter. So the backend's `probability_change_24h`
+/// arrives as the key `probabilityChange24H`, which matches no property spelled
+/// `probabilityChange24h`, and the value is silently dropped on every response.
+///
+/// `.convertToSnakeCase` is **not** the inverse: the key `probabilityChange24H`
+/// encodes back out as `probability_change24_h`. That is fine where the payload
+/// is stored opaquely (see `DiscoverLabelingOutcome`) but means an encoded key
+/// must never be assumed to equal the backend's key.
+///
+/// Two rules for any new field whose name ends in digits-plus-letters:
+/// 1. give it an explicit `CodingKeys` case whose raw value is the *converted*
+///    key (`case foo24h = "foo24H"`), or name the property `foo24H` outright as
+///    `LeagueGridModels` does; and
+/// 2. mark it `@TolerantNumeric` so a malformed value degrades to `nil` instead
+///    of failing the whole item.
+///
+/// A numeric payload field that decodes to `nil` rather than throwing when the
+/// value is absent, null, or the wrong JSON type. One bad number must not erase
+/// its own item or that item's healthy siblings.
+@propertyWrapper
+nonisolated struct TolerantNumeric<Value: Codable & Sendable>: Codable, Sendable {
+    let wrappedValue: Value?
+
+    init(wrappedValue: Value?) {
+        self.wrappedValue = wrappedValue
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        wrappedValue = try? container.decode(Value.self)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        if let wrappedValue {
+            try container.encode(wrappedValue)
+        } else {
+            try container.encodeNil()
+        }
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// A missing key must mean "no value", not a thrown error. The synthesized
+    /// `init(from:)` calls `decode(_:forKey:)` (not `decodeIfPresent`) because
+    /// the property's declared type is the non-optional wrapper, so without this
+    /// overload an absent `…24h` key would fail the whole item.
+    func decode<Value>(
+        _ type: TolerantNumeric<Value>.Type,
+        forKey key: Key
+    ) throws -> TolerantNumeric<Value> {
+        (try? decodeIfPresent(type, forKey: key)) ?? TolerantNumeric(wrappedValue: nil)
+    }
+}
+
+// MARK: - Team Data
+
+/// Shared team branding, record, and standings data used across event views.
+nonisolated struct TeamData: Decodable, Sendable {
+    let primaryColor: String?
+    let secondaryColor: String?
+    let logoSmall: String?
+    let logoLarge: String?
+    let record: String?
+    let standings: StandingsData?
+    let abbreviation: String?
+}
+
+/// League standings snapshot for a team, including record and rank context.
+nonisolated struct StandingsData: Decodable, Sendable {
+    let pct: String?
+    let wins: Int?
+    let losses: Int?
+    let points: Int?
+    let streak: String?
+    let division: String?
+    let confRank: Int?
+    let goalsFor: Int?
+    let conference: String?
+    let homeRecord: String?
+    let roadRecord: String?
+    let goalsAgainst: Int?
+}
+
+// MARK: - Odds
+
+/// Current consensus odds and derived probabilities for an event.
+nonisolated struct CurrentOdds: Decodable, Sendable {
+    // #2687: `var`, not `let`, on the three fields a pushed SSE frame replaces.
+    // A live frame carries a fresher blend than the payload this struct was
+    // decoded from, and the native surfaces all read the probability THROUGH
+    // here — so the stream writes into the model the page already reads,
+    // exactly as web's stream writes into the SWR cache. The alternative, an
+    // override the views consult alongside the model, would mean every reader
+    // has to know push exists. Nothing else about the struct changes; it is
+    // still a value type and still decoded the same way.
+    let capturedAt: String?
+    var homeProbability: Double?
+    var awayProbability: Double?
+    // UX-P114: the whole percents the card PRINTS for the two probabilities above.
+    // A game card draws both at once and the feed derives away as `1 - home`, so
+    // rounding them independently printed 101 whenever the blend landed on a
+    // half-percent (34 of 414 live/upcoming events, measured 2026-08-21). The
+    // server decides it once because four surfaces draw this strip.
+    //
+    // OPTIONAL, and every reader must fall back to `renderedDuelPercents`: a
+    // Discover response is cached and this build can be installed against an older
+    // deploy, so "the field exists in feed.py" is not "the field is on this
+    // payload".
+    // `var` for the same reason, and they must be CLEARED TOGETHER when a
+    // pushed probability lands: the served pair describes the `current_odds`
+    // this payload arrived with and nothing else, so leaving either of them
+    // beside a fresher probability prints a stale number, or a served value
+    // beside a derived one — the mismatched-pair trap `duelPercents` documents.
+    var homeRenderedPercent: Int?
+    var awayRenderedPercent: Int?
+    let spread: Double?
+    let homeSpread: Double?
+    let overUnder: Double?
+    let projectedHomeScore: Double?
+    let projectedAwayScore: Double?
+    let bookmakerCount: Int?
+    // #1854 (UX-P077): `probabilityRange` was decoded here and displayed by
+    // nothing. It carried the SPORTSBOOK min/max beside `homeProbability`, which
+    // has been the multi-source blend since #1829 — so the number this struct
+    // holds sat OUTSIDE its own stated range (measured on production: 0.2813
+    // against 0.6117–0.626). Removed from the payload and from here. An optional
+    // field's removal is safe in both directions for a Decodable, so an older
+    // build still decodes a payload that carries it and this build ignores it.
+    /// #2920 — the producer's one marked in-play pair, decoded from
+    /// `current_odds.live_projection` (`backend/app/utils/card_projected_pair.py`
+    /// `_live_projection`). Served the same way on detail, search, feed and
+    /// leagues, so the card and the page it opens read one object. See
+    /// `LiveProjection`; decoded here, admitted nowhere — what a live surface
+    /// may print from it is the reader's rule, not the decoder's.
+    ///
+    /// Three states, and they must stay three: no key or `null` is nil (the
+    /// object was withheld, or the server predates it); a present object of
+    /// any shape is non-nil, with each field it could not read as nil. Web's
+    /// reader keys on presence (`live_projection != null` stops the bare pair),
+    /// so a malformed object must not collapse into "absent".
+    ///
+    /// `var` with a default only so the memberwise initializer keeps every
+    /// existing call shape; the synthesized decoder still reads the key.
+    var liveProjection: LiveProjection? = nil
+}
+
+/// `current_odds.live_projection`, field for field (#2920). The marked
+/// in-play projected final: the mean pair over the sportsbooks whose own
+/// spread-and-total solve to it, served only on a game served `live`.
+///
+/// Every field optional and decoding NEVER throws, as `PregameProjection`:
+/// a malformed or partial object reads as fields the reader refuses, so one
+/// odd object can never drop its `CurrentOdds` or the event around it. The
+/// labels stay raw strings so an unexpected value reaches the reader to be
+/// refused rather than vanishing in decode. Times are the server's ISO-8601
+/// strings, unparsed; the count is a `Double` so a fractional count can be
+/// refused rather than failing the decode.
+///
+/// Two clocks, never one: `earliestConfirmedAt` is the OLDEST time a
+/// contributing quote was last confirmed (`valid_until`, else `captured_at`)
+/// and is never before `boundaryAt`; `latestCapturedAt` is the NEWEST time a
+/// contributing quote first appeared, and may precede the boundary (a quote
+/// made before kickoff and still live after it). Neither stands in for the
+/// other. `boundaryAt` is the scheduled start the object was measured from
+/// (`boundary` == `commence_time`), not an observed kickoff.
+nonisolated struct LiveProjection: Decodable, Sendable, Equatable {
+    let projectedHomeScore: Double?
+    let projectedAwayScore: Double?
+    /// `in_play`.
+    let kind: String?
+    /// `commence_time`.
+    let boundary: String?
+    let boundaryAt: String?
+    let earliestConfirmedAt: String?
+    let latestCapturedAt: String?
+    /// `sportsbooks`.
+    let source: String?
+    /// `consensus_spread_total`.
+    let basis: String?
+    let bookmakerCount: Double?
+    /// `points` or `goals`.
+    let unit: String?
+    /// `full_game` or `regulation` (soccer's 90 minutes).
+    let period: String?
+
+    /// Matched after `.convertFromSnakeCase`, which every app decoder uses.
+    enum CodingKeys: String, CodingKey {
+        case projectedHomeScore, projectedAwayScore, kind, boundary, boundaryAt
+        case earliestConfirmedAt, latestCapturedAt, source, basis, bookmakerCount
+        case unit, period
+    }
+}
+
+extension LiveProjection {
+    /// In an extension so the memberwise initializer survives.
+    nonisolated init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        func field<T: Decodable>(_ type: T.Type, _ key: CodingKeys) -> T? {
+            guard let c else { return nil }
+            return try? c.decodeIfPresent(type, forKey: key)
+        }
+        self.init(
+            projectedHomeScore: field(Double.self, .projectedHomeScore),
+            projectedAwayScore: field(Double.self, .projectedAwayScore),
+            kind: field(String.self, .kind),
+            boundary: field(String.self, .boundary),
+            boundaryAt: field(String.self, .boundaryAt),
+            earliestConfirmedAt: field(String.self, .earliestConfirmedAt),
+            latestCapturedAt: field(String.self, .latestCapturedAt),
+            source: field(String.self, .source),
+            basis: field(String.self, .basis),
+            bookmakerCount: field(Double.self, .bookmakerCount),
+            unit: field(String.self, .unit),
+            period: field(String.self, .period)
+        )
+    }
+}
+
+/// Opening market probabilities and favorite metadata for an event.
+nonisolated struct OpeningOdds: Decodable, Sendable {
+    let homeProbability: Double?
+    let awayProbability: Double?
+    let favorite: String?
+    /// The combined total the market closed pre-game on, decoded from
+    /// `opening_odds.over_under` by the decoder's `.convertFromSnakeCase`.
+    ///
+    /// #6290 — the field a `PRE-GAME` tile needs, and the reason it could not be
+    /// honest before. `GET /api/events/{id}` has served it since #5414 (closed
+    /// 2026-09-12), which added it to the DETAIL formatter for exactly this tile;
+    /// iOS never decoded it, so every totals card that wanted a pre-game number
+    /// reached for `current_odds.over_under` instead — the line RIGHT NOW, which
+    /// mid-game is not a pre-game number at all.
+    ///
+    /// It is a genuine pre-game value and not a re-labelled current one:
+    /// `_update_opening_odds` (`backend/app/tasks/odds_polling.py`) returns
+    /// without writing once `commence_time` has passed or the status leaves
+    /// `scheduled`, so the column freezes at the off. Measured on the live
+    /// specimen 2026-09-20 18:35 PT, event 14780544 (Colts at Chiefs, `live`):
+    /// opening `45.5` against a current line of `53.6`.
+    ///
+    /// Optional, and every reader must be able to draw nothing: 93.6% of settled
+    /// events carried an opening total when #5414 measured it, and a build can
+    /// run against a deploy older than the field.
+    let overUnder: Double?
+}
+
+/// The server's one pre-match reading for a game, decoded from `prematch_odds`
+/// by the decoder's `.convertFromSnakeCase` (#8622, the iPhone half of #8315).
+///
+/// The server walks Alex's ladder (Kalshi, then Polymarket, then sportsbooks)
+/// once and serves the rung it landed on here. `opening_odds` is only the
+/// sportsbook median, so a card printing it beside a server reason written
+/// from this reading showed "24%" over "won as a 22% underdog". Read it through
+/// `PrematchReading.resolve`, never directly.
+///
+/// Every field optional: a feed response is cached, so a build can meet a
+/// payload older than the key, and the resolver falls back to `opening_odds`.
+nonisolated struct PrematchOdds: Decodable, Sendable {
+    let homeProbability: Double?
+    let awayProbability: Double?
+    /// The pair rounded ONCE, server-side (UX-P114). These describe THIS
+    /// reading, so unlike `current_odds`' pair they may be printed beside it.
+    let homeRenderedPercent: Int?
+    let awayRenderedPercent: Int?
+    /// The rung: `kalshi`, `polymarket` or `books`.
+    let source: String?
+}
+
+// MARK: - Excitement Index
+
+/// Excitement Index score and presentation metadata for an event.
+nonisolated struct EIData: Decodable, Sendable {
+    let score: Int?
+    let rawScore: Int?
+    let status: String?
+    let label: String?
+    let emoji: String?
+    let metadata: EIMetadata?
+}
+
+/// Raw factors used to explain or debug an Excitement Index score.
+nonisolated struct EIMetadata: Decodable, Sendable {
+    let rawEi: Double?
+    let leadChanges: Int?
+    let comebackFactor: Double?
+    let snapshotCount: Int?
+}
+
+// MARK: - Highlight
+
+/// Short event highlight label surfaced in compact cards and summaries.
+nonisolated struct Highlight: Decodable, Sendable {
+    let label: String?
+}
+
+// MARK: - Event Metadata
+
+/// Supplemental event classification fields such as league, level, and importance.
+nonisolated struct EventMetadata: Decodable, Sendable {
+    let gender: String?
+    let level: String?
+    let league: String?
+    let importance: String?
+}
+
+// MARK: - ESPN
+
+/// ESPN-specific live game context and win probability payload.
+nonisolated struct ESPNData: Decodable, Sendable {
+    let espnId: String?
+    let gameClock: String?
+    let period: String?
+    let broadcast: String?
+    let winProbability: Double?
+    let probabilitySources: [String: WinProbValue]?
+    let seriesHomeWins: Int?
+    let seriesAwayWins: Int?
+}
+
+// MARK: - Win Probability Sources
+
+/// One source's win probability value and display metadata.
+nonisolated struct WinProbSource: Decodable, Sendable, Equatable {
+    /// The source write clock, used to reconcile cached REST against live push.
+    var updatedAt: String?
+    var value: WinProbValue?
+    let displayName: String?
+    let type: String?
+    let color: String?
+
+    init(from decoder: Decoder) throws {
+        // The API sends either a bare number (0.65) or a structured object.
+        if let container = try? decoder.singleValueContainer(),
+           let d = try? container.decode(Double.self) {
+            self.value = .number(d)
+            self.updatedAt = nil
+            self.displayName = nil
+            self.type = nil
+            self.color = nil
+            return
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.value = try container.decodeIfPresent(WinProbValue.self, forKey: .value)
+        self.updatedAt = try? container.decodeIfPresent(String.self, forKey: .updatedAt)
+        self.displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+        self.type = try container.decodeIfPresent(String.self, forKey: .type)
+        self.color = try container.decodeIfPresent(String.self, forKey: .color)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case value, displayName, type, color, updatedAt
+    }
+}
+
+/// Reading `Event.win_probability_sources` as a list of SOURCES.
+///
+/// The JSONB map is not all sources: `betting_book_count` is how many
+/// sportsbooks contributed, wearing the same `{value, display_name, type}`
+/// shape as a real reading. Any consumer that iterates the keys prints a
+/// "source" called `betting_book_count` reading 1000%, and any consumer that
+/// counts them over-reads (measured backend-side at 7.2x).
+///
+/// The allowlist is the backend's own: `aggregation.SOURCE_WEIGHTS`, which
+/// `compute_aggregate_probability` uses to decide what feeds the blend
+/// (`if k not in SOURCE_WEIGHTS: continue`). Keeping the two lists identical is
+/// the point — a source the blend reads is a source the app names.
+enum WinProbSourceCatalog {
+    /// The seven keys the backend blends. Everything else in the map is metadata.
+    nonisolated static let realSourceKeys: Set<String> = [
+        "final_result", "betting", "espn", "stat_model", "kalshi", "polymarket", "mlb",
+    ]
+
+    /// Fallback labels for the keys whose payload omits `display_name`.
+    private static let fallbackNames: [String: String] = [
+        "betting": "Sportsbooks",
+        "kalshi": "Kalshi",
+        "polymarket": "Polymarket",
+        "espn": "ESPN",
+        "stat_model": "Model",
+        "mlb": "MLB",
+        "final_result": "Final result",
+    ]
+
+    /// One contributing source: key, label, and its HOME win probability.
+    /// `detail` is an optional short second line under the label.
+    struct Entry: Identifiable, Equatable {
+        let key: String
+        let label: String
+        let homeProbability: Double
+        var detail: String? = nil
+        var id: String { key }
+    }
+
+    /// The real, readable sources behind the blended number, biggest-name-first
+    /// order made deterministic by key so two renders never disagree.
+    ///
+    /// #10863 — `betting_book_count` is how many sportsbooks the odds poll
+    /// that wrote `betting` took its median from. It is NOT the length of the
+    /// book table under this row: that table keeps each book's latest price,
+    /// older ones included, so on Texas–Oklahoma (14792837) the row read
+    /// "Sportsbooks (6)" above ten rows, five of them hours old, and nothing
+    /// said the two numbers counted different things. The count now says what
+    /// it is on its own line ("Based on 6 sportsbooks") and the label stays
+    /// "Sportsbooks". It says "based on", not "average of" or "live", because
+    /// the writer takes a median and the count does not record how fresh each
+    /// of those prices was.
+    static func entries(from sources: [String: WinProbSource]?) -> [Entry] {
+        guard let sources else { return [] }
+        let bookCount = sources["betting_book_count"]?.value?.doubleValue.map { Int($0) }
+        return sources
+            .filter { realSourceKeys.contains($0.key) }
+            .compactMap { key, source -> Entry? in
+                guard let probability = source.value?.doubleValue else { return nil }
+                var label = source.displayName ?? fallbackNames[key] ?? key.capitalized
+                var detail: String?
+                if key == "betting", let bookCount, bookCount > 0 {
+                    label = "Sportsbooks"
+                    detail = consensusCountLine(bookCount)
+                }
+                return Entry(
+                    key: key, label: label, homeProbability: probability, detail: detail)
+            }
+            .sorted { $0.key < $1.key }
+    }
+
+    /// #10863 — the sportsbook row's second line.
+    static func consensusCountLine(_ bookCount: Int) -> String {
+        bookCount == 1 ? "Based on 1 sportsbook" : "Based on \(bookCount) sportsbooks"
+    }
+}
+
+/// Flexible value that handles both numeric (0.65) and string ("987726") from API.
+nonisolated enum WinProbValue: Decodable, Sendable, Equatable {
+    case number(Double)
+    case string(String)
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let d = try? container.decode(Double.self) {
+            self = .number(d)
+            return
+        }
+        if let s = try? container.decode(String.self) {
+            self = .string(s)
+            return
+        }
+        throw DecodingError.typeMismatch(WinProbValue.self,
+            DecodingError.Context(codingPath: decoder.codingPath,
+                                  debugDescription: "Expected Double or String"))
+    }
+
+    var doubleValue: Double? {
+        switch self {
+        case .number(let d): return d
+        case .string(let s): return Double(s)
+        }
+    }
+}
+
+// MARK: - Bookmaker Odds
+
+/// Per-bookmaker odds snapshot with moneyline, probability, spread, and total data.
+nonisolated struct BookmakerOdds: Decodable, Sendable {
+    let bookmaker: String?
+    let homeMoneyline: Int?
+    let awayMoneyline: Int?
+    let homeProbability: Double?
+    let awayProbability: Double?
+    let capturedAt: String?
+    let spread: Double?
+    let overUnder: Double?
+    let projectedHomeScore: Double?
+    let projectedAwayScore: Double?
+}
+
+// MARK: - String Date Extension
+
+extension String {
+    /// Parse an ISO 8601 date string into a Date.
+    /// Handles both with and without fractional seconds.
+    ///
+    /// #8651 — the server's own shape takes `ISO8601Stamp`'s fast path (same
+    /// value, ~1,000× cheaper); anything it declines gets the formatters, as
+    /// before.
+    var asDate: Date? {
+        ISO8601Stamp.date(self)
+            ?? Self.iso8601FracFormatter.date(from: self)
+            ?? Self.iso8601Formatter.date(from: self)
+    }
+
+    /// The formatters alone, without the fast path — the reference
+    /// `ISO8601Stamp` is tested against.
+    var asDateByFormatter: Date? {
+        Self.iso8601FracFormatter.date(from: self)
+            ?? Self.iso8601Formatter.date(from: self)
+    }
+
+    private static let iso8601FracFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let iso8601Formatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+}
+
+// MARK: - AnyCodable (used by FeedModels + SearchModels)
+
+nonisolated enum AnyCodable: Decodable, Sendable {
+    case int(Int)
+    case double(Double)
+    case string(String)
+    case bool(Bool)
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let v = try? container.decode(Int.self) { self = .int(v) }
+        else if let v = try? container.decode(Double.self) { self = .double(v) }
+        else if let v = try? container.decode(String.self) { self = .string(v) }
+        else if let v = try? container.decode(Bool.self) { self = .bool(v) }
+        else { self = .null }
+    }
+
+    var stringValue: String {
+        switch self {
+        case .int(let v): return "\(v)"
+        case .double(let v): return "\(v)"
+        case .string(let v): return v
+        case .bool(let v): return v ? "true" : "false"
+        case .null: return ""
+        }
+    }
+}

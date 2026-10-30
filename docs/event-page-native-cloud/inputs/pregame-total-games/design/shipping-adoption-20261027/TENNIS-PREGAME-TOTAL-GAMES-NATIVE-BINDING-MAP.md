@@ -1,0 +1,3 @@
+# FORMATTING / TRUTH — before total-game chances
+
+Reuse accepted TotalMilestoneThresholdLiveInput10868 and its profile/original readings, literal threshold associations, same-unit geometry, rail, layout, timing and exact actions. Native supplies admitted original baselines, independently formatted before-phase copy and real event identities. A small default-off before presentation is not a new policy/model/formatter. All current, actual, subtotal, movement and result channels stay suppressed before play; missing is not zero. Native retains real bindings, refresh/withdrawal, original Details/Back/focus and all qualification. No complete phase/route acceptance follows this source contribution.

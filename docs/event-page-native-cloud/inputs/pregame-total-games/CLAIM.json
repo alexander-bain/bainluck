@@ -1,0 +1,53 @@
+{
+  "at": "2026-10-30T01:50:14.305939+00:00",
+  "status": "RESERVED_TO_WEE_BEY_PENDING_VERIFIED_TRANSFER_AND_SEED_ACK",
+  "pillar": [
+    "FORMATTING",
+    "TRUTH"
+  ],
+  "ship": "Pregame fans compare the two original total-game conditions and their own chances without later score/current/result leakage.",
+  "route": "tennis-live",
+  "phase": "pregame",
+  "issue": 10868,
+  "source_branch": "codex/dot-event-design-source",
+  "expected_shared_head": "a1f88d0586f6a513841ba0f31a564c51b84d6dea",
+  "sole_publisher": "Wee-Bey",
+  "design_coordinator": "01a12896-9785-71a2-ac39-9d2ae351e0ec",
+  "relay": "01a18a2a-483f-7614-9937-8549d69ed01b",
+  "original_checkpoint": "370751a9d86599e3292f2a68b050aba4694f675c",
+  "native_base": "6c73734af6d7f83f252ace8ed921eb0fcae766e3",
+  "write_paths": [
+    "ios/Bain Luck/Bain Luck/Components/TotalMilestonePresentation10868.swift",
+    "ios/Bain Luck/BainLuckTests/TotalMilestonePresentation10868Tests.swift"
+  ],
+  "parent_file_hashes": [
+    {
+      "path": "ios/Bain Luck/Bain Luck/Components/TotalMilestonePresentation10868.swift",
+      "blob": "d6e9bb32fb61e82218fbc67b52420110c7f3c89e",
+      "sha256": "d7e99dbb14726c5453810bd046817d94e5c524b88582cc0fbef0d820add78570"
+    },
+    {
+      "path": "ios/Bain Luck/BainLuckTests/TotalMilestonePresentation10868Tests.swift",
+      "blob": "ccff588b21c76f0e2c9de5d0aa58422bca33171b",
+      "sha256": "7baad726fe4cafe5436e306626d94d8e084ec44f651827159656215f872c91d8"
+    }
+  ],
+  "preserve_core_bytes": 129780,
+  "preserve_core_sha256": "52699ff983499981d282f6810e99599c0b727c9e43dc6b297a1126f440246335",
+  "preserve_whole_tests": 107,
+  "local_competing_claim": false,
+  "native_or_integrator_path_transfer": false,
+  "permitted_checks": "Source/portable hashes/diff/ancestry and prepared tests; syntax only if actually available. No heavy native build/qualification.",
+  "input_import": "Add exact two checkpoint files unchanged to the shared source branch in a separately labelled checkpoint-import commit; retain the original Git bundle/sha/provenance. Do not claim370751a9is a Git ancestor if the connector creates an additive import. Native6c73734amust already match all30protected bindings. If either target path already exists unexpectedly or any protected hash differs, stop/resolve before writing. Never substitute current master or recreate the Native base.",
+  "source_parents": "Original370751a9retained in source bundle; actual shared-branch import commit becomes the implementation parent, with exact file hashes and private history recorded.",
+  "allowed_docs": [
+    "docs/event-page-native-cloud/inputs/pregame-total-games/",
+    "docs/event-page-native-cloud/tennis-pregame-total-games/RETURN.md",
+    "docs/event-page-native-cloud/tennis-pregame-total-games/AUTHOR-CHECK.json"
+  ],
+  "offline_sequence": "One bounded required-card outcome. After verified consumer/seed acknowledgment, implement and publish ordinary non-force source commits as sole publisher without per-commit Mac approval. Return immutable source/receipt and automatically request replenishment through coordinator; no new Alex prompt or self-assigned variants.",
+  "active_outcome_limit": 3,
+  "no_downstream_grant": true,
+  "no_route_phase_credit": true,
+  "no_production_integration": true
+}
