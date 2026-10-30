@@ -176,7 +176,7 @@ async def test_board_inputs_leave_the_receipt_queue_and_the_headline_stamp_cover
     for asked, _d, _c in built.stamps:
         probes._refresher_side(tr, asked, 1.0)
     stamps = tr._window[bfile.LIVE_A]["stamps"]
-    assert [s.rsplit("@", 1)[1] for s in stamps] == [str(len(bfile.HEAD_A))], stamps
+    assert [s.split("@")[4] for s in stamps] == [str(len(bfile.HEAD_A))], stamps
     assert len(tr._uncovered.get(bfile.LIVE_A, ())) == 0
 
 

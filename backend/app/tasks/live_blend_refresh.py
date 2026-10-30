@@ -5510,12 +5510,13 @@ class LiveBlendRefresher:
                     # #10090: the row's complete public sources, from the same
                     # RETURNING bag and revision as `p`. No query. Published
                     # with the frame after COMMIT, or not at all.
-                    stamp_receipts = getattr(self, "receipts", None)
-                    if stamp_receipts is not None:
+                    note_frame = getattr(
+                        getattr(self, "receipts", None), "note_stamp_frame", None,
+                    )
+                    if note_frame is not None:
                         # #10090: the value this stamp's frame shows readers.
                         self._receipt_call(
-                            stamp_receipts.note_stamp_frame, event_id, new_rev,
-                            frame["p"], event.status,
+                            note_frame, event_id, new_rev, frame["p"], event.status,
                         )
                     snapshot = build_source_snapshot(
                         event_id, frame["rev"], new_sources,
@@ -6759,12 +6760,12 @@ class LiveBlendRefresher:
         copy, and a live event whose `preview_from_commit` arm is on is queued
         for a preview composed from that copy (`_preview_from_commit_rows`).
         """
-        receipts = getattr(self, "receipts", None)
-        if receipts is not None:
+        note_rows = getattr(getattr(self, "receipts", None), "note_committed_rows", None)
+        if note_rows is not None:
             # #10090: the delivery receipt's trail learns these inputs are
             # stored, whether or not any graph is cached for them.
             rows = rows if isinstance(rows, (list, tuple)) else list(rows)
-            self._receipt_call(receipts.note_committed_rows, rows)
+            self._receipt_call(note_rows, rows)
         graphs = getattr(self, "_preview_graphs", None)
         if graphs is None or not _preview_from_commit_possible():
             return
