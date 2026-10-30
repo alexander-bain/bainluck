@@ -1,0 +1,53 @@
+✔ GET lease ignores initial wall clock -2000000000000 (302.586248ms)
+✔ GET lease ignores initial wall clock 100000 (111.046044ms)
+✔ GET lease ignores initial wall clock 2000000000000 (96.383918ms)
+✔ wall jumps during request and after adoption do not change deadline (128.874513ms)
+✔ slow JSON/body settlement consumes original request budget (185.073852ms)
+✔ exact conservative lease boundary is rejected before adoption (67.577732ms)
+✔ same-chain higher live sequence cannot extend GET expiry after wall rollback (61.120068ms)
+✔ native-open equal-sequence envelope retains original monotonic cap (86.139829ms)
+✔ expiry survives same-base update and replay after held reset (64.069061ms)
+✔ revoke watermark survives native reset and earlier same-chain replay (121.510303ms)
+✔ new commit and snapshot floors beat a valid remaining lease (99.855664ms)
+✔ actual page adoption cancels request despite a valid server lease (63.858668ms)
+✔ hidden queued callback cannot adopt (122.680517ms)
+✔ wire-supplied local deadline cannot forge the private request binding (76.905705ms)
+✖ expired GET must not leave a later same-chain live escape through wall fallback (42.8993ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 14
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2889.34156
+
+✖ failing tests:
+
+test at review/monotonic-get/test_mounted_get_expiry.cjs:88:1
+✖ expired GET must not leave a later same-chain live escape through wall fallback (42.8993ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + {
+  +   baseRev: 0,
+  +   epoch: 7,
+  +   eventId: 1,
+  +   expiresAt: 5850,
+  +   observedAt: '2026-10-21T00:00:00Z',
+  +   p: 0.73,
+  +   seq: 2,
+  +   status: 'live'
+  + }
+  - null
+
+      at TestContext.<anonymous> (/workspace/shared/preview-state-recovery-20261021/review/monotonic-get/test_mounted_get_expiry.cjs:90:108)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { eventId: 1, epoch: 7, seq: 2, baseRev: 0, p: 0.73, status: 'live', expiresAt: 5850, observedAt: '2026-10-21T00:00:00Z' },
+    expected: null,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

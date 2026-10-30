@@ -1,0 +1,39 @@
+{
+  "scope": "Independent deterministic local bounded GET lease and hook review. No browser, network, full application build, source edits, frozen-packet edits, push, or production changes.",
+  "command": "node --test monotonic-review/test_request_start_lease.cjs monotonic-review/test_hook_monotonic_lease.cjs",
+  "result": {
+    "tests": 82,
+    "passed": 82,
+    "failed": 0,
+    "reducer_tests": 56,
+    "mounted_hook_tests": 26,
+    "delay_matrix_combinations": 60
+  },
+  "candidate_sha256": {
+    "monotonic-candidate/requestLease.ts": "eec478a973407fac3558d518d5e159a4842802203b327a66ddf05c1c4145b666",
+    "monotonic-candidate/blendPreview.ts": "1370f268029045da6b4dd82d8404d2fa1a0f7c72b29421b04b5ecb298418c749",
+    "monotonic-candidate/acceptCurrentPreview.ts": "2b191c78865ec3007a681e95e1185b8a09d6b70ebe1893b377e71922c2fd332d",
+    "monotonic-candidate/useLiveEventStream.ts": "73c6cc7257f1fbf7fbc78632400d1984782e8f13f2a6d2a25c0910efade8aeb0",
+    "monotonic-candidate/currentPreviewProbe.ts": "a7410673b208786ef403ba65557a891d3414f6e320c1d8cfc718c16a883409e1"
+  },
+  "test_sha256": {
+    "monotonic-review/hook_harness.cjs": "6c0f4f52a6af8669687470636095a779bb89fdb3b8bc15a7a1783ae1cbe232eb",
+    "monotonic-review/load_candidate.cjs": "fee917491171322a0575be86a6fdc1910f64878768ba053b0a41f1bb2f66ccf4",
+    "monotonic-review/test_hook_monotonic_lease.cjs": "f8effb51283287b39ae6951e0091fa4aadf84208ed0f95e95cde10747c9adbae",
+    "monotonic-review/test_request_start_lease.cjs": "0533172b7d3d677427edb7c57307307ba3560ae0bd778fc2af1227f56c87ae47"
+  },
+  "limits": [
+    "Only bounded GET and subsequent identified same-chain authority are wall-clock-independent. Unbound SSE retains the prior bounded-wall-skew experiment.",
+    "Deterministic in-memory and jsdom tests establish policy and hook behavior, not browser screenshots, paint timing, production atomicity, Redis implementation, throughput, capacity suitability, or rollout safety.",
+    "A blocked JavaScript thread cannot update already-painted pixels. Timer-stall assertions establish refusal on response processing and on the next render, not a wall-clock deadline for pixels while JavaScript is suspended.",
+    "Server lease identity stability and trustworthy remaining budget are protocol prerequisites. This suite tests consumer behavior; no network or independent server implementation audit was performed."
+  ],
+  "regression_provenance": {
+    "parent_reported_cap_defects": [
+      "Expired GET discarded non-renewal cap, allowing later same-chain live admission.",
+      "Expired/empty older-sequence snapshot failed to shorten matching already-held newer-sequence chain."
+    ],
+    "targeted_final_controls": "All pass; fixes were present before these targeted independent tests. No independently captured pre-fix candidate failure is claimed.",
+    "receiver_boundary": "The mounted harness retains receiver-sensitive clearTimeout checking; no receiver failure occurred."
+  }
+}
