@@ -337,7 +337,7 @@ def _wire_pass(monkeypatch, *, units, fetch):
     async def _session(**_k):
         yield _Session()
 
-    async def _population(_session, _venue, *, now_mono):
+    async def _population(_session, _venue, *, now_mono, **_k):
         return units
 
     async def _no_write(*_a, **_k):
@@ -425,7 +425,7 @@ def _wire_rotation(monkeypatch, *, units, fail_key, exc):
     async def _session(**_k):
         yield _Session()
 
-    async def _population(_session, _venue, *, now_mono):
+    async def _population(_session, _venue, *, now_mono, **_k):
         return units
 
     async def _fetch(_venue, _service, chunks, _stats, _timeout):
