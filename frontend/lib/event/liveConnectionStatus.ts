@@ -38,6 +38,7 @@
  */
 
 import type { LiveStreamStatus } from '@/hooks/useLiveEventStream';
+import { parseFoldRevision, type FoldRevision } from '@/lib/foldRevision';
 
 /** How long a receipt ("Updated", "No change", "Updates resumed") is shown. */
 export const CONNECTION_FEEDBACK_MS = 3_000;
@@ -261,6 +262,45 @@ export function priceAgeClock(
   if (adopted === null) return adoptedAt ?? null;
   const confirmed = parseClock(confirmedAt);
   return confirmed !== null && confirmed > adopted ? (confirmedAt as string) : (adoptedAt as string);
+}
+
+/**
+ * #10090 decision J, C1 (live's contract, 0830Z): `confirmed_at` vouches for
+ * the backend's published state when it was sent, never for a revision the
+ * reader holds that is older than a commit floor it already knows. A repeated
+ * heartbeat T is not a re-confirmation.
+ *
+ * The floors are the commit revisions the stream has announced for this page
+ * (`fold_preview_floor.floor`, a reconcile control's floor), max per row. A
+ * malformed vector, or one with a key that is not a row id, adds nothing.
+ */
+export function confirmationFloorsAfter(
+  floors: FoldRevision,
+  raw: unknown,
+): FoldRevision {
+  const incoming = parseFoldRevision(raw);
+  if (!incoming || !Object.keys(incoming).every(key => /^[1-9]\d*$/.test(key))) return floors;
+  let next = floors;
+  for (const [key, rev] of Object.entries(incoming)) {
+    if ((next[key] ?? -1) >= rev) continue;
+    next = { ...next, [key]: rev };
+  }
+  return next;
+}
+
+/**
+ * True while a confirmation must not be claimed: some floor is not covered by
+ * the committed fold revision of the value on screen (`shown`), or nothing on
+ * screen carries one. Only that revision covers — never an equal percentage, a
+ * heartbeat's arrival, a dropped preview or a null folded result, none of
+ * which moves it.
+ */
+export function confirmationOwed(floors: FoldRevision, shown: unknown): boolean {
+  const keys = Object.keys(floors);
+  if (keys.length === 0) return false;
+  const committed = parseFoldRevision(shown);
+  if (!committed) return true;
+  return keys.some(key => !(key in committed) || committed[key] < floors[key]);
 }
 
 /** A clock for the tap details: wall time with its zone, or null when absent/unparseable. */

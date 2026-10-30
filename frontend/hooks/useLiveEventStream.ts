@@ -16,6 +16,8 @@ import {
   type AuthorityPreviewReader,
 } from '@/lib/authorityPreview';
 import type { BlendPreviewState } from '@/lib/blendPreview';
+import { confirmationFloorsAfter, confirmationOwed } from '@/lib/event/liveConnectionStatus';
+import type { FoldRevision } from '@/lib/foldRevision';
 import type { ReconcileControl } from '@/lib/reconcileControl';
 import {
   TICK_INTERVAL_MS,
@@ -118,6 +120,9 @@ interface UseLiveEventStreamResult {
    * #10090 decision J = A — the newest heartbeat `confirmed_at` for this event
    * (ISO-8601 UTC), or null. Ages the "seconds ago" only; never a price, never a
    * receipt. Null from an old server, and keyed to `eventId` like `status`.
+   * C1: also null while a commit floor the stream announced is newer than the
+   * committed revision on screen (`confirmationOwed`); the value received in
+   * that window is kept and claimed once a committed revision covers it.
    */
   confirmedAt: string | null;
 }
@@ -156,6 +161,11 @@ export function useLiveEventStream(
   const [confirmed, setConfirmed] = useState<{ eventId: number | undefined; at: string | null }>({
     eventId, at: null,
   });
+  // #10090 J C1: the commit floors announced for this event, max per row, and
+  // the rows of the committed revision they were last pruned against.
+  const [gate, setGate] = useState<{ eventId: number | undefined; floors: FoldRevision; members: string }>({
+    eventId, floors: {}, members: memberKeys,
+  });
   const [{ reader, previewNow }, setPreview] = useState<{
     reader: AuthorityPreviewReader; previewNow: number;
   }>({ reader: EMPTY_AUTHORITY_PREVIEW, previewNow: 0 });
@@ -185,6 +195,22 @@ export function useLiveEventStream(
     setPreview({ reader: EMPTY_AUTHORITY_PREVIEW, previewNow: 0 });
   }, [eventId]);
 
+  // #10090 J C1: a row that leaves the committed fold takes its floor with it,
+  // as the reader retires it. A page with no revision on screen keeps every
+  // floor: nothing on screen covers them.
+  useEffect(() => {
+    setGate(previous => {
+      if (previous.eventId !== eventId) return { eventId, floors: {}, members: memberKeys };
+      if (!memberKeys || previous.members === memberKeys) return previous;
+      const rows = memberKeys.split(',');
+      const floors = { ...previous.floors };
+      for (const key of previous.members ? previous.members.split(',') : []) {
+        if (!rows.includes(key)) delete floors[key];
+      }
+      return { eventId, floors, members: memberKeys };
+    });
+  }, [eventId, memberKeys]);
+
   useEffect(() => {
     if (eventId) setPreview(previous => ({
       reader: authorityPreviewMembership(previous.reader, membershipRef.current, eventId), previewNow: performance.now(),
@@ -203,6 +229,17 @@ export function useLiveEventStream(
       setStatus({ statusEventId: eventId, status: 'unavailable' });
       return;
     }
+
+    // #10090 J C1: committed at once, not batched. A floor's other effects are
+    // ordinary state, and the next frame's `deliver` commits only its own lane:
+    // a chunk of floor → raw frame otherwise committed the reader's new floor
+    // (preview dropped, the old committed value showing) with the confirmation
+    // still claimed over it.
+    const raiseFloors = (raw: unknown) => flushSync(() => setGate(previous => {
+      const held = previous.eventId === eventId ? previous : { eventId, floors: {}, members: '' };
+      const floors = confirmationFloorsAfter(held.floors, raw);
+      return floors === held.floors && held === previous ? previous : { ...held, floors };
+    }));
 
     const controller = createLiveStreamController({
       open: () =>
@@ -243,6 +280,7 @@ export function useLiveEventStream(
       },
       onReconcile: (control) => {
         if (!mounted.current) return;
+        raiseFloors(control.floor);
         setPreview(previous => ({
           reader: authorityPreviewFloor(previous.reader, control.floor),
           previewNow: performance.now(),
@@ -269,6 +307,7 @@ export function useLiveEventStream(
         try {
           const packet = typeof raw === 'string' ? JSON.parse(raw) : raw;
           if (!packet || packet.event_id !== eventId) return;
+          raiseFloors(packet.floor);
           setPreview(previous => ({
             reader: authorityPreviewFloor(previous.reader, packet.floor), previewNow: performance.now(),
           }));
@@ -347,7 +386,9 @@ export function useLiveEventStream(
     chartPoints: chartEventId === eventId ? points : [],
     blendPreview: enabled && preview?.eventId === eventId ? preview : null,
     blendPreviewNow: previewNow,
-    confirmedAt: enabled && confirmed.eventId === eventId ? confirmed.at : null,
+    confirmedAt: enabled && confirmed.eventId === eventId
+      && !confirmationOwed(gate.eventId === eventId ? gate.floors : {}, authoritativeMembership)
+      ? confirmed.at : null,
     // Before this event's controller has said anything, it is connecting if
     // it is going to try at all — never the last event's word.
     status: statusEventId === eventId ? status : enabled ? 'connecting' : 'idle',
