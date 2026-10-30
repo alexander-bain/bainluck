@@ -2002,10 +2002,19 @@ async def _publish_committed_withdrawals(refresher, frames):
     import asyncio
 
     previews = []
+    # #10090 field 3: a committed withdrawal advances the revision readers
+    # adopt; the delivery receipt credits it to its writer.
+    note_revision = getattr(getattr(refresher, 'receipts', None), 'note_writer_revision', None)
     for frame in frames:
         if frame.get('reconcile_only'):
             continue  # old control cannot invalidate a newer writer cache
         event_id = frame['event_id']
+        if note_revision is not None:
+            try:
+                note_revision('polymarket_withdrawal', event_id,
+                              (frame.get('rev') or {}).get(str(event_id)), frame.get('updated_at'))
+            except Exception:
+                logger.warning('polymarket withdrawal receipt failed', exc_info=True)
         refresher._last_written_value.pop(event_id, None)
         refresher._last_refresh_at.pop(event_id, None)
         refresher._last_snapshot_at.pop(event_id, None)
