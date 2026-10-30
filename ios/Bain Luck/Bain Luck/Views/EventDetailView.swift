@@ -142,7 +142,7 @@ struct EventDetailView: View {
     /// while one is held the direction is unknown (nil).
     private func heroRising(away: Bool) -> Bool? {
         guard vm.blendPreview == nil else { return nil }
-        return (away ? vm.priceActivity?.awayDelta : vm.priceActivity?.homeDelta).map { $0 > 0 }
+        return away ? vm.priceActivity?.awayRising : vm.priceActivity?.homeRising
     }
     private var priceStreamingEligible: Bool { EventPriceStreaming.isEligible(vm.event?.status) }
     private var heroMoves: Bool { priceStreamingEligible && vm.liveUpdateStatus != .interrupted }

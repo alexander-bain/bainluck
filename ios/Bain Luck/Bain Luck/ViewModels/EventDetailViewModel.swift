@@ -160,6 +160,11 @@ final class EventDetailViewModel: ObservableObject {
     /// through `confirmedAtCoveringShown`, which decides whether it is about
     /// the number on screen. Cleared with the connection that carried it.
     @Published private(set) var streamConfirmedAt: Date?
+    /// #10090 decision J — this delivery's connect `reconcile` has arrived.
+    /// The server sends the first confirmed heartbeat BEFORE it (lane1's
+    /// #11772 probe), and only the reconcile's floor makes a served price older
+    /// than the replay window owe its pair read. Cleared with `streamConfirmedAt`.
+    private var connectReconcileSeen = false
 
     /// #10090 — the held provisional blend (`BlendPreview`), or nil. Never part
     /// of `event` or `liveBlend`: the page overlays it on the hero
@@ -722,6 +727,8 @@ final class EventDetailViewModel: ObservableObject {
         guard after.home != nil || after.away != nil else { return }
         let beforeLabels = LivePriceActivity.wholeLabels(in: prior)
         let afterLabels = LivePriceActivity.wholeLabels(in: current)
+        let beforePrinted = LivePriceActivity.displayedLabels(in: prior)
+        let afterPrinted = LivePriceActivity.displayedLabels(in: current)
         priceActivity = LivePriceActivity(
             sequence: (priceActivity?.sequence ?? 0) + 1,
             receivedAt: Date(timeIntervalSince1970: now()),
@@ -729,7 +736,9 @@ final class EventDetailViewModel: ObservableObject {
             previousHomePercent: before.home, previousAwayPercent: before.away,
             homePercent: after.home, awayPercent: after.away,
             previousHomeLabel: beforeLabels.home, previousAwayLabel: beforeLabels.away,
-            homeLabel: afterLabels.home, awayLabel: afterLabels.away
+            homeLabel: afterLabels.home, awayLabel: afterLabels.away,
+            previousHomePrinted: beforePrinted.home, previousAwayPrinted: beforePrinted.away,
+            homePrinted: afterPrinted.home, awayPrinted: afterPrinted.away
         )
     }
 
@@ -900,6 +909,9 @@ final class EventDetailViewModel: ObservableObject {
     private func receiveReconcile(_ control: LiveStreamReconcile) {
         guard control.eventId == eventId, let held = event, held.id == eventId,
               EventPriceStreaming.isEligible(held.status) else { return }
+        // Before the paid-custody return: a reconnect's re-send is still this
+        // delivery's reconcile.
+        connectReconcileSeen = true
         blendPreviewReader = BlendPreview.readerAfterCommitFloor(blendPreviewReader, control.removalRev)
         publishPreview(blendPreviewReader.held, at: previewNow())
         // A paid custody delivered again (a reconnect's re-send) asks nothing,
@@ -1290,6 +1302,7 @@ final class EventDetailViewModel: ObservableObject {
                 if !delivering {
                     self.streamHasPushedPrice = false
                     self.streamConfirmedAt = nil
+                    self.connectReconcileSeen = false
                     self.deliveryGeneration += 1
                     self.streamRefetchGeneration = nil
                     self.pendingResyncGeneration = nil
@@ -1379,6 +1392,7 @@ final class EventDetailViewModel: ObservableObject {
         awaitingFoldedResult = false
         streamHasPushedPrice = false
         streamConfirmedAt = nil
+        connectReconcileSeen = false
         streamTickTask?.cancel()
         streamTickTask = nil
         stoppingStream = true
@@ -1418,6 +1432,10 @@ final class EventDetailViewModel: ObservableObject {
     /// sends its connect replay before the first confirmation (live R3), so a
     /// replayed raw price is already adopted when one arrives. What remains is
     /// checked here:
+    ///   * this delivery's connect `reconcile` has arrived: it registers the
+    ///     committed revision as a floor, which is the only witness for a
+    ///     served price too old to replay, and the first heartbeat can precede
+    ///     it;
     ///   * no newer price is owed — a folded result, a re-read, a trailing
     ///     frame, a withdrawal or a reconcile floor still outstanding means the
     ///     confirmed price is not yet the one on screen;
@@ -1427,7 +1445,7 @@ final class EventDetailViewModel: ObservableObject {
     /// the delivery that carried it.
     @MainActor
     func confirmedAtCoveringShown(_ event: EventDetail) -> Date? {
-        guard let streamConfirmedAt, !owesNewerPrice,
+        guard let streamConfirmedAt, connectReconcileSeen, !owesNewerPrice,
               BlendPreview.displayed(blendPreview, held: event, now: previewNow()) == nil
         else { return nil }
         return streamConfirmedAt

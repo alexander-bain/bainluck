@@ -206,6 +206,8 @@ final class TheEventHeadlinePrintsTenthsAndConfirmedAt10090Tests: XCTestCase {
         final class Gate { var waiting: CheckedContinuation<Void, Never>? }
         var response: EventDetail
         var historyResponse: EventHistoryResponse?
+        /// When set, the stream pair's history half (a connect reconcile's proof).
+        var freshHistory: EventHistoryResponse?
         var gate: Gate?
         init(_ response: EventDetail) { self.response = response }
         func fetchEvent(id: Int) async throws -> EventDetail {
@@ -217,15 +219,42 @@ final class TheEventHeadlinePrintsTenthsAndConfirmedAt10090Tests: XCTestCase {
             guard let historyResponse else { throw Missing() }
             return historyResponse
         }
+        func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
+            if let freshHistory { return freshHistory }
+            return try await fetchEventHistory(id: id, hours: hours)
+        }
         func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse { throw Missing() }
         func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse { throw Missing() }
         func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse { throw Missing() }
         func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse { throw Missing() }
     }
 
+    private var clock: TimeInterval = 1_790_355_605
+
     private func model(_ client: Client, _ handle: Handle) -> EventDetailViewModel {
         EventDetailViewModel(eventId: 4242, client: client, makeStreamHandle: { _ in handle },
-            now: { 1_790_355_605 }, sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) })
+            now: { [weak self] in self?.clock ?? 0 }, sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) })
+    }
+
+    /// Production's connect (lane1 #11772 R1): after `open` — and after the
+    /// first beat, which can come first — the server sends a `reconcile` naming
+    /// its committed revision; one covering pair pays it. The clock then moves
+    /// past the pair coalescer's window, so the test's next pair starts at once.
+    private func reconcile(_ handle: Handle, _ client: Client, _ vm: EventDetailViewModel,
+                           floor: String = #"{"4242":10}"#, at: String = "2026-09-25T17:00:00Z",
+                           p: Double = 0.6, edge: String? = nil) async throws {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        client.freshHistory = try decoder.decode(EventHistoryResponse.self, from: Data("""
+        {"event_id":4242,"home_team":"Red Sox","away_team":"Cubs","status":"live","history":[],
+         "blend_edge_pinned":true,"blend_edge_fold_revision":\(edge ?? floor),"blend_edge_observed_at":"\(at)",
+         "aggregate_line":[{"timestamp":"\(at)","home_probability":\(p)}]}
+        """.utf8))
+        handle.fire("reconcile", #"{"event_id":4242,"custody_id":"connect","removal_rev":\#(floor)}"#)
+        await settle { vm.reconcileOwedSince == nil }
+        XCTAssertNil(vm.reconcileOwedSince, "the connect reconcile is paid")
+        client.freshHistory = nil
+        clock += 2
     }
 
     private func settle(until condition: () -> Bool) async {
@@ -237,10 +266,11 @@ final class TheEventHeadlinePrintsTenthsAndConfirmedAt10090Tests: XCTestCase {
     /// With no `confirmed_at` the page is exactly today's: the age clock is
     /// the observation, and an open stream with no new price is waiting.
     func testWithoutConfirmedAtThePageIsExactlyTodays() async throws {
-        let handle = Handle(), vm = model(Client(try event()), handle)
+        let client = Client(try event()), handle = Handle(), vm = model(client, handle)
         defer { vm.stopRefresh() }
         await vm.load()
         handle.fire("open")
+        try await reconcile(handle, client, vm)
         handle.push(p: 0.6, at: "2026-09-25T17:00:00Z", rev: #"{"4242":10}"#)
         handle.beat(nil)
         handle.fire("heartbeat", #"{"t":"2026-09-25T17:30:00Z"}"#)
@@ -257,13 +287,17 @@ final class TheEventHeadlinePrintsTenthsAndConfirmedAt10090Tests: XCTestCase {
     /// replay): the confirmation dates it, "Waiting for update" ends and the
     /// age counts from the newer of observation and confirmation.
     func testAConfirmationOfTheShownPriceAgesItAndEndsWaiting() async throws {
-        let handle = Handle(), vm = model(Client(try event()), handle)
+        let client = Client(try event()), handle = Handle(), vm = model(client, handle)
         defer { vm.stopRefresh() }
         await vm.load()
         handle.fire("open")
         XCTAssertEqual(vm.liveUpdateStatus, .awaitingUpdate)
         handle.beat("2026-09-25T17:05:00.000+00:00")
         let five = "2026-09-25T17:05:00Z".asDate!
+        // lane1 #11772 R1: the server's first beat precedes its connect reconcile.
+        XCTAssertNil(vm.confirmedAtCoveringShown(try XCTUnwrap(vm.event)), "no reconcile yet")
+        XCTAssertEqual(vm.liveUpdateStatus, .awaitingUpdate)
+        try await reconcile(handle, client, vm)
         XCTAssertFalse(vm.streamHasPushedPrice, "not a price")
         XCTAssertNil(vm.priceActivity, "not a receipt")
         XCTAssertEqual(vm.confirmedAtCoveringShown(try XCTUnwrap(vm.event)), five)
@@ -304,6 +338,8 @@ final class TheEventHeadlinePrintsTenthsAndConfirmedAt10090Tests: XCTestCase {
         defer { vm.stopRefresh() }
         await vm.load()
         handle.fire("open")
+        // Its proof is the history already drawn, pinned (its edge covers the floor).
+        try await reconcile(handle, client, vm, at: "2026-09-25T17:10:00Z", p: 0.52, edge: #"{"4242":11,"999":5}"#)
         let gate = Client.Gate()
         client.gate = gate
         client.response = try event(p: 0.52, status: "scheduled", revision: #"{"4242":11,"999":5}"#,
@@ -334,10 +370,11 @@ final class TheEventHeadlinePrintsTenthsAndConfirmedAt10090Tests: XCTestCase {
     /// the committed value.
     func testAShownPreviewKeepsItsOwnClock() async throws {
         let both = #""kalshi":{"value":0.6,"updated_at":"2026-09-25T17:00:00Z"},"polymarket":{"value":0.6,"updated_at":"2026-09-25T17:00:00Z"}"#
-        let handle = Handle(), vm = model(Client(try event(sources: both)), handle)
+        let client = Client(try event(sources: both)), handle = Handle(), vm = model(client, handle)
         defer { vm.stopRefresh() }
         await vm.load()
         handle.fire("open")
+        try await reconcile(handle, client, vm)
         let session = V3PageWire.nextSession()
         handle.fire("preview_open_v3", V3PageWire.open(4242, members: [4242], session: session))
         handle.beat("2026-09-25T17:05:00.000+00:00")
@@ -355,6 +392,71 @@ final class TheEventHeadlinePrintsTenthsAndConfirmedAt10090Tests: XCTestCase {
         XCTAssertEqual(vm.displayedProbabilityAgeClock(shown), "2026-09-25T17:04:00Z".asDate,
                        "the preview's own observation, not the later confirmation")
         XCTAssertEqual(vm.liveUpdateStatus, .awaitingUpdate, "as today while a preview shows")
+    }
+
+    // MARK: - (1b) Which way a tenths move slides (lane1 #11772 R2)
+
+    /// The hero and the tip print tenths, so a move inside one whole point
+    /// changes the printed text while the whole delta is 0. Its slide follows
+    /// the printed tenths; the flash, arrow and caption stay whole.
+    func testATenthsOnlyMoveSlidesTheWayThePrintedTenthsMoved() async throws {
+        func moved(_ from: Double, _ to: Double) async throws -> LivePriceActivity? {
+            let handle = Handle(), vm = model(Client(try event(p: from)), handle)
+            defer { vm.stopRefresh() }
+            await vm.load()
+            handle.fire("open")
+            handle.push(p: to, at: "2026-09-25T17:01:00Z", rev: #"{"4242":11}"#)
+            return vm.priceActivity
+        }
+        let riseRead = try await moved(0.621, 0.624)
+        let rise = try XCTUnwrap(riseRead)
+        XCTAssertEqual(rise.previousHomePrinted, "62.1%")
+        XCTAssertEqual(rise.homePrinted, "62.4%")
+        XCTAssertEqual(rise.homeDelta, 0, "the caption's whole points did not move")
+        XCTAssertEqual(rise.awayDelta, 0)
+        XCTAssertFalse(rise.displayedValueChanged, "no whole flash")
+        XCTAssertEqual(rise.homeRising, true, "62.1% → 62.4% slides as a rise")
+        XCTAssertEqual(rise.awayRising, false, "37.9% → 37.6% slides as a fall")
+
+        let fallRead = try await moved(0.624, 0.621)
+        let fall = try XCTUnwrap(fallRead)
+        XCTAssertEqual(fall.homeDelta, 0)
+        XCTAssertEqual(fall.homeRising, false)
+        XCTAssertEqual(fall.awayRising, true)
+
+        // A whole move keeps the whole delta's direction.
+        let wholeRead = try await moved(0.62, 0.64)
+        let whole = try XCTUnwrap(wholeRead)
+        XCTAssertEqual(whole.homeDelta, 2)
+        XCTAssertEqual(whole.homeRising, true)
+        XCTAssertEqual(whole.awayRising, false)
+    }
+
+    /// Nil only when the printed value is banded, unrecorded or unchanged.
+    func testTheSlideDirectionIsUnknownOnlyWhenBandedUnrecordedOrUnchanged() {
+        func activity(_ before: (Int, String, String?), _ after: (Int, String, String?)) -> LivePriceActivity {
+            LivePriceActivity(sequence: 1, receivedAt: Date(), homeProbability: nil,
+                              previousHomePercent: before.0, previousAwayPercent: nil,
+                              homePercent: after.0, awayPercent: nil,
+                              previousHomeLabel: before.1, previousAwayLabel: nil,
+                              homeLabel: after.1, awayLabel: nil,
+                              previousHomePrinted: before.2, homePrinted: after.2)
+        }
+        XCTAssertEqual(activity((62, "62%", "62.1%"), (62, "62%", "62.4%")).homeRising, true)
+        XCTAssertNil(activity((62, "62%", "62.1%"), (62, "62%", "62.1%")).homeRising, "unchanged")
+        XCTAssertNil(activity((62, "62%", nil), (62, "62%", nil)).homeRising, "unrecorded")
+        XCTAssertNil(activity((0, "<1%", "<1%"), (0, "<1%", "0.6%")).homeRising, "banded whole")
+        XCTAssertNil(activity((99, "99%", "99.4%"), (99, "99%", ">99%")).homeRising, "banded tenths")
+        XCTAssertEqual(activity((62, "62%", nil), (64, "64%", nil)).homeRising, true, "a whole move needs no tenths")
+    }
+
+    /// The hero's three priced arms and the chart tip read that direction.
+    func testTheHeroAndTipSlideByThePrintedDirection() throws {
+        let view = try String(contentsOf: Self.repoFile("ios/Bain Luck/Bain Luck/Views/EventDetailView.swift"), encoding: .utf8)
+        XCTAssertTrue(view.contains("return away ? vm.priceActivity?.awayRising : vm.priceActivity?.homeRising"))
+        let chart = try String(contentsOf: Self.repoFile("ios/Bain Luck/Bain Luck/Components/OddsChartView.swift"), encoding: .utf8)
+        XCTAssertTrue(chart.contains("rising: priceActivity?.homeRising,"))
+        XCTAssertFalse(chart.contains("rising: priceActivity?.homeDelta"))
     }
 
     /// The details say the confirmation in plain words, aged like a server
