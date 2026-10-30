@@ -17,7 +17,10 @@ bare; a structured-JSON payload is unwrapped to its ``"message"``. Folds:
 * ``writer-receipt`` ``stamps=`` items (another writer's revision), as stamps.
 
 Items written before the receipt fields existed (five-part stamps) carry no
-claim and are counted as ``legacy_items``. ``first_new_recv`` of ``?`` (a writer
+claim and are counted as ``legacy_items``. A ``delivery-receipt`` line with no
+``stamps_dropped=`` was cut in transit (logplex, 10,000+ characters): its lost
+items cannot be timed, so the line is counted as ``truncated_lines``, never read
+as zero. ``first_new_recv`` of ``?`` (a writer
 that could not say) is counted as ``unknown_recv``, never timed.
 
 Clocks: recv and ``published_at`` are the dyno's wall clock; ``stamped_at`` is
@@ -55,7 +58,9 @@ BOUNDARY = (
     "(dyno clock) -> the first publication carrying it (preview: dyno clock; stamp/"
     "revision: database write clock). Not the network, not the phone's paint. Each "
     "process judges against its own last publication, so a value another process "
-    "already showed can be claimed again; the union counts each second once."
+    "already showed can be claimed again. `total_s` is an upper bound under this "
+    "limit. The union removes overlap, not an interval that ran past the "
+    "publication that actually carried the input."
 )
 
 
@@ -95,7 +100,8 @@ def _kv(text: str) -> dict:
 def receipt_items(lines: Iterable[str]):
     """Yield one dict per receipt item: ``kind`` (stamp|preview|writer),
     ``writer``, ``event``, ``published``, ``first`` (datetime / None / ``"?"``),
-    ``legacy`` (a pre-field item). Exact repeated messages are read once (a
+    ``legacy`` (a pre-field item); kind ``truncated`` for a cut delivery
+    line, dated by its ``window_start``. Exact repeated messages are read once (a
     capture's back-to-back log sessions replay each other's tail)."""
     seen = set()
     for line in lines:
@@ -107,6 +113,10 @@ def receipt_items(lines: Iterable[str]):
         if match:
             kv = _kv(match.group(2))
             writer, event = kv.get("writer") or match.group(1), kv.get("event")
+            if "stamps_dropped" not in kv:
+                yield {"kind": "truncated", "writer": writer, "event": event,
+                       "published": _ts(kv.get("window_start")), "first": None,
+                       "legacy": False}
             for item in (kv.get("stamps") or "-").split(";"):
                 parts = item.split("@")
                 if len(parts) < 5:
@@ -153,12 +163,17 @@ def trailing(lines: Iterable[str], since: Optional[dt.datetime] = None,
     """Per-event and overall trailing total / worst / over-1 s (module doc)."""
     per: dict[str, dict] = {}
     counts = {"items": 0, "carrying_items": 0, "legacy_items": 0, "unknown_recv": 0,
-              "negative_clamped": 0, "by_kind": {}}
+              "negative_clamped": 0, "truncated_lines": 0, "by_kind": {}}
     for item in receipt_items(lines):
         published = item["published"]
-        if published is None:
+        if published is not None and (
+            (since and published < since) or (until and published >= until)
+        ):
             continue
-        if (since and published < since) or (until and published >= until):
+        if item["kind"] == "truncated":
+            counts["truncated_lines"] += 1  # undated (cut that early): counted
+            continue
+        if published is None:
             continue
         counts["items"] += 1
         if item["legacy"]:

@@ -51,8 +51,12 @@ LIMITS, stated so a reader of the number can bound it:
 * "last published" is this process's own: production runs each venue in its
   own process (``WS_VENUE_PROCESSES=1``), and the sportsbook/model writers in
   the Celery worker. Another process's publication is not seen here, so a
-  value it already showed can be claimed again; the union in the readout
-  counts each second once, but the claimed interval can run long;
+  value it already showed can be claimed again. ``total_s`` is an upper bound
+  under this limit. The union removes overlap, not an interval that ran past
+  the publication that actually carried the input;
+* a headline leg whose own change did not move ``p`` can still be the oldest
+  input a later publication carries, if none retired it first (bounded by its
+  own queued stamp);
 * a preview published after a LATER flush's commit was noted covers that
   flush's inputs too (understates by at most one flush); an input re-sent at
   the same price as the committed row is matched to the commit (understates);

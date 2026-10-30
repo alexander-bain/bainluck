@@ -687,6 +687,31 @@ def test_the_parser_reads_a_retained_production_capture():
     ]
     out = trailing(captured)
     assert out["items"] == 1 and out["legacy_items"] == 1 and out["carrying_items"] == 0
+    assert out["truncated_lines"] == 0
+
+
+def test_the_parser_counts_a_cut_delivery_line_as_truncated():
+    """The 10,052-byte line verbatim from the same capture: logplex cut it
+    inside `outcomes=`, so its JSON does not parse and its stamps are gone.
+    It is counted as truncated, never read as a minute with nothing in it."""
+    import datetime as dt
+    from pathlib import Path
+
+    from app.utils.trailing_readout import receipt_items, trailing
+
+    cut = (Path(__file__).parent / "fixtures" / "delivery_receipt_cut_line_10090.txt").read_text()
+    assert len(cut.encode()) == 10_052 and "stamps_dropped=" not in cut
+    out = trailing([cut])
+    assert out["truncated_lines"] == 1 and out["items"] == 0 and out["total_s"] == 0
+    (item,) = receipt_items([cut])
+    assert item["kind"] == "truncated" and item["event"] == "15338186"
+    # Windowed like an item, by the line's own window_start (04:20Z).
+    at = dt.datetime(2026, 10, 30, 4, 20, tzinfo=dt.timezone.utc)
+    assert trailing([cut], since=at + dt.timedelta(minutes=1))["truncated_lines"] == 0
+    assert trailing([cut], since=at, until=at + dt.timedelta(minutes=1))["truncated_lines"] == 1
+    # A cut too early to carry its window_start is still counted.
+    early = cut[:cut.index(" window_start=")]
+    assert trailing([early], since=at)["truncated_lines"] == 1
 
 
 def test_receipts_written_by_the_consumer_fold_end_to_end(clock, caplog):
