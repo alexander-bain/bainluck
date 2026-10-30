@@ -112,10 +112,11 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
         PRICE_FLUSH_SECONDS=PRICE_FLUSH_SECONDS, SET_LOCK_TIMEOUT_SQL=SET_LOCK_TIMEOUT_SQL,
         is_lock_timeout=is_lock_timeout, lock_timeout_value=lock_timeout_value,
         is_price_row_lock_refusal=is_price_row_lock_refusal,
-        chunk_price_update_stmt=lambda chunk, force_ids, nowait=False: (
-            "price", (chunk, force_ids, nowait)
+        chunk_price_update_execution=lambda chunk, force_ids, nowait=False: (
+            ("price", (chunk, force_ids, nowait)), {}
         ),
-        rerank_market_fields_stmt=lambda ids: ("rank", ids),
+        pm_rerank_market_fields_execution=lambda ids: (("rank", ids), {}),
+        rerank_market_fields_stmt=lambda ids: ("rank", ids),  # withdrawals retain their builder
         market_by_outcome={oid: oid for oid in r.ns["price_buffer"]},
     )
     compile_functions(ROOT / "app/tasks/polymarket_ws.py", ["write_chunk"], r.ns)
