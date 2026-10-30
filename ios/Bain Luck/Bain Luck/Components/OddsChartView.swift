@@ -523,6 +523,9 @@ struct OddsChartView: View {
     var refreshStreaming: Bool = false
     var liveUpdateStatus: LiveUpdateStatus = .hidden
     var priceActivity: LivePriceActivity?
+    /// #10090 C2 — the hero prints a preview, so the tip's number is that
+    /// preview's and `priceActivity` (committed moves) does not describe it.
+    var liveEdgeShowsPreview: Bool = false
     /// #9436 — the hero's current home number, for the dot at the live edge.
     /// Nil off a live page.
     var liveEdge: LiveEdgeReading?
@@ -844,6 +847,7 @@ struct OddsChartView: View {
          refreshStreaming: Bool = false,
          liveUpdateStatus: LiveUpdateStatus = .hidden,
          priceActivity: LivePriceActivity? = nil,
+         liveEdgeShowsPreview: Bool = false,
          liveEdge: LiveEdgeReading? = nil,
          quoteIsCurrent: Bool = true,
          pairedAwayLabel9483: String? = nil,
@@ -878,6 +882,7 @@ struct OddsChartView: View {
         self.refreshStreaming = refreshStreaming
         self.liveUpdateStatus = liveUpdateStatus
         self.priceActivity = priceActivity
+        self.liveEdgeShowsPreview = liveEdgeShowsPreview
         self.liveEdge = liveEdge
         self.quoteIsCurrent = quoteIsCurrent
         self.pairedAwayLabel9483 = pairedAwayLabel9483
@@ -895,6 +900,13 @@ struct OddsChartView: View {
         _selectedRange = selectedRange
         _selection = State(initialValue: selection ?? OddsChartSelection())
         _vm = StateObject(wrappedValue: model ?? OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
+    }
+
+    /// #10090 C2 — the tip's slide, read like the hero's (`heroRising`): the
+    /// printed direction of the committed move, or nil while a preview prints,
+    /// whose direction no committed receipt describes.
+    static func liveEdgeRising(_ activity: LivePriceActivity?, showsPreview: Bool) -> Bool? {
+        showsPreview ? nil : activity?.homeRising
     }
 
     /// #3410 — whether the payload holds a single reading, anywhere.
@@ -2302,7 +2314,7 @@ struct OddsChartView: View {
                     LiveChartEdgeMarker(
                         selection: selection, proxy: proxy, plotFrame: plotFrame,
                         tail: liveSplit.tail, label: "\(homeShort) \(liveEdge.homeLabel)",
-                        rising: priceActivity?.homeDelta.map { $0 > 0 },
+                        rising: Self.liveEdgeRising(priceActivity, showsPreview: liveEdgeShowsPreview),
                         lineColor: colorForSource(liveSplit.source, sources: sources),
                         lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
                         activity: priceActivity, pulseColor: colorForSource(liveSplit.source, sources: sources))

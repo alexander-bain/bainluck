@@ -154,6 +154,26 @@ final class EventDetailViewModel: ObservableObject {
     /// has to push again before the page says it is being pushed to.
     @Published private(set) var streamHasPushedPrice = false
 
+    /// #10090 decision J (ALEX item 38) — the newest `confirmed_at` the
+    /// stream has handed on (`LiveStreamController.onConfirmedAt`): the last
+    /// instant a venue agreed with every price the stream published. Read only
+    /// through `confirmedAtCoveringShown`, which decides whether it is about
+    /// the number on screen. Cleared with the connection that carried it.
+    @Published private(set) var streamConfirmedAt: Date?
+    /// #10090 decision J — this connection's connect `reconcile` has arrived.
+    /// The server sends the first confirmed heartbeat BEFORE it (lane1's
+    /// #11772 probe), and only the reconcile's floor makes a served price older
+    /// than the replay window owe its pair read.
+    ///
+    /// Scoped to the CONNECTION, not the delivery (#11772 R4): the server sends
+    /// it only on connect, and a quiet market's 90 s data silence reports
+    /// delivery down on a socket that stays open, so clearing it there left the
+    /// rest of that connection unconfirmable. Cleared at the controller's
+    /// connection boundaries (`onPreviewReset`: open, reconnect, error, stop)
+    /// and by `stopStream`. Published (R5): a reconnect's paid re-send changes
+    /// nothing else the page reads, and must still re-render the claim it opens.
+    @Published private(set) var connectReconcileSeen = false
+
     /// #10090 — the held provisional blend (`BlendPreview`), or nil. Never part
     /// of `event` or `liveBlend`: the page overlays it on the hero
     /// (`headline(_:)`) and projects it onto the chart's end (`chartFrames(_:)`)
@@ -165,6 +185,10 @@ final class EventDetailViewModel: ObservableObject {
     /// floor survives every reset: epochs only rise.
     private var blendPreviewReader = BlendPreviewReader.empty
     private var blendPreviewExpiry: Task<Void, Never>?
+    /// #10090 — the preview a commit floor withdrew from `blendPreviewReader`
+    /// that the folded hero still shows until the commit's combined result is
+    /// decided (`BlendPreview.heldAcrossCommitFloor`); nil when none is.
+    private var floorHandover: BlendPreviewState?
 
     /// #8320: a successful stream-triggered authoritative fold read also
     /// delivers a price. Socket open / cached unchanged reads do not.
@@ -251,8 +275,11 @@ final class EventDetailViewModel: ObservableObject {
 
     var liveUpdateStatus: LiveUpdateStatus {
         if pricePairRefreshFailed && EventPriceStreaming.isEligible(event?.status) { return .interrupted }
+        // #10090 decision J — a confirmation of the number on screen ends
+        // "Waiting for update" on a page that opened already holding it.
         return LiveUpdateStatus.decide(status: event?.status, delivering: streamDelivering,
-                                acceptedUpdate: streamHasPushedPrice,
+                                acceptedUpdate: streamHasPushedPrice
+                                    || event.flatMap { confirmedAtCoveringShown($0) } != nil,
                                 refreshFailed: error != nil)
     }
 
@@ -710,8 +737,13 @@ final class EventDetailViewModel: ObservableObject {
         let before = LivePriceActivity.displayedPercents(in: prior)
         let after = LivePriceActivity.displayedPercents(in: current)
         guard after.home != nil || after.away != nil else { return }
-        let beforeLabels = LivePriceActivity.displayedLabels(in: prior)
-        let afterLabels = LivePriceActivity.displayedLabels(in: current)
+        let beforeLabels = LivePriceActivity.wholeLabels(in: prior)
+        let afterLabels = LivePriceActivity.wholeLabels(in: current)
+        // #10090 C2 — the hero printed the displayed preview, when one showed,
+        // not `prior`: 70% → 66% slides down even after a committed 50%.
+        let beforePrinted = LivePriceActivity.displayedLabels(
+            in: BlendPreview.overlay(prior, blendPreview, now: previewNow()))
+        let afterPrinted = LivePriceActivity.displayedLabels(in: current)
         priceActivity = LivePriceActivity(
             sequence: (priceActivity?.sequence ?? 0) + 1,
             receivedAt: Date(timeIntervalSince1970: now()),
@@ -719,7 +751,9 @@ final class EventDetailViewModel: ObservableObject {
             previousHomePercent: before.home, previousAwayPercent: before.away,
             homePercent: after.home, awayPercent: after.away,
             previousHomeLabel: beforeLabels.home, previousAwayLabel: beforeLabels.away,
-            homeLabel: afterLabels.home, awayLabel: afterLabels.away
+            homeLabel: afterLabels.home, awayLabel: afterLabels.away,
+            previousHomePrinted: beforePrinted.home, previousAwayPrinted: beforePrinted.away,
+            homePrinted: afterPrinted.home, awayPrinted: afterPrinted.away
         )
     }
 
@@ -890,6 +924,9 @@ final class EventDetailViewModel: ObservableObject {
     private func receiveReconcile(_ control: LiveStreamReconcile) {
         guard control.eventId == eventId, let held = event, held.id == eventId,
               EventPriceStreaming.isEligible(held.status) else { return }
+        // Before the paid-custody return: a reconnect's re-send is still this
+        // connection's reconcile. Set only on change: each set publishes.
+        if !connectReconcileSeen { connectReconcileSeen = true }
         blendPreviewReader = BlendPreview.readerAfterCommitFloor(blendPreviewReader, control.removalRev)
         publishPreview(blendPreviewReader.held, at: previewNow())
         // A paid custody delivered again (a reconnect's re-send) asks nothing,
@@ -1279,12 +1316,16 @@ final class EventDetailViewModel: ObservableObject {
                 // just earned it.
                 if !delivering {
                     self.streamHasPushedPrice = false
+                    // The next 20 s beat re-sends this; the connection's
+                    // reconcile is not re-sent, so it stays (#11772 R4).
+                    self.streamConfirmedAt = nil
                     self.deliveryGeneration += 1
                     self.streamRefetchGeneration = nil
                     self.pendingResyncGeneration = nil
                     self.provenanceRefetchFrame = nil
                     self.trailingProvenanceFrame = nil
                     self.awaitingFoldedResult = false
+                    self.endFloorHandover()
                     // The dot and fast polling reflect the outage immediately.
                     // A recoverable outage does not invalidate a price already
                     // observed; load() checks terminal refusal before using it.
@@ -1319,7 +1360,17 @@ final class EventDetailViewModel: ObservableObject {
             },
             onPreviewOpenV3: { [weak self] raw in self?.receivePreviewOpenV3(raw) },
             onPreviewV3: { [weak self] raw, receivedAt in self?.receivePreviewV3(raw, receivedAt: receivedAt) },
-            onPreviewReset: { [weak self] in self?.clearPreview() },
+            // Every connection boundary, and only those: the reconcile it
+            // carried belongs to the connection that ended (#11772 R4).
+            onPreviewReset: { [weak self] in
+                guard let self else { return }
+                if self.connectReconcileSeen { self.connectReconcileSeen = false }
+                self.clearPreview()
+            },
+            onConfirmedAt: { [weak self] confirmed in
+                guard let self else { return }
+                if self.streamConfirmedAt.map({ confirmed > $0 }) ?? true { self.streamConfirmedAt = confirmed }
+            },
             deliversFoldedQuotes: true
         )
         stream = controller
@@ -1363,6 +1414,8 @@ final class EventDetailViewModel: ObservableObject {
         owedInvalidationRetriedAt = nil
         awaitingFoldedResult = false
         streamHasPushedPrice = false
+        streamConfirmedAt = nil
+        if connectReconcileSeen { connectReconcileSeen = false }
         streamTickTask?.cancel()
         streamTickTask = nil
         stoppingStream = true
@@ -1385,6 +1438,15 @@ final class EventDetailViewModel: ObservableObject {
         BlendPreview.overlay(event, blendPreview, now: previewNow())
     }
 
+    /// Whether `headline(event)` prints a preview: the published state through
+    /// its display gate. A preview the committed revision has passed, or whose
+    /// lifetime ended, stays in `blendPreview` until its expiry task runs but
+    /// prints nothing.
+    @MainActor
+    func displaysPreview(_ event: EventDetail) -> Bool {
+        BlendPreview.displayed(blendPreview, held: event, now: previewNow()) != nil
+    }
+
     /// The clock of the probability `headline(event)` prints: the preview's
     /// observation time while one shows (nil when unknown), else the committed
     /// one. Source-age warnings keep reading the committed clocks.
@@ -1392,6 +1454,71 @@ final class EventDetailViewModel: ObservableObject {
     func displayedProbabilityObservedAt(_ event: EventDetail) -> Date? {
         BlendPreview.displayedObservedAt(blendPreview, held: event, now: previewNow(),
                                          committed: event.heroProbabilityObservedAt?.asDate)
+    }
+
+    /// #10090 decision J — the stream's `confirmed_at`, when it is about the
+    /// number this page shows; else nil, which is exactly today's page.
+    ///
+    /// The server's promise covers every price it PUBLISHED, so it holds for
+    /// the reader only while the page shows the newest of those. The stream
+    /// sends its connect replay before the first confirmation (live R3), so a
+    /// replayed raw price is already adopted when one arrives. What remains is
+    /// checked here:
+    ///   * this connection's connect `reconcile` has arrived: it registers the
+    ///     committed revision as a floor, which is the only witness for a
+    ///     served price too old to replay, and the first heartbeat can precede
+    ///     it;
+    ///   * no newer price is owed — a folded result, a re-read, a trailing
+    ///     frame, a withdrawal, a reconcile floor or a commit floor the shown
+    ///     revision does not cover means the confirmed price is not yet the
+    ///     one on screen;
+    ///   * no preview is showing: previews carry no confirmation and keep
+    ///     their own clock (live's contract, "previews are not covered").
+    /// Never moved back (a 20 s beat may repeat an older value); cleared with
+    /// the delivery that carried it.
+    @MainActor
+    func confirmedAtCoveringShown(_ event: EventDetail) -> Date? {
+        guard let streamConfirmedAt, connectReconcileSeen, !owesNewerPrice,
+              BlendPreview.displayed(blendPreview, held: event, now: previewNow()) == nil
+        else { return nil }
+        return streamConfirmedAt
+    }
+
+    /// The clock the page ages its number by: max(the displayed observation,
+    /// a confirmation of it). Without one, `displayedProbabilityObservedAt`.
+    @MainActor
+    func displayedProbabilityAgeClock(_ event: EventDetail) -> Date? {
+        let observed = displayedProbabilityObservedAt(event)
+        guard let confirmed = confirmedAtCoveringShown(event) else { return observed }
+        return observed.map { max($0, confirmed) } ?? confirmed
+    }
+
+    /// The confirmation the details say aloud: only when it is newer than the
+    /// observation, so it never repeats or contradicts that clock.
+    @MainActor
+    func displayedConfirmation(_ event: EventDetail) -> Date? {
+        guard let confirmed = confirmedAtCoveringShown(event) else { return nil }
+        if let observed = displayedProbabilityObservedAt(event), observed >= confirmed { return nil }
+        return confirmed
+    }
+
+    /// #10090 decision J — a newer price than the one shown is still on its way.
+    private var owesNewerPrice: Bool {
+        awaitingFoldedResult || revisionRefetchTask != nil || revisionRefetchPending
+            || provenanceRefetchFrame != nil || trailingProvenanceFrame != nil
+            || owedInvalidation != nil || reconcileFloor != nil || owesCommitFloor
+    }
+
+    /// #10090 C1 — a commit floor (a `fold_preview_floor`, or a reconcile's
+    /// revision) the shown paired revision does not cover: that commit's value
+    /// is owed, and its raw frame or result may not have arrived yet. Live's
+    /// contract: `confirmed_at` vouches for the server's newest commit, never
+    /// for an older revision once a floor names a newer one. Ends only when a
+    /// result or load covers every floor; a dropped preview is not coverage.
+    private var owesCommitFloor: Bool {
+        guard let floors = blendPreviewReader.floors, !floors.rows.isEmpty else { return false }
+        guard let shown = event.flatMap(LiveEventPriceReconciliation.pairedFoldRevision(in:)) else { return true }
+        return !shown.covers(floors)
     }
 
     /// `liveBlend` with the displayed preview projected onto its end, for the
@@ -1452,7 +1579,7 @@ final class EventDetailViewModel: ObservableObject {
         guard let open = PreviewEnvelopeV3.decode(raw, kind: .open, eventId: eventId) else { return }
         let next = BlendPreview.readerOpenedV3(blendPreviewReader, open)
         guard next != blendPreviewReader else { return }
-        let withdrawn = next.held == nil && blendPreviewReader.held != nil
+        let withdrawn = next.held == nil && (blendPreviewReader.held != nil || floorHandover != nil)
         blendPreviewReader = next
         if withdrawn { publishPreview(nil, at: previewNow()) }
     }
@@ -1470,19 +1597,40 @@ final class EventDetailViewModel: ObservableObject {
         let waited = receivedAt.map { max(0, ProcessInfo.processInfo.systemUptime - $0) } ?? 0
         let next = BlendPreview.readerAfterV3(blendPreviewReader, envelope, frame: frame,
                                               eventId: eventId, now: current - waited)
-        guard next != blendPreviewReader else { return }
+        // During a commit floor's hand-over any frame of this page decides
+        // afresh: a revoke withdraws at once even when it moves no evidence.
+        guard next != blendPreviewReader || floorHandover != nil else { return }
         let shown = blendPreview
         blendPreviewReader = next
         publishPreview(next.held, at: current)
         if let held = next.held, held != shown { LiveTimingSeam.modelPreviewAdopted(held, reader: next) }
     }
 
+    /// The reader takes the floor at once. On a folded page the hero keeps the
+    /// preview it withdrew until the commit's combined result is decided
+    /// (`BlendPreview.heldAcrossCommitFloor`), so it never falls back to the
+    /// older committed value in between.
     @MainActor
     private func receivePreviewFloor(_ raw: String) {
-        let next = BlendPreview.readerAfterCommitFloor(blendPreviewReader, raw: raw, eventId: eventId)
-        guard next != blendPreviewReader else { return }
+        guard case .floor(let floor) = BlendPreview.commitFloorControl(raw: raw, eventId: eventId) else { return }
+        let next = BlendPreview.readerAfterCommitFloor(blendPreviewReader, floor)
+        guard next != blendPreviewReader || floorHandover != nil else { return }
         blendPreviewReader = next
-        publishPreview(next.held, at: previewNow())
+        let current = previewNow()
+        if let kept = BlendPreview.heldAcrossCommitFloor(blendPreview, floor: floor, after: next,
+                                                          held: event, now: current) {
+            publishPreview(kept, at: current)
+            floorHandover = kept
+        } else {
+            publishPreview(next.held, at: current)
+        }
+    }
+
+    /// Ends a commit floor's hand-over: the committed value now shows.
+    @MainActor
+    private func endFloorHandover() {
+        guard floorHandover != nil else { return }
+        publishPreview(nil, at: previewNow())
     }
 
     /// Clears only the held preview and ends the v3 session; keeps the domain,
@@ -1499,6 +1647,7 @@ final class EventDetailViewModel: ObservableObject {
     private func publishPreview(_ held: BlendPreviewState?, at: TimeInterval) {
         blendPreviewExpiry?.cancel()
         blendPreviewExpiry = nil
+        floorHandover = nil
         if blendPreview != held { blendPreview = held }
         guard let held else { return }
         // Capped at a day: `ttl_ms` may be any safe integer, and converting a
@@ -1582,6 +1731,9 @@ final class EventDetailViewModel: ObservableObject {
         // raw-row rule: those can only refuse a folded hero and re-read it.
         let wasAwaitingFoldedResult = awaitingFoldedResult
         if frame.foldedResult { awaitingFoldedResult = false }
+        // A commit floor's hand-over lasts until the page decides this result,
+        // whichever way it goes.
+        defer { if frame.foldedResult { endFloorHandover() } }
         switch LiveEventPriceReconciliation.foldedQuoteDecision(frame, held: current) {
         case .adopt(let quote):
             LiveEventPriceReconciliation.adoptingFoldedQuote(quote, into: &current)
