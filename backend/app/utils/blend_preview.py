@@ -2218,6 +2218,10 @@ class LedgerRegistry(PreviewRegistry):
                     frames.append(item)
         return frames
 
+    def _ticket_after(self, ticket: int, acknowledged: int) -> int:
+        """``ticket`` as it reads after ``acknowledged`` retirements of its own batch."""
+        return ticket + acknowledged
+
     async def prepare_retirements(self, items: list, call, stats: dict) -> list[dict]:
         """Run one capacity batch (retire_idle/retire_policy); return its revokes.
 
@@ -2237,7 +2241,7 @@ class LedgerRegistry(PreviewRegistry):
             for item in items:
                 outcome: list = []
                 frames.extend(await self._mutate(
-                    {**item, "read_ticket": item["read_ticket"] + acknowledged},
+                    {**item, "read_ticket": self._ticket_after(item["read_ticket"], acknowledged)},
                     call, stats, outcome))
                 if outcome == ["ok"]:
                     acknowledged += 1

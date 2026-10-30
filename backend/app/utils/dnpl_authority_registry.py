@@ -5,7 +5,7 @@ implicit activation. Construct only from a fresh primary sample; pre-sample
 observations cannot create preview chains in the recovered domain.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import json
 from typing import Any
@@ -130,6 +130,11 @@ class AuthorityLedgerRegistry(LedgerRegistry):
             when,
         )
 
+    def _ticket_after(self, ticket, acknowledged):
+        # Only the barrier counts retirements. Authority, source and owner stay
+        # the ticket's own, so the advanced ticket binds the same domain.
+        return replace(ticket, barrier=ticket.barrier + acknowledged)
+
     def _drop(self, source, reason):
         # Counted for the per-minute preview receipt only.
         key = (source, reason)
@@ -231,7 +236,7 @@ class AuthorityLedgerRegistry(LedgerRegistry):
             values[8] = encode_preview(self.authority, json.loads(values[8]))
         return await self._guarded_call(call, source, owner, *values)
 
-    async def _mutate(self, op, call, stats):
+    async def _mutate(self, op, call, stats, outcome=None):
         if (
             not isinstance(op, dict)
             or op.get("_dnpl_authority") != self.authority
@@ -239,8 +244,10 @@ class AuthorityLedgerRegistry(LedgerRegistry):
             or self._halted
         ):
             stats["authority_refused"] = stats.get("authority_refused", 0) + 1
+            if outcome is not None:
+                outcome.append("authority_refused")
             return []
-        frames = await super()._mutate(op, call, stats)
+        frames = await super()._mutate(op, call, stats, outcome)
         return [
             {
                 **frame,

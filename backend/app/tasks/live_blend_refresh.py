@@ -6819,8 +6819,13 @@ class LiveBlendRefresher:
                     for event_id, rev in sorted(rows, key=lambda row: order[row[0]]):
                         operation = registry().retire_idle(event_id, self.source, rev, ticket,
                                                            deadline_ms)
-                        operation["send_before"] = when
-                        operations.append(operation)
+                        # The authority registry refuses a ticket of another
+                        # owner or domain: no operation, as for policy.
+                        if operation is not None:
+                            operation["send_before"] = when
+                            operations.append(operation)
+                    if not operations:
+                        return []
                     try:
                         return await self._prepare_ledger_previews(operations)
                     except BaseException as exc:
