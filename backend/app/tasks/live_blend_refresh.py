@@ -665,10 +665,12 @@ DELIVERY_RECEIPT_MAX_EVENTS = 30
 #: #10090 field 2 — preview publications listed per line, like `stamps`; the
 #: overflow is counted in `previews_dropped`.
 DELIVERY_RECEIPT_MAX_PREVIEWS = 40
-#: A receipt line longer than this is trimmed before it is written: the
-#: readout counts 10,000+ character lines as truncated (logplex cuts them).
-#: Preview items go first — those carrying no `first_new_recv`, then the
-#: oldest — each counted in `previews_dropped`.
+#: A receipt line longer than this is trimmed before it is written: logplex
+#: cuts 10,000+ character lines (a busy game's `outcomes=` alone overran it,
+#: losing every stamp after it). Shed order: preview items carrying no
+#: `first_new_recv`, then outcome items (fewest accepted first, counted in
+#: `outcomes_dropped`; the line's totals still cover every outcome), then the
+#: oldest previews (`previews_dropped`). Stamps are never shed.
 DELIVERY_RECEIPT_MAX_LINE_CHARS = 9000
 #: The receipt line's fixed shape. `stamps` items are
 #: rev@stamped_at@newest_recv@oldest_recv@covered@first_new_recv; `previews`
@@ -677,7 +679,8 @@ DELIVERY_RECEIPT_FORMAT = (
     "live_blend_refresh[%s]: delivery-receipt run=%s event=%s "
     "window_start=%s window_s=%.3f raw=%d accepted=%d changed=%d "
     "repeats=%d first=%d outcomes=%s stamps=%s stamps_dropped=%d "
-    "writer=%s previews=%s previews_dropped=%d trail_dropped=%d%s"
+    "writer=%s previews=%s previews_dropped=%d trail_dropped=%d "
+    "outcomes_dropped=%d%s"
 )
 #: #10090 field 3 — the same `stamps=` item, from a writer of this process
 #: other than the arm's own stamp (a Polymarket withdrawal), one line per
@@ -1126,33 +1129,47 @@ class TailReceipts:
     def _emit(self, event_id: int, bucket: dict, window_end: float) -> None:
         """`window_start`/`window_s` are the seconds this run actually watched
         the game inside the minute — never the minute's floor before it.
-        Bounded to `DELIVERY_RECEIPT_MAX_LINE_CHARS` by dropping preview items
-        (counted), never stamps."""
+        Bounded to `DELIVERY_RECEIPT_MAX_LINE_CHARS` in the shed order that
+        constant names (each item counted), never by dropping a stamp."""
         per = bucket["outcomes"]
         totals = [sum(v[i] for v in per.values()) for i in range(4)]
         self.stats["delivery_lines"] += 1
         previews = list(bucket.get("previews", ()))
         previews_dropped = bucket.get("previews_dropped", 0)
         trail_dropped = self._trail.dropped(event_id, reset=True)
+        shown = {oid: f"{oid}:{v[0]}:{v[1]}:{v[2]}:{v[3]}" for oid, v in per.items()}
+        quiet_first = sorted(per, key=lambda oid: (per[oid][0], oid))
+        tags = _switch_tags(event_id, bucket["from"])
 
         def line():
             return DELIVERY_RECEIPT_FORMAT % (
                 self.source, self.run, event_id, _iso(bucket["from"]),
                 max(0.0, window_end - bucket["from"]),
                 bucket["raw"], *totals,
-                ",".join(f"{oid}:{v[0]}:{v[1]}:{v[2]}:{v[3]}" for oid, v in sorted(per.items()))
-                or "-",
+                ",".join(item for _, item in sorted(shown.items())) or "-",
                 ";".join(bucket["stamps"]) or "-", bucket["stamps_dropped"],
                 self.source, ";".join(previews) or "-",
-                previews_dropped, trail_dropped,
-                _switch_tags(event_id, bucket["from"]),
+                previews_dropped, trail_dropped, len(per) - len(shown), tags,
             )
 
         message = line()
-        while len(message) > DELIVERY_RECEIPT_MAX_LINE_CHARS and previews:
+        while len(message) > DELIVERY_RECEIPT_MAX_LINE_CHARS:
             idle = [i for i, item in enumerate(previews) if item.endswith("@-")]
-            previews.pop(idle[0] if idle else 0)
-            previews_dropped += 1
+            if idle:
+                previews.pop(idle[0])
+                previews_dropped += 1
+            elif quiet_first:
+                # As many of the quietest as cover the excess, so a 500-outcome
+                # game is not re-formatted once per item; never more than the
+                # one-at-a-time loop would shed (the loop re-checks).
+                excess = len(message) - DELIVERY_RECEIPT_MAX_LINE_CHARS
+                while quiet_first and excess > 0:
+                    excess -= len(shown.pop(quiet_first.pop(0))) + 1
+            elif previews:
+                previews.pop(0)
+                previews_dropped += 1
+            else:
+                break
             message = line()
         logger.info("%s", message)
 

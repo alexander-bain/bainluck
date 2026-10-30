@@ -408,6 +408,67 @@ def test_an_overlong_line_drops_previews_carrying_nothing_first(clock, caplog, m
     assert len(_stamps([line])) == 1  # stamps are never trimmed
 
 
+# ── R2 (lane1 review of 07cc2dd3): `outcomes=` is shed too, stamps never ─────
+
+
+def _busy_game(r, clock, outcomes=497, stamps=40):
+    t = 0.0
+    for k in range(outcomes):
+        t += 0.05
+        _input(r, clock, t, 300_000_000 + k, 0.30)
+    for k in range(stamps):
+        t += 0.2
+        m = _input(r, clock, t, A, 0.50 + k / 1000)
+        _stamp(r, clock, t + 0.1, 0.60 + k / 1000, 1_000_000 + k, m)
+
+
+def test_P2_busy_game_line_stays_under_10000_with_stamps(clock, caplog):
+    # Retained capture w-20261030T041733Z: one game-minute had 497 outcomes and
+    # a 10,052-byte line cut inside `outcomes=` (JSON unparseable, stamps lost).
+    # 07cc2dd3 wrote this minute as a 13,876-character line.
+    r = _receipts()
+    _busy_game(r, clock)
+    r.close_all("test")
+    msgs = [rec.getMessage() for rec in caplog.records
+            if "delivery-receipt" in rec.getMessage() and f"event={E} " in rec.getMessage()]
+    assert msgs
+    longest = max(msgs, key=len)
+    assert len(longest) < 10_000, len(longest)
+
+
+def test_a_busy_game_sheds_its_quietest_outcomes_and_keeps_every_stamp(clock, caplog):
+    r = _receipts()
+    _busy_game(r, clock)
+    _input(r, clock, 40.0, 300_000_007, 0.31)  # one prop heard twice: kept
+    r.close_all("test")
+    (msg,) = [rec.getMessage() for rec in caplog.records if "delivery-receipt run=" in rec.getMessage()]
+    (line,) = [ln for ln in _lines(caplog) if ln["event"] == str(E)]
+    assert len(msg) <= blend_mod.DELIVERY_RECEIPT_MAX_LINE_CHARS
+    assert len(_stamps([line])) == 40 and line["stamps_dropped"] == "0"
+    kept = {int(item.split(":")[0]) for item in line["outcomes"].split(",")}
+    assert A in kept and 300_000_007 in kept  # the most-heard outcomes stay
+    assert int(line["outcomes_dropped"]) == 498 - len(kept) > 0
+    # Totals still count every outcome the minute heard.
+    assert line["accepted"] == str(497 + 40 + 1)
+    # Never more than the one-at-a-time loop: the last outcome shed, put back,
+    # would overrun the bound.
+    last_shed = max(oid for oid in range(300_000_000, 300_000_497) if oid not in kept
+                    and oid != 300_000_007)
+    back = msg.replace(" outcomes=", f" outcomes={last_shed}:1:0:0:1,", 1)
+    assert len(back) > blend_mod.DELIVERY_RECEIPT_MAX_LINE_CHARS
+
+
+def test_outcomes_go_after_idle_previews_and_before_carrying_ones(clock, caplog, monkeypatch):
+    # Shed every `-` preview (~38 chars each) and the lone outcome, nothing else.
+    full, base = _overlong_scenario(clock, caplog, monkeypatch, 100_000)
+    budget = len(full) - 6 * 38 - 10
+    msg, line = _overlong_scenario(clock, caplog, monkeypatch, budget)
+    assert len(msg) <= budget
+    assert line["outcomes"] == "-" and line["outcomes_dropped"] == "1"
+    assert line["accepted"] == base["accepted"]
+    assert len([p for p in _previews([line]) if p[2] != "-"]) == 6
+
+
 def test_trail_overflow_is_counted(clock, caplog, monkeypatch):
     r = _receipts()
     r._trail.max_pending = 2
