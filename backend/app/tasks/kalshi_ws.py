@@ -1460,6 +1460,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # published revision carried it. Keyed like `price_buffer`.
     tail_receipts = TailReceipts("kalshi")
     blend_refresher.receipts = tail_receipts
+    # #10090 decision J: `confirmed_at` for this venue's events, written to
+    # Redis on the refresher's own client (`app.utils.confirmed_at`).
+    from app.utils.confirmed_at import ConfirmedAt
+    tail_receipts.confirmed = ConfirmedAt("kalshi", client=getattr(blend_refresher, "_client", None))
     # #10702: disabled without exact targets AND a short absolute expiry.
     # One budget for this run, including its existing open-contract sockets.
     if exact_trace is not None:
@@ -3006,6 +3010,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 )
             except Exception:
                 mark = None
+            # #10090 decision J: a blend leg's input — a slate winner or a
+            # BRIDGED open contract, both read by the event's blend (lane1 R1)
+            # — judged for agreement with what this source published.
+            # Bookkeeping only.
+            confirmed = getattr(tail_receipts, "confirmed", None)
+            if confirmed is not None and outcome_id not in non_blend_outcome_ids:
+                with contextlib.suppress(Exception):
+                    confirmed.note_mark(mark)
             if mark is not None:
                 input_marks[outcome_id] = mark
                 # #11138: freeze this input's DB-clock lower bound with it.
@@ -3059,6 +3071,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     or ticker_owner.get(ticker) is not client):
                 return
             mark = tail_receipts.note_input(eid, oid, value, "book_observation", msg.get("ts_ms"))
+            # A winner leg by the guard above: a re-observed price agrees or
+            # not with the published one (#10090 decision J).
+            confirmed = getattr(tail_receipts, "confirmed", None)
+            if confirmed is not None:
+                with contextlib.suppress(Exception):
+                    confirmed.note_mark(mark)
             if mark is not None:
                 book_observation_pending[oid] = (eid, value, bound, mark, ticker, signature)
                 book_observation_wake.set()
