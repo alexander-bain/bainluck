@@ -22,14 +22,20 @@ import SwiftUI
 ///   - goals           `EventDetail.homeScore/awayScore`, dated only by the
 ///                     producer's `scoreObservedAt` and named by `scoreSource`.
 ///   - state words     `PeriodLabel.liveStatusText` during play.
-///   - forecasts       before the start, `EventDetailView.projectionText`'s gates;
+///   - forecasts       before the start, `EventDetailView.projectionText`'s gates
+///                     AND the projected-final format table
+///                     (`LiveProjectedFinalAdmission2920.format(forSport:)`, native's
+///                     port of web's `projectedFinalFormat`) — web's
+///                     `eventPageProjectedPair` withholds a pregame pair the table
+///                     refuses, and native's hero gate alone does not ask, so this
+///                     file asks both and the two platforms print one answer;
 ///                     during play, `LiveProjectedFinal2920.page` and
 ///                     `LivePregameComparison11296`; after the final,
 ///                     `FinalForecastComparison11296`. A refusal prints the slot's
-///                     absence words, never a reference value. Today #11296's unit
-///                     table and #2920's format table both decline hockey, so the
-///                     during-play and final forecast slots are absent until those
-///                     owners admit hockey; this file must not route around them.
+///                     absence words, never a reference value. Today the format
+///                     table, #11296's unit table and #2920 all decline hockey, so
+///                     every hockey forecast slot is absent until those owners admit
+///                     hockey; this file must not route around them.
 ///   - result          `EventOutcome.resolve` with the served verdict.
 ///   - names and tints `TeamShortName.shortPair`, `TeamTextContrast.cardColors`.
 ///   - source names    the served `win_probability_sources[...].displayName` only;
@@ -247,9 +253,12 @@ enum HockeyJourneyPageAdapter10868 {
     }
 
     /// Before the start: the pair `EventDetailView.projectionText` admits, said
-    /// per side. Admission is that function's alone; the per-side figures are its
-    /// own rounded halves, and a test holds the two spellings together.
+    /// per side — and only where the projected-final format table admits the
+    /// sport too, as web's `eventPageProjectedPair` requires (hockey's puck line
+    /// is refused there). The per-side figures are `projectionText`'s own rounded
+    /// halves, and a test holds the two spellings together.
     static func pregamePair(_ event: EventDetail, host: Host) -> PairSlots? {
+        guard LiveProjectedFinalAdmission2920.format(forSport: event.sport) != nil else { return nil }
         guard EventDetailView.projectionText(
             event, ladderHome: host.ladderHome, ladderAway: host.ladderAway, hasScore: false, now: host.now) != nil
         else { return nil }

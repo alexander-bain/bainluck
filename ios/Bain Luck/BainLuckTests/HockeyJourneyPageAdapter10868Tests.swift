@@ -16,7 +16,8 @@ import XCTest
 ///   (Final/OT), completed; captured 2026-10-30T20:13:55Z.
 /// - `devilsKnightsBefore` — 15338496, New Jersey Devils at Vegas Golden
 ///   Knights, scheduled for 22:00Z; captured 2026-10-30T20:13:55Z, hero pair
-///   0.505 / 0.495 observed 20:13:34Z, sportsbook projection 3.5 / 2.5 goals.
+///   0.505 / 0.495 observed 20:13:34Z, sportsbook projection 3.5 / 2.5 goals
+///   (refused for hockey by the projected-final format table).
 ///
 /// CONSTRUCTED here: the reader's calendar (Pacific, en_US) and the host's
 /// clocks — `now` is the capture instant unless a test moves it, and the
@@ -119,7 +120,7 @@ final class HockeyJourneyPageAdapter10868Tests: XCTestCase {
 
     // MARK: Before
 
-    func testBeforeTheStartTheMatrixPrintsTheHerosPairAndTheProjectionGatesOwnHalves() throws {
+    func testBeforeTheStartTheMatrixPrintsTheHerosPairAndWithholdsTheForecastBothPlatformsRefuse() throws {
         let event = try detail(Self.devilsKnightsBefore)
         let host = host(observedAt: event.heroProbabilityObservedAt, now: "2026-10-30T20:13:55Z")
         XCTAssertEqual(A.phase(event, now: host.now), .before)
@@ -136,13 +137,15 @@ final class HockeyJourneyPageAdapter10868Tests: XCTestCase {
         XCTAssertEqual(m.chance.provenance,
                        "Recorded \(A.clockWords(try XCTUnwrap(event.heroProbabilityObservedAt?.asDate), host: host))",
                        "the hero's `blend` source has no served display name here, so it is not named")
-        // 3.5 / 2.5 goals from 19 sportsbooks; the page's own gate rounds per side and prints "Proj. 3-4".
-        XCTAssertEqual(m.home.projectedGoals, .value("4", spoken: "4 goals"))
-        XCTAssertEqual(m.away.projectedGoals, .value("3", spoken: "3 goals"))
-        XCTAssertEqual(m.projectedGoals.provenance, "Sportsbooks before the start · 19 books")
+        // 3.5 / 2.5 goals from 19 sportsbooks. Native's hero gate alone would print "Proj. 3-4", but the
+        // projected-final format table refuses hockey (web's `eventPageProjectedPair` withholds it), so the
+        // matrix asks both and withholds — one answer on both platforms. The divergence is the owners' to resolve.
         XCTAssertEqual(EventDetailView.projectionText(event, ladderHome: nil, ladderAway: nil, hasScore: false, now: host.now),
-                       "Proj. \(m.away.projectedGoals.text)-\(m.home.projectedGoals.text)",
-                       "the matrix's halves are the projection gate's own, in its spelling")
+                       "Proj. 3-4", "RECORDED divergence: native's hero gate admits this pair")
+        XCTAssertNil(LiveProjectedFinalAdmission2920.format(forSport: event.sport))
+        XCTAssertEqual(m.home.projectedGoals, .absent("No pregame forecast"))
+        XCTAssertEqual(m.away.projectedGoals, .absent("No pregame forecast"))
+        XCTAssertNil(m.projectedGoals.provenance)
     }
 
     func testAQuoteOlderThanTheLiveStaleWindowOrUndatedIsLastRecordedNeverCurrent() throws {
