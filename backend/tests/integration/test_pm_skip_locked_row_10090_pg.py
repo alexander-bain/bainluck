@@ -22,7 +22,8 @@ admitted to the same chunk.
   held; event 2's price stays buffered (Q491), is never written and its event
   is never stamped from the old row; nothing waits on the lock and no price
   error is logged; the skip is counted. After release, the first flush that
-  starts writes event 2, which then publishes its new value.
+  is not refused writes event 2, which then publishes its new value; no flush
+  that began with the row already free holds it back.
 * ``test_a_held_events_received_quote_reaches_the_stamp_beside_its_neighbours``:
   with the #11138 overlay wired as the consumer wires it, the held event is
   stamped from its received quote in that same flush (readers get the new
@@ -155,16 +156,18 @@ async def run_hold(rig, consumer, monkeypatch, *, overlay):
             calls_before_release=list(calls),
         )
         assert tx.is_active, "all of the above happened while the row was held"
+        release_began = time.monotonic()
         await tx.rollback()
-        released = time.monotonic()
+        released = time.monotonic()  # the server let go before it replied
         await wait_for(lambda: published(t, HELD, QUOTES[HELD]), timeout=3.0)
         async with asyncio.timeout(3.0):  # the row itself lands
             while await stored_price(rig, HELD) != QUOTES[HELD]:
                 await asyncio.sleep(0.005)
         out.update(
+            release_began=release_began,
             released=released,
             landed_row=await stored_price(rig, HELD),
-            calls_after_release=[c for c in calls if c[0] >= released],
+            calls=list(calls),
         )
     finally:
         with contextlib.suppress(Exception):
@@ -196,16 +199,21 @@ def assert_only_its_event_was_held(out, *, overlay):
     assert out["lock_waiters_seen"] == 0, out
     assert out["stats"]["price_rows_skipped_locked"] >= 1, out
     assert not out["stats"].get("errors"), out
-    after = [c for c in out["calls_after_release"] if HELD in c[1]]
-    landing = next(c for c in after if HELD in c[2])
+    # The landing call is the one that WROTE the row, never the first to start
+    # after the rollback returned: a flush that starts during the rollback's
+    # round trip runs its statement after the server let go (CI, 4 of 5 runs).
+    held_calls = [c for c in out["calls"] if HELD in c[1]]
+    landed_at = next(i for i, c in enumerate(held_calls) if HELD in c[2])
+    landing = held_calls[landed_at]
     if overlay:
         # Overlay-held, it keeps the existing re-probe floor (attempt68):
         # readers already have its quote, so the row waits at most 250 ms past
         # the release, plus one flush period.
         assert landing[0] - out["released"] <= 0.25 + 0.25 + 0.1, out
     else:
-        # The first flush after release lands it.
-        assert landing is after[0], out
+        # The first flush after release lands it: every earlier attempt
+        # (skipped or probe-refused) began before the rollback returned.
+        assert all(c[0] < out["released"] for c in held_calls[:landed_at]), out
     assert out["landed_row"] == QUOTES[HELD], out
     assert out["buffer_after"] == {} and out["pending_after"] == [], out
 
