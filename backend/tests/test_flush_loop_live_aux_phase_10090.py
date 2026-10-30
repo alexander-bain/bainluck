@@ -269,16 +269,17 @@ async def test_the_headline_is_stamped_at_its_own_commit_not_after_its_aux_board
     # Commit C (Argon Rank 1): the prop board is not what the refresher reads,
     # so a headline/board split is not a partly written board. The headline's
     # commit asks for its stamp with nothing deferring it; the board's commit
-    # asks again. (Commit B alone deferred it until the board committed.) The
+    # asks for none (A1: it wrote nothing the refresher reads). (Commit B
+    # alone deferred it until the board committed; C alone asked again.) The
     # non-live game keeps today's fence until its own phase commits.
     r.buffer.update(batch_oldest_aux_first())
     assert await r.flush(0.0) is True
     head_done = _phase_of(r.commits, HEAD_A[0]) + 1
-    aux_done = max(_phase_of(r.commits, oid) for oid in AUX_A) + 1
+    assert head_done < min(_phase_of(r.commits, oid) for oid in AUX_A) + 1
     pregame_done = _phase_of(r.commits, NONLIVE[0]) + 1
     asks = [(deferred, committed) for asked, deferred, committed in r.stamps
             if LIVE_A in asked]
-    assert [committed for _d, committed in asks] == [head_done, aux_done]
+    assert [committed for _d, committed in asks] == [head_done]
     assert all(LIVE_A not in deferred for deferred, _c in asks)
     for _asked, deferred, committed in r.stamps:
         assert (PREGAME in deferred) is (committed < pregame_done)

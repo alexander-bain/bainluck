@@ -1821,7 +1821,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # whole; a write beside it is ordered by `prices.beside_written`. A
         # live game's prop board (`prices.headline_aux_outcome_ids`, which the
         # refresher's read leaves out) never makes a split: its headline is
-        # stamped when the headline phase commits, not after the board. A
+        # stamped when the headline phase commits, not after the board, and
+        # the board's own commit queues no second stamp (A1). A
         # non-live event keeps today's fence: nothing writes it beside, and
         # stamping its debt ahead of its own phase only throttles (#10728).
         in_flight_ids: set[int] = set()
@@ -1830,8 +1831,15 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
         def fence_events():
             if beside is not None:
-                # This pass's own unfinished cohorts, and the owner's fence.
-                return cohort_event_ids.events_of(unfinished_price_ids) | owner_fence()
+                # This pass's own unfinished cohorts, and the owner's fence. A
+                # live game's unfinished prop board does not hold its stamp
+                # (A1): the refresher never reads those rows. The owner's
+                # in-flight phase stays fenced whole through `owner_fence`.
+                unfinished = (
+                    unfinished_price_ids.difference(headline_aux) if headline_aux
+                    else unfinished_price_ids
+                )
+                return cohort_event_ids.events_of(unfinished) | owner_fence()
             live = live_event_ids or ()
             fence, waiting, committed = set(), set(), set()
             owner_map = cohort_event_ids.events
@@ -2050,9 +2058,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
         def queue_committed(index, phase, written_outcome_ids, *, registered=None):
             nonlocal queued_refresh, implicit_debt_queued
+            # #10090 (A1): a live game's prop board (`headline_aux`, empty on
+            # the final drain) queues no stamp either. Its commit changes
+            # nothing the refresher reads; the game is stamped when its
+            # headline phase commits. A non-live game keeps today's cohort.
             blend_outcomes = (
                 written_outcome_ids if final_drain else
-                (oid for oid in written_outcome_ids if oid not in non_blend_outcome_ids)
+                (oid for oid in written_outcome_ids
+                 if oid not in non_blend_outcome_ids
+                 and (oid not in headline_aux
+                      or cohort_event_ids.get(oid) not in live_event_ids))
             )
             linked_events = event_ids_for_outcomes(cohort_event_ids, blend_outcomes)
             new_events = linked_events if registered is None else linked_events - registered
