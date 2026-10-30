@@ -600,7 +600,7 @@ class ConfirmedAt:
                         await asyncio.wait_for(self._wake.wait(), timeout=wait)
                         continue  # woken by a hold: write it first
                     except asyncio.TimeoutError:
-                        pass
+                        pass  # the tick came due: the regular write below
                     finally:
                         self._wake = None
                 tick = clock() + WRITE_INTERVAL_S
