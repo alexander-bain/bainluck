@@ -38,11 +38,14 @@ struct PageDetailsCloser: UIViewRepresentable {
 
         override func willMove(toWindow newWindow: UIWindow?) {
             super.willMove(toWindow: newWindow)
+            print("DIAG11703S pageWillMove t=\(CACurrentMediaTime()) toWindow=\(newWindow != nil) open=\(detailsOpen?.wrappedValue ?? false) rootPresented=\(window?.rootViewController?.presentedViewController.map { String(describing: ObjectIdentifier($0)) } ?? "nil") found=\(window.flatMap { PageDetailsCloser.detailsPopover(in: $0) }.map { String(describing: ObjectIdentifier($0)) } ?? "nil")")
             guard newWindow == nil, let detailsOpen, detailsOpen.wrappedValue else { return }
             if let window, let details = PageDetailsCloser.detailsPopover(in: window) {
                 PageDetailsCloser.close(details)
+                print("DIAG11703L afterSyncClose t=\(CACurrentMediaTime()) beingDismissed=\(details.isBeingDismissed) presenter=\(details.presentingViewController != nil)")
             }
             detailsOpen.wrappedValue = false
+            print("DIAG11703S flipped t=\(CACurrentMediaTime()) open=\(detailsOpen.wrappedValue)")
         }
     }
 
@@ -58,10 +61,12 @@ struct PageDetailsCloser: UIViewRepresentable {
     static func close(_ popover: UIViewController) {
         guard popover.presentingViewController != nil, !popover.isBeingDismissed else { return }
         let presentation = popover.presentationController
+        print("DIAG11703L dismiss t=\(CACurrentMediaTime()) popover=\(String(describing: ObjectIdentifier(popover))) delegate=\(presentation?.delegate.map { String(describing: type(of: $0)) } ?? "nil")")
         popover.dismiss(animated: false) {
             if let presentation {
                 presentation.delegate?.presentationControllerDidDismiss?(presentation)
             }
+            print("DIAG11703L dismissed t=\(CACurrentMediaTime())")
         }
     }
 }
