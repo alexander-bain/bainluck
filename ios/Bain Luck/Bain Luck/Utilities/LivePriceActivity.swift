@@ -37,19 +37,28 @@ nonisolated struct LivePriceActivity: Equatable {
     }
 
     /// Which way the printed value moved, for the slide of a changed hero or
-    /// tip. The whole-point delta when it moved; when it did not, the printed
-    /// tenths (62.1% → 62.4% is a rise the whole delta of 0 calls a fall).
-    /// Nil when banded, unrecorded or unchanged. The flash, arrow and caption
-    /// keep reading the whole deltas.
+    /// tip: the printed tenths when both parse (62.1% → 62.4% is a rise the
+    /// whole delta of 0 calls a fall, and a displayed preview of 70% replaced by
+    /// a committed 66% is a fall whatever the committed prior was), else the
+    /// whole-point delta. Nil when banded, unrecorded or unchanged.
     var homeRising: Bool? { Self.rising(whole: homeDelta, from: previousHomePrinted, to: homePrinted) }
     var awayRising: Bool? { Self.rising(whole: awayDelta, from: previousAwayPrinted, to: awayPrinted) }
 
+    /// The "↑2 pts" caption's committed whole points, or nil when they would
+    /// contradict the move the reader saw (a preview 70% → committed 66% after
+    /// a committed 50%: never "↑16 pts" on a visible fall).
+    var homeCaptionDelta: Int? {
+        guard let delta = homeDelta else { return nil }
+        if delta != 0, let rising = homeRising, rising != (delta > 0) { return nil }
+        return delta
+    }
+
     private static func rising(whole: Int?, from: String?, to: String?) -> Bool? {
-        guard let whole else { return nil }
-        if whole != 0 { return whole > 0 }
-        guard let before = from.flatMap(printedTenths), let after = to.flatMap(printedTenths),
-              before != after else { return nil }
-        return after > before
+        if let before = from.flatMap(printedTenths), let after = to.flatMap(printedTenths) {
+            return before == after ? nil : after > before
+        }
+        guard let whole, whole != 0 else { return nil }
+        return whole > 0
     }
 
     /// "62.4%" → 624; a band ("<1%", ">99%") or anything else → nil.

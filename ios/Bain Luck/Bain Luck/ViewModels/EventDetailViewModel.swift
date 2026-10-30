@@ -731,7 +731,10 @@ final class EventDetailViewModel: ObservableObject {
         guard after.home != nil || after.away != nil else { return }
         let beforeLabels = LivePriceActivity.wholeLabels(in: prior)
         let afterLabels = LivePriceActivity.wholeLabels(in: current)
-        let beforePrinted = LivePriceActivity.displayedLabels(in: prior)
+        // #10090 C2 — the hero printed the displayed preview, when one showed,
+        // not `prior`: 70% → 66% slides down even after a committed 50%.
+        let beforePrinted = LivePriceActivity.displayedLabels(
+            in: BlendPreview.overlay(prior, blendPreview, now: previewNow()))
         let afterPrinted = LivePriceActivity.displayedLabels(in: current)
         priceActivity = LivePriceActivity(
             sequence: (priceActivity?.sequence ?? 0) + 1,
@@ -1420,6 +1423,15 @@ final class EventDetailViewModel: ObservableObject {
         BlendPreview.overlay(event, blendPreview, now: previewNow())
     }
 
+    /// Whether `headline(event)` prints a preview: the published state through
+    /// its display gate. A preview the committed revision has passed, or whose
+    /// lifetime ended, stays in `blendPreview` until its expiry task runs but
+    /// prints nothing.
+    @MainActor
+    func displaysPreview(_ event: EventDetail) -> Bool {
+        BlendPreview.displayed(blendPreview, held: event, now: previewNow()) != nil
+    }
+
     /// The clock of the probability `headline(event)` prints: the preview's
     /// observation time while one shows (nil when unknown), else the committed
     /// one. Source-age warnings keep reading the committed clocks.
@@ -1442,8 +1454,9 @@ final class EventDetailViewModel: ObservableObject {
     ///     served price too old to replay, and the first heartbeat can precede
     ///     it;
     ///   * no newer price is owed — a folded result, a re-read, a trailing
-    ///     frame, a withdrawal or a reconcile floor still outstanding means the
-    ///     confirmed price is not yet the one on screen;
+    ///     frame, a withdrawal, a reconcile floor or a commit floor the shown
+    ///     revision does not cover means the confirmed price is not yet the
+    ///     one on screen;
     ///   * no preview is showing: previews carry no confirmation and keep
     ///     their own clock (live's contract, "previews are not covered").
     /// Never moved back (a 20 s beat may repeat an older value); cleared with
@@ -1478,7 +1491,19 @@ final class EventDetailViewModel: ObservableObject {
     private var owesNewerPrice: Bool {
         awaitingFoldedResult || revisionRefetchTask != nil || revisionRefetchPending
             || provenanceRefetchFrame != nil || trailingProvenanceFrame != nil
-            || owedInvalidation != nil || reconcileFloor != nil
+            || owedInvalidation != nil || reconcileFloor != nil || owesCommitFloor
+    }
+
+    /// #10090 C1 — a commit floor (a `fold_preview_floor`, or a reconcile's
+    /// revision) the shown paired revision does not cover: that commit's value
+    /// is owed, and its raw frame or result may not have arrived yet. Live's
+    /// contract: `confirmed_at` vouches for the server's newest commit, never
+    /// for an older revision once a floor names a newer one. Ends only when a
+    /// result or load covers every floor; a dropped preview is not coverage.
+    private var owesCommitFloor: Bool {
+        guard let floors = blendPreviewReader.floors, !floors.rows.isEmpty else { return false }
+        guard let shown = event.flatMap(LiveEventPriceReconciliation.pairedFoldRevision(in:)) else { return true }
+        return !shown.covers(floors)
     }
 
     /// `liveBlend` with the displayed preview projected onto its end, for the

@@ -139,9 +139,11 @@ struct EventDetailView: View {
         return (away ? labels.away : labels.home) ?? ""
     }
     /// #10090: `priceActivity` describes committed moves, not a preview's, so
-    /// while one is held the direction is unknown (nil).
+    /// while one is displayed the direction is unknown (nil). One the committed
+    /// revision has passed prints nothing: the commit that replaced it slides
+    /// by its receipt, which starts from the printed preview (C2).
     private func heroRising(away: Bool) -> Bool? {
-        guard vm.blendPreview == nil else { return nil }
+        guard let event = vm.event, !vm.displaysPreview(event) else { return nil }
         return away ? vm.priceActivity?.awayRising : vm.priceActivity?.homeRising
     }
     private var priceStreamingEligible: Bool { EventPriceStreaming.isEligible(vm.event?.status) }
@@ -1056,7 +1058,7 @@ struct EventDetailView: View {
     }
 
     private func movementCaption(_ event: EventDetail) -> String? {
-        guard let delta = vm.priceActivity?.homeDelta, delta != 0 else { return nil }
+        guard let delta = vm.priceActivity?.homeCaptionDelta, delta != 0 else { return nil }
         let names = TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam,
                                             sportKey: event.sport)
         return "\(names.home) \(delta > 0 ? "↑" : "↓")\(abs(delta)) \(abs(delta) == 1 ? "pt" : "pts")"
