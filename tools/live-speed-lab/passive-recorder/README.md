@@ -94,6 +94,35 @@ These are loud faults:
 
 Worker, Redis and DB clocks are **not** mapped by the page recorder. Missing upstream mapping stays unresolved eligibility.
 
+### Receipt brackets (`passive-case-recorder/2`)
+
+Every page callback is also one ordering exchange. It adds no record and no binding call:
+
+- The page stamps `send_mono` (document time) just before the binding call, and `time_origin` on every record. Samples also carry `read_bracket`, the document time just before and after the pinned `read()`. `mono` stays the sample's start.
+- When a binding call resolves, the page pushes `[page_seq, ack]`. Acks ride the next record (`rec.acks`), then the stop return, then one bounded drain sweep after it. The in-page ack buffer holds 512; more is counted (`acks_dropped`), never trimmed silently.
+- The collector stamps `recv = {mono, wall, since_t0_ms}` at the **first line** of `onPageRecord`, before validation or journal work, and journals it beside `rec`. An oversize record keeps `recv`, `page_seq`, `send_mono`, `time_origin` and `acks` in its marker (`kept`).
+- Reading (stated in `receipt_bounds_reference.cjs`; Measurement's adapter is the scorer): a record's observation precedes its `recv` on C (upper bound). An earlier record whose ack is strictly before this sample's read start had its `recv` before that read (lower bound). Nothing converts document time to C by a constant, and no bound crosses a document replacement.
+- Holes: a record received before the stop request whose ack never arrives (`page-ack-missing`), a dropped ack (`page-ack-dropped`), a malformed ack. SUMMARY `receipt_brackets` counts them. A replaced document on the record path is the fault `document-replaced-record`.
+
+### Clock challenge (DARK)
+
+`challenge.cjs` sends one nonce per 250 ms slot to each rostered producer incarnation and keeps raw `S`/marker/`R` exchanges (schema: `challenge_schema.json`, shared with the producer half). It runs inside this recorder's clock, journal, timers and teardown. It is **off** unless the grant names `challenge`, and then only under `--scope local` with `--challenge-connection MODULE` (a module exporting `connect()`). Production scope refuses a grant that names one: no transport is admitted.
+
+- One outstanding request per incarnation, at most 16 incarnations and 760 slots (T0−5 s .. T0+184.75 s). No retry and no catch-up: a slot that cannot be sent is a gap. A reply after the deadline is kept as `late-reply`, never as timely coverage.
+- `R` is stamped at the first line of the reply callback. A reply is accepted only if its keys, order, sizes, operation, token, run, pid, slot and nonce match an outstanding request, and its marker is `lo <= hi`. Anything else is a counted drop. Duplicates are drops.
+- Per-incarnation journal and attributed-byte ceilings stop that incarnation only. A failed or slow (2 s) connect, or a transport that drops, is a challenge hole; the page case carries on. SUMMARY `challenge_status` is the challenge's own status, separate from the page case's `status`.
+- `pg_transport.cjs` is the **proposed** transport: one node-postgres Client, `LISTEN` on the reply channel and autocommit parameterized `SELECT pg_notify($1, $2)`. It runs over a metered socket that counts every encoded byte (startup, auth, TLS records, framing), refuses a write that would cross the bidirectional cap, and discards and counts at most one read chunk past it. It is loopback-only.
+
+Controls (no browser):
+
+```sh
+node --test test_recorder_units.cjs test_receipt_units.cjs test_challenge_units.cjs
+CHALLENGE_PG_MODULE=DIR CHALLENGE_PG_URL=postgresql://user@127.0.0.1:PORT/db node --test test_challenge_pg.cjs
+node lifecycle_control.cjs --out NEW_DIR --pg-module DIR --pg-url postgresql://user@127.0.0.1:PORT/db --old-recorder PREDECESSOR_DIR
+```
+
+`lifecycle_control.cjs` runs this recorder end to end against a scripted in-process page (`lifecycle-fake-playwright/`). It is a lifecycle and record-semantics control, **not** a browser qualification.
+
 ## Coverage, holes and faults
 
 `COMPLETE` requires:

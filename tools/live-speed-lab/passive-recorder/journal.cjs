@@ -36,7 +36,10 @@ function createJournal({dir, limits, onExhausted, fault = null}) {
     fs.writeSync(fd, line);
   }
 
-  function append(kind, body) {
+  // `keep` (optional): small receipt fields an oversize marker retains, so a
+  // replaced record still carries its collector receipt and the acks it held.
+  // Dropped from the marker (and counted) only if the marker would not fit.
+  function append(kind, body, keep = null) {
     // A page callback that lands after close is counted, never written: the fd
     // number may already belong to another file.
     if (closed) { stats.late_records = (stats.late_records || 0) + 1; return null; }
@@ -45,8 +48,13 @@ function createJournal({dir, limits, onExhausted, fault = null}) {
     let size = Buffer.byteLength(line);
     if (size > limits.max_record_bytes) {
       stats.oversize++;
-      line = JSON.stringify({id, kind: 'oversize', original_kind: kind, bytes: size,
-        sha256: crypto.createHash('sha256').update(line).digest('hex')}) + '\n';
+      const marker = {id, kind: 'oversize', original_kind: kind, bytes: size,
+        sha256: crypto.createHash('sha256').update(line).digest('hex')};
+      line = JSON.stringify(keep ? {...marker, kept: keep} : marker) + '\n';
+      if (keep && Buffer.byteLength(line) > limits.max_record_bytes) {
+        stats.oversize_kept_dropped = (stats.oversize_kept_dropped || 0) + 1;
+        line = JSON.stringify({...marker, kept_dropped: true}) + '\n';
+      }
       size = Buffer.byteLength(line);
     }
     if (exhausted || stats.saved_bytes + size > ordinaryCap) {

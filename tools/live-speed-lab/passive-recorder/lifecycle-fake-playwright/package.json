@@ -1,0 +1,2 @@
+{"name": "lifecycle-fake-playwright", "version": "0.0.0-lifecycle-control", "private": true, "main": "index.js",
+ "description": "#10090 browser-free lifecycle control only: an in-process scripted page with the recorder's page contract. NOT a browser and NOT a qualification."}

@@ -1,0 +1,52 @@
+{
+ "schema": "bainluck.clock-challenge-schema/1",
+ "status": "PROPOSED by calibration (recorder half) for Authority (producer half); DARK, local tests only. Either side amends this file and the other re-pins it.",
+ "protocol": "bl-cc/1",
+ "encoding": "UTF-8 compact JSON (no whitespace), ASCII only, keys in exactly the listed order, no other keys, no duplicate keys",
+ "request": {
+  "direction": "collector C -> one producer incarnation, pg_notify(channel, payload) on the collector's one connection",
+  "channel_pattern": "^bl_cc_[0-9a-f]{16}$",
+  "channel_rule": "bl_cc_ + the roster token of the target incarnation; one channel per incarnation, never a shared broadcast",
+  "max_bytes": 256,
+  "keys": ["p", "o", "t", "r", "k", "n"],
+  "fields": {
+   "p": "protocol, the string bl-cc/1",
+   "o": "operation token, 16 lowercase hex, names this case's collector session",
+   "t": "roster token of the target incarnation, 16 lowercase hex",
+   "r": "the target's bridge run id as rostered (1..32 chars [0-9a-z_-])",
+   "k": "slot ordinal, integer 0..759",
+   "n": "nonce, 32 lowercase hex (128 random bits), never reused"
+  },
+  "producer_must_drop": "any request whose t or r is not its own, whose p is not bl-cc/1, that exceeds max_bytes, or whose n it has already answered; a drop is a counted fault, never a reply"
+ },
+ "reply": {
+  "direction": "producer incarnation -> collector, pg_notify on the bridge's existing dedicated connection",
+  "channel_pattern": "^bl_cr_[0-9a-f]{16}$",
+  "channel_rule": "bl_cr_ + o (the operation token from the request)",
+  "max_bytes": 512,
+  "keys": ["p", "o", "t", "r", "pid", "k", "n", "q", "m"],
+  "fields": {
+   "p": "bl-cc/1",
+   "o": "repeated from the request",
+   "t": "the producer's own roster token (must equal the request's)",
+   "r": "the producer's own bridge run id (must equal the request's)",
+   "pid": "the producer's os.getpid(), positive integer; the roster binds it",
+   "k": "repeated from the request",
+   "n": "repeated from the request",
+   "q": "the producer's marker sequence number in this run, integer >= 1, strictly increasing per run",
+   "m": "[lo_us, hi_us]: time.monotonic_ns() read immediately before and after the producer processed this nonce, as integer microseconds (lo = floor(ns/1000), hi = ceil(ns/1000)), lo <= hi; the SAME process monotonic domain as the trace's *_mono fields"
+  }
+ },
+ "collector_stamps": {
+  "S": "collector clock.mono() (ms) read immediately before pg_notify is called for the request",
+  "A": "collector clock.mono() when the pg_notify statement completed (diagnostic only)",
+  "R": "collector clock.mono() at the first line of the notification callback, before size check, parse or journal",
+  "order_claim": "S < M.lo and M.hi < R in real time if and only if the reply is genuine for this nonce; nothing here converts between the collector and producer clocks"
+ },
+ "examples": {
+  "request_channel": "bl_cc_0123456789abcdef",
+  "request": "{\"p\":\"bl-cc/1\",\"o\":\"fedcba9876543210\",\"t\":\"0123456789abcdef\",\"r\":\"a1b2c3d4\",\"k\":759,\"n\":\"00112233445566778899aabbccddeeff\"}",
+  "reply_channel": "bl_cr_fedcba9876543210",
+  "reply": "{\"p\":\"bl-cc/1\",\"o\":\"fedcba9876543210\",\"t\":\"0123456789abcdef\",\"r\":\"a1b2c3d4\",\"pid\":11,\"k\":759,\"n\":\"00112233445566778899aabbccddeeff\",\"q\":760,\"m\":[86400123456,86400123519]}"
+ }
+}
