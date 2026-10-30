@@ -2459,6 +2459,15 @@ nonisolated struct ExactScoreFinishLaneChannel10868: Equatable {
     let hatched: Bool
 }
 
+/// Explicit phase-specific owner copy opts the existing lanes into before play.
+/// Nil optional fields remain absent, never replaced by live match context.
+nonisolated struct ExactScoreFinishLaneBefore10868: Equatable {
+    let title: String
+    let intro: String?
+    let eyebrow: String?
+    let contextNote: String?
+}
+
 nonisolated struct ExactScoreFinishLaneInput10868: Equatable {
     /// The existing map input: phase, title, intro, the exact-match scope (its
     /// originals non-grid here), the held scope and original, the actual score
@@ -2467,10 +2476,36 @@ nonisolated struct ExactScoreFinishLaneInput10868: Equatable {
     /// In the owner's order — never sorted by chance, availability or result.
     let lanes: [ExactScoreFinishLane10868]
     let words: ExactScoreFinishLaneWords10868
+    /// Default off; does not rewrite the map's actual phase or its truth inputs.
+    var beforePresentation: ExactScoreFinishLaneBefore10868? = nil
 
-    /// During play only. Before play and after the final no lane, chance or action exists.
+    /// During play by default, before only by explicit admission; never final.
     var isShown: Bool {
-        map.phase == .during
+        map.phase == .during || (map.phase == .before && beforePresentation != nil)
+    }
+
+    private var admittedBeforeCopy: ExactScoreFinishLaneBefore10868? {
+        map.phase == .before ? beforePresentation : nil
+    }
+
+    var displayedTitle: String { admittedBeforeCopy?.title ?? map.title }
+    var displayedIntro: String? {
+        guard let before = admittedBeforeCopy else { return map.intro }
+        return before.intro
+    }
+    var displayedEyebrow: String? {
+        guard let before = admittedBeforeCopy else { return words.eyebrow }
+        return before.eyebrow
+    }
+    var displayedContextNote: String? {
+        guard let before = admittedBeforeCopy else { return words.contextNote }
+        return before.contextNote
+    }
+
+    /// Physical status affects live appearance only. Before keeps the owner's
+    /// home/away tone even if retained later fields say the finish was ruled out.
+    func dimsForAvailability(_ lane: ExactScoreFinishLane10868) -> Bool {
+        map.phase == .during && lane.availability.isRuledOut
     }
 
     /// The held scope through the map's exact-id selection. Nil outside play and
@@ -2559,6 +2594,14 @@ nonisolated struct ExactScoreFinishLaneInput10868: Equatable {
     /// or the original's identity is not exact.
     func channels(_ original: ExactScoreMapOriginal10868,
                   availability: ExactScoreFinishLaneAvailability10868?) -> [ExactScoreFinishLaneChannel10868] {
+        if map.phase == .before {
+            guard isExact(original), let chance = comparisons(original).first else { return [] }
+            // Reuse the map's one safe before comparison; never fabricate the
+            // second reading required by the unchanged during-play helper.
+            return [ExactScoreFinishLaneChannel10868(
+                title: chance.title, value: Self.value(chance.reading),
+                bar: ExactScoreFinishLaneGeometry10868.bar(chance.reading), hatched: false)]
+        }
         guard let readings = readings(original) else { return [] }
         let ruledOut = availability?.isRuledOut ?? false
         var rows = [
@@ -2583,6 +2626,7 @@ nonisolated struct ExactScoreFinishLaneInput10868: Equatable {
         case .placed(let original)?:
             return channels(original, availability: lane.availability)
         case .notListed?, .unavailable?:
+            guard map.phase == .during else { return [] }
             return [ExactScoreFinishLaneChannel10868(title: words.availabilityTitle, value: .availability(lane.availability),
                                                      bar: nil, hatched: lane.availability.isRuledOut)]
         case nil:
@@ -2601,7 +2645,7 @@ nonisolated struct ExactScoreFinishLaneInput10868: Equatable {
     /// The separately labelled actual score — context, never a chance, an
     /// availability or a grade.
     var visibleActual: ExactScoreMapActual10868? {
-        guard let scope else { return nil }
+        guard map.phase == .during, let scope else { return nil }
         return map.visibleActual(scope)
     }
 
@@ -2637,11 +2681,12 @@ nonisolated struct ExactScoreFinishLaneInput10868: Equatable {
         let availability = "\(words.availabilityTitle): \(lane.availability.text)"
         switch state(lane) {
         case .placed(let original)?:
+            if map.phase == .before { return map.spokenComparisons(original) }
             var parts = [map.spokenComparisons(original), availability]
             if let pending = spokenPending(original) { parts.append(pending) }
             return parts.joined(separator: "; ")
         case .notListed(let text)?, .unavailable(let text)?:
-            return "\(text); \(availability)"
+            return map.phase == .before ? text : "\(text); \(availability)"
         case nil:
             return ""
         }
@@ -2659,6 +2704,7 @@ nonisolated struct ExactScoreFinishLaneInput10868: Equatable {
     }
 
     private func spokenPending(_ original: ExactScoreMapOriginal10868) -> String? {
+        guard map.phase == .during else { return nil }
         guard let pending = readings(original)?.pendingResult, case .result(let result) = pending.reading else { return nil }
         return "\(pending.title): \(result.text)"
     }
@@ -2837,7 +2883,7 @@ struct ExactScoreFinishLanePresentation10868: View {
                             self.lane(lane, index: index)
                         }
                     }
-                    if let note = input.words.contextNote {
+                    if let note = input.displayedContextNote {
                         Text(note)
                             .font(.caption)
                             .foregroundStyle(DS.textSecondary)
@@ -2860,14 +2906,14 @@ struct ExactScoreFinishLanePresentation10868: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let eyebrow = input.words.eyebrow {
+            if let eyebrow = input.displayedEyebrow {
                 Text(eyebrow).font(.caption).foregroundStyle(DS.textSecondary)
             }
-            Text(input.map.title)
+            Text(input.displayedTitle)
                 .font(.title2.bold())
                 .foregroundStyle(DS.textPrimary)
                 .accessibilityAddTraits(.isHeader)
-            if let intro = input.map.intro {
+            if let intro = input.displayedIntro {
                 Text(intro).font(.subheadline).foregroundStyle(DS.textSecondary)
             }
             Text(input.words.scaleKey).font(.caption).foregroundStyle(DS.textSecondary)
@@ -2890,7 +2936,7 @@ struct ExactScoreFinishLanePresentation10868: View {
     // MARK: Lanes
 
     private func color(_ lane: ExactScoreFinishLane10868) -> Color {
-        if lane.availability.isRuledOut { return DS.textSecondary }
+        if input.dimsForAvailability(lane) { return DS.textSecondary }
         switch lane.tone {
         case .home: return DS.blue
         case .away: return DS.emeraldDark

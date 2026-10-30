@@ -2916,3 +2916,286 @@ final class ExactScoreFinishLanePresentation10868Tests: XCTestCase {
         XCTAssertEqual(rows[1].bar, .fill(0.3))
     }
 }
+
+// MARK: Pregame finish-lane reuse — PREPARED, NOT_RUN
+// Retained own baselines use the archived originals above. Copy, opaque
+// associations and hostile later payloads are constructed owner fixtures.
+extension ExactScoreFinishLanePresentation10868Tests {
+    private static let beforeCopy = ExactScoreFinishLaneBefore10868(
+        title: "How might the match finish?", intro: "Pre-match chances for each original finish",
+        eyebrow: "EXACT FINISH · BEFORE PLAY", contextNote: nil)
+
+    private static func beforeInput(
+        originals: [ExactScoreMapOriginal10868]? = nil,
+        lanes: [ExactScoreFinishLane10868]? = nil,
+        selected: String? = nil,
+        scopeID: String? = scopeID,
+        sharedScopeID: String? = nil,
+        extraScopes: [ExactScoreMapScope10868] = [],
+        copy: ExactScoreFinishLaneBefore10868? = beforeCopy
+    ) -> ExactScoreFinishLaneInput10868 {
+        var input = Self.input(.before, originals: originals, lanes: lanes, selected: selected,
+                          scopeID: scopeID, sharedScopeID: sharedScopeID, extraScopes: extraScopes)
+        input.beforePresentation = copy
+        return input
+    }
+
+    func testBeforeFinishLanesRequireOptInAndNeverForgeThePhaseOrSecondReading() {
+        let legacy = Self.input(.before)
+        XCTAssertFalse(legacy.isShown)
+        XCTAssertNil(legacy.beforePresentation)
+        XCTAssertFalse(Self.beforeInput(copy: nil).isShown)
+        let before = Self.beforeInput()
+        XCTAssertTrue(before.isShown)
+        XCTAssertEqual(before.map.phase, .before)
+        XCTAssertEqual(before.map, legacy.map)
+        for original in Self.originals {
+            XCTAssertEqual(before.comparisons(original), before.map.comparisons(original))
+            XCTAssertEqual(before.comparisons(original).count, 1)
+            XCTAssertNil(before.readings(original), "the unchanged two-reading live helper is not fabricated")
+        }
+    }
+
+    func testBeforeFinishLanesShowAllFourOwnChancesInOwnerOrderWithoutSelection() {
+        let input = Self.beforeInput()
+        XCTAssertEqual(input.lanes.compactMap(\.originalID), Self.ownerIDs)
+        XCTAssertNil(input.selection.original)
+        for index in Self.lanes.indices {
+            let rows = input.channels(input.lanes[index])
+            XCTAssertEqual(rows.count, 1)
+            XCTAssertEqual(rows[0].title, "Pre-match chance")
+            XCTAssertEqual(rows[0].value, .figure(Self.observation(Self.retained[index].baseline, Self.figures[index])))
+            XCTAssertEqual(rows[0].bar, .fill(Self.retained[index].baseline))
+            XCTAssertFalse(rows[0].hatched)
+            let width = ExactScoreFinishLaneGeometry10868.fillWidth(try! XCTUnwrap(rows[0].bar), track: 300)
+            XCTAssertEqual(try! XCTUnwrap(width), CGFloat(Self.retained[index].baseline * 300), accuracy: 0.001)
+            XCTAssertEqual(Self.details(input, index), .details(scopeID: Self.scopeID, originalID: Self.ownerIDs[index]))
+        }
+        XCTAssertEqual(ExactScoreFinishLaneGeometry10868.scale.lower, 0)
+        XCTAssertEqual(ExactScoreFinishLaneGeometry10868.scale.upper, 1)
+        XCTAssertEqual(input.map.scopeSelection.scope?.scale.upper, 0.1, "cropped map scale must not affect lanes")
+    }
+
+    func testBeforeRuledOutFinishKeepsItsOwnToneAndFiftySixPercentUnhatched() {
+        let input = Self.beforeInput(selected: Self.filsTwoZero)
+        let lane = input.lanes[3]
+        XCTAssertTrue(lane.availability.isRuledOut, "hostile retained later flag is present")
+        XCTAssertEqual(lane.tone, .home)
+        XCTAssertFalse(input.dimsForAvailability(lane))
+        XCTAssertTrue(input.isSelected(lane), "held selection is independent from physical status")
+        XCTAssertEqual(input.channels(lane), [ExactScoreFinishLaneChannel10868(
+            title: "Pre-match chance", value: .figure(Self.observation(0.56, "56%")), bar: .fill(0.56), hatched: false)])
+        XCTAssertEqual(try! XCTUnwrap(ExactScoreFinishLaneGeometry10868.fillWidth(.fill(0.56), track: 300)), 168, accuracy: 0.001)
+        XCTAssertFalse(input.accessibilityValue(lane).contains("No longer possible"))
+        XCTAssertTrue(input.accessibilityValue(lane).contains("56%"))
+    }
+
+    func testBeforeSuppressesEveryLaterResultCurrentActualAndSpokenChannel() {
+        let results: [ExactScoreMapResult10868] = [.won("Later won"), .lost("Later lost"), .other("Later void"), .unconfirmed("Later pending")]
+        let originals = Self.originals.indices.map { index in
+            Self.original(index, current: .recorded(Self.observation(0.01, "Later 1%", "Later clock")), result: results[index])
+        }
+        let input = Self.beforeInput(originals: originals)
+        XCTAssertNil(input.visibleActual)
+        XCTAssertNil(input.displayedContextNote)
+        for lane in input.lanes {
+            XCTAssertEqual(input.channels(lane).count, 1)
+            XCTAssertFalse(input.channels(lane).contains { $0.hatched })
+            XCTAssertFalse(input.dimsForAvailability(lane))
+            let spoken = input.accessibilityValue(lane)
+            for forbidden in ["Later", "Finish status", "Still possible", "No longer possible", "Market result", "Original market result", "Current chance", "Score"] {
+                XCTAssertFalse(spoken.contains(forbidden), forbidden)
+            }
+            XCTAssertTrue(spoken.contains(Self.beforeDetail))
+        }
+    }
+
+    func testBeforeOwnerCopyDoesNotBorrowLiveTitleIntroEyebrowOrContextNote() {
+        let input = Self.beforeInput()
+        XCTAssertEqual(input.displayedTitle, "How might the match finish?")
+        XCTAssertEqual(input.displayedIntro, "Pre-match chances for each original finish")
+        XCTAssertEqual(input.displayedEyebrow, "EXACT FINISH · BEFORE PLAY")
+        XCTAssertNil(input.displayedContextNote)
+        XCTAssertEqual(input.map.title, "Three finishes remain", "hostile live title remains only in input")
+        XCTAssertNotNil(input.words.contextNote)
+        let minimal = Self.beforeInput(copy: ExactScoreFinishLaneBefore10868(title: "Original finishes", intro: nil, eyebrow: nil, contextNote: nil))
+        XCTAssertEqual(minimal.displayedTitle, "Original finishes")
+        XCTAssertNil(minimal.displayedIntro)
+        XCTAssertNil(minimal.displayedEyebrow)
+        XCTAssertNil(minimal.displayedContextNote)
+        let note = Self.beforeInput(copy: ExactScoreFinishLaneBefore10868(title: "Original finishes", intro: nil, eyebrow: nil, contextNote: "Owner before note"))
+        XCTAssertEqual(note.displayedContextNote, "Owner before note")
+    }
+
+    func testBeforeMissingAndZeroRemainDifferentAndDoNotUseLaterQuotes() {
+        let input = Self.beforeInput(originals: [
+            Self.original(0, pregame: .unavailable("Own before missing"), current: .recorded(Self.observation(0.54, "54%", "Later opening"))),
+            Self.original(1, pregame: .recorded(Self.observation(0, "0%", "Own zero observation"))),
+            Self.original(2), Self.original(3),
+        ])
+        XCTAssertEqual(input.channels(input.lanes[0])[0].value, .words("Own before missing"))
+        XCTAssertEqual(input.channels(input.lanes[0])[0].bar, .noFill)
+        XCTAssertEqual(input.channels(input.lanes[1])[0].bar, .fill(0))
+        XCTAssertEqual(ExactScoreFinishLaneGeometry10868.fillWidth(.fill(0), track: 300), 0)
+        XCTAssertFalse(input.accessibilityValue(input.lanes[0]).contains("54%"))
+        XCTAssertFalse(input.accessibilityValue(input.lanes[0]).contains("0%"))
+        XCTAssertEqual(Self.routedCalls(input).count, 4)
+    }
+
+    func testBeforeInvalidChanceAndNaNLaterPayloadKeepExactOriginalActions() {
+        for probability in [Double.nan, .infinity, -.infinity, -0.1, 1.1] {
+            let original = Self.original(3, pregame: .recorded(Self.observation(probability, "Owner before figure")),
+                                          current: .recorded(Self.observation(.nan, "Later", "Later clock")))
+            let input = Self.beforeInput(originals: [Self.original(0), Self.original(1), Self.original(2), original], selected: original.id)
+            XCTAssertTrue(input.isExact(original))
+            XCTAssertTrue(input.isSelected(input.lanes[3]))
+            XCTAssertEqual(input.channels(input.lanes[3])[0].bar, .noFill)
+            XCTAssertFalse(input.channels(input.lanes[3])[0].hatched)
+            XCTAssertEqual(Self.details(input, 3), .details(scopeID: Self.scopeID, originalID: original.id))
+            XCTAssertFalse(input.accessibilityValue(input.lanes[3]).contains("Later"))
+        }
+    }
+
+    func testBeforeUnavailableAndUnlistedLanesHaveNoAvailabilityHatchingDimmingOrAction() {
+        let lanes = [Self.lane(nil, "Not listed finish", Self.ruledOut, .home),
+                     Self.lane("foreign", "Foreign finish", Self.ruledOut, .away),
+                     Self.lane("  ", "Blank finish", Self.ruledOut, .home)]
+        let input = Self.beforeInput(lanes: lanes)
+        for lane in input.lanes {
+            XCTAssertEqual(input.channels(lane), [])
+            XCTAssertFalse(input.dimsForAvailability(lane))
+            XCTAssertNil(input.detailsAction(lane, canOpen: true))
+            XCTAssertFalse(input.accessibilityValue(lane).contains("No longer possible"))
+            XCTAssertEqual(input.accessibilityLabel(lane), lane.fallbackLabel)
+        }
+        XCTAssertEqual(input.accessibilityValue(lanes[0]), "Not listed")
+        XCTAssertEqual(input.accessibilityValue(lanes[1]), "Finish unavailable")
+        XCTAssertEqual(input.accessibilityValue(lanes[2]), "Finish unavailable")
+        XCTAssertEqual(input.unplaced.map(\.id), Self.ownerIDs, "no original silently disappears")
+    }
+
+    func testBeforeUnplacedExtraOriginalsKeepOwnSingleChannelAndNoPendingSpeech() {
+        let extra = Self.constructed("constructed:extra", "Extra original", pregame: .recorded(Self.observation(0.2, "20%")),
+                                     current: .withheld("Later withheld"), result: .unconfirmed("Later pending"))
+        let input = Self.beforeInput(originals: Self.originals + [extra], lanes: Array(Self.lanes.prefix(3)))
+        XCTAssertEqual(input.unplaced.map(\.id), [Self.filsTwoZero, extra.id])
+        for original in input.unplaced {
+            let channels = input.channels(original, availability: Self.ruledOut)
+            XCTAssertEqual(channels.count, 1)
+            XCTAssertFalse(channels[0].hatched)
+            XCTAssertFalse(input.accessibilityValue(original).contains("Later"))
+            XCTAssertFalse(input.accessibilityValue(original).contains("Result pending"))
+            XCTAssertEqual(input.detailsAction(original, canOpen: true), .details(scopeID: Self.scopeID, originalID: original.id))
+        }
+        XCTAssertEqual(input.channels(extra, availability: nil)[0].bar, .fill(0.2))
+        XCTAssertEqual(Self.routedCalls(input).count, 5)
+    }
+
+    func testBeforeDuplicateOriginalsAndLaneClaimsNeverElectANeighbor() {
+        let repeated = Self.beforeInput(originals: Self.originals + [Self.original(0)], selected: Self.filsTwoOne)
+        XCTAssertNil(repeated.selection.original)
+        XCTAssertEqual(repeated.channels(repeated.lanes[0]), [])
+        XCTAssertEqual(repeated.accessibilityValue(repeated.lanes[0]), "Finish unavailable")
+        XCTAssertNil(Self.details(repeated, 0))
+        for original in repeated.unplaced {
+            XCTAssertEqual(repeated.channels(original, availability: Self.ruledOut), [])
+            XCTAssertEqual(repeated.accessibilityValue(original), "Finish unavailable")
+            XCTAssertNil(repeated.detailsAction(original, canOpen: true))
+        }
+        let claims = Self.beforeInput(lanes: Self.lanes + [Self.lanes[0]])
+        XCTAssertEqual(claims.channels(claims.lanes[0]), [])
+        XCTAssertEqual(claims.channels(claims.lanes[4]), [])
+        XCTAssertNil(Self.details(claims, 0))
+        XCTAssertEqual(claims.unplaced.map(\.id), [Self.filsTwoOne])
+        XCTAssertEqual(claims.channels(claims.unplaced[0], availability: nil).count, 1,
+                       "unique original remains reachable below ambiguous lanes, not assigned to a neighbor")
+    }
+
+    func testBeforeWithdrawnBlankAndDuplicateScopeKeepTheirExistingIdentityRules() {
+        for held in ["withdrawn", "", "  "] {
+            let input = Self.beforeInput(selected: held)
+            XCTAssertNil(input.selection.original)
+            XCTAssertTrue(input.lanes.allSatisfy { !input.isSelected($0) })
+            XCTAssertEqual(Self.routedCalls(input).count, 4)
+            let badScope = Self.beforeInput(scopeID: held)
+            XCTAssertNil(badScope.scope)
+            XCTAssertEqual(badScope.unplaced, [])
+            XCTAssertTrue(badScope.lanes.allSatisfy { badScope.channels($0).isEmpty })
+            XCTAssertTrue(Self.routedCalls(badScope).isEmpty)
+        }
+        let scope = try! XCTUnwrap(Self.input().scope)
+        let duplicated = Self.beforeInput(extraScopes: [scope])
+        XCTAssertNil(duplicated.scope)
+        XCTAssertTrue(Self.routedCalls(duplicated).isEmpty)
+        let blank = Self.beforeInput(sharedScopeID: "  ")
+        XCTAssertNil(blank.scope)
+    }
+
+    func testBeforeStaticCallbackFreeContentNeverOffersAFalseDetailsAction() {
+        let input = Self.beforeInput()
+        XCTAssertEqual(Self.routedCalls(input, canOpen: false), [])
+        for lane in input.lanes {
+            XCTAssertNil(input.detailsAction(lane, canOpen: false))
+            XCTAssertEqual(input.channels(lane).count, 1)
+        }
+        XCTAssertEqual(Self.routedCalls(input), Self.ownerIDs.map { "details|\(Self.scopeID)|\($0)" })
+    }
+
+    func testBeforeLongWordsReuseMeasuredNarrowAndAccessibilityRowGeometry() {
+        let long = Self.constructed("constructed:long", "An entire original finish condition without abbreviation",
+                                    pregame: .unavailable("The original pre-match observation and its time were not supplied"))
+        let input = Self.beforeInput(originals: Self.originals + [long])
+        XCTAssertEqual(input.unplaced.map(\.label), [long.label])
+        XCTAssertEqual(input.channels(long, availability: nil)[0].value,
+                       .words("The original pre-match observation and its time were not supplied"))
+        for (width, accessibility) in [(CGFloat(264), false), (CGFloat(280), true), (CGFloat(640), true)] {
+            let plan = try! XCTUnwrap(ExactScoreFinishLaneGeometry10868.rowPlan(
+                available: width, labelIdeal: CGSize(width: 520, height: 22), labelStackedHeight: 66,
+                valueIdeal: CGSize(width: 560, height: 22), valueStackedHeight: 88,
+                spacing: 8, accessibilitySize: accessibility))
+            XCTAssertEqual(plan.arrangement, .stack)
+            XCTAssertLessThanOrEqual(plan.label.maxX, width)
+            XCTAssertLessThanOrEqual(plan.value.maxX, width)
+            XCTAssertEqual(plan.size.height, 162)
+        }
+        XCTAssertEqual(input.detailsAction(long, canOpen: true), .details(scopeID: Self.scopeID, originalID: long.id))
+    }
+
+    func testBeforeOptionPreservesLiveAndFinalBehaviorAndOwnerColors() {
+        for phase in [ExactScoreMapPhase10868.during, .final] {
+            let legacy = Self.input(phase)
+            var opted = legacy
+            opted.beforePresentation = Self.beforeCopy
+            XCTAssertEqual(opted.isShown, legacy.isShown)
+            XCTAssertEqual(opted.visibleActual, legacy.visibleActual)
+            XCTAssertEqual(opted.displayedTitle, legacy.map.title)
+            XCTAssertEqual(opted.displayedIntro, legacy.map.intro)
+            XCTAssertEqual(opted.displayedEyebrow, legacy.words.eyebrow)
+            XCTAssertEqual(opted.displayedContextNote, legacy.words.contextNote)
+            for lane in legacy.lanes {
+                XCTAssertEqual(opted.channels(lane), legacy.channels(lane))
+                XCTAssertEqual(opted.accessibilityValue(lane), legacy.accessibilityValue(lane))
+                XCTAssertEqual(opted.detailsAction(lane, canOpen: true), legacy.detailsAction(lane, canOpen: true))
+            }
+        }
+        XCTAssertTrue(Self.input().dimsForAvailability(Self.lanes[3]))
+        XCTAssertFalse(Self.input(.final).isShown)
+    }
+}
+
+extension ExactScoreFinishLanePresentation10868Tests {
+    func testBeforeBlankAndForeignUnplacedOriginalsEmitOnlyUnavailableWords() {
+        let blank = Self.constructed("  ", "Blank original", pregame: .recorded(Self.observation(0.9, "90%")),
+                                     current: .recorded(Self.observation(0.01, "1%")), result: .won("Later won"))
+        let foreign = Self.constructed("foreign", "Foreign original", pregame: .recorded(Self.observation(0.8, "80%")),
+                                       result: .unconfirmed("Later pending"))
+        let input = Self.beforeInput(originals: Self.originals + [blank])
+        XCTAssertEqual(input.unplaced.map(\.label), ["Blank original"])
+        for original in [blank, foreign] {
+            XCTAssertFalse(input.isExact(original))
+            XCTAssertEqual(input.channels(original, availability: Self.ruledOut), [])
+            XCTAssertEqual(input.accessibilityValue(original), "Finish unavailable")
+            XCTAssertNil(input.detailsAction(original, canOpen: true))
+        }
+    }
+}
