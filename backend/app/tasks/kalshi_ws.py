@@ -2082,6 +2082,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 phase_bounds = {}
                 held_ambiguous = False
                 written_outcome_ids: list[int] = []
+                # #10090 `preview_from_commit`: the rows the UPDATE returned,
+                # handed to the refresher only once this phase has committed.
+                returned_rows: list = []
                 written_observations: dict = {}
                 primary_observations: dict = {}
                 phase_clock = None
@@ -2232,6 +2235,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                 # #9526).
                                 for row in result.all():
                                     written_outcome_ids.append(row.id)
+                                    returned_rows.append(row)
                                     returned_clock = getattr(row, "database_clock", None)
                                     if returned_clock is not None:
                                         phase_clock = (returned_clock if phase_clock is None
@@ -2413,6 +2417,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     prices.short_probe_refused.discard(oid)
                 unfinished_price_ids.difference_update(phase)
                 registered = queue_committed(index, phase, written_outcome_ids)
+                note_committed = getattr(blend_refresher, "note_committed_rows", None)
+                if returned_rows and not final_drain and callable(note_committed):
+                    # Before any await: the committed rows' own preview may go
+                    # out ahead of the stamp's read (`note_committed_rows`).
+                    note_committed(returned_rows)
                 # The enclosing session exited normally: publish its returned
                 # DB time before another await, never before COMMIT or on failure.
                 price_clock_ready = (
@@ -2932,27 +2941,36 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             return
         market_id, outcome_id = ids if ids is not None else open_contract_ids[ticker]
         try:
-            async with open_grade_admission, get_task_session() as session:
-                graded, resolved = await grade_open_contract_leg(
-                    session, market_id=market_id, outcome_id=outcome_id,
-                    state=lifecycle_state(msg), result=msg.get("result"),
-                )
-                if graded is not None:
-                    queue_market_change(
-                        session,
-                        market_id=market_id,
-                        source="kalshi",
-                        outcome_observed_at={graded.id: graded.last_updated},
+            try:
+                async with open_grade_admission, get_task_session() as session:
+                    graded, resolved = await grade_open_contract_leg(
+                        session, market_id=market_id, outcome_id=outcome_id,
+                        state=lifecycle_state(msg), result=msg.get("result"),
                     )
-                if resolved is not None:
-                    queue_market_change(
-                        session,
-                        market_id=resolved.id,
-                        source="kalshi",
-                        outcome_observed_at={},
-                        terminal=True,
-                        updated_at=resolved.settled_at,
-                    )
+                    if graded is not None:
+                        queue_market_change(
+                            session,
+                            market_id=market_id,
+                            source="kalshi",
+                            outcome_observed_at={graded.id: graded.last_updated},
+                        )
+                    if resolved is not None:
+                        queue_market_change(
+                            session,
+                            market_id=resolved.id,
+                            source="kalshi",
+                            outcome_observed_at={},
+                            terminal=True,
+                            updated_at=resolved.settled_at,
+                        )
+            finally:
+                # #10090 `preview_from_commit`: the grade writes this leg
+                # outside the price write. Committed or not (a cancellation
+                # may cut the commit), before any await, no cached read graph
+                # keeps its pre-grade row.
+                from app.tasks.live_blend_refresh import forget_preview_outcomes
+
+                forget_preview_outcomes(blend_refresher, (outcome_id,))
             if graded is None:
                 return
             # A tick still buffered for this leg would be refused by the
@@ -3122,61 +3140,72 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 closing_price = buffered[0] if buffered else None
 
         try:
-            async with get_task_session() as session:
-                settled = (
-                    await session.execute(
-                        update(FuturesMarket)
-                        .execution_options(synchronize_session=False)
-                        .where(FuturesMarket.id == market_id)
-                        .values(
-                            status="resolved",
-                            **settled_values(FuturesMarket.settled_at),
+            try:
+                async with get_task_session() as session:
+                    settled = (
+                        await session.execute(
+                            update(FuturesMarket)
+                            .execution_options(synchronize_session=False)
+                            .where(FuturesMarket.id == market_id)
+                            .values(
+                                status="resolved",
+                                **settled_values(FuturesMarket.settled_at),
+                            )
+                            .returning(FuturesMarket.id, FuturesMarket.settled_at)
                         )
-                        .returning(FuturesMarket.id, FuturesMarket.settled_at)
-                    )
-                ).first()
-                # #9484: the terminal invalidation carries the stored
-                # `settled_at` this write returned, and only if it returned
-                # one. It mirrors exactly what REST will now serve for the
-                # market; clients refetch and apply their settlement guards.
-                if settled is not None:
-                    queue_market_change(
-                        session,
-                        market_id=settled.id,
-                        source="kalshi",
-                        outcome_observed_at={},
-                        terminal=True,
-                        updated_at=settled.settled_at,
-                    )
+                    ).first()
+                    # #9484: the terminal invalidation carries the stored
+                    # `settled_at` this write returned, and only if it returned
+                    # one. It mirrors exactly what REST will now serve for the
+                    # market; clients refetch and apply their settlement guards.
+                    if settled is not None:
+                        queue_market_change(
+                            session,
+                            market_id=settled.id,
+                            source="kalshi",
+                            outcome_observed_at={},
+                            terminal=True,
+                            updated_at=settled.settled_at,
+                        )
 
-                if result in ("yes", "no"):
-                    is_winner = result == "yes"
-                    # Set is_winner on the settling outcome
-                    await session.execute(
-                        update(FuturesOutcome)
-                        .where(
-                            FuturesOutcome.market_id == market_id,
-                            FuturesOutcome.external_id == ticker,
+                    if result in ("yes", "no"):
+                        is_winner = result == "yes"
+                        # Set is_winner on the settling outcome
+                        await session.execute(
+                            update(FuturesOutcome)
+                            .where(
+                                FuturesOutcome.market_id == market_id,
+                                FuturesOutcome.external_id == ticker,
+                            )
+                            .values(
+                                is_winner=is_winner,
+                                calibration_probability=closing_price,
+                            )
                         )
-                        .values(
-                            is_winner=is_winner,
-                            calibration_probability=closing_price,
+                        # Set is_winner=False on the opposite outcome
+                        await session.execute(
+                            update(FuturesOutcome)
+                            .where(
+                                FuturesOutcome.market_id == market_id,
+                                FuturesOutcome.external_id != ticker,
+                            )
+                            .values(
+                                is_winner=not is_winner,
+                                calibration_probability=(
+                                    1.0 - closing_price if closing_price else None
+                                ),
+                            )
                         )
-                    )
-                    # Set is_winner=False on the opposite outcome
-                    await session.execute(
-                        update(FuturesOutcome)
-                        .where(
-                            FuturesOutcome.market_id == market_id,
-                            FuturesOutcome.external_id != ticker,
-                        )
-                        .values(
-                            is_winner=not is_winner,
-                            calibration_probability=(
-                                1.0 - closing_price if closing_price else None
-                            ),
-                        )
-                    )
+            finally:
+                # #10090 `preview_from_commit`: committed or not (a
+                # cancellation may cut the commit), before any await, no
+                # cached read graph keeps these legs' pre-settlement rows.
+                from app.tasks.live_blend_refresh import forget_preview_outcomes
+
+                forget_preview_outcomes(
+                    blend_refresher,
+                    (oid for oid, mid in market_id_by_outcome.items() if mid == market_id),
+                )
 
             stats["settlements"] += 1
             await blend_refresher.publish_market_changes(session)

@@ -543,7 +543,9 @@ def _without_reviewed_repeat_skip(hook):
     so the comparison is split: the predicate and its two binds must be present
     exactly as reviewed, and everything else must equal the baseline byte for
     byte (later placeholders shift by the two inserted binds). The returned
-    clock expression is pinned separately; the stored-data SQL stays frozen.
+    clock expression is pinned separately, and so are the committed row's
+    resolver columns `preview_from_commit` (#10090) reads back at the end of
+    RETURNING; the stored-data SQL stays frozen.
     """
     if hook[0] != "before":
         return hook
@@ -561,6 +563,12 @@ def _without_reviewed_repeat_skip(hook):
     assert sql.count(returned_clock) == 1, sql
     assert returned_prefix + returned_clock in sql, sql
     sql = sql.replace(returned_clock, "", 1)
+    returned_resolver = (
+        ", futures_outcomes.current_probability, futures_outcomes.is_winner, "
+        "futures_outcomes.resolution_source"
+    )
+    assert sql.endswith(returned_resolver), sql
+    sql = sql[:-len(returned_resolver)]
     match = _REPEAT_SKIP.search(sql)
     assert match, sql
     force = int(match["force"])

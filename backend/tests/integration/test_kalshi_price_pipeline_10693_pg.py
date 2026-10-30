@@ -167,7 +167,7 @@ async def _minimal_engine(n=4):
             id INTEGER PRIMARY KEY, market_id INTEGER, resolution_source TEXT,
             current_probability NUMERIC(7,6), current_yes_bid NUMERIC(6,4),
             current_yes_ask NUMERIC(6,4), last_updated TIMESTAMPTZ,
-            price_changed_at TIMESTAMPTZ)"""))
+            price_changed_at TIMESTAMPTZ, is_winner BOOLEAN)"""))
         conn.execute(
             text("""INSERT INTO futures_outcomes
             (id,market_id,current_probability,current_yes_bid,current_yes_ask,last_updated,price_changed_at)

@@ -2116,6 +2116,11 @@ def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False):
             table.c.last_updated,
             quote_moved_column(table),
             func.clock_timestamp().label("database_clock"),
+            # #10090 `preview_from_commit`: the committed row's resolver
+            # inputs, so its preview is composed without reading it back.
+            table.c.current_probability,
+            table.c.is_winner,
+            table.c.resolution_source,
         )
     )
 
@@ -3566,6 +3571,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # when the write lands. Reached through the refresher: no new name.
     blend_refresher.held_quotes = HeldRowQuotes()
     await blend_refresher.held_quotes.sample_database_clock(get_task_session)
+
     # #10090: withdrawals a previous run committed whose source removal it
     # never settled. A failed read is retried by the first withdrawal flush.
     blend_refresher.withdrawal_debt = PMWithdrawalDebt()
@@ -3945,6 +3951,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         successful_price_write_at.update(dict.fromkeys(
             (row.id for row in written_rows), _mono(),
         ))
+        note_committed = getattr(blend_refresher, "note_committed_rows", None)
+        if written_rows and not final and callable(note_committed):
+            # Before any await: the committed rows' own preview may go out
+            # ahead of the stamp's read (`note_committed_rows`).
+            note_committed(written_rows)
         # Register publication immediately after COMMIT, before buffer cleanup
         # can be interrupted. The game flush owns and joins its one sender so
         # event stamping can proceed while this separate notification awaits
@@ -3997,6 +4008,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         (`flush_props`), so a prop's withdrawal follows its price in one loop.
         ``before_write(books)`` sees the exact snapshot before its transaction.
         """
+        # #10090 `preview_from_commit`: a withdrawal (or its source removal)
+        # changes rows outside the price write; committed or maybe so, no
+        # cached read graph keeps them.
+        from app.tasks.live_blend_refresh import forget_preview_outcomes
         from app.tasks.live_blend_refresh import _mono
         from app.tasks.polymarket_ws import (
             PMWithdrawalMarketPublisher, PMWithdrawalOwnershipDeferred,
@@ -4125,6 +4140,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         })
                     withdrawal_commit_started = True
             except BaseException as exc:
+                forget_preview_outcomes(blend_refresher, books)
                 # The commit may have landed unacknowledged (a dropped
                 # connection, or cancellation during its await): the next
                 # flush re-reads every durable row memory does not hold.
@@ -4150,6 +4166,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     withdrawal_retry_until.update(dict.fromkeys(books, until))
                     return []
                 return None
+            forget_preview_outcomes(blend_refresher, books)
             if withdrawal_debt is not None:
                 withdrawal_debt.adopt(recorded)
                 # A leg whose newer quote arrived meanwhile waits for that write.
@@ -4187,6 +4204,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     )
                     removal_commit_started = True
             except BaseException as exc:
+                forget_preview_outcomes(blend_refresher, {debt.id for debt in debts + strays})
                 # Commit/close may have completed without acknowledgement.
                 # Reload the durable publication on the next flush or restart.
                 withdrawal_debt.require_reload(
@@ -4218,6 +4236,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     )
                     return []
                 return None
+            forget_preview_outcomes(blend_refresher, {debt.id for debt in debts + strays})
             # A resolver/CAS refusal settles too: a valid alternative, a newer
             # quote or a terminal result owns the source now.
             withdrawal_debt.publications.update(pending_publications)
@@ -5986,30 +6005,37 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         return gamma_verdict
 
     async def _write_resolution(condition_id, market_id, outcomes, verdict, msg):
-        async with get_task_session() as session:
-            written = await _apply_ws_resolution(
-                session, market_id, outcomes, verdict
-            )
-            # #9484: the terminal invalidation carries the `settled_at`
-            # this transaction stored, read back inside it — the market is
-            # resolved exactly as REST will now serve it.
-            settled_at = (
-                await session.execute(
-                    select(FuturesMarket.settled_at).where(
-                        FuturesMarket.id == market_id,
-                        FuturesMarket.status == "resolved",
+        try:
+            async with get_task_session() as session:
+                written = await _apply_ws_resolution(
+                    session, market_id, outcomes, verdict
+                )
+                # #9484: the terminal invalidation carries the `settled_at`
+                # this transaction stored, read back inside it — the market is
+                # resolved exactly as REST will now serve it.
+                settled_at = (
+                    await session.execute(
+                        select(FuturesMarket.settled_at).where(
+                            FuturesMarket.id == market_id,
+                            FuturesMarket.status == "resolved",
+                        )
                     )
-                )
-            ).scalar_one_or_none()
-            if settled_at is not None:
-                queue_market_change(
-                    session,
-                    market_id=market_id,
-                    source="polymarket",
-                    outcome_observed_at={},
-                    terminal=True,
-                    updated_at=settled_at,
-                )
+                ).scalar_one_or_none()
+                if settled_at is not None:
+                    queue_market_change(
+                        session,
+                        market_id=market_id,
+                        source="polymarket",
+                        outcome_observed_at={},
+                        terminal=True,
+                        updated_at=settled_at,
+                    )
+        finally:
+            # #10090 `preview_from_commit`: committed or not, no cached read
+            # graph keeps these legs' pre-resolution rows.
+            from app.tasks.live_blend_refresh import forget_preview_outcomes
+
+            forget_preview_outcomes(blend_refresher, (oid for oid, _ext in outcomes))
         await blend_refresher.publish_market_changes(session)
         logger.info(
             "Polymarket WS: %s resolved (verdict=%s, label=%s, %d/%d outcomes "
