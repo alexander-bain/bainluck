@@ -17,6 +17,32 @@ if [[ "$SHARD" != full ]]; then
 fi
 STAGE="${1:?Expected prepare or execute}"
 if [[ "$STAGE" != prepare && "$STAGE" != execute ]]; then exit 2; fi
+# Receipt only (#11201): CoreSimulator's runtime records, plus this run's own
+# pair once it exists, where journeys lost the watchOS runtime. A failed read is
+# recorded and never retried; it never decides or changes the gate.
+runtime_receipt() {
+  python3 - "$OUT/runtime-receipts.jsonl" "$@" <<'RUNTIME_RECEIPT' || echo "runtime receipt $1 not written (exit $?)" >> "$OUT/preflight.log"
+import json, subprocess, sys, time
+point, devices = sys.argv[2], sys.argv[3:]
+receipt = {"point": point, "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "selected_devices": devices}
+for key in ["runtimes"] + (["devices"] if devices else []):
+    record = receipt[key + "_read"] = {}
+    try:
+        result = subprocess.run(["xcrun", "simctl", "list", key, "--json"], capture_output=True, text=True, timeout=15)
+        record["exit_code"] = result.returncode
+        record["stderr"] = result.stderr[-4000:]
+        record["stdout_bytes"] = len(result.stdout)
+        listed = json.loads(result.stdout)[key]
+        if key == "devices":
+            listed = {runtime: [d for d in entries if d.get("udid") in devices] for runtime, entries in listed.items()}
+            listed = {runtime: entries for runtime, entries in listed.items() if entries}
+        receipt[key] = listed
+    except Exception as error:
+        record["read_error"] = repr(error)
+with open(sys.argv[1], "a") as stream:
+    stream.write(json.dumps(receipt, sort_keys=True) + "\n")
+RUNTIME_RECEIPT
+}
 if [[ "$STAGE" == prepare ]]; then
 PHASE=preflight
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
@@ -87,6 +113,7 @@ PHASE='verify exact immutable simulator products'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 python3 "$ROOT/tools/watch_ui_products.py" unpack --repo "$ROOT" \
   --archive "$ROOT/build/watch-ui-products/products.tar.gz" --output "$RUN/package"
+runtime_receipt before-products-verification
 python3 "$ROOT/tools/watch_ui_products.py" verify --repo "$ROOT" --sha "$SHA" \
   --output "$RUN/package" > "$OUT/products-verification.json"
 DERIVED="$RUN/package/payload/watch"
@@ -171,6 +198,7 @@ from pathlib import Path
 keys = ['run', 'derived', 'result', 'sha', 'watch', 'phone', 'xctestrun']
 Path(sys.argv[1]).write_text(json.dumps(dict(zip(keys, sys.argv[2:])), indent=2) + '\n')
 STATE
+runtime_receipt boot-ready "$TEST_UDID" "$PHONE_UDID"
 exit 0
 fi
 # Execute stage reuses only this job's verified immutable package and fresh pair.
@@ -188,6 +216,7 @@ python3 "$ROOT/tools/watch_ui_products.py" verify --repo "$ROOT" --sha "$SHA" \
 XCODE_ARGS=(-xctestrun "$XCTESTRUN" -destination "platform=watchOS Simulator,id=$TEST_UDID" -parallel-testing-enabled NO)
 PHASE='BainLuckWatchUITests full suite from the same built products'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
+runtime_receipt before-test-without-building "$TEST_UDID" "$PHONE_UDID"
 if xcodebuild test-without-building "${XCODE_ARGS[@]}" ${TEST_SELECTION[@]+"${TEST_SELECTION[@]}"} \
   -resultBundlePath "$RESULT" -collect-test-diagnostics never \
   -test-timeouts-enabled YES -default-test-execution-time-allowance 180 \

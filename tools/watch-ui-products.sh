@@ -147,10 +147,21 @@ for scheme in BainLuckWatchUITests 'Bain Luck'; do
     -scheme "$scheme" -clonedSourcePackagesDirPath "$PACKAGES" \
     -disableAutomaticPackageResolution > "$OUT/$destination_log-destinations.log" 2>&1
 done
-SIM_ARCH="$(python3 "$ROOT/tools/watch_simulator_architecture.py" \
-  --watch-destinations "$OUT/watch-destinations.log" --watch-id "$TEST_UDID" \
-  --phone-destinations "$OUT/phone-destinations.log" --phone-id "$PHONE_UDID" \
+# Xcode's scheme listings above are evidence only (#11201): after simctl had
+# created, paired and booted this pair, two attempts' listings omitted every
+# concrete simulator of a platform, and a third attempt's Watch build lost them.
+# Gate on the exact pair through CoreSimulator, as the journeys do.
+xcrun simctl list --json > "$OUT/prepared-simulators.json" 2>> "$OUT/preflight.log"
+xcrun simctl list pairs --json > "$OUT/prepared-pairs.json" 2>> "$OUT/preflight.log"
+PHONE_SDK_VERSION="$(xcrun --sdk iphonesimulator --show-sdk-version 2>> "$OUT/preflight.log")"
+SIM_ARCH="$(python3 "$ROOT/tools/watch_simulator_architecture.py" --prepared-pair \
+  --watch-id "$TEST_UDID" --phone-id "$PHONE_UDID" \
+  --simulators "$OUT/prepared-simulators.json" --pairs "$OUT/prepared-pairs.json" \
+  --watch-sdk "$SDK_VERSION" --phone-sdk "$PHONE_SDK_VERSION" \
   --output "$OUT/simulator-architecture.json")"
+# Build for this exact new Watch at the architecture resolved above from this
+# pair (#11201): only a concrete-device build writes Xcode's Main Thread Checker
+# insert into the xctestrun. The companion has no xctestrun and stays generic.
 XCODE_ARGS=(
   -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj"
   -scheme BainLuckWatchUITests -configuration Debug
@@ -170,7 +181,7 @@ PHASE='build the exact Debug simulator companion without launching it'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 xcodebuild build -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
   -scheme 'Bain Luck' -configuration Debug \
-  -destination "platform=iOS Simulator,id=$PHONE_UDID" \
+  -destination 'generic/platform=iOS Simulator' \
   -derivedDataPath "$PHONE_DERIVED" -jobs 2 \
   -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution \
   "ARCHS=$SIM_ARCH" \
@@ -179,10 +190,12 @@ xcodebuild build -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
   'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox' \
   > "$OUT/companion-build.log" 2>&1
 [[ "$BUILD_SOURCE_FINGERPRINT" == "$(python3 -c 'from pathlib import Path; from tools.watch_ui_products import source_fingerprint; print(source_fingerprint(Path(".")))')" ]]
+# The record taken after preparation names the runtime mount the build used;
+# the first listing can predate CoreSimulator remounting it (#11201).
 PHASE='package immutable simulator products'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 python3 "$ROOT/tools/watch_ui_products.py" pack --repo "$ROOT" --sha "$SHA" \
   --watch "$DERIVED" --phone "$PHONE_DERIVED" --architecture "$SIM_ARCH" \
   --output "$RUN/package" --archive "$OUT/products.tar.gz" \
-  --simulators "$OUT/simulators.json" --watch-runtime "$RUNTIME"
+  --simulators "$OUT/prepared-simulators.json" --watch-runtime "$RUNTIME"
 cp "$RUN/package/manifest.json" "$OUT/manifest.json"
