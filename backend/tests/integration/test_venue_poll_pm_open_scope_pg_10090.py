@@ -18,8 +18,9 @@ on the next read, and a slate market is not. Fixture 7: such a silent market
 is repriced by a real ``poll_venue`` pass, and a venue-settled event is refused,
 not written.
 
-Its own variable, like the other real-Postgres gates. Run with a scratch
-database: ``VENUE_POLL_SCOPE_DATABASE_URL=postgresql+asyncpg://localhost/<db>``.
+Opt-in on ``SEARCH_TEST_DATABASE_URL``; CI runs it in the futures price writer
+step (real Postgres). Locally, a scratch database:
+``SEARCH_TEST_DATABASE_URL=postgresql+asyncpg://localhost/<db>``.
 """
 
 import os
@@ -27,13 +28,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-DB_URL = os.environ.get("VENUE_POLL_SCOPE_DATABASE_URL")
+DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
 
 pytestmark = [
     pytest.mark.asyncio,
     pytest.mark.skipif(
         not DB_URL,
-        reason="set VENUE_POLL_SCOPE_DATABASE_URL to run the poll scope contract",
+        reason="set SEARCH_TEST_DATABASE_URL to run the poll scope contract",
     ),
 ]
 
@@ -58,7 +59,9 @@ async def maker():
     wanted = [Base.metadata.tables[name] for name in TABLES]
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all, tables=wanted, checkfirst=True)
+        # The whole schema first: CI shares this database with full-schema
+        # gates, whose tables reference this subset and refuse a subset drop.
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all, tables=wanted)
     yield async_sessionmaker(engine, expire_on_commit=False)
     await engine.dispose()
