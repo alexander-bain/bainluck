@@ -84,6 +84,7 @@ class _Session:
 def _wired(monkeypatch):
     monkeypatch.setattr(v, "_POPULATION", {})
     monkeypatch.setattr(v, "_POPULATION_RETRY_AT", {})
+    monkeypatch.setattr(v, "_POPULATION_FAILS", {})
     monkeypatch.setattr(v, "polymarket_population_sql", lambda *_a, **_k: "SELECT 1")
     monkeypatch.setattr(v, "_polymarket_open_arm", lambda: True)
     monkeypatch.setattr(v, "shown_market_ids", lambda: [])
@@ -114,22 +115,38 @@ async def test_a_failed_read_with_nothing_cached_backs_off_and_no_tick_reruns_it
 
 
 @pytest.mark.asyncio
-async def test_a_failed_read_reuses_the_last_population_on_a_clean_transaction(_wired):
+async def test_a_failed_read_raises_then_the_backoff_reuses_the_last_population(_wired):
+    """lane1 R1 on #11806: the failing pass itself is `stopped: error` even on a
+    process holding a population; only the passes inside the backoff go stale."""
     units = _stale_units()
     v._POPULATION[VENUE] = (T0 - v.POPULATION_TTL_S - 1, units)
     session = _Session(fail=True)
     stats: dict = {"errors": []}
-
-    got = await v.load_population(session, VENUE, now_mono=T0, stats=stats)
-    assert got is units
-    assert stats["population_stale"] is True
-    assert stats["errors"] and stats["errors"][0].startswith("population: ")
-    assert session.rollbacks == 1  # the aborted transaction is not reused
+    with pytest.raises(_Timeout):
+        await v.load_population(session, VENUE, now_mono=T0, stats=stats)
+    assert "population_stale" not in stats
 
     again: dict = {}
     assert await v.load_population(session, VENUE, now_mono=T0 + 30, stats=again) is units
     assert again["population_stale"] is True
-    assert session.population_reads == 1
+    assert session.population_reads == 1 and session.rollbacks == 0
+
+
+@pytest.mark.asyncio
+async def test_unreadable_redis_floor_doubles_so_ticks_do_not_rerun_the_read(monkeypatch):
+    """lane1 R2 on #11806: `start_backoff` reads a flat 30 s with Redis down; a
+    flat floor lapses by the next 30 s tick, so the floor doubles locally."""
+    def _down():
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(v, "_redis", _down)
+    session = _Session(fail=True)
+    for i in range(40):  # 20 minutes of 30 s ticks on one process
+        try:
+            await v.load_population(session, VENUE, now_mono=T0 + 30 * i, stats={})
+        except (_Timeout, v.PopulationBackoff):
+            pass
+    assert session.population_reads <= 6
 
 
 @pytest.mark.asyncio
@@ -212,5 +229,53 @@ async def test_the_pass_reads_error_then_population_backoff_as_partial(monkeypat
     v._POPULATION_RETRY_AT.clear()  # the next tick lands on another process
     second = await v.poll_venue_prices([VENUE])
     assert second[VENUE]["stopped"] == "population_backoff"
+    assert second["terminal"] == "partial"
+    assert session.population_reads == 1
+
+
+@pytest.mark.asyncio
+async def test_a_process_holding_a_population_still_reads_error_on_the_failing_pass(
+    monkeypatch, _wired
+):
+    """lane1 R1 on #11806: the adopted on-sight switch-back reads `stopped ==
+    "error"` / `terminal == "failed"`; a cached population must not hide it."""
+    import datetime as dt
+
+    v._POPULATION[VENUE] = (T0 - v.POPULATION_TTL_S - 1, _stale_units())
+    session = _Session(fail=True)
+
+    async def _clock(_s):
+        return dt.datetime.now(dt.timezone.utc)
+
+    session.commit = lambda: _noop()
+
+    async def _noop(*_a, **_k):
+        return None
+
+    @asynccontextmanager
+    async def _task_session(**_k):
+        yield session
+
+    class _Service:
+        async def close(self):
+            pass
+
+    async def _fetch(*_a, **_k):
+        return {}
+
+    monkeypatch.setattr("app.tasks.base.get_task_session", _task_session)
+    monkeypatch.setattr("app.tasks.venue_poll_pm_clob.pm_source", lambda: "gamma")
+    monkeypatch.setattr(v, "_new_service", lambda _venue: _Service())
+    monkeypatch.setattr(v, "db_clock", _clock)
+    monkeypatch.setattr(v, "_fetch_group", _fetch)
+    monkeypatch.setattr(v, "_write_group", _noop)
+
+    first = await v.poll_venue_prices([VENUE])
+    assert first[VENUE]["stopped"] == "error" and first["terminal"] == "failed"
+    assert "population_units" not in first[VENUE]
+
+    v._POPULATION_RETRY_AT.clear()
+    second = await v.poll_venue_prices([VENUE])
+    assert second[VENUE]["population_stale"] is True
     assert second["terminal"] == "partial"
     assert session.population_reads == 1

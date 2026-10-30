@@ -466,6 +466,9 @@ _POPULATION: dict[str, tuple[float, list[Unit]]] = {}
 #: Process-local floor under the shared population backoff: a process does not
 #: retry a failed read before this monotonic time even when Redis is unreadable.
 _POPULATION_RETRY_AT: dict[str, float] = {}
+#: Consecutive failed reads in this process, so the floor doubles like the
+#: shared backoff (``start_backoff`` reads a flat 30 s when Redis is down).
+_POPULATION_FAILS: dict[str, int] = {}
 
 
 class PopulationBackoff(Exception):
@@ -510,23 +513,19 @@ async def load_population(
                 population_binds(shown_market_ids()),
             )
         ).fetchall()
-    except Exception as exc:
+    except Exception:
         stats["population_read_s"] = round(time.monotonic() - started, 2)
-        seconds = start_backoff(name)
+        fails = _POPULATION_FAILS[venue] = _POPULATION_FAILS.get(venue, 0) + 1
+        local = min(BACKOFF_BASE_S * 2 ** (fails - 1), BACKOFF_MAX_S)
+        seconds = max(start_backoff(name), local)
         _POPULATION_RETRY_AT[venue] = now_mono + seconds
         stats["population_backoff_started_s"] = seconds
-        if cached is None:
-            raise  # the pass records it as `stopped: error`
-        stats.setdefault("errors", []).append(f"population: {str(exc)[:200]}")
-        # The failed statement aborted the transaction; the pass goes on with
-        # the last population on a clean one.
-        await session.rollback()
-        stats["population_stale"] = True
-        return cached[1]
+        raise  # the pass records it as `stopped: error`; later passes go stale
     stats["population_read_s"] = round(time.monotonic() - started, 2)
     stats["population_cached"] = False
     clear_backoff(name)
     _POPULATION_RETRY_AT.pop(venue, None)
+    _POPULATION_FAILS.pop(venue, None)
     units = build_units(venue, rows)
     _POPULATION[venue] = (now_mono, units)
     return units
