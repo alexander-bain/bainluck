@@ -265,17 +265,23 @@ async def test_the_aux_outcomes_are_written_before_any_nonlive_phase(r):
 
 
 @pytest.mark.asyncio
-async def test_the_event_is_not_stamped_between_its_headline_and_aux_phases(r):
+async def test_the_headline_is_stamped_at_its_own_commit_not_after_its_aux_board(r):
+    # Commit C (Argon Rank 1): the prop board is not what the refresher reads,
+    # so a headline/board split is not a partly written board. The headline's
+    # commit asks for its stamp with nothing deferring it; the board's commit
+    # asks again. (Commit B alone deferred it until the board committed.) The
+    # non-live game keeps today's fence until its own phase commits.
     r.buffer.update(batch_oldest_aux_first())
     assert await r.flush(0.0) is True
     head_done = _phase_of(r.commits, HEAD_A[0]) + 1
     aux_done = max(_phase_of(r.commits, oid) for oid in AUX_A) + 1
+    pregame_done = _phase_of(r.commits, NONLIVE[0]) + 1
     asks = [(deferred, committed) for asked, deferred, committed in r.stamps
             if LIVE_A in asked]
-    # Its headline commit asks for its stamp, still deferred (aux unfinished);
-    # its aux commit asks again, and only then may the refresher read it.
-    assert asks == [(asks[0][0], head_done), (asks[1][0], aux_done)]
-    assert LIVE_A in asks[0][0] and LIVE_A not in asks[1][0]
+    assert [committed for _d, committed in asks] == [head_done, aux_done]
+    assert all(LIVE_A not in deferred for deferred, _c in asks)
+    for _asked, deferred, committed in r.stamps:
+        assert (PREGAME in deferred) is (committed < pregame_done)
 
 
 @pytest.mark.asyncio
