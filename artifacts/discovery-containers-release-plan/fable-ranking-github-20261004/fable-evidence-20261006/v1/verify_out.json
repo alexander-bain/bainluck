@@ -1,0 +1,648 @@
+[
+ {
+  "cid": "c00",
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS q0147: rules resolve on Trump ANNOUNCING a 2028 presidential run before Jan 1, 2028; 'runs for a third term before 2028' misstates what is measured (the election itself is in 2028).",
+   "MEANING/FAITHFULNESS q0964: rules require a MANNED NASA mission landing on the Moon; 'NASA lands on the Moon' reads as any NASA lander.",
+   "MEANING q0948: rules resolve if the President, a Cabinet member, a Joint Chief or any federal agency definitively states that extraterrestrial life OR technology exists - one official's statement suffices and microbial life would count; 'the US government confirms aliens exist' overstates it."
+  ],
+  "fixes": [
+   {
+    "id": "q0147",
+    "plain": "Trump announces by the end of 2027 that he is running for a third term"
+   },
+   {
+    "id": "q0964",
+    "plain": "NASA lands astronauts on the Moon before 2028"
+   },
+   {
+    "id": "q0948",
+    "plain": "A top US official or federal agency states that extraterrestrial life or technology exists before 2028"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c01",
+  "verdict": "fix",
+  "reasons": [
+   "MEANING/FAITHFULNESS q1426: 'blue wave' is defined by the rules as Democrats holding 218+ House seats AND only 49+ Senate seats - a Senate majority is NOT required. A casual reader expects a sweep of both chambers; sentence must state the actual bar.",
+   "NOTE q1426: an election-result claim (vote Nov 3, 2026; venue deadline 2027-01-05) rather than a pure by-deadline claim; acceptable on an end-of-2026 board once reworded.",
+   "TONE FLAG (borderline) q1785: concerns the Russia-Ukraine war (peace talks). Diplomacy, not strikes; caller's call. If excluded, drop q1785 (4 members remain).",
+   "NOTE q1785: low bar - any diplomatic meeting between representatives (not leaders) aimed at ceasefire/de-escalation counts."
+  ],
+  "fixes": [
+   {
+    "id": "q1426",
+    "plain": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c02",
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (meaning) q1388: 'AI bubble bursts' resolves on a checklist definition of an AI industry downturn (at least three of several listed conditions; excerpt truncated), not a general impression.",
+   "TONE FLAG (borderline) q1251: 'Putin out' resolves on any cessation of the presidency, including death or ill health, though it does not name them."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c03",
+  "verdict": "fix",
+  "reasons": [
+   "MEANING/FAITHFULNESS q1426: 'blue wave' is defined by the rules as Democrats holding 218+ House seats AND only 49+ Senate seats - a Senate majority is NOT required. A casual reader expects a sweep of both chambers; sentence must state the actual bar.",
+   "NOTE q1426: election-result claim (deadline 2027-01-05), acceptable on an end-of-2026 board once reworded."
+  ],
+  "fixes": [
+   {
+    "id": "q1426",
+    "plain": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c04",
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS/MEANING q1236: rules resolve on OpenAI ANNOUNCING it has attained AGI, not on AGI being achieved; sentence states it as fact.",
+   "MEANING q1231: 'major meteor strike' is defined as 10 kilotons TNT or more - a fireball-scale event that occurs every few years and usually goes unnoticed, not the catastrophe a reader pictures. Sentence must carry the threshold.",
+   "MEANING q0014: 'Level 4' is jargon; it is the State Department's 'Do Not Travel' level. Rules also count an update or reaffirmation of a Level 4 advisory.",
+   "NOTE q0030: rules say only 'China has overtaken US GDP by 2030' - GDP measure (nominal vs PPP) and whether 'by 2030' means start or end of 2030 are not specified in the excerpt."
+  ],
+  "fixes": [
+   {
+    "id": "q1236",
+    "plain": "OpenAI announces it has achieved AGI before 2030"
+   },
+   {
+    "id": "q1231",
+    "plain": "A meteor releasing at least 10 kilotons of energy hits Earth before 2030"
+   },
+   {
+    "id": "q0014",
+    "plain": "The US issues a Level 4 'do not travel' advisory for Taiwan before 2030"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c05",
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS q0088: rules are about the UNITED STATES purchasing part of Greenland from Denmark before January 20, 2029; 'before January 2029' reads as before Jan 1 and 'Trump buys' personalises it.",
+   "FAITHFULNESS (minor) q1196: rules resolve when a congressional stock-trading ban BECOMES LAW (it could take effect later).",
+   "NOTE q0076: sentence has no date; the board title supplies it (rules: impeached and convicted by the Senate before Jan 20, 2029). Tone borderline: Senate 'conviction' of a named person, a political not criminal process.",
+   "NOTE: q0088 (US buys part of Greenland) logically implies q0045 (US acquires new territory) - nested, not duplicate."
+  ],
+  "fixes": [
+   {
+    "id": "q0088",
+    "plain": "The US buys at least part of Greenland from Denmark before January 20, 2029"
+   },
+   {
+    "id": "q1196",
+    "plain": "A ban on members of Congress trading stocks becomes law before January 21, 2029"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c06",
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS q0084: 'Trump' is not in the raw text or rules (invented qualifier); rules say any member of the cabinet impeached by the US House (House vote only, not removal).",
+   "FAITHFULNESS q0147: rules resolve on Trump ANNOUNCING a 2028 presidential run before Jan 1, 2028; 'runs for a third term before 2028' misstates what is measured (the election itself is in 2028).",
+   "FAITHFULNESS (minor) q0913: rules resolve when legislation establishing permanent DST BECOMES LAW before 2028, not when clocks actually stop changing."
+  ],
+  "fixes": [
+   {
+    "id": "q0084",
+    "plain": "A US cabinet member is impeached by the House before 2028"
+   },
+   {
+    "id": "q0147",
+    "plain": "Trump announces by the end of 2027 that he is running for a third term"
+   },
+   {
+    "id": "q0913",
+    "plain": "A law making daylight saving time permanent in the US is enacted before 2028"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c07",
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS q0075: venue title says 'speak' but the rules resolve only if Zelenskyy and Putin MEET; a phone call may not count. Use 'meet'.",
+   "TONE FLAG (borderline) q0075: Zelenskyy-Putin meeting concerns the Russia-Ukraine war (diplomacy, not strikes). If excluded, only 3 members remain.",
+   "NOTE q0076: no date in sentence; board title supplies it. Tone borderline (Senate conviction of a named person, political process).",
+   "NOTE: q0073 (US takes part of Canada) logically implies q0045 (US acquires new territory) - nested, not duplicate."
+  ],
+  "fixes": [
+   {
+    "id": "q0075",
+    "plain": "Zelenskyy and Putin meet before January 20, 2029"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c08",
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (meaning, verify): prices (4% before 2027, 86% before April 2027) imply this market is about the STANDARD iPhone 18 expected in spring 2027, not the iPhone 18 Pro/fold models slated for autumn 2026. The rules excerpt does not say so. If any iPhone 18-branded model is already on sale, 'Apple releases the iPhone 18' will look wrong to a casual reader - confirm the full rules and consider 'the standard iPhone 18'."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c09",
+  "verdict": "pass",
+  "reasons": [],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c10",
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (meaning): 'impeached' means a House impeachment vote only, not removal; rules are worded 'the President of the United States'. Sentences are accurate."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c11",
+  "verdict": "pass",
+  "reasons": [
+   "NOTE: rules require shares actually listed and open for trading by the date (a filing or announcement does not count); sentences are consistent with that. Wording varies across rungs ('holds an IPO' / 'goes public') but all are faithful."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c12",
+  "verdict": "pass",
+  "reasons": [],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c13",
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS/MEANING all rungs: rules resolve on OpenAI ANNOUNCING it has attained AGI by the date, not on AGI being achieved. Sentences state achievement as fact."
+  ],
+  "fixes": [
+   {
+    "id": "q1234",
+    "plain": "OpenAI announces it has achieved AGI before 2027"
+   },
+   {
+    "id": "q1235",
+    "plain": "OpenAI announces it has achieved AGI before 2028"
+   },
+   {
+    "id": "q1236",
+    "plain": "OpenAI announces it has achieved AGI before 2030"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c14",
+  "verdict": "pass",
+  "reasons": [],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c15",
+  "verdict": "pass",
+  "reasons": [
+   "NOTE: rules count either an official announcement of intent to leave the Board of Governors or actually leaving; sentences are consistent."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c16",
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS/MEANING all rungs: rules resolve when any company officially ANNOUNCES it has achieved AGI, not on AGI being achieved.",
+   "FAITHFULNESS q0006: 'human-level AI' is an invented gloss not in the raw text or rules."
+  ],
+  "fixes": [
+   {
+    "id": "q0003",
+    "plain": "A company officially announces it has achieved AGI before 2027"
+   },
+   {
+    "id": "q0004",
+    "plain": "A company officially announces it has achieved AGI before April 2027"
+   },
+   {
+    "id": "q0005",
+    "plain": "A company officially announces it has achieved AGI before July 2027"
+   },
+   {
+    "id": "q0006",
+    "plain": "A company officially announces it has achieved AGI before October 2027"
+   },
+   {
+    "id": "q0007",
+    "plain": "A company officially announces it has achieved AGI before 2028"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c17",
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (optional) q0449: sentence names no election; the default reading (2026 midterms) is correct. Could add 'in the 2026 midterms'."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c18",
+  "verdict": "pass",
+  "reasons": [],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c19",
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (optional) q0198: sentence names no year; rules are the 99th Academy Awards (March 2027), which is the default reading. The two claims resolve 20 months apart."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c20",
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (meaning) q0105: accurate, but a casual reader may be puzzled - the sitting VP being the 2028 VICE-presidential nominee is priced low because he is expected to seek the top of the ticket."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c21",
+  "verdict": "pass",
+  "reasons": [
+   "TONE FLAG (borderline) q1251: 'Putin out' resolves on any cessation of the presidency, including death or ill health, though it does not name them; here it is paired with a pop-music claim."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c22",
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS q1736: rules turn on an actor being OFFICIALLY ANNOUNCED as the next Bond by Dec 31, 2026; 'chosen' is looser (a casting decision could be made but unannounced). Polarity (No-Bond outcome) is correct.",
+   "FAITHFULNESS (minor) q0072: deadline is before January 21, 2029; 'before January 2029' reads as before Jan 1."
+  ],
+  "fixes": [
+   {
+    "id": "q1736",
+    "plain": "No actor is officially announced as the next James Bond before 2027"
+   },
+   {
+    "id": "q0072",
+    "plain": "The US takes control of any part of Greenland before January 21, 2029"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c23",
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (optional) q0188: no year in sentence; rules are the 99th Academy Awards (March 2027), the default reading."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c24",
+  "verdict": "fail",
+  "reasons": [
+   "TONE FLAG q0788: the venue title is 'Trump announces departure as President? (Excluding death)'. The claim is about a named person leaving office early, priced largely on health/removal, and cannot be stated faithfully without the death exclusion.",
+   "FAITHFULNESS/ILL-DEFINED q0788: title says 'announces departure', rules excerpt says 'leaves office before January 20, 2029' with no announcement or death language. Sentence 'announces he is leaving' is not supported by the rules (removal would also count).",
+   "FAITHFULNESS q0135: rules count an official relocation ANNOUNCEMENT as well as an actual move, with a deadline (first game of the 2028 season); the sentence states neither.",
+   "Corrected sentences supplied in case the caller overrides the tone fail."
+  ],
+  "fixes": [
+   {
+    "id": "q0788",
+    "plain": "Trump leaves office before his term ends on January 20, 2029, for any reason except death"
+   },
+   {
+    "id": "q0135",
+    "plain": "The Chicago Bears move, or announce a move, to Indiana before the 2028 season"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c25",
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS q0763: rules resolve if the US has 'agreed to, signed, or accepted' a new Iran-US nuclear deal; 'sign' is narrower than the rules."
+  ],
+  "fixes": [
+   {
+    "id": "q0763",
+    "plain": "The US and Iran reach a new nuclear deal before 2027"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c26",
+  "verdict": "fix",
+  "reasons": [
+   "MEANING/FAITHFULNESS q0141: rules define recession as two consecutive quarters of negative GDP growth (BEA) within Q4 2026-Q4 2027 - a technical definition, with a window starting in late 2026, and the sentence does not say it is the US.",
+   "STRUCTURE ok: first claim's deadline (2027-12-31) is not later than the second's (2028-01-31); no implication."
+  ],
+  "fixes": [
+   {
+    "id": "q0141",
+    "plain": "US GDP shrinks for two straight quarters between late 2026 and the end of 2027"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c27",
+  "verdict": "fix",
+  "reasons": [
+   "MEANING q1231: 'major meteor strike' is defined as 10 kilotons TNT or more - a fireball-scale event that occurs every few years and usually goes unnoticed, not the catastrophe a reader pictures. Sentence must carry the threshold. Without the fix the reversal overstates the surprise.",
+   "NOTE q0030: GDP measure and whether 'by 2030' means start or end of 2030 are unspecified in the excerpt."
+  ],
+  "fixes": [
+   {
+    "id": "q1231",
+    "plain": "A meteor releasing at least 10 kilotons of energy hits Earth before 2030"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c28",
+  "verdict": "fix",
+  "reasons": [
+   "MEANING/FAITHFULNESS q0438: 'blue wave' is defined by the rules as Democrats holding 218+ House seats AND only 49+ Senate seats - a Senate majority is NOT required. A casual reader expects a sweep of both chambers; sentence must state the actual bar.",
+   "NOTE (meaning, verify) q0857: market appears to concern the STANDARD iPhone 18 (expected spring 2027), not Pro/fold models due autumn 2026; rules excerpt does not say. If an iPhone 18-branded model is already on sale, this reversal will read as false - confirm the full rules.",
+   "STRUCTURE note: first claim's venue deadline (2027-02-01) is a month after the second's (2027-01-01), but the underlying event is the Nov 3, 2026 election, so not flagged as a later deadline."
+  ],
+  "fixes": [
+   {
+    "id": "q0438",
+    "plain": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c29",
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (sanity, verify price) q0101: sentence is faithful, but 74% for a Fed rate INCREASE by Dec 31, 2026 (two meetings left) is a striking number from a single venue; worth a glance at the live quote/spread before the card carries a 'likelier than' claim.",
+   "NOTE q1465: the listed date is not in the raw text; 'before 2027' comes from the deadline field (rules: ceases to hold a Board seat for any period by the listed date)."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c30",
+  "verdict": "fix",
+  "reasons": [
+   "MEANING q1427: rules define 'new product line' as a category of products Apple has NEVER previously sold, both announced and launched by Dec 31, 2026 - not a new iteration of an existing line, which is how 'new product line' reads."
+  ],
+  "fixes": [
+   {
+    "id": "q1427",
+    "plain": "Apple launches an entirely new product category before 2027"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c31",
+  "verdict": "fix",
+  "reasons": [
+   "MEANING q1443: rules require a formal, publicly announced, mutually agreed deal creating a BINDING obligation; looser existing security pacts would not count. Sentence should say 'binding'.",
+   "TONE FLAG (borderline) q1443: concerns the Russia-Ukraine war (defence commitment, not strikes).",
+   "NOTE q1272: listed date is not in the raw text; 'before 2027' comes from the deadline field. Resolves on any cessation of the premiership."
+  ],
+  "fixes": [
+   {
+    "id": "q1443",
+    "plain": "A European country formally agrees to a binding security guarantee for Ukraine before 2027"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c32",
+  "verdict": "fail",
+  "reasons": [
+   "STRUCTURE (reversal): the likelier first claim runs to the end of 2027, while the second is a one-off California ballot vote (November 2026 election; venue deadline 2027-11-03). The first has a clearly later deadline, and the ordering is deadline-driven: over the same window to November 2026 a cabinet impeachment would be far less likely than 32%.",
+   "FAITHFULNESS q0084: 'Trump' is not in the raw text or rules (invented qualifier); rules say any member of the cabinet impeached by the US House (House vote only, not removal).",
+   "FAITHFULNESS/MEANING q1118: rules are a ONE-TIME tax on billionaires passed as a BALLOT INITIATIVE (voters), which 'the wealth tax passes' does not convey."
+  ],
+  "fixes": [
+   {
+    "id": "q0084",
+    "plain": "A US cabinet member is impeached by the House before 2028"
+   },
+   {
+    "id": "q1118",
+    "plain": "California voters pass a one-time wealth tax on billionaires"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c33",
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (meaning) q0291: this is an IPO of STARLINK specifically (the SpaceX unit), resolved on Starlink confirming an IPO - not a SpaceX IPO, which a casual reader may conflate. First claim's deadline is the earlier one, so the reversal is sound."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c34",
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS/MEANING q0973: rules require Optimus (or another humanoid robot) to be ON SALE TO THE GENERAL PUBLIC before Dec 31, 2026; 'releases' could be read as an unveiling or limited/internal deployment."
+  ],
+  "fixes": [
+   {
+    "id": "q0973",
+    "plain": "Tesla puts its Optimus humanoid robot on sale to the general public in 2026"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c35",
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS q1963: sentence has no year ('by December 31'); deadline is December 31, 2026.",
+   "MEANING q1963: rules count only an album released AFTER the market opened; with a 2026 Drake album already out (to my knowledge), '14% releases a new album' misleads - say 'another'.",
+   "FAITHFULNESS/DISTINCTNESS q0992 vs q0989: q0989 is the US chart (84%), q0992 is most-streamed artist on all of Spotify (4%). q0992's sentence does not say worldwide, so the two read as the same claim with contradictory numbers. Not duplicates once reworded."
+  ],
+  "fixes": [
+   {
+    "id": "q1963",
+    "plain": "Drake releases another new album by December 31, 2026"
+   },
+   {
+    "id": "q0992",
+    "plain": "Drake is Spotify's most-streamed artist worldwide in 2026"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c36",
+  "verdict": "fix",
+  "reasons": [
+   "MEANING q1651, q1371: rules use DOMESTIC (US and Canada) box office only, not worldwide.",
+   "FAITHFULNESS (minor) q1046: rules are 'delayed past December 18, 2026'; sentence gives no date.",
+   "NOTE q0741: rules count Maguire performing OR being announced as Spider-Man in the film.",
+   "NOTE: q1651 (opening week) and q1371 (opening weekend) are near-identical but distinct claims."
+  ],
+  "fixes": [
+   {
+    "id": "q1651",
+    "plain": "Avengers: Doomsday has the biggest US opening week of any 2026 movie"
+   },
+   {
+    "id": "q1371",
+    "plain": "Avengers: Doomsday has the biggest US opening weekend of 2026"
+   },
+   {
+    "id": "q1046",
+    "plain": "Avengers: Doomsday is delayed past its December 18, 2026 release date"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c37",
+  "verdict": "fail",
+  "reasons": [
+   "DUPLICATE: q0200 (K, 26%) and q1878 (P, 21%) are the same question - Matt Damon wins Best Actor at the 99th Academy Awards (2027) - listed on two venues with two different probabilities.",
+   "Dropping either duplicate leaves only 2 members (nominated, wins), below the 3-member minimum for a dossier."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c38",
+  "verdict": "fix",
+  "reasons": [
+   "MEANING q1368: rules use DOMESTIC CALENDAR gross (Box Office Mojo calendar grosses: US/Canada money earned inside calendar 2026), not worldwide or lifetime gross. 'Highest-grossing movie of 2026' reads as worldwide total.",
+   "MEANING q1370, q1650, q1862: domestic (US and Canada) box office only.",
+   "NOTE: q1370 (biggest opening weekend, 64%) and q1862 (second-biggest, 34%) are mutually exclusive outcomes of one ranking - distinct claims, not duplicates."
+  ],
+  "fixes": [
+   {
+    "id": "q1368",
+    "plain": "Spider-Man: Brand New Day earns the most at the US box office during 2026"
+   },
+   {
+    "id": "q1370",
+    "plain": "Spider-Man: Brand New Day has the biggest US opening weekend of 2026"
+   },
+   {
+    "id": "q1650",
+    "plain": "Spider-Man: Brand New Day has the biggest US opening week of 2026"
+   },
+   {
+    "id": "q1862",
+    "plain": "Spider-Man: Brand New Day has the second-biggest US opening weekend of 2026"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c39",
+  "verdict": "pass",
+  "reasons": [
+   "NOTE (optional): no year in sentences; rules are the 99th Academy Awards (2027), the default reading. Three distinct claims (two nomination categories, one win)."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c40",
+  "verdict": "fail",
+  "reasons": [
+   "STRUCTURE/DUPLICATE: all three members are the single question 'do Zelenskyy and Putin meet/talk' - q1359 (no meeting before 2027, 94%) is essentially the complement of q1415 (talk by end of 2026, 8%), and q0075 is the same question at a later deadline. Not a dossier of different claims; removing the overlap leaves fewer than 3 members.",
+   "FAITHFULNESS q0075: venue title says 'speak' but the rules resolve only if Zelenskyy and Putin MEET; a phone call may not count. Use 'meet'.",
+   "TONE FLAG: every member concerns the Russia-Ukraine war (leader-level diplomacy)."
+  ],
+  "fixes": [
+   {
+    "id": "q0075",
+    "plain": "Zelenskyy and Putin meet before January 20, 2029"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c41",
+  "verdict": "fail",
+  "reasons": [
+   "DUPLICATE: q1268 (P, 64%) and q0063 (K, 58%) are the same question - the Democratic party wins the 2028 presidential election - with near-identical sentences and two different probabilities.",
+   "Dropping either leaves only 2 members, below the 3-member minimum for a dossier.",
+   "NOTE q0063: K resolves on inauguration for the term beginning Jan 20, 2029; deadline field 2029-11-07 looks off."
+  ],
+  "fixes": [],
+  "drop_members": []
+ },
+ {
+  "cid": "c42",
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS q0135: rules count an official relocation ANNOUNCEMENT as well as an actual move, with a deadline (first game of the 2028 season); the sentence states neither."
+  ],
+  "fixes": [
+   {
+    "id": "q0135",
+    "plain": "The Chicago Bears move, or announce a move, to Indiana before the 2028 season"
+   }
+  ],
+  "drop_members": []
+ },
+ {
+  "cid": "c43",
+  "verdict": "fix",
+  "reasons": [
+   "FAITHFULNESS/MEANING q0400: '2027 Pro Football Champion' is the Super Bowl played in February 2027 (2026 season) - consistent with the 16% AFC title price. 'The 2027 pro football championship' reads as the 2027 season. Deadline field 2029-02-13 looks wrong for this member.",
+   "NOTE q0542: 'last undefeated team' is the last team to lose its unbeaten record in the 2026-27 regular season, not an unbeaten season."
+  ],
+  "fixes": [
+   {
+    "id": "q0400",
+    "plain": "The Kansas City Chiefs win the Super Bowl in February 2027"
+   }
+  ],
+  "drop_members": []
+ }
+]

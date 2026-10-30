@@ -1,0 +1,135 @@
+{
+ "x01": {
+  "at": "2026-10-06T15:16:35.094Z",
+  "grade": "amazing",
+  "n": 6,
+  "note": "",
+  "type": "movers"
+ },
+ "x02": {
+  "at": "2026-10-06T15:17:49.815Z",
+  "grade": "amazing",
+  "n": 8,
+  "note": "",
+  "type": "movers"
+ },
+ "x03": {
+  "at": "2026-10-06T15:19:53.198Z",
+  "grade": "amazing",
+  "n": 15,
+  "note": "",
+  "type": "movers"
+ },
+ "x05": {
+  "at": "2026-10-06T14:42:19.510Z",
+  "grade": "amazing",
+  "n": 1,
+  "note": "",
+  "type": "movers"
+ },
+ "x06": {
+  "at": "2026-10-06T15:16:31.229Z",
+  "grade": "fine",
+  "n": 5,
+  "note": "",
+  "type": "newfav"
+ },
+ "x07": {
+  "at": "2026-10-06T15:18:12.981Z",
+  "grade": "fine",
+  "n": 12,
+  "note": "",
+  "type": "newfav"
+ },
+ "x10": {
+  "at": "2026-10-06T15:16:21.713Z",
+  "grade": "amazing",
+  "n": 3,
+  "note": "",
+  "type": "swing"
+ },
+ "x11": {
+  "at": "2026-10-06T15:18:03.314Z",
+  "grade": "fine",
+  "n": 10,
+  "note": "",
+  "type": "swing"
+ },
+ "x12": {
+  "at": "2026-10-06T15:17:47.529Z",
+  "grade": "fine",
+  "n": 7,
+  "note": "",
+  "type": "trading"
+ },
+ "x13": {
+  "at": "2026-10-06T15:19:44.547Z",
+  "grade": "fine",
+  "n": 14,
+  "note": "",
+  "type": "trading"
+ },
+ "x14": {
+  "at": "2026-10-06T15:20:26.551Z",
+  "grade": "amazing",
+  "n": 19,
+  "note": "",
+  "type": "checklist"
+ },
+ "x15": {
+  "at": "2026-10-06T15:19:56.349Z",
+  "grade": "fine",
+  "n": 16,
+  "note": "",
+  "type": "checklist"
+ },
+ "x16": {
+  "at": "2026-10-06T15:16:14.183Z",
+  "grade": "fine",
+  "n": 2,
+  "note": "",
+  "type": "checklist"
+ },
+ "x17": {
+  "at": "2026-10-06T15:17:52.264Z",
+  "grade": "fine",
+  "n": 9,
+  "note": "",
+  "type": "checklist"
+ },
+ "x18": {
+  "at": "2026-10-06T15:18:07.814Z",
+  "grade": "fine",
+  "n": 11,
+  "note": "",
+  "type": "band"
+ },
+ "x19": {
+  "at": "2026-10-06T15:20:09.792Z",
+  "grade": "fine",
+  "n": 17,
+  "note": "",
+  "type": "band"
+ },
+ "x23": {
+  "at": "2026-10-06T15:18:15.731Z",
+  "grade": "amazing",
+  "n": 13,
+  "note": "",
+  "type": "movers"
+ },
+ "x24": {
+  "at": "2026-10-06T15:20:13.857Z",
+  "grade": "amazing",
+  "n": 18,
+  "note": "",
+  "type": "newfav"
+ },
+ "x36": {
+  "at": "2026-10-06T15:16:24.081Z",
+  "grade": "fine",
+  "n": 4,
+  "note": "",
+  "type": "band"
+ }
+}

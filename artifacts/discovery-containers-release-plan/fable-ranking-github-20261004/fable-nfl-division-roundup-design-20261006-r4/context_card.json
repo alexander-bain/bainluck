@@ -1,0 +1,73 @@
+{
+ "cid": "canonical",
+ "n": 1,
+ "type": "roundup",
+ "kicker": "Round-up",
+ "headline": "NFL division front-runners",
+ "tag": "NFL",
+ "rows": [
+  {
+   "text": "NFC East: Cowboys",
+   "num": "44",
+   "p": 0.435,
+   "plain": "The Dallas Cowboys win the NFC East division in the 2026 NFL season",
+   "raw": "NFC East Division Winner \u2014 Dallas",
+   "id": "t0382",
+   "pK": 43.5,
+   "pP": null,
+   "gotcha": "",
+   "venues": [
+    "K"
+   ]
+  },
+  {
+   "text": "NFC West: 49ers",
+   "num": "41",
+   "p": 0.405,
+   "plain": "The San Francisco 49ers win the NFC West division in the 2026 NFL season",
+   "raw": "NFC West Division Winner \u2014 San Francisco",
+   "id": "t0371",
+   "pK": 40.5,
+   "pP": null,
+   "gotcha": "",
+   "venues": [
+    "K"
+   ]
+  },
+  {
+   "text": "NFC North: Vikings",
+   "num": "38",
+   "p": 0.375,
+   "plain": "The Minnesota Vikings win the NFC North division in the 2026 NFL season",
+   "raw": "NFC North Division Winner \u2014 Minnesota",
+   "id": "t0380",
+   "pK": 37.5,
+   "pP": null,
+   "gotcha": "",
+   "venues": [
+    "K"
+   ]
+  },
+  {
+   "text": "NFC South: Falcons",
+   "num": "35",
+   "p": 0.345,
+   "plain": "The Atlanta Falcons win the NFC South division in the 2026 NFL season",
+   "raw": "NFC South Division Winner \u2014 Atlanta",
+   "id": "t0374",
+   "pK": 34.5,
+   "pP": null,
+   "gotcha": "",
+   "venues": [
+    "K"
+   ]
+  }
+ ],
+ "nrows": 4,
+ "chars": 0,
+ "venues": [
+  "Kalshi"
+ ],
+ "notes": [],
+ "viz": false
+}

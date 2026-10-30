@@ -1,0 +1,1320 @@
+[
+ {
+  "jid": "j063",
+  "type": "board",
+  "title": "Before Trump's term ends",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1196",
+   "q0949",
+   "q0072",
+   "q0073",
+   "q0089"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q0949: resolves if any Cabinet member, Joint Chief or federal agency definitively states extraterrestrial life or technology exists; broader than 'the US government confirms aliens exist'",
+   "q0949, q0072, q0073: 'January 2029' misstates the Jan 20/21, 2029 deadlines"
+  ],
+  "forward": 4.4,
+  "surprise": 3,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j138",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.3218,
+  "rank": 260,
+  "ids": [
+   "q1534",
+   "q0389"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "sentences faithful",
+   "q0389 note: resolves on being announced as headliner of the February 2027 show"
+  ],
+  "forward": 3.8,
+  "surprise": 3,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j137",
+  "type": "board",
+  "title": "By the end of 2027",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1227",
+   "q1532",
+   "q0913",
+   "q0012",
+   "q1233"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "deadlines shared (Dec 31, 2027 / Jan 1, 2028); sentences faithful",
+   "meaning notes: q0913 resolves when the law is enacted; q1233 resolves on an announced price increase"
+  ],
+  "forward": 3.6,
+  "surprise": 3,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j075",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-random",
+  "score": 0.3171,
+  "rank": 268,
+  "ids": [
+   "q0085",
+   "q1370"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q1370: rules count domestic opening-weekend gross only; plain implies overall",
+   "note: tone-borderline, impeachment of a named person (political process, not criminal)"
+  ],
+  "forward": 3.6,
+  "surprise": 2.8,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j054",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.3848,
+  "rank": 167,
+  "ids": [
+   "q0036",
+   "q0391"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 3.6,
+  "surprise": 2.6,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j048",
+  "type": "clock",
+  "title": "Donald Trump announces departure as President? (Excluding death)",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0786",
+   "q0787",
+   "q0788"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "plain sentences say Trump 'announces' leaving, but the rules resolve only if he actually leaves office (venue title says 'announces departure'; rules govern)",
+   "q0788: 'before January 2029' misstates the Jan 20, 2029 deadline",
+   "rungs worded three different ways; fixes make them one question and carry the death exclusion without naming it",
+   "note: tone-borderline, card title carries '(Excluding death)' about a named person; retitle"
+  ],
+  "forward": 3.6,
+  "surprise": 2.6,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j070",
+  "type": "board",
+  "title": "By mid-2027",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0102",
+   "q1534",
+   "q1941",
+   "q1388",
+   "q0291"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q1941: resolves only on FDA approval of one product, Moderna's intismeran autogene, for any indication; not any skin cancer vaccine",
+   "note: q1388 'AI bubble bursts' resolves on a rules checklist (excerpt cut off)"
+  ],
+  "forward": 3.4,
+  "surprise": 2.8,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j148",
+  "type": "board",
+  "title": "Before Trump's term ends",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0085",
+   "q0075",
+   "q0098",
+   "q0949",
+   "q0088"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q0075: rules say Zelenskyy and Putin MEET; sentence says speak",
+   "q0949 and q0088: deadline is January 20, 2029; sentences say 'before January 2029'",
+   "q0088: rules say the United States purchases from Denmark, not Trump personally",
+   "all five share the Jan 20, 2029 deadline"
+  ],
+  "forward": 3.4,
+  "surprise": 2.8,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j047",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.3351,
+  "rank": 237,
+  "ids": [
+   "q1426",
+   "q0989"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q1426: 'blue wave' is defined as Democrats at 218+ House seats and only 49+ Senate seats (no Senate majority needed); plain overstates"
+  ],
+  "forward": 3.2,
+  "surprise": 2.6,
+  "clear": 0.8,
+  "role": "pick"
+ },
+ {
+  "jid": "j172",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.5441,
+  "rank": 40,
+  "ids": [
+   "q1262",
+   "q1371"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "MEANING note: q1371 counts domestic (US) opening-weekend gross only"
+  ],
+  "forward": 3.2,
+  "surprise": 2.2,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j175",
+  "type": "board",
+  "title": "By the end of 2027",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1229",
+   "q0007",
+   "q0012",
+   "q1996",
+   "q0964"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "MEANING: q0007 resolves on a company officially announcing it has achieved AGI, not on AGI actually being achieved",
+   "MEANING: q0964 requires a crewed (manned) NASA landing",
+   "Members share the Dec 31, 2027 / Jan 1, 2028 deadline"
+  ],
+  "forward": 3,
+  "surprise": 2.4,
+  "clear": 0.8,
+  "role": "pick"
+ },
+ {
+  "jid": "j062",
+  "type": "board",
+  "title": "By the end of November",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1220",
+   "q0331",
+   "q1187",
+   "q0571",
+   "q0285"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "note: q0331 shows 61% before Dec 1 while the same question before Nov 1 (q0330) is 5%; verify the price before showing",
+   "note: q0571 omits the role (FBI Director)"
+  ],
+  "forward": 3,
+  "surprise": 2,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j261",
+  "type": "board",
+  "title": "By mid-2027",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0102",
+   "q0005",
+   "q1192",
+   "q1251",
+   "q0291"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q0005: rules need only a company's official ANNOUNCEMENT of AGI, not actual achievement",
+   "note: q0102 95% for a Fed hike by June 30, 2027 is striking; sentence matches rules, verify source price"
+  ],
+  "forward": 2.8,
+  "surprise": 2.8,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j059",
+  "type": "board",
+  "title": "By the end of 2026: the economy",
+  "origin": "v1",
+  "score": 0.5967,
+  "rank": 10,
+  "ids": [
+   "q0101",
+   "q1935",
+   "q1159",
+   "q1387"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "note: q1387 'AI bubble bursts' resolves on a rules checklist (at least three listed downturn conditions; excerpt cut off)"
+  ],
+  "forward": 2.8,
+  "surprise": 2.6,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j265",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.4848,
+  "rank": 83,
+  "ids": [
+   "q0057",
+   "q0988"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 2.8,
+  "surprise": 2.4,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j131",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.436,
+  "rank": 111,
+  "ids": [
+   "q1261",
+   "q0193"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "sentences faithful",
+   "q0193 note: this is the 99th Academy Awards (March 2027); sentence gives no year"
+  ],
+  "forward": 2.8,
+  "surprise": 2.2,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j192",
+  "type": "clock",
+  "title": "Russia x Ukraine ceasefire agreement by...?",
+  "origin": "v1",
+  "score": 0.3592,
+  "rank": 14,
+  "ids": [
+   "q1719",
+   "q1728",
+   "q1720",
+   "q1722",
+   "q1724",
+   "q1725"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q1720 gives 'December 31' with no year; deadline is December 31, 2026",
+   "TONE: card subject is the Russia-Ukraine war (ceasefire agreement), though the claim is about a truce, not strikes or casualties",
+   "Rungs are the same question; probabilities rise with the deadline"
+  ],
+  "forward": 2.8,
+  "surprise": 2,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j238",
+  "type": "clock",
+  "title": "Will the US issue a Level 4 travel advisory for Taiwan?",
+  "origin": "v1",
+  "score": 0.1243,
+  "rank": 21,
+  "ids": [
+   "q0011",
+   "q0012",
+   "q0013",
+   "q0014"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "note: q0012 adds 'Do Not Travel' gloss; accurate, harmless"
+  ],
+  "forward": 2.4,
+  "surprise": 2.2,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j150",
+  "type": "clock",
+  "title": "Russia x Ukraine peace talks by...?",
+  "origin": "v1",
+  "score": 0.3708,
+  "rank": 13,
+  "ids": [
+   "q1786",
+   "q1787",
+   "q1788",
+   "q1785"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "clock rungs are the same question at increasing deadlines; sentences faithful",
+   "tone (borderline): Russia-Ukraine war topic, about talks rather than strikes"
+  ],
+  "forward": 2.4,
+  "surprise": 1.8,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j056",
+  "type": "clock",
+  "title": "NASA lands on the moon?",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0963",
+   "q0964",
+   "q0965"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "rules require a manned NASA mission to land; plain 'NASA lands on the moon' also reads as an uncrewed lander"
+  ],
+  "forward": 2.4,
+  "surprise": 0.8,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j160",
+  "type": "clock",
+  "title": "Will the US acquire any new territory?",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0043",
+   "q0044",
+   "q0045"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "MEANING note: rules count the US gaining control of any territory outside its sovereignty, which is broader than a formal acquisition"
+  ],
+  "forward": 2.2,
+  "surprise": 1.8,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j250",
+  "type": "clock",
+  "title": "US-Iran Hormuz Agreement by...?",
+  "origin": "v1",
+  "score": 0.1649,
+  "rank": 20,
+  "ids": [
+   "q1898",
+   "q1896",
+   "q1895",
+   "q1897",
+   "q1899"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "note: war-adjacent (US-Iran standoff) but the claim is a diplomatic agreement; not counted as a TONE hit"
+  ],
+  "forward": 2,
+  "surprise": 0.4,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j159",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.4082,
+  "rank": 143,
+  "ids": [
+   "q0015",
+   "q0135"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q0135 omits the deadline (first game of the 2028 season) and that an official relocation announcement also counts"
+  ],
+  "forward": 2.8,
+  "surprise": 1.4,
+  "clear": 1,
+  "role": "pick"
+ },
+ {
+  "jid": "j191",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.6047,
+  "rank": 21,
+  "ids": [
+   "q0438",
+   "q0991"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "MEANING: q0438 'blue wave' means Democrats hold 218+ House seats and only 49+ Senate seats; a Senate majority is not required, which a casual reader would not expect"
+  ],
+  "forward": 2.6,
+  "surprise": 2.4,
+  "clear": 0.8,
+  "role": "pick"
+ },
+ {
+  "jid": "j176",
+  "type": "board",
+  "title": "By the end of October",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1430",
+   "q1947",
+   "q0819",
+   "q0761"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "STRUCTURE: q1938 is 'Anthropic IPO happens in November 2026', a November month bucket, not an end-of-October claim; drop it (4 members remain)",
+   "q0761 says 'sign' but rules count a deal agreed to, signed, or accepted",
+   "TONE note: q1947 is war-related (Russia-Ukraine diplomatic meeting), though about diplomacy, not strikes or casualties"
+  ],
+  "forward": 2.4,
+  "surprise": 2,
+  "clear": 0.2,
+  "role": "control"
+ },
+ {
+  "jid": "j106",
+  "type": "board",
+  "title": "By the end of 2026",
+  "origin": "light-only",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1427",
+   "q0815",
+   "q0869",
+   "q0868",
+   "q0855"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q0868: 'GTA VI Online' is the online mode, not the base game (due Nov 19, 2026); 11% reads as the game itself slipping - clarify"
+  ],
+  "forward": 2.4,
+  "surprise": 1.4,
+  "clear": 1,
+  "role": "control"
+ },
+ {
+  "jid": "j237",
+  "type": "clock",
+  "title": "Will Trump publicly criticize Kevin Warsh?",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0914",
+   "q0915",
+   "q0916"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 1.4,
+  "surprise": 0.2,
+  "clear": 0.4,
+  "role": "control"
+ },
+ {
+  "jid": "j103",
+  "type": "clock",
+  "title": "Oklahoma enacts data center moratorium by...?",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q2035",
+   "q2036",
+   "q2037",
+   "q2038"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 1.4,
+  "surprise": 0,
+  "clear": 1,
+  "role": "control"
+ },
+ {
+  "jid": "j118",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.4444,
+  "rank": 105,
+  "ids": [
+   "q0060",
+   "q1566"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q1566: '2027 AFC championship' is the January 2027 game deciding the 2026 season (deadline 2027-04-01); label reads like the 2027 season",
+   "q0060 note: resolves on inauguration for the term beginning 2029, not election night"
+  ],
+  "forward": 1.6,
+  "surprise": 0.2,
+  "clear": 1,
+  "role": "control"
+ },
+ {
+  "jid": "j061",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.3418,
+  "rank": 221,
+  "ids": [
+   "q1604",
+   "q0868"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 1.6,
+  "surprise": 0.8,
+  "clear": 0.6,
+  "role": "control"
+ },
+ {
+  "jid": "j181",
+  "type": "board",
+  "title": "By the end of 2027",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1235",
+   "q0787",
+   "q0948",
+   "q1996",
+   "q0154"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "MEANING: q1235 resolves on OpenAI announcing it has attained AGI, not on AGI itself",
+   "q0787: title says 'announces departure (excluding death)' but rules say 'leaves office'; plain covers only the announcement and drops the death exclusion (verify against full rules)",
+   "TONE note: q0787 venue text references a named person's death as an exclusion",
+   "MEANING: q0154 means all four majors in a single year, not a career Grand Slam",
+   "MEANING note: q0948 resolves if any one of the President, a Cabinet member, a Joint Chief or a federal agency states extraterrestrial life or technology exists",
+   "Members share the Dec 31, 2027 / Jan 1, 2028 deadline"
+  ],
+  "forward": 3.2,
+  "surprise": 2.8,
+  "clear": 0.8,
+  "role": "reserve"
+ },
+ {
+  "jid": "j245",
+  "type": "board",
+  "title": "By the end of 2026",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1750",
+   "q1531",
+   "q0868",
+   "q1437"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 3,
+  "surprise": 2.6,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j133",
+  "type": "board",
+  "title": "By the end of 2027: Washington",
+  "origin": "v1",
+  "score": 0.7677,
+  "rank": 8,
+  "ids": [
+   "q1229",
+   "q0084",
+   "q0913",
+   "q0044",
+   "q0147"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "all five share the Jan 1, 2028 deadline; sentences faithful",
+   "q0084 note: 'Trump' is added; rules cover any cabinet member impeached by the House",
+   "q0147 note: resolves on Trump announcing a 2028 run before 2028",
+   "meaning notes: q0913 resolves when the law is enacted; q0044 counts gaining control of any outside territory"
+  ],
+  "forward": 3,
+  "surprise": 2.2,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j099",
+  "type": "board",
+  "title": "By the end of 2026",
+  "origin": "fun-weighted",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1750",
+   "q1427",
+   "q1531",
+   "q0868",
+   "q0043"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q0868: 'GTA VI Online' is the online mode, not the base game (due Nov 19, 2026); 11% reads as the game itself slipping - clarify"
+  ],
+  "forward": 2.8,
+  "surprise": 2.2,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j169",
+  "type": "board",
+  "title": "Before Trump's term ends: the world",
+  "origin": "fun-weighted",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0075",
+   "q0098",
+   "q0072",
+   "q0073"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q0075: venue title says 'speak' but the rules say Zelenskyy and Putin 'meet'; plain follows the title, rules govern (verify against full rules)",
+   "q0072 and q0073 say 'January 2029' but the deadline is before January 21, 2029",
+   "Members share the Jan 20-21, 2029 deadline"
+  ],
+  "forward": 2.8,
+  "surprise": 2.2,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j073",
+  "type": "board",
+  "title": "By the end of 2026",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1221",
+   "q1750",
+   "q1963",
+   "q0043"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 2.8,
+  "surprise": 2,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j113",
+  "type": "clock",
+  "title": "Tesla and SpaceX merger officially announced by...?",
+  "origin": "v1",
+  "score": 0.5728,
+  "rank": 8,
+  "ids": [
+   "q1531",
+   "q1533",
+   "q1534",
+   "q1532"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 3.4,
+  "surprise": 2.6,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j076",
+  "type": "clock",
+  "title": "Russia x Ukraine any diplomatic meeting by...?",
+  "origin": "v1",
+  "score": 0.4183,
+  "rank": 12,
+  "ids": [
+   "q1948",
+   "q1947",
+   "q1946"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 2.2,
+  "surprise": 2,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j155",
+  "type": "clock",
+  "title": "When will traffic at the Strait of Hormuz return to normal?",
+  "origin": "v1",
+  "score": 0.274,
+  "rank": 17,
+  "ids": [
+   "q1167",
+   "q1168",
+   "q1169",
+   "q1170",
+   "q1171",
+   "q1175"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q1167 deadline (before Oct 1, 2026) has already passed; stale rung should be removed (not listed in drop_members because drops are limited to board/dossier)",
+   "MEANING: 'normal' means the 7-day average of IMF PortWatch transit calls is above 60, a fixed threshold rather than pre-crisis traffic"
+  ],
+  "forward": 2,
+  "surprise": 0.2,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j049",
+  "type": "clock",
+  "title": "Anthropic announces bankruptcy by...?",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1996",
+   "q1997",
+   "q1998"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 1.8,
+  "surprise": 1.8,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j080",
+  "type": "clock",
+  "title": "Texas enacts data center moratorium by...?",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q2027",
+   "q2028",
+   "q2029",
+   "q2030"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 1.8,
+  "surprise": 1.8,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j060",
+  "type": "clock",
+  "title": "When will the next Millennium Prize be awarded?",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1205",
+   "q1206",
+   "q1207",
+   "q1208"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 1.8,
+  "surprise": 1.6,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j153",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.545,
+  "rank": 38,
+  "ids": [
+   "q1227",
+   "q0193"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "sentences faithful; unrelated claims at 66% and 67%"
+  ],
+  "forward": 3.2,
+  "surprise": 2.4,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j090",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-random",
+  "score": 0.3351,
+  "rank": 238,
+  "ids": [
+   "q1426",
+   "q0991"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q1426: 'blue wave' is defined as Democrats 218+ House seats AND only 49+ Senate seats (no Senate majority needed); 'sweeps' misleads at 85%"
+  ],
+  "forward": 3,
+  "surprise": 2.6,
+  "clear": 0.8,
+  "role": "reserve"
+ },
+ {
+  "jid": "j083",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.6222,
+  "rank": 16,
+  "ids": [
+   "q0788",
+   "q0200"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q0788: deadline is before Jan 20, 2029; sentence says 'before January 2029'",
+   "q0788 note: title says 'announces departure (excluding death)' but rules excerpt says 'leaves office'"
+  ],
+  "forward": 3,
+  "surprise": 2.4,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j078",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-random",
+  "score": 0.3051,
+  "rank": 284,
+  "ids": [
+   "q1750",
+   "q0184"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 2.8,
+  "surprise": 2.8,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j189",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.3345,
+  "rank": 240,
+  "ids": [
+   "q1534",
+   "q0539"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q0539 does not say which season; deadline (Jan 25, 2027) indicates the 2026 season"
+  ],
+  "forward": 2.8,
+  "surprise": 2.4,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j185",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.4353,
+  "rank": 115,
+  "ids": [
+   "q0440",
+   "q1370"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "MEANING note: q1370 counts domestic (US) opening-weekend gross only"
+  ],
+  "forward": 2.8,
+  "surprise": 2.2,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j115",
+  "type": "dossier",
+  "title": "Donald Trump",
+  "origin": "v1",
+  "score": 0.9978,
+  "rank": 3,
+  "ids": [
+   "q0085",
+   "q0046",
+   "q0042"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q0085 and q1225 are the same underlying question (Trump impeached) at two deadlines; keep the full-term one"
+  ],
+  "forward": 3.4,
+  "surprise": 2.6,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j161",
+  "type": "dossier",
+  "title": "Federal Reserve",
+  "origin": "v1",
+  "score": 0.3181,
+  "rank": 21,
+  "ids": [
+   "q1144",
+   "q0101",
+   "q0452",
+   "q0089"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "MEANING note: q0089 resolves only if a law abolishing the Fed Board and reserve banks is enacted before Jan 20, 2029",
+   "q1144 and q0452 are different meetings, not the same claim"
+  ],
+  "forward": 2.4,
+  "surprise": 2.2,
+  "clear": 0.8,
+  "role": "reserve"
+ },
+ {
+  "jid": "j111",
+  "type": "reversal",
+  "title": "",
+  "origin": "v1",
+  "score": 0.1395,
+  "rank": 32,
+  "ids": [
+   "q1531",
+   "q1360"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "note: likelier claim's deadline (Dec 31, 2026) is about 6 weeks after the other's (Nov 20, 2026); gap is modest, not clearly later"
+  ],
+  "forward": 2.8,
+  "surprise": 1.6,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j173",
+  "type": "reversal",
+  "title": "",
+  "origin": "v1",
+  "score": 0.1402,
+  "rank": 31,
+  "ids": [
+   "q1935",
+   "q0818"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "Likelier claim does not have a later deadline (both end Dec 31, 2026) and neither claim implies the other",
+   "Note: q1935 covers an agreement to lower US tariffs on Canada specifically"
+  ],
+  "forward": 2,
+  "surprise": 1.8,
+  "clear": 1,
+  "role": "reserve"
+ },
+ {
+  "jid": "j188",
+  "type": "board",
+  "title": "By the end of 2026",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1221",
+   "q1531",
+   "q1474",
+   "q0855"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "Members share the Dec 31, 2026 / Jan 1, 2027 deadline; sentences match rules",
+   "MEANING note: q1474 'visit' includes entering Greenland's maritime territory (rules cut off)"
+  ],
+  "forward": 2.4,
+  "surprise": 1.6,
+  "clear": 1,
+  "role": "reserve-control"
+ },
+ {
+  "jid": "j128",
+  "type": "board",
+  "title": "By the end of 2026",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1221",
+   "q1531",
+   "q1680",
+   "q0947"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "deadlines shared (Dec 31, 2026 / Jan 1, 2027); sentences faithful",
+   "meaning note q0947: one Cabinet member or agency stating extraterrestrial life or technology exists counts",
+   "meaning note q1680: entering North Korean land or waters counts as a visit"
+  ],
+  "forward": 2.4,
+  "surprise": 1,
+  "clear": 1,
+  "role": "reserve-control"
+ },
+ {
+  "jid": "j095",
+  "type": "board",
+  "title": "By the end of 2026: Washington",
+  "origin": "fun-weighted",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1426",
+   "q1630",
+   "q0081",
+   "q1474",
+   "q0043"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q1426: 'blue wave' is defined as Democrats 218+ House seats AND only 49+ Senate seats (no Senate majority needed); 'sweeps' misleads at 85%"
+  ],
+  "forward": 2.4,
+  "surprise": 1.8,
+  "clear": 0.8,
+  "role": "reserve-control"
+ },
+ {
+  "jid": "j156",
+  "type": "clock",
+  "title": "Next US-Iran senior diplomatic meeting by...?",
+  "origin": "v1",
+  "score": 0.2939,
+  "rank": 16,
+  "ids": [
+   "q2018",
+   "q2016",
+   "q2017"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q2018 deadline (Oct 5, 2026) is today/past at 0%; stale rung should be removed, leaving two rungs (not listed in drop_members because drops are limited to board/dossier)",
+   "Sentences omit 'next': market is about the next meeting after the Sept 22 Witkoff/Kushner-Araghchi meeting",
+   "Rules excerpt is cut off, so what counts as a 'senior' meeting could not be checked"
+  ],
+  "forward": 1.4,
+  "surprise": 0,
+  "clear": 1,
+  "role": "reserve-control"
+ },
+ {
+  "jid": "j058",
+  "type": "clock",
+  "title": "Missouri enacts data center moratorium by...?",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q2039",
+   "q2040",
+   "q2041",
+   "q2042"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 1.4,
+  "surprise": 1.2,
+  "clear": 1,
+  "role": "reserve-control"
+ },
+ {
+  "jid": "j120",
+  "type": "clock",
+  "title": "When will OpenAI release a personal AI agent?",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0825",
+   "q0826",
+   "q0827"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "clock rungs are the same question at increasing deadlines; sentences faithful",
+   "meaning note: 'personal AI agent' is narrowly defined (remembers the user and starts multi-step tasks across third-party apps on its own)"
+  ],
+  "forward": 1.2,
+  "surprise": 0.2,
+  "clear": 0.4,
+  "role": "reserve-control"
+ },
+ {
+  "jid": "j079",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-random",
+  "score": 0.2973,
+  "rank": 298,
+  "ids": [
+   "q1234",
+   "q1625"
+  ],
+  "verdict": "fix",
+  "notes": [
+   "q1234: rules resolve on OpenAI ANNOUNCING it attained AGI, not on AGI being achieved"
+  ],
+  "forward": 1.4,
+  "surprise": 1,
+  "clear": 0.6,
+  "role": "reserve-control"
+ },
+ {
+  "jid": "j096",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-random",
+  "score": 0.3985,
+  "rank": 154,
+  "ids": [
+   "q0097",
+   "q1034"
+  ],
+  "verdict": "pass",
+  "notes": [],
+  "forward": 1.6,
+  "surprise": 0.6,
+  "clear": 1,
+  "role": "reserve-control"
+ },
+ {
+  "jid": "j121",
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.599,
+  "rank": 24,
+  "ids": [
+   "q1252",
+   "q1878"
+  ],
+  "verdict": "pass",
+  "notes": [
+   "sentences faithful; unrelated claims both at 21%"
+  ],
+  "forward": 1.8,
+  "surprise": 0.6,
+  "clear": 1,
+  "role": "reserve-control"
+ }
+]

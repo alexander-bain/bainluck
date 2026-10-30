@@ -1,0 +1,18 @@
+{
+  "originals": {
+    "FABLE-ROUNDUP-CARD-DESIGN-REFERENCE-20261006.md": {
+      "bytes": 6095,
+      "sha256": "cb91c3e71986bf3e0a4fced2fd7c3bb6ee1c8805e822170d6200f0b01027503c"
+    },
+    "fable-roundup-card-reference-20261006.tar.gz": {
+      "bytes": 1273023,
+      "sha256": "1c3e588289fa03bfec5759108149eecff74277adfcb667e8303c731ed97e5446"
+    }
+  },
+  "manifest_entries_verified": 37,
+  "archive_members": 40,
+  "reference_images": 24,
+  "extra_or_missing_manifest_files": false,
+  "standalone_md_matches_archive_copy": true,
+  "rendering_scripts_executed": false
+}

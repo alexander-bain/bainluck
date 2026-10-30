@@ -1,0 +1,755 @@
+[
+ {
+  "type": "board",
+  "title": "By the end of 2026",
+  "origin": "light-only",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1427",
+   "q0815",
+   "q0869",
+   "q0868",
+   "q0855"
+  ],
+  "jid": "j106",
+  "verdict": "fix",
+  "notes": [
+   "q0868: 'GTA VI Online' is the online mode, not the base game (due Nov 19, 2026); 11% reads as the game itself slipping - clarify"
+  ],
+  "fixes": {
+   "q0868": "Rockstar releases GTA VI Online, the game's online mode, before 2027"
+  },
+  "forward": 2.4,
+  "surprise": 1.4,
+  "clear": 1,
+  "role": "control",
+  "n": 1
+ },
+ {
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.4661,
+  "rank": 93,
+  "ids": [
+   "q0088",
+   "q0999"
+  ],
+  "jid": "j257",
+  "verdict": "fix",
+  "notes": [
+   "q0088: rules say the United States buys from Denmark, deadline is January 20, 2029, not 'before January 2029'",
+   "q0999: resolves on Google's Year in Search 2026 Global People list, which ranks trending searches, not total search volume"
+  ],
+  "fixes": {
+   "q0088": "The US buys at least part of Greenland from Denmark before January 20, 2029",
+   "q0999": "Bad Bunny tops Google's Year in Search 2026 global People list"
+  },
+  "forward": 1.8,
+  "surprise": 0.8,
+  "clear": 1,
+  "role": "control",
+  "n": 2
+ },
+ {
+  "type": "clock",
+  "title": "Will Trump publicly criticize Kevin Warsh?",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0914",
+   "q0915",
+   "q0916"
+  ],
+  "jid": "j237",
+  "verdict": "pass",
+  "notes": [],
+  "fixes": {},
+  "forward": 1.4,
+  "surprise": 0.2,
+  "clear": 0.4,
+  "role": "control",
+  "n": 3
+ },
+ {
+  "type": "reversal",
+  "title": "",
+  "origin": "v1",
+  "score": 0.1402,
+  "rank": 31,
+  "ids": [
+   "q1935",
+   "q0818"
+  ],
+  "jid": "j173",
+  "verdict": "pass",
+  "notes": [
+   "Likelier claim does not have a later deadline (both end Dec 31, 2026) and neither claim implies the other",
+   "Note: q1935 covers an agreement to lower US tariffs on Canada specifically"
+  ],
+  "fixes": {},
+  "forward": 2,
+  "surprise": 1.8,
+  "clear": 1,
+  "role": "pick",
+  "n": 4
+ },
+ {
+  "type": "dossier",
+  "title": "Federal Reserve",
+  "origin": "v1",
+  "score": 0.3181,
+  "rank": 21,
+  "ids": [
+   "q1144",
+   "q0101",
+   "q0452",
+   "q0089"
+  ],
+  "jid": "j161",
+  "verdict": "pass",
+  "notes": [
+   "MEANING note: q0089 resolves only if a law abolishing the Fed Board and reserve banks is enacted before Jan 20, 2029",
+   "q1144 and q0452 are different meetings, not the same claim"
+  ],
+  "fixes": {},
+  "forward": 2.4,
+  "surprise": 2.2,
+  "clear": 0.8,
+  "role": "pick",
+  "n": 5
+ },
+ {
+  "type": "board",
+  "title": "By the end of October",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1430",
+   "q1947",
+   "q0819",
+   "q0761"
+  ],
+  "jid": "j176",
+  "verdict": "fix",
+  "notes": [
+   "STRUCTURE: q1938 is 'Anthropic IPO happens in November 2026', a November month bucket, not an end-of-October claim; drop it (4 members remain)",
+   "q0761 says 'sign' but rules count a deal agreed to, signed, or accepted",
+   "TONE note: q1947 is war-related (Russia-Ukraine diplomatic meeting), though about diplomacy, not strikes or casualties"
+  ],
+  "fixes": {
+   "q0761": "The US and Iran reach a new nuclear deal before November 1, 2026"
+  },
+  "forward": 2.4,
+  "surprise": 2,
+  "clear": 0.2,
+  "role": "control",
+  "n": 6
+ },
+ {
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-random",
+  "score": 0.3117,
+  "rank": 275,
+  "ids": [
+   "q1657",
+   "q0741"
+  ],
+  "jid": "j040",
+  "verdict": "pass",
+  "notes": [],
+  "fixes": {},
+  "forward": 2.8,
+  "surprise": 2.4,
+  "clear": 1,
+  "role": "pick",
+  "n": 7
+ },
+ {
+  "type": "clock",
+  "title": "Will the US issue a Level 4 travel advisory for Taiwan?",
+  "origin": "v1",
+  "score": 0.1243,
+  "rank": 21,
+  "ids": [
+   "q0011",
+   "q0012",
+   "q0013",
+   "q0014"
+  ],
+  "jid": "j238",
+  "verdict": "pass",
+  "notes": [
+   "note: q0012 adds 'Do Not Travel' gloss; accurate, harmless"
+  ],
+  "fixes": {},
+  "forward": 2.4,
+  "surprise": 2.2,
+  "clear": 1,
+  "role": "pick",
+  "n": 8
+ },
+ {
+  "type": "board",
+  "title": "By the end of 2027",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1235",
+   "q0787",
+   "q0948",
+   "q1996",
+   "q0154"
+  ],
+  "jid": "j181",
+  "verdict": "fix",
+  "notes": [
+   "MEANING: q1235 resolves on OpenAI announcing it has attained AGI, not on AGI itself",
+   "q0787: title says 'announces departure (excluding death)' but rules say 'leaves office'; plain covers only the announcement and drops the death exclusion (verify against full rules)",
+   "TONE note: q0787 venue text references a named person's death as an exclusion",
+   "MEANING: q0154 means all four majors in a single year, not a career Grand Slam",
+   "MEANING note: q0948 resolves if any one of the President, a Cabinet member, a Joint Chief or a federal agency states extraterrestrial life or technology exists",
+   "Members share the Dec 31, 2027 / Jan 1, 2028 deadline"
+  ],
+  "fixes": {
+   "q1235": "OpenAI announces it has achieved AGI before 2028",
+   "q0787": "Donald Trump leaves office early, or announces he will, before 2028",
+   "q0154": "Scottie Scheffler wins all four golf majors in a single year before 2028"
+  },
+  "forward": 3.2,
+  "surprise": 2.8,
+  "clear": 0.8,
+  "role": "pick",
+  "n": 9
+ },
+ {
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.4848,
+  "rank": 83,
+  "ids": [
+   "q0057",
+   "q0988"
+  ],
+  "jid": "j265",
+  "verdict": "pass",
+  "notes": [],
+  "fixes": {},
+  "forward": 2.8,
+  "surprise": 2.4,
+  "clear": 1,
+  "role": "pick",
+  "n": 10
+ },
+ {
+  "type": "clock",
+  "title": "Donald Trump announces departure as President? (Excluding death)",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0786",
+   "q0787",
+   "q0788"
+  ],
+  "jid": "j048",
+  "verdict": "fix",
+  "notes": [
+   "plain sentences say Trump 'announces' leaving, but the rules resolve only if he actually leaves office (venue title says 'announces departure'; rules govern)",
+   "q0788: 'before January 2029' misstates the Jan 20, 2029 deadline",
+   "rungs worded three different ways; fixes make them one question and carry the death exclusion without naming it",
+   "note: tone-borderline, card title carries '(Excluding death)' about a named person; retitle"
+  ],
+  "fixes": {
+   "q0786": "Trump resigns or is removed from office before 2027",
+   "q0787": "Trump resigns or is removed from office before 2028",
+   "q0788": "Trump resigns or is removed from office before January 20, 2029"
+  },
+  "forward": 3.6,
+  "surprise": 2.6,
+  "clear": 1,
+  "role": "pick",
+  "n": 11
+ },
+ {
+  "type": "board",
+  "title": "By the end of November",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1220",
+   "q0331",
+   "q1187",
+   "q0571",
+   "q0285"
+  ],
+  "jid": "j062",
+  "verdict": "pass",
+  "notes": [
+   "note: q0331 shows 61% before Dec 1 while the same question before Nov 1 (q0330) is 5%; verify the price before showing",
+   "note: q0571 omits the role (FBI Director)"
+  ],
+  "fixes": {},
+  "forward": 3,
+  "surprise": 2,
+  "clear": 1,
+  "role": "pick",
+  "n": 12
+ },
+ {
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.5954,
+  "rank": 28,
+  "ids": [
+   "q1389",
+   "q1035"
+  ],
+  "jid": "j057",
+  "verdict": "pass",
+  "notes": [],
+  "fixes": {},
+  "forward": 1.6,
+  "surprise": 0.6,
+  "clear": 1,
+  "role": "control",
+  "n": 13
+ },
+ {
+  "type": "clock",
+  "title": "Russia x Ukraine ceasefire agreement by...?",
+  "origin": "v1",
+  "score": 0.3592,
+  "rank": 14,
+  "ids": [
+   "q1719",
+   "q1728",
+   "q1720",
+   "q1722",
+   "q1724",
+   "q1725"
+  ],
+  "jid": "j192",
+  "verdict": "fix",
+  "notes": [
+   "q1720 gives 'December 31' with no year; deadline is December 31, 2026",
+   "TONE: card subject is the Russia-Ukraine war (ceasefire agreement), though the claim is about a truce, not strikes or casualties",
+   "Rungs are the same question; probabilities rise with the deadline"
+  ],
+  "fixes": {
+   "q1720": "Russia and Ukraine agree to a ceasefire by December 31, 2026"
+  },
+  "forward": 2.8,
+  "surprise": 2,
+  "clear": 1,
+  "role": "pick",
+  "n": 14
+ },
+ {
+  "type": "board",
+  "title": "By mid-2027",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0102",
+   "q1534",
+   "q1941",
+   "q1388",
+   "q0291"
+  ],
+  "jid": "j070",
+  "verdict": "fix",
+  "notes": [
+   "q1941: resolves only on FDA approval of one product, Moderna's intismeran autogene, for any indication; not any skin cancer vaccine",
+   "note: q1388 'AI bubble bursts' resolves on a rules checklist (excerpt cut off)"
+  ],
+  "fixes": {
+   "q1941": "The FDA approves Moderna's personalized cancer vaccine intismeran autogene by June 30, 2027"
+  },
+  "forward": 3.4,
+  "surprise": 2.8,
+  "clear": 1,
+  "role": "pick",
+  "n": 15
+ },
+ {
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.5441,
+  "rank": 40,
+  "ids": [
+   "q1262",
+   "q1371"
+  ],
+  "jid": "j172",
+  "verdict": "pass",
+  "notes": [
+   "MEANING note: q1371 counts domestic (US) opening-weekend gross only"
+  ],
+  "fixes": {},
+  "forward": 3.2,
+  "surprise": 2.2,
+  "clear": 1,
+  "role": "pick",
+  "n": 16
+ },
+ {
+  "type": "clock",
+  "title": "Oklahoma enacts data center moratorium by...?",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q2035",
+   "q2036",
+   "q2037",
+   "q2038"
+  ],
+  "jid": "j103",
+  "verdict": "pass",
+  "notes": [],
+  "fixes": {},
+  "forward": 1.4,
+  "surprise": 0,
+  "clear": 1,
+  "role": "control",
+  "n": 17
+ },
+ {
+  "type": "board",
+  "title": "By the end of 2026",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1750",
+   "q1531",
+   "q0868",
+   "q1437"
+  ],
+  "jid": "j245",
+  "verdict": "pass",
+  "notes": [],
+  "fixes": {},
+  "forward": 3,
+  "surprise": 2.6,
+  "clear": 1,
+  "role": "pick",
+  "n": 18
+ },
+ {
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.3351,
+  "rank": 237,
+  "ids": [
+   "q1426",
+   "q0989"
+  ],
+  "jid": "j047",
+  "verdict": "fix",
+  "notes": [
+   "q1426: 'blue wave' is defined as Democrats at 218+ House seats and only 49+ Senate seats (no Senate majority needed); plain overstates"
+  ],
+  "fixes": {
+   "q1426": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms"
+  },
+  "forward": 3.2,
+  "surprise": 2.6,
+  "clear": 0.8,
+  "role": "pick",
+  "n": 19
+ },
+ {
+  "type": "clock",
+  "title": "Tesla and SpaceX merger officially announced by...?",
+  "origin": "v1",
+  "score": 0.5728,
+  "rank": 8,
+  "ids": [
+   "q1531",
+   "q1533",
+   "q1534",
+   "q1532"
+  ],
+  "jid": "j113",
+  "verdict": "pass",
+  "notes": [],
+  "fixes": {},
+  "forward": 3.4,
+  "surprise": 2.6,
+  "clear": 1,
+  "role": "pick",
+  "n": 20
+ },
+ {
+  "type": "board",
+  "title": "Before Trump's term ends",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0085",
+   "q0075",
+   "q0098",
+   "q0949",
+   "q0088"
+  ],
+  "jid": "j148",
+  "verdict": "fix",
+  "notes": [
+   "q0075: rules say Zelenskyy and Putin MEET; sentence says speak",
+   "q0949 and q0088: deadline is January 20, 2029; sentences say 'before January 2029'",
+   "q0088: rules say the United States purchases from Denmark, not Trump personally",
+   "all five share the Jan 20, 2029 deadline"
+  ],
+  "fixes": {
+   "q0075": "Zelenskyy and Putin meet before January 20, 2029",
+   "q0949": "The US government confirms that aliens exist before January 20, 2029",
+   "q0088": "The US buys at least part of Greenland from Denmark before January 20, 2029"
+  },
+  "forward": 3.4,
+  "surprise": 2.8,
+  "clear": 1,
+  "role": "pick",
+  "n": 21
+ },
+ {
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-random",
+  "score": 0.3171,
+  "rank": 268,
+  "ids": [
+   "q0085",
+   "q1370"
+  ],
+  "jid": "j075",
+  "verdict": "fix",
+  "notes": [
+   "q1370: rules count domestic opening-weekend gross only; plain implies overall",
+   "note: tone-borderline, impeachment of a named person (political process, not criminal)"
+  ],
+  "fixes": {
+   "q1370": "Spider-Man: Brand New Day has the biggest domestic opening weekend of 2026"
+  },
+  "forward": 3.6,
+  "surprise": 2.8,
+  "clear": 1,
+  "role": "pick",
+  "n": 22
+ },
+ {
+  "type": "clock",
+  "title": "Will the US acquire any new territory?",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0043",
+   "q0044",
+   "q0045"
+  ],
+  "jid": "j160",
+  "verdict": "pass",
+  "notes": [
+   "MEANING note: rules count the US gaining control of any territory outside its sovereignty, which is broader than a formal acquisition"
+  ],
+  "fixes": {},
+  "forward": 2.2,
+  "surprise": 1.8,
+  "clear": 1,
+  "role": "pick",
+  "n": 23
+ },
+ {
+  "type": "board",
+  "title": "By the end of 2027",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1227",
+   "q1532",
+   "q0913",
+   "q0012",
+   "q1233"
+  ],
+  "jid": "j137",
+  "verdict": "pass",
+  "notes": [
+   "deadlines shared (Dec 31, 2027 / Jan 1, 2028); sentences faithful",
+   "meaning notes: q0913 resolves when the law is enacted; q1233 resolves on an announced price increase"
+  ],
+  "fixes": {},
+  "forward": 3.6,
+  "surprise": 3,
+  "clear": 1,
+  "role": "pick",
+  "n": 24
+ },
+ {
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.436,
+  "rank": 111,
+  "ids": [
+   "q1261",
+   "q0193"
+  ],
+  "jid": "j131",
+  "verdict": "pass",
+  "notes": [
+   "sentences faithful",
+   "q0193 note: this is the 99th Academy Awards (March 2027); sentence gives no year"
+  ],
+  "fixes": {},
+  "forward": 2.8,
+  "surprise": 2.2,
+  "clear": 1,
+  "role": "pick",
+  "n": 25
+ },
+ {
+  "type": "clock",
+  "title": "NASA lands on the moon?",
+  "origin": "loosened",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0963",
+   "q0964",
+   "q0965"
+  ],
+  "jid": "j056",
+  "verdict": "fix",
+  "notes": [
+   "rules require a manned NASA mission to land; plain 'NASA lands on the moon' also reads as an uncrewed lander"
+  ],
+  "fixes": {
+   "q0963": "NASA lands astronauts on the Moon before 2027",
+   "q0964": "NASA lands astronauts on the Moon before 2028",
+   "q0965": "NASA lands astronauts on the Moon before 2029"
+  },
+  "forward": 2.4,
+  "surprise": 0.8,
+  "clear": 1,
+  "role": "pick",
+  "n": 26
+ },
+ {
+  "type": "board",
+  "title": "Before Trump's term ends",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q1196",
+   "q0949",
+   "q0072",
+   "q0073",
+   "q0089"
+  ],
+  "jid": "j063",
+  "verdict": "fix",
+  "notes": [
+   "q0949: resolves if any Cabinet member, Joint Chief or federal agency definitively states extraterrestrial life or technology exists; broader than 'the US government confirms aliens exist'",
+   "q0949, q0072, q0073: 'January 2029' misstates the Jan 20/21, 2029 deadlines"
+  ],
+  "fixes": {
+   "q0949": "A top US official or federal agency definitively states alien life or technology exists before January 20, 2029",
+   "q0072": "The US takes control of part of Greenland before January 21, 2029",
+   "q0073": "The US takes control of any part of Canada before January 21, 2029"
+  },
+  "forward": 4.4,
+  "surprise": 3,
+  "clear": 1,
+  "role": "pick",
+  "n": 27
+ },
+ {
+  "type": "yardstick",
+  "title": "",
+  "origin": "v1-top",
+  "score": 0.3848,
+  "rank": 167,
+  "ids": [
+   "q0036",
+   "q0391"
+  ],
+  "jid": "j054",
+  "verdict": "pass",
+  "notes": [],
+  "fixes": {},
+  "forward": 3.6,
+  "surprise": 2.6,
+  "clear": 1,
+  "role": "pick",
+  "n": 28
+ },
+ {
+  "type": "clock",
+  "title": "Russia x Ukraine peace talks by...?",
+  "origin": "v1",
+  "score": 0.3708,
+  "rank": 13,
+  "ids": [
+   "q1786",
+   "q1787",
+   "q1788",
+   "q1785"
+  ],
+  "jid": "j150",
+  "verdict": "pass",
+  "notes": [
+   "clock rungs are the same question at increasing deadlines; sentences faithful",
+   "tone (borderline): Russia-Ukraine war topic, about talks rather than strikes"
+  ],
+  "fixes": {},
+  "forward": 2.4,
+  "surprise": 1.8,
+  "clear": 1,
+  "role": "pick",
+  "n": 29
+ },
+ {
+  "type": "board",
+  "title": "By mid-2027",
+  "origin": "random-top24",
+  "score": null,
+  "rank": null,
+  "ids": [
+   "q0102",
+   "q0005",
+   "q1192",
+   "q1251",
+   "q0291"
+  ],
+  "jid": "j261",
+  "verdict": "fix",
+  "notes": [
+   "q0005: rules need only a company's official ANNOUNCEMENT of AGI, not actual achievement",
+   "note: q0102 95% for a Fed hike by June 30, 2027 is striking; sentence matches rules, verify source price"
+  ],
+  "fixes": {
+   "q0005": "A company officially announces it has achieved artificial general intelligence before July 2027"
+  },
+  "forward": 2.8,
+  "surprise": 2.8,
+  "clear": 1,
+  "role": "pick",
+  "n": 30
+ }
+]
