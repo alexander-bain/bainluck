@@ -18,7 +18,12 @@ from sqlalchemy import text
 logger = logging.getLogger(__name__)
 
 CACHE_KEY = "bainluck:backfill_winners_status"
-CACHE_TTL = 7200  # 2 hours — task runs every 1h so always fresh
+# #10090 item 6: the task runs once a day off-peak (10:35 UTC, heavy), not
+# hourly — its 2-20 min census scan was competing with live prices at the
+# busy evening hour. 26 h outlives one 24 h gap plus the run itself, so the
+# admin endpoint is never empty between two successful runs. A reading can be
+# up to ~24 h old: the payload's own `computed_at` says how old.
+CACHE_TTL = 93_600  # 26 hours
 
 
 async def _precompute_backfill_winners_status() -> dict:

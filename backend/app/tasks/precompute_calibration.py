@@ -11426,8 +11426,8 @@ _COVERAGE_CHUNK_SQL = text("""
 # NOTE (#1199): the backfill-winners/status cache (key
 # `bainluck:backfill_winners_status`) used to be piggybacked onto this task as a
 # second heavy `market_status` CTE. That block was removed — the dedicated
-# `precompute_backfill_winners_status` task owns that key, runs HOURLY at :35
-# with a 2h TTL, and writes the exact same shape. Running the CTE again here was
+# `precompute_backfill_winners_status` task owns that key, runs DAILY at 10:35
+# UTC with a 26h TTL (#10090; hourly :35 / 2h before), and writes the exact same shape. Running the CTE again here was
 # pure duplicate compute and was the second heavy query pushing this snapshot
 # over its soft_time_limit. Do NOT re-add it here.
 

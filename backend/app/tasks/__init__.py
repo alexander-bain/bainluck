@@ -8357,7 +8357,13 @@ celery_app.conf.beat_schedule = {
     },
     "precompute-backfill-winners-status": {
         "task": "app.tasks.precompute_backfill_winners_status",
-        "schedule": crontab(minute=35),  # Every hour at :35 — cache expensive backfill status queries
+        # #10090 item 6: daily 10:35 UTC (3:35 AM PT), was hourly at :35. The
+        # 2-20 min census scan ran through the busy evening hour on the shared
+        # database and was IO behind slow Kalshi update rounds (class f). No
+        # other heavy DAILY job fires in hour 10; :35 keeps the minute the
+        # hourly form already held against the hourly heavy siblings. Pairs
+        # with CACHE_TTL = 26 h in precompute_backfill_winners_status.py.
+        "schedule": crontab(minute=35, hour=10),  # Daily 10:35 UTC — cache expensive backfill status queries
         "options": {"queue": "heavy"},
     },
     "precompute-backfill-progress": {

@@ -38,7 +38,8 @@ def test_authoritative_set_excludes_heuristic_clean_resolution():
 
 def test_backfill_winners_status_not_duplicated_in_coverage():
     """#1199: the backfill-winners/status CTE must live ONLY in the dedicated
-    precompute_backfill_winners_status task (hourly :35, 2h TTL). It used to be
+    precompute_backfill_winners_status task (daily 10:35 UTC, 26h TTL since
+    #10090; hourly :35 / 2h before). It used to be
     duplicated inside _snapshot_coverage_metrics as a second heavy query, which
     pushed that daily task over its 600s soft_time_limit (~1/24h). The dedup is
     the fix — guard that the coverage snapshot does NOT re-embed the twin (or the
@@ -99,3 +100,41 @@ def test_curve_excludes_heuristic_and_nullsource_754_989():
     # transparency surfaces present (heuristic filter + the #261 truth-evidence census)
     assert "heuristic_filter" in src
     assert "truth_evidence" in src
+
+
+def test_status_cache_outlives_the_gap_between_beat_fires_10090():
+    """#10090 item 6: the status precompute moved from hourly :35 to once a day
+    off-peak, so its 2-20 min census scan stops running through the busy evening
+    hour beside live prices. Two things must hold together, and a later edit to
+    either half alone breaks the admin endpoint (and /health, which reads it):
+
+    * the beat stays on `heavy` and fires once a day in the off-peak hour; and
+    * CACHE_TTL outlives the LARGEST gap between fires (derived from the beat,
+      not retyped) plus the run's own hard limit, so the key never expires
+      between two successful runs and the route never answers 202.
+
+    The payload carries `computed_at`, so a reading up to a day old is labelled
+    as such rather than mistaken for fresh.
+    """
+    from app.tasks import celery_app
+    import app.tasks.precompute_backfill_winners_status as m
+
+    entry = celery_app.conf.beat_schedule["precompute-backfill-winners-status"]
+    assert entry["task"] == "app.tasks.precompute_backfill_winners_status"
+    assert entry["options"]["queue"] == "heavy"
+    sched = entry["schedule"]
+    assert (set(sched.minute), set(sched.hour)) == ({35}, {10}), (
+        "#10090: expected daily 10:35 UTC (3:35 AM PT); an hourly form puts the "
+        "census scan back into the busy evening hour"
+    )
+
+    slots = sorted(h * 60 + mi for h in sched.hour for mi in sched.minute)
+    gaps = [b - a for a, b in zip(slots, slots[1:])] + [slots[0] + 24 * 60 - slots[-1]]
+    hard_limit_s = celery_app.tasks[
+        "app.tasks.precompute_backfill_winners_status"
+    ].time_limit
+    assert m.CACHE_TTL > max(gaps) * 60 + hard_limit_s, (
+        m.CACHE_TTL, max(gaps) * 60, hard_limit_s
+    )
+    assert m.CACHE_TTL == 93_600
+    assert '"computed_at": datetime.now(timezone.utc).isoformat()' in inspect.getsource(m)
