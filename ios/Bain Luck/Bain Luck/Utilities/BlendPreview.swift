@@ -952,7 +952,10 @@ nonisolated enum BlendPreview {
     /// (`extendingServedSourceSeries`) never draws it.
     static func chartFrames(_ frames: [LiveBlendPoint], history: EventHistoryResponse?,
                             state: BlendPreviewState?, held: EventDetail?, now: TimeInterval) -> [LiveBlendPoint] {
-        guard let p = displayed(state, held: held, now: now), let at = state?.observedAt else { return frames }
+        guard let p = displayed(state, held: held, now: now) else {
+            return headlineOverOlderPin(frames, history: history, held: held)
+        }
+        guard let at = state?.observedAt else { return frames }
         let authority = state.flatMap { state in
             state.baseFoldRevision.map { BlendPreviewChartAuthority(eventId: state.eventId, base: $0) }
         }
@@ -969,6 +972,47 @@ nonisolated enum BlendPreview {
         }
         if let last = frames.last, last.date >= at { return frames }
         return frames + [LiveBlendPoint(date: at, homeProbability: p, previewAuthority: authority)]
+    }
+
+    /// #10090 — web's #8749 rule (`appendHeroObservation`, its synthetic-edge
+    /// half) for the committed headline. The history route pins its blend edge
+    /// at the SERVE minute, and the price there can be a detail hero cached a
+    /// TTL earlier, so after a real commit a later read can end the line on the
+    /// value the commit replaced. When the headline was observed strictly after
+    /// the pin's own observation (`blend_edge_observed_at`) and at or before the
+    /// pin, `frames` gains a marker carrying the headline, and the chart
+    /// re-values that one pin in its render copy
+    /// (`OddsChartView.extendingBlendToLiveEdge`). A headline observed after the
+    /// pin is the frames' rule already: a pushed frame past the edge is appended.
+    /// Committed truth only — a displayed preview owns the end
+    /// (`chartFrames`). History and frames are never written.
+    static func headlineOverOlderPin(_ frames: [LiveBlendPoint], history: EventHistoryResponse?,
+                                     held: EventDetail?) -> [LiveBlendPoint] {
+        guard let held, let history, let p = held.heroProbability, p.isFinite, (0...1).contains(p),
+              let at = held.heroProbabilityObservedAt?.asDate,
+              let revision = LiveEventPriceReconciliation.pairedFoldRevision(in: held) else { return frames }
+        let authority = BlendPreviewChartAuthority(eventId: held.id, base: revision)
+        guard olderPinUnderHeadline(history, authority: authority, at: at, p: p) != nil else { return frames }
+        return frames + [LiveBlendPoint(date: at, homeProbability: p, headlineOverPin: authority)]
+    }
+
+    /// The pin a headline observed at `at` re-values, or nil. Every refusal
+    /// leaves the pin as served: an unpinned edge, another event, a pin
+    /// observed at or after the headline (equal or unknown clocks decide
+    /// nothing), a pin past the headline's revision or without one
+    /// (`chartCoversAuthority`), a headline observed after the pin, a pin that
+    /// already prints it, and any served blend point at or after the headline
+    /// that is a reading rather than a carry-forward (`carriedPointsAfter`).
+    static func olderPinUnderHeadline(_ history: EventHistoryResponse, authority: BlendPreviewChartAuthority,
+                                      at: Date, p: Double) -> AggregateLinePoint? {
+        guard chartCoversAuthority(history, authority: authority), history.blendEdgePinned == true,
+              let observed = history.blendEdgeObservedAt?.asDate, observed < at,
+              let revision = history.blendEdgeFoldRevision?.revision,
+              revision.rows.count == authority.base.rows.count, authority.base.covers(revision),
+              let edge = history.aggregateLine?.last, let edgeAt = edge.timestamp.asDate,
+              at <= edgeAt, edge.homeProbability != p,
+              carriedPointsAfter(history, at: at) != nil else { return nil }
+        return edge
     }
 
     /// Revision authority wins even if a newer committed pin has an OLDER

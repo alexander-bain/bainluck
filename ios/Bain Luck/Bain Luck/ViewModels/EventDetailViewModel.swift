@@ -1564,11 +1564,14 @@ final class EventDetailViewModel: ObservableObject {
     /// What the hero and chart print, for the timing seam's view marks
     /// (`LiveTimingSeam.presented`); `.idle` while nothing records.
     ///
-    /// Evaluated with every body. With no preview displayed, `headline`,
-    /// `displayedProbabilityObservedAt` and `chartFrames` each return the
-    /// committed value at their first guard, so it reads those directly: no
-    /// copy, no projection. While one shows, the chart's end is projected once
-    /// per change of its inputs (`timingChartEnd`), not once per body.
+    /// Evaluated with every body. With no preview displayed, `headline` and
+    /// `displayedProbabilityObservedAt` return the committed value at their
+    /// first guard, so it reads those directly: no copy, no projection.
+    /// `chartFrames` may then add the committed headline as a marker that
+    /// re-values an older pin (`BlendPreview.headlineOverOlderPin`); the seam
+    /// does not see it, and `chartEnd` stays the committed buffer's last
+    /// frame. While a preview shows, the chart's end is projected once per
+    /// change of its inputs (`timingChartEnd`), not once per body.
     @MainActor
     func timingPresented(_ event: EventDetail) -> LiveTimingSeam.Presented {
         guard LiveTimingSeam.isRecording else { return .idle }
