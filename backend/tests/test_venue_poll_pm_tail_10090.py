@@ -394,6 +394,36 @@ async def test_a_write_pass_passes_the_tail_history_bound(monkeypatch):
     assert found["1"][0]["external_id"] == "0x01"
 
 
+async def test_the_30_second_polls_group_write_keeps_its_own_history_bound(monkeypatch):
+    """``_write_group`` without ``history`` writes with the 30-second poll's
+    bound, never the tail's (latency R1 on #11808)."""
+    seen = []
+
+    class _Session:
+        async def commit(self):
+            return None
+
+    async def load_state(_session, ids):
+        return {oid: (0.30, 0.29, 0.31) for oid in ids}
+
+    async def write_market(_session, *, poll, **_k):
+        seen.append((poll.min_interval_s, poll.big_move))
+
+    monkeypatch.setattr(v, "load_state", load_state)
+    monkeypatch.setattr(v, "write_market", write_market)
+    monkeypatch.setattr(v.DeferredPoints, "read", classmethod(lambda cls, ids: cls()))
+    monkeypatch.setattr(v.DeferredPoints, "save", lambda self: None)
+    units = _units(1)
+    found = {"1": [{"external_id": "0x01", "probability": 0.40, "yes_bid": 0.40, "yes_ask": 0.42}]}
+    now = datetime.now(timezone.utc)
+    stats = {"errors": []}
+    await v._write_group(_Session(), "polymarket", units, found, now, stats)
+    await v._write_group(_Session(), "polymarket", units, found, now, stats,
+                         history=(tail.HISTORY_MIN_INTERVAL_S, tail.HISTORY_BIG_MOVE))
+    assert seen == [(v.HISTORY_MIN_INTERVAL_S, v.HISTORY_BIG_MOVE), (900.0, 0.03)]
+    assert v.HISTORY_MIN_INTERVAL_S != 900.0
+
+
 async def test_a_shadow_pass_writes_nothing_and_counts_what_it_would_write(monkeypatch):
     _state, writes = _wire(monkeypatch)
     now = datetime.now(timezone.utc)
@@ -514,12 +544,21 @@ async def test_a_failed_population_re_read_keeps_the_last_population(monkeypatch
     monkeypatch.setattr(tail, "_read_tail_population", read)
     session = _Session()
     first = await tail.load_tail_population(session, exclude_shown=False, now_mono=0.0)
+    assert first[2]["cached"] == 0 and first[2]["read_s"] >= 0
     cached = await tail.load_tail_population(session, exclude_shown=False, now_mono=10.0)
-    assert cached == first and calls == [False]  # inside the TTL: no read
+    assert cached[:2] == first[:2] and calls == [False]  # inside the TTL: no read
+    assert cached[2]["cached"] == 1 and "read_s" not in cached[2]
     units, token_of, counts = await tail.load_tail_population(
         session, exclude_shown=False, now_mono=tail.POPULATION_TTL_S + 1)
     assert [u.key for u in units] == ["1", "2"] and token_of == _token_of(2)
-    assert counts["reread_failed"] == 1 and session.rolled_back == 1
+    assert counts["reread_failed"] == 1 and counts["cached"] == 1 and session.rolled_back == 1
+    # A failed re-read is not re-run by the next 3-minute pass, only after a TTL.
+    await tail.load_tail_population(
+        session, exclude_shown=False, now_mono=tail.POPULATION_TTL_S + 1 + tail.CADENCE_S)
+    assert len(calls) == 2
+    await tail.load_tail_population(
+        session, exclude_shown=False, now_mono=2 * tail.POPULATION_TTL_S + 2)
+    assert len(calls) == 3
 
     monkeypatch.setattr(tail, "_POPULATION", {})
     with pytest.raises(TimeoutError):  # nothing to keep: the pass fails, counted

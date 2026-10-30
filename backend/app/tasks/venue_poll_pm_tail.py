@@ -355,7 +355,8 @@ async def load_tail_population(session, *, exclude_shown: bool, now_mono: float)
     """``(units, condition → token 0, pairing counts)``, cached per process."""
     cached = _POPULATION.get(exclude_shown)
     if cached is not None and now_mono - cached[0] < POPULATION_TTL_S:
-        return cached[1], cached[2], cached[3]
+        return cached[1], cached[2], {**cached[3], "cached": 1}
+    started = time.monotonic()
     try:
         units, token_of, counts = await _read_tail_population(session, exclude_shown)
     except Exception as exc:  # noqa: BLE001 — a cold re-read must not stop the rotation
@@ -363,13 +364,17 @@ async def load_tail_population(session, *, exclude_shown: bool, now_mono: float)
             raise
         # The candidate read measured 0.7 s warm and 16.6 s cold on production
         # (2026-10-30, 20 s statement timeout): a re-read that fails keeps the
-        # last population, whose membership moves slowly, and the next pass
-        # tries again.
+        # last population, whose membership moves slowly, for another TTL — so
+        # a read that timed out cold is not re-run on every 3-minute pass.
         await session.rollback()
+        _POPULATION[exclude_shown] = (now_mono, *cached[1:])
         logger.warning("venue_poll_pm_tail: population re-read failed, keeping the last: %s", exc)
-        return cached[1], cached[2], {**cached[3], "reread_failed": 1}
+        return cached[1], cached[2], {
+            **cached[3], "cached": 1, "reread_failed": 1,
+            "read_s": round(time.monotonic() - started, 2),
+        }
     _POPULATION[exclude_shown] = (now_mono, units, token_of, counts)
-    return units, token_of, counts
+    return units, token_of, {**counts, "cached": 0, "read_s": round(time.monotonic() - started, 2)}
 
 
 async def _read_tail_population(session, exclude_shown: bool):
