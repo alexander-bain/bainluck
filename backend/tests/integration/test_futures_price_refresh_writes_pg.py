@@ -2395,6 +2395,98 @@ async def test_the_poll_never_restores_a_price_the_socket_withdrew_after_its_rea
     assert stats["legs_newer_writer"] == 1 and "legs_held" not in stats
 
 
+# ── #10090 lane1 G1 on #11793: both poll lock sites take FOR NO KEY UPDATE, so a
+#    pending snapshot INSERT (its FK check holds FOR KEY SHARE on the leg) is
+#    neither skipped as `legs_held` nor waited on. FOR UPDATE would be both ─────
+
+
+async def _vp_pending_snapshot(engine, outcome_id):
+    """An open transaction with a snapshot INSERT pending on one leg; returns it
+    and its relation lock modes on futures_outcomes (the FK's KEY SHARE)."""
+    from sqlalchemy import func, insert, text
+
+    from app.models.models import FuturesOddsSnapshot
+
+    holder = await engine.connect()
+    await holder.begin()
+    await holder.execute(insert(FuturesOddsSnapshot).values(
+        outcome_id=outcome_id, bookmaker="kalshi", probability=0.4, captured_at=func.now(), reading_count=1,
+    ))
+    mode = (await holder.execute(text(
+        "SELECT string_agg(l.mode, ',') FROM pg_locks l WHERE l.pid = pg_backend_pid() "
+        "AND l.locktype = 'relation' AND l.relation = 'futures_outcomes'::regclass"
+    ))).scalar_one()
+    return holder, mode
+
+
+async def test_the_poll_writes_a_leg_with_a_pending_snapshot_insert_without_skipping_or_waiting(
+    poll_db, vp_deferred
+):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.tasks.venue_poll_30s import write_market
+
+    db = poll_db
+    mid, ids = await _vp_market(db, source="kalshi", ext="KXK",
+                                legs=[("KXK-A", False, None), ("KXK-B", False, None)])
+    await db.commit()
+    engine = create_async_engine(DB_URL)
+    holder, mode = await _vp_pending_snapshot(engine, ids["KXK-B"])
+    await db.execute(text("SET lock_timeout = '2s'"))
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, ids.values(), fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
+    try:
+        _, poll_s = await _vp_timed(write_market(
+            db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
+            priced=[_vp_item("KXK-A", 0.55, 0.54, 0.56), _vp_item("KXK-B", 0.60, 0.59, 0.61)],
+        ))
+    finally:
+        await holder.rollback()
+        await holder.close()
+        await engine.dispose()
+    assert "RowShareLock" in (mode or "")  # the case is real: the FK check holds KEY SHARE
+    assert poll_s < 1.0
+    assert stats["rows_updated"] == 2
+    assert "legs_held" not in stats and "legs_newer_writer" not in stats
+    assert float((await _vp_row(db, ids["KXK-B"]))[0]) == pytest.approx(0.60)
+
+
+async def test_the_rerank_reaches_a_leg_with_a_pending_snapshot_insert_without_skipping_or_waiting(
+    poll_db, vp_deferred
+):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.tasks.venue_poll_30s import write_market
+
+    db = poll_db
+    mid, ids = await _vp_market(db, source="kalshi", ext="KXQ",
+                                legs=[("KXQ-A", False, None), ("KXQ-B", False, None)])
+    await db.commit()
+    engine = create_async_engine(DB_URL)
+    # B has a snapshot INSERT pending and is not in this read: only the rerank reaches it.
+    holder, mode = await _vp_pending_snapshot(engine, ids["KXQ-B"])
+    await db.execute(text("SET lock_timeout = '2s'"))
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, [ids["KXQ-A"]], fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
+    try:
+        _, poll_s = await _vp_timed(write_market(
+            db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
+            priced=[_vp_item("KXQ-A", 0.55, 0.54, 0.56)],
+        ))
+    finally:
+        await holder.rollback()
+        await holder.close()
+        await engine.dispose()
+    rank = dict((await db.execute(
+        text("SELECT id, rank FROM futures_outcomes WHERE market_id = :m"), {"m": mid}
+    )).fetchall())
+    assert "RowShareLock" in (mode or "")
+    assert poll_s < 1.0
+    assert rank[ids["KXQ-A"]] == 1 and rank[ids["KXQ-B"]] == 2
+
+
 async def test_clob_items_write_every_leg_convention_then_skip_unchanged_markets(poll_db, vp_deferred):
     """The CLOB path's items through the first build's writer: a field's bare
     legs, a ``_yes``/``_no`` pair and a bare + ``_side1`` pair each take the
