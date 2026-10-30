@@ -2282,6 +2282,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 phase_bounds = {}
                 held_ambiguous = False
                 written_outcome_ids: list[int] = []
+                # #10090 `preview_from_commit`: the rows the UPDATE returned,
+                # handed to the refresher only once this phase has committed.
+                returned_rows: list = []
                 written_observations: dict = {}
                 primary_observations: dict = {}
                 phase_clock = None
@@ -2434,6 +2437,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                 # #9526).
                                 for row in result.all():
                                     written_outcome_ids.append(row.id)
+                                    returned_rows.append(row)
                                     returned_clock = getattr(row, "database_clock", None)
                                     if returned_clock is not None:
                                         phase_clock = (returned_clock if phase_clock is None
@@ -2620,6 +2624,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 if beside is not None:
                     prices.beside_written.update(phase)
                 registered = queue_committed(index, phase, written_outcome_ids)
+                note_committed = getattr(blend_refresher, "note_committed_rows", None)
+                if returned_rows and not final_drain and callable(note_committed):
+                    # Before any await: the committed rows' own preview may go
+                    # out ahead of the stamp's read (`note_committed_rows`).
+                    note_committed(returned_rows)
                 # The enclosing session exited normally: publish its returned
                 # DB time before another await, never before COMMIT or on failure.
                 price_clock_ready = (
@@ -3394,6 +3403,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         except Exception:
             stats["errors"] += 1
             logger.exception("Kalshi WS: settlement error for %s", ticker)
+        # #10090 `preview_from_commit`: committed or not, no cached read graph
+        # keeps these legs' pre-settlement rows.
+        from app.tasks.live_blend_refresh import forget_preview_outcomes
+
+        forget_preview_outcomes(
+            blend_refresher,
+            (oid for oid, mid in market_id_by_outcome.items() if mid == market_id),
+        )
 
     # -- Connections (#10090) --
     # Steady clients by kind; a replaced or retired client leaves these lists

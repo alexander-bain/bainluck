@@ -90,6 +90,11 @@ SPECS = {
     # drain or door admission has a lock retry deferred only by a buffered
     # withdrawal: whether that retry (and its due prompt) is taken past it.
     "lock_retry_past_withdrawal": {"modes": ("alternate",), "values": (0, 1), "today": 0},
+    # `live_blend_refresh.PREVIEW_FROM_COMMIT_SWITCH`, read per live event a
+    # committed price write returns: whether its preview is composed from those
+    # rows on the last read graph before the stamp's own read. A per-event
+    # change, so `ab` (one event-id parity) compares it as well as `alternate`.
+    "preview_from_commit": {"modes": ("ab", "alternate"), "values": (0, 1), "today": 0},
 }
 SWITCHES = tuple(SPECS)
 MODES = ("off", "ab", "alternate")

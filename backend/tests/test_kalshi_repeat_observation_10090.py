@@ -53,10 +53,10 @@ def database():
             id INTEGER PRIMARY KEY, market_id INTEGER, resolution_source TEXT,
             current_probability NUMERIC(7,6), current_yes_bid NUMERIC(5,4),
             current_yes_ask NUMERIC(5,4), last_updated DATETIME,
-            price_changed_at DATETIME)"""))
+            price_changed_at DATETIME, is_winner BOOLEAN)"""))
         db.execute(
             text("""INSERT INTO futures_outcomes VALUES
-            (1, 2, NULL, .3, .2, .4, :fresh, :fresh)"""),
+            (1, 2, NULL, .3, .2, .4, :fresh, :fresh, NULL)"""),
             {"fresh": FRESH},
         )
     yield engine

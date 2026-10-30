@@ -307,6 +307,28 @@ LOCK_RETRY_PROMPT_DELAYS_S = (1.0, 2.0, 4.0)
 #: on the busy wide-book games whose buffer never clears, so a due
 #: `lock_retry_prompt` stayed out flush after flush.
 LOCK_RETRY_PAST_WITHDRAWAL_SWITCH = "lock_retry_past_withdrawal"
+#: #10090 runtime trial (``ab``/``alternate`` 0/1, today 0), read per event when
+#: a committed price write hands its RETURNING rows over (`note_committed_rows`):
+#: on, a live event's preview is composed from those rows patched into the
+#: refresher's last read graph and proposed at once, with that read's ticket,
+#: revision and base, before the stamp's own session, ticket and SELECT. Redis
+#: refuses a stale ticket or older context; the ordinary refresh runs behind it
+#: either way, so a refusal costs only the head start. Production 2026-10-29
+#: 23:28-23:52Z (discover): live recv->stamped_at p50 187 ms Kalshi / 279 ms PM,
+#: about half of it after the price commit.
+PREVIEW_FROM_COMMIT_SWITCH = "preview_from_commit"
+#: How old a cached read graph may be when a commit is composed onto it. The
+#: rows this process commits are patched in; a write by another process (the
+#: poll, a settlement) is unseen until the next read, so this bounds that.
+PREVIEW_GRAPH_MAX_AGE_S = 3.0
+#: How long a committed row is noted for a read already in flight to patch in:
+#: past the graph age, so no graph young enough to compose can predate it.
+PREVIEW_NOTE_RETENTION_S = 2 * PREVIEW_GRAPH_MAX_AGE_S
+#: Live preview events whose last read graph is kept (oldest read dropped).
+PREVIEW_GRAPH_MAX_EVENTS = 512
+#: The outcome columns a committed price write returns and the patch replaces.
+#: A row missing any of them is not patched (its event is not composed).
+COMMIT_PATCH_FIELDS = ("current_probability", "last_updated", "is_winner", "resolution_source")
 
 
 def _optional_db_key(event_ids) -> Optional[int]:
@@ -385,6 +407,84 @@ def _lock_retry_past_withdrawal() -> bool:
     try:
         return bool(_optional_db_trial().value(LOCK_RETRY_PAST_WITHDRAWAL_SWITCH, 0))
     except Exception:  # noqa: BLE001 — a switch read never fails a flush
+        return False
+
+
+_NOT_RETURNED = object()
+
+
+def _field_ranks(prices) -> list:
+    """Each leg's `rank` under `field_rank_expr` (``rank()``, DESC NULLS LAST,
+    ties share a number): what a write's re-rank of the market stores."""
+    keys = [(0, 0.0) if price is None else (1, float(price)) for price in prices]
+    return [1 + sum(other > key for other in keys) for key in keys]
+
+
+def _patched_group(group, returned: dict) -> Optional[list]:
+    """``group`` with each committed row in ``returned`` (outcome id -> its
+    `COMMIT_PATCH_FIELDS`) newer than the graph's copy patched in. Rows are
+    replaced, never mutated. None when a patched market's cached `rank`s are
+    not what its write's re-rank (`rerank_market_fields_stmt`) stores."""
+    from types import SimpleNamespace
+
+    patched = []
+    for entry in group:
+        outcomes, changed = [], False
+        for row in entry.outcomes:
+            values = returned.get(row.id)
+            stored = getattr(row, "last_updated", None)
+            if values is None or (stored is not None and values["last_updated"] <= stored):
+                outcomes.append(row)
+            else:
+                outcomes.append(SimpleNamespace(**{**vars(row), **values}))
+                changed = True
+        if not changed:
+            patched.append(entry)
+            continue
+        if [row.rank for row in outcomes] != _field_ranks(
+                [row.current_probability for row in outcomes]):
+            return None
+        patched.append(_replace(entry, outcomes=outcomes))
+    return patched
+
+
+def _prune_notes(notes: dict, now: float, noted_at) -> None:
+    """Drop notes older than `PREVIEW_NOTE_RETENTION_S` (oldest first)."""
+    while notes:
+        key = next(iter(notes))
+        if now - noted_at(notes[key]) <= PREVIEW_NOTE_RETENTION_S:
+            break
+        del notes[key]
+
+
+def forget_preview_outcomes(refresher, outcome_ids) -> None:
+    """`LiveBlendRefresher.forget_preview_outcomes` on the refresher a writer
+    holds, for rows it changed outside a price write. Nothing for a refresher
+    without it. Never raises."""
+    forget = getattr(refresher, "forget_preview_outcomes", None)
+    if callable(forget):
+        with contextlib.suppress(Exception):
+            forget(list(outcome_ids))
+
+
+def _preview_from_commit_possible() -> bool:
+    """Whether any event may have `preview_from_commit` on now; False on error."""
+    try:
+        trial = _optional_db_trial()
+        return (trial.state(PREVIEW_FROM_COMMIT_SWITCH).mode != "off"
+                or bool(trial.value(PREVIEW_FROM_COMMIT_SWITCH, 0)))
+    except Exception:  # noqa: BLE001 — a switch read never fails a read or write
+        return False
+
+
+def _preview_from_commit(event_id) -> bool:
+    """This event's `preview_from_commit` arm; off on any switch error."""
+    try:
+        trial = _optional_db_trial()
+        if trial.state(PREVIEW_FROM_COMMIT_SWITCH).mode == "ab":
+            return trial.arm(PREVIEW_FROM_COMMIT_SWITCH, int(event_id))
+        return bool(trial.value(PREVIEW_FROM_COMMIT_SWITCH, 0))
+    except Exception:  # noqa: BLE001 — a switch read never fails a write
         return False
 
 
@@ -2592,6 +2692,23 @@ class LiveBlendRefresher:
         self.observation_read_stats: dict[str, int] = {
             "detached": 0, "finished": 0, "capped": 0, "ceiling_cancelled": 0,
         }
+        #: #10090 `preview_from_commit` — each live preview event's last read
+        #: graph: event id -> (`_mono` of the read, event, group). Replaced, never
+        #: mutated: a committed row or stamp installs a patched copy.
+        self._preview_graphs: dict[int, tuple] = {}
+        #: Outcome id -> the cached event whose graph holds it.
+        self._preview_graph_outcomes: dict[int, int] = {}
+        #: Committed outcomes awaiting composition: event id -> {outcome id:
+        #: the `last_updated` its write returned}. One worker drains it.
+        self._commit_preview_due: dict[int, dict[int, Any]] = {}
+        #: Outcome id -> (`_mono` noted, its committed `COMMIT_PATCH_FIELDS`),
+        #: oldest note first, kept `PREVIEW_NOTE_RETENTION_S`.
+        self._noted_commits: dict[int, tuple] = {}
+        #: Outcome id -> `_mono` when this process last changed it outside a
+        #: price write (`forget_preview_outcomes`), oldest first, kept as long.
+        self._forgotten_outcomes: dict[int, float] = {}
+        self._commit_preview_task: Optional[asyncio.Task] = None
+        self.commit_preview_stats: dict[str, int] = {"proposed": 0, "errors": 0}
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -4245,6 +4362,8 @@ class LiveBlendRefresher:
         # does no admission read either (#10090).
         if stopped_waiting is not None and stopped_waiting():
             raise _ObservationReadAbandoned
+        # `preview_from_commit`: a kept graph is as old as its ticket.
+        read_started = _mono()
         with _observation_read_step("admission"):
             preview_ticket = (
                 await self._preview_admission_read() if preview_columns else None
@@ -4370,6 +4489,8 @@ class LiveBlendRefresher:
                 for entry in group:
                     for row in entry.outcomes:
                         row._primary_quote_overlaid = id(row) not in original_rows
+        if preview_ticket is not None:
+            self._remember_preview_graphs(grouped, original_rows, read_started)
         if preview_ticket is not None:
             # Marked so a caller whose deadline lands here cancels it as before:
             # a retirement writes Redis and the row, never after its caller left.
@@ -4585,6 +4706,10 @@ class LiveBlendRefresher:
             _park_closing_sampler(getattr(self, "source", None), task)
         try:
             await self._close_preview_maintenance()
+        except asyncio.CancelledError as exc:
+            interrupted = exc
+        try:
+            await self._close_commit_preview()
         except asyncio.CancelledError as exc:
             interrupted = exc
         try:
@@ -5185,6 +5310,8 @@ class LiveBlendRefresher:
             self._last_write_at[event_id] = now
             self._last_written_value[event_id] = value
         self.stats["stamped"] += len(written)
+        for event_id, (new_sources, new_rev, _event) in committed_bags.items():
+            self._preview_graph_committed(event_id, new_sources, new_rev)
         if exact_trace is not None:
             for event_id, (basis, revision, stamped_at) in trace_bases.items():
                 with contextlib.suppress(Exception):
@@ -6281,6 +6408,299 @@ class LiveBlendRefresher:
                 "live_blend_refresh[%s]: observation read failed after its caller stopped waiting",
                 self.source, exc_info=(type(error), error, error.__traceback__),
             )
+
+    # ── #10090 `preview_from_commit` ────────────────────────────────────────
+
+    def _remember_preview_graphs(self, grouped, original_rows, read_started) -> None:
+        """Keep each live preview event's graph exactly as this read returned it.
+
+        Committed rows only: an event with a held-quote overlay (#11138) is not
+        kept and drops any older graph, so nothing composed from the cache was
+        never stored. A row this process committed while the read was in flight
+        (`note_committed_rows`) is patched in, so a read that started before
+        that COMMIT never puts the row's older value back. A read older than the
+        kept one (a concurrent read that finished late) does not replace it.
+        ``read_started`` is taken before the read's ticket: the graph's age.
+        Never raises.
+        """
+        graphs = getattr(self, "_preview_graphs", None)
+        if graphs is None or not _preview_from_commit_possible():
+            return
+        try:
+            for event_id, (event, group) in grouped.items():
+                if event_id not in self.preview_events:
+                    continue
+                kept = graphs.get(event_id)
+                at = getattr(event, "preview_context_at", None)
+                if kept is not None:
+                    kept_at = getattr(kept[1], "preview_context_at", None)
+                    if isinstance(kept_at, datetime) and (
+                            not isinstance(at, datetime) or at < kept_at):
+                        continue
+                if (getattr(event, "status", None) != "live"
+                        or getattr(event, "completed_at", None) is not None
+                        or getattr(event, "preview_read_ticket", None) is None
+                        or any(id(row) not in original_rows
+                               for entry in group for row in entry.outcomes)):
+                    self._forget_preview_graph(event_id)
+                    continue
+                forgotten = self._forgotten_outcomes
+                if any(forgotten.get(row.id, -math.inf) >= read_started
+                       for entry in group for row in entry.outcomes):
+                    self._forget_preview_graph(event_id)
+                    continue
+                noted = self._noted_commits
+                patched = _patched_group(group, {
+                    row.id: noted[row.id][1]
+                    for entry in group for row in entry.outcomes if row.id in noted
+                })
+                if patched is None:
+                    self._forget_preview_graph(event_id)
+                    continue
+                self._install_preview_graph(event_id, (read_started, event, patched))
+            while len(graphs) > PREVIEW_GRAPH_MAX_EVENTS:
+                self._forget_preview_graph(min(graphs, key=lambda eid: graphs[eid][0]))
+        except Exception:
+            self.commit_preview_stats["errors"] += 1
+            logger.warning("live_blend_refresh[%s]: preview graph not kept", self.source,
+                           exc_info=True)
+
+    def _install_preview_graph(self, event_id: int, entry: tuple) -> None:
+        self._forget_preview_graph(event_id)
+        self._preview_graphs[event_id] = entry
+        for market in entry[2]:
+            for row in market.outcomes:
+                self._preview_graph_outcomes[row.id] = event_id
+
+    def _forget_preview_graph(self, event_id: int) -> None:
+        entry = self._preview_graphs.pop(event_id, None)
+        if entry is None:
+            return
+        for market in entry[2]:
+            for row in market.outcomes:
+                if self._preview_graph_outcomes.get(row.id) == event_id:
+                    del self._preview_graph_outcomes[row.id]
+
+    def note_committed_rows(self, rows) -> None:
+        """A committed price write's RETURNING rows. Never raises.
+
+        Called synchronously after the write's COMMIT, before its first await.
+        Each row is noted for `PREVIEW_NOTE_RETENTION_S` (a read in flight
+        patches it in); each cached graph holding a returned row gets a patched
+        copy, and a live event whose `preview_from_commit` arm is on is queued
+        for a preview composed from that copy (`_preview_from_commit_rows`).
+        """
+        graphs = getattr(self, "_preview_graphs", None)
+        if graphs is None or not _preview_from_commit_possible():
+            return
+        try:
+            now = _mono()
+            noted = self._noted_commits
+            patches: dict[int, dict[int, dict]] = {}
+            for row in rows:
+                oid = getattr(row, "id", None)
+                values = {name: getattr(row, name, _NOT_RETURNED) for name in COMMIT_PATCH_FIELDS}
+                if (oid is None or any(value is _NOT_RETURNED for value in values.values())
+                        or values["last_updated"] is None):
+                    continue
+                noted.pop(oid, None)
+                noted[oid] = (now, values)
+                event_id = self._preview_graph_outcomes.get(oid)
+                if event_id is not None:
+                    patches.setdefault(event_id, {})[oid] = values
+            _prune_notes(noted, now, lambda note: note[0])
+            for event_id, returned in patches.items():
+                read_at, event, group = graphs[event_id]
+                patched = _patched_group(group, returned)
+                if patched is None:
+                    # The write's re-rank moved a stored `rank` the resolver sorts by.
+                    self._forget_preview_graph(event_id)
+                    continue
+                self._install_preview_graph(event_id, (read_at, event, patched))
+                if _preview_from_commit(event_id):
+                    self._commit_preview_due.setdefault(event_id, {}).update(
+                        (oid, values["last_updated"]) for oid, values in returned.items()
+                    )
+            if self._commit_preview_due:
+                task = self._commit_preview_task
+                if task is None or task.done():
+                    self._commit_preview_task = asyncio.create_task(
+                        self._drain_commit_previews(), name=f"commit-preview-{self.source}",
+                    )
+        except Exception:
+            self.commit_preview_stats["errors"] += 1
+            logger.warning("live_blend_refresh[%s]: committed rows not noted", self.source,
+                           exc_info=True)
+
+    def forget_preview_outcomes(self, outcome_ids) -> None:
+        """Rows this process changed OUTSIDE a price write (a settlement, a
+        withdrawal): each cached graph holding one is dropped, and no read that
+        started before now is kept for them. Called after that write's COMMIT,
+        or when its outcome is unknown. Never raises."""
+        graphs = getattr(self, "_preview_graphs", None)
+        if graphs is None or not _preview_from_commit_possible():
+            return
+        try:
+            now = _mono()
+            forgotten = self._forgotten_outcomes
+            for oid in outcome_ids:
+                forgotten.pop(oid, None)
+                forgotten[oid] = now
+                event_id = self._preview_graph_outcomes.get(oid)
+                if event_id is not None:
+                    self._forget_preview_graph(event_id)
+            _prune_notes(forgotten, now, lambda at: at)
+        except Exception:
+            self.commit_preview_stats["errors"] += 1
+            logger.warning("live_blend_refresh[%s]: changed rows not forgotten", self.source,
+                           exc_info=True)
+
+    def _preview_graph_committed(self, event_id: int, sources, rev) -> None:
+        """A stamp committed this event's bag at ``rev``: the cached graph's
+        event carries it, so a later composition proposes on that revision and
+        judges an unchanged reading against it. Never raises."""
+        from copy import deepcopy
+        from types import SimpleNamespace
+
+        try:
+            entry = getattr(self, "_preview_graphs", {}).get(event_id)
+            if entry is None:
+                return
+            read_at, event, group = entry
+            current = getattr(event, "preview_rev", None)
+            if (type(rev) is not int or not isinstance(sources, dict)
+                    or (type(current) is int and current >= rev)):
+                return
+            self._preview_graphs[event_id] = (read_at, SimpleNamespace(**{
+                **vars(event),
+                "preview_sources": deepcopy(sources),
+                "preview_rev": rev,
+                "win_probability_sources": {self.source: deepcopy(sources.get(self.source))},
+            }), group)
+        except Exception:
+            self.commit_preview_stats["errors"] += 1
+            logger.warning("live_blend_refresh[%s]: committed bag not cached", self.source,
+                           exc_info=True)
+
+    async def _drain_commit_previews(self) -> None:
+        while self._commit_preview_due:
+            due, self._commit_preview_due = self._commit_preview_due, {}
+            try:
+                await self._preview_from_commit_rows(due)
+            except Exception:
+                self.commit_preview_stats["errors"] += 1
+                logger.warning("live_blend_refresh[%s]: preview from commit not sent",
+                               self.source, exc_info=True)
+
+    def _commit_preview_plan(self, event_id: int, written: dict, now: float):
+        """``(event, reading, value, contributing)`` the re-read path would
+        propose for this commit, from the cached graph; None to leave it there.
+
+        Only a live event whose graph is young, needs no current-book proof,
+        holds no held quote (the re-read would overlay it), is not held back
+        from refreshing, still holds exactly the rows this process committed
+        and resolves with a proven home orientation. Then the re-read path's
+        own gates: a reading that records no new observation against the
+        stored entry, or that `_should_write` would not write, is left to it.
+        """
+        from app.utils.aggregation import oldest_observation_time
+        from app.utils.live_blend import (
+            compute_source_home_probability, has_proven_home_orientation,
+        )
+        from app.utils.settledness import market_assigned_settled
+
+        cached = self._preview_graphs.get(event_id)
+        if cached is None:
+            return None
+        read_at, event, group = cached
+        held = self.held_quotes
+        if (now - read_at > PREVIEW_GRAPH_MAX_AGE_S
+                or event.status != "live" or event.completed_at is not None
+                or getattr(event, "preview_read_ticket", None) is None
+                or type(getattr(event, "preview_rev", None)) is not int
+                or event_id in self._lock_retry
+                or self._failed_hold_until.get(event_id, now) > now
+                or self._current_reading_proof(event_id, group, [], park_refused=False)
+                or (held is not None and any(row.id in held
+                                             for entry in group for row in entry.outcomes))):
+            return None
+        rows = {row.id: (entry, row) for entry in group for row in entry.outcomes}
+        if any(oid not in rows or rows[oid][1].last_updated != at
+               for oid, at in written.items()):
+            return None  # a newer read or write replaced a row since
+        reading = compute_source_home_probability(
+            group, event.home_team_name, event.away_team_name,
+        )
+        if reading is None or not has_proven_home_orientation(reading):
+            return None  # the stamp's own path owns the inversion fallback
+        contributing = getattr(reading, "contributing_outcomes", None) or (reading.outcome,)
+        ids = {getattr(row, "id", None) for row in contributing}
+        if ids.isdisjoint(written) or not ids.issubset(rows):
+            return None
+        if any(entry.market.status != "open"
+               or market_assigned_settled(entry.market, entry.outcomes)
+               or any(row.resolution_source is not None or row.is_winner is True
+                      for row in entry.outcomes)
+               for entry in {id(rows[oid][0]): rows[oid][0] for oid in ids}.values()):
+            return None
+        value = round(reading.home_probability, 4)
+        if (restamp_records_no_observation(
+                value, oldest_observation_time(contributing),
+                getattr(event, "win_probability_sources", None), self.source)
+                or self._last_written_value.get(event_id) == value):
+            return None
+        return event, reading, value, contributing
+
+    async def _preview_from_commit_rows(self, due: dict) -> None:
+        """Propose each queued event's preview from its cached graph, no read.
+
+        The proposal is the re-read path's (`_preview_before_stamp`) for the
+        plan `_commit_preview_plan` admits, carrying the cached read's ticket,
+        revision and base, so Redis refuses it (`read_required`, an older
+        context) whenever that read is no longer current, and the refused open
+        is forgotten locally. The ordinary refresh of the same commit runs
+        behind it whatever happens here.
+        """
+        from app.utils.aggregation import observation_basis
+        from app.utils.blend_preview import registry
+
+        now = _mono()
+        plans = []
+        for event_id, written in due.items():
+            plan = self._commit_preview_plan(event_id, written, now)
+            if plan is not None and observation_basis(plan[3]):
+                plans.append((event_id, *plan))
+        if not plans:
+            return
+        preview = registry()
+        frames = preview.expire()
+        for event_id, event, reading, value, contributing in plans:
+            frames.extend(preview.propose(
+                event_id, self.source, value=value, event=event,
+                row_sources=event.preview_sources, row_rev=event.preview_rev,
+                eligibility=getattr(reading, "eligibility", None),
+                observed_basis=observation_basis(contributing),
+            ))
+            self.commit_preview_stats["proposed"] += 1
+        await self._publish_previews(frames)
+
+    async def _close_commit_preview(self) -> None:
+        """Cancel and join the composition worker before the sessions close."""
+        task, self._commit_preview_task = getattr(self, "_commit_preview_task", None), None
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        interrupted = None
+        while not task.done():
+            try:
+                await asyncio.wait({task})
+            except CancelledError as exc:
+                interrupted = exc
+        if not task.cancelled():
+            task.exception()
+        if interrupted is not None:
+            raise interrupted
 
     async def _preview_before_stamp(self, grouped, plans, published_seq, *, observation_only=(),
                                     selections=None) -> None:
