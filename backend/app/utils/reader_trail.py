@@ -21,16 +21,23 @@ readers, or None when it carries no change readers lacked. The receipt lines
 HOW IT DECIDES, one consumer process, one source, per LIVE event:
 
 * every accepted input whose price differs from the previous input for that
-  outcome (or is the first of the run) joins the event's trail — a repeat
-  cannot change anything;
-* an input is COMMITTED once its price row has committed: the flush's
+  outcome joins the event's trail — a repeat cannot change anything. The first
+  input of a run for an outcome has nothing to differ from and does NOT join
+  (F1, counted ``first_skipped``): latency's 1614Z validation found the 110 s
+  Kalshi interval was a first observation at the price already stored;
+* an input is COMMITTED only when its OWN price row committed: the flush's
   RETURNING row carries the input's price (`note_committed_rows`, matched to
-  the newest trail input of that outcome at that price, which also covers the
-  older ones it superseded), or a stamp's staged mark has reached it
-  (`note_flushed`);
+  the newest trail input of that outcome at that price). F2, from the same
+  validation (a Polymarket trade prints at the bid, the midpoint returns, the
+  stored row never moves, yet the next publication that did move credited the
+  print from its own receipt) — an input is RETIRED, never credited, when:
+  a newer input of its outcome committed (``superseded``); a committed flush's
+  staged mark reached it and its price was never stored (``flushed``,
+  `note_flushed`); or a reading that changed nothing readers see blended its
+  committed price (``settled``, `settle`). Each is counted;
 * a published PREVIEW blend carries every committed input not yet shown; a
-  STAMP carries every input up to its staged mark (or, with no mark, every
-  committed one), and retires them;
+  STAMP carries every committed input up to its staged mark (or, with no mark,
+  every committed one), and retires them;
 * a publication's ``first_new_recv`` is the oldest not-yet-shown input it
   carries, but only when its value differs from the last value this process
   PUBLISHED to readers by preview or stamp. So a stamp that follows its own
@@ -54,9 +61,16 @@ LIMITS, stated so a reader of the number can bound it:
   value it already showed can be claimed again. ``total_s`` is an upper bound
   under this limit. The union removes overlap, not an interval that ran past
   the publication that actually carried the input;
-* a headline leg whose own change did not move ``p`` can still be the oldest
-  input a later publication carries, if none retired it first (bounded by its
-  own queued stamp);
+* a headline leg whose own committed change did not move ``p`` can still be
+  the oldest input a later publication carries when no `settle` reading
+  retired it first (a stamp-phase reading, or a held quote over its row);
+* a leg refused by a row lock inside a flush that committed other legs of the
+  event is retired as ``flushed``: its eventual commit is not credited
+  (understates; the lock receipts count those holds);
+* a newer committed price superseding an unshown one is credited from the
+  newer receipt (understates by the gap between them);
+* the first input of a run is never credited, even when it differs from the
+  stored row (understates by at most one flush: it is written promptly);
 * a preview published after a LATER flush's commit was noted covers that
   flush's inputs too (understates by at most one flush); an input re-sent at
   the same price as the committed row is matched to the commit (understates);
@@ -98,8 +112,13 @@ class _Input:
         self.shown = False
 
 
+#: Why an input left the trail without being credited (module doc, F2).
+RETIRED_REASONS = ("superseded", "flushed", "settled")
+
+
 class _EventTrail:
-    __slots__ = ("inputs", "shown_p", "stamp_p", "stamp_rev", "dropped", "outcomes")
+    __slots__ = ("inputs", "shown_p", "stamp_p", "stamp_rev", "dropped", "outcomes",
+                 "retired", "first_skipped")
 
     def __init__(self) -> None:
         self.inputs: deque[_Input] = deque()
@@ -110,6 +129,8 @@ class _EventTrail:
         self.stamp_rev: Optional[int] = None
         self.dropped = 0
         self.outcomes: set[int] = set()
+        self.retired = dict.fromkeys(RETIRED_REASONS, 0)
+        self.first_skipped = 0
 
 
 def _int(value) -> Optional[int]:
@@ -145,6 +166,25 @@ class ReaderTrail:
             trail.dropped = 0
         return count
 
+    def retired(self, event_id: int, *, reset: bool = False) -> tuple[dict, int]:
+        """``({reason: count}, first_skipped)`` since the last reset."""
+        trail = self._events.get(event_id)
+        if trail is None:
+            return dict.fromkeys(RETIRED_REASONS, 0), 0
+        counts, first = dict(trail.retired), trail.first_skipped
+        if reset:
+            trail.retired = dict.fromkeys(RETIRED_REASONS, 0)
+            trail.first_skipped = 0
+        return counts, first
+
+    @staticmethod
+    def _retire(trail: _EventTrail, gone: list, reason: str) -> None:
+        if not gone:
+            return
+        ids = {id(item) for item in gone}
+        trail.inputs = deque(item for item in trail.inputs if id(item) not in ids)
+        trail.retired[reason] += len(gone)
+
     def _trail(self, event_id: int) -> _EventTrail:
         trail = self._events.get(event_id)
         if trail is None:
@@ -162,9 +202,12 @@ class ReaderTrail:
 
     # ── inputs ───────────────────────────────────────────────────────────────
 
-    def note_input(self, mark, changed: bool) -> None:
-        """One accepted input of a live event; only a CHANGED price joins."""
+    def note_input(self, mark, changed: bool, *, first: bool = False) -> None:
+        """One accepted input of a live event; only a CHANGED price joins.
+        ``first``: a headline input with no prior this run (F1), counted."""
         trail = self._trail(mark.event_id)
+        if first:
+            trail.first_skipped += 1
         if not changed:
             return
         if len(trail.inputs) >= self.max_pending:
@@ -177,8 +220,9 @@ class ReaderTrail:
     def note_committed_rows(self, rows: Iterable) -> None:
         """A price write's committed RETURNING rows (``id``,
         ``current_probability``): per row, the newest trail input of that
-        outcome at the stored price, and every older input of the outcome, are
-        committed. A row matching no input commits nothing."""
+        outcome at the stored price is committed, and every older unshown
+        input of the outcome is retired (``superseded``). A row matching no
+        input commits nothing."""
         for row in rows:
             oid = getattr(row, "id", None)
             price = _float(getattr(row, "current_probability", None))
@@ -190,22 +234,46 @@ class ReaderTrail:
             for item in reversed(trail.inputs):
                 if (item.outcome_id == oid
                         and abs(item.probability - price) <= COMMITTED_PRICE_TOLERANCE):
-                    match = item.seq
+                    match = item
                     break
             if match is None:
                 continue
-            for item in trail.inputs:
-                if item.outcome_id == oid and item.seq <= match:
-                    item.committed = True
+            match.committed = True
+            self._retire(trail, [
+                item for item in trail.inputs
+                if item.outcome_id == oid and item.seq < match.seq and not item.shown
+            ], "superseded")
 
     def note_flushed(self, event_id: int, seq: int) -> None:
-        """A flush staged its newest committed input of this event at ``seq``."""
+        """A committed flush staged its newest input of this event at ``seq``:
+        every input up to it whose own price was not stored is retired
+        (``flushed``)."""
         trail = self._events.get(event_id)
         if trail is None:
             return
-        for item in trail.inputs:
-            if item.seq <= seq:
-                item.committed = True
+        self._retire(trail, [
+            item for item in trail.inputs if item.seq <= seq and not item.committed
+        ], "flushed")
+
+    def settle(self, event_id: int, rows: Iterable) -> None:
+        """A reading that changed nothing readers see (the arm's value equals
+        the one it last wrote or the row stores) blended these rows (``id``,
+        ``current_probability``): every committed, unshown input whose own
+        price is its row's is retired (``settled``). An input committed after
+        the reading took its rows does not match them, and stays."""
+        trail = self._events.get(event_id)
+        if trail is None:
+            return
+        read = {}
+        for row in rows:
+            price = _float(getattr(row, "current_probability", None))
+            if price is not None:
+                read[getattr(row, "id", None)] = price
+        self._retire(trail, [
+            item for item in trail.inputs
+            if item.committed and not item.shown and item.outcome_id in read
+            and abs(item.probability - read[item.outcome_id]) <= COMMITTED_PRICE_TOLERANCE
+        ], "settled")
 
     # ── publications ─────────────────────────────────────────────────────────
 
@@ -247,9 +315,11 @@ class ReaderTrail:
                 item.since = wall
 
     def stamp(self, event_id: int, p, rev, mark_seq: Optional[int]) -> Optional[float]:
-        """A committed stamp's frame: carries every input up to ``mark_seq``
-        (its staged mark), or with no mark every committed input, and retires
-        them. Returns ``first_new_recv``."""
+        """A committed stamp's frame: carries every committed input up to
+        ``mark_seq`` (its staged mark), or with no mark every committed input,
+        and retires them; an uncommitted one up to the mark (normally already
+        gone, `note_flushed`) leaves as ``flushed``. Returns
+        ``first_new_recv``."""
         trail = self._events.get(event_id)
         if trail is None:
             return None
@@ -257,6 +327,9 @@ class ReaderTrail:
         if rev is not None and (trail.stamp_rev is None or rev > trail.stamp_rev):
             trail.stamp_rev = rev
         if mark_seq is not None:
+            self._retire(trail, [
+                item for item in trail.inputs if item.seq <= mark_seq and not item.committed
+            ], "flushed")
             covered = [item for item in trail.inputs if item.seq <= mark_seq]
         else:
             covered = [item for item in trail.inputs if item.committed]

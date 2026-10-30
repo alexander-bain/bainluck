@@ -60,9 +60,17 @@ def _iso(t):
     return blend_mod._iso(EPOCH + t)
 
 
-def _receipts(source="kalshi"):
+#: The price each headline outcome last had this run before a test's inputs:
+#: a first input of a run never joins the trail (F1), so every test that
+#: expects a credit starts from a prior.
+SEED = 0.01
+
+
+def _receipts(source="kalshi", seed=(A, B)):
     blend_mod._live_handoff[source] = frozenset({E})
-    return TailReceipts(source)
+    r = TailReceipts(source)
+    r._last_p[E] = dict.fromkeys(seed, SEED)
+    return r
 
 
 def _input(r, clock, t, oid, p):
@@ -83,8 +91,13 @@ def _preview(r, clock, t, p, seq, base_rev=100, reply="published", kind="blend")
     )
 
 
-def _stamp(r, clock, t, p, rev, mark, *, frame_rev=None, reread=False):
+def _stamp(r, clock, t, p, rev, mark, *, frame_rev=None, reread=False, commit=True):
+    """A committed stamp of ``mark``'s flush. ``commit``: the flush's RETURNING
+    row stored ``mark``'s own price first, as production notes it before
+    staging (F2: no other input is credited from it)."""
     clock.t = t
+    if commit and mark is not None:
+        _commit(r, (mark.outcome_id, mark.probability))
     r.note_stamp_frame(E, rev if frame_rev is None else frame_rev, p, "live")
     if mark is not None:
         r.observe({E: mark}, EPOCH + t, {E}, t)
@@ -228,6 +241,7 @@ def test_a_reread_stamp_carries_what_has_committed(clock, caplog):
     _input(r, clock, 0.2, B, 0.40)  # not stored yet
     _stamp(r, clock, 0.5, 0.62, 101, None, reread=True)
     m3 = _input(r, clock, 0.6, A, 0.56)
+    _commit(r, (B, 0.40))  # m3's flush stores B too
     _stamp(r, clock, 0.9, 0.64, 102, m3)
     assert [s[5] for s in _stamps(_close(r, caplog))] == [_iso(0.1), _iso(0.2)]
 
@@ -470,11 +484,13 @@ def test_outcomes_go_after_idle_previews_and_before_carrying_ones(clock, caplog,
 
 
 def test_trail_overflow_is_counted(clock, caplog, monkeypatch):
-    r = _receipts()
+    legs = [A + 10 * i for i in range(4)]  # four legs: none supersedes another
+    r = _receipts(seed=legs)
     r._trail.max_pending = 2
     m = None
-    for i in range(4):
-        m = _input(r, clock, i, A, 0.50 + i / 100)
+    for i, leg in enumerate(legs):
+        m = _input(r, clock, i, leg, 0.50 + i / 100)
+    _commit(r, *((leg, 0.50 + i / 100) for i, leg in enumerate(legs)))
     _stamp(r, clock, 5.0, 0.61, 101, m)
     (line,) = _close(r, caplog)
     assert line["trail_dropped"] == "2"
@@ -723,6 +739,7 @@ def test_receipts_written_by_the_consumer_fold_end_to_end(clock, caplog):
     _preview(r, clock, 0.3, 0.61, seq=1)                 # [0.0, 0.3]
     _stamp(r, clock, 0.8, 0.61, 101, m0)                 # `-`
     m1 = _input(r, clock, 2.0, A, 0.53)
+    _commit(r, (A, 0.53))
     r.note_stamp_frame(E, 102, 0.62, "live")
     clock.t = 3.2
     r.observe({E: m1}, EPOCH + 3.2, {E}, 3.2)
@@ -733,3 +750,195 @@ def test_receipts_written_by_the_consumer_fold_end_to_end(clock, caplog):
     assert event["intervals"] == 2
     assert event["total_s"] == pytest.approx(0.3 + 1.2, abs=1e-3)
     assert event["worst_s"] == pytest.approx(1.2, abs=1e-3) and event["over_1s"] == 1
+
+
+# ── F1 + F2 (latency 1614Z validation): credit only an input whose own price ─
+# committed and changed what readers see. All ten top intervals of 15:03–15:13Z
+# were artifacts: one first observation (Kalshi, 110 s), nine non-moving
+# Polymarket inputs credited at the next real move. Red on 62557fad's module.
+
+
+def _retired(line):
+    counts = dict(part.split(":") for part in line["trail_retired"].split(","))
+    return {k: int(v) for k, v in counts.items()}, int(line["trail_first_skipped"])
+
+
+def test_F1_the_kalshi_110s_first_observation_shape_credits_nothing(clock, caplog):
+    # 15338663, 15:07:40.138 -> 15:09:30.091: the event entered Kalshi's live set,
+    # both legs' first inputs sat at the stored 0.99 (no RETURNING row), and the
+    # stamp 110 s later was "moved" only against nothing shown yet.
+    r = _receipts(seed=())
+    m = _input(r, clock, 0.138, A, 0.99)
+    _input(r, clock, 0.140, B, 0.01)
+    _stamp(r, clock, 110.091, 0.99475, 101, m, commit=False)
+    lines = _close(r, caplog)
+    assert [s[5] for s in _stamps(lines)] == ["-"]
+    assert sum(_retired(line)[1] for line in lines) == 2
+
+
+def test_F1_a_first_input_whose_price_is_stored_still_never_joins(clock, caplog):
+    r = _receipts(seed=())
+    m = _input(r, clock, 0.1, A, 0.60)
+    _stamp(r, clock, 0.5, 0.61, 101, m)  # its own RETURNING row, even so
+    m2 = _input(r, clock, 1.0, A, 0.62)  # the second input has a prior
+    _stamp(r, clock, 1.4, 0.63, 102, m2)
+    assert [s[5] for s in _stamps(_close(r, caplog))] == ["-", _iso(1.0)]
+
+
+def test_F2_a_trade_then_midpoint_flicker_whose_row_never_moved_is_never_credited(clock, caplog):
+    # A print at the bid, the midpoint back: the flush's write found the row
+    # at 0.50 (no RETURNING row), so nothing readers see changed.
+    r = _receipts()
+    m0 = _input(r, clock, 0.0, A, 0.50)
+    _stamp(r, clock, 0.3, 0.60, 100, m0)
+    _input(r, clock, 1.0, A, 0.48)
+    m2 = _input(r, clock, 1.1, A, 0.50)
+    clock.t = 1.5
+    r.observe({E: m2}, EPOCH + 1.5, {E}, 1.5)   # the flush committed, staged
+    r.resolve([E], {E: ("unchanged", 0.50)}, {E: m2}, EPOCH + 1.5, 1.5)
+    m3 = _input(r, clock, 30.0, A, 0.55)        # the next real move
+    _stamp(r, clock, 30.4, 0.63, 101, m3)
+    lines = _close(r, caplog)
+    assert [s[5] for s in _stamps(lines)] == [_iso(0.0), _iso(30.0)]
+    assert sum(_retired(line)[0]["flushed"] for line in lines) == 2
+
+
+def test_F2_a_committed_leg_that_left_the_headline_unchanged_is_settled(clock, caplog):
+    # Item #3 (15338587): the write landed, the reading found 0.03 unchanged
+    # (`unobserved`), and the next real move credited the leg from its own
+    # receipt 45.8 s earlier.
+    r = _receipts()
+    m0 = _input(r, clock, 0.0, A, 0.50)
+    _stamp(r, clock, 0.3, 0.60, 100, m0)
+    m1 = _input(r, clock, 1.0, A, 0.501)
+    _commit(r, (A, 0.501))
+    clock.t = 1.4
+    r.observe({E: m1}, EPOCH + 1.4, {E}, 1.4)
+    r.settle(E, [SimpleNamespace(id=A, current_probability=0.501)])  # the reading's rows
+    r.resolve([E], {E: ("unobserved", 0.03)}, {E: m1}, EPOCH + 1.4, 1.4)
+    m2 = _input(r, clock, 40.0, B, 0.47)
+    _stamp(r, clock, 40.3, 0.64, 101, m2)
+    lines = _close(r, caplog)
+    assert [s[5] for s in _stamps(lines)] == [_iso(0.0), _iso(40.0)]
+    assert sum(_retired(line)[0]["settled"] for line in lines) == 1
+
+
+def test_F2_settle_keeps_an_input_committed_after_the_reading_took_its_rows(clock, caplog):
+    r = _receipts()
+    m0 = _input(r, clock, 0.0, A, 0.50)
+    _stamp(r, clock, 0.3, 0.60, 100, m0)
+    m1 = _input(r, clock, 1.0, A, 0.52)
+    _commit(r, (A, 0.52))  # landed while the reading was in flight
+    r.settle(E, [SimpleNamespace(id=A, current_probability=0.50)])  # it read 0.50
+    _stamp(r, clock, 2.0, 0.62, 101, m1)
+    assert [s[5] for s in _stamps(_close(r, caplog))] == [_iso(0.0), _iso(1.0)]
+
+
+def test_F2_a_held_write_that_finally_commits_is_credited_from_its_own_receipt(clock, caplog):
+    r = _receipts()
+    m0 = _input(r, clock, 0.0, A, 0.50)
+    _stamp(r, clock, 0.3, 0.60, 100, m0)
+    m1 = _input(r, clock, 1.0, A, 0.55)  # its price write is held (lock): no flush commits it
+    clock.t = 3.0
+    r.observe({}, EPOCH + 3.0, set(), 3.0)
+    _stamp(r, clock, 6.0, 0.64, 101, m1)  # it commits at last, and the stamp carries it
+    assert [s[5] for s in _stamps(_close(r, caplog))] == [_iso(0.0), _iso(1.0)]
+
+
+def test_F2_a_committed_price_whose_stamp_the_throttle_held_is_credited(clock, caplog):
+    r = _receipts()
+    m0 = _input(r, clock, 0.0, A, 0.50)
+    _stamp(r, clock, 0.3, 0.60, 100, m0)
+    m1 = _input(r, clock, 1.0, A, 0.55)
+    _commit(r, (A, 0.55))
+    clock.t = 1.2
+    r.observe({E: m1}, EPOCH + 1.2, set(), 1.2)  # committed, not due: held
+    _stamp(r, clock, 3.0, 0.64, 101, m1, commit=False)
+    assert [s[5] for s in _stamps(_close(r, caplog))] == [_iso(0.0), _iso(1.0)]
+
+
+def test_F2_a_newer_committed_price_supersedes_the_older_unshown_one(clock, caplog):
+    r = _receipts()
+    m0 = _input(r, clock, 0.0, A, 0.50)
+    _stamp(r, clock, 0.3, 0.60, 100, m0)
+    _input(r, clock, 1.0, A, 0.52)
+    m2 = _input(r, clock, 2.0, A, 0.54)
+    _stamp(r, clock, 2.5, 0.63, 101, m2)  # its RETURNING row stored 0.54
+    lines = _close(r, caplog)
+    assert [s[5] for s in _stamps(lines)] == [_iso(0.0), _iso(2.0)]
+    assert sum(_retired(line)[0]["superseded"] for line in lines) == 1
+
+
+def test_F2_the_receipt_line_prints_every_retirement_reason(clock, caplog):
+    r = _receipts()
+    m0 = _input(r, clock, 0.0, A, 0.50)
+    _stamp(r, clock, 0.3, 0.60, 100, m0)
+    (line,) = _close(r, caplog)
+    assert line["trail_retired"] == "superseded:0,flushed:0,settled:0"
+    assert line["trail_first_skipped"] == "0"
+
+
+def test_F2_the_refresher_settles_with_the_rows_its_reading_blended(clock):
+    r = blend_mod.LiveBlendRefresher("kalshi", min_refresh_interval_s=2.0)
+    r.receipts = _receipts()
+    m0 = _input(r.receipts, clock, 0.0, A, 0.50)
+    _stamp(r.receipts, clock, 0.3, 0.60, 100, m0)
+    _input(r.receipts, clock, 1.0, A, 0.51)
+    _commit(r.receipts, (A, 0.51))
+    group = [SimpleNamespace(outcomes=[SimpleNamespace(id=A, current_probability=0.51),
+                                       SimpleNamespace(id=B, current_probability=0.40)])]
+    # Agreeing with process memory is not enough: the poll wrote 0.6105 since.
+    polled = SimpleNamespace(win_probability_sources={"kalshi": {"value": 0.6105}})
+    r._settle_trail(E, group, stored_row=polled, value=0.61)
+    assert r.receipts._trail.retired(E)[0]["settled"] == 0
+    stored = SimpleNamespace(win_probability_sources={"kalshi": {"value": 0.61}})
+    r._settle_trail(E, group, stored_row=stored, value=0.61)
+    assert r.receipts._trail.retired(E)[0]["settled"] == 1
+    # A receipt failure never reaches the price path.
+    r._settle_trail(E, [object()], stored_row=stored, value=0.61)
+
+
+def test_F2_both_agreeing_dispositions_settle_the_trail():
+    """`unobserved` and `unchanged` (which `preview_only` refines) are the
+    readings whose value is the one last written or stored: each settles."""
+    import ast
+    import inspect
+    import textwrap
+
+    src = textwrap.dedent(inspect.getsource(blend_mod.LiveBlendRefresher._refresh_batch))
+    settled = []
+    for node in ast.walk(ast.parse(src)):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list):
+            continue
+        for i, stmt in enumerate(body):
+            if (isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Tuple)
+                    and stmt.value.elts and isinstance(stmt.value.elts[0], ast.Constant)
+                    and stmt.value.elts[0].value in ("unobserved", "unchanged")
+                    and any(isinstance(t, ast.Subscript)
+                            and getattr(t.value, "attr", None) == "_dispositions"
+                            for t in stmt.targets)):
+                calls = [n.func.attr for s in body[i + 1:] for n in ast.walk(s)
+                         if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
+                assert "_settle_trail" in calls, stmt.value.elts[0].value
+                settled.append(stmt.value.elts[0].value)
+    assert sorted(settled) == ["unchanged", "unobserved"]
+
+
+def test_the_parser_reads_retired_fields_and_lines_without_them():
+    from app.utils.trailing_readout import trailing
+
+    before = (f"live_blend_refresh[polymarket]: delivery-receipt run=a event=7 "
+              f"window_start={_t(0)} stamps=1@{_t(5.0)}@-@-@1@{_t(2.0)} stamps_dropped=0 "
+              f"writer=polymarket previews=- previews_dropped=0 trail_dropped=0 outcomes_dropped=0")
+    after = (f"live_blend_refresh[polymarket]: delivery-receipt run=b event=7 "
+             f"window_start={_t(60)} stamps=2@{_t(65.0)}@-@-@1@{_t(64.0)} stamps_dropped=0 "
+             f"writer=polymarket previews=- previews_dropped=0 trail_dropped=0 "
+             f"trail_retired=superseded:3,flushed:5,settled:2 trail_first_skipped=4 "
+             f"outcomes_dropped=0 sw=preview_from_commit:on")
+    out = trailing([_wrapped(before), _wrapped(after)])
+    assert out["unretired_lines"] == 1 and out["retired_lines"] == 1
+    assert out["trail_retired"] == {"superseded": 3, "flushed": 5, "settled": 2,
+                                    "first_skipped": 4}
+    assert out["items"] == 2 and out["events"]["7"]["total_s"] == pytest.approx(4.0)
+    assert trailing([after])["unretired_lines"] == 0

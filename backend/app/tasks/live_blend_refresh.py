@@ -675,12 +675,15 @@ DELIVERY_RECEIPT_MAX_LINE_CHARS = 9000
 #: The receipt line's fixed shape. `stamps` items are
 #: rev@stamped_at@newest_recv@oldest_recv@covered@first_new_recv; `previews`
 #: items are base_rev:seq@published_at@first_new_recv (`ReaderTrail`).
+#: `trail_retired` is superseded:N,flushed:N,settled:N — trail inputs that
+#: left uncredited (F2) — and `trail_first_skipped` the headline inputs with no
+#: prior this run that never joined (F1).
 DELIVERY_RECEIPT_FORMAT = (
     "live_blend_refresh[%s]: delivery-receipt run=%s event=%s "
     "window_start=%s window_s=%.3f raw=%d accepted=%d changed=%d "
     "repeats=%d first=%d outcomes=%s stamps=%s stamps_dropped=%d "
     "writer=%s previews=%s previews_dropped=%d trail_dropped=%d "
-    "outcomes_dropped=%d%s"
+    "trail_retired=%s trail_first_skipped=%d outcomes_dropped=%d%s"
 )
 #: #10090 field 3 — the same `stamps=` item, from a writer of this process
 #: other than the arm's own stamp (a Polymarket withdrawal), one line per
@@ -981,9 +984,11 @@ class TailReceipts:
             mark.event_id, deque(maxlen=DELIVERY_RECEIPT_MAX_PENDING)
         ).append((mark.seq, mark.recv_wall, mark.outcome_id))
         # Last: the trail is the newest receipt, and never costs the others.
+        # F1: a first input has nothing to differ from, so it never joins.
         headline = not any(mark.outcome_id in ids for ids in self.trail_excluded)
         self._trail.note_input(
-            mark, headline and (prior is None or prior != mark.probability),
+            mark, headline and prior is not None and prior != mark.probability,
+            first=headline and prior is None,
         )
 
     def _note_stamp(self, event_id: int, disposition: tuple) -> None:
@@ -1063,6 +1068,13 @@ class TailReceipts:
         """A price write's committed RETURNING rows, before any await: the
         trail inputs they stored are committed (`ReaderTrail`)."""
         self._trail.note_committed_rows(rows)
+
+    def settle(self, event_id: int, rows) -> None:
+        """F2(c): a live event's reading changed nothing readers see; the
+        committed inputs whose prices it blended leave the trail uncredited
+        (`ReaderTrail.settle`)."""
+        if event_id in self._live_events:
+            self._trail.settle(event_id, rows)
 
     def note_preview(self, frame: dict, meta, reply) -> None:
         """#10090 fields 1+2 — one ledger send, after it (`observe_publication`).
@@ -1146,6 +1158,8 @@ class TailReceipts:
         previews = list(bucket.get("previews", ()))
         previews_dropped = bucket.get("previews_dropped", 0)
         trail_dropped = self._trail.dropped(event_id, reset=True)
+        retired, first_skipped = self._trail.retired(event_id, reset=True)
+        trail_retired = ",".join(f"{reason}:{count}" for reason, count in retired.items())
         shown = {oid: f"{oid}:{v[0]}:{v[1]}:{v[2]}:{v[3]}" for oid, v in per.items()}
         quiet_first = sorted(per, key=lambda oid: (per[oid][0], oid))
         tags = _switch_tags(event_id, bucket["from"])
@@ -1158,7 +1172,8 @@ class TailReceipts:
                 ",".join(item for _, item in sorted(shown.items())) or "-",
                 ";".join(bucket["stamps"]) or "-", bucket["stamps_dropped"],
                 self.source, ";".join(previews) or "-",
-                previews_dropped, trail_dropped, len(per) - len(shown), tags,
+                previews_dropped, trail_dropped, trail_retired, first_skipped,
+                len(per) - len(shown), tags,
             )
 
         message = line()
@@ -3787,6 +3802,32 @@ class LiveBlendRefresher:
                 {eid for eid in due if eid in getattr(self, "preview_events", ())},
             )
 
+    def _stored_entry_is(self, stored_row, value) -> bool:
+        """The row's STORED entry for this source is ``value`` (lane1 S1)."""
+        entry = (getattr(stored_row, "win_probability_sources", None) or {})
+        entry = entry.get(self.source) if isinstance(entry, dict) else None
+        stored = entry.get("value") if isinstance(entry, dict) else None
+        try:
+            return round(float(stored), 6) == round(float(value), 6)
+        except (TypeError, ValueError):
+            return False
+
+    def _settle_trail(self, event_id: int, group, *, stored_row, value) -> None:
+        """#10090 F2(c): an `unchanged`/`unobserved` reading wrote nothing. When
+        the row's stored entry for this source is its ``value`` (lane1 S1: the
+        poll and the matcher write the same entry, so agreeing with process
+        memory is not enough), the committed inputs whose prices it blended
+        changed nothing readers see (`TailReceipts.settle`). Log-only."""
+        receipts = self.receipts
+        if receipts is None:
+            return
+
+        def settle():
+            if self._stored_entry_is(stored_row, value):
+                receipts.settle(event_id, [row for entry in group for row in entry.outcomes])
+
+        self._receipt_call(settle)
+
     def _note_confirm_basis(self, event_id: int, contributing, *, stored_row=None,
                             value=None) -> None:
         """#10090 decision J: the rows an agreeing disposition blended, for
@@ -3802,16 +3843,8 @@ class LiveBlendRefresher:
         confirmed = getattr(self.receipts, "confirmed", None)
         if confirmed is None:
             return
-        if stored_row is not None:
-            entry = (getattr(stored_row, "win_probability_sources", None) or {})
-            entry = entry.get(self.source) if isinstance(entry, dict) else None
-            stored = entry.get("value") if isinstance(entry, dict) else None
-            try:
-                same = round(float(stored), 6) == round(float(value), 6)
-            except (TypeError, ValueError):
-                same = False
-            if not same:
-                return
+        if stored_row is not None and not self._stored_entry_is(stored_row, value):
+            return
         self._receipt_call(confirmed.note_basis, event_id, contributing)
 
     def _note_confirm_unpublishable(self, event_id: int) -> None:
@@ -5250,6 +5283,7 @@ class LiveBlendRefresher:
                             self._dispositions[event_id] = ("unobserved", value)
                             self._note_confirm_basis(
                                 event_id, contributing, stored_row=event, value=value)
+                            self._settle_trail(event_id, group, stored_row=event, value=value)
                             if phase == "compute":
                                 # A periodic durable read can predate an already
                                 # accepted observation preview. Let its registry
@@ -5271,6 +5305,7 @@ class LiveBlendRefresher:
                             self._dispositions[event_id] = ("unchanged", value)
                             self._note_confirm_basis(
                                 event_id, contributing, stored_row=event, value=value)
+                            self._settle_trail(event_id, group, stored_row=event, value=value)
                             # Persistence cadence does not own display admission.
                             # Only a complete contributing observation can try
                             # this route; the registry proves it newer than the
