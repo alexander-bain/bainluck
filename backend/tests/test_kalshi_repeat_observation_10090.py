@@ -195,6 +195,7 @@ def _fresh_admission():
     cohort_event_ids = event_id_by_outcome
     non_blend_outcome_ids = set()
     final_drain = False
+    headline_aux, live_event_ids = (), set()  # A1's closure names: no prop board
     batch_marks = {1: 'one', 2: 'two'}
     queued_events, queued_marks, queued_refresh = set(), {}, False
     implicit_debt_queued = False
