@@ -22754,7 +22754,6 @@
     {
       "key": "usa-men-final-berth",
       "title": "Will an American reach the men's final?",
-      "hook": "The market asks about the American men as a group, not one at a time.",
       "draw": "mens-singles",
       "source": "kalshi",
       "market_id": 59694147,
@@ -22844,7 +22843,7 @@
     {
       "key": "sabalenka-title-defence",
       "title": "Can Sabalenka go back-to-back?",
-      "hook": "She won here last year — and with the US Open the last major of 2026, this market is now exactly that question.",
+      "hook": "She won here last year, and the US Open is the last major of 2026.",
       "draw": "womens-singles",
       "source": "kalshi",
       "market_id": 194,
@@ -22875,7 +22874,6 @@
     {
       "key": "usa-women-quarterfinal-count",
       "title": "Can three American women reach the quarterfinals?",
-      "hook": "One market for the whole American contingent, with a rung for one right through seven.",
       "draw": "womens-singles",
       "source": "kalshi",
       "market_id": 59694149,
