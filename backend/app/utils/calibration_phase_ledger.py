@@ -113,6 +113,19 @@ RESUMABLE_PHASES: tuple[str, ...] = (PHASE_FUTURES, PHASE_SPORTS, PHASE_DIAGNOST
 #: two-beat gap ``calibration_publish_age`` pages on.
 ELASTIC_PHASES: frozenset[str] = frozenset({PHASE_FUTURES})
 
+#: #10983. The stage an elastic phase must finish BEFORE its first unit can
+#: start, keyed by phase. ``futures`` freezes its generation with one roster
+#: read (``read:futures_generation`` in the frozen module) under the PHASE
+#: statement timeout; no unit runs until it returns, so a budget that cannot
+#: hold it banks nothing however many units it could otherwise hold.
+ELASTIC_PRE_UNIT_STAGES: dict[str, str] = {PHASE_FUTURES: "read:futures_generation"}
+
+#: Where :func:`app.tasks.calibration_main_build.load_phase_carryover` hands the
+#: plan the prior beat's measured pre-unit cost, inside that phase's unit cost.
+#: A LOWER BOUND by construction: the per-read mean of every observation of the
+#: stage, completed or cancelled, and a cancelled read cost more than it ran.
+PRE_UNIT_MS_KEY = "pre_unit_ms"
+
 #: Exactly what a carried phase must hand back, per phase. Resume is
 #: all-or-nothing per phase and this is what enforces it: a stored output whose
 #: key set does not match EXACTLY is discarded, because a phase marked done
@@ -1178,6 +1191,18 @@ def _elastic_cut(
       work" and becomes "no work" — the fatal shape this function exists to keep
       off the inelastic phases, and it must not be moved onto the elastic one
       just because that phase is allowed to be cut.
+
+    **#10983: one unit is not the first thing the phase pays for.** The roster
+    read (:data:`ELASTIC_PRE_UNIT_STAGES`) runs first, under the phase's own
+    statement timeout. Production, 2026-10-30: diagnostics' worst completion
+    rose to 718,113 ms, the cut left ``futures`` 177,703 ms (statement timeout
+    159,933 ms) — above its 138,727 ms unit, so the one-unit test passed — and
+    the roster read, measured at 176,654 ms on the last publishing beat, was
+    cancelled at ~162 s on every beat from 05:39Z on. Nothing banked, no phase
+    completed, so the history that set the plan could not move: the same plan,
+    every beat, and a curve frozen at 04:20Z. So the remainder must hold the
+    measured pre-unit cost AND one unit, and the pre-unit stage must fit inside
+    the statement timeout it actually runs under.
     """
     budgeted = {name: ms for name, ms, flag, _, _, _ in raw if flag and ms is not None}
     if len(budgeted) != len(raw):
@@ -1193,9 +1218,28 @@ def _elastic_cut(
         # over-declared in the first place — the caller's own paths own both.
         return None
     unit_ms, _, _ = _decode_unit_cost(unit_costs.get(target))
-    if unit_ms is not None and remainder < unit_ms:
+    pre_unit_ms = _decode_pre_unit(unit_costs.get(target))
+    if pre_unit_ms is not None and _statement_timeout_for(remainder) <= pre_unit_ms:
+        return None
+    if unit_ms is not None and remainder < unit_ms + (pre_unit_ms or 0):
         return None
     return {target: remainder}
+
+
+def _decode_pre_unit(raw: Any) -> Optional[int]:
+    """The measured pre-unit cost (:data:`PRE_UNIT_MS_KEY`), or ``None`` — #10983.
+
+    Decoded apart from :func:`_decode_unit_cost` for the reason
+    :func:`_decode_unit_worst` gives: it is one self-describing duration, and a
+    unit cost without it must still yield its mean. ``None`` means "not
+    measured", which may only leave the cut as it was.
+    """
+    if not isinstance(raw, dict):
+        return None
+    value = raw.get(PRE_UNIT_MS_KEY)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value) if value > 0 else None
 
 
 def _decode_unit_cost(raw: Any) -> tuple[Optional[int], Optional[int], Optional[int]]:
