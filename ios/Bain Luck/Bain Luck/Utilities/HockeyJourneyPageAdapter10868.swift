@@ -95,6 +95,8 @@ enum HockeyJourneyPageAdapter10868 {
         static let lost = "Lost"
         static let spokenLabel = "Hockey win chances, score and forecast"
         static let aboutLabel = "About these sources"
+        /// The period and clock come from ESPN's game state, which serves no time of its own.
+        static let stateSource = "Game state from ESPN"
     }
 
     // MARK: - Phase
@@ -252,13 +254,24 @@ enum HockeyJourneyPageAdapter10868 {
             provenance: joined([reading.captionWord, source]))
     }
 
-    /// Before the start: the pair `EventDetailView.projectionText` admits, said
-    /// per side — and only where the projected-final format table admits the
-    /// sport too, as web's `eventPageProjectedPair` requires (hockey's puck line
-    /// is refused there). The per-side figures are `projectionText`'s own rounded
-    /// halves, and a test holds the two spellings together.
+    /// Before the start: the pair `EventDetailView.projectionText` admits — and
+    /// only where the projected-final format table admits the sport too, as
+    /// web's `eventPageProjectedPair` requires (hockey's puck line is refused
+    /// there; whether hockey's pregame pair should print is Design's open
+    /// HOCKEY-PREGAME-FORECAST-PRECISION decision, and this one guard is the
+    /// whole switch).
     static func pregamePair(_ event: EventDetail, host: Host) -> PairSlots? {
         guard LiveProjectedFinalAdmission2920.format(forSport: event.sport) != nil else { return nil }
+        return admittedPregamePair(event, host: host)
+    }
+
+    /// The raw pair `EventDetailView.projectionText`'s own source selection
+    /// admits — the sportsbooks' pregame pair where the sport's spread is a
+    /// margin, else the ladders' — said per side at its own precision through
+    /// `NBALadderCard9483.number` (a whole number stays whole, a projection keeps
+    /// one decimal): 3.5 / 2.5 prints "3.5" / "2.5", never a rounded "4" / "3".
+    /// Admission stays that function's alone; nothing here re-qualifies a pair.
+    static func admittedPregamePair(_ event: EventDetail, host: Host) -> PairSlots? {
         guard EventDetailView.projectionText(
             event, ladderHome: host.ladderHome, ladderAway: host.ladderAway, hasScore: false, now: host.now) != nil
         else { return nil }
@@ -272,7 +285,6 @@ enum HockeyJourneyPageAdapter10868 {
             sportsbooks = nil
         }
         guard let pair = sportsbooks ?? zip2(host.ladderHome, host.ladderAway) else { return nil }
-        let homeGoals = Int(pair.home.rounded()), awayGoals = Int(pair.away.rounded())
         let books = event.currentOdds?.bookmakerCount
         let provenance: String
         if sportsbooks != nil {
@@ -282,7 +294,7 @@ enum HockeyJourneyPageAdapter10868 {
             provenance = "Prediction-market lines before the start"
         }
         return PairSlots(title: Words.projectedGoals,
-                         home: goalsSlot(homeGoals), away: goalsSlot(awayGoals), provenance: provenance)
+                         home: forecastSlot(pair.home), away: forecastSlot(pair.away), provenance: provenance)
     }
 
     /// The live score, dated by the producer's own observation clock.
@@ -332,8 +344,10 @@ enum HockeyJourneyPageAdapter10868 {
                                                                    servedFinalScorePeriod: event.finalScorePeriod),
             projection: event.pregameProjection)
         else { return nil }
+        // The served halves the comparison was qualified from, at their own
+        // precision — the cards round them, this matrix keeps a 2.5 a 2.5.
         let c = qualified.comparison
-        return PairSlots(title: Words.pregameForecast, home: goalsSlot(c.home), away: goalsSlot(c.away),
+        return PairSlots(title: Words.pregameForecast, home: forecastSlot(qualified.home), away: forecastSlot(qualified.away),
                          provenance: "\(c.label) · \(c.bookmakerCount) \(c.bookmakerCount == 1 ? "book" : "books")")
     }
 
@@ -350,8 +364,12 @@ enum HockeyJourneyPageAdapter10868 {
         case .live:
             let state = PeriodLabel.liveStatusText(period: event.espn?.period, gameClock: event.espn?.gameClock)
                 ?? (EventState.isSuspended(event.status) ? "Play suspended" : "Live")
-            let observed = event.scoreObservedAt?.asDate.map { "Game state as of \(clockWords($0, host: host))" }
-            return (state, joined([observed, event.scoreSource.map(sourceWord)]))
+            // ESPN's period and clock carry no observation time of their own, and a
+            // held newer score (`LiveEventScoreReconciliation`) replaces only the
+            // score tuple and its clock — so the state is never dated by the score's
+            // clock. The score keeps its own clock in the goals column.
+            let hasState = event.espn?.period != nil || event.espn?.gameClock != nil
+            return (state, hasState ? Words.stateSource : nil)
         case .final:
             return ("Final", start.map { dayWords($0, host: host) })
         }
@@ -366,6 +384,12 @@ enum HockeyJourneyPageAdapter10868 {
 
     static func goalsSlot(_ count: Int) -> HockeyJourneySlot10868 {
         .value("\(count)", spoken: count == 1 ? "1 goal" : "\(count) goals")
+    }
+
+    /// A forecast in goals at its own precision; the spoken words say the same figure.
+    static func forecastSlot(_ goals: Double) -> HockeyJourneySlot10868 {
+        let text = NBALadderCard9483.number(goals)
+        return .value(text, spoken: text == "1" ? "1 goal" : "\(text) goals")
     }
 
     /// `formatProbability`'s figure said in words; the figure itself is unchanged.
