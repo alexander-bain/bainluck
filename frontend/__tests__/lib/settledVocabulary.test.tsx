@@ -84,6 +84,18 @@ import {
 } from "@/lib/propGrade";
 import type { DivergenceRow } from "@/lib/propDivergence";
 import type { GameMarketsResponse } from "@/lib/api";
+import type { EventDetailResponse, EventHistoryResponse } from "@/lib/types";
+import HockeyJourneyAllProps from "@/components/event/eventpage10868/HockeyJourneyAllProps";
+import HockeyJourneyContributionCard from "@/components/event/eventpage10868/HockeyJourneyContributionCard";
+import HockeyJourneyPage from "@/components/event/eventpage10868/HockeyJourneyPage";
+import HockeyJourneyStories from "@/components/event/eventpage10868/HockeyJourneyStories";
+import {
+  buildHockeyJourney,
+  hockeyJourneyContribution,
+  hockeyJourneyOriginals,
+  NO_HELD_CHOICE,
+} from "@/lib/eventPage10868/hockeyJourney";
+import hockeyFixtures from "./hockeyJourney10868.fixtures.json";
 import type { PlayerPropRow } from "@/lib/playerPropsGrouping";
 import { vocabularyDelta } from "../helpers/renderedTokens";
 
@@ -295,6 +307,34 @@ function nbaGradedTotal(hit: boolean) {
 }
 
 /**
+ * #10868 — the hockey journey (`nhl-journey`): one finished game (15169793,
+ * the verbatim subset in `hockeyJourney10868.fixtures.json`) with EVERY player
+ * prop's served settlement forced one way (`is_winner` and `hit` together) and
+ * nothing else changed. CONSTRUCTED: the box score is removed, so a count can
+ * never overrule a forced settlement ("Result unconfirmed") and the pair differs
+ * by the verdict alone. Game-line originals keep their served grades both ways.
+ */
+const HOCKEY_NOW = Date.parse("2026-10-11T04:56:41Z");
+function hockeyBodies(hit: boolean): { event: EventDetailResponse; markets: GameMarketsResponse } {
+  const event = { ...hockeyFixtures.finalDetail, box_score_data: null } as unknown as EventDetailResponse;
+  const markets = {
+    ...hockeyFixtures.finalMarkets,
+    player_props: hockeyFixtures.finalMarkets.player_props.map((row) => ({ ...row, is_winner: hit, hit })),
+  } as unknown as GameMarketsResponse;
+  return { event, markets };
+}
+function hockeyJourney(hit: boolean) {
+  const { event, markets } = hockeyBodies(hit);
+  return buildHockeyJourney({
+    event,
+    history: hockeyFixtures.finalHistory as unknown as EventHistoryResponse,
+    gameMarkets: markets,
+    host: { nowMs: HOCKEY_NOW, hero: null, probabilityObservedAt: null },
+  });
+}
+const HOCKEY = "components/event/eventpage10868";
+
+/**
  * EVERY component that can state a settled prop verdict. Not hand-maintained:
  * `enrolment` below proves this list covers the transitive closure.
  */
@@ -429,6 +469,41 @@ const SURFACES: Surface[] = [
       renderToStaticMarkup(
         <TotalPointsSpectrum data={spectrumPayload(hit)} eventStatus="completed" />,
       ),
+  },
+  // #10868 — the hockey journey. The two verdict surfaces first, then the two
+  // wrappers that only render them.
+  ...(["points", "assists"] as const).map((stat): Surface => ({
+    file: `${HOCKEY}/HockeyJourneyContributionCard.tsx`,
+    variant: `hockey ${stat}, final`,
+    render: (hit) => {
+      const { event, markets } = hockeyBodies(hit);
+      return renderToStaticMarkup(
+        <HockeyJourneyContributionCard
+          card={hockeyJourneyContribution(stat, event, markets, HOCKEY_NOW)!}
+          held={NO_HELD_CHOICE}
+          onHold={() => undefined}
+        />,
+      );
+    },
+  })),
+  {
+    file: `${HOCKEY}/HockeyJourneyAllProps.tsx`,
+    render: (hit) => {
+      const { event, markets } = hockeyBodies(hit);
+      return renderToStaticMarkup(
+        <HockeyJourneyAllProps originals={hockeyJourneyOriginals(event, markets, HOCKEY_NOW)} entryLabel="All props" />,
+      );
+    },
+  },
+  // The two wrappers only render the surfaces above; each satisfies the import
+  // contract by importing the enrolled surface it delegates to (VERDICT_EXPORTS).
+  {
+    file: `${HOCKEY}/HockeyJourneyStories.tsx`,
+    render: (hit) => renderToStaticMarkup(<HockeyJourneyStories journey={hockeyJourney(hit)} />),
+  },
+  {
+    file: `${HOCKEY}/HockeyJourneyPage.tsx`,
+    render: (hit) => renderToStaticMarkup(<HockeyJourneyPage journey={hockeyJourney(hit)} />),
   },
 ];
 
@@ -648,6 +723,11 @@ describe("every settled surface is enrolled in the census", () => {
       // surface — which is what `PropDivergenceRail` does, and is the reason
       // `PropTravelBar` was extracted rather than copied in the first place.
       "PropTravelBar",
+      // #10868 — the hockey journey's wrappers delegate the same way: Stories to
+      // the contribution card, the page to All props and the stories.
+      "HockeyJourneyContributionCard",
+      "HockeyJourneyAllProps",
+      "HockeyJourneyStories",
     ];
     // The compact browser delegates its verdict slot to the parent's existing
     // StatBox. Pin BOTH sides of that callback instead of exempting wrappers
