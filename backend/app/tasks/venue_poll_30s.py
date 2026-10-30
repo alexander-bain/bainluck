@@ -10,8 +10,9 @@ game's props more than 6 h before kickoff could therefore be an hour old, and a
 futures chart gained one point an hour. Speed's end state is the sockets
 carrying only live games; this poll is what has to exist first.
 
-SHIPPED DARK. ``VENUE_POLL_30S_ENABLED`` unset (or ``0``) makes the beat a
-no-op that touches neither Redis nor the database. ``1``/``all`` runs both
+SHIPPED DARK. ``VENUE_POLL_30S_ENABLED`` unset (or ``0``) makes the task body
+return before it touches Redis or the database (Celery's own broker publish and
+task-counter signals still run each tick). ``1``/``all`` runs both
 venues; ``kalshi`` or ``polymarket`` runs one. Speed asks Alex before setting it.
 
 WHAT IS POLLED: shown, minus socket
@@ -23,7 +24,8 @@ WHAT IS POLLED: shown, minus socket
   a category page or a tournament register is serving right now (the same three
   signals ``futures_price_refresh`` reads);
 * a market linked to an event that is ``scheduled`` and has not kicked off, up to
-  ``GAME_HORIZON_HOURS`` ahead (or further when it is high-value or served).
+  ``GAME_HORIZON_HOURS`` ahead. A linked market further out is not polled here,
+  high-value or served or not: it stays on the hourly refresh.
 
 All under ``LIVE_MARKET_SQL`` (open, unresolved, not venue-settled), and only
 legs ``_write_prices`` itself would accept (not crowned, not ``api_settlement``).
@@ -91,7 +93,13 @@ Each venue has a request budget per pass and a rotating cursor
 pass's budget is covered in order and wraps; the stats say how far a pass got.
 A pass stops starting requests ``_MIN_REQUEST_S`` before ``PASS_BUDGET_S``. A 429
 (gotcha 36: the clients re-raise it) stops that venue for the pass and backs it
-off exponentially (``…:backoff``); it never becomes "no price". The population
+off exponentially (``…:backoff``); it never becomes "no price", and the cursor
+stays before the group so it is read first once the back-off ends. Any other
+failed read (an error, or a timeout on the full ``REQUEST_TIMEOUT_S``) stops the
+pass with the cursor PAST the failed group (``groups_failed``), so one group
+that keeps failing costs one read per rotation instead of stopping the rotation
+there. A Kalshi market with more legs than a whole pass's budget can read is
+skipped and counted (``units_oversize``), never left at the head. The population
 is re-read at most every ``POPULATION_TTL_S`` per worker process. Single-flight
 in the task wrapper means a slow pass declines the next tick rather than
 overlapping it.
@@ -507,7 +515,6 @@ def backoff_remaining(venue: str) -> float:
 
 def start_backoff(venue: str) -> int:
     """Back the venue off after a 429: 30 s, doubling to ``BACKOFF_MAX_S``."""
-    level = 1
     try:
         rc = _redis()
         level = int(rc.incr(f"{_KEY_PREFIX}:{venue}:backoff_level"))
@@ -557,7 +564,7 @@ class PollWrite:
     last_point: dict[int, tuple]
     allowed: frozenset[int]
     rows_updated: int = 0
-    #: outcome_id → (probability, yes_bid, yes_ask, last_price) read unchanged.
+    #: outcome_id → (probability, yes_bid, yes_ask) read unchanged.
     unchanged: dict[int, tuple] = field(default_factory=dict)
 
     def admit(self, outcome_id, prob, bid, ask, stats) -> bool:
@@ -728,11 +735,16 @@ def kalshi_items(service, raw_markets: list[dict], stats: dict) -> dict[str, dic
     return items
 
 
-def kalshi_requests(units: list[Unit], budget: int) -> list[tuple[list[Unit], list[list[str]]]]:
+def kalshi_requests(
+    units: list[Unit], budget: int, stats: Optional[dict] = None
+) -> list[tuple[list[Unit], list[list[str]]]]:
     """Pack units into request groups: (units, ticker chunks), within ``budget``.
 
     A unit is never split across groups, so its legs are written after every
     one of its reads; a unit with more legs than one request is its own group.
+    A unit needing more reads than the whole ``budget`` can never be read, so it
+    is skipped and counted (``units_oversize``) rather than stopping the pack —
+    at the head of the rotation it would otherwise stop every pass there.
     """
     groups: list[tuple[list[Unit], list[list[str]]]] = []
     used = 0
@@ -754,6 +766,10 @@ def kalshi_requests(units: list[Unit], budget: int) -> list[tuple[list[Unit], li
                 legs[i : i + KALSHI_TICKERS_PER_REQUEST]
                 for i in range(0, len(legs), KALSHI_TICKERS_PER_REQUEST)
             ]
+            if len(chunks) > budget:
+                if stats is not None:
+                    stats["units_oversize"] = stats.get("units_oversize", 0) + 1
+                continue
             if used + len(chunks) > budget:
                 break
             groups.append(([unit], chunks))
@@ -770,7 +786,11 @@ def kalshi_requests(units: list[Unit], budget: int) -> list[tuple[list[Unit], li
     return groups
 
 
-def polymarket_requests(units: list[Unit], budget: int) -> list[tuple[list[Unit], list[list[str]]]]:
+def polymarket_requests(
+    units: list[Unit], budget: int, stats: Optional[dict] = None
+) -> list[tuple[list[Unit], list[list[str]]]]:
+    """Gamma events in reads of ``PM_EVENTS_PER_REQUEST``; one read per group,
+    so no unit can exceed the budget (``stats`` is for the shared signature)."""
     groups = []
     for i in range(0, len(units), PM_EVENTS_PER_REQUEST):
         if len(groups) >= budget:
@@ -872,8 +892,11 @@ async def poll_venue(venue: str, *, deadline: float) -> dict:
             cursor = read_cursor(venue)
             ordered = rotate(units, cursor)
             pack = kalshi_requests if venue == "kalshi" else polymarket_requests
-            groups = pack(ordered, budget)
-            offset = time.time() - (await db_clock(session)).timestamp()
+            groups = pack(ordered, budget, stats)
+            # Local clock read AFTER the database answers: `fetched_at` then
+            # errs early by the reply's latency, so the newer-writer guard yields.
+            db_now = await db_clock(session)
+            offset = time.time() - db_now.timestamp()
             await session.commit()
             last_key = None
             for gi, (group_units, chunks) in enumerate(groups):
@@ -884,20 +907,29 @@ async def poll_venue(venue: str, *, deadline: float) -> dict:
                 if gi:
                     await asyncio.sleep(spacing)
                 fetched_at = datetime.fromtimestamp(time.time() - offset, timezone.utc)
+                wall = min(REQUEST_TIMEOUT_S, left)
                 try:
-                    found = await _fetch_group(
-                        venue, service, chunks, stats, min(REQUEST_TIMEOUT_S, left)
-                    )
+                    found = await _fetch_group(venue, service, chunks, stats, wall)
                 except asyncio.TimeoutError:
+                    if wall < REQUEST_TIMEOUT_S:
+                        # The pass's clock cut the read short: the group never
+                        # had its full wall, so it is first next pass.
+                        stats["stopped"] = "budget"
+                        break
+                    stats["groups_failed"] = stats.get("groups_failed", 0) + 1
                     stats["stopped"] = "timeout"
+                    last_key = group_units[-1].key
                     break
                 except Exception as exc:  # noqa: BLE001 — classified below
                     if is_rate_limited(exc):
+                        # The venue said slow down: no cursor move past it.
                         stats["backoff_started_s"] = start_backoff(venue)
                         stats["stopped"] = "rate_limited"
                     else:
                         stats["errors"].append(f"fetch: {str(exc)[:200]}")
+                        stats["groups_failed"] = stats.get("groups_failed", 0) + 1
                         stats["stopped"] = "fetch_error"
+                        last_key = group_units[-1].key
                     break
                 await _write_group(session, venue, group_units, found, fetched_at, stats)
                 last_key = group_units[-1].key
@@ -969,8 +1001,10 @@ async def poll_venue_prices(venues) -> dict:
     stops = [r.get("stopped") for r in results]
     if all(s == "error" for s in stops):
         summary["terminal"] = "failed"
-    elif any(s in ("error", "fetch_error", "rate_limited", "timeout") for s in stops) or any(
-        r.get("errors") for r in results
+    elif (
+        any(s in ("error", "fetch_error", "rate_limited", "timeout") for s in stops)
+        or any(r.get("errors") for r in results)
+        or any(r.get("units_oversize") for r in results)
     ):
         summary["terminal"] = "partial"
     else:

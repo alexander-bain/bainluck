@@ -2,7 +2,8 @@
 bound, hand-off reading, Kalshi refusals, 429 back-off and the time budget.
 
 The SQL and the write path are proved against real Postgres in
-``tests/integration/test_venue_poll_30s_real_postgres_10090.py``.
+``tests/integration/test_futures_price_refresh_writes_pg.py`` (the ``#10090``
+section at its end, run by CI's search-recall step).
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ def test_the_switch_is_off_unless_it_names_a_venue(raw, expected):
     assert v.enabled_venues(env) == expected
 
 
-def test_a_dark_tick_touches_neither_redis_nor_the_database(monkeypatch):
+def test_a_dark_tick_body_touches_neither_redis_nor_the_database(monkeypatch):
     from app import tasks
 
     monkeypatch.delenv(v.ENABLED_ENV, raising=False)
@@ -87,6 +88,16 @@ def test_a_market_larger_than_one_request_spans_requests_and_counts_against_the_
     assert len(groups[0][1]) == 3 and groups[0][0] == [big]
     assert len(groups) == 1  # the budget is spent; market 2 waits for the next pass
     assert v.kalshi_requests([big], budget=2) == []  # never half a market
+
+
+def test_a_market_larger_than_the_whole_budget_is_skipped_and_counted_not_a_wedge():
+    # lane1's R2 second instance: at the head of the rotation it packed nothing,
+    # the pass read as `done` and the cursor never moved.
+    stats: dict = {}
+    small = _unit("2", 5)
+    groups = v.kalshi_requests([_unit("1", 300), small], 2, stats)
+    assert groups == [([small], [[ext for _o, ext in small.legs[2]]])]
+    assert stats == {"units_oversize": 1}
 
 
 def test_polymarket_requests_batch_events_within_the_budget():
@@ -356,3 +367,132 @@ async def test_one_venue_failing_never_takes_the_other_down(monkeypatch):
     summary = await v.poll_venue_prices({"kalshi", "polymarket"})
     assert summary["polymarket"]["stopped"] == "done"
     assert summary["terminal"] == "partial"
+
+
+def _wire_rotation(monkeypatch, *, units, fail_key, exc):
+    """lane1's R2 probe rig: a real cursor store, a group that keeps failing."""
+    store = {"cursor": None}
+    visited = []
+
+    @asynccontextmanager
+    async def _session(**_k):
+        yield _Session()
+
+    async def _population(_session, _venue, *, now_mono):
+        return units
+
+    async def _fetch(_venue, _service, chunks, _stats, _timeout):
+        (ids,) = chunks
+        visited.append(tuple(ids))
+        if fail_key in ids:
+            raise exc()
+        return {}
+
+    async def _write(*_a, **_k):
+        pass
+
+    class _Service:
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("app.tasks.base.get_task_session", _session)
+    monkeypatch.setattr(v, "load_population", _population)
+    monkeypatch.setattr(v, "_new_service", lambda _venue: _Service())
+    monkeypatch.setattr(v, "_fetch_group", _fetch)
+    monkeypatch.setattr(v, "_write_group", _write)
+    monkeypatch.setattr(v, "backoff_remaining", lambda _venue: 0.0)
+    monkeypatch.setattr(v, "read_cursor", lambda _venue: store["cursor"])
+    monkeypatch.setattr(
+        v, "write_cursor",
+        lambda _venue, key: store.__setitem__("cursor", key) if key is not None else None,
+    )
+    monkeypatch.setattr(v, "clear_backoff", lambda _venue: None)
+    monkeypatch.setattr(v, "PM_EVENTS_PER_REQUEST", 1)
+    monkeypatch.setattr(v, "PM_REQUEST_SPACING_S", 0.0)
+    return store, visited
+
+
+def _unprocessable():
+    request = httpx.Request("GET", "https://gamma-api.polymarket.com/events")
+    return httpx.HTTPStatusError("422", request=request, response=httpx.Response(422, request=request))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc", [_unprocessable, TimeoutError], ids=["422", "timeout"])
+async def test_a_group_that_keeps_failing_never_wedges_the_rotation(monkeypatch, exc):
+    # lane1's probe (`test_l1rev_probe_wedge.py`), inverted: on b4261c5d the
+    # fetch log read [1, 2, 2, 2, 2, 2] and units 3 and 4 were never read again.
+    import asyncio
+    import time
+
+    exc = asyncio.TimeoutError if exc is TimeoutError else exc
+    units = [v.Unit(str(k), {k: [(k * 10, f"c{k}")]}) for k in (1, 2, 3, 4)]
+    store, visited = _wire_rotation(monkeypatch, units=units, fail_key="2", exc=exc)
+    first = await v.poll_venue("polymarket", deadline=time.monotonic() + 20)
+    assert first["groups_failed"] == 1 and store["cursor"] == "2"
+    assert first["stopped"] in ("fetch_error", "timeout")
+    second = await v.poll_venue("polymarket", deadline=time.monotonic() + 20)
+    # Pass 2 starts PAST the failure and reaches it again only at the end of the
+    # rotation: one failed read per rotation, every other unit still read.
+    assert visited == [("1",), ("2",), ("3",), ("4",), ("1",), ("2",)]
+    assert second["units_done"] == 3 and store["cursor"] == "2"
+
+
+@pytest.mark.asyncio
+async def test_a_read_the_pass_clock_cut_short_keeps_its_place(monkeypatch):
+    # A timeout under a wall shorter than REQUEST_TIMEOUT_S is the pass's budget,
+    # not the group's failure: the group was never given its full read.
+    import asyncio
+    import time
+
+    units = [v.Unit(str(k), {k: [(k * 10, f"c{k}")]}) for k in (1, 2)]
+    store, visited = _wire_rotation(monkeypatch, units=units, fail_key="1", exc=asyncio.TimeoutError)
+    stats = await v.poll_venue("polymarket", deadline=time.monotonic() + v._MIN_REQUEST_S + 1)
+    assert stats["stopped"] == "budget" and "groups_failed" not in stats
+    assert store["cursor"] is None and visited == [("1",)]
+
+
+@pytest.mark.asyncio
+async def test_an_oversize_market_makes_the_pass_partial_not_healthy(monkeypatch):
+    async def _poll(venue, *, deadline):
+        return {"stopped": "done", "errors": [], **({"units_oversize": 1} if venue == "kalshi" else {})}
+
+    monkeypatch.setattr(v, "poll_venue", _poll)
+    summary = await v.poll_venue_prices({"kalshi", "polymarket"})
+    assert summary["terminal"] == "partial"
+
+
+@pytest.mark.asyncio
+async def test_the_local_clock_is_read_after_the_database_clock_answers(monkeypatch):
+    # lane1 R4: read before the await, `fetched_at` overstates the database clock
+    # by the query's send latency, the unsafe side of the newer-writer guard.
+    import time as real_time
+
+    order = []
+
+    async def _db_clock(_session):
+        order.append("db")
+        return datetime.now(timezone.utc)
+
+    class _Clock:
+        monotonic = staticmethod(real_time.monotonic)
+
+        @staticmethod
+        def time():
+            order.append("local")
+            return real_time.time()
+
+    async def _fetch(*_a, **_k):
+        return {}
+
+    _wire_pass(monkeypatch, units=[_unit("1", 3)], fetch=_fetch)
+    monkeypatch.setattr(v, "_write_group", lambda *_a, **_k: _noop())
+    monkeypatch.setattr(v, "db_clock", _db_clock)
+    monkeypatch.setattr(v, "time", _Clock)
+    stats = await v.poll_venue("kalshi", deadline=real_time.monotonic() + 20)
+    assert stats["stopped"] == "done"
+    assert order[:2] == ["db", "local"]
+
+
+async def _noop():
+    return None
