@@ -7245,13 +7245,14 @@ jobs:
           set -o pipefail
           python -m pytest tests/integration/test_status_task_releases_started_rows_pg_10090.py \
             tests/integration/test_status_task_releases_phase_rows_before_history_reads_pg_10090.py \
+            tests/integration/test_last_post_commence_snapshot_source_ranges_pg_10090.py \
             -v -rs 2>&1 | tee /tmp/statusrelease10090.txt
           if grep -qiE "[0-9]+ skipped" /tmp/statusrelease10090.txt; then
             echo "::error::#10090 status-release contract SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]13 passed[,[:space:]]" /tmp/statusrelease10090.txt || {
-            echo "::error::#10090 status-release contract did not run all 13 cases (4 promoted, 3 resumed, 4 history-read, 2 tennis-recall releases)"
+          grep -qE "[^0-9]16 passed[,[:space:]]" /tmp/statusrelease10090.txt || {
+            echo "::error::#10090 status-release contract did not run all 16 cases (4 promoted, 3 resumed, 4 history-read, 2 tennis-recall releases, 3 snapshot-read)"
             exit 1
           }
           # CERT-4214's witnesses for the same commit: a genuine settlement

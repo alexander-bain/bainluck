@@ -126,6 +126,24 @@ class TestSnapshotEvidenceQuery:
         # the CAL-P002 repair time out. One bind, one pass.
         assert sorted(text(LAST_POST_COMMENCE_SNAPSHOT_SQL)._bindparams) == ["event_ids"]
 
+    def test_the_venue_exclusion_is_reached_by_index_ranges(self):
+        from app.utils.event_completion import (
+            _NON_VENUE_SOURCE_RANGES,
+            LAST_POST_COMMENCE_SNAPSHOT_SQL,
+            VENUE_PRICE_SOURCES,
+        )
+
+        # #10090: `NOT IN` cannot be an index condition, so the old single arm
+        # fetched every venue row (93% of the table) and filtered after. Each
+        # arm is a range on (event_id, source): NULL, below the first venue,
+        # between each pair, above the last. Equality of the answer and the
+        # plan shape are proved on real Postgres in
+        # tests/integration/test_last_post_commence_snapshot_source_ranges_pg_10090.py.
+        assert len(_NON_VENUE_SOURCE_RANGES) == len(VENUE_PRICE_SOURCES) + 2
+        assert not any("NOT IN" in arm for arm in _NON_VENUE_SOURCE_RANGES)
+        for arm in _NON_VENUE_SOURCE_RANGES:
+            assert f"AND {arm}\n" in LAST_POST_COMMENCE_SNAPSHOT_SQL
+
 
 class TestBothProducersAreWired:
     """The decision logic above is pure and directly tested; these pin the glue.
