@@ -662,6 +662,29 @@ DELIVERY_RECEIPT_MAX_PENDING = 512
 #: evening slate must not turn the receipt into the dyno's loudest line. The
 #: most active games are written; the rest are counted in one overflow line.
 DELIVERY_RECEIPT_MAX_EVENTS = 30
+#: #10090 field 2 — preview publications listed per line, like `stamps`; the
+#: overflow is counted in `previews_dropped`.
+DELIVERY_RECEIPT_MAX_PREVIEWS = 40
+#: A receipt line longer than this is trimmed before it is written: the
+#: readout counts 10,000+ character lines as truncated (logplex cuts them).
+#: Preview items go first — those carrying no `first_new_recv`, then the
+#: oldest — each counted in `previews_dropped`.
+DELIVERY_RECEIPT_MAX_LINE_CHARS = 9000
+#: The receipt line's fixed shape. `stamps` items are
+#: rev@stamped_at@newest_recv@oldest_recv@covered@first_new_recv; `previews`
+#: items are base_rev:seq@published_at@first_new_recv (`ReaderTrail`).
+DELIVERY_RECEIPT_FORMAT = (
+    "live_blend_refresh[%s]: delivery-receipt run=%s event=%s "
+    "window_start=%s window_s=%.3f raw=%d accepted=%d changed=%d "
+    "repeats=%d first=%d outcomes=%s stamps=%s stamps_dropped=%d "
+    "writer=%s previews=%s previews_dropped=%d trail_dropped=%d%s"
+)
+#: #10090 field 3 — the same `stamps=` item, from a writer of this process
+#: other than the arm's own stamp (a Polymarket withdrawal), one line per
+#: revision of a live event.
+WRITER_RECEIPT_FORMAT = (
+    "live_blend_refresh[%s]: writer-receipt writer=%s event=%s stamps=%s"
+)
 
 
 #: #10090 — the live games a consumer run's receipt knew, left for the next run
@@ -850,6 +873,14 @@ class TailReceipts:
         self._uncovered: dict[int, deque] = {}
         self._committed: dict[int, InputMark] = {}
         self._live_events: set[int] = set(_live_handoff.pop(source, frozenset()))
+        #: #10090 total unnecessary delay: what live readers still lack, per
+        #: publication (`app.utils.reader_trail`). Live events only.
+        from app.utils.reader_trail import ReaderTrail
+
+        self._trail = ReaderTrail()
+        #: The frame value each live event's in-flight stamp publishes, by
+        #: revision; taken by `_note_stamp` once that stamp committed.
+        self._stamp_frames: dict[int, tuple] = {}
         #: Coverage starts no earlier than this run did, nor before a game was
         #: first stamped live in it: a minute line must never claim seconds the
         #: consumer was not watching (Root's 57 s repro: 3 inputs in 3 s read
@@ -920,7 +951,7 @@ class TailReceipts:
             )
             bucket = self._window[event_id] = {
                 "raw": 0, "outcomes": {}, "stamps": [], "stamps_dropped": 0,
-                "from": observed_from,
+                "previews": [], "previews_dropped": 0, "from": observed_from,
             }
         return bucket
 
@@ -943,17 +974,25 @@ class TailReceipts:
         self._uncovered.setdefault(
             mark.event_id, deque(maxlen=DELIVERY_RECEIPT_MAX_PENDING)
         ).append((mark.seq, mark.recv_wall, mark.outcome_id))
+        # Last: the trail is the newest receipt, and never costs the others.
+        self._trail.note_input(mark, prior is None or prior != mark.probability)
 
     def _note_stamp(self, event_id: int, disposition: tuple) -> None:
         """A committed stamp: the published `rev`, its `stamped_at` (the SSE
         frame's `updated_at`, byte for byte), and the inputs it carried — every
         input of this event up to the newest committed one, so a stamp that
         coalesced many inputs says how many (`covered`) and how old the oldest
-        was. Inputs that arrived after the committed one wait for the next."""
+        was. Inputs that arrived after the committed one wait for the next.
+
+        #10090 field 1: the item's sixth part is `first_new_recv`, the receipt
+        of the oldest input this stamp is the FIRST publication to carry to
+        readers, judged against the last value published by preview or stamp
+        (`ReaderTrail.stamp`); `-` when it carried no change readers lacked."""
         rev = disposition[4] if len(disposition) > 4 else None
         status = disposition[5] if len(disposition) > 5 else None
         was_live = event_id in self._live_events
         mark = self._committed.pop(event_id, None)
+        frame = self._stamp_frames.pop(event_id, None)
         if len(disposition) > 6 and disposition[6] is False:
             # A queued fresh stamp reread the board. The staged input is not
             # joined to that reading; only the exact observation trace can
@@ -973,6 +1012,15 @@ class TailReceipts:
                 covered += 1
                 if oldest is None:
                     oldest = wall
+        first_new = None
+        try:
+            # The frame's own value, only if it is THIS stamp's (same revision).
+            value = frame[1] if frame is not None and frame[0] == rev else None
+            first_new = self._trail.stamp(
+                event_id, value, rev, mark.seq if mark is not None else None,
+            )
+        except Exception:
+            logger.warning("tail receipt: trail stamp failed", exc_info=True)
         if status is not None and status != "live":
             # This stamp is still the game's (its minute was live); after it,
             # nothing more is kept for the event.
@@ -980,6 +1028,7 @@ class TailReceipts:
             self._uncovered.pop(event_id, None)
             self._last_p.pop(event_id, None)
             self._live_since.pop(event_id, None)
+            self._trail.forget(event_id)
         self._roll(_wall())
         bucket = self._bucket(event_id)
         if len(bucket["stamps"]) >= DELIVERY_RECEIPT_MAX_STAMPS:
@@ -991,7 +1040,61 @@ class TailReceipts:
             _iso(mark.recv_wall) if mark is not None else "-",
             _iso(oldest) or "-",
             str(covered),
+            _iso(first_new) or "-",
         )))
+
+    def note_stamp_frame(self, event_id: int, rev, probability, status) -> None:
+        """The value a stamp's frame publishes, noted when the frame is built
+        (before COMMIT); `_note_stamp` takes it only for the same revision, so
+        a stamp that rolled back leaves nothing it could be credited with."""
+        if status == "live" or event_id in self._live_events:
+            self._stamp_frames[event_id] = (rev, probability)
+
+    def note_committed_rows(self, rows) -> None:
+        """A price write's committed RETURNING rows, before any await: the
+        trail inputs they stored are committed (`ReaderTrail`)."""
+        self._trail.note_committed_rows(rows)
+
+    def note_preview(self, frame: dict, meta, reply) -> None:
+        """#10090 fields 1+2 — one ledger send, after it (`observe_publication`).
+        Only what Redis PUBLISHED reached readers. A blend of a live event is
+        listed as base_rev:seq@published_at@first_new_recv; a revoke drops
+        readers back to the committed value (`ReaderTrail.revoke`)."""
+        if not reply or reply[0] != "published":
+            return
+        preview = frame.get("preview") or {}
+        kind = preview.get("kind")
+        event_id = frame.get("event_id")
+        if event_id not in self._live_events or kind not in ("blend", "revoke"):
+            return
+        wall = _wall()
+        if kind == "revoke":
+            self._trail.revoke(event_id, wall)
+            return
+        _seen, first_new = self._trail.preview(event_id, frame.get("p"), preview.get("base_rev"))
+        self._roll(wall)
+        bucket = self._bucket(event_id)
+        if len(bucket["previews"]) >= DELIVERY_RECEIPT_MAX_PREVIEWS:
+            bucket["previews_dropped"] += 1
+            return
+        base = preview.get("base_rev")
+        bucket["previews"].append("%s:%s@%s@%s" % (
+            "-" if base is None else base, preview.get("seq", "-"), _iso(wall),
+            _iso(first_new) or "-",
+        ))
+
+    def note_writer_revision(self, writer: str, event_id: int, rev, stamped_at) -> None:
+        """#10090 field 3 — a revision this process's OTHER writer published
+        for a live event (a Polymarket withdrawal's invalidation). Its frame
+        carries no value, so it is credited with no input (`-`), and what
+        readers show next is unknown here (`ReaderTrail.revision`)."""
+        if event_id not in self._live_events:
+            return
+        self._trail.revision(event_id, rev)
+        logger.info(
+            WRITER_RECEIPT_FORMAT, self.source, writer, event_id,
+            "@".join(("-" if rev is None else str(rev), str(stamped_at), "-", "-", "0", "-")),
+        )
 
     def _roll(self, wall: float, *, final: bool = False) -> None:
         """Close the UTC minute once the clock has left it (or at exit), one
@@ -1025,22 +1128,36 @@ class TailReceipts:
 
     def _emit(self, event_id: int, bucket: dict, window_end: float) -> None:
         """`window_start`/`window_s` are the seconds this run actually watched
-        the game inside the minute — never the minute's floor before it."""
+        the game inside the minute — never the minute's floor before it.
+        Bounded to `DELIVERY_RECEIPT_MAX_LINE_CHARS` by dropping preview items
+        (counted), never stamps."""
         per = bucket["outcomes"]
         totals = [sum(v[i] for v in per.values()) for i in range(4)]
         self.stats["delivery_lines"] += 1
-        logger.info(
-            "live_blend_refresh[%s]: delivery-receipt run=%s event=%s "
-            "window_start=%s window_s=%.3f raw=%d accepted=%d changed=%d "
-            "repeats=%d first=%d outcomes=%s stamps=%s stamps_dropped=%d%s",
-            self.source, self.run, event_id, _iso(bucket["from"]),
-            max(0.0, window_end - bucket["from"]),
-            bucket["raw"], *totals,
-            ",".join(f"{oid}:{v[0]}:{v[1]}:{v[2]}:{v[3]}" for oid, v in sorted(per.items()))
-            or "-",
-            ";".join(bucket["stamps"]) or "-", bucket["stamps_dropped"],
-            _switch_tags(event_id, bucket["from"]),
-        )
+        previews = list(bucket.get("previews", ()))
+        previews_dropped = bucket.get("previews_dropped", 0)
+        trail_dropped = self._trail.dropped(event_id, reset=True)
+
+        def line():
+            return DELIVERY_RECEIPT_FORMAT % (
+                self.source, self.run, event_id, _iso(bucket["from"]),
+                max(0.0, window_end - bucket["from"]),
+                bucket["raw"], *totals,
+                ",".join(f"{oid}:{v[0]}:{v[1]}:{v[2]}:{v[3]}" for oid, v in sorted(per.items()))
+                or "-",
+                ";".join(bucket["stamps"]) or "-", bucket["stamps_dropped"],
+                self.source, ";".join(previews) or "-",
+                previews_dropped, trail_dropped,
+                _switch_tags(event_id, bucket["from"]),
+            )
+
+        message = line()
+        while len(message) > DELIVERY_RECEIPT_MAX_LINE_CHARS and previews:
+            idle = [i for i, item in enumerate(previews) if item.endswith("@-")]
+            previews.pop(idle[0] if idle else 0)
+            previews_dropped += 1
+            message = line()
+        logger.info("%s", message)
 
     def unowed(self, marks: Iterable[InputMark]) -> None:
         """#10090 (A1) — committed inputs no stamp reads (a live game's prop
@@ -1107,6 +1224,11 @@ class TailReceipts:
             held = self._committed.get(event_id)
             if event_id in self._live_events and (held is None or mark.seq > held.seq):
                 self._committed[event_id] = mark
+            if event_id in self._live_events:
+                try:
+                    self._trail.note_flushed(event_id, mark.seq)
+                except Exception:
+                    logger.warning("tail receipt: trail flush failed", exc_info=True)
             chain = self._open.get(event_id)
             if chain is not None:
                 chain.later_committed += 1
@@ -3705,19 +3827,26 @@ class LiveBlendRefresher:
         return counts
 
     def _preview_observer(self):
-        """The ledger send's observer: the stage trace's (if any), then the
-        preview receipt's. Each is read-only and runs after the send."""
+        """The ledger send's observer: the stage trace's (if any), the preview
+        receipt's, then the delivery receipt's trail (#10090 fields 1+2). Each
+        is read-only, runs after the send, and cannot cost the others."""
         trace, receipt = self._stage_hook("preview"), self.preview_receipt
-        if receipt is None:
-            return trace
-        if trace is None:
-            return receipt.published
+        observers = [fn for fn in (
+            trace,
+            None if receipt is None else receipt.published,
+            getattr(getattr(self, "receipts", None), "note_preview", None),
+        ) if fn is not None]
+        if not observers:
+            return None
+        if len(observers) == 1:
+            return observers[0]
 
         def observe(frame, meta, reply):
-            try:
-                trace(frame, meta, reply)
-            finally:
-                receipt.published(frame, meta, reply)
+            for fn in observers:
+                try:
+                    fn(frame, meta, reply)
+                except Exception:
+                    pass
         return observe
 
     async def refresh_pending(
@@ -5358,6 +5487,13 @@ class LiveBlendRefresher:
                     # #10090: the row's complete public sources, from the same
                     # RETURNING bag and revision as `p`. No query. Published
                     # with the frame after COMMIT, or not at all.
+                    stamp_receipts = getattr(self, "receipts", None)
+                    if stamp_receipts is not None:
+                        # #10090: the value this stamp's frame shows readers.
+                        self._receipt_call(
+                            stamp_receipts.note_stamp_frame, event_id, new_rev,
+                            frame["p"], event.status,
+                        )
                     snapshot = build_source_snapshot(
                         event_id, frame["rev"], new_sources,
                     )
@@ -6600,6 +6736,12 @@ class LiveBlendRefresher:
         copy, and a live event whose `preview_from_commit` arm is on is queued
         for a preview composed from that copy (`_preview_from_commit_rows`).
         """
+        receipts = getattr(self, "receipts", None)
+        if receipts is not None:
+            # #10090: the delivery receipt's trail learns these inputs are
+            # stored, whether or not any graph is cached for them.
+            rows = rows if isinstance(rows, (list, tuple)) else list(rows)
+            self._receipt_call(receipts.note_committed_rows, rows)
         graphs = getattr(self, "_preview_graphs", None)
         if graphs is None or not _preview_from_commit_possible():
             return

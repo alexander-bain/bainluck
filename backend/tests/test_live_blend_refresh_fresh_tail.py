@@ -195,7 +195,11 @@ async def test_queued_fresh_tail_reads_actual_quote_clock_without_claiming_old_m
     assert not any(line["stage"] == "EVENT_COMMITTED" for line in trace_lines)
     assert trace.stamps == {}  # Old staged mark did not join the new observation.
     delivery = r.receipts._window[held]["stamps"]
-    assert len(delivery) == 1 and delivery[0].endswith("@-@-@0")
+    assert len(delivery) == 1 and delivery[0].split("@")[2:5] == ["-", "-", "0"]
+    # #10090 field 1 is a different claim: this stamp is the first publication
+    # carrying something newer than the held input, so readers trailed from its
+    # receipt (`ReaderTrail.stamp` with no mark carries the committed inputs).
+    assert delivery[0].split("@")[5] == blend_module._iso(OLD.timestamp())
     tail = [record.getMessage() for record in caplog.records
             if "tail-receipt run=" in record.getMessage()
             and f"event={held} " in record.getMessage()]
