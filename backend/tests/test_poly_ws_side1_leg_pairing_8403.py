@@ -89,14 +89,14 @@ class _Session:
         self._writes = writes
         self._scenario = scenario
 
-    async def execute(self, stmt):
+    async def execute(self, stmt, binds=None):
         if isinstance(stmt, Update):
             params = stmt.compile(dialect=postgresql.dialect()).params
             if (
                 stmt.table.name == "futures_outcomes"
-                and price_writes(stmt)
+                and price_writes(stmt, binds)
             ):
-                self._writes.extend(price_writes(stmt))
+                self._writes.extend(price_writes(stmt, binds))
             return _Result([])
         if self._scenario is not None and is_stored_live_slate_read(stmt):
             # #10090 attempt156: the stored-live load reads its own three

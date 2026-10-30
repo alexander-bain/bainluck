@@ -378,16 +378,16 @@ class _Session:
         self._meta_writes = meta_writes
         self._scenario = scenario
 
-    async def execute(self, stmt, params=None):
+    async def execute(self, stmt, binds=None):
         if stmt is SET_LOCK_TIMEOUT_SQL:  # the chunk's per-transaction lock budget
             return _Result([])
         if isinstance(stmt, Update):
             params = stmt.compile(dialect=postgresql.dialect()).params
             if (
                 stmt.table.name == "futures_outcomes"
-                and price_writes(stmt)
+                and price_writes(stmt, binds)
             ):
-                self._writes.extend(price_writes(stmt))
+                self._writes.extend(price_writes(stmt, binds))
                 # 1b298f0362: only the rows the chunk UPDATE returns count as
                 # written (and so as owed a blend); every given price lands.
                 # Unmoved, as in the q491 rig: market invalidations (#9484)
@@ -397,7 +397,7 @@ class _Session:
                         ord=i, id=oid, market_id=MARKET_ID,
                         last_updated=STORED_AT, quote_moved=False,
                     )
-                    for i, (oid, _prob) in enumerate(price_writes(stmt), start=1)
+                    for i, (oid, _prob) in enumerate(price_writes(stmt, binds), start=1)
                 ])
             elif stmt.table.name == "futures_markets":
                 self._meta_writes.append(params["id_1"])
