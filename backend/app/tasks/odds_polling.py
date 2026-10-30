@@ -814,6 +814,7 @@ async def _ingest_event_odds(
     *,
     update_opening: bool = True,
     drop_below_floor: bool = True,
+    received_at: Optional[float] = None,
 ) -> int:
     """Create odds snapshots for every bookmaker of one event, then update the
     event's opening-odds consensus and win_probability_sources['betting'].
@@ -843,6 +844,10 @@ async def _ingest_event_odds(
         because the market thinned. Dropping on that would delete a consensus a
         full poll had legitimately written. So a partial caller under the floor
         leaves the existing entry untouched instead of removing it.
+
+    `received_at` (#10090) is when our server received this listing (epoch
+    seconds): the `betting` write's delivery receipt starts its clock there.
+    Receipt only; None when the caller did not time its fetch.
     """
     event_id = event.id
     # #8530: price each side under the name the ROW gives it, not the feed's
@@ -1074,6 +1079,7 @@ async def _ingest_event_odds(
                 session, event, "betting",
                 _betting_value,
                 metadata={"betting_book_count": _book_count},
+                received_at=received_at,
                 evidence={
                     "rule": "median",
                     "floor": BETTING_BOOK_FLOOR,
@@ -1208,6 +1214,7 @@ async def _poll_mlb_pregame():
                 regions=MLB_PREGAME_REGIONS,
                 markets=MLB_PREGAME_MARKETS,
             )
+            received_at = datetime.now(timezone.utc).timestamp()
         except Exception as e:
             logger.warning("MLB pre-game poll failed: %s", e)
             return {"skipped": True, "reason": "api_error", "error": str(e)}
@@ -1264,6 +1271,7 @@ async def _poll_mlb_pregame():
                 total_events += 1
             total_snapshots += await _ingest_event_odds(
                 session, event, event_data, commence_time, snapshot_cache,
+                received_at=received_at,
             )
             # #10090: the game is the transaction unit, as in `_poll_all_odds`.
             # One commit after the slate held each game's row from its
@@ -1662,6 +1670,7 @@ async def _poll_all_odds():
                         regions=api_regions,
                         markets=api_markets,
                     )
+                    received_at = datetime.now(timezone.utc).timestamp()
                     all_events_data.extend(events_data)
                     sports_polled += 1
 
@@ -1741,6 +1750,7 @@ async def _poll_all_odds():
                         # so the two polling paths stay identical (issue #892).
                         total_snapshots += await _ingest_event_odds(
                             session, event, event_data, commence_time, snapshot_cache,
+                            received_at=received_at,
                         )
                         # #10090: commit AND publish this game before the next
                         # game's registry lookup and snapshot bookkeeping. The

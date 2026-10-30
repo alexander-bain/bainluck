@@ -12,6 +12,17 @@ records each event's final committed bag inside the same transaction
 receipted in this process's log from RETURNING through COMMIT to the Redis
 reply (`app.utils.nonvenue_trace`), and a COMMIT carrying one re-reads that
 row once (`_read_committing_rows`). Disarmed, each hook is a ``None`` check.
+
+#10090 field 3 (always on, log only): every committed LIVE frame these writers
+publish is credited in one ``writer-receipt`` line, the delivery receipt's
+``stamps=`` item ``rev@stamped_at@recv@recv@sources@first_new_recv``. ``recv``
+is when the producer received its input (the odds poll's listing), ``-`` if it
+did not say. ``first_new_recv`` is that ``recv`` when the write changed the
+blend: the committed bag's aggregate against the same bag with each written
+source's prior entry put back, both computed at COMMIT. ``-`` when it did not;
+``?`` when the prior entry or the receipt instant is unknown here (an unmapped
+event, a producer that does not time its fetch). The comparison is against the
+stored bag, not against a venue preview another process may be showing.
 """
 
 from __future__ import annotations
@@ -46,7 +57,82 @@ _PENDING = "nonvenue_probability_pending"
 _READY = "nonvenue_probability_committed"
 _HOOKS = "nonvenue_probability_hooks"
 _CLIENT_SCOPE = "nonvenue_probability_client_scope"
+_RECEIPTS = "nonvenue_probability_receipts"
 NONVENUE_SOURCES = frozenset({"betting", "stat_model", "mlb", "espn"})
+#: #10090 field 3: one line per committed live frame (module doc).
+WRITER_RECEIPT_FORMAT = "nonvenue_live_push[%s]: writer-receipt writer=%s event=%s stamps=%s"
+_ABSENT = object()  # the source had no entry before this transaction wrote it
+_UNKNOWN = object()  # what it had is not known to this process
+
+
+def _iso(wall):
+    if wall is None:
+        return None
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(wall, timezone.utc).isoformat(timespec="milliseconds")
+
+
+def _note_receipt(sync, event_id, source, previous, row, received_at):
+    """Keep what this transaction's receipt needs: each written source's entry
+    before the transaction's FIRST write of it, the newest committed row, and
+    the newest receipt instant. Never raises."""
+    try:
+        context = sync.info.setdefault(_RECEIPTS, {}).setdefault(
+            event_id, {"priors": {}, "received_at": None, "row": None},
+        )
+        if source not in context["priors"]:
+            context["priors"][source] = (
+                previous.get(source, _ABSENT) if isinstance(previous, dict) else _UNKNOWN
+            )
+        if received_at is not None:
+            context["received_at"] = max(received_at, context["received_at"] or received_at)
+        context["row"] = row
+    except Exception:
+        logger.warning("nonvenue writer receipt not noted", exc_info=True)
+
+
+def _first_new_recv(context) -> str:
+    priors = context["priors"]
+    sources, status, espn, opening = context["row"]
+    if not isinstance(sources, dict) or any(p is _UNKNOWN for p in priors.values()):
+        return "?"
+    before = dict(sources)
+    for name, prior in priors.items():
+        if prior is _ABSENT:
+            before.pop(name, None)
+        else:
+            before[name] = prior
+
+    def blend(bag):
+        value = compute_aggregate_probability(SimpleNamespace(
+            win_probability_sources=bag, status=status,
+            espn_win_prob_home=espn, opening_home_probability=opening,
+        ), status)
+        return None if value is None else float(value)
+
+    after, prior_value = blend(sources), blend(before)
+    if after is None or (prior_value is not None and abs(after - prior_value) <= 1e-9):
+        return "-"
+    return _iso(context["received_at"]) or "?"
+
+
+def _log_writer_receipts(latest, receipts) -> None:
+    for event_id, frame in latest.items():
+        context = receipts.get(event_id)
+        if context is None or context["row"] is None or not _frame_is_sent(frame):
+            continue
+        try:
+            recv = _iso(context["received_at"]) or "-"
+            rev = (frame.get("rev") or {}).get(str(event_id))
+            writer = "+".join(sorted(context["priors"]))
+            logger.info(WRITER_RECEIPT_FORMAT, writer, writer, event_id, "@".join((
+                "-" if rev is None else str(rev), str(frame["updated_at"]), recv, recv,
+                str(len(context["priors"])), _first_new_recv(context),
+            )))
+        except Exception:
+            logger.warning("nonvenue writer receipt failed for event %s", event_id,
+                           exc_info=True)
 
 
 def _frame_is_sent(frame) -> bool:
@@ -99,6 +185,9 @@ def _after_commit(session):
     session.info.setdefault(_READY, []).extend(
         frame for frame in latest.values() if _frame_is_sent(frame)
     )
+    receipts = session.info.pop(_RECEIPTS, None)
+    if receipts:
+        _log_writer_receipts(latest, receipts)
     trace = nonvenue_trace()
     if trace is not None:
         trace.committed(pending, latest, _frame_is_sent)
@@ -118,6 +207,18 @@ def _after_rollback(session, transaction):
         if event is not None:
             set_committed_value(event, "win_probability_sources", previous)
     session.info[_PENDING] = [entry for entry in pending if not belongs_to(entry[0])]
+    receipts = session.info.get(_RECEIPTS)
+    if receipts:
+        # A rolled-back write is credited nowhere; a later one starts afresh.
+        alive: dict = {}
+        for _, frame, _, _, _ in session.info[_PENDING]:
+            alive.setdefault(frame["event_id"], set()).add(frame.get("source"))
+        for event_id in list(receipts):
+            priors = receipts[event_id]["priors"]
+            for name in [n for n in priors if n not in alive.get(event_id, ())]:
+                del priors[name]
+            if not priors:
+                del receipts[event_id]
     trace = nonvenue_trace()
     if trace is not None:
         trace.rolled_back(transaction, rolled_back)
@@ -250,6 +351,7 @@ async def write_nonvenue_probability(
     values=None,
     evidence=None,
     trace_inputs=None,
+    received_at=None,
 ):
     """Atomically replace/remove one allowed source and queue its returned blend.
 
@@ -262,7 +364,9 @@ async def write_nonvenue_probability(
     in the publication row, never in the bag. No commit happens here.
     ``trace_inputs`` (#10090) is the producer's own input/version witness, a
     dict or a zero-argument callable; it is read only for a traced event and
-    reaches nothing but `nonvenue_trace`.
+    reaches nothing but `nonvenue_trace`. ``received_at`` (#10090) is when the
+    producer received its input, epoch seconds; it reaches only the writer
+    receipt (module doc).
     """
     if source not in NONVENUE_SOURCES:
         raise ValueError(f"not a nonvenue probability source: {source}")
@@ -276,14 +380,15 @@ async def write_nonvenue_probability(
     )
     try:
         return await _write(session, event, source, value, metadata, values, evidence,
-                            trace, seam)
+                            trace, seam, received_at)
     except BaseException as exc:
         if seam is not None:
             trace.write_failed(seam, exc)
         raise
 
 
-async def _write(session, event, source, value, metadata, values, evidence, trace, seam):
+async def _write(session, event, source, value, metadata, values, evidence, trace, seam,
+                 received_at=None):
     prior_txn_row_write = await _probe_prior_txn_row_write(session, event.id)
     # Literal source dispatch keeps the existing writer/eligibility scanner
     # able to verify every mint. This entry point never accepts venue sources.
@@ -336,6 +441,9 @@ async def _write(session, event, source, value, metadata, values, evidence, trac
     )
     if mapped is not None:
         set_committed_value(event, "win_probability_sources", sources)
+    _note_receipt(session.sync_session, event.id, source,
+                  previous if mapped is not None else _UNKNOWN,
+                  (sources, status, espn, opening), received_at)
     at = sources[source]["updated_at"] if value is not None else removed_at.isoformat()
     shim = SimpleNamespace(
         win_probability_sources=sources,
