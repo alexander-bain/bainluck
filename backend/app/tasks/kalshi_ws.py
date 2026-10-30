@@ -199,6 +199,24 @@ def kalshi_non_speaking_ticker(external_id: str | None) -> bool:
     )
 
 
+def kalshi_headline_aux_ticker(external_id: str | None) -> bool:
+    """#10090 (Argon flush-loop Rank 3) — True when the refresher's Kalshi read
+    (`LiveBlendRefresher._read_groups`) leaves this market's outcomes out of
+    the headline: a ticker that does not feed the blend. A missing or empty
+    ticker IS read there (the resolver's name fallback), so it is not.
+
+    Wider than `kalshi_non_speaking_ticker`, which keeps unknown series in
+    their event's cohort rather than guess. This decides only a live game's
+    phase ORDER (`linked_first_phases`), never cohort membership or stamping.
+    """
+    from app.utils.prediction_market_matching import feeds_win_prob_blend
+
+    return (
+        isinstance(external_id, str) and bool(external_id)
+        and not feeds_win_prob_blend(external_id)
+    )
+
+
 class _KalshiHeadlineEvents(Mapping[int, int]):
     """Live view of existing event admission, omitting known non-speakers.
 
@@ -548,6 +566,18 @@ class _KalshiPriceOwner:
         # overlay again: the linked settlement writer leaves `last_updated`
         # alone, so no stored row would ever read as newer than the quote.
         self.settled_market_ids: set[int] = set()
+        # #10090 (Argon Rank 3): linked outcomes the refresher's headline read
+        # leaves out (`kalshi_headline_aux_ticker`), kept IN PLACE by the
+        # consumer with its maps. A live game writes them in its own phase
+        # after every live headline phase, ahead of the non-live tail. Empty
+        # (a rig, a direct call) keeps each live game one phase, as before.
+        self.headline_aux_outcome_ids: set[int] = set()
+        # #10090 (Argon Rank 1): outcomes a live write beside the running
+        # flush committed during it. A later phase of that flush never writes
+        # its OLDER snapshot value for one of them once beside has taken it out
+        # of the buffer (a newer tick keeps it there, and that is written).
+        # Cleared at each main flush's snapshot.
+        self.beside_written: set[int] = set()
         # #10090: the consumer's `_FlushTimings`, when it keeps one.
         self.timings = None
         # #10090: the run's one blend refresh. It may outlive the flush that
@@ -925,6 +955,7 @@ def _packed(groups, max_rows, max_groups=None, key=None):
 def linked_first_phases(
     batch, market_id_by_outcome, event_id_by_outcome, pending_events=(),
     live_events=None, pending_events_fenced=False, tail_event_by_outcome=None,
+    headline_aux=(),
 ):
     """Publish independent games separately, followed by unrelated contracts.
 
@@ -963,6 +994,16 @@ def linked_first_phases(
     timeouts held a live game's total-points lines ~78 s behind futures in
     the same 200-row phases). They stay non-live tail work: same budget,
     preemption and stamp cohort, at their batch-order position.
+
+    #10090 (Argon Rank 3) — ``headline_aux``: a live game's outcomes the
+    refresher's headline read leaves out (`kalshi_headline_aux_ticker`). Each
+    live game's other outcomes are its headline phase; these, whole markets,
+    are its live-aux phase. Every live headline phase comes first, then the
+    live-aux phases, then the non-live tail: one game's long prop board
+    (production 2026-10-30 00:20Z: `db_phase=1.64s/live/140`) no longer holds
+    another live game's headline. They stay live work — never budget-deferred
+    or preempted — and keep their event's cohort, so the event is not stamped
+    until both of its phases have committed.
     """
     if not batch or any(market_id_by_outcome.get(oid) is None for oid in batch):
         return [batch]
@@ -1006,6 +1047,17 @@ def linked_first_phases(
     for game in games.values():
         holds_live = any(event_id_by_outcome.get(oid) in live_events for oid in game)
         (live if holds_live else other).append(game)
+    if headline_aux and live:
+        headline, auxiliary = [], []
+        for game in live:
+            aux = {oid: entry for oid, entry in game.items() if oid in headline_aux}
+            if len(aux) < len(game):
+                headline.append(
+                    {oid: entry for oid, entry in game.items() if oid not in aux}
+                )
+            if aux:
+                auxiliary.append(aux)
+        live = headline + auxiliary
     markets = {}
     for oid, entry in rest.items():
         markets.setdefault(market_id_by_outcome[oid], {})[oid] = entry
@@ -1348,6 +1400,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         outcome_id for outcome_id, market_id in market_id_by_outcome.items()
         if kalshi_non_speaking_ticker(_ticker_by_market.get(market_id))
     }
+    # #10090 (Argon Rank 3): what the headline read leaves out, filled IN PLACE
+    # beside `non_blend_outcome_ids` (phase order only).
+    headline_aux_outcome_ids = prices.headline_aux_outcome_ids
+    headline_aux_outcome_ids.clear()
+    headline_aux_outcome_ids.update(
+        outcome_id for outcome_id, market_id in market_id_by_outcome.items()
+        if kalshi_headline_aux_ticker(_ticker_by_market.get(market_id))
+    )
     # #9484: filled IN PLACE by `admit_open_contracts`, which the handlers and
     # the flush read through these same objects.
     open_contract_ids: dict[str, tuple[int, int]] = {}
@@ -1587,13 +1647,18 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     if oid in batch
                 }
                 prices.short_probe_refused.intersection_update(batch)
+                prices.beside_written.clear()
             else:
-                outcomes, events, markets = beside
-                # The owner's unfinished outcomes are most of the buffer:
-                # reject them first, before any per-outcome event lookup.
+                outcomes, events, markets = beside[:3]
+                # #10090 (Argon Rank 1): the owner's in-flight outcomes are no
+                # longer most of the buffer. Its live-event outcomes (computed
+                # once per owner flush) reject the rest first, before any
+                # per-outcome event lookup; without them, the in-flight set.
+                first = beside[3] if len(beside) > 3 else None
                 batch = {
                     oid: entry for oid, entry in price_buffer.items()
-                    if oid not in outcomes
+                    if (oid in first if first is not None else oid not in outcomes)
+                    and oid not in outcomes
                     and cohort_event_ids.get(oid) in live_event_ids
                     and cohort_event_ids.get(oid) not in events
                     and market_id_by_outcome.get(oid) not in markets
@@ -1629,7 +1694,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     prices.stamping.done() or final_drain
                 ):
                     await prices.join_stamp(blend_refresher)
-                if prices.stamping is None:
+                if prices.stamping is not None:
+                    # #10090 (Argon Rank 2), as Polymarket's quiet flush does:
+                    # while it admits, the running call's door takes the due
+                    # debt now (a live game's throttled price first), instead
+                    # of that debt waiting for the call to return.
+                    admit = getattr(blend_refresher, "admit_fresh", None)
+                    if admit is not None and not final_drain:
+                        admit((), flush_started=flush_started,
+                              defer_event_ids=() if beside is None else beside[1])
+                else:
                     owed = blend_refresher.pending_event_ids()
                     if owed and beside is None:
                         prices.flush_work += 1  # owed stamps are actual work
@@ -1678,32 +1752,43 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # failure mode — exception, cancellation, or a hard kill between the two
         # — can lose a price the buffer was holding. Nothing needs to be
         # "put back", because it was never taken away.
+        # #10090 (Argon Rank 3): a live game's headline phase, then its
+        # live-aux phase. The final drain keeps its whole-game contract.
+        headline_aux = (
+            () if final_drain else getattr(prices, "headline_aux_outcome_ids", ())
+        )
+
+        def aux_phase(phase):
+            return bool(headline_aux) and all(oid in headline_aux for oid in phase)
+
         phases = linked_first_phases(
             batch, market_id_by_outcome, cohort_event_ids,
             pending_events=blend_refresher.pending_event_ids(),
             live_events=live_event_ids,
             pending_events_fenced=True,
             tail_event_by_outcome=event_id_by_outcome,
+            headline_aux=headline_aux,
         )
         if beside is not None:
             # The main writer keeps oldest-first progress. Its helper serves
             # the newest whole live event first, so a later quote does not
             # inherit the helper's older buffered tail before the owner joins.
+            # Every headline phase still goes before every live-aux phase.
             phases.sort(
-                key=lambda phase: max(
+                key=lambda phase: (aux_phase(phase), -max(
                     (getattr(batch_marks.get(oid), "seq", 0) for oid in phase),
                     default=0,
-                ),
-                reverse=True,
+                )),
             )
         if not final_drain and live_event_ids and held_quotes is not None:
             # Preserve whole phases and their intra-class order. Give live
             # groups not yet offered a short attempt their first chance before
             # retained normal-budget retries; those retries remain in this flush.
+            # Live-aux phases keep their place after every headline phase.
             def first_attempt_order(phase):
                 if not any(cohort_event_ids.get(oid) in live_event_ids for oid in phase):
-                    return 2
-                return int(
+                    return 4
+                return 2 * aux_phase(phase) + int(
                     not prices.short_probe_refused.isdisjoint(phase)
                     or any(oid in prices.ambiguous_retry_since for oid in phase)
                 )
@@ -1712,6 +1797,73 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # Re-resolve through the current map at each launch for late bridges.
         # Beside a flush, that flush's unfinished prices stay unfinished here.
         unfinished_price_ids = set(batch) if beside is None else set(batch) | beside[0]
+        # #10090 (Argon Rank 1) — WHAT IS ACTUALLY IN FLIGHT. Every stamp
+        # admission and the write beside a phase used to be fenced by ALL of
+        # `unfinished_price_ids`: the whole snapshot, 160-220k entries at
+        # evening load. A live game whose phase was stamp-fenced or refused
+        # stayed in it for the rest of a 3-7 s flush, so its newer quotes could
+        # not be written beside and its committed price could not be stamped
+        # (Kalshi 15338515, 00:18:40-44Z: held 4.3 s, `fenced` 8-12k/min). For
+        # a LIVE event the fence is now the phase inside its transaction
+        # (`in_flight_ids`) plus a write split across phases — some of the
+        # event committed by this flush (read through the current map, so a
+        # late bridge counts), some still unfinished — so no stamp reads a
+        # partly written board. A live event wholly in a later phase is stored
+        # whole; a write beside it is ordered by `prices.beside_written`. A
+        # live game's prop board (`prices.headline_aux_outcome_ids`, which the
+        # refresher's read leaves out) never makes a split: its headline is
+        # stamped when the headline phase commits, not after the board. A
+        # non-live event keeps today's fence: nothing writes it beside, and
+        # stamping its debt ahead of its own phase only throttles (#10728).
+        in_flight_ids: set[int] = set()
+        committed_price_ids: set[int] = set()
+        live_candidates = None
+
+        def fence_events():
+            if beside is not None:
+                # This pass's own unfinished cohorts, and the owner's fence.
+                return cohort_event_ids.events_of(unfinished_price_ids) | beside[1]
+            live = live_event_ids or ()
+            fence, waiting, committed = set(), set(), set()
+            owner_map = cohort_event_ids.events
+            if len(unfinished_price_ids) + len(committed_price_ids) > len(owner_map):
+                # One pass over the map, as `events_of` takes a large set.
+                pairs = (
+                    (oid, event) for oid, event in owner_map.items()
+                    if oid in unfinished_price_ids or oid in committed_price_ids
+                )
+            else:
+                pairs = (
+                    (oid, owner_map.get(oid))
+                    for oid in (*unfinished_price_ids, *committed_price_ids)
+                )
+            non_speakers = cohort_event_ids.non_speakers
+            unread = getattr(prices, "headline_aux_outcome_ids", ())
+            for oid, event in pairs:
+                if event is None or oid in non_speakers:
+                    continue
+                if oid in unfinished_price_ids:
+                    if event not in live:
+                        fence.add(event)
+                    elif oid not in unread:
+                        waiting.add(event)
+                elif oid not in unread:
+                    committed.add(event)
+            fence |= waiting & committed
+            if in_flight_ids:
+                fence |= cohort_event_ids.events_of(in_flight_ids)
+            return fence
+
+        def beside_first():
+            # The live games' outcomes, once per owner flush (the live set is
+            # refilled every 30 s; a bridge made since joins the next flush).
+            nonlocal live_candidates
+            if live_candidates is None:
+                live = live_event_ids
+                live_candidates = frozenset(
+                    oid for oid, event in cohort_event_ids.events.items() if event in live
+                )
+            return live_candidates
         had_lock_failure = False
         flush_counted = False
         # #10090: one refresh may cover several committed whole-event phases.
@@ -1759,11 +1911,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
         async def serve_live_beside():
             prices.writing_beside()
-            unfinished = frozenset(unfinished_price_ids)
+            # #10090 (Argon Rank 1): only the phase in its transaction and the
+            # events split across phases, not the whole unfinished snapshot.
+            in_flight = frozenset(in_flight_ids)
             excluded = (
-                unfinished,
-                frozenset(cohort_event_ids.events_of(unfinished)),
-                frozenset(map(market_id_by_outcome.get, unfinished)) - {None},
+                in_flight,
+                frozenset(fence_events()),
+                frozenset(map(market_id_by_outcome.get, in_flight)) - {None},
+                beside_first(),
             )
             while not beside_stop:
                 prices.input_wake.clear()
@@ -1828,7 +1983,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             nonlocal queued_refresh
             count_work()
             stamping_fresh = set(queued_events)
-            unfinished_events = cohort_event_ids.events_of(unfinished_price_ids)
+            unfinished_events = fence_events()
             # refresh takes implicit debt too. Capture before its first turn.
             # Excluded cohorts remain owed but cannot read a partially written
             # board or hold unrelated whole-game price transactions together.
@@ -1859,7 +2014,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 queued_events,
                 flush_started=flush_started,
                 marks=list(queued_marks.values()),
-                defer_event_ids=cohort_event_ids.events_of(unfinished_price_ids),
+                defer_event_ids=fence_events(),
             )
             if not admitted:
                 return
@@ -2068,6 +2223,32 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         # returned writes now and is admitted again.
                         stats["stamp_fenced"] += len(phase)
                         continue
+                if beside is None and prices.beside_written:
+                    # #10090 (Argon Rank 1) — ORDERING. A live write beside an
+                    # earlier phase committed these outcomes' newest buffered
+                    # value and took it out of the buffer. Re-reading below
+                    # would fall back to this flush's OLDER snapshot and write
+                    # it over that newer price. Dropped instead. (The beside
+                    # writer for THIS phase excludes it, and the last one was
+                    # joined before it began, so nothing moves them between
+                    # here and the re-read.) A tick since is still buffered and
+                    # is written; a settlement's removal keeps its fallback.
+                    async with buffer_lock:
+                        superseded = {
+                            oid for oid in phase
+                            if oid in prices.beside_written and oid not in price_buffer
+                        }
+                    if superseded:
+                        stats["beside_superseded"] = (
+                            stats.get("beside_superseded", 0) + len(superseded)
+                        )
+                        unfinished_price_ids.difference_update(superseded)
+                        phase = {
+                            oid: entry for oid, entry in phase.items()
+                            if oid not in superseded
+                        }
+                        if not phase:
+                            continue
                 # The overlay carries a refused probe's quotes to the stamp;
                 # an ambiguity episode, any earlier refusal and the beside
                 # pass (C1: its refusal would skip the next main start) take
@@ -2089,6 +2270,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     held_quotes.begin_write_clock()
                     if held_quotes is not None and not final_drain else None
                 )
+                in_flight_ids.clear()
+                in_flight_ids.update(phase)
                 if (
                     beside is None and live_event_ids and not final_drain
                 ):
@@ -2301,6 +2484,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         if oid in open_contract_outcome_ids
                     )
                 except Exception as exc:
+                    in_flight_ids.clear()  # rolled back: nothing of it landed
                     await end_beside()
                     # Q491 — the batch is still in `price_buffer`, so the next flush
                     # retries it. Before Q491 the buffer was drained up front and a
@@ -2412,6 +2596,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     prices.ambiguous_retry_since.pop(oid, None)
                     prices.short_probe_refused.discard(oid)
                 unfinished_price_ids.difference_update(phase)
+                in_flight_ids.clear()
+                committed_price_ids.update(phase)
+                if beside is not None:
+                    prices.beside_written.update(phase)
                 registered = queue_committed(index, phase, written_outcome_ids)
                 # The enclosing session exited normally: publish its returned
                 # DB time before another await, never before COMMIT or on failure.
@@ -3496,6 +3684,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # Bridge candidates passed canonical winner admission; keep this
             # new/refreshed map member speaking even if an old entry existed.
             non_blend_outcome_ids.discard(outcome_id)
+            headline_aux_outcome_ids.discard(outcome_id)
         stats["open_contract_bridged_outcomes"] = len(bridge)
         stats["open_contract_bridged_events"] = len(set(bridge.values()))
         # An open contract's field is re-ranked like a linked one's.
@@ -3549,9 +3738,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             oid for oid, mid in market_by_outcome.items()
             if kalshi_non_speaking_ticker(ticker_by_market.get(mid))
         }
+        aux = {
+            oid for oid, mid in market_by_outcome.items()
+            if kalshi_headline_aux_ticker(ticker_by_market.get(mid))
+        }
         for oid, event_id in bridge.items():
             by_outcome.setdefault(oid, event_id)
             non_blend.discard(oid)
+            aux.discard(oid)
         market_by_outcome.update((oid, mid) for mid, oid in ids.values())
         open_oids = {oid for _, oid in ids.values()}
         fresh = set(market_by_outcome) | set(by_outcome)
@@ -3562,6 +3756,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 market_by_outcome[oid] = market_id_by_outcome[oid]
             if oid in non_blend_outcome_ids:
                 non_blend.add(oid)
+            if oid in headline_aux_outcome_ids:
+                aux.add(oid)
             if oid in open_contract_outcome_ids:
                 open_oids.add(oid)
 
@@ -3574,6 +3770,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             target.update(value)
         for target, value in (
             (non_blend_outcome_ids, non_blend), (open_contract_outcome_ids, open_oids),
+            (headline_aux_outcome_ids, aux),
             (legged_market_ids, {mid for mid, _ in new_ids.values()}),
         ):
             target.clear()
