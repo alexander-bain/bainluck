@@ -75,6 +75,7 @@ import ChartFullscreenDialog from "@/components/event/ChartFullscreenDialog";
 import {
   EMPTY_CONNECTION_TRACKER,
   presentConnectionStatus,
+  priceAgeClock,
   stepConnectionTracker,
   type ConnectionTracker,
 } from "@/lib/event/liveConnectionStatus";
@@ -614,6 +615,8 @@ export default function EventPage({ params }: EventPageProps) {
     // #10090: provisional hero overlay only (canary events).
     blendPreview,
     blendPreviewNow,
+    // #10090 decision J = A: ages the "seconds ago" only (`priceAgeClock`).
+    confirmedAt: streamConfirmedAt,
     chartPoints,
     status: reportedStreamStatus,
     recoveryGeneration,
@@ -2272,8 +2275,11 @@ export default function EventPage({ params }: EventPageProps) {
   // and #4469's two guard suites pin it.
   // #10200: the inputs are named so the chart status's tap details read the
   // same score clock this badge ages from — one expression, not two.
+  // #10090 decision J = A: the price ages from the later of its write and the
+  // stream's `confirmed_at`, so a steady price the markets keep confirming
+  // stays a few seconds old. No `confirmed_at` (an old server) ⇒ today's stamp.
   const heroStampInputs = {
-    priceStamp: freshestSourceStamp,
+    priceStamp: priceAgeClock(freshestSourceStamp, streamConfirmedAt),
     scoreStamp: liveGamesLine ? event.linescore?.observed_at : renderedScoreStamp,
   };
   const heroStamp = heroFreshness({ ...heroStampInputs });
@@ -2450,6 +2456,9 @@ export default function EventPage({ params }: EventPageProps) {
       // A withdrawn claim is about the price, whichever fact is older (#5459).
       priceMayBeOld: ageAdmissionIsStale && (liveClaimUnbacked || heroStamp.fact !== "score"),
       scoreMayBeOld: ageAdmissionIsStale && !liveClaimUnbacked && heroStamp.fact === "score",
+      // #10090 decision J = A. A stream double that predates the field reports
+      // `undefined`: unconfirmed.
+      priceConfirmed: Boolean(acceptedPriceClock) && typeof streamConfirmedAt === "string",
     },
     Date.now(),
   );
@@ -2478,6 +2487,7 @@ export default function EventPage({ params }: EventPageProps) {
       presentation={connectionPresentation}
       observation={{ eventId, count: observationCount, delivery: observationDelivery }}
       priceObservedAt={acceptedPriceClock}
+      priceConfirmedAt={streamConfirmedAt}
       scoreShown={Boolean(liveGamesLine) || heroScorePairPresent}
       scoreConfirmedAt={heroStampInputs.scoreStamp}
       oldestFact={displayedOldestFact}

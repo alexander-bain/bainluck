@@ -114,6 +114,12 @@ interface UseLiveEventStreamResult {
   blendPreview: BlendPreviewState | null;
   /** #10090: Monotonic time at the last preview change or expiry, for `displayedPreview`. */
   blendPreviewNow: number;
+  /**
+   * #10090 decision J = A — the newest heartbeat `confirmed_at` for this event
+   * (ISO-8601 UTC), or null. Ages the "seconds ago" only; never a price, never a
+   * receipt. Null from an old server, and keyed to `eventId` like `status`.
+   */
+  confirmedAt: string | null;
 }
 
 export function useLiveEventStream(
@@ -147,6 +153,9 @@ export function useLiveEventStream(
     statusEventId: number | undefined; status: LiveStreamStatus;
   }>({ statusEventId: eventId, status: 'idle' });
   const [recovery, setRecovery] = useState({ eventId, ordinal: 0 });
+  const [confirmed, setConfirmed] = useState<{ eventId: number | undefined; at: string | null }>({
+    eventId, at: null,
+  });
   const [{ reader, previewNow }, setPreview] = useState<{
     reader: AuthorityPreviewReader; previewNow: number;
   }>({ reader: EMPTY_AUTHORITY_PREVIEW, previewNow: 0 });
@@ -285,6 +294,15 @@ export function useLiveEventStream(
       onStatusChange: (next) => {
         if (mounted.current) setStatus({ statusEventId: eventId, status: next });
       },
+      // Newest wins: a reconnect's on-connect confirmation can be older than
+      // one the previous socket already delivered.
+      onConfirmedAt: (at) => {
+        if (mounted.current) setConfirmed(previous => (
+          previous.eventId === eventId && previous.at !== null && Date.parse(previous.at) >= Date.parse(at)
+            ? previous
+            : { eventId, at }
+        ));
+      },
       // #10090: the reopen after a server-directed rollover fires at its own
       // deadline rather than at the next 5 s tick. The controller cancels it on
       // `stop()` below, and a deadline that outlives its rollover opens nothing.
@@ -329,6 +347,7 @@ export function useLiveEventStream(
     chartPoints: chartEventId === eventId ? points : [],
     blendPreview: enabled && preview?.eventId === eventId ? preview : null,
     blendPreviewNow: previewNow,
+    confirmedAt: enabled && confirmed.eventId === eventId ? confirmed.at : null,
     // Before this event's controller has said anything, it is connecting if
     // it is going to try at all — never the last event's word.
     status: statusEventId === eventId ? status : enabled ? 'connecting' : 'idle',

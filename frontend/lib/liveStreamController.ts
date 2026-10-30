@@ -85,6 +85,25 @@ export interface StreamHandle {
   readonly readyState: number;
 }
 
+/**
+ * #10090 decision J = A — the `confirmed_at` a heartbeat carries, or null. An
+ * old server's heartbeat (`{"t": ...}`), a body that is not JSON, or a value
+ * that is not a parseable time all read as no confirmation.
+ */
+export function heartbeatConfirmedAt(raw: unknown): string | null {
+  let body: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!body || typeof body !== 'object') return null;
+  const value = (body as { confirmed_at?: unknown }).confirmed_at;
+  return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
+}
+
 export interface LiveStreamDeps {
   /** Opens a transport. Throwing is treated as a refused connect. */
   open: () => StreamHandle;
@@ -114,6 +133,14 @@ export interface LiveStreamDeps {
   onAuthorityPreviewOpen?: (raw: unknown) => void;
   onAuthorityPreview?: (raw: unknown, receivedAt: number) => void;
   previewNow?: () => number;
+  /**
+   * #10090 decision J = A — the heartbeat's `confirmed_at` (ISO-8601 UTC): the
+   * newest venue input that AGREED with what the stream has published. The
+   * server never advances it while a different price is held. It ages the
+   * reader's "seconds ago" only; like the heartbeat itself it is NOT a delivery
+   * and touches no clock, cursor or status here.
+   */
+  onConfirmedAt?: (confirmedAt: string) => void;
   /**
    * #10200 — what the TRANSPORT is doing, for the reader-facing status only.
    *
@@ -510,13 +537,15 @@ export function createLiveStreamController(
       deps.onPreviewFloor?.((event as { data?: unknown })?.data);
     });
 
-    next.addEventListener('heartbeat', () => {
+    next.addEventListener('heartbeat', (event) => {
       if (stopped || handle !== next) return;
       // TRANSPORT clock only. A heartbeat proves this server process is alive
       // and its socket is open. It proves nothing about the publisher, because
       // the web subscriber emits it regardless — which is exactly how a dead
       // `worker-ws` kept polling switched off behind a frozen number.
       lastMessageAt = now();
+      const confirmedAt = heartbeatConfirmedAt((event as { data?: unknown })?.data);
+      if (confirmedAt !== null) deps.onConfirmedAt?.(confirmedAt);
     });
 
     // The match ended. Terminal: the caller refetches once and settles the page

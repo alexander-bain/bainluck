@@ -167,6 +167,12 @@ export interface ConnectionPresentation {
 
 export interface ConnectionPresentationInput {
   status: LiveStreamStatus;
+  /**
+   * #10090 decision J = A — the stream has confirmed the value on screen
+   * (`confirmed_at` received, a price held). An open socket then reads
+   * "Connected" rather than "Connected · waiting". Absent ⇒ today's words.
+   */
+  priceConfirmed?: boolean;
   /** Finished / settled / stopped words, or null when the match is not over. */
   terminalLabel: string | null;
   /** The header badge's own stale/withdrawn answer, when the oldest fact is the price. */
@@ -231,7 +237,30 @@ export function presentConnectionStatus(
       announcement: '',
     };
   }
+  if (input.status === 'open' && input.priceConfirmed) {
+    return { label: 'Connected', tone: 'live', breathes: true, announcement: '' };
+  }
   return { ...BASE[input.status], announcement: '' };
+}
+
+/**
+ * #10090 decision J = A — the clock the reader's "seconds ago" counts from:
+ * the later of the adopted price clock and the stream's `confirmed_at` (the
+ * newest venue input that agreed with what was published; the server never
+ * advances it while a different price is held).
+ *
+ * No adopted clock ⇒ null: a confirmation of nothing on screen ages nothing.
+ * No or unparseable confirmation (an old server) ⇒ the adopted clock,
+ * unchanged, so the page is exactly today's.
+ */
+export function priceAgeClock(
+  adoptedAt: string | null | undefined,
+  confirmedAt: string | null | undefined,
+): string | null {
+  const adopted = parseClock(adoptedAt);
+  if (adopted === null) return adoptedAt ?? null;
+  const confirmed = parseClock(confirmedAt);
+  return confirmed !== null && confirmed > adopted ? (confirmedAt as string) : (adoptedAt as string);
 }
 
 /** A clock for the tap details: wall time with its zone, or null when absent/unparseable. */

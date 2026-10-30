@@ -32,7 +32,10 @@ describe("#4469 the live badge is fed the oldest fact, not the freshest price", 
   test("the page computes the hero stamp from both inputs", () => {
     const code = executableSource(PAGE);
     expect(code).toMatch(/heroFreshness\(\{/);
-    expect(code).toMatch(/priceStamp:\s*freshestSourceStamp/);
+    // #10090 decision J = A: the price ages from the later of its write and the
+    // stream's `confirmed_at` (`priceAgeClock`), which is the write itself on an
+    // old server. Still the price input, still the freshest source write.
+    expect(code).toMatch(/priceStamp:\s*priceAgeClock\(freshestSourceStamp,\s*streamConfirmedAt\)/);
     // Gated on the render condition, not on the field merely existing: an
     // unrendered score must not age the badge.
     expect(code).toMatch(/scoreStamp:\s*liveGamesLine\s*\?\s*event\.linescore\?\.observed_at/);
