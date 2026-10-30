@@ -1659,3 +1659,75 @@ class TestACommittedChunkRefreshesItsEvent:
         assert stats["errors"] == 0
         assert stats["held_prices_withdrawn"] == 1
         assert seen == [(pytest.approx(0.42), None)]
+
+
+# --------------------------------- #10090 decision J: confirmed_at (R1) ----
+#
+# lane1 R1 on #11767 (9dd290e2): the input hook skipped open legs, so a
+# BRIDGED leg — which feeds its event's blend — never reached the tracker, and
+# the slate leg's agreeing repeat confirmed the event while the bridged leg's
+# newer, different price was held. Here, not in tests/test_confirmed_at_10090.py,
+# because it needs this file's real-transaction rig and CI's real-PostgreSQL
+# gate (#10664) runs this file.
+
+
+class TestTheBridgedLegFeedsConfirmedAt:
+    async def test_polymarket_a_bridged_open_leg_on_a_mixed_event_holds(
+        self, monkeypatch, tmp_path,
+    ):
+        import sys
+
+        import app.tasks.base as task_base
+        import app.tasks.redis_state as redis_state
+        from app.utils.confirmed_at import ConfirmedAt
+        from tests.test_confirmed_at_10090 import (
+            _assert_bridged_leg_holds,
+            _stamping_refresher,
+        )
+
+        pm = sys.modules[__name__]
+
+        # The game slate leg (51 on event 900) and an open winner market on
+        # the SAME event: a mixed event, written on the game flush.
+        rows = [(7, ["711"], None, None, pm.EVENT_ID, "Steelers vs. Browns", "0x7")]
+        rig = pm._Rig(pm._database(tmp_path), pm.GAME_SLATE, (rows, pm.OPEN_OUTCOME_ROWS[:1]),
+                      pm._frames_by_token({
+                          pm.GAME_TOKEN: [(0.0, pm._tick(pm.GAME_TOKEN, "0.40", "0.44")),
+                                          (0.1, pm._tick(pm.GAME_TOKEN, "0.40", "0.44"))],
+                          "711": [(0.05, pm._tick("711", "0.60", "0.64"))],
+                      }))
+        rig.undecided = {pm.EVENT_ID}
+        seen = {}
+
+        class _Ctx:
+            async def __aenter__(self):
+                self.real = Session(rig.engine)
+                return pm._Session(self.real, rig)
+
+            async def __aexit__(self, exc_type, *_exc):
+                try:
+                    (self.real.commit if exc_type is None else self.real.rollback)()
+                finally:
+                    self.real.close()
+                return False
+
+        monkeypatch.setattr(ConfirmedAt, "_kick", lambda self: None)
+        monkeypatch.setattr(poly_task, "SUBSCRIPTION_REFRESH_SECONDS", 0.6)
+        monkeypatch.setattr(poly_task, "PRICE_FLUSH_SECONDS", 0.05)
+        monkeypatch.setattr(blend_mod, "LiveBlendRefresher",
+                            _stamping_refresher(seen, {pm.GAME_OUTCOME: 0.42, 71: 0.30}))
+        monkeypatch.setattr(redis_state, "get_async_redis_client", lambda: rig.redis)
+        monkeypatch.setattr(websockets, "connect", lambda *a, **kw: pm._VenueSocket(rig))
+        monkeypatch.setattr(task_base, "get_task_session", lambda *a, **kw: _Ctx())
+        stop = asyncio.Event()
+        timer = asyncio.get_running_loop().call_later(0.6, stop.set)
+        try:
+            await poly_task._run_polymarket_ws_consumer(stop=stop)
+        finally:
+            timer.cancel()
+        tracker = seen["refresher"].receipts.confirmed
+        assert tracker._events[pm.EVENT_ID].pub == {pm.GAME_OUTCOME: 0.42, 71: 0.30}
+        _assert_bridged_leg_holds(tracker, pm.EVENT_ID, 71, 0.62)
+
+
+
