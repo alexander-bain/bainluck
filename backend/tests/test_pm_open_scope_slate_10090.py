@@ -304,6 +304,10 @@ class ScopeRig(_Rig):
         self.eligible = list(eligible)
         self.catalog_reads = self.open_reads = self.seed_reads = 0
         self.on_slate_read = None
+        # #10090 held seeds: (market_id, event_id) rows the held-market read
+        # can return; it answers the ones its statement asks about.
+        self.held_rows = []
+        self.held_reads = []
 
     def get_task_session(self, **kwargs):
         original, rig = super().get_task_session(**kwargs), self
@@ -332,6 +336,15 @@ class ScopeRig(_Rig):
                         if isinstance(answer, BaseException):
                             raise answer
                         return _Result([(mid,) for mid in answer])
+                    if sql == str(open_mod.open_contract_held_markets_stmt()):
+                        asked = stmt.compile().params
+                        markets = set(asked.get("id_1") or ())
+                        events = set(asked.get("event_id_1") or ())
+                        rig.held_reads.append((markets, events))
+                        return _Result([
+                            (mid, eid) for mid, eid in rig.held_rows
+                            if mid in markets or eid in events
+                        ])
                     if "linked_event_id" in sql:
                         rig.catalog_reads += 1
                         if rig.on_slate_read is not None:
@@ -413,9 +426,19 @@ class Phases:
         return self.reads, local
 
 
-def _arm(monkeypatch, rig, scope):
+def _arm(monkeypatch, rig, scope, presence=None):
+    """``presence``: a callable answering each held-set read (default: nobody
+    holds anything). Served markets are empty; the seed memory starts empty."""
+    from app.utils import reader_presence
+
     Socket.subscribed = []
     _install(monkeypatch, rig)
+    open_mod.reset_open_scope_memory()
+    monkeypatch.setattr(
+        reader_presence, "read_reader_presence",
+        presence or (lambda: reader_presence.ReaderPresence()),
+    )
+    monkeypatch.setattr(reader_presence, "served_market_ids", lambda: [])
     monkeypatch.setattr(websockets, "connect", lambda *a, **k: Socket())
     monkeypatch.setattr(blend, "LiveBlendRefresher", Refresher)
     monkeypatch.setattr(task, "SUBSCRIPTION_REFRESH_SECONDS", 0.02)
@@ -519,8 +542,8 @@ async def test_an_empty_all_catalog_still_exits_before_recovery(monkeypatch):
 @pytest.mark.asyncio
 async def test_a_failed_seed_read_keeps_the_installed_open_catalog(monkeypatch):
     """6b. Read 1 keeps the binary (its market is eligible), read 2's seed read
-    fails, read 3 drops it. Between 2 and 3 the installed catalog stands and
-    the failure is reported."""
+    fails, read 3 drops it (its quiet period aged out by hand). Between 2 and 3
+    the installed catalog stands and the failure is reported."""
     rig = ScopeRig(
         slate=POLY_SLATE,
         eligible=[
@@ -538,6 +561,10 @@ async def test_a_failed_seed_read_keeps_the_installed_open_catalog(monkeypatch):
                 dict(local["open_asset_to_outcome"]),
                 local["stats"]["open_contract_admission_error"],
             )
+        if n == 1:  # #10090 hysteresis: read 1's seed has been quiet long enough
+            memory = open_mod.open_scope_memory()
+            for mid in memory.market_seen:
+                memory.market_seen[mid] -= open_mod.OPEN_SCOPE_QUIET_S
         if n == 2:
             stop.set()
 

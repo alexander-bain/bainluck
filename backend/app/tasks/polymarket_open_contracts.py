@@ -158,6 +158,17 @@ def open_contract_scope() -> str:
     return OPEN_SCOPE_ALL
 
 
+#: #10090: under ``slate`` a market leaves the fast set only once it has been out
+#: of every seed class (held, served, slate, mirroring a game token) this long.
+OPEN_SCOPE_QUIET_S = 1800.0
+#: #10090: a held market the installed scope has not seen may bring the catalog
+#: refresh forward, at most once per this interval: each handover blocks the
+#: flushes ~0.6-0.8 s (G1 receipts).
+OPEN_SCOPE_EARLY_REFRESH_MIN_S = 120.0
+#: #10090: how often a run re-reads the held set between catalog refreshes.
+OPEN_SCOPE_PRESENCE_CHECK_S = 10.0
+
+
 def book_snapshot_prices_enabled() -> bool:
     """#9733: price open contracts from the venue's subscribe snapshot.
 
@@ -235,6 +246,29 @@ def open_contract_scope_markets_stmt():
         select(FuturesMarket.id)
         .join(Event, FuturesMarket.event_id == Event.id)
         .where(*_open_market_clauses(), _slate_event_window())
+    )
+
+
+def open_contract_held_markets_stmt(
+    market_ids: Iterable[int] = (), event_ids: Iterable[int] = ()
+):
+    """#10090: ``(market_id, event_id)`` of the open markets a reader holds.
+
+    By the market itself (a held ``live:market:<id>``) or by its event (a held
+    ``live:event:<id>``), under the open-market clauses. Read only under
+    ``slate``: at a catalog refresh for the held events, and by the presence
+    check for ids the installed scope has not seen.
+    """
+    from sqlalchemy import or_, select
+
+    from app.models.models import FuturesMarket
+
+    return select(FuturesMarket.id, FuturesMarket.event_id).where(
+        *_open_market_clauses(),
+        or_(
+            FuturesMarket.id.in_(sorted(set(market_ids))),
+            FuturesMarket.event_id.in_(sorted(set(event_ids))),
+        ),
     )
 
 
@@ -792,6 +826,97 @@ def _scope_open_contract_admission_steps(admission, eligible_market_ids, taken_a
         scope_mirrored_legs_dropped=mirrored_all - mirrored_kept,
     )
     return out
+
+
+def game_mirror_market_ids(
+    admission: OpenContractAdmission, taken_assets: Iterable[str]
+) -> set[int]:
+    """Markets of the open legs that mirror a token the game socket carries.
+
+    The scope's token seed, by market, so the quiet period can remember it once
+    the game has left the socket.
+    """
+    taken = set(taken_assets)
+    return {
+        mid
+        for token, legs in admission.asset_mirrors.items()
+        if token in taken
+        for _oid, mid in legs
+    }
+
+
+@dataclass
+class OpenScopeMemory:
+    """#10090: when each market and event was last a ``slate`` seed.
+
+    Plain data, process-wide (:func:`open_scope_memory`), so a run's recycle
+    keeps it. A market or event stays a seed until it has been out of every
+    seed class for ``OPEN_SCOPE_QUIET_S``: promote at once, demote only after a
+    quiet period. ``presence`` is the last held set that could be read; an
+    unreadable one is replaced by it, and nothing ages out on that refresh.
+    ``early_refresh_at`` is the last presence-driven refresh, for its rate limit.
+    """
+
+    market_seen: dict[int, float] = field(default_factory=dict)
+    event_seen: dict[int, float] = field(default_factory=dict)
+    presence: Any = None
+    early_refresh_at: Optional[float] = None
+
+    def seeds(
+        self,
+        markets: Iterable[int],
+        events: Iterable[int],
+        *,
+        now: float,
+        quiet_s: float,
+        expire: bool = True,
+    ) -> tuple[set[int], set[int]]:
+        """Record this refresh's fresh seeds; return every market/event still one."""
+        for mid in markets:
+            self.market_seen[mid] = now
+        for eid in events:
+            self.event_seen[eid] = now
+        if expire:
+            for seen in (self.market_seen, self.event_seen):
+                for key in [k for k, at in seen.items() if now - at >= quiet_s]:
+                    del seen[key]
+        return set(self.market_seen), set(self.event_seen)
+
+    def unseen(
+        self, presence, game_market_ids: Iterable[int], game_event_ids: Iterable[int]
+    ) -> tuple[set[int], set[int]]:
+        """Held ids neither the installed scope's seeds nor the game socket cover."""
+        return (
+            set(presence.market_ids) - self.market_seen.keys() - set(game_market_ids),
+            set(presence.event_ids) - self.event_seen.keys() - set(game_event_ids),
+        )
+
+    def note(self, markets: Iterable[int], events: Iterable[int], now: float) -> None:
+        """Mark held ids seen, so the presence check asks about each once."""
+        for mid in markets:
+            self.market_seen.setdefault(mid, now)
+        for eid in events:
+            self.event_seen.setdefault(eid, now)
+
+    def early_refresh_wait(self, now: float, min_s: float) -> float:
+        """Seconds until a presence-driven refresh is allowed (0: now)."""
+        if self.early_refresh_at is None:
+            return 0.0
+        return max(0.0, self.early_refresh_at + min_s - now)
+
+
+_SCOPE_MEMORY = OpenScopeMemory()
+
+
+def open_scope_memory() -> OpenScopeMemory:
+    """The process's ``slate`` seed memory (one PM venue process per dyno run)."""
+    return _SCOPE_MEMORY
+
+
+def reset_open_scope_memory() -> None:
+    """Forget every seed. For tests."""
+    global _SCOPE_MEMORY
+    _SCOPE_MEMORY = OpenScopeMemory()
 
 
 # ── the event bridge (#10091, existing cohort → event blend) ─────────────────
