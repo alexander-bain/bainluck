@@ -19,14 +19,30 @@ COVERAGE. A sampled surface covers an obligation only through identity:
 preview_v3 frame with the same frontend identity, or `fold:1=<rev>` -> the
 committed bag at that revision (lab trigger log) -> the Kalshi entry's
 `observed_basis` for the read leg -> exactly one RETURNING row of a recorded price
-phase (its `last_updated`) -> that phase's buffered input value -> the tape input
-carrying that value (values are unique per outcome; verified). A later input
-supersedes every earlier one on the same stream, explicitly.
+phase whose OUTER commit is witnessed (its `last_updated`, its returned value equal
+to the phase's buffered input) -> the tape input carrying that value (values are
+unique per outcome; verified). A later input supersedes every earlier one on the
+same stream, explicitly. The SEEDED committed revision (lab r2 `origin='seed'`,
+written before the tape, no `observed_basis`) is the bounded initial state: it
+covers no input, and the first display after it is bracketed by it.
+
+MEMBERSHIP. Every accepted Kalshi mark, classification row and RETURNING row must
+name the sealed fixture's own event/market/outcome; anything else is invalid.
+
+BOARD and CONTROLS gate the verdict. Each board input (event 1's and the pre-game
+board) is committed by exactly one witnessed RETURNING row whose basis a
+successful post-commit MARKET publication names, or explicitly coalesced into a
+later committed input; anything else is invalid. Board DOM is not measured. B and
+P (events 2/3) resolve each read-leg input through its committed row to the first
+committed bag revision carrying it or a successor, and that revision's post-commit
+`TailReceipts.resolve` witness: an unresolved input is invalid, and a control
+regression (CONTROL_RULE) is `no_improvement_or_regression`. Backend claims only.
 """
 import hashlib
 import json
 import math
 import re
+from datetime import datetime
 from pathlib import Path
 
 from score import score
@@ -91,10 +107,15 @@ def tape_inputs(tape):
 def classification_check(config, tape):
     cls = (config.get("effective") or {}).get("a1", {}).get("classification")
     require(isinstance(cls, dict), "missing A1 context: the arm's own read-rule classification")
-    expected = {o["external_id"]: m["role"] for m in tape["fixture"]["markets"] for o in m["outcomes"]}
-    require(set(cls) == set(expected), "classification does not cover exactly the sealed fixture")
-    for ticker, role in expected.items():
+    sealed = {o["external_id"]: {"outcome_id": o["id"], "market_id": m["id"], "event_id": m["event_id"],
+                                 "role": m["role"], "market_external_id": m["external_id"]}
+              for m in tape["fixture"]["markets"] for o in m["outcomes"]}
+    require(set(cls) == set(sealed), "classification does not cover exactly the sealed fixture")
+    for ticker, identity in sealed.items():
         c = cls[ticker]
+        wrong = sorted(k for k, v in identity.items() if c.get(k) != v)
+        require(not wrong, f"classification of {ticker} differs from the sealed fixture on {wrong}")
+        role = identity["role"]
         if role == "headline":
             require(c["feeds_win_prob_blend"] and not c["headline_aux"] and not c["non_speaking"],
                     f"headline {ticker} is not read by the arm's own rule")
@@ -118,6 +139,52 @@ def frontend_preview_identity(payload):
     fold = "fold:" + ",".join(f"{r}={base[r]}" for r in rows)
     return (f"v3:{auth['incarnation']}:{auth['namespace']}:{payload['stream_session']}:"
             f"e{preview['epoch']}.s{preview['seq']}:{fold}")
+
+
+INITIAL = "initial"  # the seeded committed revision: covers no input
+
+
+def wall_of(value):
+    """A bag log `logged_at` (PG clock_timestamp, serialized by str()) as epoch seconds."""
+    return datetime.fromisoformat(str(value)).timestamp()
+
+
+def committed_returning(a1, fixture_markets):
+    """outcome -> the RETURNING rows of every phase whose OUTER commit the lab r2
+    recorder witnessed. A returned iterator precedes the commit, so a phase that
+    returned but rolled back, or whose outcome is unknown, contributes nothing.
+    Each row must name its sealed market and return the value its phase carried."""
+    market_of = {o["id"]: m["id"] for m in fixture_markets for o in m["outcomes"]}
+    require(any("outer" in p for p in a1["phases"]), "phase commit witness absent: not the lab r2 recorder")
+    rows = {}
+    for i, p in enumerate(a1["phases"]):
+        if p.get("outer") != "committed":
+            continue
+        require(p["status"] == "returned", f"phase {i} committed without returning its rows")
+        for row in p["rows"]:
+            oid = row["id"]
+            require(market_of.get(oid) == row["market_id"],
+                    f"phase {i} returned outcome {oid} under market {row['market_id']}, outside the sealed membership")
+            carried = p["outcomes"].get(str(oid))
+            require(carried is not None and row.get("value") is not None
+                    and round(float(row["value"]), 4) == round(float(carried[0]), 4),
+                    f"phase {i} returned {row.get('value')} for outcome {oid}, not the input it carried")
+            rows.setdefault(oid, []).append({"basis": row["last_updated"], "value": round(float(carried[0]), 4),
+                                             "market_id": row["market_id"], "phase": i,
+                                             "committed_mono": p["committed_mono"], "beside": p["beside"]})
+    return rows
+
+
+def one_row(rows, oid, basis):
+    """The one witnessed committed RETURNING row of `oid` at `basis`; two are ambiguous (None)."""
+    hits = [r for r in rows.get(oid, []) if abs(r["basis"] - basis) <= 1e-6]
+    return hits[0] if len(hits) == 1 else None
+
+
+def accepted_ticker_marks(marks, oid, item, first_sent):
+    return sorted((m for m in marks if m["outcome_id"] == oid and m["kind"] == "ticker"
+                   and m["recv_mono"] >= first_sent and round(m["probability"], 4) == item["value"]),
+                  key=lambda m: m["seq"])
 
 
 def a1_arm(path, spec, *, stable_backend_clock=False):
@@ -180,14 +247,30 @@ def a1_arm(path, spec, *, stable_backend_clock=False):
     event_of = {o["id"]: m["event_id"] for m in fixture_markets for o in m["outcomes"]}
     board_ids = {oid for oid, role in role_of.items() if role == "board" and event_of[oid] == EVENT}
 
+    # ── sealed membership of every accepted Kalshi mark ─────────────────────
+    marks = [m for m in a1["marks"] if m["source"] == "kalshi"]
+    for m in marks:
+        require(m["outcome_id"] in event_of, f"Kalshi mark {m['seq']} names outcome {m['outcome_id']} outside the sealed fixture")
+        require(m["event_id"] == event_of[m["outcome_id"]],
+                f"Kalshi mark {m['seq']} names event {m['event_id']} for outcome {m['outcome_id']} "
+                f"of sealed event {event_of[m['outcome_id']]}")
+    committed = committed_returning(a1, fixture_markets)
+
     # ── the read leg, from the frames themselves ────────────────────────────
     rows = [json.loads(line) for line in (path/"reader.jsonl").read_text().splitlines()]
     preview_frames = [r for r in rows if r["kind"] == "frame" and r["type"] == "preview_v3"
                       and r["payload"].get("event_id") == EVENT]
+    require(all(e.get("origin") in ("seed", "update") for e in a1["bag_log"]),
+            "bag log entry without a seed/update origin: not the lab r2 recorder")
+    seeds = [e for e in a1["bag_log"] if int(e["event_id"]) == EVENT and e["origin"] == "seed"]
+    require(len(seeds) == 1 and seeds[0].get("rev") is not None, "event 1 has no single seeded committed revision")
+    seed_rev, seed_bag = int(seeds[0]["rev"]), json_value(seeds[0]["kalshi"]) or {}
     bag = {}
     for entry in a1["bag_log"]:
-        if int(entry["event_id"]) == EVENT and entry.get("rev") is not None:
+        if int(entry["event_id"]) == EVENT and entry.get("rev") is not None and entry["origin"] == "update":
+            require(int(entry["rev"]) > seed_rev, f"committed revision {entry['rev']} does not follow the seed {seed_rev}")
             bag.setdefault(int(entry["rev"]), []).append(json_value(entry["kalshi"]) or {})
+    bag[seed_rev] = [seed_bag]
     named = set()
     for r in preview_frames:
         pending = (r["payload"]["frame"].get("preview") or {}).get("pending_entries") or {}
@@ -203,21 +286,22 @@ def a1_arm(path, spec, *, stable_backend_clock=False):
                      if o["id"] == read_leg)]["feeds_win_prob_blend"], "read leg is not read by the pinned rule")
 
     # ── obligations: tape inputs on the read leg, eligible at consumer receipt ──
-    marks = [m for m in a1["marks"] if m["source"] == "kalshi"]
     by_outcome = {}
     for m in marks:
         by_outcome.setdefault(m["outcome_id"], []).append(m)
     series = inputs[read_leg]
     sent_mono = {e["i"]: e["sent_mono"] for e in sent}
     frame_index = {id(f): i for i, f in enumerate(tape["frames"])}
+
+    def sent_at(item):
+        return min(sent_mono[frame_index[id(f)]] for f in item["frames"])
+
     eligible, excluded, holes = [], {"book_observation": 0, "outside_window": 0}, []
     obligation_of_value = {}
     previous = None
     for item in series:
-        first_sent = min(sent_mono[frame_index[id(f)]] for f in item["frames"])
-        accepted = [m for m in by_outcome.get(read_leg, [])
-                    if m["kind"] == "ticker" and m["recv_mono"] >= first_sent
-                    and round(m["probability"], 4) == item["value"]]
+        first_sent = sent_at(item)
+        accepted = accepted_ticker_marks(by_outcome.get(read_leg, []), read_leg, item, first_sent)
         excluded["book_observation"] += sum(
             1 for m in by_outcome.get(read_leg, []) if m["kind"] == "book_observation"
             and m["recv_mono"] >= first_sent and round(m["probability"], 4) == item["value"])
@@ -241,24 +325,10 @@ def a1_arm(path, spec, *, stable_backend_clock=False):
         previous = identity
     order = {o["id"]: i for i, o in enumerate(eligible)}
 
-    # ── commits: RETURNING rows of the read leg -> the input they carried ───
-    commit_of_basis = []
-    for phase in a1["phases"]:
-        for row in phase["rows"]:
-            if row["id"] != read_leg:
-                continue
-            value = round(float(phase["outcomes"][str(read_leg)][0]), 4)
-            commit_of_basis.append({"basis": row["last_updated"], "value": value,
-                                    "obligation": obligation_of_value.get(value),
-                                    "beside": phase["beside"], "t_ms": rel_mono(phase["start_mono"])})
-
+    # ── commits: exactly one witnessed committed RETURNING row -> its input ──
     def obligation_for_basis(basis):
-        hits = [c for c in commit_of_basis if abs(c["basis"] - basis) <= 1e-6]
-        if len({c["obligation"] for c in hits}) == 1 and hits[0]["obligation"] is not None:
-            return hits[0]["obligation"]
-        if not hits and commit_of_basis and basis < min(c["basis"] for c in commit_of_basis):
-            return "initial"
-        return None
+        row = one_row(committed, read_leg, basis)
+        return None if row is None else obligation_of_value.get(row["value"])
 
     # ── displayed identity -> Kalshi basis on the read leg ──────────────────
     preview_basis = {}
@@ -275,7 +345,10 @@ def a1_arm(path, spec, *, stable_backend_clock=False):
     def basis_of_rev(rev):
         entries = bag.get(rev, [])
         values = {(e.get("observed_basis") or {}).get(str(read_leg)) for e in entries}
-        return values.pop() if len(values) == 1 else None
+        value = values.pop() if len(values) == 1 else None
+        # Only the seeded revision may lack a basis: it is the initial state.
+        # Any other basis-less revision stays unknown.
+        return INITIAL if value is None and rev == seed_rev and len(entries) == 1 else value
 
     def resolve(state):
         if not state:
@@ -309,11 +382,11 @@ def a1_arm(path, spec, *, stable_backend_clock=False):
                 report["unsupported"] += 1
                 continue
             basis = resolve((ident.get("attributes") or {}).get(attr))
-            covered = None if basis is None else obligation_for_basis(basis)
+            covered = INITIAL if basis == INITIAL else None if basis is None else obligation_for_basis(basis)
             if covered is None:
                 report["identity_holes"] += 1
                 continue
-            index = -1 if covered == "initial" else order.get(covered)
+            index = -1 if covered == INITIAL else order.get(covered)
             if index is None:
                 report["identity_holes"] += 1
                 continue
@@ -361,12 +434,20 @@ def a1_arm(path, spec, *, stable_backend_clock=False):
                 f"{s} identity coverage incomplete: {rep['identity_holes']} unresolved, "
                 f"{rep['unsupported']} unsupported, {rep['unbracketed']} unbracketed rows")
     require(not holes, "input coverage holes: " + "; ".join(holes[:5]))
+    surface_report["headline"]["initial_revision"] = surface_report["chart"]["initial_revision"] = seed_rev
+    board = board_coverage(a1, tape, inputs, committed, marks, sent_at)
+    require(not board["failures"], f"board coverage incomplete ({len(board['failures'])}): "
+            + "; ".join(board["failures"][:5]))
+    controls = stamp_controls(a1, tape, inputs, committed, marks, sent_at, u)
+    for event, control in controls.items():
+        require(not control["failures"], f"control event {event} incomplete ({len(control['failures'])}): "
+                + "; ".join(control["failures"][:5]))
     scorecard = score(trace)
     scorecard["whole_sample_gap"] = clock.get("longest_wait")
     return {"path": str(path), "source": source, "trace": trace, "score": scorecard,
             "mechanism": mechanism(a1, tape, inputs, rel_mono, read_leg, board_ids),
-            "controls": stamp_controls(a1, tape, inputs, rel_mono, marks, sent_mono, frame_index),
-            "board_publication": board_publication(a1, tape, board_ids, rel_mono),
+            "controls": controls,
+            "board_publication": board,
             "parity": {"raw_wire_sha256": raw_wire, "frame_offsets_ms": [e["at_ms"] for e in sent],
                        "jitter_ms": [e["jitter_ms"] for e in sent], "snapshot": a1["parity"],
                        "settings": config["effective"]["a1"]["speed_switch_env"],
@@ -438,57 +519,147 @@ def mechanism(a1, tape, inputs, rel_mono, read_leg, board_ids):
                         "note": "separate witness of the candidate's removed work; not required"}}
 
 
-def stamp_controls(a1, tape, inputs, rel_mono, marks, sent_mono, frame_index):
-    """Backend-only controls: each headline input's consumer receipt to the
-    first committed Kalshi stamp for its event that staged a mark at or after
-    it. B is the competing live headline, P the pre-game control."""
-    legs = {}
-    for m in tape["fixture"]["markets"]:
-        if m["role"] == "headline":
-            home = next(o for o in m["outcomes"] if o.get("leg") == "home")
-            legs[m["event_id"]] = home["id"]
+def stamp_controls(a1, tape, inputs, committed, marks, sent_at, u):
+    """Backend-only B/P controls (events 2/3): no DOM is claimed.
+
+    The read leg is the one headline outcome the event's committed bag names in
+    `observed_basis`. Each tape input on it resolves by identity: its first
+    accepted ticker mark (receipt) -> the first committed bag revision whose basis
+    is exactly one witnessed committed RETURNING row carrying it or a later input
+    (explicit supersession) -> that revision's post-commit `TailReceipts.resolve`
+    witness (`stamped`, the same rev). Delay is [bag write - receipt - u, witness -
+    receipt]. A later staged mark is never a read basis. Any input left without
+    that chain is a failure (final debt), never a successful control."""
     out = {}
-    for event, oid in legs.items():
-        delays, unresolved = [], 0
-        for item in inputs[oid]:
-            first_sent = min(sent_mono[frame_index[id(f)]] for f in item["frames"])
-            accepted = sorted((m for m in marks if m["outcome_id"] == oid and m["kind"] == "ticker"
-                               and m["recv_mono"] >= first_sent and round(m["probability"], 4) == item["value"]),
-                              key=lambda m: m["seq"])
-            if not accepted:
-                unresolved += 1
+    for m in tape["fixture"]["markets"]:
+        if m["role"] != "headline" or m["event_id"] == EVENT:
+            continue
+        event, heads = m["event_id"], {o["id"] for o in m["outcomes"]}
+        updates = [e for e in a1["bag_log"] if int(e["event_id"]) == event and e["origin"] == "update"]
+        named = set()
+        for e in updates:
+            named |= {int(k) for k in ((json_value(e["kalshi"]) or {}).get("observed_basis") or {})}
+        failures, updates_out = [], []
+        if len(named) != 1 or not named <= heads:
+            out[str(event)] = {"leg": None, "failures": [
+                f"committed bag basis names {sorted(named)}, not one headline leg of event {event}"]}
+            continue
+        leg, = named
+        index_of_value = {i["value"]: i["index"] for i in inputs[leg]}
+        revisions = []
+        for e in sorted(updates, key=lambda e: int(e["rev"])):
+            basis = ((json_value(e["kalshi"]) or {}).get("observed_basis") or {}).get(str(leg))
+            row = None if basis is None else one_row(committed, leg, basis)
+            if row is None or row["value"] not in index_of_value:
+                failures.append(f"rev {e['rev']} basis {basis} has no single committed RETURNING row of a tape input")
                 continue
-            seq, recv = accepted[0]["seq"], accepted[0]["recv_mono"]
-            stamped = [r["mono"] for r in a1["resolved"]
-                       if str(event) in r["dispositions"] and r["dispositions"][str(event)][0] == "stamped"
-                       and (r["staged"].get(str(event)) or -1) >= seq and r["mono"] >= recv]
-            if stamped:
-                delays.append((min(stamped) - recv)*1000.0)
-            else:
-                unresolved += 1
-        delays.sort()
-        out[str(event)] = {"inputs": len(inputs[oid]), "stamped": len(delays), "unresolved": unresolved,
-                           "max_ms": delays[-1] if delays else None,
-                           "p50_ms": delays[len(delays)//2] if delays else None}
+            witnesses = [r["mono"] for r in a1["resolved"]
+                         if (r["dispositions"].get(str(event)) or [None])[0] == "stamped"
+                         and len(r["dispositions"][str(event)]) > 4
+                         and r["dispositions"][str(event)][4] == str(e["rev"])]
+            revisions.append({"rev": int(e["rev"]), "input": index_of_value[row["value"]],
+                              "logged": wall_of(e["logged_at"]), "witness": min(witnesses) if witnesses else None})
+        for item in inputs[leg]:
+            identity = f"{event}:{item['index']}"
+            accepted = accepted_ticker_marks(marks, leg, item, sent_at(item))
+            if not accepted:
+                failures.append(f"{identity} has no accepted consumer mark")
+                continue
+            covering = next((r for r in revisions if r["input"] >= item["index"]), None)
+            if covering is None:
+                failures.append(f"{identity} unresolved at end: no committed bag revision carries it or a successor")
+                continue
+            if covering["witness"] is None:
+                failures.append(f"{identity}: rev {covering['rev']} has no post-commit stamped witness")
+                continue
+            mark = accepted[0]
+            lo = max(0.0, (covering["logged"] - mark["recv_wall"])*1000.0 - u)
+            hi = (covering["witness"] - mark["recv_mono"])*1000.0
+            if lo > hi:
+                failures.append(f"{identity}: bag write after its own post-commit witness (clock inconsistent)")
+                continue
+            updates_out.append({"id": identity, "delay_ms": [lo, hi], "rev": covering["rev"],
+                                "via": f"{event}:{covering['input']}", "marks": [x["seq"] for x in accepted],
+                                "disposition": "stamped" if covering["input"] == item["index"]
+                                else "covered_by_successor"})
+        out[str(event)] = {
+            "leg": leg, "inputs": len(inputs[leg]), "resolved": len(updates_out), "final_debt": len(inputs[leg]) - len(updates_out),
+            "worst_ms": [max((x["delay_ms"][i] for x in updates_out), default=0.0) for i in (0, 1)],
+            "cumulative_ms": [sum(x["delay_ms"][i] for x in updates_out) for i in (0, 1)],
+            "updates": updates_out, "failures": failures, "dom": "not_measured"}
     return out
 
 
-def board_publication(a1, tape, board_ids, rel_mono):
-    """Board display verified SEPARATELY from the headline: committed board
-    rows (RETURNING) and the MARKET publication that follows only an outer
-    commit. The DOM board is not sampled by the pinned recorder."""
-    committed = {}
-    for p in a1["phases"]:
-        for r in p["rows"]:
-            if r["id"] in board_ids:
-                committed[r["market_id"]] = max(committed.get(r["market_id"], -math.inf), rel_mono(p["end_mono"]))
-    published = set()
-    for pub in a1.get("market_publications", []):
-        for change in pub.get("changes") or []:
-            if isinstance(change, dict) and change.get("market_id") in committed:
-                published.add(change["market_id"])
-    return {"board_markets_committed": sorted(committed), "board_markets_published": sorted(published),
-            "dom": "not_measured"}
+def board_coverage(a1, tape, inputs, committed, marks, sent_at):
+    """Every board input (event 1's board and the pre-game board), by identity.
+
+    Each input is received (an accepted ticker mark), then committed by exactly
+    one witnessed RETURNING row carrying its value, and that row's basis is named
+    by exactly one SUCCESSFUL post-commit MARKET publication (`sent` equals its
+    change count) for its market. An input with no committed row is coalesced
+    only into a later committed input of the same outcome, explicitly. A missing,
+    failed or partial publication, or one naming the market without that row's
+    basis, is a failure. Board DOM display is not sampled: `dom` stays
+    not_measured."""
+    publications = a1.get("market_publications")
+    require(isinstance(publications, list) and all("sent" in p for p in publications),
+            "publication result absent: not the lab r2 recorder")
+    named = {}
+    for i, pub in enumerate(publications):
+        changes = pub.get("changes")
+        ok = (pub.get("source") == "kalshi" and isinstance(changes, list) and bool(changes)
+              and pub["sent"] == len(changes))
+        for change in changes or []:
+            if not isinstance(change, dict):
+                continue
+            for oid, stamp in (change.get("outcome_observed_at") or {}).items():
+                named.setdefault((change.get("market_id"), int(oid)), []).append(
+                    {"basis": datetime.fromisoformat(stamp).timestamp(), "ok": ok, "mono": pub["mono"], "i": i})
+
+    def publication(row, oid):
+        hits = [n for n in named.get((row["market_id"], oid), [])
+                if abs(n["basis"] - row["basis"]) <= 1e-6 and n["mono"] >= row["committed_mono"]]
+        good = [n for n in hits if n["ok"]]
+        if len(good) == 1:
+            return "published", good[0]["i"]
+        if good:
+            return "ambiguous_publication", None
+        return ("publication_failed" if hits else "unpublished"), None
+
+    failures, out = [], []
+    cohort = [o["id"] for m in tape["fixture"]["markets"] if m["role"] == "board" for o in m["outcomes"]]
+    for oid in cohort:
+        series = inputs.get(oid, [])
+        committed_index = {}
+        for item in series:
+            hits = [r for r in committed.get(oid, []) if r["value"] == item["value"]]
+            if len(hits) > 1:
+                failures.append(f"board {oid}:{item['index']} has {len(hits)} committed RETURNING rows")
+            elif hits:
+                committed_index[item["index"]] = hits[0]
+        for item in series:
+            identity = f"{oid}:{item['index']}"
+            if not accepted_ticker_marks(marks, oid, item, sent_at(item)):
+                failures.append(f"board {identity} has no accepted consumer mark")
+                continue
+            row = committed_index.get(item["index"])
+            if row is None:
+                later = next((i for i in sorted(committed_index) if i > item["index"]), None)
+                if later is None:
+                    failures.append(f"board {identity} unresolved: no committed RETURNING row carries it or a successor")
+                else:
+                    out.append({"id": identity, "disposition": "coalesced", "via": f"{oid}:{later}"})
+                continue
+            status, pub = publication(row, oid)
+            if status != "published":
+                failures.append(f"board {identity} committed in phase {row['phase']} but {status}")
+                continue
+            out.append({"id": identity, "disposition": "committed_and_published", "phase": row["phase"],
+                        "publication": pub})
+    return {"outcomes": len(cohort), "inputs": sum(len(inputs.get(oid, [])) for oid in cohort),
+            "committed_and_published": sum(x["disposition"] == "committed_and_published" for x in out),
+            "coalesced": sum(x["disposition"] == "coalesced" for x in out),
+            "by_input": out, "failures": failures, "dom": "not_measured"}
 
 
 def parity(b, c, tolerance):
@@ -532,6 +703,24 @@ def parity(b, c, tolerance):
 
 DEFAULT_TOLERANCE = {"jitter_ms": 50.0, "age_s": 0.5, "clause_age_s": 600.0}
 
+CONTROL_RULE = ("Declared before any arm: a B/P control regresses when, over the same input identities, the "
+                "candidate's worst or cumulative receipt-to-committed-stamp interval lies wholly above the "
+                "baseline's (candidate lower bound > baseline upper bound + control_tolerance_ms, default 0), "
+                "the rule score.decide applies to the headline/chart. A regression is no_improvement_or_regression.")
+
+
+def control_regressions(b, c, tolerance_ms):
+    regressions = []
+    for event in sorted(set(b) | set(c)):
+        cb, cc = b.get(event), c.get(event)
+        require(cb and cc and {x["id"] for x in cb["updates"]} == {x["id"] for x in cc["updates"]},
+                f"control event {event} input identities differ between arms")
+        for metric in ("worst_ms", "cumulative_ms"):
+            if cc[metric][0] > cb[metric][1] + tolerance_ms:
+                regressions.append(f"control event {event} {metric}: candidate {cc[metric][0]:.1f} ms > "
+                                   f"baseline {cb[metric][1]:.1f} ms")
+    return regressions
+
 
 def a1_consume(spec, out, *, stable_backend_clock=False):
     """Offline, repeatable: score two retained A1 arms; never modifies them."""
@@ -559,11 +748,17 @@ def a1_consume(spec, out, *, stable_backend_clock=False):
                 missing = [x["cycle"] for x in arm["mechanism"]["cycles"] if not x["exercised"]]
                 reasons.append(f"{name}: board contention mechanism unexercised in cycles {missing}")
         require(not reasons, "; ".join(reasons))
-        result.update(decision=decide(b["score"], c["score"]),
+        regressions = control_regressions(b["controls"], c["controls"], float(spec.get("control_tolerance_ms", 0.0)))
+        decision = decide(b["score"], c["score"])
+        if regressions and decision != "experiment_invalid":
+            decision = "no_improvement_or_regression"
+        result.update(decision=decision, control_rule=CONTROL_RULE, control_regressions=regressions,
                       decision_scope="A1 controlled synthetic board-contention tape only; not production",
                       baseline=b, candidate=c, comparability={**report, "same_tape_bytes": True,
                       "limits": ["SYNTHETIC controlled tape and fixture; not a production reproduction.",
-                                 "Board DOM display not sampled; board publication verified from the backend.",
+                                 "Board DOM display not sampled; every board input is verified committed and "
+                                 "published (or explicitly coalesced) from the backend.",
+                                 "B/P controls are backend receipt-to-committed-stamp intervals, not DOM timings.",
                                  "Starting ages measured at the parity marker, not rebased.",
                                  "One AB order unless the spec says otherwise; no global subsecond claim."]})
         Path(out/"comparison.json").write_text(json.dumps(result, indent=2, default=str, allow_nan=False) + "\n")
