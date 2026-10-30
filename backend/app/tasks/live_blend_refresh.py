@@ -937,7 +937,7 @@ class TailReceipts:
         last[mark.outcome_id] = mark.probability
         self._uncovered.setdefault(
             mark.event_id, deque(maxlen=DELIVERY_RECEIPT_MAX_PENDING)
-        ).append((mark.seq, mark.recv_wall))
+        ).append((mark.seq, mark.recv_wall, mark.outcome_id))
 
     def _note_stamp(self, event_id: int, disposition: tuple) -> None:
         """A committed stamp: the published `rev`, its `stamped_at` (the SSE
@@ -964,7 +964,7 @@ class TailReceipts:
         pending = self._uncovered.get(event_id)
         if mark is not None and pending:
             while pending and pending[0][0] <= mark.seq:
-                _seq, wall = pending.popleft()
+                _seq, wall, _outcome = pending.popleft()
                 covered += 1
                 if oldest is None:
                     oldest = wall
@@ -1036,6 +1036,22 @@ class TailReceipts:
             ";".join(bucket["stamps"]) or "-", bucket["stamps_dropped"],
             _switch_tags(event_id, bucket["from"]),
         )
+
+    def unowed(self, marks: Iterable[InputMark]) -> None:
+        """#10090 (A1) — committed inputs no stamp reads (a live game's prop
+        board): they leave the stamp-coverage queue without being 'covered'."""
+        upto: dict[int, dict[int, int]] = {}
+        for mark in marks:
+            upto.setdefault(mark.event_id, {})[mark.outcome_id] = mark.seq
+        for event_id, delivered in upto.items():
+            pending = self._uncovered.get(event_id)
+            if pending:
+                # Every input of a delivered outcome up to the one its commit
+                # carried, repeats included.
+                kept = [entry for entry in pending
+                        if entry[0] > delivered.get(entry[2], -1)]
+                pending.clear()
+                pending.extend(kept)
 
     def stage(self, marks: Iterable[InputMark]) -> None:
         """The revisions a flush just COMMITTED — called after the commit and

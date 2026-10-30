@@ -206,8 +206,18 @@ def kalshi_headline_aux_ticker(external_id: str | None) -> bool:
     ticker IS read there (the resolver's name fallback), so it is not.
 
     Wider than `kalshi_non_speaking_ticker`, which keeps unknown series in
-    their event's cohort rather than guess. This decides only a live game's
-    phase ORDER (`linked_first_phases`), never cohort membership or stamping.
+    their event's cohort rather than guess. It never decides cohort membership
+    (the outcomes stay in `_KalshiHeadlineEvents`, so their phase priority and
+    the owner's in-flight fence are unchanged). For a LIVE game it decides
+    phase ORDER (`linked_first_phases`) and, since A1, STAMPING: a board
+    commit queues no stamp, stages no receipt mark and fences no beside stamp;
+    the game is stamped when its headline phase commits. A non-live game and
+    the final drain keep the whole cohort.
+
+    That is safe only while this rule is the exact inverse of the refresher's
+    Kalshi read; a read term added without the matching `feeds_win_prob_blend`
+    rule leaves a read row unstamped. The whole read is pinned offline
+    (`test_r2_the_refreshers_kalshi_read_has_exactly_the_four_terms_the_aux_rule_inverts`).
     """
     from app.utils.prediction_market_matching import feeds_win_prob_blend
 
@@ -1825,7 +1835,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # whole; a write beside it is ordered by `prices.beside_written`. A
         # live game's prop board (`prices.headline_aux_outcome_ids`, which the
         # refresher's read leaves out) never makes a split: its headline is
-        # stamped when the headline phase commits, not after the board. A
+        # stamped when the headline phase commits, not after the board, and
+        # the board's own commit queues no second stamp (A1). A
         # non-live event keeps today's fence: nothing writes it beside, and
         # stamping its debt ahead of its own phase only throttles (#10728).
         in_flight_ids: set[int] = set()
@@ -1834,8 +1845,15 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
         def fence_events():
             if beside is not None:
-                # This pass's own unfinished cohorts, and the owner's fence.
-                return cohort_event_ids.events_of(unfinished_price_ids) | owner_fence()
+                # This pass's own unfinished cohorts, and the owner's fence. A
+                # live game's unfinished prop board does not hold its stamp
+                # (A1): the refresher never reads those rows. The owner's
+                # in-flight phase stays fenced whole through `owner_fence`.
+                unfinished = (
+                    unfinished_price_ids.difference(headline_aux) if headline_aux
+                    else unfinished_price_ids
+                )
+                return cohort_event_ids.events_of(unfinished) | owner_fence()
             live = live_event_ids or ()
             fence, waiting, committed = set(), set(), set()
             owner_map = cohort_event_ids.events
@@ -2054,10 +2072,29 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
         def queue_committed(index, phase, written_outcome_ids, *, registered=None):
             nonlocal queued_refresh, implicit_debt_queued
+            # #10090 (A1): a live game's prop board (`headline_aux`, empty on
+            # the final drain) queues no stamp either. Its commit changes
+            # nothing the refresher reads; the game is stamped when its
+            # headline phase commits. A non-live game keeps today's cohort.
+            # `read` is that rule written once: it decides the linked events,
+            # the staged receipt marks (a board-only first phase owes nothing,
+            # so it must not open a throttle chain) and the inputs the
+            # delivery receipt stops waiting on.
+            def read(oid):
+                return oid not in headline_aux or cohort_event_ids.get(oid) not in live_event_ids
             blend_outcomes = (
                 written_outcome_ids if final_drain else
-                (oid for oid in written_outcome_ids if oid not in non_blend_outcome_ids)
+                (oid for oid in written_outcome_ids
+                 if oid not in non_blend_outcome_ids and read(oid))
             )
+            if headline_aux and not final_drain:
+                # The board's inputs are delivered by its commit: no stamp is
+                # owed for them, so the receipts stop waiting for one.
+                with contextlib.suppress(Exception):
+                    tail_receipts.unowed([
+                        batch_marks[oid] for oid in written_outcome_ids
+                        if oid in batch_marks and not read(oid)
+                    ])
             linked_events = event_ids_for_outcomes(cohort_event_ids, blend_outcomes)
             new_events = linked_events if registered is None else linked_events - registered
             first_ack = registered is None and not implicit_debt_queued
@@ -2067,7 +2104,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 queued_events.update(new_events)
                 queued_marks.update({
                     oid: batch_marks[oid]
-                    for oid in written_outcome_ids if oid in batch_marks
+                    for oid in written_outcome_ids if oid in batch_marks and read(oid)
                     and (registered is None or cohort_event_ids.get(oid) in new_events)
                 })
                 queued_refresh = True
