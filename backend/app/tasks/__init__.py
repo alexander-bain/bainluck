@@ -7047,7 +7047,7 @@ def precompute_admin_matured_linkage(self):
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.precompute_backfill_winners_status")
 def precompute_backfill_winners_status(self):
-    """Precompute backfill-winners/status response and cache in Redis (every 1h)."""
+    """Precompute backfill-winners/status response and cache in Redis (daily 10:35 UTC, #10090)."""
     from app.tasks.precompute_backfill_winners_status import _precompute_backfill_winners_status
     return _tracked_run("precompute_backfill_winners_status", _precompute_backfill_winners_status())
 
@@ -8362,7 +8362,7 @@ celery_app.conf.beat_schedule = {
         # database and was IO behind slow Kalshi update rounds (class f). No
         # other heavy DAILY job fires in hour 10; :35 keeps the minute the
         # hourly form already held against the hourly heavy siblings. Pairs
-        # with CACHE_TTL = 26 h in precompute_backfill_winners_status.py.
+        # with CACHE_TTL = 50 h in precompute_backfill_winners_status.py.
         "schedule": crontab(minute=35, hour=10),  # Daily 10:35 UTC — cache expensive backfill status queries
         "options": {"queue": "heavy"},
     },
