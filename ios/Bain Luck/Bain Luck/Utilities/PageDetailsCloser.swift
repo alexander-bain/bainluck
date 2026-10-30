@@ -33,8 +33,15 @@ struct PageDetailsCloser: UIViewRepresentable {
 
         override func willMove(toWindow newWindow: UIWindow?) {
             super.willMove(toWindow: newWindow)
+            print("DIAG11703S pageWillMove t=\(CACurrentMediaTime()) toWindow=\(newWindow != nil) open=\(detailsOpen?.wrappedValue ?? false) rootPresented=\(window?.rootViewController?.presentedViewController.map { String(describing: ObjectIdentifier($0)) } ?? "nil")")
             guard newWindow == nil, let detailsOpen, detailsOpen.wrappedValue else { return }
             detailsOpen.wrappedValue = false
+            print("DIAG11703S flipped t=\(CACurrentMediaTime()) open=\(detailsOpen.wrappedValue)")
+            if let top = window?.rootViewController?.presentedViewController,
+               top.presentedViewController == nil, top.modalPresentationStyle == .popover, !top.isBeingDismissed {
+                top.dismiss(animated: false) { print("DIAG11703S uikitDismissed t=\(CACurrentMediaTime())") }
+                print("DIAG11703S uikitDismissCalled t=\(CACurrentMediaTime()) being=\(top.isBeingDismissed)")
+            }
         }
     }
 }
