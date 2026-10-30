@@ -239,3 +239,30 @@ async def test_no_live_legs_reads_no_memory(redis):
 
 async def test_the_rest_lasts_one_hour():
     assert topup.PRIORITY_MISS_SECONDS == 3600
+
+
+async def test_a_gamma_outage_with_legs_already_stored_rests_nothing(redis):
+    """The arm production takes: something is stored, so Gamma's raise is caught
+    and the stored legs are returned — and that pass must rest nothing either."""
+    stored_cid = "0x" + "b" * 64
+
+    class Stored(Session):
+        async def execute(self, stmt):
+            if isinstance(stmt, Update):
+                return SimpleNamespace(all=lambda: [])
+            self.reads += 1
+            rows = (
+                [(PROP_MARKET, {topup.OUTCOME_TOKEN_METADATA_KEY: {"999": "tok"}},
+                  None, None)]
+                if self.reads == 1
+                else []
+            )
+            return SimpleNamespace(all=lambda: rows)
+
+    filled = await run(
+        Gamma(fail=True),
+        targets=[(PROP_MARKET, 999, stored_cid)] + FLOOD[:10],
+        session=Stored(),
+    )
+    assert filled == {999: (PROP_MARKET, "tok")}
+    assert redis.zset == {}
