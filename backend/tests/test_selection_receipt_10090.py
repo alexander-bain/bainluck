@@ -25,6 +25,7 @@ first became eligible. These pin the receipt that can, inside the same traces:
 from datetime import datetime, timedelta, timezone
 import json
 import re
+import socket
 import time
 from types import SimpleNamespace
 
@@ -56,6 +57,28 @@ def _legacy_registry(monkeypatch):
                         else frozenset())
     yield
     blend_preview.reset_registry_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _no_hostname_lookup(monkeypatch, request):
+    """Only the real-Redis tests (unix socket) may reach a server.
+
+    A CI runner's ``getaddrinfo`` can stall past the 250 ms observation budget
+    while a laptop is refused at once, so a rig that opens a socket passes here
+    and fails there. Fail any lookup fast, and name it.
+    """
+    if "redis_kwargs" in request.fixturenames:
+        yield
+        return
+    looked_up = []
+
+    def refused(host, port, *args, **kwargs):
+        looked_up.append((host, port))
+        raise OSError(f"test opened a network connection to {host}:{port}")
+
+    monkeypatch.setattr(socket, "getaddrinfo", refused)
+    yield
+    assert not looked_up, f"rig opened a network connection: {looked_up}"
 
 
 def traced(event=EVENT, outcome=K_OUTCOME):
@@ -140,6 +163,20 @@ class FakeLedger:
         return False
 
 
+def no_admission_socket(monkeypatch, r):
+    """A FakeLedger refresher's admission read takes no Redis socket.
+
+    ``ledger = True`` sends ``_preview_admission_read`` to a real pooled
+    connection: refused at once locally (ticket None), but a stalled runner DNS
+    spends the observation read's budget and no SELECTED line is written. This
+    is the refused read's ticket, with no network.
+    """
+    async def no_ticket():
+        return None
+
+    monkeypatch.setattr(r, "_preview_admission_read", no_ticket)
+
+
 # ── the batch route (`_refresh_batch`) ──────────────────────────────────────
 
 async def test_batch_selection_is_receipted_at_its_decision_and_rides_the_proposal(monkeypatch):
@@ -150,6 +187,7 @@ async def test_batch_selection_is_receipted_at_its_decision_and_rides_the_propos
     attach(r, trace)
     selector(monkeypatch, speaker())
     monkeypatch.setattr(blend_preview, "_REGISTRY", FakeLedger())
+    no_admission_socket(monkeypatch, r)
     sent = _capture_previews(monkeypatch, r, session)
 
     await r.refresh([1])
@@ -192,6 +230,7 @@ async def test_batch_no_reading_and_identical_repeats_cost_one_line(monkeypatch)
     box = selector(monkeypatch, None)
     registry_box = FakeLedger(propose=False)
     monkeypatch.setattr(blend_preview, "_REGISTRY", registry_box)
+    no_admission_socket(monkeypatch, r)
     _capture_previews(monkeypatch, r, session)
     for _ in range(3):
         await r.refresh([1])
@@ -251,6 +290,7 @@ async def test_unchanged_route_receipts_selection_and_tags_its_proposal(monkeypa
     trace, lines = traced(event=1, outcome=rows[0].id)
     attach(r, trace)
     monkeypatch.setattr(blend_preview, "_REGISTRY", FakeLedger())
+    no_admission_socket(monkeypatch, r)
     await r.preview_accepted_observations(observations, validate)
     (selected,) = stage(lines, "SELECTED")
     assert (selected["route"], selected["disposition"], selected["then"]) == (
@@ -267,6 +307,7 @@ async def test_unchanged_route_names_a_send_boundary_refusal(monkeypatch):
     trace, lines = traced(event=1, outcome=rows[0].id)
     attach(r, trace)
     monkeypatch.setattr(blend_preview, "_REGISTRY", FakeLedger())
+    no_admission_socket(monkeypatch, r)
     reads = []
 
     async def first_only(ids):
