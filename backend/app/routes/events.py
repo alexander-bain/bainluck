@@ -32410,6 +32410,103 @@ def _withhold_refused_sportsbook_minutes(
     return sorted(out, key=lambda p: p.timestamp)
 
 
+def _full_book_consensus_points(
+    points: list,
+    snapshots: list,
+    *,
+    trusted_from: datetime | None,
+    trusted_until: datetime | None,
+) -> list:
+    """The betting series re-valued as the headline's consensus at each minute's end (#11105).
+
+    The `history` row a minute's betting point comes from averages only the books
+    that WROTE a row in that minute — a book that re-confirmed its price writes
+    none (`_create_or_update_snapshot` only moves ``valid_until``). The headline's
+    `betting` is the median of EVERY book the poll saw (`_ingest_event_odds`). So
+    the served line weighed a different number at 3.0 than the frames a held page
+    appends. Specimen 15338028 (CBJ @ CAR, live 2026-10-29): 18 books stood all
+    through 23:15, 9 repriced; the row said 0.7097 (mean of the 9), the headline
+    0.7032 (median of the 18), and the 23:15 bucket drew a +0.6 pt out-and-back
+    the headline never showed.
+
+    Each point keeps its timestamp and is re-valued at the LAST stamp before its
+    minute ends: per book, the newest row captured by then, counted while that
+    row still stands there (``valid_until`` widened by the poll tolerance, as
+    `_sportsbook_floor_spans` counts). That is the superset of the books the poll
+    saw, so a book that went dark and came back at the same price is counted —
+    the same one-way error #11105's floor accepts. The median and the rounding
+    are the writer's. Only the value moves: the points, the floor spans and
+    #9081's withdrawal still decide WHEN the books speak.
+
+    Where the read may lack a row that stood there — before ``trusted_from``, at
+    or past ``trusted_until`` — or no book stands, the point is left as it was.
+    The split refusal (#7523) is not modelled, for the reason the floor gives.
+    """
+    if not points:
+        return points
+    from bisect import bisect_left, bisect_right
+    from statistics import median
+
+    from app.utils.aggregation import TimestampedProb
+
+    tolerance = _BOOK_FLOOR_POLL_TOLERANCE
+
+    def _utc(stamp: datetime) -> datetime:
+        return stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=timezone.utc)
+
+    by_book: dict[str, list[tuple[datetime, datetime, float | None]]] = {}
+    stamps: set[datetime] = set()
+    for snap in snapshots:
+        if snap.captured_at is None:
+            continue
+        start = _utc(snap.captured_at)
+        end = _utc(snap.valid_until) if snap.valid_until is not None else start
+        stamps.add(start)
+        stamps.add(end)
+        prob = snap.home_win_probability
+        by_book.setdefault(snap.bookmaker, []).append(
+            (start, max(start, end), float(prob) if prob else None)
+        )
+    books = []
+    for rows in by_book.values():
+        rows.sort(key=lambda row: row[0])
+        books.append(([row[0] for row in rows], rows))
+    ordered_stamps = sorted(stamps)
+
+    out = []
+    for point in points:
+        if point.home_probability is None:
+            # A withdrawal marker (#9081) says the books stopped; it is not a
+            # consensus to re-value.
+            out.append(point)
+            continue
+        index = bisect_left(ordered_stamps, _utc(point.timestamp) + timedelta(minutes=1))
+        at = ordered_stamps[index - 1] if index else None
+        if (
+            at is None
+            or (trusted_from is not None and at < trusted_from)
+            or (trusted_until is not None and at + tolerance >= trusted_until)
+        ):
+            out.append(point)
+            continue
+        standing = []
+        for starts, rows in books:
+            newest = bisect_right(starts, at)
+            if not newest:
+                continue
+            _start, end, prob = rows[newest - 1]
+            # The headline counts a book only when its current row quotes a
+            # home probability; an older row of the same book is not its price.
+            if prob is not None and end + tolerance >= at:
+                standing.append(prob)
+        out.append(
+            TimestampedProb(timestamp=point.timestamp, home_probability=round(median(standing), 4))
+            if standing
+            else point
+        )
+    return out
+
+
 def _pin_blend_edge(
     aggregate_line: list,
     event,
@@ -34225,6 +34322,26 @@ async def get_event_odds_history(
                         _trusted_until is None or end_cap < _trusted_until
                     ):
                         _trusted_until = end_cap
+                    _trusted_from = (
+                        cutoff + _BOOK_FLOOR_POLL_TOLERANCE if cutoff is not None else None
+                    )
+                    # The value each minute weighs is the headline's consensus
+                    # over every standing book, not the books that repriced in
+                    # it. Before the floor, so a span that closes returns the
+                    # books on that consensus. See `_full_book_consensus_points`.
+                    try:
+                        agg_sources["betting"] = _full_book_consensus_points(
+                            agg_sources["betting"],
+                            snapshots,
+                            trusted_from=_trusted_from,
+                            trusted_until=_trusted_until,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "full-book consensus skipped for event %d (#11105)",
+                            event_id,
+                            exc_info=True,
+                        )
                     if _withdrawal is not None:
                         _tail = "withdrawn"
                     elif _terminal_point_owns_the_edge(
@@ -34237,11 +34354,7 @@ async def get_event_odds_history(
                         agg_sources["betting"],
                         _sportsbook_floor_spans(
                             snapshots,
-                            trusted_from=(
-                                cutoff + _BOOK_FLOOR_POLL_TOLERANCE
-                                if cutoff is not None
-                                else None
-                            ),
+                            trusted_from=_trusted_from,
                             trusted_until=_trusted_until,
                             tail=_tail,
                         ),
