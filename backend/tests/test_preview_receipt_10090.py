@@ -450,10 +450,52 @@ def test_a_mark_older_than_the_await_window_is_purged_when_charged(caplog):
     f = close_minute(r, clock, caplog)
     assert (f["measured"], f["unpreviewed"], f["max_ms"]) == ("0", "1", "-")
     assert (f["moved_measured"], f["live_moved_max_ms"]) == ("0", "-")
+    assert f["live_moved_late"] == "1"  # live and moved: the purge is not silent
     # The blend still published: the next one compares against 0.70.
     charge(r, clock, 5, 0.70, 0.1, seq=3)
     f = close_minute(r, clock, caplog)
     assert (f["measured"], f["repeat"], f["moved_measured"]) == ("1", "1", "0")
+
+
+def test_a_purged_charge_counts_late_only_when_live_and_moved(caplog):
+    # latency's Probe B: a live, moved blend 70 s after its input must not read
+    # as a lower live_moved_max; a purged first, repeat or pre-game blend is
+    # not late.
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    clock = Clock()
+    r = receipt(clock, {})
+    for eid, status in ((1, "live"), (2, "live"), (3, "scheduled")):
+        r.published(valued(eid, 0.50, status), None, ("published",))
+    charge(r, clock, 1, 0.60, 70.0)                      # live, moved, late
+    charge(r, clock, 2, 0.50, 70.0)                      # live repeat, purged
+    charge(r, clock, 3, 0.60, 70.0, status="scheduled")  # moved pre-game, purged
+    charge(r, clock, 4, 0.60, 70.0)                      # live first, purged
+    f = close_minute(r, clock, caplog)
+    assert (f["measured"], f["unpreviewed"], f["live_moved_measured"]) == ("0", "4", "0")
+    assert (f["live_moved_max_ms"], f["live_moved_late"]) == ("-", "1")
+    # The counter is per minute.
+    f = close_minute(r, clock, caplog)
+    assert f["live_moved_late"] == "0"
+
+
+def test_moved_latency_is_charged_to_the_newest_input_and_can_understate(caplog):
+    # latency's Probe A: the input that moves the blend arrives at t0, a newer
+    # same-price repeat at t0+0.7 s replaces it, the moved blend publishes at
+    # t0+0.8 s. The reader waited 800 ms; the line says 100 ms. moved_* is NOT
+    # an upper bound on the reader's wait. Do not restore that claim.
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    clock = Clock()
+    r = receipt(clock, {})
+    charge(r, clock, 1, 0.50, 0.0)
+    clock.advance(1)
+    r.committed({1: mark(1, clock.mono, seq=2)})  # t0: the mover
+    clock.advance(0.7)
+    r.committed({1: mark(1, clock.mono, seq=3)})  # t0+0.7: a newer repeat
+    clock.advance(0.1)
+    r.published(valued(1, 0.55), None, ("published",))
+    f = close_minute(r, clock, caplog)
+    assert (f["coalesced"], f["moved_measured"], f["moved_max_ms"]) == ("1", "1", "100")
+    assert (f["live_moved_measured"], f["live_moved_max_ms"]) == ("1", "100")
 
 
 def test_a_frame_without_a_value_is_never_moved(caplog):
@@ -518,6 +560,6 @@ def test_the_line_format_is_pinned():
         "live_measured", "live_p50_ms", "live_p90_ms", "live_p99_ms", "live_max_ms",
         "moved_measured", "moved_p50_ms", "moved_p90_ms", "moved_p99_ms", "moved_max_ms",
         "live_moved_measured", "live_moved_p50_ms", "live_moved_p90_ms",
-        "live_moved_p99_ms", "live_moved_max_ms", "live_moved_worst",
+        "live_moved_p99_ms", "live_moved_max_ms", "live_moved_worst", "live_moved_late",
     ]
     assert pr.PREVIEW_RECEIPT_FORMAT.startswith("blend_preview[%s]: preview-receipt run=%s ")
