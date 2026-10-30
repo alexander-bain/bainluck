@@ -241,7 +241,10 @@ async def test_a_process_holding_a_population_still_reads_error_on_the_failing_p
     "error"` / `terminal == "failed"`; a cached population must not hide it."""
     import datetime as dt
 
-    v._POPULATION[VENUE] = (T0 - v.POPULATION_TTL_S - 1, _stale_units())
+    # The pass reads the module's `time.monotonic()` (uptime on Linux), so the
+    # stale entry is anchored on that clock; a fixed T0 reads FRESH on a runner
+    # booted less than T0 seconds ago (CI run 41123944982).
+    v._POPULATION[VENUE] = (v.time.monotonic() - v.POPULATION_TTL_S - 1, _stale_units())
     session = _Session(fail=True)
 
     async def _clock(_s):
