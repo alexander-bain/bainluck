@@ -664,18 +664,23 @@ class _Forgets:
 
         self.held_quotes = HeldRowQuotes()
         self.forgotten = []
+        self.trace = []
 
     def forget_preview_outcomes(self, ids):
         self.forgotten.append(sorted(ids))
+        self.trace.append("forget")
 
     async def publish_market_changes(self, session):
-        pass
+        self.trace.append("publish")
 
 
 @pytest.mark.parametrize("status,failure,forgotten", [
-    ("determined", False, [[1, 2]]),
-    ("determined", True, [[1, 2]]),  # committed or not: the commit may have landed
-    ("active", False, []),
+    ("determined", None, [[1, 2]]),
+    # Committed or not: the commit may have landed, also when a cancellation
+    # cuts it (lane1 R2 on 3d769974).
+    ("determined", "error", [[1, 2]]),
+    ("determined", "cancel", [[1, 2]]),
+    ("active", None, []),
 ])
 async def test_a_kalshi_settlement_forgets_its_markets_legs(status, failure, forgotten):
     import logging
@@ -688,6 +693,8 @@ async def test_a_kalshi_settlement_forgets_its_markets_legs(status, failure, for
 
     class Failing(_Session):
         async def execute(self, stmt, *args):
+            if failure == "cancel":
+                raise asyncio.CancelledError()
             raise RuntimeError("settlement write refused")
 
     refresher = _Forgets()
@@ -704,8 +711,58 @@ async def test_a_kalshi_settlement_forgets_its_markets_legs(status, failure, for
         logger=logging.getLogger(__name__), stats={"errors": 0, "settlements": 0},
         _UNCAPTURED=object(),
     )
-    await ns["handle_lifecycle"]({"market_ticker": "KXG-A", "status": status, "result": "yes"})
+    call = ns["handle_lifecycle"]({"market_ticker": "KXG-A", "status": status, "result": "yes"})
+    if failure == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            await call
+    else:
+        await call
     assert refresher.forgotten == forgotten
+    if status == "determined" and failure is None:
+        # Before the publication's await, where a sibling leg's commit could run.
+        assert refresher.trace == ["forget", "publish"]
+
+
+@pytest.mark.parametrize("failure", [None, "error", "cancel"])
+async def test_an_open_contract_grade_forgets_its_leg_committed_or_not(failure):
+    """lane1 R1 on 3d769974: the open-contract grade writes one leg's
+    `is_winner`, settled price and `last_updated` outside the price write; a
+    bridged game-winner leg sits in its live event's cached graph."""
+    import logging
+
+    from tests.test_kalshi_held_quotes_10090 import MARKET as KMARKET, _lift, _Session
+
+    graded = Row(id=7, last_updated=NOW)
+
+    async def grade(session, *, market_id, outcome_id, state, result):
+        if failure == "cancel":
+            raise asyncio.CancelledError()
+        if failure == "error":
+            raise RuntimeError("grade write refused")
+        return graded, None
+
+    refresher = _Forgets()
+    stats = {"errors": 0, "open_contract_settlements": 0, "open_contract_markets_resolved": 0,
+             "open_contract_lifecycle_unverdicted": 0}
+    ns = _lift(
+        "handle_open_contract_lifecycle",
+        open_contract_settlement_enabled=lambda: True,
+        lifecycle_verdict=lambda msg: ("settled", True), lifecycle_state=lambda msg: "settled",
+        open_contract_ids={"KXG-A": (KMARKET, 7)}, open_grade_admission=asyncio.Lock(),
+        get_task_session=lambda: _Session([]), grade_open_contract_leg=grade,
+        queue_market_change=lambda *a, **kw: None, buffer_lock=asyncio.Lock(), price_buffer={},
+        blend_refresher=refresher, logger=logging.getLogger(__name__), stats=stats,
+    )
+    call = ns["handle_open_contract_lifecycle"]("KXG-A", {"market_ticker": "KXG-A"})
+    if failure == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            await call
+    else:
+        await call
+    assert refresher.forgotten == [[7]]
+    if failure is None:
+        assert refresher.trace == ["forget", "publish"]
+        assert stats["open_contract_settlements"] == 1
 
 
 def _lift_pm(*names, **ns):
