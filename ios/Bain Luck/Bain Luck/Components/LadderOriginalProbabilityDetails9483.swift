@@ -1147,6 +1147,8 @@ enum OriginalHandicapCard9483 {
         let words: Words
         /// Nonbreaking opt-in. It does not change the final presentation.
         var showsDuringPlay: Bool = false
+        /// Separately admitted before-only presentation; live/final remain unchanged.
+        var showsBeforePlay: Bool = false
     }
 
     /// A placed panel's final readings, from the Details' own content.
@@ -1166,7 +1168,16 @@ enum OriginalHandicapCard9483 {
         let pendingMarketContext: String?
     }
 
+    /// A before-only projection: no place to carry actual/later/result channels.
+    struct BeforeShown: Equatable {
+        let chance: Details.ShownReading?
+        /// A non-pregame original still opens its exact Details, but its mode
+        /// is not silently rewritten. Only its admitted before reading survives.
+        let unavailable: String?
+    }
+
     enum State: Equatable {
+        case before(BeforeShown)
         case live(LiveShown)
         case shown(Shown)
         /// The exact original resolves but is not in result mode; it still opens.
@@ -1187,7 +1198,11 @@ enum OriginalHandicapCard9483 {
 
     /// Final by default; live only on the true during phase with explicit opt-in.
     static func isShown(_ input: Input) -> Bool {
-        input.phase == .final || isLive(input)
+        input.phase == .final || isLive(input) || isBefore(input)
+    }
+
+    static func isBefore(_ input: Input) -> Bool {
+        input.phase == .before && input.showsBeforePlay
     }
 
     static func isLive(_ input: Input) -> Bool {
@@ -1222,12 +1237,16 @@ enum OriginalHandicapCard9483 {
     static func state(_ panel: Panel, in input: Input) -> State? {
         guard isShown(input) else { return nil }
         guard let catalogue = catalogue(input) else {
-            return isLive(input) ? .unavailable(nonBlank(input.words.scopeUnavailable) ?? Details.unavailable) : nil
+            return (isLive(input) || isBefore(input)) ? .unavailable(nonBlank(input.words.scopeUnavailable) ?? Details.unavailable) : nil
         }
         guard let selection = selection(panel, in: input),
               let original = Details.original(in: catalogue, selection: selection),
               let content = Details.content(catalogue: catalogue, selection: selection) else {
             return .unavailable(nonBlank(input.words.panelUnavailable) ?? Details.unavailable)
+        }
+        if isBefore(input) {
+            return .before(BeforeShown(chance: content.readings.first { $0.label == Details.pregameLabel },
+                                       unavailable: original.mode == .pregame ? nil : "Pregame presentation unavailable"))
         }
         if isLive(input) {
             let pending: String?
@@ -1292,6 +1311,22 @@ enum OriginalHandicapCard9483 {
     /// with its own provenance, then the original's result — each named.
     static func spoken(_ panel: Panel, in input: Input) -> String {
         guard let state = state(panel, in: input) else { return "" }
+        if isBefore(input) {
+            var parts = [nonBlank(panel.predicate) ?? nonBlank(input.words.panelUnavailable) ?? Details.unavailable]
+            if let condition = nonBlank(panel.condition) { parts.append(condition) }
+            switch state {
+            case .before(let shown):
+                if let chance = shown.chance {
+                    parts.append("\(chance.label): \(chance.text)" + (chance.provenance.map { ", \($0)" } ?? ""))
+                }
+                if let unavailable = shown.unavailable { parts.append(unavailable) }
+            case .unavailable(let words), .comparisonUnavailable(let words):
+                parts.append(words)
+            case .live, .shown:
+                break // No later/actual/result channel is spoken before play.
+            }
+            return parts.joined(separator: ". ") + "."
+        }
         if case .live(let shown) = state {
             var parts = [nonBlank(panel.predicate) ?? nonBlank(input.words.panelUnavailable) ?? Details.unavailable]
             if let condition = nonBlank(panel.condition) { parts.append(condition) }
@@ -1313,7 +1348,7 @@ enum OriginalHandicapCard9483 {
         }
         parts.append(isLive(input) ? spokenLiveActual(panel) : spokenActual(panel.actual))
         switch state {
-        case .live:
+        case .before, .live:
             break // Handled above without borrowing final channels.
         case .shown(let shown):
             parts.append("\(Details.resultLabel): \(shown.result.words)"
@@ -1434,7 +1469,7 @@ struct OriginalHandicapCardView9483: View {
         if Model.isShown(input) {
             VStack(alignment: .leading, spacing: 18) {
                 header
-                if Model.catalogue(input) != nil || Model.isLive(input) {
+                if Model.catalogue(input) != nil || Model.isLive(input) || Model.isBefore(input) {
                     ForEach(Array(input.groups.enumerated()), id: \.offset) { index, group in
                         groupView(group, index: index)
                     }
@@ -1512,10 +1547,15 @@ struct OriginalHandicapCardView9483: View {
             if let subject = Model.nonBlank(panel.subject) {
                 Text(subject).font(.headline)
             }
-            if Model.isLive(input), let condition = Model.nonBlank(panel.condition) {
+            if (Model.isLive(input) || Model.isBefore(input)), let condition = Model.nonBlank(panel.condition) {
                 Text(condition).font(.subheadline.weight(.semibold))
             }
             switch Model.state(panel, in: input) {
+            case .before(let shown)?:
+                if let before = shown.chance { chance(before) }
+                if let unavailable = shown.unavailable {
+                    Text(unavailable).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                }
             case .live(let shown)?:
                 ForEach(shown.readings, id: \.label) { reading in
                     chance(reading)
@@ -1536,7 +1576,9 @@ struct OriginalHandicapCardView9483: View {
                 actual(panel.actual)
                 result(shown, condition: panel.condition, acts: acts)
             case .comparisonUnavailable(let words)?, .unavailable(let words)?:
-                if Model.isLive(input) { liveActual(panel) } else { actual(panel.actual) }
+                if !Model.isBefore(input) {
+                    if Model.isLive(input) { liveActual(panel) } else { actual(panel.actual) }
+                }
                 Text(words)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
