@@ -13,8 +13,10 @@
 - **Command:** `heroku pg:psql -a bainluck`. This is the main app's database, which both apps share.
 - **When:**
   - not while a both-app exclusion/hold is active (DNPL notices), and not during an attended fold/apply;
-  - preferably not between :15 and :40 UTC, while the accuracy rebuild runs (it holds long transactions that the build would wait behind).
-  - Live games are fine: the build's lock does not block INSERT, UPDATE or DELETE.
+  - preferably not between :15 and :40 UTC, while the accuracy rebuild runs (it holds long transactions that the build would wait behind);
+  - not 09:00–10:15 UTC (2:00–3:15 AM PT), while the nightly backup runs (20–65 minutes each night this week, one transaction throughout).
+  - Live games are fine: the build's lock does not block INSERT, UPDATE or DELETE. It does read the 4 GB table twice, so prefer a quieter hour when there is a choice.
+- **How:** paste one section at a time and read its output before pasting the next. `ON_ERROR_STOP` does not stop lines that were already pasted.
 
 ## 1. Pre-checks (same psql session)
 ```sql
@@ -30,9 +32,10 @@ SELECT c.relname, i.indisvalid, i.indisready,
  WHERE i.indrelid = 'public.win_prob_snapshots'::regclass
  ORDER BY 1;
 -- (b) long transactions the build would wait behind. Expect 0 rows (autovacuum
---     workers are fine). If there are any, wait or pick another time. Do not
---     kill anything as part of this runbook.
-SELECT pid, now() - xact_start AS xact_age, state, left(query, 80) AS query
+--     workers are fine and are not listed). If there are rows, do not kill
+--     anything: rerun (b) once a minute and go to section 2 within a minute of
+--     it showing 0 rows. Still rows after 15 minutes: stop and pick another window.
+SELECT pid, application_name, now() - xact_start AS xact_age, state, left(query, 80) AS query
   FROM pg_stat_activity
  WHERE datname = current_database() AND xact_start < now() - interval '2 minutes'
    AND backend_type = 'client backend'
@@ -44,25 +47,25 @@ If (a) shows an INVALID leftover named `ix_winprob_event_source_captured`, run t
 
 ## 2. The operation
 ```sql
-SET lock_timeout = '30s';
-SET statement_timeout = '20min';
+SET lock_timeout = '10min';
+SET statement_timeout = '30min';
 CREATE INDEX CONCURRENTLY ix_winprob_event_source_captured ON public.win_prob_snapshots USING btree (event_id, source, captured_at);
 ```
 - **No `IF NOT EXISTS`, on purpose.** After an interrupted build, an `IF NOT EXISTS` re-run prints `CREATE INDEX` and leaves the INVALID index in place. Pre-check (a) is the existence test.
 - **Run it outside a transaction block.** psql autocommits by default. Do not start psql with `-1`/`--single-transaction`, and do not type `BEGIN`.
 - **Why these timeouts.**
   - The build takes SHARE UPDATE EXCLUSIVE. That lock does not conflict with the chart INSERTs/UPDATEs or the `FOR UPDATE` lookups, so neither a wait nor the build holds up a stamp or a chart point. (An ordinary autovacuum on this table is cancelled in its favour; an anti-wraparound one is not, and pre-check (c) does not see it — the build then waits up to the lock timeout and stops cleanly.)
-  - `lock_timeout = 30s` bounds each individual wait. CONCURRENTLY waits behind older transactions one holder at a time, with a fresh clock for each.
-  - `statement_timeout = 20min` is the absolute cap.
-  - A timeout after the first phase leaves an INVALID index. Section 3 catches that, and section 4 removes it.
+  - `lock_timeout = 10min` bounds each individual wait. CONCURRENTLY waits behind older transactions one holder at a time, with a fresh clock for each. Its last wait is for every transaction in the whole database that began before its second pass, not only users of this table. Reads of 44–496 seconds are routine here (`a11.out.json`; 20:10Z), so a short timeout would throw away a finished build. Waiting is harmless: in a local PG17 rehearsal an INSERT took 2.6 ms and the `FOR UPDATE` lookup 8 ms while the build sat in `waiting for old snapshots`.
+  - `statement_timeout = 30min` is the absolute cap: up to ~10 minutes of waiting plus the build.
+  - Any stop after the build has begun, a timed-out wait included, leaves an INVALID index with this name. Rehearsed locally: a stop in the first wait leaves an empty one; a stop in the last wait leaves a full one (~500 MB here) that every chart INSERT keeps updating until it is dropped. Only a stop while taking the table lock at the very start leaves nothing. Post-check 1 catches it; run section 4 in the same sitting.
 - **Optional progress view** from a second psql window: `SELECT phase, blocks_done, blocks_total FROM pg_stat_progress_create_index;`
 
 ## 3. Expected cost, and post-checks
 - **Expected build time: about 1–5 minutes.** This is an estimate from a local rig, not a production build.
   - Local PG14 (laptop SSD): a 508 MB heap of 1.3M rows in the production column shape built in 2.27 s.
   - Production: 3,968 MB heap, about 12.9M rows (PG17), read twice under live load.
-  - Wall time can also stretch to the length of any transaction open when it starts; pre-check (b) keeps that short.
-- **Expected disk: about 500 MB** (the rig measured 50 MB for 1.3M rows). The database is 108 GB.
+  - Wall time can also stretch by the length of any transaction open at its start or at its last wait, up to the 10-minute lock timeout each; pre-check (b) keeps the first one short.
+- **Expected disk: about 500 MB** (the rig measured 50 MB for 1.3M rows), plus about as much sort scratch while it runs. The plan is Standard 3: 108 GB of 512 GB used, so even ten times the estimate fits.
 - **Post-check 1, in the same psql session:** rerun pre-check (a). It must show `ix_winprob_event_source_captured | t | t | ~500 MB | CREATE INDEX ix_winprob_event_source_captured ON public.win_prob_snapshots USING btree (event_id, source, captured_at)`. Anything other than `indisvalid = t` and `indisready = t` means go to section 4 now.
 - **Post-check 2, a lane does this via db-query plan-only `explain`:** the plain-SELECT mirror of the lookup (`SELECT id FROM win_prob_snapshots WHERE event_id = <a live event> AND source = 'polymarket' AND captured_at <= now() ORDER BY captured_at DESC LIMIT 1`) must show `Index Scan Backward using ix_winprob_event_source_captured`. Today it shows `Sort` over `Index Scan using ix_winprob_event_source` (`ex1.out.json` in this folder).
 - **Post-check 3, the effect, owned by speed (light reads, about 30 minutes after post-check 1):**
@@ -73,15 +76,17 @@ CREATE INDEX CONCURRENTLY ix_winprob_event_source_captured ON public.win_prob_sn
 
 ## 4. Rollback (also how an INVALID leftover is cleared)
 ```sql
-SET lock_timeout = '30s';
-SET statement_timeout = '20min';
+SET lock_timeout = '10min';
+SET statement_timeout = '30min';
 DROP INDEX CONCURRENTLY IF EXISTS public.ix_winprob_event_source_captured;
 -- then rerun pre-check (a): the name must be ABSENT.
 ```
+- If the DROP prints `canceling statement due to lock timeout`, nothing is harmed: run the same three lines again. It waits for every transaction that has this table open, and writes are not blocked while it waits. Rehearsed locally: a rerun after the reader ended completed.
 - After a rollback, behaviour is exactly today's: the chart writer stays behind.
 - The rollback writes no data.
 
 ## 5. Recording it so `alembic --autogenerate` never proposes dropping it
+- **Older drift, unchanged by this:** autogenerate already proposes four index changes on this table, because the model's `index=True` columns do not match the migration's `ix_winprob_event_source` / `ix_winprob_captured`. Any autogenerated revision must still have those lines removed by hand. Checked locally: master proposes those four plus dropping the new index; with the declaration, only those four.
 - **The declaration** is in `WinProbSnapshot.__table_args__` on the draft PR (latency branch `latency/10090-winprob-chart-lookup-index`). It must merge **after** post-check 1 passes, not before. Declared before the build, an autogenerated revision could emit a non-concurrent `CREATE INDEX` into a release, which is gotcha #31.
 - **No Alembic migration.** On a database without the index it would build non-concurrently inside the release phase, holding a lock against every chart INSERT for the whole build. On production it would no-op over an INVALID leftover and report success.
 - **The guard** is `backend/tests/test_winprob_chart_lookup_index_registration_10090.py`. It pins the declared definition, the compiled DDL (this section 2 minus CONCURRENTLY), and that no migration executes the name.
