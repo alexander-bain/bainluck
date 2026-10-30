@@ -1129,10 +1129,14 @@ class PolymarketWebSocket:
                                 if event_type == "price_change" and self.on_price:
                                     quotes = _price_change_quotes(data)
                                     if asset_ids is not None:
+                                        # #10090: `quote_versions` holds exactly
+                                        # this connection's ids (never added to),
+                                        # so this is the list's membership in
+                                        # O(1), not a scan of up to 500 ids.
                                         quotes = [
                                             q
                                             for q in quotes
-                                            if q["asset_id"] in asset_ids
+                                            if q["asset_id"] in quote_versions
                                         ]
                                     await self._price_quotes(
                                         quotes, shard, book_snapshot=False,
