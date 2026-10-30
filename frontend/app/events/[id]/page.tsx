@@ -74,6 +74,7 @@ import { useObservationCount } from "@/hooks/useObservationCount";
 import ChartFullscreenDialog from "@/components/event/ChartFullscreenDialog";
 import {
   EMPTY_CONNECTION_TRACKER,
+  confirmationOfDisplayed,
   presentConnectionStatus,
   priceAgeClock,
   stepConnectionTracker,
@@ -214,7 +215,7 @@ import type { ActiveChartPoint, TeamData } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
 import { PinIcon } from "@/components/PinButton";
 import { teamShortNames, shippableCrestBadge } from "@/lib/teamShortName";
-import EventHeroProbabilityPair from "@/components/EventHeroProbabilityPair";
+import EventHeroProbabilityPair, { heroPrintedPair } from "@/components/EventHeroProbabilityPair";
 import { useTenthsOptIn } from "@/lib/tenthsOptIn";
 import SlashBreakableName from "@/components/SlashBreakableName";
 import { SignalBars } from "@/components/discover/shared";
@@ -2168,6 +2169,32 @@ export default function EventPage({ params }: EventPageProps) {
   const awaySlotWithheld = sportPricesADraw(event.sport);
   const awayProb = printableAway(servedAwayProb, event.sport);
   const awayPct = printableAway(servedAwayPct, event.sport);
+
+  // #10090 decision J under a preview (native #11816's rule, web half).
+  // `confirmed_at` vouches for the committed pair, so while a preview is up it
+  // is claimed only if the hero prints that same pair: a same-number preview
+  // keeps "Probability confirmed", a different-number one shows none. Every
+  // reader of the words "Probability confirmed" / "Connected" takes this value.
+  // The header badge's age (`heroStampInputs`) is the source-staleness policy,
+  // not a confirmation claim, and keeps the raw stream value unchanged.
+  const admittedPreviewProbability = displayedPreview(blendPreview, event, blendPreviewNow);
+  const committedPrinted = (() => {
+    if (admittedPreviewProbability === null) return null;
+    const committed = resolveProbability(event, historyData, lastChartPoint, isLive, isFinished, isSuspended, false, true);
+    if (committed.selectedProbabilitySource !== "hero-blend") return { home: null, away: null };
+    return heroPrintedPair({
+      homeProb: committed.homeProb, awayProb: printableAway(committed.awayProb, event.sport),
+      homePct: committed.homePct, awayPct: printableAway(committed.awayPct, event.sport),
+      awayWithheld: awaySlotWithheld, venueSettled: venueSettledSentence !== null, tenths: tenthsOptIn,
+    });
+  })();
+  const confirmedAtShown = confirmationOfDisplayed(streamConfirmedAt, committedPrinted && {
+    shown: heroPrintedPair({
+      homeProb, awayProb, homePct, awayPct,
+      awayWithheld: awaySlotWithheld, venueSettled: venueSettledSentence !== null, tenths: tenthsOptIn,
+    }),
+    committed: committedPrinted,
+  });
   const openingAwaySlotWithheld = awayIsTheComplement(
     servedOpeningAwayProb,
     openingHomeProb,
@@ -2458,7 +2485,7 @@ export default function EventPage({ params }: EventPageProps) {
       scoreMayBeOld: ageAdmissionIsStale && !liveClaimUnbacked && heroStamp.fact === "score",
       // #10090 decision J = A. A stream double that predates the field reports
       // `undefined`: unconfirmed.
-      priceConfirmed: Boolean(acceptedPriceClock) && typeof streamConfirmedAt === "string",
+      priceConfirmed: Boolean(acceptedPriceClock) && typeof confirmedAtShown === "string",
     },
     Date.now(),
   );
@@ -2469,7 +2496,6 @@ export default function EventPage({ params }: EventPageProps) {
   const connectionStatusVisible = connectionTerminalLabel
     ? connectionTrackerRef.current.sawUnfinished || showsAge
     : quoteEligible || showsAge;
-  const admittedPreviewProbability = displayedPreview(blendPreview, event, blendPreviewNow);
   const observationDelivery = resolvedProbability?.selectedProbabilitySource === "hero-blend"
     ? admittedPreviewProbability !== null ? "dnpl" as const : "committed" as const
     : "unknown" as const;
@@ -2487,7 +2513,7 @@ export default function EventPage({ params }: EventPageProps) {
       presentation={connectionPresentation}
       observation={{ eventId, count: observationCount, delivery: observationDelivery }}
       priceObservedAt={acceptedPriceClock}
-      priceConfirmedAt={streamConfirmedAt}
+      priceConfirmedAt={confirmedAtShown}
       scoreShown={Boolean(liveGamesLine) || heroScorePairPresent}
       scoreConfirmedAt={heroStampInputs.scoreStamp}
       oldestFact={displayedOldestFact}

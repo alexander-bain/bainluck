@@ -303,6 +303,33 @@ export function confirmationOwed(floors: FoldRevision, shown: unknown): boolean 
   return keys.some(key => !(key in committed) || committed[key] < floors[key]);
 }
 
+/** One printed headline pair (`heroPrintedPair`); null for a side with no reading. */
+export interface PrintedPair {
+  home: string | null;
+  away: string | null;
+}
+
+/**
+ * #10090 decision J under a preview (native #11816's rule 2, web half).
+ * `confirmed_at` vouches for the COMMITTED pair. While a preview is displayed
+ * (`printed` non-null), it stands only if the preview prints that pair — the
+ * same digits on both sides, at the precision the reader sees — because then
+ * the number on screen is the confirmed number, and `priceAgeClock` ages it
+ * from the later of the preview's observation and the confirmation. A preview
+ * that prints any other number is provisional: nothing claims it confirmed,
+ * and it keeps its own clock. No preview (`printed` null) ⇒ unchanged.
+ */
+export function confirmationOfDisplayed(
+  confirmedAt: string | null | undefined,
+  printed: { shown: PrintedPair; committed: PrintedPair } | null,
+): string | null {
+  if (typeof confirmedAt !== 'string') return null;
+  if (!printed) return confirmedAt;
+  const { shown, committed } = printed;
+  return shown.home !== null && shown.home === committed.home && shown.away === committed.away
+    ? confirmedAt : null;
+}
+
 /** A clock for the tap details: wall time with its zone, or null when absent/unparseable. */
 export function formatObservationClock(iso: string | null | undefined, milliseconds = false): string | null {
   const t = parseClock(iso);
