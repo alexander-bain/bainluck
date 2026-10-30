@@ -3000,8 +3000,9 @@ struct OddsChartView: View {
     /// live row): no bucket's evidence is later than that. The bucket that
     /// contains the read moves to the pin, so the pin still ends the line and
     /// the published edge does not move. When a preview replaced the pin,
-    /// `previewAt` is the cap and that bucket stays where it was, because the
-    /// preview must stay strictly newer than every committed point.
+    /// `previewAt` is the cap, because the preview must stay strictly newer
+    /// than every committed point: that bucket moves to the latest held frame
+    /// before the preview that printed its value, else it stays where it was.
     ///
     /// When the committed headline re-valued the pin, its clock is the cap,
     /// and that bucket moves to the latest instant in its minute, up to the
@@ -3035,12 +3036,14 @@ struct OddsChartView: View {
             let date: Date
             if end < cap {
                 date = end
-            } else if let headline {
-                date = headline.value == point.probability ? cap : frames
+            } else if headline == nil && previewAt == nil {
+                date = cap
+            } else if headline?.value == point.probability {
+                date = cap
+            } else {
+                date = frames
                     .filter { $0.date >= point.date && $0.date < cap && $0.homeProbability == point.probability }
                     .map(\.date).max() ?? point.date
-            } else {
-                date = previewAt == nil ? cap : point.date
             }
             return ChartDataPoint(date: date, probability: point.probability, source: point.source)
         }
