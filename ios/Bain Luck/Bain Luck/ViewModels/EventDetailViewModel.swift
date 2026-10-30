@@ -160,11 +160,19 @@ final class EventDetailViewModel: ObservableObject {
     /// through `confirmedAtCoveringShown`, which decides whether it is about
     /// the number on screen. Cleared with the connection that carried it.
     @Published private(set) var streamConfirmedAt: Date?
-    /// #10090 decision J — this delivery's connect `reconcile` has arrived.
+    /// #10090 decision J — this connection's connect `reconcile` has arrived.
     /// The server sends the first confirmed heartbeat BEFORE it (lane1's
     /// #11772 probe), and only the reconcile's floor makes a served price older
-    /// than the replay window owe its pair read. Cleared with `streamConfirmedAt`.
-    private var connectReconcileSeen = false
+    /// than the replay window owe its pair read.
+    ///
+    /// Scoped to the CONNECTION, not the delivery (#11772 R4): the server sends
+    /// it only on connect, and a quiet market's 90 s data silence reports
+    /// delivery down on a socket that stays open, so clearing it there left the
+    /// rest of that connection unconfirmable. Cleared at the controller's
+    /// connection boundaries (`onPreviewReset`: open, reconnect, error, stop)
+    /// and by `stopStream`. Published (R5): a reconnect's paid re-send changes
+    /// nothing else the page reads, and must still re-render the claim it opens.
+    @Published private(set) var connectReconcileSeen = false
 
     /// #10090 — the held provisional blend (`BlendPreview`), or nil. Never part
     /// of `event` or `liveBlend`: the page overlays it on the hero
@@ -917,8 +925,8 @@ final class EventDetailViewModel: ObservableObject {
         guard control.eventId == eventId, let held = event, held.id == eventId,
               EventPriceStreaming.isEligible(held.status) else { return }
         // Before the paid-custody return: a reconnect's re-send is still this
-        // delivery's reconcile.
-        connectReconcileSeen = true
+        // connection's reconcile. Set only on change: each set publishes.
+        if !connectReconcileSeen { connectReconcileSeen = true }
         blendPreviewReader = BlendPreview.readerAfterCommitFloor(blendPreviewReader, control.removalRev)
         publishPreview(blendPreviewReader.held, at: previewNow())
         // A paid custody delivered again (a reconnect's re-send) asks nothing,
@@ -1308,8 +1316,9 @@ final class EventDetailViewModel: ObservableObject {
                 // just earned it.
                 if !delivering {
                     self.streamHasPushedPrice = false
+                    // The next 20 s beat re-sends this; the connection's
+                    // reconcile is not re-sent, so it stays (#11772 R4).
                     self.streamConfirmedAt = nil
-                    self.connectReconcileSeen = false
                     self.deliveryGeneration += 1
                     self.streamRefetchGeneration = nil
                     self.pendingResyncGeneration = nil
@@ -1351,7 +1360,13 @@ final class EventDetailViewModel: ObservableObject {
             },
             onPreviewOpenV3: { [weak self] raw in self?.receivePreviewOpenV3(raw) },
             onPreviewV3: { [weak self] raw, receivedAt in self?.receivePreviewV3(raw, receivedAt: receivedAt) },
-            onPreviewReset: { [weak self] in self?.clearPreview() },
+            // Every connection boundary, and only those: the reconcile it
+            // carried belongs to the connection that ended (#11772 R4).
+            onPreviewReset: { [weak self] in
+                guard let self else { return }
+                if self.connectReconcileSeen { self.connectReconcileSeen = false }
+                self.clearPreview()
+            },
             onConfirmedAt: { [weak self] confirmed in
                 guard let self else { return }
                 if self.streamConfirmedAt.map({ confirmed > $0 }) ?? true { self.streamConfirmedAt = confirmed }
@@ -1400,7 +1415,7 @@ final class EventDetailViewModel: ObservableObject {
         awaitingFoldedResult = false
         streamHasPushedPrice = false
         streamConfirmedAt = nil
-        connectReconcileSeen = false
+        if connectReconcileSeen { connectReconcileSeen = false }
         streamTickTask?.cancel()
         streamTickTask = nil
         stoppingStream = true
@@ -1449,7 +1464,7 @@ final class EventDetailViewModel: ObservableObject {
     /// sends its connect replay before the first confirmation (live R3), so a
     /// replayed raw price is already adopted when one arrives. What remains is
     /// checked here:
-    ///   * this delivery's connect `reconcile` has arrived: it registers the
+    ///   * this connection's connect `reconcile` has arrived: it registers the
     ///     committed revision as a floor, which is the only witness for a
     ///     served price too old to replay, and the first heartbeat can precede
     ///     it;

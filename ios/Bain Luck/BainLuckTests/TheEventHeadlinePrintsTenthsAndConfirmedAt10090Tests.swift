@@ -455,7 +455,7 @@ final class TheEventHeadlinePrintsTenthsAndConfirmedAt10090Tests: XCTestCase {
         let view = try String(contentsOf: Self.repoFile("ios/Bain Luck/Bain Luck/Views/EventDetailView.swift"), encoding: .utf8)
         XCTAssertTrue(view.contains("return away ? vm.priceActivity?.awayRising : vm.priceActivity?.homeRising"))
         let chart = try String(contentsOf: Self.repoFile("ios/Bain Luck/Bain Luck/Components/OddsChartView.swift"), encoding: .utf8)
-        XCTAssertTrue(chart.contains("rising: priceActivity?.homeRising,"))
+        XCTAssertTrue(chart.contains("showsPreview ? nil : activity?.homeRising"))
         XCTAssertFalse(chart.contains("rising: priceActivity?.homeDelta"))
     }
 

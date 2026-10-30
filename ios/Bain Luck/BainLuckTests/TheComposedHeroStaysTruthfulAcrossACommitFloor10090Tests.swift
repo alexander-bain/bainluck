@@ -162,6 +162,17 @@ final class TheComposedHeroStaysTruthfulAcrossACommitFloor10090Tests: XCTestCase
 
         handle.beat("2026-10-21T19:00:10.000+00:00")
         XCTAssertNil(vm.confirmedAtCoveringShown(try shown(vm)), "a repeat is not a re-confirmation")
+        // #11772 R4: a quiet 100 s lapses delivery on the open socket, which
+        // keeps its reconcile; the floor's debt survives the lapse too.
+        for _ in 1...5 {
+            clock.t += 20
+            handle.beat("2026-10-21T19:00:10.000+00:00")
+            vm.tickStream()
+        }
+        XCTAssertFalse(vm.streamDelivering, "the lapse")
+        handle.beat("2026-10-21T19:00:10.000+00:00")
+        XCTAssertNil(vm.confirmedAtCoveringShown(try shown(vm)), "the lapse does not pay the floor")
+        XCTAssertEqual(vm.displayedProbabilityAgeClock(try shown(vm)), committedClock)
         handle.beat("2026-10-21T19:00:20.000+00:00")
         XCTAssertEqual(vm.streamConfirmedAt, tLater, "stored")
         XCTAssertNil(vm.confirmedAtCoveringShown(try shown(vm)), "a newer one dates the newer commit, not this value")
@@ -274,6 +285,23 @@ final class TheComposedHeroStaysTruthfulAcrossACommitFloor10090Tests: XCTestCase
         XCTAssertEqual(activity.previousHomePrinted, "70.0%")
         XCTAssertEqual(activity.homeRising, false)
         XCTAssertNil(activity.homeCaptionDelta)
+    }
+
+    /// The chart tip slides like the hero: nil while a preview prints, the
+    /// printed committed direction otherwise.
+    func testTheTipSlidesLikeTheHero() throws {
+        let fall = LivePriceActivity(sequence: 1, receivedAt: Date(), homeProbability: 0.66,
+                                     previousHomePercent: 70, previousAwayPercent: nil,
+                                     homePercent: 66, awayPercent: nil,
+                                     previousHomeLabel: "70%", previousAwayLabel: nil,
+                                     homeLabel: "66%", awayLabel: nil,
+                                     previousHomePrinted: "70.0%", homePrinted: "66.0%")
+        XCTAssertEqual(OddsChartView.liveEdgeRising(fall, showsPreview: false), false)
+        XCTAssertNil(OddsChartView.liveEdgeRising(fall, showsPreview: true), "a preview prints: no committed direction")
+        let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck/Views/EventDetailView.swift")
+        let view = try String(contentsOf: path, encoding: .utf8)
+        XCTAssertTrue(view.contains("liveEdgeShowsPreview: vm.displaysPreview(event),"))
     }
 
     /// The page reads them: the caption the withheld delta, the hero's slide

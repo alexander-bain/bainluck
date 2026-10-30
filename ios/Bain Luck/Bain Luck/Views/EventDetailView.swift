@@ -470,6 +470,8 @@ struct EventDetailView: View {
                                          refreshStreaming: refreshIndicator == .streaming,
                                          liveUpdateStatus: vm.liveUpdateStatus,
                                          priceActivity: vm.priceActivity,
+                                         // #10090 C2 — the tip slides like the hero.
+                                         liveEdgeShowsPreview: vm.displaysPreview(event),
                                          // #9436 — the hero's own number, for the
                                          // dot on the end of the line. #10090: the
                                          // number the hero prints, preview included.

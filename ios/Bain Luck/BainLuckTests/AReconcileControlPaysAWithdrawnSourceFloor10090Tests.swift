@@ -1,5 +1,6 @@
 import XCTest
 import Foundation
+import Combine
 @testable import Bain_Luck
 
 /// #10090 / #11253 — Root's paired decision (reconciliation-contract-20261019):
@@ -762,6 +763,79 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
         try await quiet()
         handle.beat("2026-09-27T17:06:00.000+00:00")
         XCTAssertNil(vm.confirmedAtCoveringShown(try XCTUnwrap(vm.event)), "the left page's reconcile does not carry over")
+    }
+
+    // MARK: - #11772 R4: the reconcile belongs to the connection; R5: its flip re-renders
+
+    /// A quiet market: 90 s with no adopted price reports delivery down on a
+    /// socket that stays open, and that socket never re-sends its connect
+    /// reconcile. The connection's reconcile still stands, so the next beat
+    /// confirms the shown price again with no new reconcile.
+    func testAQuietLapseOnTheOpenSocketKeepsThisConnectionsReconcile() async throws {
+        let (_, handle, vm) = try await opened(pairs: [Self.without11])
+        handle.fire("reconcile", Self.control("c-1"))
+        try await settle { vm.reconcileOwedSince == nil }
+        handle.beat("2026-09-27T17:05:00.000+00:00")
+        XCTAssertEqual(vm.confirmedAtCoveringShown(try XCTUnwrap(vm.event)), "2026-09-27T17:05:00Z".asDate)
+        // Beats keep the transport alive; no price is adopted for 100 s.
+        for _ in 1...5 {
+            clock += 20
+            handle.beat("2026-09-27T17:05:00.000+00:00")
+            vm.tickStream()
+        }
+        XCTAssertFalse(vm.streamDelivering, "data silence: delivery is down")
+        XCTAssertFalse(handle.isClosed, "on a socket that stays open")
+        XCTAssertNil(vm.streamConfirmedAt, "the delivery took its confirmation")
+        handle.beat("2026-09-27T17:06:00.000+00:00")
+        let shown = try XCTUnwrap(vm.event)
+        XCTAssertEqual(vm.confirmedAtCoveringShown(shown), "2026-09-27T17:06:00Z".asDate,
+                       "the next beat confirms with no new reconcile")
+        XCTAssertEqual(vm.displayedProbabilityAgeClock(shown), "2026-09-27T17:06:00Z".asDate)
+    }
+
+    /// A reconcile that arrives between a transport error and its retry's
+    /// `open` belongs to no connection: the retry's `open` clears it, and that
+    /// connection's beats wait for its own reconcile.
+    func testAReconcileBetweenAnErrorAndTheRetrysOpenDoesNotCarryOver() async throws {
+        let (_, handle, vm) = try await opened(pairs: [Self.without11])
+        handle.fire("reconcile", Self.control("c-1"))
+        try await settle { vm.reconcileOwedSince == nil }
+        handle.fire("error")
+        XCTAssertFalse(vm.streamDelivering)
+        handle.fire("reconcile", Self.control("c-1"))
+        handle.fire("open")
+        XCTAssertTrue(vm.streamDelivering)
+        handle.beat("2026-09-27T17:06:00.000+00:00")
+        XCTAssertNil(vm.confirmedAtCoveringShown(try XCTUnwrap(vm.event)),
+                     "this connection has no reconcile of its own yet")
+        handle.fire("reconcile", Self.control("c-1"))
+        XCTAssertEqual(vm.confirmedAtCoveringShown(try XCTUnwrap(vm.event)), "2026-09-27T17:06:00Z".asDate)
+    }
+
+    /// R5: a reconnect's paid re-send changes nothing else the page reads (the
+    /// beat before it already set the same confirmation), so opening the
+    /// claim must publish by itself, or the status keeps "waiting".
+    func testAPaidReconcileThatOpensTheConfirmationPublishes() async throws {
+        let (_, handle, vm) = try await opened(pairs: [Self.without11])
+        handle.fire("reconcile", Self.control("c-1"))
+        try await settle { vm.reconcileOwedSince == nil }
+        handle.fire("error")
+        handle.fire("open")
+        handle.beat("2026-09-27T17:06:00.000+00:00")
+        XCTAssertNil(vm.confirmedAtCoveringShown(try XCTUnwrap(vm.event)))
+        XCTAssertEqual(vm.liveUpdateStatus, .awaitingUpdate)
+        var published = 0
+        let watch = vm.objectWillChange.sink { _ in published += 1 }
+        defer { watch.cancel() }
+        handle.fire("reconcile", Self.control("c-1"))
+        XCTAssertNil(vm.reconcileOwedSince, "paid: the early return")
+        XCTAssertGreaterThanOrEqual(published, 1, "the flip re-renders the page")
+        XCTAssertEqual(vm.confirmedAtCoveringShown(try XCTUnwrap(vm.event)), "2026-09-27T17:06:00Z".asDate)
+        XCTAssertEqual(vm.liveUpdateStatus, .live)
+        // A repeat flips nothing, so it publishes nothing.
+        published = 0
+        handle.fire("reconcile", Self.control("c-1"))
+        XCTAssertEqual(published, 0)
     }
 
     // MARK: - R12 the pure rules
