@@ -598,7 +598,10 @@ def _pm_writer(*, fail_commit=False):
     r.ns.update(
         get_task_session=session, blend_refresher=Refresher(),
         _PMPriceWriteResult=_PMPriceWriteResult,
-        chunk_price_update_stmt=lambda chunk, **kw: ("prices", chunk),
+        chunk_price_update_execution=lambda chunk, **kw: (("prices", chunk), {}),
+        pm_rerank_market_fields_execution=lambda ids: (
+            r.ns["rerank_market_fields_stmt"](ids), {}
+        ),
     )
     compile_functions(ROOT / "app/tasks/polymarket_ws.py", ["write_chunk"], r.ns)
     return r

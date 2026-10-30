@@ -8,10 +8,10 @@ from sqlalchemy.dialects.postgresql.asyncpg import dialect
 from app.tasks import polymarket_ws as task
 
 
-def execution(chunk, force_ids=None, nowait=False):
+def execution(chunk, force_ids=None, nowait=False, **kwargs):
     helper = getattr(task, "chunk_price_update_execution", None)
     assert callable(helper), "the PM writer still rebuilds its statement per chunk"
-    return helper(chunk, force_ids=force_ids, nowait=nowait)
+    return helper(chunk, force_ids=force_ids, nowait=nowait, **kwargs)
 
 
 def rerank_execution(ids):
@@ -86,3 +86,46 @@ def test_rerank_reuses_shape_but_keeps_each_whole_market_population():
     assert "DESC NULLS LAST" in expanded.statement
     assert "IS DISTINCT FROM" in expanded.statement
     assert "last_updated" not in expanded.statement
+
+
+# lane1b port onto G2: the SKIP LOCKED form (#11797) is a cached shape too.
+
+
+@pytest.mark.parametrize("count", [2, 100, 500])
+def test_reused_skip_shape_keeps_exact_current_arrays_and_unit_list(count):
+    chunk = {9_000_000 + i: (i + 1) / (count + 2) for i in range(count)}
+    force_ids = set(list(chunk)[::3])
+    units = {oid: (7_000 + i // 4 if i % 5 else None) for i, oid in enumerate(chunk)}
+    statement, parameters = execution(chunk, force_ids, skip_units=units)
+    baseline = task.chunk_price_update_stmt(chunk, force_ids=force_ids, skip_units=units)
+    before = baseline.compile(dialect=dialect())
+    after = statement.compile(dialect=dialect())
+    assert str(before) == str(after)
+    assert before.construct_params() == after.construct_params(parameters)
+    assert parameters["chunk_unit_event"] == [units[oid] for oid in chunk]
+    assert "SKIP LOCKED" in str(after) and "NOWAIT" not in str(after)
+
+
+def test_two_skip_executions_never_share_a_unit_list_or_a_skip_set():
+    first, p1 = execution({1: 0.5, 2: 0.5, 3: 0.4}, set(), skip_units={1: 10, 2: 10, 3: None})
+    second, p2 = execution({3: 0.6, 1: 0.5}, set(), skip_units={3: 30, 1: None})
+    assert first is second
+    assert p1["chunk_unit_event"] == [10, 10, None]
+    assert p2["chunk_unit_event"] == [30, None]
+    for bind in first._generate_cache_key().bindparams:
+        if bind.key.startswith("chunk_"):
+            assert not bind.value, "cached template retains execution data"
+
+
+def test_three_shapes_and_skip_ignores_nowait_as_the_builder_does():
+    blocking, plain = execution({1: 0.5}, nowait=False)
+    probe, _ = execution({1: 0.5}, nowait=True)
+    skip, with_units = execution({1: 0.5}, skip_units={1: None})
+    skip_probe, _ = execution({1: 0.5}, nowait=True, skip_units={1: None})
+    assert len({id(blocking), id(probe), id(skip)}) == 3
+    assert skip is skip_probe
+    assert "chunk_unit_event" not in plain and with_units["chunk_unit_event"] == [None]
+    assert str(skip.compile(dialect=dialect())) == str(
+        task.chunk_price_update_stmt({1: 0.5}, nowait=True, skip_units={1: None})
+        .compile(dialect=dialect())
+    )

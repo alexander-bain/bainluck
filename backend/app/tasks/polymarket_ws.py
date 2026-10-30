@@ -22,7 +22,7 @@ from typing import Any, NamedTuple, Optional
 from datetime import datetime, timezone
 
 from sqlalchemy import text
-from sqlalchemy.sql.dml import Update
+from sqlalchemy.sql.base import Executable
 
 from app.tasks.kalshi_ws import (
     FINAL_FLUSH_ATTEMPTS,
@@ -2330,32 +2330,46 @@ def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False, skip_unit
     )
 
 
-@lru_cache(maxsize=2)
-def _pm_chunk_price_update_template(nowait: bool) -> Update:
+@lru_cache(maxsize=3)
+def _pm_chunk_price_update_template(nowait: bool, skip: bool = False) -> Executable:
     # Only expression shapes live here. Quotes, input marks, clocks and ORM
     # rows stay with their existing owners; every execution supplies new arrays.
-    return chunk_price_update_stmt({}, force_ids=set(), nowait=nowait)
+    # Three shapes: waiting, NOWAIT, and the SKIP LOCKED form (whose unit list
+    # is an array bind like the others, so no skip set is ever cached).
+    return chunk_price_update_stmt(
+        {}, force_ids=set(), nowait=nowait, skip_units={} if skip else None,
+    )
 
 
 def chunk_price_update_execution(
     chunk: dict[int, Any],
     force_ids: Collection[int] | None = None,
     nowait: bool = False,
-) -> tuple[Update, dict[str, Any]]:
-    """#10090: reuse the price expression with this chunk's fresh array binds."""
+    skip_units: Mapping[int, int | None] | None = None,
+) -> tuple[Executable, dict[str, Any]]:
+    """#10090: reuse the price expression with this chunk's fresh array binds.
+
+    ``skip_units`` selects :func:`chunk_price_update_stmt`'s SKIP LOCKED form
+    (which ignores ``nowait``); its ``{outcome_id: event_id or None}`` map is
+    bound per call as ``chunk_unit_event``, in chunk order.
+    """
     ids = list(chunk)
     prices = list(chunk.values())
     forced = set(ids) if force_ids is None else force_ids
-    return _pm_chunk_price_update_template(bool(nowait)), {
+    skip = skip_units is not None
+    parameters = {
         "chunk_ids": ids,
         "chunk_prices": prices,
         "chunk_compare": prices,
         "chunk_force": [oid in forced for oid in ids],
     }
+    if skip:
+        parameters["chunk_unit_event"] = [skip_units.get(oid) for oid in ids]
+    return _pm_chunk_price_update_template(bool(nowait) and not skip, skip), parameters
 
 
 @lru_cache(maxsize=1)
-def _pm_rerank_market_fields_template() -> Update:
+def _pm_rerank_market_fields_template() -> Executable:
     from sqlalchemy import bindparam
     from app.utils.futures_rank import rerank_market_fields_stmt
 
@@ -2364,7 +2378,7 @@ def _pm_rerank_market_fields_template() -> Update:
 
 def pm_rerank_market_fields_execution(
     market_ids: Iterable[int],
-) -> tuple[Update, dict[str, Any]]:
+) -> tuple[Executable, dict[str, Any]]:
     """Reuse the field rule; each transaction still names its whole markets."""
     return _pm_rerank_market_fields_template(), {"market_ids": list(market_ids)}
 
@@ -4215,7 +4229,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     statement, parameters = (
                         chunk_price_update_execution(chunk, force_ids=forced, nowait=probe)
                         if skip_units is None else
-                        (chunk_price_update_stmt(chunk, force_ids=forced, skip_units=skip_units), {})
+                        chunk_price_update_execution(chunk, force_ids=forced, skip_units=skip_units)
                     )
                     result = await session.execute(statement, parameters)
                 except Exception as exc:
