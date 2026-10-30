@@ -36,6 +36,7 @@ import pytest
 
 from app.tasks import live_blend_refresh as blend
 from app.tasks import polymarket_ws as pm
+from app.utils import blend_preview
 from tests.test_pm_bridged_writer_10090 import _mark
 from tests.test_polymarket_withdrawal_speed_10651 import rig as pm_rig
 from tests.test_single_event_commit_10090 import rig as stamp_rig
@@ -120,6 +121,28 @@ def _record_bridged(p, order):
 async def _drain(boundary):
     await asyncio.wait_for(boundary.bridges.join(), 2)
     await asyncio.wait_for(boundary.join_stamps(cancel=True), 2)
+
+
+class _SimulatedClock:
+    """``pm.time`` (and the refresher's ``_mono``) whose ``monotonic`` moves only
+    when the test advances it, so queue ages (``PM_PREGAME_BRIDGE_MAX_WAIT_S``)
+    and the stamp budget count simulated steps, never a busy runner's wall
+    clock."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+async def _turns(count):
+    """``count`` event-loop turns: pacing by scheduling, never by wall time."""
+    for _ in range(count):
+        await asyncio.sleep(0)
 
 
 # ── the turn on the side connection ───────────────────────────────────────
@@ -471,9 +494,22 @@ async def test_randomized_ticks_liveness_and_side_load_keep_every_outcome_in_ord
 ):
     """Per outcome, the values written follow input order and the newest input
     is the last one written, under random ticks, liveness flips, flushes and
-    a side loop taking turns on the connection."""
+    a side loop taking turns on the connection.
+
+    Every delay is event-loop turns and the writer's clock is simulated (one
+    millisecond per step), each actor drawing from its own stream: the run is
+    a function of the seed alone, so its cohort mix is too. With real sleeps,
+    a loaded runner (load 48) wrote 2 live cohorts where the bound says 3."""
     monkeypatch.setattr(pm, "PM_BRIDGED_SIDE_FIRST", False)
+    clock = _SimulatedClock()
+    monkeypatch.setattr(pm, "time", clock)
+    monkeypatch.setattr(blend, "_mono", clock.monotonic)  # the stamp budget's clock
+    # No ledger: a stamp's preview read would open a real Redis socket, whose
+    # reply arrives on the runner's clock.
+    monkeypatch.setattr(blend_preview, "_REGISTRY", blend_preview.PreviewRegistry())
     rnd = random.Random(seed)
+    write_pace = random.Random(f"write-{seed}")
+    side_pace = random.Random(f"side-{seed}")
     events = (2, 3, 4)
     p, x = _bridges(monkeypatch, events=events, live=(3,))
     p.ns["FLUSH_CHUNK_ROWS"] = rnd.choice((2, 4, 250))
@@ -493,7 +529,7 @@ async def test_randomized_ticks_liveness_and_side_load_keep_every_outcome_in_ord
     async def write(chunk, **kwargs):
         for oid, value in chunk.items():
             written.setdefault(oid, []).append(seq_of[(oid, value)])
-        await asyncio.sleep(rnd.choice((0, 0, 0.001)))
+        await _turns(write_pace.choice((0, 0, 3)))
         return await original(chunk, **kwargs)
 
     p.ns["write_chunk"] = write
@@ -502,13 +538,14 @@ async def test_randomized_ticks_liveness_and_side_load_keep_every_outcome_in_ord
     async def side_loop():
         while not stop.is_set():
             async with boundary.side_writer:
-                await asyncio.sleep(rnd.choice((0, 0.001, 0.002)))
+                await _turns(side_pace.choice((0, 3, 6)))
             await asyncio.sleep(0)
 
     side = asyncio.create_task(side_loop())
     seq = 0
     try:
         for _ in range(200):
+            clock.now += 0.001
             op = rnd.random()
             if op < 0.4:
                 eid = rnd.choice(events)
@@ -524,20 +561,21 @@ async def test_randomized_ticks_liveness_and_side_load_keep_every_outcome_in_ord
                 _set_live(x, eid, eid not in x.r._live_event_ids)
             elif op < 0.75:
                 await asyncio.wait_for(
-                    p.ns["_flush_prices"](flush_started=time.monotonic()), 2,
+                    p.ns["_flush_prices"](flush_started=clock.monotonic()), 2,
                 )
             else:
                 # Stamps and writes take their turns.
-                await asyncio.sleep(rnd.choice((0, 0.001, 0.003)))
+                await _turns(rnd.choice((0, 3, 9)))
         stop.set()
         await asyncio.wait_for(side, 1)
         for _ in range(40):
+            clock.now += 0.001
             if not p.ns["price_buffer"] and not boundary.bridges.busy():
                 break
             await asyncio.wait_for(boundary.bridges.join(), 2)
             await asyncio.wait_for(boundary.join_stamps(), 2)
             await asyncio.wait_for(
-                p.ns["_flush_prices"](flush_started=time.monotonic()), 2,
+                p.ns["_flush_prices"](flush_started=clock.monotonic()), 2,
             )
     finally:
         stop.set()
