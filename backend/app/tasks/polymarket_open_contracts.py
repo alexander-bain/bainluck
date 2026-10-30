@@ -129,6 +129,46 @@ def open_contract_receiver_process_enabled() -> bool:
     return os.getenv("POLYMARKET_WS_OPEN_RECEIVER_PROCESS", "0").strip() == "1"
 
 
+#: #10090: ``POLYMARKET_WS_OPEN_SCOPE`` values. ``all`` is the arm as it is.
+OPEN_SCOPE_ALL = "all"
+OPEN_SCOPE_SLATE = "slate"
+
+
+def open_contract_scope() -> str:
+    """#10090: which open contracts the open arm keeps on the socket.
+
+    ``all`` (the default, and anything unrecognised, with one warning) keeps
+    every admitted contract, as before. ``slate`` keeps only what a market on
+    a live or near-start event needs (:func:`scope_open_contract_admission`);
+    everything else is left to the polls. Read at every catalog refresh, so
+    moving back to ``all`` restores the full arm through the same handover.
+    """
+    raw = os.getenv("POLYMARKET_WS_OPEN_SCOPE")
+    if raw is None or not raw.strip():
+        return OPEN_SCOPE_ALL
+    value = raw.strip().lower()
+    if value in (OPEN_SCOPE_ALL, OPEN_SCOPE_SLATE):
+        return value
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "Polymarket WS: POLYMARKET_WS_OPEN_SCOPE=%r is not all|slate; using all",
+        raw,
+    )
+    return OPEN_SCOPE_ALL
+
+
+#: #10090: under ``slate`` a market leaves the fast set only once it has been out
+#: of every seed class (held, served, slate, mirroring a game token) this long.
+OPEN_SCOPE_QUIET_S = 1800.0
+#: #10090: a held market the installed scope has not seen may bring the catalog
+#: refresh forward, at most once per this interval: each handover blocks the
+#: flushes ~0.6-0.8 s (G1 receipts).
+OPEN_SCOPE_EARLY_REFRESH_MIN_S = 120.0
+#: #10090: how often a run re-reads the held set between catalog refreshes.
+OPEN_SCOPE_PRESENCE_CHECK_S = 10.0
+
+
 def book_snapshot_prices_enabled() -> bool:
     """#9733: price open contracts from the venue's subscribe snapshot.
 
@@ -185,6 +225,51 @@ def open_contract_markets_stmt():
         case((bridged, FuturesMarket.name)).label("name"),
         case((bridged, FuturesMarket.external_id)).label("external_id"),
     ).where(*_open_market_clauses())
+
+
+def open_contract_scope_markets_stmt():
+    """#10090: the open markets whose OWN event the socket slate holds.
+
+    The seed of ``POLYMARKET_WS_OPEN_SCOPE=slate``: the open-market clauses
+    above, joined to the market's own event under the game slate's event
+    predicate (``polymarket_ws._slate_event_window``: clock-free live, the
+    bounded scheduled arm, the recent-suspended arm). Every market class —
+    props included — since membership is the market's event, not its class.
+    Read only under ``slate``.
+    """
+    from sqlalchemy import select
+
+    from app.models.models import Event, FuturesMarket
+    from app.tasks.polymarket_ws import _slate_event_window
+
+    return (
+        select(FuturesMarket.id)
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(*_open_market_clauses(), _slate_event_window())
+    )
+
+
+def open_contract_held_markets_stmt(
+    market_ids: Iterable[int] = (), event_ids: Iterable[int] = ()
+):
+    """#10090: ``(market_id, event_id)`` of the open markets a reader holds.
+
+    By the market itself (a held ``live:market:<id>``) or by its event (a held
+    ``live:event:<id>``), under the open-market clauses. Read only under
+    ``slate``: at a catalog refresh for the held events, and by the presence
+    check for ids the installed scope has not seen.
+    """
+    from sqlalchemy import or_, select
+
+    from app.models.models import FuturesMarket
+
+    return select(FuturesMarket.id, FuturesMarket.event_id).where(
+        *_open_market_clauses(),
+        or_(
+            FuturesMarket.id.in_(sorted(set(market_ids))),
+            FuturesMarket.event_id.in_(sorted(set(event_ids))),
+        ),
+    )
 
 
 def open_contract_outcomes_stmt(market_ids: Iterable[int] = ()):
@@ -306,6 +391,10 @@ class OpenContractAdmission:
     #: #9733 follow-on — leg → the other leg of its binary, both admitted
     #: (``complement_pairs``). A price accepted for one also prices the other.
     complement_of: dict[int, int] = field(default_factory=dict)
+    #: #10090: ``slate`` once :func:`scope_open_contract_admission` has cut it.
+    #: The consumer keeps its catalog-refresh loop for an installed slate
+    #: scope even when nothing is left in it.
+    scope: str = OPEN_SCOPE_ALL
     counts: dict[str, int] = field(
         default_factory=lambda: {
             "markets": 0,
@@ -614,6 +703,220 @@ def _complement_pairs_steps(legs_by_market, admitted, graded, excluded=frozenset
         out[a] = b
         out[b] = a
     return out
+
+
+# ── the slate scope (#10090, ``POLYMARKET_WS_OPEN_SCOPE=slate``) ─────────────
+#
+# The open arm streams every open contract, and its callbacks, writes and
+# backlog share one saturated core with the live games. Under ``slate`` it
+# keeps only what a live or near-start market depends on. Catalog discovery
+# and pairing are unchanged and run first: a plain event-window filter before
+# pairing would lose the distant or event-less binary whose token prices a
+# live board (#9736), so the cut is made on the finished admission.
+
+
+def scope_open_contract_admission(
+    admission: OpenContractAdmission,
+    eligible_market_ids: Iterable[int],
+    taken_assets: Iterable[str] = (),
+) -> OpenContractAdmission:
+    """The part of ``admission`` a slate market depends on, to a fixed point.
+
+    Seeds: every token the game socket carries (``taken_assets``) that an open
+    leg mirrors, and every owned or mirrored token whose leg's OWN market is in
+    ``eligible_market_ids`` (:func:`open_contract_scope_markets_stmt`, every
+    market class). Closure: a kept token keeps its owner leg and every leg
+    that mirrors it; a kept leg's binary complement (``complement_of``) keeps
+    the token that leg prices from, and so on until nothing is added. So the
+    event-less binary behind a live board stays, with its other leg and that
+    leg's own token and mirrors.
+
+    Nothing is re-owned or re-paired: kept entries are the admission's own,
+    in its order, so a token the game socket carries is still never
+    subscribed here, and ``_no``/``_side1`` attribution is the pairing's. The
+    counts are the full catalog's, plus ``scope_*``: assets kept/dropped, the
+    seeds, and mirrored legs kept/dropped.
+    """
+    return _finish(
+        _scope_open_contract_admission_steps(
+            admission, eligible_market_ids, taken_assets
+        )
+    )
+
+
+async def scope_open_contract_admission_cooperatively(
+    admission: OpenContractAdmission,
+    eligible_market_ids: Iterable[int],
+    taken_assets: Iterable[str] = (),
+) -> OpenContractAdmission:
+    """:func:`scope_open_contract_admission` with loop turns. Same result."""
+    return await _finish_cooperatively(
+        _scope_open_contract_admission_steps(
+            admission, eligible_market_ids, taken_assets
+        )
+    )
+
+
+def _scope_open_contract_admission_steps(admission, eligible_market_ids, taken_assets):
+    eligible = set(eligible_market_ids)
+    taken = set(taken_assets)
+    owner_of = admission.asset_to_outcome
+    market_of = admission.asset_to_market
+    mirrors_of = admission.asset_mirrors
+    complement_of = admission.complement_of
+
+    # leg -> the token(s) it prices from (one, by construction; a list so a
+    # shape the pairing never makes still closes rather than drops).
+    tokens_of: dict[int, list[str]] = {}
+    frontier: list[str] = []
+    for i, (token, oid) in enumerate(owner_of.items()):
+        if _pause(i):
+            yield
+        tokens_of.setdefault(oid, []).append(token)
+        if market_of.get(token) in eligible:
+            frontier.append(token)
+    for i, (token, legs) in enumerate(mirrors_of.items()):
+        if _pause(i):
+            yield
+        seed = token in taken
+        for oid, mid in legs:
+            tokens_of.setdefault(oid, []).append(token)
+            seed = seed or mid in eligible
+        if seed:
+            frontier.append(token)
+    seeds = len(set(frontier))
+
+    kept: set[str] = set()
+    steps = 0
+    while frontier:
+        token = frontier.pop()
+        if token in kept:
+            continue
+        kept.add(token)
+        steps += 1
+        if _pause(steps):
+            yield
+        legs = [oid for oid, _mid in mirrors_of.get(token, ())]
+        if token in owner_of:
+            legs.append(owner_of[token])
+        for oid in legs:
+            other = complement_of.get(oid)
+            if other is None:
+                continue
+            frontier.extend(t for t in tokens_of.get(other, ()) if t not in kept)
+
+    out = OpenContractAdmission(scope=OPEN_SCOPE_SLATE)
+    out.asset_to_outcome = {t: o for t, o in owner_of.items() if t in kept}
+    out.asset_to_market = {t: market_of[t] for t in out.asset_to_outcome}
+    out.asset_mirrors = {
+        t: list(legs) for t, legs in mirrors_of.items() if t in kept
+    }
+    kept_legs = set(out.asset_to_outcome.values()) | set(out.mirrored_outcomes())
+    out.complement_of = {
+        a: b for a, b in complement_of.items() if a in kept_legs and b in kept_legs
+    }
+    mirrored_all = sum(len(legs) for legs in mirrors_of.values())
+    mirrored_kept = sum(len(legs) for legs in out.asset_mirrors.values())
+    out.counts = dict(admission.counts)
+    out.counts.update(
+        scope_assets_kept=len(out.asset_to_outcome),
+        scope_assets_dropped=len(owner_of) - len(out.asset_to_outcome),
+        scope_seed_tokens=seeds,
+        scope_mirrored_legs_kept=mirrored_kept,
+        scope_mirrored_legs_dropped=mirrored_all - mirrored_kept,
+    )
+    return out
+
+
+def game_mirror_market_ids(
+    admission: OpenContractAdmission, taken_assets: Iterable[str]
+) -> set[int]:
+    """Markets of the open legs that mirror a token the game socket carries.
+
+    The scope's token seed, by market, so the quiet period can remember it once
+    the game has left the socket.
+    """
+    taken = set(taken_assets)
+    return {
+        mid
+        for token, legs in admission.asset_mirrors.items()
+        if token in taken
+        for _oid, mid in legs
+    }
+
+
+@dataclass
+class OpenScopeMemory:
+    """#10090: when each market and event was last a ``slate`` seed.
+
+    Plain data, process-wide (:func:`open_scope_memory`), so a run's recycle
+    keeps it. A market or event stays a seed until it has been out of every
+    seed class for ``OPEN_SCOPE_QUIET_S``: promote at once, demote only after a
+    quiet period. ``presence`` is the last held set that could be read; an
+    unreadable one is replaced by it, and nothing ages out on that refresh.
+    ``early_refresh_at`` is the last presence-driven refresh, for its rate limit.
+    """
+
+    market_seen: dict[int, float] = field(default_factory=dict)
+    event_seen: dict[int, float] = field(default_factory=dict)
+    presence: Any = None
+    early_refresh_at: Optional[float] = None
+
+    def seeds(
+        self,
+        markets: Iterable[int],
+        events: Iterable[int],
+        *,
+        now: float,
+        quiet_s: float,
+        expire: bool = True,
+    ) -> tuple[set[int], set[int]]:
+        """Record this refresh's fresh seeds; return every market/event still one."""
+        for mid in markets:
+            self.market_seen[mid] = now
+        for eid in events:
+            self.event_seen[eid] = now
+        if expire:
+            for seen in (self.market_seen, self.event_seen):
+                for key in [k for k, at in seen.items() if now - at >= quiet_s]:
+                    del seen[key]
+        return set(self.market_seen), set(self.event_seen)
+
+    def unseen(
+        self, presence, game_market_ids: Iterable[int], game_event_ids: Iterable[int]
+    ) -> tuple[set[int], set[int]]:
+        """Held ids neither the installed scope's seeds nor the game socket cover."""
+        return (
+            set(presence.market_ids) - self.market_seen.keys() - set(game_market_ids),
+            set(presence.event_ids) - self.event_seen.keys() - set(game_event_ids),
+        )
+
+    def note(self, markets: Iterable[int], events: Iterable[int], now: float) -> None:
+        """Mark held ids seen, so the presence check asks about each once."""
+        for mid in markets:
+            self.market_seen.setdefault(mid, now)
+        for eid in events:
+            self.event_seen.setdefault(eid, now)
+
+    def early_refresh_wait(self, now: float, min_s: float) -> float:
+        """Seconds until a presence-driven refresh is allowed (0: now)."""
+        if self.early_refresh_at is None:
+            return 0.0
+        return max(0.0, self.early_refresh_at + min_s - now)
+
+
+_SCOPE_MEMORY = OpenScopeMemory()
+
+
+def open_scope_memory() -> OpenScopeMemory:
+    """The process's ``slate`` seed memory (one PM venue process per dyno run)."""
+    return _SCOPE_MEMORY
+
+
+def reset_open_scope_memory() -> None:
+    """Forget every seed. For tests."""
+    global _SCOPE_MEMORY
+    _SCOPE_MEMORY = OpenScopeMemory()
 
 
 # ── the event bridge (#10091, existing cohort → event blend) ─────────────────

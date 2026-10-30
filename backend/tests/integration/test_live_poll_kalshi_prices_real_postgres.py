@@ -874,3 +874,88 @@ class TestADeadTransactionCostsOneMarketNotTheBeat:
         assert stats["errors"] == []
         assert stats["terminal"] == "complete"
         assert stats["session_recoveries"] == 0
+
+
+# --------------------------------------------------------------------------
+# #10090 decision L — the 2-minute poll's Polymarket window is its own setting
+# --------------------------------------------------------------------------
+#
+# Alex approved L (ALEX-DECISIONS item 42): the Polymarket socket narrows to
+# live + 3 h and this poll carries Polymarket games out to 6 h. The offline arms
+# in `tests/test_live_poll_pm_upcoming_hours_10090.py` read the statement; these
+# read what the server actually returns for it. Anchors are offsets from one
+# `now` passed to the loader itself, so no arm depends on the wall clock.
+
+
+async def _seed_upcoming(session, now):
+    """Scheduled games, each with one market per venue named in its tuple.
+
+    Returns {(hours_out, source): market_id}.
+    """
+    from app.models.models import Event, FuturesMarket, Sport
+
+    sport = Sport(key="americanfootball_nfl", name="NFL", group="American Football")
+    session.add(sport)
+    await session.flush()
+
+    ids = {}
+    for hours_out, sources in ((2, ("kalshi", "polymarket")),
+                               (5, ("kalshi", "polymarket")),
+                               (7, ("polymarket",))):
+        event = Event(
+            sport_id=sport.id,
+            home_team_name=f"Home {hours_out}",
+            away_team_name=f"Away {hours_out}",
+            commence_time=now + timedelta(hours=hours_out),
+            status="scheduled",
+        )
+        session.add(event)
+        await session.flush()
+        for source in sources:
+            market = FuturesMarket(
+                source=source,
+                external_id=f"{source}-{hours_out}h",
+                event_id=event.id,
+                name=f"Away {hours_out} at Home {hours_out}",
+                category="championship",
+                llm_sport_category="football",
+                market_type="game_winner",
+                status="open",
+            )
+            session.add(market)
+            await session.flush()
+            ids[(hours_out, source)] = market.id
+    await session.commit()
+    return ids
+
+
+async def _polled(session, now, monkeypatch, pm_hours):
+    from app.tasks import prediction_market_matching as pmm
+
+    monkeypatch.setattr(pmm, "LIVE_POLL_PM_UPCOMING_HOURS", pm_hours)
+    pop = await pmm._load_live_poll_population(session, now)
+    return set(pop.markets_by_id)
+
+
+class TestThePolymarketWindowIsItsOwn:
+    async def test_at_six_a_5h_polymarket_game_is_polled_and_a_5h_kalshi_game_is_not(
+        self, pg_session, monkeypatch
+    ):
+        now = datetime.now(timezone.utc)
+        ids = await _seed_upcoming(pg_session, now)
+        polled = await _polled(pg_session, now, monkeypatch, 6)
+
+        assert ids[(5, "polymarket")] in polled
+        assert ids[(5, "kalshi")] not in polled
+        # Inside 3 h both venues, as before; past 6 h neither.
+        assert ids[(2, "polymarket")] in polled and ids[(2, "kalshi")] in polled
+        assert ids[(7, "polymarket")] not in polled
+
+    async def test_at_the_default_neither_5h_leg_is_polled(
+        self, pg_session, monkeypatch
+    ):
+        now = datetime.now(timezone.utc)
+        ids = await _seed_upcoming(pg_session, now)
+        polled = await _polled(pg_session, now, monkeypatch, 3)
+
+        assert polled == {ids[(2, "kalshi")], ids[(2, "polymarket")]}

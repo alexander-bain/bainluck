@@ -634,3 +634,109 @@ def test_the_consumer_actually_applies_both_halves_of_the_slate():
         "_slate_market_filter() is not applied in the same .where() as the "
         "event window: settled markets are back in the subscription"
     )
+
+
+# ---------------------------------------------------------------------------
+# #10090: `PM_WS_UPCOMING_HOURS` narrows only the scheduled arm's upper bound.
+#
+# At 13:40Z on 2026-10-30 the slate held 354 markets on live games and 1,633 on
+# games 2-6 h away, on a venue process at loop cpu 0.95. Decision L would set
+# the window to 3 h; these two cases prove what that selects, against the
+# shipped predicate, before anyone sets it. At 3 the game four hours out is
+# the one row that leaves; at 6 (the default) nothing moves.
+# ---------------------------------------------------------------------------
+
+#: case -> (event status, hours from now to commence)
+UPCOMING_CASES = {
+    "the_game_in_four_hours": ("scheduled", 4),  # THE SHIP: out at 3, in at 6
+    "the_game_in_two_hours": ("scheduled", 2),
+    "the_game_in_progress": ("live", -1),
+    "the_event_stuck_at_live": ("live", -24 * 30),
+    "the_suspended_match": ("suspended", -6),
+    "the_game_that_started": ("scheduled", -2),  # the 24 h floor, unchanged
+    "the_game_tomorrow": ("scheduled", 30),
+}
+
+#: hours setting -> cases the slate keeps
+UPCOMING_KEPT = {
+    3: {
+        "the_game_in_two_hours",
+        "the_game_in_progress",
+        "the_event_stuck_at_live",
+        "the_suspended_match",
+        "the_game_that_started",
+    },
+    6: {
+        "the_game_in_four_hours",
+        "the_game_in_two_hours",
+        "the_game_in_progress",
+        "the_event_stuck_at_live",
+        "the_suspended_match",
+        "the_game_that_started",
+    },
+}
+
+
+async def _upcoming_kept(hours, monkeypatch):
+    from sqlalchemy import select
+
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
+    from app.tasks import polymarket_ws
+
+    monkeypatch.setattr(polymarket_ws, "PM_WS_UPCOMING_HOURS", hours)
+    now = datetime.now(timezone.utc)
+    engine, maker = await _engine_with_tables()
+    try:
+        async with maker() as session:
+            sport = Sport(key="americanfootball_nfl", name="NFL")
+            session.add(sport)
+            await session.flush()
+            ids = {}
+            for case, (status, offset) in UPCOMING_CASES.items():
+                event = Event(
+                    sport_id=sport.id,
+                    home_team_name=f"{case} Home",
+                    away_team_name=f"{case} Away",
+                    commence_time=now + timedelta(hours=offset),
+                    status=status,
+                )
+                session.add(event)
+                await session.flush()
+                ids[case] = event.id
+                market = FuturesMarket(
+                    source="polymarket",
+                    external_id=f"0x{case}",
+                    name=f"{case} moneyline",
+                    event_id=event.id,
+                    status="open",
+                )
+                session.add(market)
+                await session.flush()
+                session.add(FuturesOutcome(
+                    market_id=market.id, name=case, external_id=f"0x{case}_yes",
+                ))
+            await session.commit()
+        async with maker() as session:
+            kept = {
+                row.event_id
+                for row in (await session.execute(
+                    select(FuturesOutcome.id, FuturesMarket.event_id)
+                    .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                    .join(Event, FuturesMarket.event_id == Event.id)
+                    .where(
+                        FuturesMarket.source == "polymarket",
+                        FuturesMarket.event_id.isnot(None),
+                        polymarket_ws._slate_event_window(),
+                        polymarket_ws._slate_market_filter(),
+                    )
+                )).all()
+            }
+    finally:
+        await engine.dispose()
+    return {case for case, eid in ids.items() if eid in kept}
+
+
+@needs_postgres
+@pytest.mark.parametrize("hours", sorted(UPCOMING_KEPT))
+async def test_the_upcoming_window_setting_keeps_exactly(hours, monkeypatch):
+    assert await _upcoming_kept(hours, monkeypatch) == UPCOMING_KEPT[hours]

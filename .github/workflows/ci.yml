@@ -7627,7 +7627,8 @@ jobs:
         # file reddens this gate until the number below moves with it. That is
         # the point (it is how a silently-dropped case gets caught), but it means
         # the number is part of the test file's contract, not CI boilerplate.
-        # 14 = 7 age-floor + 4 settled-market + 2 link-read (#10663) + 1 wiring case.
+        # 16 = 7 age-floor + 4 settled-market + 2 link-read (#10663) + 1 wiring
+        # + 2 upcoming-window (#10090).
         if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -7637,12 +7638,12 @@ jobs:
             echo "::error::#837 slate contract SKIPPED — the gate did not run"
             exit 1
           fi
-          # `[^0-9]` so a future `114 passed` cannot satisfy a gate asking for 14.
+          # `[^0-9]` so a future `116 passed` cannot satisfy a gate asking for 16.
           # `[,[:space:]]` because pytest drops the comma when a run emits no
           # warnings (`12 passed in 3.4s`) — the old `passed,` form was green
           # only by the accident of this file currently raising warnings.
-          grep -qE "[^0-9]14 passed[,[:space:]]" /tmp/slate837.txt || {
-            echo "::error::#837 slate contract did not run all 14 cases"
+          grep -qE "[^0-9]16 passed[,[:space:]]" /tmp/slate837.txt || {
+            echo "::error::#837 slate contract did not run all 16 cases"
             exit 1
           }
 

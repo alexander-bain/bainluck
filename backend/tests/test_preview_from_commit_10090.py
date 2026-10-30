@@ -37,6 +37,8 @@ EV = 7
 HOME, AWAY = "Reynolds / Watt", "Behar / Paris"
 CONDITION = "0x" + "20" * 32
 MARKET, HOME_LEG, AWAY_LEG = 66756997, 250776126, 250776127
+#: Rebound at the start of EVERY test by `anchors` below; these import-time
+#: values only serve a caller that runs outside one.
 NOW = datetime.now(timezone.utc)
 #: The cached read's statement time, and the rows it saw.
 READ_AT = NOW - timedelta(seconds=1)
@@ -49,8 +51,9 @@ def bag(*, pm=0.46, kalshi=0.5):
             "polymarket": {"value": pm, "updated_at": (NOW - timedelta(seconds=3)).isoformat()}}
 
 
-def event(*, rev=10, ticket=0, status="live", sources=None, at=READ_AT):
+def event(*, rev=10, ticket=0, status="live", sources=None, at=None):
     sources = bag() if sources is None else sources
+    at = READ_AT if at is None else at
     return Row(id=EV, sport_key="tennis_atp_lyon", home_team_name=HOME, away_team_name=AWAY,
                status=status, completed_at=None, commence_time=NOW - timedelta(hours=3),
                win_probability_sources={"polymarket": sources.get("polymarket")},
@@ -59,7 +62,8 @@ def event(*, rev=10, ticket=0, status="live", sources=None, at=READ_AT):
                preview_read_ticket=ticket)
 
 
-def legs(*, home="0.460000", away="0.540000", seen=SEEN, market_status="open", ranks=(2, 1)):
+def legs(*, home="0.460000", away="0.540000", seen=None, market_status="open", ranks=(2, 1)):
+    seen = SEEN if seen is None else seen
     market = Row(id=MARKET, source="polymarket", external_id=CONDITION, event_id=EV,
                  name="Lyon Open (Doubles): Reynolds/Watt vs Behar/Paris",
                  status=market_status, market_metadata={})
@@ -74,8 +78,9 @@ def legs(*, home="0.460000", away="0.540000", seen=SEEN, market_status="open", r
     return [MarketOutcomes(market, rows, NOW - timedelta(hours=3), False)]
 
 
-def returned(*, oid=HOME_LEG, price="0.480000", seen=NOW, **extra):
+def returned(*, oid=HOME_LEG, price="0.480000", seen=None, **extra):
     """One row as the price UPDATE ... RETURNING hands it over."""
+    seen = NOW if seen is None else seen
     values = dict(id=oid, market_id=MARKET, current_probability=Decimal(price),
                   last_updated=seen, is_winner=None, resolution_source=None,
                   quote_moved=True, database_clock=seen)
@@ -109,8 +114,31 @@ def comparable(op):
     return {**op, "payload": payload}
 
 
+@pytest.fixture(autouse=True)
+def anchors(monkeypatch):
+    """Every anchor is an offset from ONE wall-clock read taken at the start of
+    THIS test (gotcha #44: offset first; nothing here truncates or branches).
+
+    They used to be taken once, at import. The code under test stamps its own
+    pending reading with the real `datetime.now` when it composes, so in a CI
+    shard that reached this file minutes after collecting it, the fixture's
+    Kalshi stamp (NOW - 5 s) fell more than `HERO_RELATIVE_GRACE_SECONDS`
+    behind that stamp, the blend's relative recency decay engaged, and every
+    later read of the clock decayed it a little more: the frame (composed
+    first) and `_expected_p` (computed after) differed in the sixth place
+    (0.549808 vs 0.549807, CI 41069588766). Anchored here, the fixture's
+    stamps are seconds old whenever the test runs.
+    """
+    now = datetime.now(timezone.utc)
+    module_globals = globals()
+    monkeypatch.setitem(module_globals, "NOW", now)
+    monkeypatch.setitem(module_globals, "READ_AT", now - timedelta(seconds=1))
+    monkeypatch.setitem(module_globals, "SEEN", now - timedelta(seconds=2))
+    return now
+
+
 @pytest.fixture
-def r(monkeypatch):
+def r(monkeypatch, anchors):
     blend_preview.reset_registry_for_tests()
     monkeypatch.setattr(blend_preview, "_REGISTRY", blend_preview.LedgerRegistry(sources=SOURCES))
     monkeypatch.setattr(blend_preview, "preview_events_for",
