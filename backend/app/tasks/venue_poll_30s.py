@@ -1180,6 +1180,11 @@ async def poll_venue_prices(venues) -> dict:
         any(s in ("error", "fetch_error", "rate_limited", "timeout") for s in stops)
         or any(r.get("errors") for r in results)
         or any(r.get("units_oversize") for r in results)
+        # lane1 R3 on #11793: a CLOB rotation stopped by a timeout or a 429
+        # leaves the rest of the book to Gamma's ~14-minute rotation, which is
+        # the staleness this poll removes; `backoff` stays not-partial, like
+        # the venue-level backoff.
+        or any(r.get("clob_stopped") in ("timeout", "rate_limited") for r in results)
     ):
         summary["terminal"] = "partial"
     else:

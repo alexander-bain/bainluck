@@ -572,3 +572,50 @@ async def test_the_clob_pass_leaves_the_gamma_reading_its_reserve(monkeypatch):
     stats = await v.poll_venue("polymarket", deadline=end)
     assert seen["deadline"] == pytest.approx(end - clob.GAMMA_RESERVE_S)
     assert stats["stopped"] == "done" and stats["covered_share"] == 1.0
+
+
+async def _clob_stop(monkeypatch, case):
+    """The real CLOB rotation stopped by ``case``; returns its stats."""
+    store, units = _wire_clob_rotation(monkeypatch)
+    deadline = time.monotonic() + 20
+    if case == "timeout":
+        service = _FailingService("t-0x1", asyncio.TimeoutError)
+        deadline = time.monotonic() + 9  # every wall clipped: the first group fails
+    elif case == "rate_limited":
+        monkeypatch.setattr(clob, "start_backoff", lambda _venue: 30)
+        request = httpx.Request("POST", "https://clob.polymarket.com/prices")
+        service = _FailingService("t-0x1", lambda: httpx.HTTPStatusError(
+            "429", request=request, response=httpx.Response(429, request=request)))
+    elif case == "budget":
+        service = _FailingService("t-0x9", asyncio.TimeoutError)
+        deadline = time.monotonic() + v._MIN_REQUEST_S - 0.5
+    elif case == "backoff":
+        monkeypatch.setattr(clob, "backoff_remaining", lambda _venue: 30.0)
+        service = _FailingService("t-0x9", asyncio.TimeoutError)
+    else:
+        service = _FailingService("t-0x9", asyncio.TimeoutError)
+    stats = {"errors": [], "unknown_outcomes": 0}
+    await clob.clob_pass(None, service, units, deadline=deadline, offset=0.0, stats=stats)
+    assert stats["clob_stopped"] == case
+    return stats
+
+
+@pytest.mark.parametrize("case, terminal", [
+    ("timeout", "partial"), ("rate_limited", "partial"),
+    ("budget", "complete"), ("backoff", "complete"), ("done", "complete"),
+])
+async def test_a_clob_rotation_stopped_by_a_timeout_or_a_429_makes_the_pass_partial(
+    monkeypatch, case, terminal
+):
+    # lane1's R3 on #11793: Gamma cannot cover what a stopped CLOB rotation
+    # leaves in the same pass, so the pass must not read `complete`.
+    pm = await _clob_stop(monkeypatch, case)
+    pm["stopped"] = "done"
+    pm["errors"] = []  # the venue's own Gamma rotation finished clean
+
+    async def _poll(venue, *, deadline):
+        return pm if venue == "polymarket" else {"stopped": "done", "errors": []}
+
+    monkeypatch.setattr(v, "poll_venue", _poll)
+    summary = await v.poll_venue_prices({"kalshi", "polymarket"})
+    assert summary["terminal"] == terminal
