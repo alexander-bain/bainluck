@@ -1,0 +1,81 @@
+{
+  "status": "PREPARED_RETURN",
+  "at": "2026-10-30T00:55:29.708355+00:00",
+  "source_parent": "2f55cc13e912765dc2b099f78b896278cf85247c",
+  "source_head": "7d3c449c686561660310ac21d93e6f90e332fbe3",
+  "source_tree": "8784332d660db8cab4c732655fe0682b61344a2a",
+  "frozen_base": "6c73734af6d7f83f252ace8ed921eb0fcae766e3",
+  "branch": "codex/dot-event-design-source",
+  "native_changed_paths": [
+    "ios/Bain Luck/Bain Luck/Components/LadderOriginalProbabilityDetails9483.swift",
+    "ios/Bain Luck/BainLuckTests/LadderOriginalProbabilityDetails9483Tests.swift"
+  ],
+  "input_seed_files": 55,
+  "sha256": {
+    "ios/Bain Luck/Bain Luck/Components/LadderOriginalProbabilityDetails9483.swift": "06b0c5d306df258d3d9a33b51e927338d98cd4f256db572ed2b37099919f476d",
+    "ios/Bain Luck/BainLuckTests/LadderOriginalProbabilityDetails9483Tests.swift": "467581691313fdda45fd05239b66590b8658b820c687c0f90dc408ccabf2bf17"
+  },
+  "prepared_tests": {
+    "preserved": 60,
+    "added": 12,
+    "total": 72,
+    "execution": "NOT_RUN"
+  },
+  "checks": [
+    {
+      "name": "archive manifest 52 files",
+      "exit_code": 0
+    },
+    {
+      "name": "bundle prerequisite and ancestry",
+      "exit_code": 0
+    },
+    {
+      "name": "accepted parent source/test identity",
+      "exit_code": 0
+    },
+    {
+      "name": "immutable 43673-byte core",
+      "exit_code": 0
+    },
+    {
+      "name": "immutable 105015-byte old tests",
+      "exit_code": 0
+    },
+    {
+      "name": "allowed changed paths",
+      "exit_code": 0
+    },
+    {
+      "name": "unique prepared test names",
+      "exit_code": 0
+    },
+    {
+      "name": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "source_review": {
+    "result": "no blocking defect found",
+    "kind": "independent manual source review only",
+    "native_qualification": false
+  },
+  "native_checks": {
+    "Swift syntax": "NOT_RUN",
+    "typecheck": "NOT_RUN",
+    "SwiftUI compile": "NOT_RUN",
+    "XCTest": "NOT_RUN",
+    "render": "NOT_RUN",
+    "VoiceOver": "NOT_RUN",
+    "device": "NOT_RUN",
+    "TestFlight": "NOT_RUN"
+  },
+  "design_acceptance": "PENDING",
+  "remote_publication": "PENDING; CLI authentication unavailable, Mac disconnected before seed handoff",
+  "source_risks": [
+    "Owner must prove progress/original associations and updates",
+    "Native layout and real hit regions unverified",
+    "Uncompiled Swift and prepared tests may contain compiler/runtime errors",
+    "No production mount or reader behavior established"
+  ]
+}
