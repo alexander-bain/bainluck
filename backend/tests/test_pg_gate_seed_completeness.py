@@ -721,6 +721,11 @@ COVERED = (
     # FOR UPDATE must hold out through the foreign key. It names every NOT NULL
     # column, so it dies on the lock, never on the schema.
     "test_repair_11315_roster_lock_pg.py",
+    # #10090 part 2 (#11799 R1/R2). Seeds by ORM; its raw INSERTs are the
+    # concurrent snapshot writers whose FK KEY SHARE the retirement chunk's
+    # FOR NO KEY UPDATE must not conflict with. Each names `reading_count`
+    # (NOT NULL, no server default), so it dies on the lock, never the schema.
+    "test_movement_window_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
