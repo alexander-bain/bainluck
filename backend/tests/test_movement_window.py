@@ -107,6 +107,9 @@ class _RecordingSession:
         # of `events`/`calls`/`rowcounts` so the phase-indexed controls below
         # keep reading A..C; its own control pins where it lands.
         self.lock_budgets: list[tuple[int, dict]] = []
+        # (position in `events`, params) per retirement idle bound, kept out
+        # of band for the lock budget's reason.
+        self.idle_budgets: list[tuple[int, dict]] = []
         # (position in `events`, sql, params) per lock-free prepare read
         # (#10090: A4/A7, then A/A2/A5/A6 in part 2), kept out of `events` for
         # the lock budget's reason. Each answers `prepared_ids[label]`, so a
@@ -124,6 +127,9 @@ class _RecordingSession:
         if sql == "SELECT transaction_timestamp()":
             self.out_of_band.append("RETIREMENT CLOCK")
             return _Result(0, [self.retirement_asof])
+        if "set_config('idle_in_transaction_session_timeout'" in sql:
+            self.idle_budgets.append((len(self.events), params or {}))
+            return _Result(0)
         if "set_config('lock_timeout'" in sql:
             self.lock_budgets.append((len(self.events), params or {}))
             self.out_of_band.append("LOCK BUDGET")
@@ -290,8 +296,8 @@ def test_the_core_yields_quote_rows_instead_of_waiting_for_them(run_task):
     outcome_writes = [s for s in core if s.startswith("UPDATE futures_outcomes")]
     assert len(outcome_writes) == 6, core
     for sql in outcome_writes:
-        lock = "FOR UPDATE OF fo SKIP LOCKED" if "futures_outcomes fo" in sql else (
-            "FOR UPDATE SKIP LOCKED"
+        lock = "FOR NO KEY UPDATE OF fo SKIP LOCKED" if "futures_outcomes fo" in sql else (
+            "FOR NO KEY UPDATE SKIP LOCKED"
         )
         assert f"LIMIT :batch {lock} )" in sql, sql
     # B/C keep their coherent recompute: no market is skipped.
@@ -441,7 +447,7 @@ def test_snapshot_scans_run_before_any_outcome_lock(run_task):
         # Both now commit apart from their prepare read, so both judge the
         # prepare read's instant (#10090 part 2).
         write_shared = shared.replace("now()", "CAST(:retirement_asof AS timestamptz)")
-        assert "FOR UPDATE" not in prep_sql, prep_sql
+        assert not re.search(r"FOR (NO KEY )?UPDATE", prep_sql), prep_sql
         assert prep_sql.startswith(f"/* movement prepare: {label} */ SELECT fo.id {shared} ORDER BY"), prep_sql
         writes = [
             (sql, params) for sql, params in session.calls
@@ -450,7 +456,7 @@ def test_snapshot_scans_run_before_any_outcome_lock(run_task):
         assert len(writes) == 1, (label, core)
         sql, params = writes[0]
         assert f"{write_shared} AND fo.id = ANY(:prepared_ids) ORDER BY" in sql, sql
-        assert "FOR UPDATE OF fo SKIP LOCKED" in sql, sql
+        assert "FOR NO KEY UPDATE OF fo SKIP LOCKED" in sql, sql
         assert params["prepared_ids"] == session.prepared_ids[label], params
         assert params["batch"] == prep_params["batch"], (params, prep_params)
         assert {k: v for k, v in params.items() if k not in {"prepared_ids", "retirement_asof"}} == prep_params
@@ -477,7 +483,7 @@ def test_a_chunked_sweep_reads_its_targets_lock_free_then_rechecks_them(
         p for p in session.prepares if f"movement prepare: {label} */" in p[1]
     ]
     assert position == commits[phase] + 1, (position, commits)
-    assert "FOR UPDATE" not in prep_sql, prep_sql
+    assert not re.search(r"FOR (NO KEY )?UPDATE", prep_sql), prep_sql
     match = re.fullmatch(
         rf"/\* movement prepare: {label} \*/ SELECT id (FROM .*?)"
         r"( ORDER BY abs\(probability_change_24h\) DESC)? LIMIT :batch",
@@ -492,7 +498,7 @@ def test_a_chunked_sweep_reads_its_targets_lock_free_then_rechecks_them(
     sql, params = writes[phase]
     assert (
         f"SELECT id {predicate} AND id = ANY(:prepared_ids){order} "
-        "LIMIT :batch FOR UPDATE SKIP LOCKED )"
+        "LIMIT :batch FOR NO KEY UPDATE SKIP LOCKED )"
     ) in sql, sql
     assert params["prepared_ids"] == session.prepared_ids[label], params
     assert {k: v for k, v in params.items() if k != "prepared_ids"} == prep_params
@@ -1985,3 +1991,23 @@ def test_the_bank_runs_after_every_retirement_and_the_committed_recompute(
         f"the bank is out of order — sweeps={sweeps} bank={bank} "
         f"recompute={recompute}: {events}"
     )
+
+
+def test_every_retirement_bounds_its_own_idle_time(run_task):
+    """#10090 part 2: a worker that dies inside a chunk cannot hold its rows.
+
+    Each retirement transaction arms `MOVEMENT_CHUNK_IDLE_TIMEOUT_MS` beside its
+    lock budget, before it takes a row, so Postgres ends a backend whose client
+    went quiet between the chunk's UPDATE and its COMMIT.
+    """
+    from app.tasks import MOVEMENT_CHUNK_IDLE_TIMEOUT_MS
+
+    _, session = run_task()
+    retirements = session.lock_budgets[:7]
+    assert [pos for pos, _ in session.idle_budgets] == [pos for pos, _ in retirements], (
+        session.idle_budgets, session.lock_budgets,
+    )
+    assert all(
+        params == {"ms": f"{MOVEMENT_CHUNK_IDLE_TIMEOUT_MS}ms"}
+        for _, params in session.idle_budgets
+    ), session.idle_budgets

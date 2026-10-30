@@ -3683,13 +3683,28 @@ MOVEMENT_CORE_LOCK_TIMEOUT_MS = 500
 #: this run. It is retired by the next run, as a skipped row already was.
 MOVEMENT_RETIRE_CHUNK = 1_000
 
+#: How long one retirement transaction may sit idle between its own statements
+#: before Postgres ends the session (#10090 part 2).
+#:
+#: A worker restart on 2026-10-30 orphaned statement A's backend, which held its
+#: rows for 15 minutes until it was killed by hand. A chunk returns at most
+#: `MOVEMENT_RETIRE_CHUNK` market ids, so it no longer stalls in ClientWrite.
+#: But a worker that dies between a chunk's UPDATE and its COMMIT leaves the
+#: backend idle in transaction, holding the chunk's rows until the server
+#: notices the dead peer. Between its own statements a healthy chunk is idle
+#: for milliseconds. Applied with `SET LOCAL`, so it ends with the
+#: transaction; no server or role setting changes
+#: (`calibration_paired_publication.IDLE_IN_TRANSACTION_TIMEOUT_MS` is the
+#: precedent).
+MOVEMENT_CHUNK_IDLE_TIMEOUT_MS = 5_000
+
 #: A4's and A7's eligibility, ONE text each, shared by the lock-free prepare
 #: read and the locking write (#10090). Their `futures_odds_snapshots` LATERAL
 #: over every candidate leg is the core's costly scan; run inside the core it
 #: kept every outcome A1-A3 had already taken locked for its whole duration.
 #: So it runs FIRST, before any outcome lock, and returns at most `:batch` ids;
 #: the core then re-evaluates this SAME predicate restricted to those ids
-#: (`fo.id = ANY(:prepared_ids)`) under `FOR UPDATE OF fo SKIP LOCKED`. The
+#: (`fo.id = ANY(:prepared_ids)`) under `FOR NO KEY UPDATE OF fo SKIP LOCKED`. The
 #: re-check is the version check: a row a writer rewrote, or that A1-A3 already
 #: cleared, or whose window moved, simply no longer qualifies and is
 #: left as it is — nothing is retired on the prepare read's word alone. A row
@@ -4161,6 +4176,13 @@ def update_max_movement(self):
                         SET_LOCK_TIMEOUT_SQL,
                         {"ms": lock_timeout_value(MOVEMENT_CORE_LOCK_TIMEOUT_MS)},
                     )
+                    await session.execute(
+                        text(
+                            "SELECT set_config('idle_in_transaction_session_timeout',"
+                            " CAST(:ms AS text), true)"
+                        ),
+                        {"ms": f"{MOVEMENT_CHUNK_IDLE_TIMEOUT_MS}ms"},
+                    )
                     retired = await session.execute(text(statement), params)
                     market_ids = sorted({
                         market_id for market_id in retired.scalars().all()
@@ -4239,7 +4261,7 @@ def update_max_movement(self):
                         SELECT id""" + a_predicate + """
                           AND id = ANY(:prepared_ids)""" + a_order + """
                         LIMIT :batch
-                        FOR UPDATE SKIP LOCKED
+                        FOR NO KEY UPDATE SKIP LOCKED
                     )
                     RETURNING market_id
                 """,
@@ -4306,7 +4328,7 @@ def update_max_movement(self):
                         SELECT id""" + a2_predicate + """
                           AND id = ANY(:prepared_ids)""" + a_order + """
                         LIMIT :batch
-                        FOR UPDATE SKIP LOCKED
+                        FOR NO KEY UPDATE SKIP LOCKED
                     )
                     RETURNING market_id
                 """,
@@ -4398,7 +4420,7 @@ def update_max_movement(self):
                                OR current_probability - probability_change_24h > 1)
                         ORDER BY abs(probability_change_24h) DESC
                         LIMIT :batch
-                        FOR UPDATE SKIP LOCKED
+                        FOR NO KEY UPDATE SKIP LOCKED
                     )
                     RETURNING market_id
                 """,
@@ -4526,7 +4548,7 @@ def update_max_movement(self):
                           AND fo.id = ANY(:prepared_ids)
                         ORDER BY abs(fo.probability_change_24h) DESC
                         LIMIT :batch
-                        FOR UPDATE OF fo SKIP LOCKED
+                        FOR NO KEY UPDATE OF fo SKIP LOCKED
                     )
                     RETURNING market_id
                 """,
@@ -4591,7 +4613,7 @@ def update_max_movement(self):
                         SELECT id""" + a5_predicate + """
                           AND id = ANY(:prepared_ids)
                         LIMIT :batch
-                        FOR UPDATE SKIP LOCKED
+                        FOR NO KEY UPDATE SKIP LOCKED
                     )
                     RETURNING market_id
                 """,
@@ -4635,7 +4657,7 @@ def update_max_movement(self):
                         SELECT id""" + a6_predicate + """
                           AND id = ANY(:prepared_ids)
                         LIMIT :batch
-                        FOR UPDATE SKIP LOCKED
+                        FOR NO KEY UPDATE SKIP LOCKED
                     )
                     RETURNING market_id
                 """,
@@ -4755,7 +4777,7 @@ def update_max_movement(self):
                               AND fo.id = ANY(:prepared_ids)
                             ORDER BY abs(fo.probability_change_24h) DESC
                             LIMIT :batch
-                            FOR UPDATE OF fo SKIP LOCKED
+                            FOR NO KEY UPDATE OF fo SKIP LOCKED
                         )
                         RETURNING market_id
                     """,

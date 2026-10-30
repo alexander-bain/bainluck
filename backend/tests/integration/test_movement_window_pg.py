@@ -40,6 +40,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -2667,3 +2669,237 @@ def test_a_quote_writer_waits_for_one_chunk_not_for_the_whole_sweep() -> None:
     assert seen["write_done"] < task_done, seen
     after = asyncio.run(_read(ids))
     assert after == {label: (None, None) for label in ("first", "second", "third")}, after
+
+
+# ---------------------------------------------------------------------------
+# #10090 part 2, discover's review of #11799 (R1 + R2): the sweep's row lock
+# strength, and the idle bound on each retirement transaction.
+#
+# A pending `futures_odds_snapshots` INSERT holds FOR KEY SHARE on its outcome
+# row through the foreign key. FOR UPDATE conflicts with KEY SHARE; FOR NO KEY
+# UPDATE does not. The sweep changes no key column, so it needs only NO KEY.
+# ---------------------------------------------------------------------------
+
+
+LIAR = (
+    "liar", "open", 1, -0.740, 0.740, None, 0.069,
+    [(1, 0.0985), (2, 0.0975), (13, 0.0525), (20, 0.1005)],
+)
+
+
+def _psycopg():
+    import psycopg2
+
+    return psycopg2, DB_URL.replace("+asyncpg", "")
+
+
+def _pending_snapshot(outcome_id: int):
+    """Open a transaction holding one uncommitted snapshot INSERT."""
+    psycopg2, dsn = _psycopg()
+    conn = psycopg2.connect(dsn)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO futures_odds_snapshots (outcome_id, bookmaker, probability, captured_at, reading_count)"
+        " VALUES (%s, 'kalshi', 0.5, now() - interval '30 hours', 1)",
+        (outcome_id,),
+    )
+    return conn
+
+
+@pytest.mark.parametrize(
+    "rows, label, counter",
+    [
+        ([("stale", "open", 48, 0.40, 0.40)], "stale", "expired"),
+        ([LIAR], "liar", "unobserved_retired"),
+    ],
+    ids=["A-plain", "A4-of-fo"],
+)
+def test_a_pending_snapshot_insert_does_not_hide_its_row_from_the_sweep(rows, label, counter):
+    ids = asyncio.run(_reset_and_seed(rows))
+    writer = _pending_snapshot(ids[label][1])
+    try:
+        result = _run_task()
+    finally:
+        writer.commit()
+        writer.close()
+    after = asyncio.run(_read(ids))
+    assert result[counter] == 1, (
+        "a row whose only holder was a pending snapshot INSERT (FOR KEY SHARE) "
+        f"was skipped by the sweep's lock: {counter}={result[counter]}"
+    )
+    assert after[label][0] is None, after
+
+
+def test_a_snapshot_insert_does_not_wait_for_a_retirement_chunk() -> None:
+    import app.tasks as tasks_mod
+
+    psycopg2, dsn = _psycopg()
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("first", "open", 48, 0.40, 0.40),
+                ("second", "open", 48, 0.30, 0.30),
+                ("third", "open", 48, 0.20, 0.20),
+            ]
+        )
+    )
+    setup = psycopg2.connect(dsn)
+    setup.autocommit = True
+    with setup.cursor() as cur:
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION movement_probe_hold() RETURNS trigger
+            LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(3); RETURN NEW; END $$
+        """)
+        # AFTER: the row is already rewritten and still locked by its chunk.
+        cur.execute(f"""
+            CREATE TRIGGER movement_probe_hold
+            AFTER UPDATE ON futures_outcomes FOR EACH ROW
+            WHEN (OLD.id = {int(ids["second"][1])}
+                  AND NEW.probability_change_24h IS NULL)
+            EXECUTE FUNCTION movement_probe_hold()
+        """)
+    setup.close()
+
+    seen: dict[str, object] = {}
+
+    def _snapshot_writer() -> None:
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                cur.execute(
+                    "SELECT count(*) FROM pg_stat_activity "
+                    "WHERE wait_event = 'PgSleep' AND pid <> pg_backend_pid()"
+                )
+                hit = cur.fetchone()[0]
+                conn.rollback()
+                if hit:
+                    break
+                time.sleep(0.02)
+            else:
+                return
+            # The production writers' own bound (lock_timeout 500 ms).
+            cur.execute("SET lock_timeout = '500ms'")
+            started = time.monotonic()
+            try:
+                cur.execute(
+                    "INSERT INTO futures_odds_snapshots"
+                    " (outcome_id, bookmaker, probability, captured_at, reading_count)"
+                    " VALUES (%s, 'kalshi', 0.5, now(), 1)",
+                    (ids["second"][1],),
+                )
+                conn.commit()
+                seen["ok"] = True
+            except psycopg2.Error as exc:
+                conn.rollback()
+                seen["ok"] = False
+                seen["error"] = f"{exc.pgcode} {str(exc).splitlines()[0]}"
+            seen["insert_s"] = time.monotonic() - started
+        finally:
+            conn.close()
+
+    thread = threading.Thread(target=_snapshot_writer)
+    real_chunk = tasks_mod.MOVEMENT_RETIRE_CHUNK
+    tasks_mod.MOVEMENT_RETIRE_CHUNK = 1
+    try:
+        thread.start()
+        result = _run_task()
+        thread.join(30)
+    finally:
+        tasks_mod.MOVEMENT_RETIRE_CHUNK = real_chunk
+
+    assert result["expired"] == 3, result
+    assert "ok" in seen, "the held chunk never slept, so nothing was measured"
+    assert seen["ok"] is True, (
+        "a snapshot INSERT on a row the open chunk had retired could not take "
+        f"FOR KEY SHARE within 500 ms: {seen}"
+    )
+    assert seen["insert_s"] < 0.5, seen
+
+
+def test_a_client_that_goes_quiet_inside_a_chunk_releases_its_rows() -> None:
+    """R2: the worker dies between a chunk's UPDATE and its COMMIT.
+
+    Emulated by a client that stops talking for 12 s right before the chunk's
+    maxima recompute. With no bound, a writer on the chunk's row waits the whole
+    12 s (in production, until the server notices the dead peer). With
+    `SET LOCAL idle_in_transaction_session_timeout`, Postgres ends the session
+    and the writer proceeds within the bound.
+    """
+    import app.tasks as tasks_mod
+    import app.tasks.base as base_mod
+    import app.tasks.futures_movers_warm as warm_mod
+
+    psycopg2, dsn = _psycopg()
+    ids = asyncio.run(_reset_and_seed([("first", "open", 48, 0.40, 0.40)]))
+    seen: dict[str, object] = {}
+
+    class _QuietCtx:
+        async def __aenter__(self):
+            from sqlalchemy.ext.asyncio import async_sessionmaker
+
+            self._engine = _engine()
+            session = async_sessionmaker(self._engine, expire_on_commit=False)()
+            real_execute = session.execute
+
+            async def execute(stmt, params=None, *a, **k):
+                sql = str(stmt)
+                if "SET max_movement_24h = sub.max_mv" in sql and params and not seen.get("stalled"):
+                    seen["stalled"] = time.monotonic()
+                    await asyncio.sleep(12)
+                return await real_execute(stmt, params, *a, **k)
+
+            session.execute = execute
+            self._session = session
+            return session
+
+        async def __aexit__(self, *exc):
+            try:
+                await self._session.close()
+            finally:
+                await self._engine.dispose()
+            return False
+
+    def _writer() -> None:
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            deadline = time.monotonic() + 15
+            while "stalled" not in seen and time.monotonic() < deadline:
+                time.sleep(0.02)
+            time.sleep(0.2)
+            cur.execute("SET statement_timeout = '30s'")
+            started = time.monotonic()
+            cur.execute(
+                "UPDATE futures_outcomes SET current_probability = 0.51 WHERE id = %s",
+                (ids["first"][1],),
+            )
+            conn.commit()
+            seen["write_s"] = time.monotonic() - started
+        finally:
+            conn.close()
+
+    async def _no_warm(_session):
+        return {"terminal": "skipped", "completed": 0}
+
+    real_session, real_warm = base_mod.get_task_session, warm_mod.warm_futures_movers
+    base_mod.get_task_session = lambda: _QuietCtx()
+    warm_mod.warm_futures_movers = _no_warm
+    thread = threading.Thread(target=_writer)
+    try:
+        thread.start()
+        try:
+            seen["result"] = tasks_mod.update_max_movement.run()
+        except Exception as exc:  # noqa: BLE001
+            seen["task_error"] = type(exc).__name__
+        thread.join(40)
+    finally:
+        base_mod.get_task_session = real_session
+        warm_mod.warm_futures_movers = real_warm
+
+    assert "write_s" in seen, seen
+    assert seen["write_s"] < 8.0, (
+        f"a writer waited {seen['write_s']:.1f} s on a row held by a chunk whose "
+        f"client had gone quiet: {seen}"
+    )
