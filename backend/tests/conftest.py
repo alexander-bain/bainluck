@@ -404,3 +404,12 @@ def isolated_dnpl_process_registry():
     reset_registry_for_tests()
     yield
     reset_registry_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _pm_cpu_sampler_off(monkeypatch):
+    """#10090: the PM venue process starts a SIGPROF stack sampler
+    (`app/utils/loop_cpu_sampler.py`). A test that runs the venue in-process
+    would leave its handler installed in the worker for every later test, so
+    it is OFF in tests; `test_loop_cpu_sampler_10090` turns it on per sampler."""
+    monkeypatch.setenv("PM_CPU_SAMPLER", "0")
