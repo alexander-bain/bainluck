@@ -62,7 +62,9 @@ MAX_PRIORITY_OUTCOME_CONDITIONS = 200
 #: such book.  Shape is ``{"<outcome_id>": "<yes_token>"}`` — keyed by
 #: ``FuturesOutcome.id`` because that is what the socket must attribute a tick
 #: to, and stringified because JSONB object keys are always strings.
-OUTCOME_TOKEN_METADATA_KEY = "clob_yes_token_by_outcome"
+#: #10090: defined in ``futures_liveness`` so the ingest polls' metadata REPLACE
+#: carries it back (``CARRIED_METADATA_KEYS``); one name, two readers.
+from app.utils.futures_liveness import OUTCOME_TOKEN_METADATA_KEY  # noqa: E402
 
 #: Where the outcome top-up's position between recycles lives (#837).  Redis,
 #: not a column, for the reason ``anchor_schedule_sentinel`` keeps its
