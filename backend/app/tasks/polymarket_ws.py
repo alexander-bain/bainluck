@@ -3580,6 +3580,20 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # entry per subscribed outcome) and holds the mark of the buffered value.
     tail_receipts = TailReceipts("polymarket")
     blend_refresher.receipts = tail_receipts
+    # #10090 decision J: `confirmed_at` for this venue's events. A buffered
+    # withdrawal whose book prices a published leg out is a pending change
+    # (the rule `flush_withdrawals` applies to the stored price).
+    from app.utils.confirmed_at import ConfirmedAt
+    from app.utils.kalshi_empty_book import book_refutes_price as _refutes
+
+    def _withdrawal_refutes(outcome_id, price):
+        book = withdraw_buffer.get(outcome_id)
+        return book is not None and _refutes(book[0], book[1], price)
+
+    tail_receipts.confirmed = ConfirmedAt(
+        "polymarket", client=getattr(blend_refresher, "_client", None),
+        refutes=_withdrawal_refutes,
+    )
     # #10090 stage trace: OFF unless 1-4 events (a fold's members), their
     # explicit outcomes and an absolute expiry <=600 s away are configured
     # (`app/utils/pm_stage_trace.py`).
@@ -5729,6 +5743,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     withdraw_buffer[outcome_id] = (leg_bid, leg_ask)
                     if getattr(blend_refresher, "preview_events", ()):
                         observation_continuity.pop(outcome_id, None)
+                    # #10090 decision J: a book that prices a published leg
+                    # out is a pending change; re-judge agreement now.
+                    confirmed = getattr(tail_receipts, "confirmed", None)
+                    if confirmed is not None:
+                        with contextlib.suppress(Exception):
+                            confirmed.note_withdrawal(
+                                event_id_by_outcome.get(outcome_id), outcome_id)
                 # #11138: a held quote never outlives a book that withdraws it.
                 held_quotes = getattr(blend_refresher, "held_quotes", None)
                 if held_quotes is not None:
@@ -5825,6 +5846,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             )
         except Exception:
             return
+        # #10090 decision J: a game leg's input, judged for agreement with
+        # what this source published. Bookkeeping only.
+        confirmed = getattr(tail_receipts, "confirmed", None)
+        if (confirmed is not None and outcome_id not in non_blend_outcome_ids
+                and outcome_id not in open_outcome_ids):
+            with contextlib.suppress(Exception):
+                confirmed.note_mark(mark)
         if mark is not None:
             if (event_id_by_outcome.get(outcome_id) in getattr(blend_refresher, "preview_events", ())
                     and outcome_id not in non_blend_outcome_ids and outcome_id not in open_outcome_ids):

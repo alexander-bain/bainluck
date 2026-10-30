@@ -717,6 +717,10 @@ class TailReceipts:
         #: as 3 in 60 s, a 20x understatement).
         self._run_start = _wall()
         self._live_since: dict[int, float] = {}
+        #: #10090 decision J: this venue's `ConfirmedAt`, or None (wired by
+        #: the consumer, which also hands it each headline input's mark).
+        #: Fed every resolution below.
+        self.confirmed = None
 
     # ── the socket's side ────────────────────────────────────────────────────
 
@@ -959,6 +963,13 @@ class TailReceipts:
         """After a batch that COMMITTED: close each attempted chain on what the
         batch did with it. A lock skip keeps (or opens) the chain — the retry
         is the path, and it is counted."""
+        if self.confirmed is not None:
+            for event_id in due:
+                try:
+                    self.confirmed.resolved(
+                        event_id, dispositions.get(event_id, ("no_market",)))
+                except Exception:
+                    logger.warning("tail receipt: confirmed_at resolve failed", exc_info=True)
         for event_id in due:
             disposition = dispositions.get(event_id, ("no_market",))
             if disposition[0] == "stamped":
@@ -987,6 +998,11 @@ class TailReceipts:
         `batch_failed`. The refresher retains all due events, so their chains
         stay open and count the failure. The defensive dropped result is only
         for a caller that explicitly omits an event from `requeued`."""
+        if self.confirmed is not None:
+            try:
+                self.confirmed.failed(due)
+            except Exception:
+                logger.warning("tail receipt: confirmed_at failure failed", exc_info=True)
         for event_id in due:
             disposition = dispositions.get(event_id, ("",))
             failure = "commit_failed" if disposition[0] == "stamped" else "batch_failed"
@@ -1010,6 +1026,9 @@ class TailReceipts:
     def close_all(self, reason: str) -> None:
         """The consumer is exiting: every chain still open was never stamped by
         this run, and the next run's fresh refresher cannot inherit it."""
+        if self.confirmed is not None:
+            with contextlib.suppress(Exception):
+                self.confirmed.close()
         now = _mono()
         open_at_close = len(self._open)
         for event_id in sorted(self._open):
@@ -3391,6 +3410,22 @@ class LiveBlendRefresher:
         self._receipt_call(receipts.observe, staged, stored_wall, due, now)
         if self.preview_receipt is not None:
             self._receipt_call(self.preview_receipt.committed, staged)
+        confirmed = getattr(receipts, "confirmed", None)
+        if confirmed is not None and due:
+            # #10090 decision J: these events' batch may preview or stamp
+            # before it resolves; nothing they hold is confirmed until then.
+            self._receipt_call(
+                confirmed.begin, due,
+                {eid for eid in due if eid in getattr(self, "preview_events", ())},
+            )
+
+    def _note_confirm_basis(self, event_id: int, contributing) -> None:
+        """#10090 decision J: the rows an agreeing disposition blended, for
+        `ConfirmedAt` to compare later inputs against (`TailReceipts.resolve`
+        hands it the disposition after the commit)."""
+        confirmed = getattr(self.receipts, "confirmed", None)
+        if confirmed is not None:
+            self._receipt_call(confirmed.note_basis, event_id, contributing)
 
     def _preview_receipt_counters(self) -> dict:
         """This arm's cumulative counts for the preview receipt. Reads the
@@ -4772,6 +4807,7 @@ class LiveBlendRefresher:
                         ):
                             self.stats["unobserved_skipped"] += 1
                             self._dispositions[event_id] = ("unobserved", value)
+                            self._note_confirm_basis(event_id, contributing)
                             if phase == "compute":
                                 # A periodic durable read can predate an already
                                 # accepted observation preview. Let its registry
@@ -4791,6 +4827,7 @@ class LiveBlendRefresher:
                         if not self._should_write(event_id, value, now):
                             self.stats["unchanged_skipped"] += 1
                             self._dispositions[event_id] = ("unchanged", value)
+                            self._note_confirm_basis(event_id, contributing)
                             # Persistence cadence does not own display admission.
                             # Only a complete contributing observation can try
                             # this route; the registry proves it newer than the
@@ -4988,6 +5025,7 @@ class LiveBlendRefresher:
                         # publishes, and whether the game is live.
                         new_rev, event.status,
                     )
+                    self._note_confirm_basis(event_id, contributing)
 
                     # The AGGREGATE, computed off the sources JSONB the server
                     # RETURNED — the number the hero renders, not this one

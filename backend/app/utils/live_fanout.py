@@ -314,6 +314,13 @@ class LiveFanout:
         if self._quote_projector is not None:
             self._quote_projector.forget_preview_base(event_id)
 
+    def confirmed_reads(self):
+        """#10090 decision J: the process's `confirmed_at` read cache, shared
+        by every stream on this hub (one Redis read per event per second)."""
+        from app.utils.confirmed_at import confirmed_reads
+
+        return confirmed_reads()
+
     # -- the Redis side -----------------------------------------------------
 
     async def _connect_locked(self) -> None:

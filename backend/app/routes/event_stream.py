@@ -88,6 +88,13 @@ MAX_CONNECTIONS = int(os.getenv("SSE_MAX_CONNECTIONS", "200"))
 #: Reconnect delay handed to the client via the SSE `retry:` field.
 RETRY_MS = int(os.getenv("SSE_RETRY_MS", "5000"))
 
+#: #10090 decision J: how long connect waits for the event's `confirmed_at`
+#: before its first heartbeat goes without it, and the least time between two
+#: heartbeats sent because it advanced. Its producer writes at most once a
+#: second per venue (`app.utils.confirmed_at`), so a faster beat says nothing.
+CONFIRMED_CONNECT_WAIT_S = 0.1
+CONFIRMED_BEAT_MIN_S = 1.0
+
 #: How long one pass waits for a frame before rechecking the clock and the
 #: client. It is the loop's tick, not a delivery deadline: a frame that arrives
 #: mid-wait ends the wait immediately.
@@ -103,6 +110,21 @@ QUOTE_STATUSES = frozenset({"live", "scheduled", "suspended"})
 #: would add a network round trip to the connect path to answer a local
 #: question.
 _open_connections = 0
+
+
+def _heartbeat(confirmed_at: Optional[float]) -> str:
+    """The named heartbeat. ``confirmed_at`` (#10090 decision J) is the newest
+    instant a venue input agreed with what this stream published, or null;
+    a reader that knows nothing of it keeps reading ``t`` alone."""
+    from app.utils.confirmed_at import iso
+
+    return sse_encode(
+        json.dumps({
+            "t": datetime.now(timezone.utc).isoformat(),
+            "confirmed_at": iso(confirmed_at),
+        }),
+        event="heartbeat",
+    )
 
 
 def _frame_is_fresh(frame: dict, now: datetime) -> bool:
@@ -457,6 +479,10 @@ async def _stream(
     from app.utils.live_fanout import CLOSED, CONFIRMED, Recovery, fanout
 
     hub = fanout()
+    # #10090 decision J: the hub's process-wide `confirmed_at` cache. A hub
+    # without one (a test double) streams exactly as before.
+    get_confirmations = getattr(hub, "confirmed_reads", None)
+    confirmations = get_confirmations() if callable(get_confirmations) else None
     protocol = getattr(request, "query_params", {}).get("preview_protocol")
     authority_v3 = protocol == "authority-v3"
     subscription = _FoldSubscription(hub, authority_v3=authority_v3)
@@ -555,6 +581,16 @@ async def _stream(
             "event_id": event_id,
             **({"fold_session": preview_session.session} if preview_session else {}),
         }), event="open")
+        # #10090 decision J: when the event has a `confirmed_at`, one
+        # heartbeat carries it at once, so a steady price has a clock before
+        # its next frame. Without one there is nothing to say yet.
+        confirmed_sent = None if confirmations is None else await _await_honouring_cancel(
+            confirmations.current(members, CONFIRMED_CONNECT_WAIT_S)
+        )
+        confirmed_beat = started
+        if confirmed_sent is not None:
+            yield _heartbeat(confirmed_sent)
+            confirmed_beat = asyncio.get_event_loop().time()
         recovery_ids = list(subscription.subscriptions)
         # One owned read may finish after replay or live prices. Reconciliation
         # is an obligation, not permission to hold already committed prices.
@@ -571,7 +607,7 @@ async def _stream(
         replay = deque(await _await_honouring_cancel(
             latest_frames([event_id, *(contributor_ids or [])])
         ))
-        last_beat = started
+        last_beat = confirmed_beat
         recovery_generation = 0
         # Highest revision already sent per origin: a catch-up read that finds
         # only what the open-time replay sent stays silent.
@@ -597,6 +633,16 @@ async def _stream(
                     json.dumps({"reason": "max_age"}), event="reconnect"
                 )
                 return
+
+            # #10090 decision J: a newer `confirmed_at` goes out at once as a
+            # heartbeat (at most one per CONFIRMED_BEAT_MIN_S), so the page's
+            # clock follows the venues between frames. Cached: no wait here.
+            confirmed_now = None if confirmations is None else confirmations.peek(members)
+            if (confirmed_now is not None
+                    and (confirmed_sent is None or confirmed_now > confirmed_sent)
+                    and loop_now - confirmed_beat >= CONFIRMED_BEAT_MIN_S):
+                yield _heartbeat(confirmed_now)
+                confirmed_sent, confirmed_beat, last_beat = confirmed_now, loop_now, loop_now
 
             projected_preview = update_preview_session()
             if projected_preview is not None:
@@ -925,11 +971,8 @@ async def _stream(
                 # "is this market moving" instead of "is this server alive".
                 # On a quiet market those differ, and the watchdog would tear
                 # down a perfectly healthy stream. This is observable.
-                yield sse_encode(
-                    json.dumps(
-                        {"t": datetime.now(timezone.utc).isoformat()}
-                    ),
-                    event="heartbeat",
+                yield _heartbeat(
+                    None if confirmations is None else confirmations.peek(members)
                 )
                 last_beat = loop_now
     except asyncio.CancelledError:
