@@ -1172,6 +1172,45 @@ class TestR3R4TheStream:
             await stream.aclose()
 
 
+class TestR8NoBeatWhileARecoveryReadIsOwed:
+    @pytest.mark.asyncio
+    async def test_no_confirmed_at_advance_while_a_confirmed_recovery_read_is_owed(
+            self, monkeypatch):
+        """lane1 R8 (b3ab03fc): a frame published between the replay read and
+        SUBSCRIBE reaches the reader only through the CONFIRMED recovery read;
+        until it does, no heartbeat may carry a `confirmed_at` vouching for it."""
+        import time as _time
+
+        from app.utils import live_fanout
+
+        monkeypatch.setattr(ca, "READ_TTL_S", 0.0)
+        now = {"c": _time.time() - 20}
+
+        async def fetch(ids):
+            now["c"] += 1.0
+            ms = int(now["c"] * 1000)
+            return {eid: [_entry(c=ms, w=ms)] for eid in ids}
+
+        stream, hub, release = _fold_stream(monkeypatch, ConfirmedReads(fetch))
+        beats = []
+        try:
+            for _ in range(2):  # retry, open
+                await asyncio.wait_for(anext(stream), 1)
+            hub.subscriptions["live:event:2"].offer(live_fanout.CONFIRMED)
+            deadline = asyncio.get_running_loop().time() + 0.3
+            while asyncio.get_running_loop().time() < deadline:
+                try:
+                    chunk = await asyncio.wait_for(anext(stream), 0.1)
+                except asyncio.TimeoutError:
+                    break
+                if chunk.startswith("event: heartbeat"):
+                    beats.append(json.loads(chunk.split("data: ")[1]).get("confirmed_at"))
+        finally:
+            release.set()
+            await stream.aclose()
+        assert not [b for b in beats if b is not None], beats
+
+
 def _stamping_refresher(seen, basis):
     """A refresher whose every stamp blends ``basis`` ({outcome: price}) and
     whose frame the publisher acknowledges (as `_publish_prices` reports)."""

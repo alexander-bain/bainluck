@@ -509,11 +509,13 @@ async def _stream(
     pending_projection = None
 
     def headline_owed() -> bool:
-        """#10090 decision J (lane1 R4): a fold or preview quote the reader's
-        headline still waits on — its number on screen is not yet the one a
-        `confirmed_at` would vouch for."""
+        """#10090 decision J (lane1 R4, R8): a fold, a preview quote or a
+        CONFIRMED recovery read the reader's headline still waits on — its
+        number on screen is not yet the one a `confirmed_at` would vouch for."""
         return (folded_projection is not None or pending_projection is not None
-                or recovery_quote is not None or pending_quote_control is not None)
+                or recovery_quote is not None or pending_quote_control is not None
+                or recovery_coverage is not None or pending_recovery
+                or bool(pending_confirmations))
     preview_floors = {}
     active_preview_origin = None
     preview_session = None
