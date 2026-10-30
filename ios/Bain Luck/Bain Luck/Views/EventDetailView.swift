@@ -396,7 +396,7 @@ struct EventDetailView: View {
             // before the new event's stream begins.
             .onChange(of: eventId) { _, _ in
                 nflCards.resetNBAStream()
-                showProbabilityDetails = false
+                closeProbabilityDetails()
             }
             .onDisappear {
                 // #11703 — the freshness details belong to this page. Its
@@ -404,7 +404,7 @@ struct EventDetailView: View {
                 // pushes another game would otherwise leave it up over that
                 // page, reading this one's stopped model (build 89: "Update
                 // interrupted … 34 minutes ago" over a healthy live game).
-                showProbabilityDetails = false
+                closeProbabilityDetails()
                 duringPageAnchor.cancel()
                 afterPageAnchor.cancel()
                 marketPageVisible = false
@@ -1059,6 +1059,18 @@ struct EventDetailView: View {
         let names = TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam,
                                             sportKey: event.sport)
         return "\(names.home) \(delta > 0 ? "↑" : "↓")\(abs(delta)) \(abs(delta) == 1 ? "pt" : "pts")"
+    }
+
+    /// #11703 — closes the freshness details at once, with no dismissal
+    /// animation: the page closing them may already be off its window (a
+    /// push covers it before `onDisappear`), and an animated dismissal from
+    /// there left the popover up over the next page for seconds on hosted
+    /// iOS 27 (draft PR #11784: off-window at 0.18 s, still up at 1.5 s).
+    private func closeProbabilityDetails() {
+        guard showProbabilityDetails else { return }
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { showProbabilityDetails = false }
     }
 
     /// Routine delivery/confidence details open through the info control.
