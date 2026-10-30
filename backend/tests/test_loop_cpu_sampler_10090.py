@@ -1,6 +1,8 @@
 """#10090: the PM venue process's low-rate stack sampler (`app/utils/loop_cpu_sampler.py`).
 
-Real ITIMER_PROF / SIGPROF on the pytest main thread, the real fold and line.
+Real timers and signals on the pytest main thread (ITIMER_PROF on Linux, as in
+production; ITIMER_REAL where a test judges attribution on macOS), the real
+fold and line.
 No venue, DB or Redis. Every test that starts a sampler stops it and puts the
 process's SIGPROF handler and timer back.
 """
@@ -24,10 +26,18 @@ from app.utils.loop_cpu_sampler import IDLE, LoopCpuSampler
 
 @pytest.fixture
 def restore_sigprof():
-    previous = signal.getsignal(signal.SIGPROF)
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGPROF, signal.SIGALRM)}
     yield
     signal.setitimer(signal.ITIMER_PROF, 0)
-    signal.signal(signal.SIGPROF, previous if previous is not None else signal.SIG_DFL)
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    for sig, handler in previous.items():
+        signal.signal(sig, handler if handler is not None else signal.SIG_DFL)
+
+
+#: Tests that judge WHERE samples land use production's CPU timer on Linux
+#: (CI). macOS notices an expired CPU timer only at the next syscall, so there
+#: they use the wall-clock timer, as a rig on macOS does.
+ATTRIBUTION_TIMER = signal.ITIMER_PROF if sys.platform == "linux" else signal.ITIMER_REAL
 
 
 def _on():
@@ -55,6 +65,15 @@ def _burn(seconds, *steps):
             step()
 
 
+def _rounds(seconds, *steps):
+    """Run ``steps`` for about ``seconds`` of CPU with no syscall in the loop
+    (a syscall per round would itself be a frame the samples could favour)."""
+    per_round = sum(_cpu_per_call(step, calls=5) for step in steps)
+    for _ in range(max(20, int(seconds / max(per_round, 1e-6)))):
+        for step in steps:
+            step()
+
+
 def _deep(depth, seconds, *steps):
     if depth:
         return _deep(depth - 1, seconds, *steps)
@@ -68,17 +87,17 @@ def _names(counts):
 def test_real_timer_charges_cpu_to_the_function_that_spent_it(restore_sigprof):
     """The rejected thread designs read the selector, not the hot path: this is
     the property that makes the line worth reading."""
-    sampler = LoopCpuSampler(interval_s=0.002, enabled=_on).start(thread=False)
+    sampler = LoopCpuSampler(interval_s=0.002, enabled=_on, timer=ATTRIBUTION_TIMER).start(thread=False)
     assert sampler is not None
     try:
-        _burn(1.0, hot_three, hot_one)
+        _rounds(1.0, hot_three, hot_one)
     finally:
         sampler.stop()
     counts = _names(sampler._window.self_counts)
     three, one = counts.get("hot_three", 0), counts.get("hot_one", 0)
     assert three + one >= 100, counts
     assert 0.6 <= three / (three + one) <= 0.9, counts  # 3:1 work, 0.75 expected
-    assert signal.getitimer(signal.ITIMER_PROF) == (0.0, 0.0)
+    assert signal.getitimer(ATTRIBUTION_TIMER) == (0.0, 0.0)
 
 
 def test_sampler_costs_under_half_a_percent_at_10hz(restore_sigprof):
@@ -223,7 +242,10 @@ def test_thread_logs_one_line_per_window_and_reads_the_switch_at_each_boundary(r
     log = logging.getLogger("test_loop_cpu_sampler_10090")
     log.addHandler(Capture())
     log.setLevel(logging.INFO)
-    sampler = LoopCpuSampler(interval_s=0.002, window_s=0.4, enabled=lambda: switch["on"], log=log)
+    sampler = LoopCpuSampler(
+        interval_s=0.002, window_s=0.4, enabled=lambda: switch["on"], log=log,
+        timer=ATTRIBUTION_TIMER,
+    )
     assert sampler.start() is sampler
     try:
         deadline = time.monotonic() + 10
@@ -234,9 +256,13 @@ def test_thread_logs_one_line_per_window_and_reads_the_switch_at_each_boundary(r
         assert "hot_three" in lines[-1]
         switch["on"] = False
         deadline = time.monotonic() + 10
-        while signal.getitimer(signal.ITIMER_PROF) != (0.0, 0.0) and time.monotonic() < deadline:
+        # Wait on the boundary itself: a one-shot timer also reads zero for the
+        # instant between firing and the handler re-arming it.
+        while sampler._active and time.monotonic() < deadline:
             _burn(0.05, hot_three)
-        assert signal.getitimer(signal.ITIMER_PROF) == (0.0, 0.0)  # disarmed at the boundary
+        assert not sampler._active
+        _burn(0.05, hot_three)  # any handler already in flight sees inactive
+        assert signal.getitimer(ATTRIBUTION_TIMER) == (0.0, 0.0)  # disarmed at the boundary
         _burn(0.3, hot_three)
         logged = len(lines)
         time.sleep(1.0)
@@ -340,7 +366,6 @@ def test_samples_are_not_pulled_onto_the_frame_that_makes_syscalls(restore_sigpr
     when a neighbour makes a syscall every microsecond. On macOS the prof
     timer fails exactly this (the decoy takes the hot function's samples),
     which is why a rig there uses the real timer."""
-    previous_alarm = signal.getsignal(signal.SIGALRM)
     hot, decoy = _cpu_per_call(hot_three), _cpu_per_call(syscall_decoy)
     expected = hot / (hot + decoy)
     rounds = max(50, int(1.5 / (hot + decoy)))
@@ -351,7 +376,6 @@ def test_samples_are_not_pulled_onto_the_frame_that_makes_syscalls(restore_sigpr
             syscall_decoy()
     finally:
         sampler.stop()
-        signal.signal(signal.SIGALRM, previous_alarm)
     counts = _names(sampler._window.self_counts)
     got_hot, got_decoy = counts.get("hot_three", 0), counts.get("syscall_decoy", 0)
     assert got_hot + got_decoy >= 150, counts
