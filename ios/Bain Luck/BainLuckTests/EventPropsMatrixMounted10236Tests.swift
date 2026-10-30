@@ -254,20 +254,20 @@ final class EventPropsMatrixMounted10236Tests: XCTestCase {
             let (all, first) = try frames(host, name)
             // #10796 — the first frame's hero row, read on its own: the away
             // team's 58% on the left, the home team's 42% on the right, each
-            // with its percent sign.
+            // with its percent sign. #10090 (ALEX item 39): in tenths.
             let row = try XCTUnwrap(try heroRow(first, numbers: ["58", "42"]),
                                     "\(name): the hero leads the page: \(all[0])")
             let hero = try heroHalves(first, row: row)
-            XCTAssertTrue(hero.left.contains("58%") && hero.right.contains("42%"),
+            XCTAssertTrue(hero.left.contains("58.0%") && hero.right.contains("42.0%"),
                           "\(name): the hero leads the page: \(hero) in \(all[0])")
             // Negative controls on the same pixels: a missing number, and a
             // number whose percent sign is clipped, are both refused.
             let rightHalf = CGRect(x: row.midX, y: row.minY, width: row.width / 2, height: row.height)
             let missing = try heroHalves(covering(first, rightHalf), row: row)
-            XCTAssertFalse(missing.right.contains("42%"), "\(name): a missing 42% still read: \(missing)")
+            XCTAssertFalse(missing.right.contains("42.0%"), "\(name): a missing 42.0% still read: \(missing)")
             let leftSign = CGRect(x: row.minX + row.width * 0.25, y: row.minY, width: row.width * 0.25, height: row.height)
             let clipped = try heroHalves(covering(first, leftSign), row: row)
-            XCTAssertFalse(clipped.left.contains("58%"), "\(name): a clipped 58% still read: \(clipped)")
+            XCTAssertFalse(clipped.left.contains("58.0%"), "\(name): a clipped 58.0% still read: \(clipped)")
             print("Hero row read (#10796): \(name) \(hero) | missing \(missing) | clipped \(clipped)")
             let at = try XCTUnwrap(all.firstIndex { $0.contains { $0.contains("Live Player") } },
                                    "\(name): the matrix is on the page: \(all)")

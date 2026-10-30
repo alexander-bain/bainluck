@@ -139,10 +139,12 @@ struct EventDetailView: View {
         return (away ? labels.away : labels.home) ?? ""
     }
     /// #10090: `priceActivity` describes committed moves, not a preview's, so
-    /// while one is held the direction is unknown (nil).
+    /// while one is displayed the direction is unknown (nil). One the committed
+    /// revision has passed prints nothing: the commit that replaced it slides
+    /// by its receipt, which starts from the printed preview (C2).
     private func heroRising(away: Bool) -> Bool? {
-        guard vm.blendPreview == nil else { return nil }
-        return (away ? vm.priceActivity?.awayDelta : vm.priceActivity?.homeDelta).map { $0 > 0 }
+        guard let event = vm.event, !vm.displaysPreview(event) else { return nil }
+        return away ? vm.priceActivity?.awayRising : vm.priceActivity?.homeRising
     }
     private var priceStreamingEligible: Bool { EventPriceStreaming.isEligible(vm.event?.status) }
     private var heroMoves: Bool { priceStreamingEligible && vm.liveUpdateStatus != .interrupted }
@@ -468,6 +470,8 @@ struct EventDetailView: View {
                                          refreshStreaming: refreshIndicator == .streaming,
                                          liveUpdateStatus: vm.liveUpdateStatus,
                                          priceActivity: vm.priceActivity,
+                                         // #10090 C2 — the tip slides like the hero.
+                                         liveEdgeShowsPreview: vm.displaysPreview(event),
                                          // #9436 — the hero's own number, for the
                                          // dot on the end of the line. #10090: the
                                          // number the hero prints, preview included.
@@ -477,12 +481,13 @@ struct EventDetailView: View {
                                          // current, on its own clock: the tick ages them out
                                          // with no new price. A started game the venue has
                                          // already settled is a verdict, never a live quote,
-                                         // whatever its status still says.
+                                         // whatever its status still says. #10090 decision J:
+                                         // aged by a confirmation of the shown price too.
                                          quoteIsCurrent: EventHeadlinePhase9483.isCurrent(
                                              status: event.status, commenceTime: event.commenceTime?.asDate,
                                              isOpeningLine: event.currentOdds.map {
                                                  OpeningLineHero.resolve($0, for: event).isOpeningLine } ?? false,
-                                             observedAt: vm.displayedProbabilityObservedAt(event),
+                                             observedAt: vm.displayedProbabilityAgeClock(event),
                                              deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
                                              now: displayNow(tick.date))
                                              && !EventState.showsVenueSettledVerdict(
@@ -1055,7 +1060,7 @@ struct EventDetailView: View {
     }
 
     private func movementCaption(_ event: EventDetail) -> String? {
-        guard let delta = vm.priceActivity?.homeDelta, delta != 0 else { return nil }
+        guard let delta = vm.priceActivity?.homeCaptionDelta, delta != 0 else { return nil }
         let names = TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam,
                                             sportKey: event.sport)
         return "\(names.home) \(delta > 0 ? "↑" : "↓")\(abs(delta)) \(abs(delta) == 1 ? "pt" : "pts")"
@@ -1092,7 +1097,9 @@ struct EventDetailView: View {
         // scrolls if even the lower space runs out.
         .popover(isPresented: $showProbabilityDetails, arrowEdge: .top) {
             FreshnessRevealView(status: vm.liveUpdateStatus,
-                lastReceivedAt: vm.priceActivity?.receivedAt, confidenceTier: confidenceTier,
+                lastReceivedAt: vm.priceActivity?.receivedAt,
+                confirmedAt: vm.event.flatMap { vm.displayedConfirmation($0) },
+                confidenceTier: confidenceTier,
                 forecast: revealForecast11296)
                 // idealWidth: the popover sizes from the IDEAL size; with only a
                 // max it measured the text unwrapped and came out 144pt tall.
@@ -1795,11 +1802,14 @@ struct EventDetailView: View {
                             // derived home re-opens the same 101 from the other side,
                             // and an older deploy can carry one field and not the
                             // other, so the pair falls back whole.
-                            let percents = Self.heroPairPercents(shown, away: away, home: home)
-                            let awayPct = percents.away
-                            let homePct = percents.home
+                            //
+                            // #10090 (ALEX item 39) — in tenths, and the pair
+                            // still sums to 100: the away side is DERIVED from
+                            // the home tenth (`EventHeadlineTenths10090`), which
+                            // is the same promise the whole pair above keeps.
+                            let printed = EventHeadlineTenths10090.pair(home: home, away: away)
                             HStack(spacing: 8) {
-                                Text(formatProbability(away, renderedPercent: awayPct))
+                                Text(printed.away ?? "")
                                     .acceptedValueChange(heroValue(away: true), rising: heroRising(away: true), animates: heroMoves)
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.away)
@@ -1809,7 +1819,7 @@ struct EventDetailView: View {
                                 Text("\u{2013}")
                                     .font(.title3)
                                     .foregroundStyle(.secondary.opacity(0.4))
-                                Text(formatProbability(home, renderedPercent: homePct))
+                                Text(printed.home)
                                     .acceptedValueChange(heroValue(away: false), rising: heroRising(away: false), animates: heroMoves)
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.home)
@@ -1847,7 +1857,7 @@ struct EventDetailView: View {
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(colors.home)
                                     .lineLimit(1)
-                                Text(formatProbability(home))
+                                Text(EventHeadlineTenths10090.pair(home: home, away: nil).home)
                                     .acceptedValueChange(heroValue(away: false), rising: heroRising(away: false), animates: heroMoves)
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.home)
@@ -2415,10 +2425,11 @@ struct EventDetailView: View {
         else { return nil }
         // #2085 — the hero pair's own percents, from the one rule both
         // arrangements read.
-        let percents = Self.heroPairPercents(shown, away: away, home: pair.home)
+        // #10090 — in tenths, the away side derived (`EventHeadlineTenths10090`).
+        let printed = EventHeadlineTenths10090.pair(home: pair.home, away: away)
         return NFLPairedHeadline9483.priced(
-            awayText: formatProbability(away, renderedPercent: percents.away),
-            homeText: formatProbability(pair.home, renderedPercent: percents.home),
+            awayText: printed.away ?? "",
+            homeText: printed.home,
             live: event.status == "live", score: score, pregame: pregame)
     }
 
@@ -2830,7 +2841,8 @@ struct EventDetailView: View {
                 status: event.status, commenceTime: event.commenceTime?.asDate,
                 isOpeningLine: isOpeningLine,
                 // #10090 — a preview's own observation time; unknown is undated.
-                observedAt: vm.displayedProbabilityObservedAt(event),
+                // Decision J: a confirmation of the shown price ages it too.
+                observedAt: vm.displayedProbabilityAgeClock(event),
                 deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
                 now: displayNow(tick.date)) {
                 EventHeadlinePhaseLabel9483(phase: phase, baseline: baseline, maxWidth: maxWidth)
