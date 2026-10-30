@@ -1510,9 +1510,13 @@ async def _write_prices(
     * ``poll.admit`` may decline the leg first: a leg a venue socket prices, or
       one whose stored price and book equal this read (written only if it
       changed);
-    * the UPDATE also requires ``last_updated`` to be older than
-      ``poll.fetched_at``, so a socket write that landed after the venue read
-      was sent wins, and a leg that UPDATE missed writes no snapshot;
+    * the UPDATE also requires ``last_updated`` and ``price_changed_at`` to be
+      older than ``poll.fetched_at``, so a socket write (or #9934 withdrawal)
+      that landed after the venue read was sent wins, and a leg that UPDATE
+      missed writes no snapshot (``legs_newer_writer``);
+    * the UPDATE skips a row another transaction holds rather than waiting on
+      it (``legs_held``), so the poll never holds a market's earlier legs while
+      it waits on a later one;
     * the snapshot is written only when ``poll.history`` admits it (the
       history bound), so a price row can move without a chart point.
 
@@ -1590,7 +1594,7 @@ async def _write_prices(
     from app.utils.price_change_stamp import price_changed_at_value
     from app.utils.resolution_authority import OVERWRITABLE_WINNER_SOURCES  # #9220
     from app.utils.settled_price import SETTLED_SOURCE, settled_price_values  # #9220
-    from sqlalchemy import case, func, or_, update as sa_update
+    from sqlalchemy import case, func, or_, select, update as sa_update
 
     if not priced:
         return 0
@@ -1804,17 +1808,40 @@ async def _write_prices(
             # #10090. Empty unless the 30-second poll is writing: then a row a
             # newer writer already touched is left to it.
             newer_writer_guard: list = []
+            fresher: list = []
             if poll is not None:
                 if not poll.admit(
                     outcome_id, side_prob, side.get("yes_bid"), side.get("yes_ask"), stats
                 ):
                     continue
-                newer_writer_guard.append(
+                fresher.append(
                     or_(
                         FuturesOutcome.last_updated.is_(None),
                         FuturesOutcome.last_updated < poll.fetched_at,
                     )
                 )
+                # A socket's #9934 withdrawal nulls the price and moves
+                # `price_changed_at` but leaves `last_updated` alone on purpose,
+                # so the guard above cannot see it; this one does.
+                fresher.append(
+                    or_(
+                        FuturesOutcome.price_changed_at.is_(None),
+                        FuturesOutcome.price_changed_at < poll.fetched_at,
+                    )
+                )
+                # FOR NO KEY UPDATE SKIP LOCKED: a row another transaction holds
+                # is being written by a newer writer, so the poll leaves it to
+                # the next pass instead of waiting on it while holding this
+                # market's earlier legs. Aliased, or the subquery correlates away.
+                held = FuturesOutcome.__table__.alias("poll_lockable")
+                newer_writer_guard = [
+                    *fresher,
+                    FuturesOutcome.id.in_(
+                        select(held.c.id)
+                        .where(held.c.id == outcome_id)
+                        .with_for_update(skip_locked=True, key_share=True)
+                    ),
+                ]
             american = probability_to_american(side_prob)
             updated = await session.execute(
                 sa_update(FuturesOutcome)
@@ -1889,7 +1916,18 @@ async def _write_prices(
             )
             if poll is not None:
                 if not updated.rowcount:
-                    stats["legs_newer_writer"] = stats.get("legs_newer_writer", 0) + 1
+                    # Only on the miss: a plain read never waits on a lock, and
+                    # a row whose committed values still pass the guard was
+                    # skipped because another transaction holds it.
+                    passed = (
+                        await session.execute(
+                            select(*fresher).where(
+                                FuturesOutcome.id == outcome_id
+                            )
+                        )
+                    ).first()
+                    key = "legs_held" if passed and all(passed) else "legs_newer_writer"
+                    stats[key] = stats.get(key, 0) + 1
                     continue
                 poll.rows_updated += 1
                 if not poll.history(outcome_id, side_prob, stats):

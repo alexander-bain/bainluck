@@ -50,9 +50,13 @@ so an event entering the 6 h window is not subscribed the instant the predicate
 says so. The poll therefore keeps an event for a band of that interval plus
 ``HANDOFF_SLACK_S`` inside the window (:func:`_handoff_band_sql`): overlap, never
 a gap. Overlap is safe because every poll write carries ``last_updated <
-fetched_at`` — ``fetched_at`` is the database clock just before the venue read
-was sent — so a socket write that landed after the read always wins, and the
-poll writes no snapshot for a row it did not update. When a socket arm is turned
+fetched_at`` and ``price_changed_at < fetched_at`` — ``fetched_at`` is the
+database clock just before the venue read was sent — so a socket write that
+landed after the read always wins (a #9934 withdrawal moves only
+``price_changed_at``), and the poll writes no snapshot for a row it did not
+update. It never waits on a row a socket holds: the leg UPDATE and the rerank
+take ``FOR NO KEY UPDATE SKIP LOCKED``, a held leg is counted ``legs_held`` and
+left to the next pass. When a socket arm is turned
 off the poll takes its markets at the next population read; the socket keeps
 them until its own recycle, which is overlap again.
 
@@ -673,7 +677,7 @@ async def write_market(
 
     from app.models.models import FuturesOddsSnapshot
     from app.tasks.futures_price_refresh import _write_prices
-    from app.utils.futures_rank import rerank_market_field_stmt
+    from app.utils.futures_rank import rerank_market_field_skip_locked_stmt
     from app.utils.odds_math import probability_to_american
 
     before = poll.rows_updated
@@ -681,7 +685,7 @@ async def write_market(
     stats["history_points"] = stats.get("history_points", 0) + points
     if poll.rows_updated > before:
         stats["rows_updated"] = stats.get("rows_updated", 0) + poll.rows_updated - before
-        await session.execute(rerank_market_field_stmt(market_id))
+        await session.execute(rerank_market_field_skip_locked_stmt(market_id))
         stats["markets_moved"] = stats.get("markets_moved", 0) + 1
     for outcome_id, (prob, bid, ask) in poll.trailing():
         await session.execute(

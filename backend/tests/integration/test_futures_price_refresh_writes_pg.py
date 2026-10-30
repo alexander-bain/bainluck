@@ -2211,3 +2211,150 @@ async def test_a_settled_leg_is_never_written(poll_db):
         prob, points = await _vp_row(db, oid)
         assert float(prob) == pytest.approx(0.40) and points == 0
     assert stats["unknown_outcomes"] == 2
+
+
+# ── #10090 lane1 R1/R2 on #11793: the poll never waits on a held row, and never
+#    restores a price a socket withdrew after the poll's read was sent ─────────
+
+
+async def _vp_hold(engine, outcome_id):
+    """An open transaction holding one leg, the way a socket save does."""
+    from sqlalchemy import text
+
+    holder = await engine.connect()
+    await holder.begin()
+    await holder.execute(
+        text("UPDATE futures_outcomes SET current_probability = 0.45 WHERE id = :o"),
+        {"o": outcome_id},
+    )
+    return holder
+
+
+async def _vp_timed(coro):
+    import time
+
+    t0 = time.monotonic()
+    out = await coro
+    return out, time.monotonic() - t0
+
+
+async def test_the_poll_skips_a_held_leg_and_never_holds_its_siblings_waiting(poll_db):
+    import asyncio
+
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.tasks.venue_poll_30s import write_market
+
+    db = poll_db
+    mid, ids = await _vp_market(db, source="kalshi", ext="KXL",
+                                legs=[("KXL-A", False, None), ("KXL-B", False, None)])
+    await db.commit()
+    engine = create_async_engine(DB_URL)
+    holder = await _vp_hold(engine, ids["KXL-B"])
+    third = await engine.connect()
+    # get_task_session's bound: a poll that waits shows as ~2 s and an error.
+    await db.execute(text("SET lock_timeout = '2s'"))
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, ids.values(), fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
+
+    async def third_writer_of_a():
+        await asyncio.sleep(0.5)  # after the poll has written A
+        await third.begin()
+        await third.execute(text("SET LOCAL lock_timeout = '1s'"))
+        out, waited = await _vp_timed(third.execute(
+            text("UPDATE futures_outcomes SET current_probability = 0.50 WHERE id = :o"),
+            {"o": ids["KXL-A"]},
+        ))
+        await third.rollback()
+        return waited
+
+    try:
+        (_, poll_s), third_s = await asyncio.gather(
+            _vp_timed(write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats,
+                                   priced=[_vp_item("KXL-A", 0.55, 0.54, 0.56),
+                                           _vp_item("KXL-B", 0.60, 0.59, 0.61)])),
+            third_writer_of_a(),
+        )
+    finally:
+        await holder.rollback()
+        await holder.close()
+        await third.close()
+        await engine.dispose()
+    assert poll_s < 1.0 and third_s < 0.5
+    assert stats["rows_updated"] == 1 and stats["legs_held"] == 1
+    assert "legs_newer_writer" not in stats
+    assert float((await _vp_row(db, ids["KXL-A"]))[0]) == pytest.approx(0.55)
+    assert float((await _vp_row(db, ids["KXL-B"]))[0]) == pytest.approx(0.40)
+    rank = dict((await db.execute(
+        text("SELECT id, rank FROM futures_outcomes WHERE market_id = :m"), {"m": mid}
+    )).fetchall())
+    # A is re-ranked; the held B keeps its rank for the next pass.
+    assert rank[ids["KXL-A"]] == 1 and rank[ids["KXL-B"]] is None
+
+
+async def test_the_rerank_skips_a_held_leg_the_price_write_never_touched(poll_db):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.tasks.venue_poll_30s import write_market
+
+    db = poll_db
+    mid, ids = await _vp_market(db, source="kalshi", ext="KXR",
+                                legs=[("KXR-A", False, None), ("KXR-B", False, None)])
+    await db.commit()
+    engine = create_async_engine(DB_URL)
+    # B is held and not in this read: only the rerank would reach it.
+    holder = await _vp_hold(engine, ids["KXR-B"])
+    await db.execute(text("SET lock_timeout = '2s'"))
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, [ids["KXR-A"]], fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
+    try:
+        _, poll_s = await _vp_timed(write_market(
+            db, venue="kalshi", market_id=mid, poll=poll, stats=stats,
+            priced=[_vp_item("KXR-A", 0.55, 0.54, 0.56)],
+        ))
+    finally:
+        await holder.rollback()
+        await holder.close()
+        await engine.dispose()
+    assert poll_s < 1.0 and stats["rows_updated"] == 1
+    assert float((await _vp_row(db, ids["KXR-A"]))[0]) == pytest.approx(0.55)
+
+
+async def test_the_poll_never_restores_a_price_the_socket_withdrew_after_its_read(poll_db):
+    import asyncio
+
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.tasks.polymarket_ws import withdraw_book_refuted_prices
+    from app.tasks.venue_poll_30s import write_market
+
+    db = poll_db
+    mid, ids = await _vp_market(db, source="polymarket", ext="9100", legs=[("0xabc", False, None)])
+    oid = ids["0xabc"]
+    await db.execute(text("UPDATE futures_outcomes SET last_updated = now() - interval '1 hour', "
+                          "price_changed_at = now() - interval '1 hour' WHERE id = :o"), {"o": oid})
+    await db.commit()
+    # The poll's read is sent (a tight book at 0.42) ...
+    fetched_at = (await db.execute(text("SELECT clock_timestamp()"))).scalar_one()
+    await db.commit()
+    await asyncio.sleep(0.05)
+    # ... then the socket sees the book go wide and withdraws the held 0.40
+    # (#9934: price NULL, `price_changed_at` moves, `last_updated` does not) ...
+    engine = create_async_engine(DB_URL)
+    async with async_sessionmaker(engine)() as sock:
+        withdrawn = await withdraw_book_refuted_prices(sock, {oid: (0.60, 0.99)})
+        await sock.commit()
+    await engine.dispose()
+    assert [r[0] for r in withdrawn] == [oid]
+    await db.commit()
+    # ... then the poll's write of its earlier read lands, and yields.
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, [oid], fetched_at=fetched_at)
+    await write_market(db, venue="polymarket", market_id=mid, poll=poll, stats=stats,
+                       priced=[_vp_item("0xabc", 0.42, 0.41, 0.43)])
+    prob, points = await _vp_row(db, oid)
+    assert prob is None and points == 0
+    assert stats["legs_newer_writer"] == 1 and "legs_held" not in stats
