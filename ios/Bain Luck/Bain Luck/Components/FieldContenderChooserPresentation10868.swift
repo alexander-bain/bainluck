@@ -5638,10 +5638,12 @@ nonisolated enum FieldHeadlineGeometry10868 {
     }
 
     /// The one square frame every key is drawn in, whatever its shape, so the
-    /// names beside them line up; none for a diameter that cannot be drawn.
+    /// names beside them line up; none for a diameter that cannot be drawn,
+    /// including one whose frame would overflow.
     static func keyFrameSide(diameter: CGFloat) -> CGFloat? {
         guard diameter.isFinite, diameter > 0 else { return nil }
-        return diameter * (FieldHeadlineKeyShape10868.allCases.map(keyExtent).max() ?? 1)
+        let side = diameter * (FieldHeadlineKeyShape10868.allCases.map(keyExtent).max() ?? 1)
+        return side.isFinite ? side : nil
     }
 
     /// The one drawing plan the key Canvas uses: the owner's shape centred in
@@ -5662,10 +5664,12 @@ nonisolated enum FieldHeadlineGeometry10868 {
         let bounds = CGRect(x: (size.width - extent) / 2, y: (size.height - extent) / 2, width: extent, height: extent)
         var outline: CGRect?
         if hollow {
+            // A line as wide as half the shape can leave no inside: refuse it before any inset arithmetic.
+            guard lineWidth < extent / 2 else { return nil }
             // A diamond's edges run at 45°, so its corners move √2 times as far as the line's half-width.
             let inset = shape == .diamond ? lineWidth / 2 * 2.squareRoot() : lineWidth / 2
             let inner = bounds.insetBy(dx: inset, dy: inset)
-            guard inner.width > lineWidth else { return nil }
+            guard inner.width > lineWidth, [inner.minX, inner.minY, inner.width, inner.height].allSatisfy(\.isFinite) else { return nil }
             outline = inner
         }
         return FieldHeadlineKeyPlan10868(shape: shape, hollow: hollow, bounds: bounds, outline: outline, lineWidth: lineWidth)

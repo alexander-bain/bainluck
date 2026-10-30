@@ -6426,7 +6426,7 @@ final class FieldPhaseHeadline10868Tests: XCTestCase {
     func testTheKeyPlanDrawsNothingForAnUndrawableDiameterLineOrFrame() {
         let frame = CGSize(width: 12, height: 12)
         for shape in FieldHeadlineKeyShape10868.allCases {
-            for bad: CGFloat in [0, -10, .nan, .infinity, -.infinity] {
+            for bad: CGFloat in [0, -10, .nan, .infinity, -.infinity, .greatestFiniteMagnitude] {
                 XCTAssertNil(FieldHeadlineGeometry10868.keyFrameSide(diameter: bad), "\(bad)")
                 XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: false, in: frame, diameter: bad, lineWidth: 2), "\(shape) \(bad)")
                 XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: true, in: frame, diameter: 10, lineWidth: bad), "\(shape) \(bad)")
@@ -6436,6 +6436,10 @@ final class FieldPhaseHeadline10868Tests: XCTestCase {
             for size in [CGSize(width: 11.9, height: 12), CGSize(width: 12, height: 11.9), .zero,
                          CGSize(width: CGFloat.nan, height: 12), CGSize(width: 12, height: CGFloat.infinity)] {
                 XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: false, in: size, diameter: 10, lineWidth: 2), "\(shape) \(size)")
+            }
+            // A finite line too wide to inset — up to the largest finite value — leaves no hollow plan, never a non-finite one.
+            for wide: CGFloat in [.greatestFiniteMagnitude, .greatestFiniteMagnitude / 2, 1e300] {
+                XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: true, in: frame, diameter: 10, lineWidth: wide), "\(shape) \(wide)")
             }
             // A line too wide to leave a hollow key an inside draws none; the same line on a filled key is fine.
             XCTAssertNil(FieldHeadlineGeometry10868.keyPlan(shape, hollow: true, in: frame, diameter: 10, lineWidth: 5), "\(shape)")
