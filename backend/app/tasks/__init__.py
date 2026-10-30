@@ -725,6 +725,9 @@ celery_app.conf.task_routes = {
     "app.tasks.poll_sport_odds": {"queue": "realtime"},
     "app.tasks.sync_espn_live_events": {"queue": "realtime"},
     "app.tasks.poll_live_prediction_markets": {"queue": "realtime"},
+    # #10090 — the 30-second venue price poll. Dark by default
+    # (`VENUE_POLL_30S_ENABLED`): off, a tick returns before Redis or the DB.
+    "app.tasks.poll_venue_prices_30s": {"queue": "realtime"},
     "app.tasks.sync_mlb_win_probability": {"queue": "realtime"},
     "app.tasks.sync_statpal_livescores": {"queue": "realtime"},
     # #2867 / D59. On `realtime` for a correctness reason, not a cost one: the
@@ -2515,6 +2518,32 @@ def poll_live_prediction_markets(self):
         return _tracked_run(
             "prediction_market_live", _poll_live_prediction_market_prices()
         )
+
+
+@celery_app.task(
+    bind=True,
+    name="app.tasks.poll_venue_prices_30s",
+    soft_time_limit=45,
+    time_limit=55,
+)
+def poll_venue_prices_30s(self):
+    """#10090 — 30-second price poll of shown markets off the venue sockets.
+
+    Off unless ``VENUE_POLL_30S_ENABLED`` names a venue; off, it returns before
+    touching Redis or the database. See :mod:`app.tasks.venue_poll_30s`.
+    """
+    from app.tasks.venue_poll_30s import LEASE_TTL_S, enabled_venues, poll_venue_prices
+    from app.utils.single_flight import single_flight
+
+    venues = enabled_venues()
+    if not venues:
+        return {"status": "disabled", "terminal": "complete"}
+    with single_flight(
+        "app.tasks.poll_venue_prices_30s", ttl_seconds=LEASE_TTL_S
+    ) as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
+        return _tracked_run("venue_poll_30s", poll_venue_prices(venues))
 
 
 @celery_app.task(bind=True, name="app.tasks.backfill_polymarket_win_prob")
@@ -7511,6 +7540,15 @@ celery_app.conf.beat_schedule = {
     "poll-live-prediction-markets": {
         "task": "app.tasks.poll_live_prediction_markets",
         "schedule": 120.0,  # Every 2 minutes — covers live + upcoming (3h) games
+    },
+    # #10090 — every shown Kalshi/Polymarket market the sockets do not carry,
+    # every 30 s. Dark unless `VENUE_POLL_30S_ENABLED` names a venue. `expires`
+    # is one period: a tick the queue held longer than that is stale by
+    # definition, and single-flight already declines a lapping one.
+    "poll-venue-prices-30s": {
+        "task": "app.tasks.poll_venue_prices_30s",
+        "schedule": 30.0,
+        "options": {"expires": 30},
     },
     "sync-mlb-win-probability": {
         "task": "app.tasks.sync_mlb_win_probability",

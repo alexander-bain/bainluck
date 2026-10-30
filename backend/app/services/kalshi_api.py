@@ -1469,6 +1469,7 @@ class KalshiAPIService(BaseAPIClient):
         min_settled_ts: Optional[int] = None,
         max_settled_ts: Optional[int] = None,
         mve_filter: Optional[str] = None,
+        tickers: Optional[list[str]] = None,
     ) -> tuple[list[dict], Optional[str]]:
         """
         Get markets from Kalshi.
@@ -1494,6 +1495,10 @@ class KalshiAPIService(BaseAPIClient):
                 params it always sent.
             mve_filter: ``"exclude"`` drops multivariate combo markets, which
                 we never ingest and which dominate the settled volume.
+            tickers: Named market tickers, sent as the venue's comma-separated
+                ``tickers`` filter (#10090 30-second poll): many markets in one
+                read. A ticker the venue does not return is absent from the
+                list, never an error; callers key by ``ticker``.
 
         Returns:
             Tuple of (RAW markets list, next cursor or None). 🔴 The dicts are
@@ -1517,6 +1522,8 @@ class KalshiAPIService(BaseAPIClient):
             params["max_settled_ts"] = int(max_settled_ts)
         if mve_filter:
             params["mve_filter"] = mve_filter
+        if tickers:
+            params["tickers"] = ",".join(tickers)
         if cursor:
             params["cursor"] = cursor
 

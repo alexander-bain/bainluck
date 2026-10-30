@@ -1497,8 +1497,24 @@ async def _write_prices(
     bookmaker: str,
     priced: list[dict],
     stats: dict,
+    *,
+    poll=None,
 ) -> int:
     """Write price columns + one snapshot per outcome. Returns snapshots written.
+
+    ``poll`` (#10090, the 30-second venue poll) is
+    :class:`app.tasks.venue_poll_30s.PollWrite` or ``None``. ``None`` is this
+    function exactly as it was. Given, three things change for each leg that
+    survives every refusal below, and nothing else does:
+
+    * ``poll.admit`` may decline the leg first: a leg a venue socket prices, or
+      one whose stored price and book equal this read (written only if it
+      changed);
+    * the UPDATE also requires ``last_updated`` to be older than
+      ``poll.fetched_at``, so a socket write that landed after the venue read
+      was sent wins, and a leg that UPDATE missed writes no snapshot;
+    * the snapshot is written only when ``poll.history`` admits it (the
+      history bound), so a price row can move without a chart point.
 
     ``priced`` items: ``external_id``, ``probability``, ``yes_bid``, ``yes_ask``,
     ``last_price``, and optionally a ``no`` sub-dict of the same shape.
@@ -1785,10 +1801,24 @@ async def _write_prices(
             side_prob = side.get("probability")
             if side_prob is None or not (0 < side_prob < 1):
                 continue
+            # #10090. Empty unless the 30-second poll is writing: then a row a
+            # newer writer already touched is left to it.
+            newer_writer_guard: list = []
+            if poll is not None:
+                if not poll.admit(
+                    outcome_id, side_prob, side.get("yes_bid"), side.get("yes_ask"), stats
+                ):
+                    continue
+                newer_writer_guard.append(
+                    or_(
+                        FuturesOutcome.last_updated.is_(None),
+                        FuturesOutcome.last_updated < poll.fetched_at,
+                    )
+                )
             american = probability_to_american(side_prob)
-            await session.execute(
+            updated = await session.execute(
                 sa_update(FuturesOutcome)
-                .where(FuturesOutcome.id == outcome_id)
+                .where(FuturesOutcome.id == outcome_id, *newer_writer_guard)
                 .values(
                     current_probability=side_prob,
                     current_american_odds=american,
@@ -1857,6 +1887,13 @@ async def _write_prices(
                     **volume_values,
                 )
             )
+            if poll is not None:
+                if not updated.rowcount:
+                    stats["legs_newer_writer"] = stats.get("legs_newer_writer", 0) + 1
+                    continue
+                poll.rows_updated += 1
+                if not poll.history(outcome_id, side_prob, stats):
+                    continue
             await session.execute(
                 pg_insert(FuturesOddsSnapshot).values(
                     outcome_id=outcome_id,

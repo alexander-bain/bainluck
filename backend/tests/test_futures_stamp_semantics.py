@@ -532,6 +532,17 @@ READ_SIDE_CONSUMERS = {
         "load it removed, on exactly the live games it exists to spare. No "
         "wrong number reaches a reader; the cost is lock and write churn."
     ),
+    "app/tasks/venue_poll_30s.py": (
+        "POLLER ALIVE — #10090's 30-second venue poll. Its write (through "
+        "`futures_price_refresh._write_prices`) requires `last_updated < "
+        "fetched_at`, the database clock just before the venue read was sent, "
+        "read as 'no other writer touched this row since our read': a socket "
+        "write that landed during the read wins and the poll writes no chart "
+        "point. Under option 1 a socket quote that REPEATS would not advance "
+        "the stamp, so the poll could rewrite the row with its own read — of "
+        "the same price, since a moved price still stamps. No wrong number; "
+        "the guard only loses its ability to tell a repeat from silence."
+    ),
 }
 
 _GATE = re.compile(r"last_updated\s*(?:<|>=|<=|>)\s*")
