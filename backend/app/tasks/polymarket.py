@@ -5492,6 +5492,9 @@ async def _backfill_polymarket_price_history(
                 "PM price history backfill: %d outcomes across %d events",
                 len(outcomes_to_backfill), len(by_event),
             )
+            # #10090: no transaction spans a network call. The roster is plain
+            # dicts now, so end the read before the first Gamma request.
+            await session.commit()
 
             service = PolymarketAPIService()
             try:
@@ -5565,51 +5568,67 @@ async def _backfill_polymarket_price_history(
                         ]
 
                         if batch_values:
-                            for i in range(0, len(batch_values), 100):
-                                stmt = pg_insert(FuturesOddsSnapshot).values(batch_values[i:i + 100])
-                                await session.execute(stmt.on_conflict_do_nothing())
-                            stats["snapshots_created"] += len(batch_values)
+                            # #10090: this outcome's writes commit before the
+                            # next network call. A run-long transaction kept
+                            # every opening UPDATE's row locked for minutes,
+                            # and in open_sparse those are the rows the live
+                            # socket writes. A failed write rolls back this
+                            # outcome alone; its siblings stand (Hot List #42).
+                            # Stats count only what committed.
+                            try:
+                                for i in range(0, len(batch_values), 100):
+                                    stmt = pg_insert(FuturesOddsSnapshot).values(batch_values[i:i + 100])
+                                    await session.execute(stmt.on_conflict_do_nothing())
 
-                            verdict, chosen = choose_history_opening(
-                                [(v["captured_at"], v["probability"]) for v in batch_values],
-                                outcome["resolution_date"],
-                                outcome["settled_at"],
-                            )
+                                verdict, chosen = choose_history_opening(
+                                    [(v["captured_at"], v["probability"]) for v in batch_values],
+                                    outcome["resolution_date"],
+                                    outcome["settled_at"],
+                                )
+                                rowcount = None
+                                if verdict == HISTORY_OPENING_OK:
+                                    # The price and its capture time are one fact
+                                    # and are written together (#7648); an existing
+                                    # opening is never rewritten.
+                                    written = await session.execute(
+                                        text("""
+                                            UPDATE futures_outcomes
+                                            SET opening_probability = :price,
+                                                opening_source = 'clob_history',
+                                                opening_captured_at = :captured_at
+                                            WHERE id = :oid
+                                              AND opening_probability IS NULL
+                                        """),
+                                        {
+                                            "price": chosen[1],
+                                            "captured_at": chosen[0],
+                                            "oid": outcome["outcome_id"],
+                                        },
+                                    )
+                                    rowcount = getattr(written, "rowcount", None)
+                                await session.commit()
+                            except Exception as e:
+                                await session.rollback()
+                                stats["errors"].append(
+                                    f"{outcome['outcome_id']}: write: {str(e)[:80]}"
+                                )
+                                await asyncio.sleep(0.1)
+                                continue
+
+                            stats["snapshots_created"] += len(batch_values)
                             if verdict != HISTORY_OPENING_OK:
                                 stats[_HISTORY_OPENING_REFUSAL_KEY[verdict]] += 1
+                            elif rowcount == 0:
+                                stats["opening_kept_existing"] += 1
+                            elif isinstance(rowcount, int) and rowcount > 0:
+                                stats["opening_written"] += 1
                             else:
-                                # The price and its capture time are one fact
-                                # and are written together (#7648); an existing
-                                # opening is never rewritten.
-                                written = await session.execute(
-                                    text("""
-                                        UPDATE futures_outcomes
-                                        SET opening_probability = :price,
-                                            opening_source = 'clob_history',
-                                            opening_captured_at = :captured_at
-                                        WHERE id = :oid
-                                          AND opening_probability IS NULL
-                                    """),
-                                    {
-                                        "price": chosen[1],
-                                        "captured_at": chosen[0],
-                                        "oid": outcome["outcome_id"],
-                                    },
-                                )
-                                rowcount = getattr(written, "rowcount", None)
-                                if rowcount == 0:
-                                    stats["opening_kept_existing"] += 1
-                                elif isinstance(rowcount, int) and rowcount > 0:
-                                    stats["opening_written"] += 1
-                                else:
-                                    stats["opening_write_unconfirmed"] += 1
+                                stats["opening_write_unconfirmed"] += 1
 
                         stats["outcomes_processed"] += 1
                         await asyncio.sleep(0.1)
 
                     await asyncio.sleep(0.1)
-
-                await session.commit()
             finally:
                 await service.close()
 
