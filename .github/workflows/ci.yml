@@ -2059,6 +2059,7 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_futures_price_refresh_writes_pg.py \
+            tests/integration/test_venue_poll_pm_open_scope_pg_10090.py \
             -v -s -rs 2>&1 | tee /tmp/futures_writer.txt
           if grep -qiE "[0-9]+ skipped" /tmp/futures_writer.txt; then
             echo "::error::futures price writer contract SKIPPED — the gate did not run"

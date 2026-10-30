@@ -1497,8 +1497,33 @@ async def _write_prices(
     bookmaker: str,
     priced: list[dict],
     stats: dict,
+    *,
+    poll=None,
 ) -> int:
-    """Write price columns + one snapshot per outcome. Returns snapshots written.
+    """Write price columns + one snapshot per outcome. Returns snapshots written
+    (rows moved, when ``poll`` is given).
+
+    ``poll`` (#10090, the 30-second venue poll) is
+    :class:`app.tasks.venue_poll_30s.PollWrite` or ``None``. ``None`` is this
+    function exactly as it was. Given, three things change for each leg that
+    survives every refusal below, and nothing else does:
+
+    * ``poll.admit`` may decline the leg first: a leg a venue socket prices, or
+      one whose stored price and book equal this read (written only if it
+      changed);
+    * the UPDATE also requires ``last_updated`` and ``price_changed_at`` to be
+      older than ``poll.fetched_at``, so a socket write (or #9934 withdrawal)
+      that landed after the venue read was sent wins, and a leg that UPDATE
+      missed writes no snapshot (``legs_newer_writer``);
+    * the UPDATE skips a row another transaction holds rather than waiting on
+      it (``legs_held``), so the poll never holds a market's earlier legs while
+      it waits on a later one;
+    * no snapshot is written here: the leg is appended to ``poll.moved`` and
+      counted in the return, and the poll decides the chart point afterwards
+      on its own read of only the moved legs' last points (the history bound).
+      Reading every polled leg's last point before the write measured 3.0 s per
+      1,000 legs on production (2026-10-30, cold), which a 30 s pass over
+      ~68,000 Polymarket legs cannot afford.
 
     ``priced`` items: ``external_id``, ``probability``, ``yes_bid``, ``yes_ask``,
     ``last_price``, and optionally a ``no`` sub-dict of the same shape.
@@ -1574,7 +1599,7 @@ async def _write_prices(
     from app.utils.price_change_stamp import price_changed_at_value
     from app.utils.resolution_authority import OVERWRITABLE_WINNER_SOURCES  # #9220
     from app.utils.settled_price import SETTLED_SOURCE, settled_price_values  # #9220
-    from sqlalchemy import case, func, or_, update as sa_update
+    from sqlalchemy import case, func, or_, select, update as sa_update
 
     if not priced:
         return 0
@@ -1785,10 +1810,47 @@ async def _write_prices(
             side_prob = side.get("probability")
             if side_prob is None or not (0 < side_prob < 1):
                 continue
+            # #10090. Empty unless the 30-second poll is writing: then a row a
+            # newer writer already touched is left to it.
+            newer_writer_guard: list = []
+            fresher: list = []
+            if poll is not None:
+                if not poll.admit(
+                    outcome_id, side_prob, side.get("yes_bid"), side.get("yes_ask"), stats
+                ):
+                    continue
+                fresher.append(
+                    or_(
+                        FuturesOutcome.last_updated.is_(None),
+                        FuturesOutcome.last_updated < poll.fetched_at,
+                    )
+                )
+                # A socket's #9934 withdrawal nulls the price and moves
+                # `price_changed_at` but leaves `last_updated` alone on purpose,
+                # so the guard above cannot see it; this one does.
+                fresher.append(
+                    or_(
+                        FuturesOutcome.price_changed_at.is_(None),
+                        FuturesOutcome.price_changed_at < poll.fetched_at,
+                    )
+                )
+                # FOR NO KEY UPDATE SKIP LOCKED: a row another transaction holds
+                # is being written by a newer writer, so the poll leaves it to
+                # the next pass instead of waiting on it while holding this
+                # market's earlier legs. Aliased, or the subquery correlates away.
+                held = FuturesOutcome.__table__.alias("poll_lockable")
+                newer_writer_guard = [
+                    *fresher,
+                    FuturesOutcome.id.in_(
+                        select(held.c.id)
+                        .where(held.c.id == outcome_id)
+                        .with_for_update(skip_locked=True, key_share=True)
+                    ),
+                ]
             american = probability_to_american(side_prob)
-            await session.execute(
+            updated = await session.execute(
                 sa_update(FuturesOutcome)
-                .where(FuturesOutcome.id == outcome_id)
+                .where(FuturesOutcome.id == outcome_id, *newer_writer_guard)
                 .values(
                     current_probability=side_prob,
                     current_american_odds=american,
@@ -1857,6 +1919,24 @@ async def _write_prices(
                     **volume_values,
                 )
             )
+            if poll is not None:
+                if not updated.rowcount:
+                    # Only on the miss: a plain read never waits on a lock, and
+                    # a row whose committed values still pass the guard was
+                    # skipped because another transaction holds it.
+                    passed = (
+                        await session.execute(
+                            select(*fresher).where(
+                                FuturesOutcome.id == outcome_id
+                            )
+                        )
+                    ).first()
+                    key = "legs_held" if passed and all(passed) else "legs_newer_writer"
+                    stats[key] = stats.get(key, 0) + 1
+                    continue
+                poll.moved.append((outcome_id, side))
+                written += 1
+                continue
             await session.execute(
                 pg_insert(FuturesOddsSnapshot).values(
                     outcome_id=outcome_id,

@@ -476,10 +476,16 @@ class TestEverySiteBindsTheNewParameters:
             "app/routes/admin_source_health.py": DEFINES,
             "tests/integration/test_futures_price_refresh_writes_pg.py": EXECUTES,
             "tests/integration/test_kalshi_delisted_leg_retirement_pg.py": EXECUTES,
+            # #10090 — the 30-second venue poll's population SQL interpolates
+            # `HIGH_VALUE_SQL` and runs it every population read.
+            "app/tasks/venue_poll_30s.py": EXECUTES,
             # Counts interpolation tokens in a source scan; never runs them.
             "tests/test_futures_price_refresh.py": MENTIONS,
             # Reads the strings to assert their shape; never runs them.
             "tests/test_posted_book_no_measured_volume_5781.py": MENTIONS,
+            # #10090 — renders G2's pool text from `HIGH_VALUE_SQL` to compare
+            # the poll's population SQL byte for byte; never runs it.
+            "tests/test_venue_poll_pm_open_scope_10090.py": MENTIONS,
             # #5896. Names `_CANDIDATE_SQL` in its module docstring — the
             # six-hour anti-join is the REASON that ship exists, so the prose
             # has to name it — and imports the two withdrawal statements,
@@ -524,7 +530,7 @@ class TestEverySiteBindsTheNewParameters:
             "reach one — drop them, a stale entry hides a deletion"
         )
         executors = [r for r, k in classified.items() if k == EXECUTES]
-        assert len(executors) == 2
+        assert len(executors) == 3
         for rel in executors:
             assert "pool_bind_params()" in (root / rel).read_text(encoding="utf-8"), (
                 f"{rel} executes a pool statement without taking the bind set whole"

@@ -481,6 +481,10 @@ class TestBeatScheduleCompleteness:
         "assemble-containers-hourly",
         # #9935 C1 — the theme collections assemble hourly, flag-gated.
         "assemble-theme-collections-hourly",
+        # #10090 — the 30-second venue price poll, dark by default. Gotcha
+        # #12: this allowlist is the reason a new beat entry cannot land
+        # silently.
+        "poll-venue-prices-30s",
     }
 
     def test_no_missing_entries(self):

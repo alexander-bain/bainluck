@@ -1914,3 +1914,619 @@ class TestTheLabelArmReachesTheBoardTheValueArmsCannot9543:
 
         again = {m["id"] for m in await fpr._scan_threshold_label_candidates(db)}
         assert ids["pokemon"] not in again and ids["cowage"] not in again
+
+
+# ══ #10090: the 30-second venue poll's population and write ═══════════════════
+#
+# Folded here from its own file (lane1 R1 on PR #11789): this file's
+# search-recall step already runs under the all-skipped detector, and ci.yml has
+# no room for another step. Two contracts no mock can observe:
+#
+# * WHO is polled — the population SQL renders the sockets' own predicates
+#   (`kalshi_ws._kalshi_slate_event_window`, `polymarket_ws._slate_event_window`,
+#   `kalshi_open_contract_stmt`) and the hand-off band, so only a real planner
+#   running the real text says which rows it admits.
+# * WHAT is written — `_write_prices` with a `PollWrite`: a changed leg moves and
+#   gains a point, an unchanged one writes nothing, a row a newer writer touched
+#   is left alone with no point, a move inside the history interval moves the row
+#   and gains its point on a later pass, and a settled leg is never written.
+
+
+@pytest.fixture
+async def poll_db():
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    import app.models.models  # noqa: F401
+    from app.services.database import Base
+
+    # Only the tables this gate touches, with their foreign-key closure: the
+    # whole schema carries indexes a local PG14 cannot build, and nothing here
+    # reads them.
+    wanted = {"sports", "events", "futures_markets", "futures_outcomes", "futures_odds_snapshots"}
+    tables, frontier = set(), set(wanted)
+    while frontier:
+        name = frontier.pop()
+        tables.add(name)
+        for fk in Base.metadata.tables[name].foreign_keys:
+            if fk.column.table.name not in tables:
+                frontier.add(fk.column.table.name)
+    subset = [t for t in Base.metadata.sorted_tables if t.name in tables]
+
+    engine = create_async_engine(DB_URL)
+    async with engine.begin() as conn:
+        # Drop the WHOLE schema first: the full-schema `db` fixture above leaves
+        # tables that reference this subset, and a subset drop would refuse.
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=subset))
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as session:
+        yield session
+    await engine.dispose()
+
+
+def _vp_now():
+    """Read at each use: a module-level anchor is stale by however long the run
+    has taken, and the hand-off band is only 660 s wide (a 12-minute run put
+    the 5 h 55 m event outside it)."""
+    return datetime.now(timezone.utc)
+
+
+async def _vp_event(session, *, status="scheduled", starts_in=timedelta(days=2)):
+    from sqlalchemy import text
+
+    from app.models.models import Event, Sport
+
+    sport = (
+        await session.execute(text("SELECT id FROM sports WHERE key = 'nfl_test'"))
+    ).scalar()
+    if sport is None:
+        row = Sport(key="nfl_test", name="NFL", group="American Football")
+        session.add(row)
+        await session.flush()
+        sport = row.id
+    event = Event(
+        sport_id=sport,
+        home_team_name="Home",
+        away_team_name="Away",
+        commence_time=_vp_now() + starts_in,
+        status=status,
+    )
+    session.add(event)
+    await session.flush()
+    return event.id
+
+
+async def _vp_market(
+    session,
+    *,
+    source,
+    ext,
+    legs,
+    event_id=None,
+    tier=1,
+    metadata=None,
+    status="open",
+):
+    """``legs``: [(external_id, is_winner, resolution_source)]."""
+    from sqlalchemy import text
+
+    from app.models.models import FuturesMarket, FuturesOutcome
+
+    market = FuturesMarket(
+        source=source,
+        external_id=ext,
+        name=f"{ext} market",
+        category="futures",
+        market_tier=tier,
+        status=status,
+        event_id=event_id,
+        resolution_date=_vp_now() + timedelta(days=30),
+        market_metadata=metadata or {},
+    )
+    session.add(market)
+    await session.flush()
+    ids = {}
+    for leg_ext, is_winner, source_of_grade in legs:
+        outcome = FuturesOutcome(
+            market_id=market.id,
+            external_id=leg_ext,
+            name=leg_ext,
+            is_winner=is_winner,
+            resolution_source=source_of_grade,
+            current_probability=0.40,
+            current_yes_bid=0.39,
+            current_yes_ask=0.41,
+        )
+        session.add(outcome)
+        await session.flush()
+        if is_winner is None:
+            # The column's server default is FALSE, so the ORM's None does not
+            # reach the row; the open arm's NULL leg is written as a raw
+            # INSERT writes it.
+            await session.execute(
+                text("UPDATE futures_outcomes SET is_winner = NULL WHERE id = :o"),
+                {"o": outcome.id},
+            )
+        ids[leg_ext] = outcome.id
+    return market.id, ids
+
+
+async def _vp_population(session, venue, *, open_arm):
+    from sqlalchemy import text
+
+    from app.tasks import venue_poll_30s as v
+
+    sql = v.kalshi_population_sql(open_arm) if venue == "kalshi" else v.polymarket_population_sql(open_arm)
+    rows = (
+        await session.execute(
+            text(sql),
+            v.population_binds([]),
+        )
+    ).fetchall()
+    return {row[-1] for row in rows}
+
+
+async def test_kalshi_population_is_shown_minus_both_socket_arms(poll_db):
+    db = poll_db
+    await _vp_market(
+        db, source="kalshi", ext="KXFUT-1",
+        legs=[("KXFUT-1-A", False, None), ("KXFUT-1-B", None, None),
+              ("KXFUT-1-C", True, "api_settlement"), ("KXFUT-1-D", False, "api_settlement")],
+    )
+    await _vp_market(db, source="kalshi", ext="KXLOW-1", tier=4, legs=[("KXLOW-1-A", False, None)])
+    in_window = await _vp_event(db, starts_in=timedelta(hours=2))
+    in_band = await _vp_event(db, starts_in=timedelta(hours=5, minutes=55))
+    far = await _vp_event(db, starts_in=timedelta(hours=30))
+    live = await _vp_event(db, status="live", starts_in=timedelta(hours=-1))
+    for eid, tag in ((in_window, "WIN"), (in_band, "BAND"), (far, "FAR"), (live, "LIVE")):
+        await _vp_market(db, source="kalshi", ext=f"KXGAME-{tag}", event_id=eid, tier=5,
+                      legs=[(f"KXGAME-{tag}-H", False, None)])
+    await db.commit()
+
+    polled = await _vp_population(db, "kalshi", open_arm=True)
+    # The open arm streams the NULL leg; settled legs and low-value unlinked
+    # markets are not polled; the game socket keeps its window but not the band.
+    assert polled == {"KXFUT-1-A", "KXGAME-BAND-H", "KXGAME-FAR-H"}
+
+    polled_arm_off = await _vp_population(db, "kalshi", open_arm=False)
+    assert "KXFUT-1-B" in polled_arm_off
+    assert "KXGAME-WIN-H" not in polled_arm_off and "KXGAME-LIVE-H" not in polled_arm_off
+
+
+async def test_polymarket_population_drops_tokened_markets_only_while_the_open_arm_is_on(poll_db):
+    db = poll_db
+    await _vp_market(db, source="polymarket", ext="9001", legs=[("0xaaa", False, None)],
+                  metadata={"polymarket_event_id": "9001"})
+    await _vp_market(db, source="polymarket", ext="9002", legs=[("0xbbb", False, None)],
+                  metadata={"polymarket_event_id": "9002", "clob_token_ids": '["1","2"]'})
+    await _vp_market(db, source="polymarket", ext="9003", status="resolved",
+                  legs=[("0xccc", False, None)], metadata={"polymarket_event_id": "9003"})
+    await db.commit()
+
+    assert await _vp_population(db, "polymarket", open_arm=True) == {"0xaaa"}
+    assert await _vp_population(db, "polymarket", open_arm=False) == {"0xaaa", "0xbbb"}
+
+
+async def _vp_poll(db, outcome_ids, *, fetched_at=None):
+    from app.tasks.venue_poll_30s import PollWrite, load_state
+
+    stored = await load_state(db, list(outcome_ids))
+    return PollWrite(
+        fetched_at=fetched_at or datetime.now(timezone.utc),
+        now=datetime.now(timezone.utc),
+        stored=stored,
+        allowed=frozenset(outcome_ids),
+    )
+
+
+@pytest.fixture
+def vp_deferred(monkeypatch):
+    """The deferred-point set on an in-memory Redis; ``read`` like each pass does."""
+    from app.tasks import venue_poll_30s as v
+    from tests.test_venue_poll_30s_10090 import _FakeRedis
+
+    fake = _FakeRedis()
+    monkeypatch.setattr(v, "_redis", lambda: fake)
+    _VP_PENDING.clear()
+    return fake
+
+
+async def _vp_row(db, outcome_id):
+    from sqlalchemy import text
+
+    return (
+        await db.execute(
+            text("SELECT current_probability, (SELECT count(*) FROM futures_odds_snapshots "
+                 "WHERE outcome_id = :o) FROM futures_outcomes WHERE id = :o"),
+            {"o": outcome_id},
+        )
+    ).one()
+
+
+def _vp_points(ids=None):
+    """What a pass reads of the deferred set before it writes, then saves after."""
+    from app.tasks.venue_poll_30s import DeferredPoints
+
+    points = DeferredPoints.read(ids or _VP_ALL_IDS)
+    _VP_PENDING.append(points)
+    return points
+
+
+#: every outcome id a test may write; the fake set answers only for these
+_VP_ALL_IDS = list(range(1, 2000))
+_VP_PENDING: list = []
+
+
+def _vp_save_points():
+    while _VP_PENDING:
+        _VP_PENDING.pop().save()
+
+
+def _vp_item(ext, prob, bid, ask):
+    return {"external_id": ext, "probability": prob, "yes_bid": bid, "yes_ask": ask,
+            "last_price": prob}
+
+
+async def test_a_changed_leg_moves_and_gains_a_point_an_unchanged_one_writes_nothing(poll_db, vp_deferred):
+    db = poll_db
+    from app.tasks.venue_poll_30s import write_market
+
+    mid, ids = await _vp_market(db, source="kalshi", ext="KXW",
+                             legs=[("KXW-A", False, None), ("KXW-B", False, None)])
+    await db.commit()
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, ids.values(), fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
+    await write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
+                       priced=[_vp_item("KXW-A", 0.55, 0.54, 0.56), _vp_item("KXW-B", 0.40, 0.39, 0.41)])
+    assert float((await _vp_row(db, ids["KXW-A"]))[0]) == pytest.approx(0.55)
+    assert (await _vp_row(db, ids["KXW-A"]))[1] == 1
+    assert (await _vp_row(db, ids["KXW-B"]))[1] == 0
+    assert stats["rows_updated"] == 1 and stats["legs_unchanged"] == 1
+
+
+async def test_a_row_a_newer_writer_touched_is_left_alone_with_no_point(poll_db, vp_deferred):
+    db = poll_db
+    from app.tasks.venue_poll_30s import write_market
+
+    mid, ids = await _vp_market(db, source="kalshi", ext="KXN", legs=[("KXN-A", False, None)])
+    await db.commit()
+    stats = {"unknown_outcomes": 0}
+    # The venue read was sent an hour ago; the row was written since.
+    poll = await _vp_poll(db, ids.values(), fetched_at=datetime.now(timezone.utc) - timedelta(hours=1))
+    await write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
+                       priced=[_vp_item("KXN-A", 0.70, 0.69, 0.71)])
+    prob, points = await _vp_row(db, ids["KXN-A"])
+    assert float(prob) == pytest.approx(0.40) and points == 0
+    assert stats["legs_newer_writer"] == 1
+
+
+async def test_a_move_inside_the_interval_moves_the_row_and_gains_its_point_later(poll_db, vp_deferred):
+    db = poll_db
+    from app.models.models import FuturesOddsSnapshot
+    from app.tasks.venue_poll_30s import HISTORY_MIN_INTERVAL_S, write_market
+
+    mid, ids = await _vp_market(db, source="kalshi", ext="KXH", legs=[("KXH-A", False, None)])
+    oid = ids["KXH-A"]
+    db.add(FuturesOddsSnapshot(
+        outcome_id=oid, bookmaker="kalshi", probability=0.40,
+        captured_at=datetime.now(timezone.utc) - timedelta(seconds=10),
+    ))
+    await db.commit()
+    future = datetime.now(timezone.utc) + timedelta(seconds=5)
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, [oid], fetched_at=future)
+    await write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
+                       priced=[_vp_item("KXH-A", 0.41, 0.40, 0.42)])
+    prob, points = await _vp_row(db, oid)
+    assert float(prob) == pytest.approx(0.41) and points == 1  # row moved, no new point
+    assert stats["history_deferred"] == 1
+    _vp_save_points()
+
+    # The next pass after the interval reads the same price: a trailing point.
+    later = await _vp_poll(db, [oid], fetched_at=future + timedelta(seconds=5))
+    later.now = later.now + timedelta(seconds=HISTORY_MIN_INTERVAL_S + 1)
+    await write_market(db, venue="kalshi", market_id=mid, poll=later, stats=stats, deferred=_vp_points(),
+                       priced=[_vp_item("KXH-A", 0.41, 0.40, 0.42)])
+    assert (await _vp_row(db, oid))[1] == 2
+    assert stats["history_trailing_points"] == 1
+
+
+async def test_a_settled_leg_is_never_written(poll_db, vp_deferred):
+    db = poll_db
+    from app.tasks.venue_poll_30s import write_market
+
+    mid, ids = await _vp_market(db, source="kalshi", ext="KXS",
+                             legs=[("KXS-A", True, "api_settlement"), ("KXS-B", False, "api_settlement")])
+    await db.commit()
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, ids.values(), fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
+    await write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
+                       priced=[_vp_item("KXS-A", 0.55, 0.54, 0.56), _vp_item("KXS-B", 0.55, 0.54, 0.56)])
+    for oid in ids.values():
+        prob, points = await _vp_row(db, oid)
+        assert float(prob) == pytest.approx(0.40) and points == 0
+    assert stats["unknown_outcomes"] == 2
+
+
+# ── #10090 lane1 R1/R2 on #11793: the poll never waits on a held row, and never
+#    restores a price a socket withdrew after the poll's read was sent ─────────
+
+
+async def _vp_hold(engine, outcome_id):
+    """An open transaction holding one leg, the way a socket save does."""
+    from sqlalchemy import text
+
+    holder = await engine.connect()
+    await holder.begin()
+    await holder.execute(
+        text("UPDATE futures_outcomes SET current_probability = 0.45 WHERE id = :o"),
+        {"o": outcome_id},
+    )
+    return holder
+
+
+async def _vp_timed(coro):
+    import time
+
+    t0 = time.monotonic()
+    out = await coro
+    return out, time.monotonic() - t0
+
+
+async def test_the_poll_skips_a_held_leg_and_never_holds_its_siblings_waiting(poll_db, vp_deferred):
+    import asyncio
+
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.tasks.venue_poll_30s import write_market
+
+    db = poll_db
+    mid, ids = await _vp_market(db, source="kalshi", ext="KXL",
+                                legs=[("KXL-A", False, None), ("KXL-B", False, None)])
+    await db.commit()
+    engine = create_async_engine(DB_URL)
+    holder = await _vp_hold(engine, ids["KXL-B"])
+    third = await engine.connect()
+    # get_task_session's bound: a poll that waits shows as ~2 s and an error.
+    await db.execute(text("SET lock_timeout = '2s'"))
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, ids.values(), fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
+
+    async def third_writer_of_a():
+        await asyncio.sleep(0.5)  # after the poll has written A
+        await third.begin()
+        await third.execute(text("SET LOCAL lock_timeout = '1s'"))
+        out, waited = await _vp_timed(third.execute(
+            text("UPDATE futures_outcomes SET current_probability = 0.50 WHERE id = :o"),
+            {"o": ids["KXL-A"]},
+        ))
+        await third.rollback()
+        return waited
+
+    try:
+        (_, poll_s), third_s = await asyncio.gather(
+            _vp_timed(write_market(db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
+                                   priced=[_vp_item("KXL-A", 0.55, 0.54, 0.56),
+                                           _vp_item("KXL-B", 0.60, 0.59, 0.61)])),
+            third_writer_of_a(),
+        )
+    finally:
+        await holder.rollback()
+        await holder.close()
+        await third.close()
+        await engine.dispose()
+    assert poll_s < 1.0 and third_s < 0.5
+    assert stats["rows_updated"] == 1 and stats["legs_held"] == 1
+    assert "legs_newer_writer" not in stats
+    assert float((await _vp_row(db, ids["KXL-A"]))[0]) == pytest.approx(0.55)
+    assert float((await _vp_row(db, ids["KXL-B"]))[0]) == pytest.approx(0.40)
+    rank = dict((await db.execute(
+        text("SELECT id, rank FROM futures_outcomes WHERE market_id = :m"), {"m": mid}
+    )).fetchall())
+    # A is re-ranked; the held B keeps its rank for the next pass.
+    assert rank[ids["KXL-A"]] == 1 and rank[ids["KXL-B"]] is None
+
+
+async def test_the_rerank_skips_a_held_leg_the_price_write_never_touched(poll_db, vp_deferred):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.tasks.venue_poll_30s import write_market
+
+    db = poll_db
+    mid, ids = await _vp_market(db, source="kalshi", ext="KXR",
+                                legs=[("KXR-A", False, None), ("KXR-B", False, None)])
+    await db.commit()
+    engine = create_async_engine(DB_URL)
+    # B is held and not in this read: only the rerank would reach it.
+    holder = await _vp_hold(engine, ids["KXR-B"])
+    await db.execute(text("SET lock_timeout = '2s'"))
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, [ids["KXR-A"]], fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
+    try:
+        _, poll_s = await _vp_timed(write_market(
+            db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
+            priced=[_vp_item("KXR-A", 0.55, 0.54, 0.56)],
+        ))
+    finally:
+        await holder.rollback()
+        await holder.close()
+        await engine.dispose()
+    assert poll_s < 1.0 and stats["rows_updated"] == 1
+    assert float((await _vp_row(db, ids["KXR-A"]))[0]) == pytest.approx(0.55)
+
+
+async def test_the_poll_never_restores_a_price_the_socket_withdrew_after_its_read(poll_db, vp_deferred):
+    import asyncio
+
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.tasks.polymarket_ws import withdraw_book_refuted_prices
+    from app.tasks.venue_poll_30s import write_market
+
+    db = poll_db
+    mid, ids = await _vp_market(db, source="polymarket", ext="9100", legs=[("0xabc", False, None)])
+    oid = ids["0xabc"]
+    await db.execute(text("UPDATE futures_outcomes SET last_updated = now() - interval '1 hour', "
+                          "price_changed_at = now() - interval '1 hour' WHERE id = :o"), {"o": oid})
+    await db.commit()
+    # The poll's read is sent (a tight book at 0.42) ...
+    fetched_at = (await db.execute(text("SELECT clock_timestamp()"))).scalar_one()
+    await db.commit()
+    await asyncio.sleep(0.05)
+    # ... then the socket sees the book go wide and withdraws the held 0.40
+    # (#9934: price NULL, `price_changed_at` moves, `last_updated` does not) ...
+    engine = create_async_engine(DB_URL)
+    async with async_sessionmaker(engine)() as sock:
+        withdrawn = await withdraw_book_refuted_prices(sock, {oid: (0.60, 0.99)})
+        await sock.commit()
+    await engine.dispose()
+    assert [r[0] for r in withdrawn] == [oid]
+    await db.commit()
+    # ... then the poll's write of its earlier read lands, and yields.
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, [oid], fetched_at=fetched_at)
+    await write_market(db, venue="polymarket", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
+                       priced=[_vp_item("0xabc", 0.42, 0.41, 0.43)])
+    prob, points = await _vp_row(db, oid)
+    assert prob is None and points == 0
+    assert stats["legs_newer_writer"] == 1 and "legs_held" not in stats
+
+
+# ── #10090 lane1 G1 on #11793: both poll lock sites take FOR NO KEY UPDATE, so a
+#    pending snapshot INSERT (its FK check holds FOR KEY SHARE on the leg) is
+#    neither skipped as `legs_held` nor waited on. FOR UPDATE would be both ─────
+
+
+async def _vp_pending_snapshot(engine, outcome_id):
+    """An open transaction with a snapshot INSERT pending on one leg; returns it
+    and its relation lock modes on futures_outcomes (the FK's KEY SHARE)."""
+    from sqlalchemy import func, insert, text
+
+    from app.models.models import FuturesOddsSnapshot
+
+    holder = await engine.connect()
+    await holder.begin()
+    await holder.execute(insert(FuturesOddsSnapshot).values(
+        outcome_id=outcome_id, bookmaker="kalshi", probability=0.4, captured_at=func.now(), reading_count=1,
+    ))
+    mode = (await holder.execute(text(
+        "SELECT string_agg(l.mode, ',') FROM pg_locks l WHERE l.pid = pg_backend_pid() "
+        "AND l.locktype = 'relation' AND l.relation = 'futures_outcomes'::regclass"
+    ))).scalar_one()
+    return holder, mode
+
+
+async def test_the_poll_writes_a_leg_with_a_pending_snapshot_insert_without_skipping_or_waiting(
+    poll_db, vp_deferred
+):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.tasks.venue_poll_30s import write_market
+
+    db = poll_db
+    mid, ids = await _vp_market(db, source="kalshi", ext="KXK",
+                                legs=[("KXK-A", False, None), ("KXK-B", False, None)])
+    await db.commit()
+    engine = create_async_engine(DB_URL)
+    holder, mode = await _vp_pending_snapshot(engine, ids["KXK-B"])
+    await db.execute(text("SET lock_timeout = '2s'"))
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, ids.values(), fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
+    try:
+        _, poll_s = await _vp_timed(write_market(
+            db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
+            priced=[_vp_item("KXK-A", 0.55, 0.54, 0.56), _vp_item("KXK-B", 0.60, 0.59, 0.61)],
+        ))
+    finally:
+        await holder.rollback()
+        await holder.close()
+        await engine.dispose()
+    assert "RowShareLock" in (mode or "")  # the case is real: the FK check holds KEY SHARE
+    assert poll_s < 1.0
+    assert stats["rows_updated"] == 2
+    assert "legs_held" not in stats and "legs_newer_writer" not in stats
+    assert float((await _vp_row(db, ids["KXK-B"]))[0]) == pytest.approx(0.60)
+
+
+async def test_the_rerank_reaches_a_leg_with_a_pending_snapshot_insert_without_skipping_or_waiting(
+    poll_db, vp_deferred
+):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.tasks.venue_poll_30s import write_market
+
+    db = poll_db
+    mid, ids = await _vp_market(db, source="kalshi", ext="KXQ",
+                                legs=[("KXQ-A", False, None), ("KXQ-B", False, None)])
+    await db.commit()
+    engine = create_async_engine(DB_URL)
+    # B has a snapshot INSERT pending and is not in this read: only the rerank reaches it.
+    holder, mode = await _vp_pending_snapshot(engine, ids["KXQ-B"])
+    await db.execute(text("SET lock_timeout = '2s'"))
+    stats = {"unknown_outcomes": 0}
+    poll = await _vp_poll(db, [ids["KXQ-A"]], fetched_at=datetime.now(timezone.utc) + timedelta(seconds=5))
+    try:
+        _, poll_s = await _vp_timed(write_market(
+            db, venue="kalshi", market_id=mid, poll=poll, stats=stats, deferred=_vp_points(),
+            priced=[_vp_item("KXQ-A", 0.55, 0.54, 0.56)],
+        ))
+    finally:
+        await holder.rollback()
+        await holder.close()
+        await engine.dispose()
+    rank = dict((await db.execute(
+        text("SELECT id, rank FROM futures_outcomes WHERE market_id = :m"), {"m": mid}
+    )).fetchall())
+    assert "RowShareLock" in (mode or "")
+    assert poll_s < 1.0
+    assert rank[ids["KXQ-A"]] == 1 and rank[ids["KXQ-B"]] == 2
+
+
+async def test_clob_items_write_every_leg_convention_then_skip_unchanged_markets(poll_db, vp_deferred):
+    """The CLOB path's items through the first build's writer: a field's bare
+    legs, a ``_yes``/``_no`` pair and a bare + ``_side1`` pair each take the
+    side ``_write_prices`` gives them; a second identical pass writes nothing and
+    skips each market before the writer's own read."""
+    db = poll_db
+    from app.tasks import venue_poll_pm_clob as clob
+    from app.tasks.venue_poll_30s import Unit, _write_group
+
+    field_id, field = await _vp_market(db, source="polymarket", ext="7001",
+                                       legs=[("0xa", False, None), ("0xb", False, None)])
+    pair_id, pair = await _vp_market(db, source="polymarket", ext="7002",
+                                     legs=[("0xd_yes", False, None), ("0xd_no", False, None)])
+    side_id, side = await _vp_market(db, source="polymarket", ext="7003",
+                                     legs=[("0xe", False, None), ("0xe_side1", False, None)])
+    await db.commit()
+    units = [Unit("7001", {field_id: [(field["0xa"], "0xa"), (field["0xb"], "0xb")]}),
+             Unit("7002", {pair_id: [(pair["0xd_yes"], "0xd_yes"), (pair["0xd_no"], "0xd_no")]}),
+             Unit("7003", {side_id: [(side["0xe"], "0xe"), (side["0xe_side1"], "0xe_side1")]})]
+    token_of = {"0xa": "ta", "0xb": "tb", "0xd": "td", "0xe": "te"}
+    tops = {"ta": (0.42, 0.50), "tb": (None, 0.03), "td": (0.60, 0.62), "te": (0.20, 0.24)}
+
+    async def one_pass():
+        stats = {"errors": [], "unknown_outcomes": 0}
+        priced: set = set()
+        found = clob._price_group(units, token_of, tops, priced, stats)
+        await _write_group(db, "polymarket", units, found,
+                           datetime.now(timezone.utc) + timedelta(seconds=5), stats)
+        return stats
+
+    stats = await one_pass()
+    expect = {field["0xa"]: 0.46, field["0xb"]: 0.40,  # 0xb: no bid → untouched
+              pair["0xd_yes"]: 0.61, pair["0xd_no"]: 0.39,
+              side["0xe"]: 0.22, side["0xe_side1"]: 0.78}
+    for oid, prob in expect.items():
+        assert float((await _vp_row(db, oid))[0]) == pytest.approx(prob), oid
+    assert stats["rows_updated"] == 5 and stats["history_points"] == 5
+    assert stats["clob_refused_no_book"] == 1 and stats["errors"] == []
+
+    again = await one_pass()
+    assert again.get("rows_updated", 0) == 0 and again["markets_unchanged"] == 3
+    for oid in expect:
+        assert (await _vp_row(db, oid))[1] == (0 if oid == field["0xb"] else 1)
