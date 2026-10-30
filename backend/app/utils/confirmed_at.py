@@ -464,7 +464,9 @@ class ConfirmedAt:
             state.held_since = state.unknown_since = None
         elif state.pub is None:
             if state.unknown_since is None:
-                state.unknown_since = at
+                # Into unknown: a running hold keeps its start (R7).
+                state.unknown_since = (state.held_since if state.held_since is not None
+                                       else at)
         else:
             state.unknown_since = None
             if self.agrees(state):
@@ -473,6 +475,11 @@ class ConfirmedAt:
                                               or candidate > state.confirmed):
                     state.confirmed = candidate
                     self.stats["advanced"] += 1
+            elif state.pub is None:
+                # `agrees` gave up on the acknowledgement: into unknown, and
+                # a running hold keeps its start (R7).
+                state.unknown_since = (state.held_since if state.held_since is not None
+                                       else at)
             elif state.held_since is None:
                 state.held_since = at
         self._mark(event_id, state)

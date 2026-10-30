@@ -935,6 +935,49 @@ class TestR2ConfirmationWaitsForPublication:
         assert _state(t).pub is None and _c(t) is None
 
 
+class TestR7AHoldKeepsItsStartIntoUnknown:
+    """lane1 R7 (b3ab03fc): awaiting -> unknown must not drop or move the
+    hold's start, or `combine` lets the other venue's later agreements count
+    while this venue's committed, different price is still unpublished."""
+
+    def _h(self, t, clock):
+        return t.report(_state(t), clock.wall)[1]
+
+    def test_a_lost_acknowledgement_keeps_the_holds_start(self, clock):
+        t = _tracker(clock)
+        t0 = int(clock.wall * 1000)
+        _publish(t, o70=0.6, acked=False, rev=9)
+        assert self._h(t, clock) == t0
+        clock.tick(ca.AWAITING_MAX_S + 1)
+        t.note_input(E, HOME, 0.6, clock.wall)  # the input that gives up
+        assert _state(t).pub is None
+        assert self._h(t, clock) == t0
+        clock.tick(1)
+        t.note_input(E, HOME, 0.6, clock.wall)
+        assert self._h(t, clock) == t0
+
+    def test_an_unacknowledged_answer_keeps_the_holds_start(self, clock):
+        t = _tracker(clock)
+        t0 = int(clock.wall * 1000)
+        _publish(t, o70=0.6, acked=False, rev=9)
+        clock.tick(5)
+        t.published((), {(E, 9)})
+        assert _state(t).pub is None
+        assert self._h(t, clock) == t0
+
+    def test_the_other_venues_later_agreement_does_not_count(self, clock):
+        t = _tracker(clock)
+        t0 = int(clock.wall * 1000)
+        _publish(t, o70=0.6, acked=False, rev=9)
+        clock.tick(ca.AWAITING_MAX_S + 1)
+        t.note_input(E, HOME, 0.6, clock.wall)
+        now = int(clock.wall * 1000)
+        c, h = t.report(_state(t), clock.wall)
+        entries = [_entry(c=c, h=h, w=now),          # this venue, unknown
+                   _entry(c=t0 + 30_000, w=now)]     # the other venue agrees
+        assert combine(entries, clock.wall) is None
+
+
 class TestR5TheUnknownHoldFollowsTheLastInput:
     def test_inputs_every_5s_for_60s_keep_the_hold_then_it_lapses_30s_after(self, clock):
         t = _tracker(clock)
