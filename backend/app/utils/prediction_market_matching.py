@@ -2579,6 +2579,8 @@ _KALSHI_TEAM_ABBREVS: dict[str, str] = {
     "nic_soc": "Nice", "len_soc": "Lens", "str_soc": "Strasbourg",
     "nan_soc": "Nantes", "tou_soc": "Toulouse", "mon_soc2": "Montpellier",
     "bre_soc2": "Brest", "rei_soc": "Reims", "leh_soc": "Le Havre",
+    # #11805: Kalshi names Le Havre with HAC in 26OCT30HACPSG.
+    "hac_soc": "Le Havre",
     "ang_soc": "Angers", "aux_soc": "Auxerre", "steti_soc": "Saint-Etienne",
     # ── Soccer — MLS (suffixed with _mls) ──
     "atl_mls": "Atlanta United", "aus_mls": "Austin FC", "cha_mls": "Charlotte FC",
@@ -2706,7 +2708,7 @@ _SOC_ABBREV_LEAGUE_OWNER: dict[str, str] = {
     # Ligue 1
     **{a: "soccer_france_ligue_one" for a in (
         "psg", "asm", "olm", "ol", "lil", "ren", "nic", "len", "str", "nan",
-        "tou", "rei", "leh", "ang", "aux", "steti",
+        "tou", "rei", "leh", "hac", "ang", "aux", "steti",
     )},
     # Champions League — the block's own heading. `par` is the only key it adds
     # that no domestic block already holds, and it is exactly the one that was
