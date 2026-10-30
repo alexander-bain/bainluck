@@ -12,14 +12,23 @@ import SwiftUI
 /// which story is held, which player and milestone each story is on, the held
 /// original and the disclosures. It builds the page input from the values the
 /// page already holds (passed in — it reads no view model, opens no network,
-/// subscribes to nothing, runs no timer and ranks nothing) and rebuilds it only
-/// when those values change, never on every body pass.
+/// subscribes to nothing, runs no timer and ranks nothing).
 ///
-/// Proposed mount (NOT applied — `EventDetailView` is Native's):
+/// The input is recomputed from those values on every body pass. No owner
+/// supplies a revision that covers every value the adapters read (served
+/// odds, opening/prematch readings, ESPN state, box values, history rows,
+/// markets), and a partial memo would hold a changed score or chance on
+/// screen, so none is kept here; any cache needs that complete owner
+/// revision first (performance work, routed).
+///
+/// Proposed mount (NOT applied — `EventDetailView` is Native's). The switch
+/// below does NOT exist: `ReleaseSurfaces` (Utilities/ReleaseSurfaces.swift)
+/// is the project's per-surface gate, and adding `hockeyJourneyPageEnabled`
+/// to it is Native's call.
 /// ```swift
 /// if ReleaseSurfaces.hockeyJourneyPageEnabled, HockeyJourneyEventPageHost10868.applies(event) {
 ///     HockeyJourneyEventPageHost10868(
-///         event: vm.headline(event), history: vm.history, historyRevision: vm.historyGeneration,
+///         event: vm.headline(event), history: vm.history,
 ///         markets: vm.gameMarkets, boxScore: vm.relatedFutures?.boxScore,
 ///         probabilityObservedAt: vm.displayedProbabilityObservedAt(event),
 ///         deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
@@ -29,17 +38,19 @@ import SwiftUI
 ///         onInteraction: { /* the page's existing reader hold */ })
 /// }
 /// ```
-/// Backout is the same switch off (`ReleaseSurfaces`, the project's existing
-/// per-surface gate); no data or route is touched by either state.
+/// Backout is that switch off; no data or route is touched by either state.
 ///
 /// Until the first history payload arrives the slot shows the page's own
 /// loading mark. The history owner has no words for a history that failed to
 /// load, so none are invented here (routed, #10868 gap).
+///
+/// History controls: only Full chart opens anything (the full-size history
+/// reader). The history adapter offers Details and Inspect as unavailable
+/// until their owner contracts exist, so the shared callback never enables a
+/// control that does nothing.
 struct HockeyJourneyEventPageHost10868: View {
     let event: EventDetail
     let history: EventHistoryResponse?
-    /// `vm.historyGeneration`: one step per adopted history payload.
-    var historyRevision: Int = 0
     let markets: GameMarketsResponse?
     let boxScore: [String: [String: Double]]?
     let probabilityObservedAt: Date?
@@ -70,46 +81,23 @@ struct HockeyJourneyEventPageHost10868: View {
         }
     }
 
-    /// Everything a rebuild depends on: the event's served state, the history
-    /// revision, the markets and box score by value, the reader's minute and
-    /// the screen's own reading state.
-    struct BuildKey: Equatable {
-        let eventID: Int
-        let status: String?
-        let commenceTime: String?
-        let homeScore: Int?
-        let awayScore: Int?
-        let scoreObservedAt: String?
-        let period: String?
-        let gameClock: String?
-        let heroHome: Double?
-        let heroAway: Double?
-        let heroObservedAt: String?
-        let probabilityObservedAt: Date?
-        let interrupted: Bool
-        let ladderHome: Double?
-        let ladderAway: Double?
-        let hasHistory: Bool
-        let historyRevision: Int
-        let markets: GameMarketsResponse?
-        let boxScore: [String: [String: Double]]?
-        let minute: Int
-        let wide: Bool
-        let pointsPlayer: String?
-        let pointsMilestone: String?
-        let assistsPlayer: String?
-        let assistsMilestone: String?
-        let story: HockeyJourneyPageCard10868?
-        let readerOpen: Bool
-        let selection: OriginalMarketDetails9483.Selection?
-    }
-
     struct Built {
         let input: HockeyJourneyPageInput10868
         let originals: HockeyJourneyPageOriginals10868
     }
 
-    @State private var built: Built?
+    /// The screen's own reading state, as the builders take it.
+    struct Reading: Equatable {
+        var story: HockeyJourneyPageCard10868? = nil
+        var pointsPlayer: String? = nil
+        var pointsMilestone: String? = nil
+        var assistsPlayer: String? = nil
+        var assistsMilestone: String? = nil
+        var selection: OriginalMarketDetails9483.Selection? = nil
+        var readerOpen = false
+        var wide = false
+    }
+
     @State private var presented: Presented?
     @State private var story: HockeyJourneyPageCard10868?
     @State private var pointsPlayer: String?
@@ -123,22 +111,8 @@ struct HockeyJourneyEventPageHost10868: View {
     @State private var assistsTiming = false
     @Environment(\.horizontalSizeClass) private var sizeClass
 
-    private var key: BuildKey {
-        BuildKey(eventID: event.id, status: event.status, commenceTime: event.commenceTime,
-                 homeScore: event.homeScore, awayScore: event.awayScore, scoreObservedAt: event.scoreObservedAt,
-                 period: event.espn?.period, gameClock: event.espn?.gameClock,
-                 heroHome: event.heroProbability, heroAway: event.heroProbabilityAway,
-                 heroObservedAt: event.heroProbabilityObservedAt, probabilityObservedAt: probabilityObservedAt,
-                 interrupted: deliveryInterrupted, ladderHome: ladderHome, ladderAway: ladderAway,
-                 hasHistory: history != nil, historyRevision: historyRevision,
-                 markets: markets, boxScore: boxScore,
-                 minute: Int(now.timeIntervalSince1970 / 60), wide: sizeClass == .regular,
-                 pointsPlayer: pointsPlayer, pointsMilestone: pointsMilestone,
-                 assistsPlayer: assistsPlayer, assistsMilestone: assistsMilestone,
-                 story: story, readerOpen: presented != nil, selection: selection)
-    }
-
     var body: some View {
+        let built = make()
         Group {
             if let built {
                 page(built, mode: .page)
@@ -147,11 +121,10 @@ struct HockeyJourneyEventPageHost10868: View {
                     .frame(maxWidth: .infinity, minHeight: 120)
             }
         }
-        .onChange(of: key, initial: true) { _, _ in built = make() }
         .sheet(item: $presented) { shown in
             NavigationStack {
                 ScrollView {
-                    if let built { page(built, mode: shown.mode).padding(.horizontal, 16) }
+                    if let built = make() { page(built, mode: shown.mode).padding(.horizontal, 16) }
                 }
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
@@ -175,7 +148,7 @@ struct HockeyJourneyEventPageHost10868: View {
             onStoryIntent: { intent in handle(intent) },
             onOpenStory: { card in open(.reader(card)) },
             onHistoryAction: { id in
-                if id == "history.expand" { open(.reader(.history)) }
+                if id == HockeyJourneyHistoryAdapter10868.expandActionID { open(.reader(.history)) }
             },
             onHistoryInspectionChoice: nil,
             onHistoryPlotPosition: nil,
@@ -210,12 +183,26 @@ struct HockeyJourneyEventPageHost10868: View {
         }
     }
 
-    /// Nil until the first history payload: the history owner has no
-    /// loading or failed-load state, and the page input requires one.
     private func make() -> Built? {
+        Self.build(event: event, history: history, markets: markets, boxScore: boxScore,
+                   probabilityObservedAt: probabilityObservedAt, deliveryInterrupted: deliveryInterrupted,
+                   ladderHome: ladderHome, ladderAway: ladderAway, now: now,
+                   reading: Reading(story: story, pointsPlayer: pointsPlayer, pointsMilestone: pointsMilestone,
+                                    assistsPlayer: assistsPlayer, assistsMilestone: assistsMilestone,
+                                    selection: selection, readerOpen: presented != nil,
+                                    wide: sizeClass == .regular))
+    }
+
+    /// The page input and originals from the passed values alone — pure, so
+    /// every changed value reaches the screen on the next pass. Nil until the
+    /// first history payload: the history owner has no loading or failed-load
+    /// state, and the page input requires one.
+    static func build(event: EventDetail, history: EventHistoryResponse?, markets: GameMarketsResponse?,
+                      boxScore: [String: [String: Double]]?, probabilityObservedAt: Date?,
+                      deliveryInterrupted: Bool = false, ladderHome: Double? = nil, ladderAway: Double? = nil,
+                      now: Date, reading: Reading = Reading(),
+                      calendar: Calendar = .current, locale: Locale = .current) -> Built? {
         guard let history else { return nil }
-        let calendar = Calendar.current
-        let locale = Locale.current
         let host = HockeyJourneyPageAdapter10868.Host(
             probabilityObservedAt: probabilityObservedAt, deliveryInterrupted: deliveryInterrupted,
             ladderHome: ladderHome, ladderAway: ladderAway, now: now, calendar: calendar, locale: locale)
@@ -226,19 +213,21 @@ struct HockeyJourneyEventPageHost10868: View {
         let people = HockeyJourneyContributionAdapter10868.Host(
             boxScore: boxScore, now: now, calendar: calendar, locale: locale)
         let points = HockeyJourneyContributionAdapter10868.points(
-            event, markets: markets, host: people, selectedPlayerID: pointsPlayer, selectedMilestoneID: pointsMilestone)
+            event, markets: markets, host: people,
+            selectedPlayerID: reading.pointsPlayer, selectedMilestoneID: reading.pointsMilestone)
         let assists = HockeyJourneyContributionAdapter10868.assists(
-            event, markets: markets, host: people, selectedPlayerID: assistsPlayer, selectedMilestoneID: assistsMilestone)
+            event, markets: markets, host: people,
+            selectedPlayerID: reading.assistsPlayer, selectedMilestoneID: reading.assistsMilestone)
         let tints = TeamTextContrast.cardColors(awayHex: event.awayTeamData?.primaryColor,
                                                 homeHex: event.homeTeamData?.primaryColor)
         let originals = HockeyJourneyOriginalsAdapter10868.originals(
             event, markets: markets,
             host: HockeyJourneyOriginalsAdapter10868.Host(now: now, calendar: calendar, locale: locale),
-            tint: tints.home, selection: selection)
+            tint: tints.home, selection: reading.selection)
         let input = HockeyJourneyPageInputAdapter10868.input(
             event, history: historyInput, points: points, assists: assists,
             originalsCount: originals.catalogue?.originals.count,
-            stream: .init(displayed: story, readerOpen: presented != nil, wide: sizeClass == .regular),
+            stream: .init(displayed: reading.story, readerOpen: reading.readerOpen, wide: reading.wide),
             host: host)
         return Built(input: input, originals: originals)
     }
