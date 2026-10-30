@@ -440,10 +440,30 @@ class TestTheTwoSurfacesDateTheBoardFromTheSameSet:
         population. Reading the real source keeps this suite from drifting away
         from the surface it claims to agree with."""
         from app.routes import futures as futures_module
+        from app.utils import futures_outcome_representation as representation
+
+        detail_tree = ast.parse(inspect.getsource(futures_module._format_market_detail))
+        assert any(
+            isinstance(n, ast.Call)
+            and getattr(n.func, "id", None) == "represent_futures_outcomes"
+            for n in ast.walk(detail_tree)
+        )
+        represented = ast.parse(
+            inspect.getsource(representation.represent_futures_outcomes)
+        )
+        delegation = [
+            n
+            for n in ast.walk(represented)
+            if isinstance(n, ast.Call)
+            and getattr(n.func, "id", None) == "local_futures_withheld_ids"
+        ]
+        assert len(delegation) == 1
+        assert ast.unparse(delegation[0].args[1]) == "sorted_outcomes"
 
         calls = [
             node
-            for node in ast.walk(ast.parse(inspect.getsource(futures_module)))
+            for module in (futures_module, representation)
+            for node in ast.walk(ast.parse(inspect.getsource(module)))
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == "stale_observation_keys"
@@ -453,21 +473,21 @@ class TestTheTwoSurfacesDateTheBoardFromTheSameSet:
         # the same withheld-leg question, so the chart could refuse the #23
         # squeeze on the same boards the detail page refuses it on. A second
         # honest caller is not this guard's defect; a NARROWED population is.
-        # The detail's call is the one over `sorted_outcomes`.
+        # #11616 passes sorted_outcomes into the helper as source_outcomes.
         detail = [
             c
             for c in calls
             if c.args
             and isinstance(c.args[0], ast.GeneratorExp)
             and isinstance(c.args[0].generators[0].iter, ast.Name)
-            and c.args[0].generators[0].iter.id == "sorted_outcomes"
+            and c.args[0].generators[0].iter.id == "source_outcomes"
         ]
         assert len(detail) == 1, f"expected one detail call, found {len(detail)}"
 
         (arg,) = detail[0].args
         assert isinstance(arg, ast.GeneratorExp)
         (comp,) = arg.generators
-        assert isinstance(comp.iter, ast.Name) and comp.iter.id == "sorted_outcomes"
+        assert isinstance(comp.iter, ast.Name) and comp.iter.id == "source_outcomes"
         assert comp.ifs == [], "detail narrowed the population it dates the board from"
 
         # Every OTHER caller owes the same promise, so a future surface cannot

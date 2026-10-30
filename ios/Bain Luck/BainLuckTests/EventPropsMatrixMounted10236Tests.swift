@@ -216,7 +216,9 @@ final class EventPropsMatrixMounted10236Tests: XCTestCase {
         let scroll = try XCTUnwrap(pageScroll(in: host.view), "\(name): the page has a scroll view")
         var result: [[String]] = []
         var first: CGImage?
-        var y: CGFloat = 0, index = 0
+        // At rest a page under its navigation bar sits at -adjustedContentInset.top;
+        // offset 0 slides the hero up under the toolbar, which no reader sees.
+        var y: CGFloat = -scroll.adjustedContentInset.top, index = 0
         repeat {
             scroll.setContentOffset(CGPoint(x: 0, y: y), animated: false)
             settle(host, 0.25)
@@ -226,6 +228,22 @@ final class EventPropsMatrixMounted10236Tests: XCTestCase {
             y += scroll.bounds.height * 0.8; index += 1
         } while y < scroll.contentSize.height && index < 30
         return (result, try XCTUnwrap(first))
+    }
+
+    /// The page in a window of the app's foreground-active scene, with its real
+    /// safe area and bars (the MatrixPageReadingAnchor10236Tests host).
+    private func sceneWindow(_ name: String) async throws -> UIWindow {
+        func activeScene() -> UIWindowScene? {
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first { $0.activationState == .foregroundActive }
+        }
+        let deadline = CACurrentMediaTime() + 10
+        while activeScene() == nil && CACurrentMediaTime() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let scene = try XCTUnwrap(activeScene(), "\(name): the mounted page needs a foreground-active window scene")
+        return UIWindow(windowScene: scene)
     }
 
     func testTheActualPageDrawsTheHeroAndTheHitsMatrixAtPhoneAndAccessibilitySizes() async throws {
@@ -247,9 +265,11 @@ final class EventPropsMatrixMounted10236Tests: XCTestCase {
                 .environment(\.scenePhase, .active).environment(\.colorScheme, .light)
             let host = hostForMeasurement(page, at: size)
             host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-            let win = UIWindow(frame: host.view.frame)
-            win.rootViewController = host; win.isHidden = false
-            defer { vm.stopRefresh(); win.isHidden = true }
+            let win = try await sceneWindow(name)
+            let previousKeyWindow = win.windowScene?.windows.first { $0.isKeyWindow }
+            win.frame = host.view.frame
+            win.rootViewController = host; win.makeKeyAndVisible()
+            defer { vm.stopRefresh(); win.isHidden = true; previousKeyWindow?.makeKey() }
             settle(host, 0.6)
             let (all, first) = try frames(host, name)
             // #10796 — the first frame's hero row, read on its own: the away

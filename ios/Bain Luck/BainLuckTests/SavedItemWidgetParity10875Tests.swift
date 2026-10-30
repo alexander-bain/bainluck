@@ -126,6 +126,15 @@ final class SavedItemWidgetParity10875Tests: XCTestCase {
             let widget = try decoder().decode(SavedWidgetMarketDetail10875.self, from: json)
             XCTAssertEqual(SavedWidgetReadingRules10875.renderedPercents(widget.outcomes),
                            futuresDetailRenderedPercents(app.outcomes), "integers differ: \(status)/\(String(describing: lead))")
+            // #11616 R1: a settled board with no supported winner names nobody on
+            // the market page. The widget keeps its own hero rule — a separate
+            // target whose widening needs its own G5 gate (deferral accepted in
+            // lane1b's NATIVE-DELTA-REVIEW-0d239c9d §1 / Root's disposition), so
+            // the hero half is paired on open boards only.
+            guard status == "open" else {
+                XCTAssertNil(futuresDetailHeroOutcome(app), "an ungraded settled board names nobody")
+                continue
+            }
             XCTAssertEqual(SavedWidgetReadingRules10875.heroOutcome(widget)?.id, futuresDetailHeroOutcome(app)?.id,
                            "hero leg differs: \(status)/\(String(describing: lead))")
         }

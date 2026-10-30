@@ -132,7 +132,10 @@ import XCTest
         let result = market([winner, outcome("October 31, 2026", 0.6)])
         XCTAssertNil(result.dateLadderAnswer)
         XCTAssertEqual(result.topOutcomes?.first?.verdict(in: result), .won)
-        XCTAssertEqual(SearchGrouping.leaderOutcome(result)?.name, "October 31, 2026")
+        // #11616: the family now retains that same called leader without a
+        // quote; neither search door replaces a result with the next price.
+        XCTAssertEqual(SearchGrouping.leaderOutcome(result)?.name, "November 30, 2026")
+        XCTAssertEqual(SearchGrouping.leaderOutcome(result)?.verdict(in: result), .won)
     }
 
     func testBothSearchRowsUseTheDateAnswerBeforeTheirExistingFallback() throws {
@@ -142,6 +145,6 @@ import XCTest
         let source = try String(contentsOf: root, encoding: .utf8)
         XCTAssertTrue(source.contains("market.dateLadderAnswer ?? SearchGrouping.leaderOutcome(market)"))
         XCTAssertTrue(source.contains("market.dateLadderAnswer ?? market.topOutcomes?.first"))
-        XCTAssertEqual(source.components(separatedBy: ".verdict(in: market)").count - 1, 2)
+        XCTAssertEqual(source.components(separatedBy: ".rowValue(in: market)").count - 1, 2)
     }
 }

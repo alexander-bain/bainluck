@@ -143,7 +143,7 @@ final class SearchAnswerGradedLeaderReadsAsResult8640Tests: XCTestCase {
     }
 
     func testTheRetractionMatchesWeb() throws {
-        let source = try repoFile("frontend/components/futures/OutcomeRow.tsx")
+        let source = try repoFile("frontend/lib/futuresOutcomeVerdict.ts")
         XCTAssertTrue(
             source.contains("export const RETRACTED_RESOLUTION_SOURCE = \"\(OutcomeVerdict.retractedResolutionSource)\";"),
             "web's retraction constant changed — route to ux"
@@ -157,14 +157,22 @@ final class SearchAnswerGradedLeaderReadsAsResult8640Tests: XCTestCase {
     /// price over a called leg again, and no decode test can see that.
     func testBothLeaderRowsAskTheVerdictBeforeThePrice() throws {
         let view = try repoFile("ios/Bain Luck/Bain Luck/Views/SearchView.swift")
-        XCTAssertEqual(view.components(separatedBy: ".verdict(in: market)").count - 1, 2)
+        XCTAssertEqual(view.components(separatedBy: ".rowValue(in: market)").count - 1, 2)
         for row in ["private func searchFamilyRow(", "private func searchFuturesRow("] {
             let start = try XCTUnwrap(view.range(of: row))
             let next = view.range(of: "private func ", range: start.upperBound..<view.endIndex)?.lowerBound ?? view.endIndex
             let body = view[start.upperBound..<next]
-            let ask = try XCTUnwrap(body.range(of: ".verdict(in: market)"), "\(row) no longer asks the verdict")
-            let price = try XCTUnwrap(body.range(of: "formatProbability("))
-            XCTAssertLessThan(ask.lowerBound, price.lowerBound, "\(row) prints the price before asking")
+            XCTAssertTrue(body.contains("searchFuturesValue("), "\(row) bypasses the shared value renderer")
+            XCTAssertTrue(body.contains(".rowValue(in: market)"), "\(row) bypasses the detail result decision")
+            XCTAssertFalse(body.contains("formatProbability("), "\(row) renders a price outside the result decision")
         }
+        let start = try XCTUnwrap(view.range(of: "private func searchFuturesValue("))
+        let end = try XCTUnwrap(view.range(of: "private func ", range: start.upperBound..<view.endIndex))
+        let body = view[start.upperBound..<end.lowerBound]
+        XCTAssertTrue(body.contains("case .verdict(let verdict):"))
+        XCTAssertTrue(body.contains("searchVerdictText(verdict, font: font)"))
+        XCTAssertTrue(body.contains("case .resultUnknown:"))
+        XCTAssertTrue(body.contains("Text(\"Result unknown\")"))
+        XCTAssertTrue(body.contains("case .price(let probability):"))
     }
 }

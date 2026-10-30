@@ -148,8 +148,9 @@ final class FuturesZeroPercentLabel5899Tests: XCTestCase {
                                     encoding: .utf8)
             XCTAssertTrue(source.contains(site.anchor),
                           "\(site.file) no longer holds the thing this scan aims at — re-aim it")
-            XCTAssertTrue(source.contains("percentNumber("),
-                          "\(site.file) stopped delegating to the shared rule (#5899)")
+            let formatter = site.file.hasPrefix("Views/") ? "futuresProbabilityLabel(" : "percentNumber("
+            XCTAssertTrue(source.contains(formatter),
+                          "\(site.file) stopped delegating to its shared rule (#5899/#11616)")
             XCTAssertFalse(source.contains(site.banned),
                            "\(site.file) interpolates the bare integer again (#5899)")
         }

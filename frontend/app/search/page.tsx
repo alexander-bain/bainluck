@@ -579,6 +579,7 @@ function SearchContent() {
                   pinDisabled={isFuturesMaxReached}
                   games={results.results}
                   readsOpenFieldOuts
+                  keepsServedOrder
                 />
               </div>
             ))}

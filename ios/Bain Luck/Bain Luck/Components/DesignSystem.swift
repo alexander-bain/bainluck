@@ -93,19 +93,24 @@ struct ProbabilityNumber: View {
     /// never the COLOUR — `DS.probColor` reads the probability, which is a
     /// property of the value rather than of the printed numeral.
     var renderedPercent: Int?
+    /// Optional consumer formatting; absent preserves this component's existing
+    /// numeral policy. The caller supplies the number/marker without a percent.
+    var formattedNumber: String?
 
     /// `value` is percentage POINTS. The figure goes through `percentNumber` so a
     /// priced-but-tiny outcome reads `<1%` rather than `0%` (#5899) — the futures
     /// leader row drew `0%` directly above three `<1%` rows of the same list.
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 1) {
-            Text(percentNumber(value, renderedPercent: renderedPercent))
+            Text(formattedNumber ?? percentNumber(value, renderedPercent: renderedPercent))
                 .font(.system(size: size, weight: .semibold, design: .monospaced))
                 .foregroundStyle(color ?? DS.probColor(value))
                 .tracking(-0.5)
-            Text("%")
-                .font(.system(size: size * 0.42, weight: .semibold, design: .monospaced))
-                .foregroundStyle((color ?? DS.probColor(value)).opacity(0.7))
+            if formattedNumber != "—" {
+                Text("%")
+                    .font(.system(size: size * 0.42, weight: .semibold, design: .monospaced))
+                    .foregroundStyle((color ?? DS.probColor(value)).opacity(0.7))
+            }
         }
     }
 }

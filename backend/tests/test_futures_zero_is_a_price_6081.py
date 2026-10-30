@@ -274,7 +274,11 @@ class TestTheIdiomDoesNotComeBack:
         before touching this number is whether the payload the deleted site
         served still comes from a strict site, or from nowhere.
         """
-        strict = [ln for kind, ln in _conditional_probability_reads(futures_routes) if kind == "strict"]
+        from app.utils import futures_outcome_representation
+        # Detail's strict read moved into the shared representation; count both
+        # modules and keep the original eight-site ratchet intact.
+        strict = [ln for module in (futures_routes, futures_outcome_representation)
+                  for kind, ln in _conditional_probability_reads(module) if kind == "strict"]
         assert len(strict) == 8, (
             f"expected 8 served sites on the strict form, found {len(strict)} "
             f"at lines {strict}. If a served site was added, give it the strict "

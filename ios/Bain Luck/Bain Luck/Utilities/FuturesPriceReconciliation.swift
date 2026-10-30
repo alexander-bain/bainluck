@@ -145,7 +145,8 @@ nonisolated enum FuturesPriceReconciliation {
             leadOutcomeId: incoming.leadOutcomeId, representation: incoming.representation,
             questionIdentity: incoming.questionIdentity,
             contributingSources: incoming.contributingSources,
-            representationFallback: incoming.representationFallback)
+            representationFallback: incoming.representationFallback,
+            marketType: incoming.marketType)
     }
 
     /// Only an accepted, dated new quote or authoritative result is activity.

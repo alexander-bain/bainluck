@@ -204,11 +204,17 @@ class TestDetailUsesSharedPipeline:
     def test_format_market_detail_calls_shared_helpers(self):
         import inspect
         from app.routes import futures
+        from app.utils import futures_outcome_representation as representation
 
         src = inspect.getsource(futures._format_market_detail)
-        assert "is_placeholder_outcome_name" in src
-        assert "normalize_display_probs" in src
-        assert "leader_pick_order" in src
+        assert "represent_futures_outcomes(" in src
+        shared = inspect.getsource(representation.represent_futures_outcomes)
+        assert "eligible_futures_outcomes(" in shared
+        assert "is_placeholder_outcome_name(" in inspect.getsource(
+            representation.eligible_futures_outcomes
+        )
+        assert "normalize_display_probs(" in shared
+        assert "leader_pick_order(" in shared
 
 
 # ===========================================================================

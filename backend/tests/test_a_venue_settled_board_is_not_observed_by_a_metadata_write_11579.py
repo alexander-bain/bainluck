@@ -309,9 +309,17 @@ def _rule_calls():
 
 def test_every_caller_reads_the_parent_stamp_through_the_helper():
     calls = list(_rule_calls())
-    # events, entertainment, futures ×2, league_futures, prop_families — if this
-    # drops, a caller was lost; if it grows, the new one is checked below.
-    assert len(calls) >= 6, [str(p) for p, _ in calls]
+    # #11616 consolidates the search/detail rule calls into one shared helper.
+    # Pin every surviving path, and the two delegation edges below, rather than
+    # mistaking the old direct-call count for reader coverage.
+    expected = {
+        "routes/entertainment.py",
+        "routes/futures.py",
+        "routes/league_futures.py",
+        "routes/prop_families.py",
+        "utils/futures_outcome_representation.py",
+    }
+    assert expected <= {str(p.relative_to(APP)) for p, _ in calls}
     for path, call in calls:
         kw = {k.arg: k.value for k in call.keywords}
         stamp = kw.get("board_touched_at")
@@ -319,3 +327,37 @@ def test_every_caller_reads_the_parent_stamp_through_the_helper():
             f"{path.relative_to(APP.parent)}:{call.lineno} passes "
             f"{ast.unparse(stamp) if stamp is not None else 'nothing'} as board_touched_at"
         )
+
+
+@pytest.mark.parametrize(
+    "path,function,callee",
+    [
+        (
+            "routes/events.py",
+            "_search_withheld_price_ids",
+            "local_futures_withheld_ids",
+        ),
+        ("routes/futures.py", "_format_market_detail", "represent_futures_outcomes"),
+        (
+            "utils/futures_outcome_representation.py",
+            "represent_futures_outcomes",
+            "local_futures_withheld_ids",
+        ),
+        (
+            "utils/futures_outcome_representation.py",
+            "local_futures_withheld_ids",
+            "unobserved_board_keys",
+        ),
+    ],
+)
+def test_search_and_detail_still_reach_the_capped_parent_stamp(path, function, callee):
+    tree = ast.parse((APP / path).read_text())
+    func = next(
+        n
+        for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == function
+    )
+    assert any(
+        isinstance(n, ast.Call) and getattr(n.func, "id", None) == callee
+        for n in ast.walk(func)
+    ), f"{path}:{function} no longer reaches {callee}"
