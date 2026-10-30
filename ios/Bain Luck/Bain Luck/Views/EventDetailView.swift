@@ -399,7 +399,7 @@ struct EventDetailView: View {
                 showProbabilityDetails = false
             }
             #if os(iOS)
-            .background(PageDetailsCloser(detailsOpen: showProbabilityDetails))
+            .background(PageDetailsCloser(detailsOpen: $showProbabilityDetails))
             #endif
             .onDisappear {
                 // #11703 — the freshness details belong to this page. Its
