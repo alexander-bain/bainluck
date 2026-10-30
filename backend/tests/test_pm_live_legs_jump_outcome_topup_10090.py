@@ -77,8 +77,18 @@ def cursor(monkeypatch):
         if value:
             store["value"] = value
 
+    async def no_rest():
+        return set()
+
+    async def rest(_cids):
+        pass
+
     monkeypatch.setattr(topup, "load_topup_cursor", load)
     monkeypatch.setattr(topup, "save_topup_cursor", save)
+    # The resting memory (#10090 follow-up) has its own file; these cases pin
+    # Fix A's seat order with nothing resting.
+    monkeypatch.setattr(topup, "load_priority_misses", no_rest)
+    monkeypatch.setattr(topup, "save_priority_misses", rest)
     return store
 
 
