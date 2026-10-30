@@ -499,6 +499,16 @@ OPTIONAL_DB_HELD_MAX = FRESH_STAMP_WORKERS - 2
 # event goes next, so pre-game prices keep progressing while live ones lead.
 ADMITTED_LIVE_RUN = 3
 
+# #10090 (Argon flush-loop Rank 2) — a due throttle-deferred LIVE event rides
+# a running call's door outside its debt slots, at most this many at a time.
+# Production 2026-10-30 00:18Z (Kalshi 15338515, origin=throttle,
+# lock_retries=0): the one debt slot is shared with pre-game debt, so a live
+# game's throttled price waited its turn behind it. One stamp worker always
+# stays for a later fresh cohort. A row-lock retry keeps the shared slot's turn
+# order: it may wait out a whole lock budget, and Root's fairness case (a
+# locked event due again at once) must not take a worker every admission.
+ADMITTED_LIVE_DEBT_SLOTS = FRESH_STAMP_WORKERS - 1
+
 # Includes the point currently writing and reservations before quote COMMIT.
 # The writer's ordinary backlog. Past it a newly due stamp does not wait
 # (#11138) and still owes its point at its own observation time, paid when
@@ -2171,6 +2181,10 @@ class _FreshAdmission:
         #: admitted cohorts: debt keeps progressing while a call lives on, but
         #: never holds more than ADMITTED_DEBT_SLOTS stamp workers (default 1).
         self.debts: set[int] = set()
+        #: #10090 — owed LIVE events stamped beside the cohorts outside
+        #: `debts` (ADMITTED_LIVE_DEBT_SLOTS): pre-game debt never holds a
+        #: live game's turn.
+        self.live_debts: set[int] = set()
         self.publish: Optional[Callable[[list[dict]], Awaitable[None]]] = None
         self.publish_inline: Optional[Callable[[list[dict]], Awaitable[None]]] = None
         #: #10090 — per event, how many of its attempts in this call have
@@ -2190,8 +2204,10 @@ class _FreshAdmission:
     @property
     def debt(self) -> Optional[int]:
         """The owed event in the door's slot, as with one slot (the default);
-        with more slots, the lowest-numbered of them."""
-        return min(self.debts) if self.debts else None
+        with more slots, or a live game riding its own allowance
+        (`live_debts`), the lowest-numbered of them."""
+        riding = self.debts | self.live_debts
+        return min(riding) if riding else None
 
     def next_queued(self) -> int:
         """The admitted event the next free worker stamps: the oldest live
@@ -2208,6 +2224,7 @@ class _FreshAdmission:
         """These events' stamps returned, or went back to debt unstamped."""
         self.holding.difference_update(event_ids)
         self.debts.difference_update(event_ids)
+        self.live_debts.difference_update(event_ids)
         for event_id in event_ids:
             self.released[event_id] = self.released.get(event_id, 0) + 1
         signal, self._released_signal = self._released_signal, None
@@ -2414,6 +2431,9 @@ class LiveBlendRefresher:
         #: cannot take every turn from a writable sibling.
         self._debt_rotation: list[int] = []
         self._last_refresh_at: dict[int, float] = {}
+        #: #10090 — the newest clock a caller has handed `_due`, and `_mono`
+        #: when it was handed: the floor's "now", whatever the caller's clock.
+        self._clock_high: Optional[tuple[float, float]] = None
         #: Events whose last batch failed -> the monotonic time before which
         #: they are not due, whatever the throttle says.
         self._failed_hold_until: dict[int, float] = {}
@@ -2569,8 +2589,21 @@ class LiveBlendRefresher:
                 return False
             del self._failed_hold_until[event_id]
         last = self._last_refresh_at.get(event_id)
+        # #10090 (Argon flush-loop Rank 2): the floor reads the current clock,
+        # not only the caller's. A Kalshi main flush hands its own start to
+        # every admission for its whole 3-7 s, so an event a LATER clock had
+        # stamped (a write beside it, a later flush's cohort) read as under the
+        # floor all that time and waited for the next flush. "Current" is the
+        # newest clock any caller has handed this refresher, advanced by the
+        # time since: every caller's clock is a `_mono` reading, so whatever
+        # was due on the caller's clock is still due.
+        mono = _mono()
+        high = self._clock_high
+        if high is None or now > high[0]:  # a repeated clock is not newer
+            self._clock_high = high = (now, mono)
+        current = max(now, high[0] + max(0.0, mono - high[1]))
         return last is None or (
-            (now - last) >= self.min_refresh_interval_s - FLUSH_CLOCK_SLACK_S
+            (current - last) >= self.min_refresh_interval_s - FLUSH_CLOCK_SLACK_S
         )
 
     # ── inversion orientation, cached ────────────────────────────────────────
@@ -3789,31 +3822,44 @@ class LiveBlendRefresher:
             )
         slots = _admitted_debt_slots()
         free = slots - len(window.debts)
-        if free > 0:
+        # Live throttle debt only; a row-lock retry is never "live" here.
+        live = self._live_event_ids
+        live_owed = (live & self._throttle_deferred) - self._lock_retry
+        live_free = ADMITTED_LIVE_DEBT_SLOTS - len(window.live_debts)
+        if free > 0 or (live_free > 0 and live_owed):
             # #10090: a call that keeps admitting may outlive the moment a new
             # `refresh` would have taken the debt, so the oldest due owed events
             # ride along — at most this admission's `slots` at a time, behind
-            # the cohort, never fenced.
+            # the cohort, never fenced. Live games first (Argon Rank 2), and on
+            # their own allowance: pre-game debt never holds a live turn.
             self._wake_book_refused(_mono())
             owed = self._lock_retry | self._throttle_deferred
             rotation = [eid for eid in self._debt_rotation if eid in owed]
             rotation += sorted(owed.difference(rotation))
             order = [eid for eid in self._pending_continuation if eid in owed]
             order += [eid for eid in rotation if eid not in order]
+            order.sort(key=lambda eid: eid not in live_owed)  # stable: turn order kept
             # #10090 `owed_past_withdrawal`: debt deferred only by a buffered
             # withdrawal may ride; the cohort itself is excluded as before.
             debt_excluded = excluded.difference(
                 self._past_withdrawal(withdrawing_event_ids, event_ids)
             )
             for eid in order:
-                if free <= 0:
-                    break
+                is_live = eid in live_owed
+                if free <= 0 and not is_live:
+                    break  # every live one is ahead
+                if is_live and live_free <= 0 and free <= 0:
+                    continue
                 if eid in taken or eid in debt_excluded or eid in window.holding:
                     continue
                 if self._due(eid, flush_started):
                     taken.add(eid)
-                    window.debts.add(eid)
-                    free -= 1
+                    if is_live and live_free > 0:
+                        window.live_debts.add(eid)
+                        live_free -= 1
+                    else:
+                        window.debts.add(eid)
+                        free -= 1
                     rotation.remove(eid)
                     rotation.append(eid)
             self._debt_rotation = rotation
@@ -3837,7 +3883,9 @@ class LiveBlendRefresher:
             for eid in taken:
                 self._stage_trace(
                     "stage_admission", "ADMIT",
-                    ("DEBT_" if eid in window.debts and eid not in cohort else "")
+                    ("DEBT_" if eid not in cohort and (
+                        eid in window.debts or eid in window.live_debts
+                    ) else "")
                     + ("ADMITTED" if eid in due else "THROTTLED"),
                     (eid,), flush_started=flush_started,
                 )
@@ -3878,11 +3926,11 @@ class LiveBlendRefresher:
             window.holding.update(due)
             window.clocks.update(dict.fromkeys(due, clock))
             window.retry.update(retry)
-            live = self._live_event_ids
-            if slots > 1:
+            if slots > 1 or not window.live_debts.isdisjoint(due):
                 # Debt rides behind the cohort that let it in: with more than
-                # one slot, owed events with lower ids would otherwise take
-                # every worker (and session slot) ahead of these fresh prices.
+                # one slot (or live debt beside it), owed events with lower ids
+                # would otherwise take every worker (and session slot) ahead of
+                # these fresh prices.
                 due = [eid for eid in due if eid in cohort] + [
                     eid for eid in due if eid not in cohort
                 ]
@@ -4595,7 +4643,10 @@ class LiveBlendRefresher:
         # so that event would query Postgres every 2-second flush, forever, to
         # discover the same nothing.
         for event_id in event_ids:
-            self._last_refresh_at[event_id] = now
+            # Never back in time: an older flush clock than the stamp already
+            # recorded would let the floor (it reads the current clock) pass early.
+            last = self._last_refresh_at.get(event_id)
+            self._last_refresh_at[event_id] = now if last is None else max(last, now)
 
         if self._session_factory is not None:
             get_task_session = self._session_factory  # #2471: the consumer's

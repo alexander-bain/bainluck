@@ -184,7 +184,9 @@ class _Slotted(_Gated):
 
 
 @pytest.mark.parametrize("slots, started", [
-    (1, [99, 1, 50]),            # today, byte for byte: one debt ahead of a free slot
+    # Argon Rank 2: owed LIVE events ride their own allowance (not the one
+    # debt slot), so with one slot too they queue behind the fresh cohort.
+    (1, [99, 50, 1, 2]),
     (2, [99, 50, 1, 2]),
     (3, [99, 50, 1, 2]),
 ])
