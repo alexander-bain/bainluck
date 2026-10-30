@@ -1,0 +1,163 @@
+{
+  "at": "2026-10-30T00:12:37.063786+00:00",
+  "base": "6c73734af6d7f83f252ace8ed921eb0fcae766e3",
+  "parent": "2f55cc13e912765dc2b099f78b896278cf85247c",
+  "scope": "Existing owner model/formatter/selection/currentness/result/score/routing contracts remain unchanged. New live context is presentation only.",
+  "files": [
+    {
+      "path": "ios/Bain Luck/Bain Luck.xcodeproj/project.pbxproj",
+      "blob": "4edaec3ecdb0af06395fb1aab72f4fd9c8eb4f50",
+      "sha256": "5d162ef221b8296e88832b5226135824559f2c40197738feb38f77fbb45ee800"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Components/DesignSystem.swift",
+      "blob": "c236267ff83eb73365457f2e53f1d13a1ec01d78",
+      "sha256": "3ab804ee7ffe72d94eef2eb84e63847546b64f3d01704a5550ac5172a4878aea"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Components/EventQuestionMatrixSection10238.swift",
+      "blob": "c41455266bbb874aae805c34fa2d57d6a739c754",
+      "sha256": "737c85e312cb17ba1ef1f3bda38b102149d8d1ac5bf8b54fc2ee9c5940a7dcf8"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Components/NBAEventCards9483.swift",
+      "blob": "d7c43fcb524d401347322b72f8c9b5d927abbbdb",
+      "sha256": "9a47eff687a50ca40c7a141f2bbabb27495c8e7489a0a8adb79ed8c77409d056"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Components/NBAScoringPresentation9483.swift",
+      "blob": "f215aa16615d824999f311ff7a1d04b8d55fe7ae",
+      "sha256": "5adb9457c2d010ad0a311f6dec8f5eb3344eaa736e1a87bcbeffc1ef6d66ac74"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Components/NFLCardReader9483.swift",
+      "blob": "b64af4fe2f43239a0db770fc8b1ad172fda54abf",
+      "sha256": "6e56f4eeade77b96979941f3e61b965ef442bdbb9fcd1d75f32c363101240bf9"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Components/NFLEventCards9483.swift",
+      "blob": "b0fdec039a4d49013538f3ac3f37c44acff306ce",
+      "sha256": "e9357d289fcb2626b4e80b0f8ef790ad2fdd636173ec6689787f387696c175a4"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Components/SourceAgeText.swift",
+      "blob": "bebd0739ddccea789f24c7ebb6788fd9b04b2a08",
+      "sha256": "246cd637c3eded5ec4808c5a7c897bd9bbca5bdf3728728ab30ac468be99dc8c"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Models/CommonTypes.swift",
+      "blob": "0d7f1ab046ee204b7988e3118e73ad7599d0c0e7",
+      "sha256": "ec2e1a248ec98cd84d508b27ebe48f1a99403c59ed18f199099b58fb67dceca1"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Models/EventPropsMatrixModels.swift",
+      "blob": "aed9d8d0f2c391285c676198e07d7ebcbde56d2f",
+      "sha256": "54e6cb7f21380cb2f10886a0866db74c941619d0fd01dd2486b5df33bd06f9cc"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Models/EventQuestionMatrixModels.swift",
+      "blob": "e22056787defd9082dc26f99b1f97ea3e95f7ef8",
+      "sha256": "479e069c30e7057969dce35867c246381df6a49c5ce240963fda5998f4f6c323"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Models/FuturesModels.swift",
+      "blob": "a2014f1f6cca3ed62b3a1f957b2217d4e5164e14",
+      "sha256": "9a707f37cb4b1ddf628562d8b39cef37ab8485ca958aeecce9697d479f6f25b8"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Utilities/ColorExtensions.swift",
+      "blob": "7adf8ad1f5455c8ecf68004d231734601bac4758",
+      "sha256": "115fc1809ca7fc544cba1a15c2f633d3b70b4f7716cd5a9213369999ea58df14"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Utilities/EventQuestionMatrixAdapter.swift",
+      "blob": "cefa550a33135e5f6d9409a4d03b01e64013ff42",
+      "sha256": "c377945479439fd4546c8538daaede3f6f430904aea82f27265625a8f95cb56d"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Utilities/EventQuestionMatrixCurrentnessActivation10238.swift",
+      "blob": "9c75d12c34c2ecf65df2834e74fbd85392a6394f",
+      "sha256": "2c6b2b94076e2d96f43794203b1457d0ca81707d6043d94ca50b03ff90366e2f"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Utilities/FormattingUtilities.swift",
+      "blob": "0a8788b29eab0510464c147e5206eb64e7fc115a",
+      "sha256": "053b79a97d95d5d4e002140f8465f80064858913f7fe6a3966ad1843febc8c96"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Utilities/NBALadderCard9483.swift",
+      "blob": "17cf37c8914ea0f3308ebbb2e18e1412d3d90d6f",
+      "sha256": "d8886db66920edda5eb876645509cbbaf9ac444fceddfd8e3c5d224f67f636cc"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Utilities/NFLEventCardDeck9483.swift",
+      "blob": "7a72a7d2206e6416ff631a0b72b8b7c40cd6a328",
+      "sha256": "047f1dfcf39d22781d33ccfab2291853eefab25eac3d18f3f648d3c8a47ef16e"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Utilities/SourceAge.swift",
+      "blob": "8b7503b05725d7ad96417ca9dbc849ba04850238",
+      "sha256": "880ff05bc3d3806eccf7e1f3ddeefd15be28be603b965f35d69b539d987f219e"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Utilities/SourceLabels.swift",
+      "blob": "afd4660c326f49b0cd06fa7cc8af36ccc2aa408a",
+      "sha256": "5538e8bb6835d9f22eb743becd13b2e1b8d62da423bb7fb0b29582a10c9a4deb"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Views/EventDetailView.swift",
+      "blob": "8b026e3c53b8174d660f5746c890bc264bec07b2",
+      "sha256": "8670b6d4d678a57ccfd9b3dd5ab6eb788d3d4077ab2dab2d8b87219e6b8d503e"
+    },
+    {
+      "path": "ios/Bain Luck/BainLuckTests/Fixtures/event-15320337-game-matrix-9483-nba-final.20261015.json",
+      "blob": "0097c49e5c88bdb601d36800bf540fdce0b38322",
+      "sha256": "47119b3df6d13296d3ad800c2579c6d5aa05ee2b97fd9915a1b724bbfbd9c505"
+    },
+    {
+      "path": "ios/Bain Luck/BainLuckTests/Fixtures/event-15327183-game-matrix-9483-nba-pregame.20261015.json",
+      "blob": "5ef2032431c0a37f1afcde08d9ae543af0b1a328",
+      "sha256": "41eac86208c8c9506e6b1e059ef71474865ec53a69e71e9b825a38927ec44be0"
+    },
+    {
+      "path": "ios/Bain Luck/BainLuckTests/NBAEventCards9483Tests.swift",
+      "blob": "4c63105d7f2cf426ffdd4badd85d561f84693afe",
+      "sha256": "6803ec87e70a3f95dac7cbc2daac88d1bd6e9d03aa2999894cddd8d0ca4b4d3f"
+    },
+    {
+      "path": "ios/Bain Luck/BainLuckTests/NBAScoringPresentation9483Tests.swift",
+      "blob": "aabeea2a33442e19c2c2f2474f38c72e0924d7de",
+      "sha256": "fcdc39c0da55d97cbe938c00d260bd924dbf7f15935e3b1841c8d72581244fb5"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Utilities/QuestionMatrixSelection.swift",
+      "blob": "184a161dca7fc98f9cccb12fafb8ebc91ae870d2",
+      "sha256": "56b8a7c1ea9442ec44ebe30c071b3d883484135ccc1405ad5596c7f47ed56c06"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Utilities/FuturesDetailRowValue.swift",
+      "blob": "718bc1e9a3125529206392bdf1815f0745dedc67",
+      "sha256": "1eb723692f223c6b041be1a80fd1fc01c78ddb36974c886116e58577d9760a99"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Utilities/FlowLayout.swift",
+      "blob": "49727b7610c2cb5e06ed21aa9ac1a50817e1336f",
+      "sha256": "9305035b010f4c19bceb4bdca9b8cd378d46a4764ca4bd07eac175d431219557"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Models/EventModels.swift",
+      "blob": "90cd07281a227c560bd3821d44ccfe156855897b",
+      "sha256": "1fae8f58a6d787e4e5180170a045dba4cec33759b9bcd22f3ecd9a76c8766e38"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Utilities/StoredLineScore.swift",
+      "blob": "f44183ba2c86ef40f18fc798397aaf21f1b69e8f",
+      "sha256": "e6d0770c133f4ec98256f372b1577bd5e96e00d5e70aa9c1434ce3a199929b1a"
+    }
+  ],
+  "expected_contract_source": "TENNIS-HANDICAP-BINDING-SOURCES.json plus tennis-handicap-source-return/DESIGN-CHECK.json at2f55cc13",
+  "fresh_admission_validation": false,
+  "validation_required_before_assignment": "Verify expected hashes at frozen base, clean exact parent/worktree and current Native shelf HEAD/worktree. Preserve the existing holds; this manifest is not a current source assignment.",
+  "source_assignment": false,
+  "downstream_grant": false
+}

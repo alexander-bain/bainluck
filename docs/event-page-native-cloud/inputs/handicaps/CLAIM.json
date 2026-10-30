@@ -1,0 +1,48 @@
+{
+  "at": "2026-10-30T00:36:43.607633+00:00",
+  "status": "RESERVED_FOR_WEE_BEY_PENDING_VERIFIED_TRANSFER_IMPORT_AND_CONTRACT_ACK",
+  "authority": "Direct human message in Event page design chat authorizing Wee-Bey collaboration/source exchange/reservation and sole publication to codex/dot-event-design-source",
+  "coordinator_thread": "01a18a2a-483f-7614-9937-8549d69ed01b",
+  "cloud_parent": "01a172d9-2ff7-7313-857b-f083f453e0fd",
+  "central_tracker_owner": "Design",
+  "source_acceptance_owner": "Design",
+  "sole_source_branch_publisher": "Wee-Bey",
+  "source_branch": "codex/dot-event-design-source",
+  "branch_created_or_published_here": false,
+  "base": "6c73734af6d7f83f252ace8ed921eb0fcae766e3",
+  "accepted_parent": "2f55cc13e912765dc2b099f78b896278cf85247c",
+  "write_paths": [
+    "ios/Bain Luck/Bain Luck/Components/LadderOriginalProbabilityDetails9483.swift",
+    "ios/Bain Luck/BainLuckTests/LadderOriginalProbabilityDetails9483Tests.swift"
+  ],
+  "native_core_prefix_bytes": 43673,
+  "native_core_prefix_sha256": "aac022c67478599d1d2b6200475a561db4b8f522e88231459f9b7f7262fe6276",
+  "whole_parent_tests_preserved": 60,
+  "source_references_verified": 9,
+  "protected_binding_paths": 30,
+  "positions_per_binding": 5,
+  "parent_clean": true,
+  "pending_local_action_overlap": false,
+  "local_total_games_owner": "Existing UX Opus, run172620; excluded from this reservation/archive",
+  "sequential_outcomes": [
+    "live handicap panels",
+    "explicit opt-in pregame handicap panels in the same files after immutable first return"
+  ],
+  "second_outcome_active": false,
+  "maximum_cloud_outcomes_including_unaccepted_returns": 2,
+  "maximum_all_design_active_outcomes": 3,
+  "replenishment": "Coordinator automatically requests next pinned missing lifecycle/card gap after bounded batch; no new Alex prompt. No self-assignment/occupied paths.",
+  "source_started": false,
+  "downstream_grant": false,
+  "route_phase_credit": false,
+  "checks_unrun": [
+    "Swift syntax",
+    "typecheck",
+    "native compile",
+    "XCTest",
+    "native render",
+    "VoiceOver",
+    "device",
+    "TestFlight"
+  ]
+}

@@ -1,0 +1,3341 @@
+{
+ "_provenance": "trimmed from public GET /api/events/15327183/game-markets read 2026-10-15T18:30Z (Raptors @ Knicks, scheduled 23:30Z); full-game count_threshold + signed_handicap questions only",
+ "event_id": 15327183,
+ "home_team": "New York Knicks",
+ "away_team": "Toronto Raptors",
+ "status": "scheduled",
+ "game_question_matrix": {
+  "contract": "10238.v1",
+  "display_scope": "game",
+  "questions": [
+   {
+    "question_key": "q:count|points|game|full_game|ge:206",
+    "kind": "count_threshold",
+    "label": "206+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 206,
+     "line": 205.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726842",
+      "label": "Over 205.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726842
+      ],
+      "published": {
+       "value": 0.915,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:26:52.286819+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:208",
+    "kind": "count_threshold",
+    "label": "208+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 208,
+     "line": 207.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726841",
+      "label": "Over 207.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726841
+      ],
+      "published": {
+       "value": 0.875,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:210",
+    "kind": "count_threshold",
+    "label": "210+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 210,
+     "line": 209.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726859",
+      "label": "Over 209.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726859
+      ],
+      "published": {
+       "value": 0.875,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:30:04.175874+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:212",
+    "kind": "count_threshold",
+    "label": "212+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 212,
+     "line": 211.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726858",
+      "label": "Over 211.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726858
+      ],
+      "published": {
+       "value": 0.84,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:30:15.974246+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:214",
+    "kind": "count_threshold",
+    "label": "214+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 214,
+     "line": 213.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726839",
+      "label": "Over 213.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726839
+      ],
+      "published": {
+       "value": 0.815,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:23:15.700727+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:216",
+    "kind": "count_threshold",
+    "label": "216+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 216,
+     "line": 215.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726840",
+      "label": "Over 215.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726840
+      ],
+      "published": {
+       "value": 0.775,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:16:06.013183+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:218",
+    "kind": "count_threshold",
+    "label": "218+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 218,
+     "line": 217.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726843",
+      "label": "Over 217.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726843
+      ],
+      "published": {
+       "value": 0.735,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:04:55.369286+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:220",
+    "kind": "count_threshold",
+    "label": "220+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 220,
+     "line": 219.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726844",
+      "label": "Over 219.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726844
+      ],
+      "published": {
+       "value": 0.705,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:17:08.649339+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:222",
+    "kind": "count_threshold",
+    "label": "222+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 222,
+     "line": 221.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726845",
+      "label": "Over 221.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726845
+      ],
+      "published": {
+       "value": 0.655,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:22:37.858699+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:224",
+    "kind": "count_threshold",
+    "label": "224+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 224,
+     "line": 223.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726846",
+      "label": "Over 223.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726846
+      ],
+      "published": {
+       "value": 0.62,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:01:10.051360+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:226",
+    "kind": "count_threshold",
+    "label": "226+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 226,
+     "line": 225.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726847",
+      "label": "Over 225.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726847
+      ],
+      "published": {
+       "value": 0.555,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:26:23.497235+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:228",
+    "kind": "count_threshold",
+    "label": "228+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 228,
+     "line": 227.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726848",
+      "label": "Over 227.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726848
+      ],
+      "published": {
+       "value": 0.525,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:26:55.563587+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:230",
+    "kind": "count_threshold",
+    "label": "230+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 230,
+     "line": 229.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726849",
+      "label": "Over 229.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726849
+      ],
+      "published": {
+       "value": 0.475,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:28:21.962425+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:232",
+    "kind": "count_threshold",
+    "label": "232+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 232,
+     "line": 231.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726850",
+      "label": "Over 231.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726850
+      ],
+      "published": {
+       "value": 0.43,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:30:35.234333+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:234",
+    "kind": "count_threshold",
+    "label": "234+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 234,
+     "line": 233.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726851",
+      "label": "Over 233.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726851
+      ],
+      "published": {
+       "value": 0.375,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:42:45.085322+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:236",
+    "kind": "count_threshold",
+    "label": "236+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 236,
+     "line": 235.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726852",
+      "label": "Over 235.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726852
+      ],
+      "published": {
+       "value": 0.325,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:29:53.049213+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:238",
+    "kind": "count_threshold",
+    "label": "238+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 238,
+     "line": 237.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726853",
+      "label": "Over 237.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726853
+      ],
+      "published": {
+       "value": 0.285,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:240",
+    "kind": "count_threshold",
+    "label": "240+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 240,
+     "line": 239.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726855",
+      "label": "Over 239.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726855
+      ],
+      "published": {
+       "value": 0.265,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:18:38.021812+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:242",
+    "kind": "count_threshold",
+    "label": "242+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 242,
+     "line": 241.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726854",
+      "label": "Over 241.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726854
+      ],
+      "published": {
+       "value": 0.22,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:25:32.784288+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:244",
+    "kind": "count_threshold",
+    "label": "244+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 244,
+     "line": 243.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726857",
+      "label": "Over 243.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726857
+      ],
+      "published": {
+       "value": 0.19,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:27:02.897572+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:246",
+    "kind": "count_threshold",
+    "label": "246+ points",
+    "market_name": "Toronto vs New York: Total Points",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 246,
+     "line": 245.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726856",
+      "label": "Over 245.5 points",
+      "side": "over",
+      "market_ids": [
+       65904902
+      ],
+      "contributor_outcome_ids": [
+       247726856
+      ],
+      "published": {
+       "value": 0.165,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:22:19.547447+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:215",
+    "kind": "count_threshold",
+    "label": "215+ points",
+    "market_name": "Raptors vs. Knicks: O/U 214.5",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 215,
+     "line": 214.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247932374",
+      "label": "Over",
+      "side": "over",
+      "market_ids": [
+       65960095
+      ],
+      "contributor_outcome_ids": [
+       247932374
+      ],
+      "published": {
+       "value": 0.79,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "polymarket",
+       "observed_at": "2026-10-15T18:27:03.135545+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:221",
+    "kind": "count_threshold",
+    "label": "221+ points",
+    "market_name": "Raptors vs. Knicks: O/U 220.5",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 221,
+     "line": 220.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247932378",
+      "label": "Over",
+      "side": "over",
+      "market_ids": [
+       65960097
+      ],
+      "contributor_outcome_ids": [
+       247932378
+      ],
+      "published": {
+       "value": 0.68,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "polymarket",
+       "observed_at": "2026-10-15T18:26:52.721019+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:223",
+    "kind": "count_threshold",
+    "label": "223+ points",
+    "market_name": "Raptors vs. Knicks: O/U 222.5",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 223,
+     "line": 222.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247932380",
+      "label": "Over",
+      "side": "over",
+      "market_ids": [
+       65960098
+      ],
+      "contributor_outcome_ids": [
+       247932380
+      ],
+      "published": {
+       "value": 0.625,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "polymarket",
+       "observed_at": "2026-10-15T18:27:03.135545+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:229",
+    "kind": "count_threshold",
+    "label": "229+ points",
+    "market_name": "Raptors vs. Knicks: O/U 228.5",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 229,
+     "line": 228.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247932387",
+      "label": "Over",
+      "side": "over",
+      "market_ids": [
+       65960101
+      ],
+      "contributor_outcome_ids": [
+       247932387
+      ],
+      "published": {
+       "value": 0.495,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "polymarket",
+       "observed_at": "2026-10-15T18:17:30.879537+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "leg_is_complement",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:231",
+    "kind": "count_threshold",
+    "label": "231+ points",
+    "market_name": "Raptors vs. Knicks: O/U 230.5",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 231,
+     "line": 230.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247932389",
+      "label": "Over",
+      "side": "over",
+      "market_ids": [
+       65960102
+      ],
+      "contributor_outcome_ids": [
+       247932389
+      ],
+      "published": {
+       "value": 0.45,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "polymarket",
+       "observed_at": "2026-10-15T18:28:50.354135+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "leg_is_complement",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:count|points|game|full_game|ge:237",
+    "kind": "count_threshold",
+    "label": "237+ points",
+    "market_name": "Raptors vs. Knicks: O/U 236.5",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "game",
+     "label": null
+    },
+    "predicate": {
+     "relation": "ge",
+     "bound": 237,
+     "line": 236.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247932395",
+      "label": "Over",
+      "side": "over",
+      "market_ids": [
+       65960105
+      ],
+      "contributor_outcome_ids": [
+       247932395
+      ],
+      "published": {
+       "value": 0.31,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "polymarket",
+       "observed_at": "2026-10-15T18:17:30.879537+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "leg_is_complement",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-1.5",
+    "kind": "signed_handicap",
+    "label": "Toronto Raptors -1.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Toronto Raptors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -1.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726805",
+      "label": "Toronto wins by over 1.5 points",
+      "side": "away",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726805
+      ],
+      "published": {
+       "value": 0.33,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-11.5",
+    "kind": "signed_handicap",
+    "label": "Toronto Raptors -11.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Toronto Raptors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -11.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726816",
+      "label": "Toronto wins by over 11.5 points",
+      "side": "away",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726816
+      ],
+      "published": {
+       "value": 0.12,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:10:07.837889+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-13.5",
+    "kind": "signed_handicap",
+    "label": "Toronto Raptors -13.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Toronto Raptors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -13.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726815",
+      "label": "Toronto wins by over 13.5 points",
+      "side": "away",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726815
+      ],
+      "published": {
+       "value": 0.085,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:30:02.673492+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-15.5",
+    "kind": "signed_handicap",
+    "label": "Toronto Raptors -15.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Toronto Raptors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -15.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726817",
+      "label": "Toronto wins by over 15.5 points",
+      "side": "away",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726817
+      ],
+      "published": {
+       "value": 0.075,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:20:14.091637+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-2.5",
+    "kind": "signed_handicap",
+    "label": "Toronto Raptors -2.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Toronto Raptors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -2.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726811",
+      "label": "Toronto wins by over 2.5 points",
+      "side": "away",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726811
+      ],
+      "published": {
+       "value": 0.305,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:28:53.045889+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-3.5",
+    "kind": "signed_handicap",
+    "label": "Toronto Raptors -3.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Toronto Raptors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -3.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726812",
+      "label": "Toronto wins by over 3.5 points",
+      "side": "away",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726812
+      ],
+      "published": {
+       "value": 0.275,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:30:07.669472+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-5.5",
+    "kind": "signed_handicap",
+    "label": "Toronto Raptors -5.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Toronto Raptors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -5.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726813",
+      "label": "Toronto wins by over 5.5 points",
+      "side": "away",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726813
+      ],
+      "published": {
+       "value": 0.23,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-7.5",
+    "kind": "signed_handicap",
+    "label": "Toronto Raptors -7.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Toronto Raptors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -7.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726808",
+      "label": "Toronto wins by over 7.5 points",
+      "side": "away",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726808
+      ],
+      "published": {
+       "value": 0.18,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:15:54.047787+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|away|full_game|-9.5",
+    "kind": "signed_handicap",
+    "label": "Toronto Raptors -9.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "away",
+     "label": "Toronto Raptors"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -9.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726814",
+      "label": "Toronto wins by over 9.5 points",
+      "side": "away",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726814
+      ],
+      "published": {
+       "value": 0.145,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-1.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -1.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -1.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726793",
+      "label": "New York wins by over 1.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726793
+      ],
+      "published": {
+       "value": 0.62,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:48:54.749214+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-10.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -10.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -10.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726802",
+      "label": "New York wins by over 10.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726802
+      ],
+      "published": {
+       "value": 0.35,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-12.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -12.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -12.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726803",
+      "label": "New York wins by over 12.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726803
+      ],
+      "published": {
+       "value": 0.3,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-14.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -14.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -14.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726804",
+      "label": "New York wins by over 14.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726804
+      ],
+      "published": {
+       "value": 0.25,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-16.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -16.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -16.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726810",
+      "label": "New York wins by over 16.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726810
+      ],
+      "published": {
+       "value": 0.19,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-18.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -18.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -18.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726807",
+      "label": "New York wins by over 18.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726807
+      ],
+      "published": {
+       "value": 0.155,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:26:55.563587+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-2.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -2.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -2.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726794",
+      "label": "New York wins by over 2.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726794
+      ],
+      "published": {
+       "value": 0.595,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-20.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -20.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -20.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726806",
+      "label": "New York wins by over 20.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726806
+      ],
+      "published": {
+       "value": 0.125,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-22.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -22.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -22.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726809",
+      "label": "New York wins by over 22.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726809
+      ],
+      "published": {
+       "value": 0.1,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-3.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -3.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -3.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726795",
+      "label": "New York wins by over 3.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726795
+      ],
+      "published": {
+       "value": 0.57,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:09:25.572425+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-4.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -4.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -4.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726796",
+      "label": "New York wins by over 4.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726796
+      ],
+      "published": {
+       "value": 0.535,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:20:21.263924+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-5.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -5.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -5.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726797",
+      "label": "New York wins by over 5.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726797
+      ],
+      "published": {
+       "value": 0.5,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T18:01:17.247468+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-6.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -6.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -6.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726798",
+      "label": "New York wins by over 6.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726798
+      ],
+      "published": {
+       "value": 0.46,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-7.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -7.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -7.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726799",
+      "label": "New York wins by over 7.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726799
+      ],
+      "published": {
+       "value": 0.44,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-8.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -8.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -8.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726800",
+      "label": "New York wins by over 8.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726800
+      ],
+      "published": {
+       "value": 0.41,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:01:52.575534+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   },
+   {
+    "question_key": "q:handicap|points|home|full_game|-9.5",
+    "kind": "signed_handicap",
+    "label": "New York Knicks -9.5 points",
+    "market_name": "Toronto vs New York: Spread",
+    "quantity": {
+     "key": "points",
+     "singular": "point",
+     "plural": "points",
+     "integer": true
+    },
+    "period": {
+     "key": "full_game",
+     "label": "Game"
+    },
+    "subject": {
+     "side": "home",
+     "label": "New York Knicks"
+    },
+    "predicate": {
+     "relation": "handicap",
+     "bound": null,
+     "line": -9.5
+    },
+    "typing": {
+     "state": "typed",
+     "reason": null
+    },
+    "lifecycle": {
+     "state": "open",
+     "market_status": "open"
+    },
+    "options": [
+     {
+      "option_key": "o:247726801",
+      "label": "New York wins by over 9.5 points",
+      "side": "home",
+      "market_ids": [
+       65904900
+      ],
+      "contributor_outcome_ids": [
+       247726801
+      ],
+      "published": {
+       "value": 0.38,
+       "value_state": "quoted",
+       "basis": "published_source_display",
+       "source": "kalshi",
+       "observed_at": "2026-10-15T17:03:12.606772+00:00"
+      },
+      "result": {
+       "state": "open",
+       "evidence_kind": "none"
+      },
+      "comparison": {
+       "state": "unavailable",
+       "reason": "no_pregame_pin",
+       "baseline": null,
+       "latest": null,
+       "delta_points": null
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -1,0 +1,52 @@
+# FORMATTING / TRUTH — native tennis handicap cards across the match
+
+Ship: fans see both original pre-match chances prominently, with distinct set/game progress during play and an uncluttered chance-only presentation before play. This extends existing package14 toward the approved event-page experience; it is not a new route or a completed native page.
+
+## Ownership and admission
+
+Alex directly authorized source/work exchange through `Coordinate cloud design contributions` (`01a18a2a-483f-7614-9937-8549d69ed01b`), continuous unclaimed cloud implementation, and Wee-Bey as sole publisher of `codex/dot-event-design-source`. Design retains requirements, fidelity/acceptance decisions, the central tracker and component manifest. Native/Integrator retain production bindings, qualification and delivery. No production integration, deployment, PR, master write, Apple operation, or lane takeover is authorized.
+
+Local UX Opus owns **total-games**, not this package. Do not write, copy a new version of, rebase or publish `TotalMilestonePresentation10868.swift` or its test file. Cloud reserves only the two handicap files below. These are currently clean at the exact accepted parent; no pending local UX/Native/Integrator action names them. `CLAIM.json` records the fresh check. Source admission becomes effective only after consumer-local archive/hash/parent verification and acknowledgment of this contract. Local Design will not assign these paths to UX while this reservation is held.
+
+The repository is `https://github.com/alexander-bain/bainluck.git`. Accepted handicap parent: `2f55cc13e912765dc2b099f78b896278cf85247c`; frozen base: `6c73734af6d7f83f252ace8ed921eb0fcae766e3`. The Git bundle carries only this parent's source history after that base, under its original local branch ref. Before import, prove the base object in the actual cloud checkout. Verify the bundle prerequisite/head, then import locally and verify the four-hash source/contract receipt. Create the dedicated branch from this exact parent; do not silently start from current master, add local total-games, or reconstruct a missing parent.
+
+Only these native paths are writable:
+
+- `ios/Bain Luck/Bain Luck/Components/LadderOriginalProbabilityDetails9483.swift`
+- `ios/Bain Luck/BainLuckTests/LadderOriginalProbabilityDetails9483Tests.swift`
+
+The component's43673-byte original Details/chooser prefix is immutable. Preserve all60 accepted parent tests as a byte-exact prefix. Bounded nonbreaking opt-in changes within the handicap section and appended helpers/tests are permitted. Existing default final behavior, APIs, original chooser, formatter/policy/model/routing/subscription/host files and30protected bindings are read-only. Do not import another parked package or make a parallel data/formatting/truth pipeline.
+
+## First outcome — live handicap card
+
+Implement the exact enclosed `TENNIS-LIVE-HANDICAP-NEXT-SOURCE.md`, retained cases, reuse proposal/cases and binding map. This wrapper supersedes its old local-runner/path/no-source-push instructions only for this admitted cloud contribution and its dedicated source branch. Product/data/preservation requirements and every downstream hold remain.
+
+Reuse the actual `.during` phase and exact `OriginalMarketDetails9483.Mode`/`.content`/chooser identity contract. Show43.5% and54.5% original pre-match chances, independently unavailable current chances, owner-supplied1set won and+2games ahead, and separately pending original-market context. Preserve each market's real mode; never force `.final` or `.result` to reuse a helper. Keep sets and games distinct. Real retained baselines are06:58:25.957874Z before verified10:55Z start; later99.95/87% quotes and alternate47% opening are not current or baseline replacements. See all nine complete reference/source files, not hashes alone.
+
+Follow the approved two compact panels with full conditions, prominent equal-weight before/current numeric figures where admitted and common0–100%rails. Label every drawn channel. Missing words are not0%; physical progress is not a market result. Use whole-label wrapping, uncapped Dynamic Type and genuine44ptcontrols. No long table, picker-hidden baseline, repeated permanent provenance rows or source-specific feature branch architecture. Full Details/provenance and host actions remain shared.
+
+## Conditional second outcome — pregame coverage in the same shared card
+
+This is an explicit phase adaptation of the approved two-panel handicap presentation, not a new route/design variant. The current accepted card is final-only and the first outcome adds during-play use; the existing route register independently requires pregame cards/comparisons too. Design admits a default-off pregame option after the first outcome is immutably committed and its source return is written. No new human prompt or per-commit Mac acknowledgment is needed.
+
+Use the same two files, original identities, owner predicate/condition labels and measured panels. Keep true `.before` and the original owner's `.pregame` mode. A panel shows the complete condition, prominent own pre-match chance and its fixed-scale probability rail, with genuine original Details/chooser actions where supplied. Suppress all sporting actuals, block states, current/later chance, movement, pending/result copy, grade glyphs and their spoken values during this phase—even when contradictory later payloads are supplied. No zero sporting actual or placeholder current/result row. Reuse `OriginalMarketDetails9483.content` in its admitted mode; do not synthesize or rewrite modes. A non-pregame original must not leak its later or result channels into a before-only panel; retain a clearly named unavailable state and independently safe before information only through existing owner content.
+
+The retained43.5/54.5% original observations and clocks remain the concrete before facts. Fixture associations/copy are explicitly constructed owner presentation inputs, not real app binding or a latest-price freshness claim. Missing/0%/invalid geometry, exact blank/duplicate/foreign/withdrawn/NaN identity behavior, genuine/static actions, and narrow/AX planning follow the same owner contracts. Preserve all first-outcome tests and add focused before tests as an appendix. Existing live opt-in and default final behavior must remain unchanged. No threshold arithmetic, baseline election, probability conversion, grade inference, local formatter, clock or subscription.
+
+Prepare this second outcome only if the first has a committed return, no conflicting priority/custody notice is known, the protected/core contracts still match, and the active-outcome count stays at most3. A first return awaiting Design intake counts1; this second source outcome counts1; the one local source author/wait counts at most1. Do not start a third while both cloud returns await intake. A timeout/missing reply does not mean acceptance. Stop on actual ownership/contract conflict and preserve work.
+
+## Publication and documentation
+
+Wee-Bey is the **sole publisher** of the dedicated source branch. Verify its current remote ref before initial creation; if it already exists unexpectedly, inspect/agree ownership rather than overwrite it. Import the supplied accepted parent and input packet, then publish only an ordinary non-force fast-forward to that exact branch. All network source operations are limited to this authorized repository/branch and its prerequisite object reads. No other branch, PR, master merge/deploy or release operation follows. If the branch moves unexpectedly, preserve local commits and stop publication; resolve the actual path conflict with Design. Never reset/amend/force-push through it. Design/local UX will not race publication to this branch.
+
+Read-only input/docs may be seeded beneath `docs/event-page-native-cloud/inputs/handicaps/` on that branch, preserving the archive's manifest and relocation map. Cloud-owned source return docs are only `docs/event-page-native-cloud/tennis-live-handicaps/RETURN.md`, `AUTHOR-CHECK.json`, and the corresponding `tennis-pregame-handicaps/` pair. These returns name exact parent/head/tree, changed paths, pins, frozen prefix/tests, checks/exit codes, source risks and all unpaid qualification. Say PREPARED_RETURN, never SOURCE_ACCEPTED. Cloud must not overwrite Design's central manifest, phase/card evidence, Page, GitHub status or local runner queues.
+
+After either return, send its immutable source/receipt identifiers to Design through the existing coordinator. Design reviews exact source and either requests a correction or accepts/parks it, then updates the same central tracker. The second admitted phase may proceed offline under the rule above. After the two bounded outcomes, request replenishment automatically through the coordinator; do not ask Alex to prompt continuation, self-assign more variants or expand into occupied contracts. Design will select the next real missing lifecycle/card gap from the existing approved register, reserve paths and deliver another pinned packet. Actual qualification remains held until its existing owners grant capacity.
+
+## Evidence and holds
+
+Cloud currently reports no Swift installation. Source/portable diff/ancestry/hash checks and focused **prepared**, unrun tests are allowed. Do not claim syntax parsing, typecheck, SwiftUI compilation, XCTest, native frames, VoiceOver or device acceptance without those actual operations and their grants. A browser reconstruction is not native visual evidence.
+
+All57routes and applicable pregame/live/final cards, comparisons, history, full original catalogue and held reader remain in scope. These two source changes alone complete neither a phase nor a route. Native retains real event/original/predicate/score associations, shared formatting/currentness/settlement, mounting, updates/withdrawal, Details/Back/focus and coordinated qualification. Compact/wide/AX fidelity, interactions/accessibility, independent review, integration and identified carrying-TestFlight acceptance remain owed. Preserve original NBA obligations and1.0.5/CLI/Delivery Speed/release priority; design is not a release gate or promised1.0.5scope.
+
+Prior failed coordination attempts remain historical in the local denial receipt. The direct current user authorization resolves source collaboration only; it does not retry/reroute V5/CU messages or enable unrelated operations. No upload is a source acceptance or evidence of delivery.

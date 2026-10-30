@@ -1,0 +1,4735 @@
+import SwiftUI
+
+/// The Sources list's own width, so #4107's label column can be clamped against
+/// the room the row actually has. A preference key rather than a
+/// `UIScreen.main.bounds` read: gotcha #27 — Stage Manager can hand back a
+/// background scene, and this file's neighbours have been walked off that API
+/// deliberately.
+private struct SourceRowWidthKey: PreferenceKey {
+    static let defaultValue: Double = 0
+    static func reduce(value: inout Double, nextValue: () -> Double) {
+        value = max(value, nextValue())
+    }
+}
+
+// MARK: - View
+
+struct EventDetailView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var marketPageVisible = false
+    // Only presentation/event identity is retained, never a withdrawn quote.
+    @State private var duringDetailEventID: Int?
+    @State private var afterDetailEventID: Int?
+    // #10236 — Close returns the page to where the matrix sat on screen; one
+    // anchor per matrix host (`MatrixPageReadingAnchor10236`).
+    @State private var duringPageAnchor = MatrixPageReadingAnchor10236(host: .during)
+    @State private var afterPageAnchor = MatrixPageReadingAnchor10236(host: .after)
+    @AccessibilityFocusState(for: .voiceOver) private var duringPageTitleFocused: Bool
+    let eventId: Int
+    @StateObject private var vm: EventDetailViewModel
+    /// Closed for every reader. Starts open only when the LOOK rig asks
+    /// (`-launch_expand_sections`), which is the only way this list can be
+    /// photographed — the rig cannot tap a chevron. See `LaunchRig`.
+    @State private var showSources = LaunchRig.expandsCollapsedSections()
+    /// #10863 — the book table past its first `collapsedBookmakerRowLimit` rows.
+    @State private var showAllBookmakers = false
+    @State private var showProbabilityDetails = false
+    @ScaledMetric(relativeTo: .largeTitle) private var eventHeadlineChanceSize9483: CGFloat = 44
+    /// v476 — actual score and projected final share one scaled figure style.
+    @ScaledMetric(relativeTo: .title2) private var eventHeadlineScoreSize9483: CGFloat = 24
+    /// #9483 — the NFL cards' open card and selections, owned by the page so
+    /// they survive the deck → full size → deck round trip.
+    @StateObject private var nflCards = NFLCardDeckState9483()
+    /// #9483 v445 — the page scroll phase and unobscured viewport the compact
+    /// NBA stream reads. Held, not observed: a scroll phase change re-renders
+    /// the stream, never this page.
+    @State private var nbaStreamSignals = NBAStoryStreamView9483.Signals()
+    /// The width of a row in the sources disclosure, reported by the
+    /// `GeometryReader` behind the whole panel, so both lists inside it can size
+    /// their label column against the room the row actually has rather than a
+    /// literal. `0` until the first layout pass.
+    ///
+    /// Measured on the PANEL and not on either list, because the two lists render
+    /// under independent conditions. An event with sportsbook odds and no
+    /// aggregate sources draws the books list alone — the disclosure's own toggle
+    /// says "Individual Sportsbooks" for exactly that case — and if only the
+    /// sources list published this, that event would leave it `0` forever. `0`
+    /// means "not measured yet", which `maximumLabelWidth` deliberately treats as
+    /// UNCLAMPED, so the books column would have quietly lost the bar's floor.
+    @State private var sourceRowWidth: Double = 0
+    /// #1833 — the narrower of the two stacked charts' inline plots, published by
+    /// each (`PageAxisPlotWidthPreferenceKey`) and handed back to both, so one
+    /// page draws one clock. Only this view can see both charts.
+    @State private var pageAxisPlotWidth: CGFloat = 0
+    /// #8320 — whether the hero has gone under the bar, so the bar can take the
+    /// score over only then (`navTitleShowsScore`). `true` until measured.
+    ///
+    /// #8651 — the DECISION, never the hero's position. The hero's bottom edge
+    /// moves with every frame of every scroll, and holding it here re-ran this
+    /// whole page's body on each of those frames: build 23's choppy scrolling on
+    /// Alex's phone. The hero's own `GeometryReader` decides, and this changes
+    /// only when the hero actually crosses the bar.
+    @State private var navShowsScore = true
+    /// The bar's bottom edge in `scrollSpace`; moves only when the bar does.
+    @State private var scrollViewportTop: CGFloat = 0
+    static let scrollSpace = "eventDetailScroll"
+    /// #8481 — the page's ONE All / Since Start choice. The picker above Win
+    /// Probability writes it and both charts read it (Alex, 2026-09-24: one
+    /// control governs both). It lived in the probability chart's own view model,
+    /// where neither the shared window nor the score chart could see it.
+    @State private var chartRange: OddsTimeRange = .sinceStart
+    /// #4974 — whether this appearance may read a finished game's stored
+    /// checkpoints. One value, so a load's completion opens readiness and moves
+    /// the revision in a single write (`PublicationCaller4974`).
+    @State private var publicationCaller = PublicationCaller4974()
+    /// Original history window bounds legacy ink even when stored dots widen the axis.
+    private var legacyChartDataDomain: ClosedRange<Date>? {
+        Self.pageLegacyChartDataDomain(event: vm.event, history: vm.history, range: chartRange,
+                                       journey: vm.publicationJourney, key: publicationTaskKey,
+                                       now: displayNow())
+    }
+    private var sharedChartDomain: ClosedRange<Date>? {
+        Self.pageSharedChartDomain(event: vm.event, history: vm.history, range: chartRange,
+                                   journey: vm.publicationJourney, key: publicationTaskKey,
+                                   now: displayNow())
+    }
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// Reflow the hero before its growing center column squeezes the teams.
+    /// #10796 keeps the competitors together in the larger-text layout.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// #9483 / #11296 — ONE display clock for the page's freshness readers:
+    /// the headline's phase and age, the quote-is-current test the chart's end
+    /// dot follows, the live chart window's end, and the NBA ladders' quote
+    /// eligibility. Nil — every production mount — is the real clock, read
+    /// where each reader read it before. A retained-data check sets the
+    /// retained observation's instant here so all four read the same held
+    /// moment; no served timestamp is restamped. A view-model clock alone
+    /// cannot do it: these readers are the page's, not the model's.
+    private let displayAsOf: Date?
+
+    init(eventId: Int, viewModel: EventDetailViewModel? = nil, displayAsOf: Date? = nil) {
+        self.eventId = eventId
+        self.displayAsOf = displayAsOf
+        _vm = StateObject(wrappedValue: viewModel ?? EventDetailViewModel(eventId: eventId))
+    }
+
+    /// The instant the page's freshness readers compare against: the injected
+    /// display clock, else `tick` (a `TimelineView`'s date), else now.
+    private func displayNow(_ tick: Date? = nil) -> Date {
+        Self.displayNow(asOf: displayAsOf, tick: tick ?? Date())
+    }
+
+    static func displayNow(asOf: Date?, tick: Date) -> Date { asOf ?? tick }
+
+    private var isLive: Bool { vm.event?.status == "live" }
+    private var publicationTaskKey: PublicationTaskKey4974 {
+        PublicationTaskKey4974(pageEventId: eventId, vmEventId: vm.eventId,
+                               event: vm.event, caller: publicationCaller)
+    }
+    /// #9436 — what the hero's whole-string change reads: the pair the chart's
+    /// live-edge label also prints (`LivePriceActivity.displayedLabels`), which
+    /// is exactly the pair the hero draws; moving only while live. #10090: the
+    /// hero prints `vm.headline(event)`, so this reads it too — otherwise a
+    /// commit confirming a shown preview slides the stale committed value away.
+    private func heroValue(away: Bool) -> String {
+        guard let event = vm.event else { return "" }
+        let labels = LivePriceActivity.displayedLabels(in: vm.headline(event))
+        return (away ? labels.away : labels.home) ?? ""
+    }
+    /// #10090: `priceActivity` describes committed moves, not a preview's, so
+    /// while one is held the direction is unknown (nil).
+    private func heroRising(away: Bool) -> Bool? {
+        guard vm.blendPreview == nil else { return nil }
+        return (away ? vm.priceActivity?.awayDelta : vm.priceActivity?.homeDelta).map { $0 > 0 }
+    }
+    private var priceStreamingEligible: Bool { EventPriceStreaming.isEligible(vm.event?.status) }
+    private var heroMoves: Bool { priceStreamingEligible && vm.liveUpdateStatus != .interrupted }
+    /// #4002 — this page kept a PRIVATE COPY of a vocabulary `EventState`
+    /// already owns, and `suspended` (live/048) matched none of its arms. So
+    /// the hero drew no badge, no score, a grey `Proj. 3-2` where the score
+    /// belongs and a kick-off time for a match played four days earlier.
+    /// `EventCardView` took that exact repair under CERT-786 and this page did
+    /// not, because a copy is invisible to the fix applied to the original.
+    /// Read the vocabulary; never restate it.
+    private var isFinished: Bool { EventState.isFinished(vm.event?.status) }
+    /// #4021 — the CLOCK is part of this test. See `EventState.isSuspendedAndStarted`.
+    private var isSuspended: Bool {
+        EventState.isSuspendedAndStarted(
+            vm.event?.status, commenceTime: vm.event?.commenceTime?.asDate)
+    }
+    private var isIPad: Bool { sizeClass == .regular }
+    private var logoSize: CGFloat { isIPad ? 80 : 56 }
+
+    /// #9483 — the crest once the hero restacks: the probabilities lead and the
+    /// teams follow as compact identity, so a crest no longer takes a row of
+    /// its own above them. Text is never shrunk to buy the room.
+    static let stackedHeroLogoSize: CGFloat = 32
+
+    static func heroLogoSize(stacked: Bool, regular: CGFloat) -> CGFloat {
+        stacked ? min(regular, stackedHeroLogoSize) : regular
+    }
+    private var scoreFontSize: CGFloat { isIPad ? 52 : 40 }
+    private var contentMaxWidth: CGFloat {
+        #if os(macOS)
+        return 1200
+        #else
+        return isIPad ? 1100 : 700
+        #endif
+    }
+
+    /// The title's rungs, or nil before a score exists to protect.
+    private var titleRungs: EventNavTitle.Rungs? {
+        guard let event = vm.event,
+              let hs = event.homeScore, let as_ = event.awayScore else { return nil }
+        // #4880 — this joined the raw pair with no guard at all, so the title
+        // read "… • 25' 25'" on every live soccer match.
+        let state = PeriodLabel.liveStatusText(
+            period: event.espn?.period, gameClock: event.espn?.gameClock) ?? ""
+        return EventNavTitle.rungs(
+            away: event.awayTeam, home: event.homeTeam,
+            awayScore: as_, homeScore: hs,
+            awayServed: event.awayTeamData?.abbreviation,
+            homeServed: event.homeTeamData?.abbreviation,
+            state: state,
+            sportKey: event.sport
+        )
+    }
+
+    /// The flat title. Still what the bar shows on macOS, and on every platform
+    /// it is what a pushed view's back button and VoiceOver read — so it stays
+    /// the WIDEST rung, which is the whole sentence.
+    private var dynamicTitle: String {
+        if let rungs = titleRungs { return (rungs.withState ?? rungs.labelled).text }
+        return scorelessTitle
+    }
+
+    /// The matchup alone: the title before a score exists, and (#8320) the
+    /// bar's title while the hero is on screen stating the score itself.
+    private var scorelessTitle: String {
+        guard let event = vm.event else { return "Game Details" }
+        return EventNavTitle.scoreless(
+            away: event.awayTeam, home: event.homeTeam,
+            awayServed: event.awayTeamData?.abbreviation,
+            homeServed: event.homeTeamData?.abbreviation,
+            sportKey: event.sport
+        )
+    }
+
+    /// #5634 — `scorelessTitle`'s floor, in the crest badges' codes.
+    private var scorelessCompactTitle: String {
+        guard let event = vm.event else { return "Game Details" }
+        return EventNavTitle.scorelessCompact(
+            away: event.awayTeam, home: event.homeTeam,
+            awayServed: event.awayTeamData?.abbreviation,
+            homeServed: event.homeTeamData?.abbreviation
+        )
+    }
+
+    #if os(iOS)
+    /// #4900 — the inline title, laid out rather than truncated.
+    ///
+    /// `ViewThatFits` walks the rungs widest-first and takes the first that the
+    /// bar can actually hold; the bar measures, because no character count
+    /// here can (the four photographed specimens broke between 16 and 24
+    /// characters in the same bar). The floor is rendered as PARTS with the two
+    /// numbers at a higher layout priority than the two names, so even a club
+    /// whose three-glyph code somehow does not fit loses letters off a name and
+    /// never a digit off a score — which is the defect this exists to end.
+    @ViewBuilder
+    private var navTitleView: some View {
+        // #8320 — while the hero is on screen it states the score, so the bar
+        // names the matchup instead of repeating it.
+        if let rungs = titleRungs,
+           navShowsScore {
+            ViewThatFits(in: .horizontal) {
+                if let full = rungs.withState {
+                    Text(full.text).font(.headline).lineLimit(1)
+                }
+                Text(rungs.labelled.text).font(.headline).lineLimit(1)
+                scoreProtectedTitle(rungs.compact)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(dynamicTitle)
+        } else {
+            // VoiceOver still hears the whole sentence, score included: it is
+            // not reading the hero's numbers off the screen alongside.
+            // #5634 — the names first, the crest codes when the names do not
+            // fit, never a name cut in half ("RMA vs Dubai Bas…").
+            ViewThatFits(in: .horizontal) {
+                Text(scorelessTitle).font(.headline).lineLimit(1)
+                Text(scorelessCompactTitle).font(.headline).lineLimit(1)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(dynamicTitle)
+        }
+    }
+
+    private func scoreProtectedTitle(_ c: EventNavTitle.Candidate) -> some View {
+        HStack(spacing: 4) {
+            Text(c.away).lineLimit(1).truncationMode(.tail)
+            Text(c.awayScore).layoutPriority(1)
+            Text("-").layoutPriority(1)
+            Text(c.home).lineLimit(1).truncationMode(.tail)
+            Text(c.homeScore).layoutPriority(1)
+        }
+        .font(.headline)
+    }
+    #endif
+
+    private var shareURL: URL {
+        URL(string: eventShareURL(eventId)) ?? bainLuckFallbackURL
+    }
+
+    /// #4974 — every page load the reader starts: appearance, pull to refresh
+    /// and Refresh now (`EventDetailView.loadPage(pageEventId:vm:caller:)`).
+    private func loadPage() async {
+        await Self.loadPage(pageEventId: eventId, vm: vm, caller: $publicationCaller)
+    }
+
+    /// #8651 — the page's own rebuild count, kept only when the rig asks
+    /// (`LaunchRig.countsPageBuilds`), so a test can read what a scroll costs.
+    private static let countsBuilds = LaunchRig.countsPageBuilds()
+    private static var builds = 0
+
+    private static func countBuild() -> Int {
+        guard countsBuilds else { return 0 }
+        builds += 1
+        return builds
+    }
+
+    var body: some View {
+        let builds = Self.countBuild()
+        contentView
+            .background {
+                if Self.countsBuilds {
+                    Text("\(builds)")
+                        .font(.system(size: 1))
+                        .opacity(0.01)
+                        .accessibilityIdentifier("page-build-count")
+                }
+            }
+            .navigationTitle(dynamicTitle)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                #if os(iOS)
+                ToolbarItem(placement: .principal) {
+                    navTitleView
+                        .accessibilityFocused($duringPageTitleFocused)
+                }
+                #endif
+                // Delivery status sits beside Win Probability, where the fan is
+                // reading prices. Keep the manual refresh independently reachable.
+                if isLive {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button { Task { await loadPage() } } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 13, weight: .medium))
+                                .frame(width: 22, height: 22)
+                        }
+                        .accessibilityLabel("Refresh now")
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    HStack(spacing: 4) {
+                        ShareLink(item: shareURL) {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 14))
+                        }
+                        .recordsShareOpened {
+                            ShareInstrumentation.recordShareOpened(
+                                itemType: "event",
+                                itemId: String(eventId),
+                                itemName: vm.event.map { "\($0.awayTeam) vs \($0.homeTeam)" },
+                                category: DiscoverCategory.token(forSport: vm.event?.sport),
+                                surface: .eventDetail
+                            )
+                        }
+                        PinButton(type: "event", id: eventId)
+                        #if os(iOS)
+                        // #10880 — present only on an eligible upcoming game.
+                        CalendarDetailMenu10880(pageEventId: eventId, event: vm.event)
+                        #endif
+                    }
+                }
+            }
+            // #4974 — the page's one checkpoint task. SwiftUI cancels the run
+            // in flight whenever the key moves and when the page leaves; a run
+            // calls the view model only for a ready appearance of this page's
+            // own view model (`PublicationTaskKey4974.action`).
+            .task(id: publicationTaskKey) {
+                await Self.runPublicationTask(for: publicationTaskKey, vm: vm)
+            }
+            // Its own modifier so the existing disappearance block is untouched:
+            // a load still in flight can no longer reopen readiness.
+            .onDisappear { publicationCaller.suspend() }
+            // #10874 — a viewed game joins Spotlight's recent entries.
+            .spotlightViewed10874(vm.event.flatMap { event in
+                event.id == eventId ? SpotlightSubject10874.game(
+                    id: event.id, away: event.awayTeam, home: event.homeTeam,
+                    sportKey: event.sport, commenceTime: event.commenceTime) : nil
+            })
+            .task {
+                marketPageVisible = true
+                vm.setMarketPageVisible(scenePhase == .active)
+                await loadPage()
+                AnalyticsService.trackEventDetailView(eventId: eventId, sport: vm.event?.sport)
+            }
+            .refreshable {
+                await loadPage()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase != .active {
+                    duringPageAnchor.cancel()
+                    afterPageAnchor.cancel()
+                }
+                vm.setMarketPageVisible(marketPageVisible && phase == .active)
+                // #1833: a page brought back from the background reads the game
+                // again now, rather than whenever the suspended poll gets to it.
+                vm.scenePhaseChanged(to: phase, pageVisible: marketPageVisible)
+            }
+            // #9483 v445 C3 — another event on this page: the old event's
+            // reader closes and its stream, reasons and ladder selections go
+            // before the new event's stream begins.
+            .onChange(of: eventId) { _, _ in nflCards.resetNBAStream() }
+            .onDisappear {
+                duringPageAnchor.cancel()
+                afterPageAnchor.cancel()
+                marketPageVisible = false
+                duringDetailEventID = nil
+                afterDetailEventID = nil
+                duringPageTitleFocused = false
+                vm.stopRefresh()
+            }
+    }
+
+    @ViewBuilder
+    private var contentView: some View {
+        if vm.loading {
+            ProgressView()
+        } else if let error = vm.error, vm.event == nil {
+            ContentUnavailableView(
+                "Error",
+                systemImage: "exclamationmark.triangle",
+                description: Text(error)
+            )
+        } else if let event = vm.event {
+            ScrollView {
+                VStack(spacing: 12) {
+                    VStack(spacing: usesApprovedHeadlinePresentation9483(event) ? 0 : 12) {
+                    // #10090 — the hero may show a provisional blend; with
+                    // none held this is `event` itself. The chart projects the
+                    // same one (`vm.chartFrames`); every other section keeps
+                    // committed truth.
+                    heroSection(vm.headline(event))
+                        .background(GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: NavShowsScorePreferenceKey.self,
+                                value: Self.navTitleShowsScore(
+                                    heroBottom: proxy.frame(in: .named(Self.scrollSpace)).maxY,
+                                    viewportTop: scrollViewportTop))
+                        })
+                        // #10876 — no tip (the bar's pin tip, the chart's tip)
+                        // opens while this hero is on screen.
+                        .contextualTipHero10876(type: "event", id: eventId, scrollSpace: Self.scrollSpace)
+                    VStack(spacing: 0) {
+                        TimelineView(.periodic(from: .now, by: 60)) { tick in
+                            OddsChartView(eventId: event.id, teamColors: teamColors(event),
+                                         commenceTime: event.commenceTime, status: event.status,
+                                         // #6381 — so the empty state stops saying
+                                         // "yet" under a hero that says settled.
+                                         venueSettled: event.venueSettled == true,
+                                         homeTeamName: event.homeTeam,
+                                         awayTeamName: event.awayTeam,
+                                         homeTeamLogo: event.homeTeamData?.logoSmall,
+                                         awayTeamLogo: event.awayTeamData?.logoSmall,
+                                         homeTeamAbbrev: event.homeTeamData?.abbreviation,
+                                         awayTeamAbbrev: event.awayTeamData?.abbreviation,
+                                         sportKey: event.sport,
+                                         // #9483 tennis (Design C3) — the scoreboard,
+                                         // for the full-size header's result line.
+                                         homeScore: event.homeScore,
+                                         awayScore: event.awayScore,
+                                         // #8320 — the page's one decision, so the
+                                         // fullscreen dot cannot claim a push the
+                                         // toolbar does not.
+                                         refreshStreaming: refreshIndicator == .streaming,
+                                         liveUpdateStatus: vm.liveUpdateStatus,
+                                         priceActivity: vm.priceActivity,
+                                         // #9436 — the hero's own number, for the
+                                         // dot on the end of the line. #10090: the
+                                         // number the hero prints, preview included.
+                                         liveEdge: LiveEdgeReading.current(in: vm.headline(event)),
+                                         // #9483 Argon P1 — the edge, its number and the ring
+                                         // are live only while the headline calls this quote
+                                         // current, on its own clock: the tick ages them out
+                                         // with no new price. A started game the venue has
+                                         // already settled is a verdict, never a live quote,
+                                         // whatever its status still says.
+                                         quoteIsCurrent: EventHeadlinePhase9483.isCurrent(
+                                             status: event.status, commenceTime: event.commenceTime?.asDate,
+                                             isOpeningLine: event.currentOdds.map {
+                                                 OpeningLineHero.resolve($0, for: event).isOpeningLine } ?? false,
+                                             observedAt: vm.displayedProbabilityObservedAt(event),
+                                             deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
+                                             now: displayNow(tick.date))
+                                             && !EventState.showsVenueSettledVerdict(
+                                                 event.status, venueSettled: event.venueSettled,
+                                                 commenceTime: event.commenceTime?.asDate, now: displayNow(tick.date)),
+                                          pairedAwayLabel9483: LivePriceActivity.displayedLabels(in: vm.headline(event)).away,
+                                         // #10456 — the served winner pair, both
+                                         // sides: admission for the balance ink.
+                                         servedHomeProbability: event.currentOdds?.homeProbability,
+                                         servedAwayProbability: event.currentOdds?.awayProbability,
+                                         forcedDomain: sharedChartDomain,
+                                         legacyDataDomain: legacyChartDataDomain,
+                                         pageAxisPlotWidth: pageAxisPlotWidth,
+                                         selectedRange: $chartRange,
+                                         preloadedHistory: vm.history,
+                                         // #8651 — its live edge, read once per
+                                         // payload rather than on every rebuild.
+                                         preloadedHistoryEdge: vm.historyDigest.map(\.edge),
+                                         // #10090 — every payload, not only a moved edge.
+                                         preloadedHistoryGeneration: vm.historyGeneration,
+                                         // #920 — the pushed blends the hero is
+                                         // already showing, so the chart's right
+                                         // edge reaches the same moment it does.
+                                         // #10090: plus a displayed preview, at its
+                                         // observation time, never stored.
+                                         liveFrames: vm.chartFrames(event),
+                                         // #925 — the scrub readout rides INSIDE the
+                                         // chart, above its plot, so the finger on
+                                         // the chart and the text it rewrites are on
+                                         // screen together (it was below the chart,
+                                         // under the tab bar, in Alex's recording).
+                                         readout: (isLive || isFinished) && vm.history?.scoringPlays?.isEmpty == false
+                                            ? GamePlayCardView(
+                                                homeTeam: event.homeTeam,
+                                                awayTeam: event.awayTeam,
+                                                homeTeamColor: teamColors(event).home,
+                                                awayTeamColor: teamColors(event).away,
+                                                homeTeamLogo: event.homeTeamData?.logoSmall,
+                                                awayTeamLogo: event.awayTeamData?.logoSmall,
+                                                lastPoint: lastPlayPoint(event: event))
+                                            : nil,
+                                         // #4974 — the journey only when page, view
+                                         // model, detail and journey agree on a
+                                         // finished game and this appearance is
+                                         // ready; the chart keeps its own guard.
+                                         publicationJourney: Self.chartPublicationJourney(
+                                            vm.publicationJourney, key: publicationTaskKey))
+                        }
+                        // Bookmaker table (collapsible Sources panel)
+                        sourcesToggle(event)
+
+                        // #3410 — this link goes to THIS event's model breakdown,
+                        // so on a game with no readings at all it promises a page
+                        // that is itself empty. With the chart collapsed and
+                        // `sourcesToggle` already self-hiding, it was the last
+                        // thing left in the card and read as stranded.
+                        if Self.hasAnyProbabilityEvidence(event: event, history: vm.history) {
+                            NavigationLink(value: Route.eventModels(id: event.id)) {
+                                HStack {
+                                    Spacer()
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "function")
+                                            .font(.caption2.weight(.bold))
+                                        Text("View Probability Models")
+                                            .font(.caption2.weight(.medium))
+                                    }
+                                    .foregroundStyle(.blue)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 6)
+                            }
+                        }
+                    }
+                    .background(usesApprovedHeadlinePresentation9483(event) ? Color.clear : Color.cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: usesApprovedHeadlinePresentation9483(event) ? 0 : 12))
+                    }
+                    // #9483 v476 — headline and chart are one rounded card on the
+                    // adopted pair: one backdrop, one set of corners, no seam notch.
+                    .background {
+                        if usesApprovedHeadlinePresentation9483(event) { Self.heroBackdrop(teamColors(event)) }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: usesApprovedHeadlinePresentation9483(event) ? 16 : 0))
+                    // #10830 — Alex, build 46: Start Live Activity sat between the
+                    // hero and the chart and took "too much prime real estate".
+                    // It follows the chart now, a small leading control.
+                    #if os(iOS)
+                    if let reading = GameActivitySnapshot.liveActivityReading(for: event) {
+                        GameActivityControl(snapshot: reading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 4)
+                    }
+                    #endif
+                    let projectedInput = projectedPointsInput(event)
+                    let projectionReplacesDifferential = ProjectedFinalPointsMount.replacesScoreDifferential(projectedInput)
+                    // #9483 — the NFL cards sit directly under the paired chart:
+                    // the forecast against what happened, and the top player
+                    // milestones. Each opens full size. Every section below,
+                    // including the full projected-points chart and all props,
+                    // stays where it is.
+                    let nflDeck = nflCardDeck(event, projectedInput: projectedInput)
+                    if !nflDeck.isEmpty {
+                        // #9483 v445 — compact NBA: the story stream replaces
+                        // the deck's scroller; elsewhere the deck as before.
+                        NFLEventCardDeckView9483(
+                            cards: nflDeck, awayName: nflNames(event).away, homeName: nflNames(event).home,
+                            awayColor: teamColors(event).away, homeColor: teamColors(event).home,
+                            state: nflCards, stream: nbaStreamPage(event, cards: nflDeck))
+                    }
+                    // #9483 C3 — the venue's winner price is read under the
+                    // chart, never between the hero's result and the chart.
+                    if let gameMarkets = vm.gameMarkets,
+                       let quote = gameMarkets.openWinnerQuote {
+                        FinalGameWinnerQuoteView(
+                            quote: quote, eventId: event.id, eventStatus: event.status,
+                            closedMarketIds: Set(gameMarkets.closedWinnerMarketIds ?? [])
+                        )
+                    }
+                    // #8320 — the score by inning sat between the hero and the
+                    // chart, pushing the chart off the first screen. It is detail
+                    // for the score the hero already states, so it follows the
+                    // chart instead of standing in front of it.
+                    // #9067 — the stored line score needs no history, so a
+                    // failed history fetch no longer hides the card with it.
+                    if isLive || isFinished,
+                       vm.history != nil || event.boxScoreData != nil {
+                        GameSegmentsView(
+                            history: vm.history,
+                            lineScore: event.boxScoreData,
+                            isFinished: isFinished,
+                            sportKey: event.sport,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeTeamColor: teamColors(event).home,
+                            awayTeamColor: teamColors(event).away,
+                            homeTeamAbbrev: event.homeTeamData?.abbreviation,
+                            awayTeamAbbrev: event.awayTeamData?.abbreviation,
+                            // #1831: the scoreboard's own totals, so the card can
+                            // never disagree with the hero above it.
+                            finalHomeScore: event.homeScore,
+                            finalAwayScore: event.awayScore
+                        )
+                    }
+                    // "Why the Line Moved" removed — content was low quality
+                    // (obvious statements, minor injuries). See #745 for revamp plan.
+                    // #10239 / #10478 / #10549 — the ONE projected-points
+                    // decision. Football and basketball leagues the series
+                    // names (#10549 follow-through), before, during and after
+                    // the game, secondary to the win probability above, on the
+                    // page's own sport key; before and during read the
+                    // clock the history arrived on. When it admits a drawable
+                    // chart, that chart takes the Score Differential card's place
+                    // (never two answers to one question); every refusal keeps
+                    // the differential.
+                    // Score Differential Chart
+                    if let history = vm.history, (isLive || isFinished), !projectionReplacesDifferential {
+                        ScoreDifferentialChartView(
+                            history: history,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            sportKey: event.sport,
+                            commenceTime: event.commenceTime,
+                            eventStatus: event.status,
+                            homeTeamColor: teamColors(event).home,
+                            awayTeamColor: teamColors(event).away,
+                            homeTeamAbbrev: event.homeTeamData?.abbreviation,
+                            awayTeamAbbrev: event.awayTeamData?.abbreviation,
+                            homeTeamLogo: event.homeTeamData?.logoSmall,
+                            awayTeamLogo: event.awayTeamData?.logoSmall,
+                            forcedDomain: sharedChartDomain,
+                            legacyDataDomain: legacyChartDataDomain,
+                            pageAxisPlotWidth: pageAxisPlotWidth,
+                            range: chartRange
+                        )
+                    }
+                    if projectionReplacesDifferential, let projectedInput {
+                        ProjectedFinalPointsChartView(
+                            input: projectedInput,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeColor: teamColors(event).home,
+                            awayColor: teamColors(event).away,
+                            periodMarkers: vm.history?.periodMarkers,
+                            sportKey: event.sport
+                        )
+                        .padding(16)
+                        .background(Color.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    // #9483 C2 — the player questions follow the score context
+                    // (differential / projected points), ahead of the maps and
+                    // the spectrum. The whole block moved as one, so it is still
+                    // ONE mount with both #10236 anchors.
+                    // #10236 / #10237 — ONE player-props mount, phased by the
+                    // server's envelope: `after_player_props` (finished game)
+                    // draws the After grid, else `during_player_props` (live)
+                    // draws the During matrix, else the card below stays exactly
+                    // as it was. The phone never decides the phase; a detail
+                    // sheet open in one phase keeps its host until dismissed.
+                    if duringDetailEventID != eventId,
+                       AfterPropsMatrixLayout.drawable(vm.gameMarkets?.afterPlayerProps) != nil
+                        || afterDetailEventID == eventId {
+                        AfterPropsMatrixView(
+                            props: AfterPropsMatrixLayout.drawable(vm.gameMarkets?.afterPlayerProps)
+                                ?? AfterPlayerProps(contract: nil, stats: [], actuals: [], questions: [], coverage: nil),
+                            onDetailPresentationChanged: { presented in
+                                if presented {
+                                    afterPageAnchor.capture(eventID: eventId)
+                                } else {
+                                    afterPageAnchor.finish(eventID: eventId)
+                                }
+                                afterDetailEventID = presented ? eventId : nil
+                                if presented { duringPageTitleFocused = false }
+                            },
+                            onMatrixUnavailableDismissed: {
+                                // Before the deferred `false`: a withdrawn matrix
+                                // is never scrolled back to.
+                                afterPageAnchor.cancel()
+                                guard marketPageVisible, scenePhase == .active,
+                                      afterDetailEventID == eventId else { return }
+                                duringPageTitleFocused = true
+                            }
+                        )
+                        .background(MatrixPageReadingAnchorMarker10236(anchor: afterPageAnchor))
+                    } else if !(vm.gameMarkets?.duringPlayerProps?.rows ?? []).isEmpty
+                        || duringDetailEventID == eventId {
+                        EventPropsMatrixView(
+                            // Nil/empty after withdrawal carries NO old source,
+                            // stat, probability or observation into the sheet.
+                            props: vm.gameMarkets?.duringPlayerProps
+                                ?? DuringPlayerProps(contract: nil, stats: [], rows: [], coverage: nil),
+                            // #10486 — a sheet open at the final follows the
+                            // After question or says the game is over.
+                            afterProps: AfterPropsMatrixLayout.drawable(vm.gameMarkets?.afterPlayerProps),
+                            gameEnded: isFinished
+                                || AfterPropsMatrixLayout.drawable(vm.gameMarkets?.afterPlayerProps) != nil,
+                            // #10236 — the page's one display clock.
+                            displayAsOf: displayAsOf,
+                            onDetailPresentationChanged: { presented in
+                                if presented {
+                                    duringPageAnchor.capture(eventID: eventId)
+                                } else {
+                                    duringPageAnchor.finish(eventID: eventId)
+                                }
+                                duringDetailEventID = presented ? eventId : nil
+                                if presented { duringPageTitleFocused = false }
+                            },
+                            onMatrixUnavailableDismissed: {
+                                // Invoked only by onDismiss, never on refresh.
+                                duringPageAnchor.cancel()
+                                guard marketPageVisible, scenePhase == .active,
+                                      duringDetailEventID == eventId else { return }
+                                duringPageTitleFocused = true
+                            }
+                        )
+                        .background(MatrixPageReadingAnchorMarker10236(anchor: duringPageAnchor))
+                    }
+                    // Player Props (from game-markets endpoint) — only the props
+                    // the matrix above does not already draw.
+                    if let gameMarkets = vm.gameMarkets,
+                       case let playerProps = AfterPropsMatrixLayout.untypedPlayerProps(
+                           EventPropsMatrixLayout.untypedPlayerProps(
+                               gameMarkets.playerProps ?? [], typed: gameMarkets.duringPlayerProps),
+                           typed: gameMarkets.afterPlayerProps),
+                       !playerProps.isEmpty {
+                        PlayerPropsCardView(
+                            playerProps: playerProps,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeColor: teamColors(event).home,
+                            awayColor: teamColors(event).away,
+                            eventStatus: event.status,
+                            commenceTime: event.commenceTime?.asDate,
+                            boxScore: vm.relatedFutures?.boxScore,
+                            // #6866 — the same crests the hero draws.
+                            homeLogoURL: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
+                            awayLogoURL: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
+                            sportKey: event.sport
+                        )
+                    }
+                    // Market Maps (margin + total density curves)
+                    if let gameMarkets = vm.gameMarkets {
+                        // #4982 — the page is the only thing that can see both
+                        // cards, so the page is what decides which one states
+                        // that we do not hold the played count. Everything but
+                        // the payload's presence is decided inside the chart's
+                        // own predicate, so this cannot drift from what the
+                        // chart above actually rendered.
+                        // #10549 — a differential the projection replaced
+                        // stated nothing.
+                        let absenceStatedAbove = !projectionReplacesDifferential && vm.history.map {
+                            ScoreDifferentialChartView.statesPlayedCountAbsence(
+                                history: $0,
+                                sportKey: event.sport,
+                                eventStatus: event.status,
+                                commenceTime: event.commenceTime
+                            )
+                        } ?? false
+                        MarketMapView(
+                            gameMarkets: gameMarkets,
+                            eventStatus: event.status,
+                            commenceTime: event.commenceTime?.asDate,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeAbbr: event.homeTeamData?.abbreviation,
+                            awayAbbr: event.awayTeamData?.abbreviation,
+                            homeColor: teamColors(event).home,
+                            awayColor: teamColors(event).away,
+                            sportKey: event.sport,
+                            homeSpread: event.currentOdds?.homeSpread,
+                            // #9483 — live, the tile reads the headline's own
+                            // admitted pair (the same decision the popover
+                            // opens on) or draws nothing.
+                            liveForecast: revealForecast11296.map {
+                                MarketMapRail.LiveMarginForecast($0.current)
+                            },
+                            overUnder: event.currentOdds?.overUnder,
+                            // #6290 — the pre-game total, from `opening_odds` and
+                            // never from `current_odds`. The two are the same
+                            // number before the off and diverge with every score.
+                            openingOverUnder: event.openingOdds?.overUnder,
+                            homeScore: event.homeScore,
+                            awayScore: event.awayScore,
+                            absenceStatedAbove: absenceStatedAbove,
+                            halfScores: halfScores(event)
+                        )
+                    }
+                    // Total Points Spectrum (projected scoring + threshold ladder)
+                    if let gameMarkets = vm.gameMarkets {
+                        TotalPointsSpectrumView(
+                            gameMarkets: gameMarkets,
+                            eventStatus: event.status,
+                            commenceTime: event.commenceTime?.asDate,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeColor: teamColors(event).home,
+                            awayColor: teamColors(event).away,
+                            sportKey: event.sport,
+                            overUnder: event.currentOdds?.overUnder,
+                            // #6290 — as on the maps above.
+                            openingOverUnder: event.openingOdds?.overUnder,
+                            homeScore: event.homeScore,
+                            awayScore: event.awayScore
+                        )
+                    }
+                    // Special Event Markets (game props, novelty, MVP)
+                    if let gameMarkets = vm.gameMarkets,
+                       let otherMarkets = gameMarkets.other,
+                       otherMarkets.count >= 3 {
+                        SpecialEventMarketsView(
+                            markets: otherMarkets,
+                            eventStatus: event.status,
+                            commenceTime: event.commenceTime?.asDate
+                        )
+                    }
+                    // #10238 — the sourced Game and Series questions, as two
+                    // independent siblings. Each stays mounted while its payload
+                    // is nil so an open question resolves to "unavailable" rather
+                    // than vanishing, and Series is never gated on Game, the
+                    // price or the game's phase: a finished Game leaves an open
+                    // Series showing. Not SeriesProbabilityView (model-only).
+                    EventQuestionMatrixSection10238(
+                        matrix: vm.gameMarkets?.gameQuestionMatrix, scope: .game)
+                    EventQuestionMatrixSection10238(
+                        matrix: vm.relatedFutures?.seriesQuestionMatrix, scope: .series)
+                    // #9483 — the one route to every original market, including
+                    // the ones no card above can draw (web's All markets).
+                    if let gameMarkets = vm.gameMarkets {
+                        AllMarketsCatalogView9483(gameMarkets: gameMarkets, eventStatus: event.status)
+                            .equatable()
+                    }
+                    // Graceful empty state: a market-less game (e.g. an aged-out
+                    // closed game whose Kalshi/odds markets have expired) has no
+                    // market sections to show. Say so rather than leaving a gap or
+                    // assuming a section exists (#1092).
+                    if let gameMarkets = vm.gameMarkets,
+                       !Self.gameMarketsHaveContent(gameMarkets) {
+                        noGameMarketsNote(status: event.status)
+                    }
+                    // Series Probability (playoff series context)
+                    if let tags = event.eventTags,
+                       (tags.contains("competitive_structure:series") || tags.contains("competitive_structure:best_of_7")),
+                       let homeProb = event.currentOdds?.homeProbability {
+                        SeriesProbabilityView(
+                            homeWinProb: homeProb,
+                            homeSeriesWins: event.espn?.seriesHomeWins ?? 0,
+                            awaySeriesWins: event.espn?.seriesAwayWins ?? 0,
+                            gamesToWin: tags.contains("competitive_structure:best_of_7") ? 4 : 4,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeTeamColor: teamColors(event).home,
+                            awayTeamColor: teamColors(event).away
+                        )
+                    }
+                    if let prog = vm.teamProgression {
+                        ChampionshipPathView(
+                            progression: prog,
+                            homeTeamColor: teamColors(event).home,
+                            awayTeamColor: teamColors(event).away
+                        )
+                    }
+                    RelatedFuturesView(
+                        eventId: event.id,
+                        awayTeamColor: teamColors(event).away,
+                        homeTeamColor: teamColors(event).home,
+                        awayTeam: event.awayTeam,
+                        homeTeam: event.homeTeam,
+                        sportKey: event.sport,
+                        preloadedData: vm.relatedFutures,
+                        // #10238 — the same payload the Series section above draws.
+                        seriesMarketIdsDrawnAbove: EventQuestionMatrixAdapter.drawnMarketIds(
+                            in: vm.relatedFutures?.seriesQuestionMatrix, scope: .series)
+                    )
+                    // League page link
+                    leaguePageLink(event)
+                    // Related by sport tag — cross-content discovery
+                    if let sport = event.sport, let cat = sportCategoryForKey(sport) {
+                        RelatedByTagView(
+                            tags: ["sport:\(cat.key)"],
+                            excludeEventId: event.id,
+                            title: "More \(cat.name)",
+                            limit: 4
+                        )
+                    }
+                    espnSection(event)
+                }
+                .padding(.horizontal)
+                .padding(.bottom)
+                .frame(maxWidth: contentMaxWidth)
+                .frame(maxWidth: .infinity)
+                .onPreferenceChange(PageAxisPlotWidthPreferenceKey.self) { width in
+                    pageAxisPlotWidth = width
+                }
+            }
+            .coordinateSpace(name: Self.scrollSpace)
+            // Where content stops being covered by the bar, in the same space.
+            .background(GeometryReader { proxy in
+                Color.clear.preference(
+                    key: ScrollViewportTopPreferenceKey.self,
+                    value: proxy.safeAreaInsets.top)
+                    // #9483 v445 — and where it is covered again at the
+                    // bottom (the tab bar): the stream's usable viewport.
+                    .preference(key: UsableViewportPreferenceKey.self,
+                                value: Self.usableViewport(size: proxy.size))
+            })
+            .onPreferenceChange(NavShowsScorePreferenceKey.self) { navShowsScore = $0 ?? true }
+            .onPreferenceChange(ScrollViewportTopPreferenceKey.self) { scrollViewportTop = $0 }
+            .onPreferenceChange(UsableViewportPreferenceKey.self) { viewport in
+                if nbaStreamSignals.usableViewport != viewport { nbaStreamSignals.usableViewport = viewport }
+            }
+            // #9483 v445 — only the PAGE's scroll phase can say the page is
+            // being scrolled; the stream nested in it cannot observe that.
+            .modifier(PageScrollPhase9483(signals: nbaStreamSignals))
+            // #10090 — the timing seam's view mark: this update handed the hero
+            // and chart the value it names. Not a paint (`LiveTimingSeam`).
+            .onChange(of: LiveTimingSeam.presented(event, liveBlend: vm.liveBlend)) { old, new in
+                LiveTimingSeam.viewUpdated(from: old, to: new)
+            }
+            // #9483 — a card opened full size: the page stays mounted beneath,
+            // so Back lands on the card it was opened from.
+            #if os(iOS)
+            .fullScreenCover(isPresented: nflReaderPresented) { nflReader(event) }
+            #else
+            .sheet(isPresented: nflReaderPresented) { nflReader(event).frame(minWidth: 420, minHeight: 640) }
+            #endif
+        }
+    }
+
+    // MARK: - Team Colors
+
+    /// Whether the game-markets payload has any renderable section. All arrays
+    /// are optional and can arrive empty for a market-less / aged-out game.
+    /// #10238 — a drawn Game question counts; Series does not (the note is
+    /// about Game inventory, and Series has its own section).
+    static func gameMarketsHaveContent(_ gm: GameMarketsResponse) -> Bool {
+        !(gm.spreads ?? []).isEmpty
+            || !EventQuestionMatrixAdapter.rows(in: gm.gameQuestionMatrix, scope: .game).isEmpty
+            || !(gm.totals ?? []).isEmpty
+            || !(gm.teamTotals ?? []).isEmpty
+            || !(gm.periodMarkets ?? []).isEmpty
+            || !(gm.playerProps ?? []).isEmpty
+            || !(gm.duringPlayerProps?.rows ?? []).isEmpty
+            || AfterPropsMatrixLayout.drawable(gm.afterPlayerProps) != nil
+            || !(gm.other ?? []).isEmpty
+            || gm.openWinnerQuote?.isPresentable(eventId: gm.eventId, eventStatus: gm.status,
+                                                closedMarketIds: Set(gm.closedWinnerMarketIds ?? [])) == true
+    }
+
+    /// #3821 — the copy is tensed by ``EventState/noGameMarketsLine(status:)``.
+    /// It takes the status rather than the sentence so the tense cannot drift
+    /// from the one place native decides what "over" means, which is the same
+    /// reason #3465 moved its two notes onto `SportVocab`.
+    private func noGameMarketsNote(status: String?) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "chart.bar.xaxis")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(EventState.noGameMarketsLine(status: status))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// #2902 — the same both-sides-one-grey fallback the Sports card had, on the
+    /// hero bar of every tennis and golf event page. One palette, one contract:
+    /// the pair always reads apart. See `ProbabilityBarPalette`.
+    ///
+    /// #7036 — and a second, independent contract: the pair also has to be
+    /// visible on the page it is drawn on. Every consumer of this helper — the
+    /// hero, both charts, the spectrums, the player-prop rows, the source and
+    /// bookmaker tables, Championship Path, Related Futures — paints on the same
+    /// white card surface, so a club whose brand colour IS white (Fulham,
+    /// Tottenham, Real Madrid: 26 clubs store `#ffffff`) had its half of every
+    /// one of them painted invisible. A colour under the WCAG floor is reported
+    /// to the palette as **absent**, which is what makes this a floor under the
+    /// existing behaviour rather than a second palette: the palette then runs
+    /// its own default-and-ladder path and re-derives the #2902 pair contract on
+    /// the substituted value, so flooring one side cannot collapse the two onto
+    /// one colour. See `TeamTextContrast`.
+    private func teamColors(_ event: EventDetail) -> (away: Color, home: Color) {
+        TeamTextContrast.cardColors(
+            awayHex: event.awayTeamData?.primaryColor,
+            homeHex: event.homeTeamData?.primaryColor
+        )
+    }
+
+    /// #7943 — what each half was played to, for the four half maps.
+    ///
+    /// Read off the SAME `espn_history` the segment table above already
+    /// consumes, so the two cards on this page cannot disagree about the
+    /// halftime score. `HalfScores` withholds rather than guesses; `.none` is a
+    /// card that draws no result, which is the behaviour every half map had
+    /// before this.
+    private func halfScores(_ event: EventDetail) -> HalfScores.Pair {
+        let readings = (vm.history?.espnHistory ?? []).compactMap { point -> HalfScoreReading? in
+            guard let period = point.period,
+                  let home = point.homeScore,
+                  let away = point.awayScore,
+                  let date = point.timestamp.asDate else { return nil }
+            return HalfScoreReading(period: period, home: home, away: away, date: date)
+        }
+        let fromHistory = HalfScores.split(
+            readings: readings,
+            currentHome: event.homeScore,
+            currentAway: event.awayScore,
+            isDone: isFinished
+        )
+        // #9108 — a finished game with no halftime reading takes each half's
+        // score from its graded half rows. A halftime reading still wins
+        // wherever one exists.
+        guard fromHistory.first == nil, isFinished else { return fromHistory }
+        return HalfScoresFromGrades.split(
+            rows: vm.gameMarkets?.periodMarkets ?? [],
+            finalHome: event.homeScore,
+            finalAway: event.awayScore,
+            home: event.homeTeam,
+            away: event.awayTeam
+        )
+    }
+
+    private func movementCaptionSlot(_ event: EventDetail, colors: (away: Color, home: Color)) -> some View {
+        LivePriceMovementCaption(sequence: vm.priceActivity?.sequence ?? 0,
+                                 text: movementCaption(event),
+                                 color: colors.home,
+                                 isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
+    }
+
+    private func movementCaption(_ event: EventDetail) -> String? {
+        guard let delta = vm.priceActivity?.homeDelta, delta != 0 else { return nil }
+        let names = TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam,
+                                            sportKey: event.sport)
+        return "\(names.home) \(delta > 0 ? "↑" : "↓")\(abs(delta)) \(abs(delta) == 1 ? "pt" : "pts")"
+    }
+
+    /// Routine delivery/confidence details open through the info control.
+    /// Waiting, fallback refresh and interruption stay visible, as does the
+    /// finite acknowledgement of an accepted receipt whose percent did not move.
+    ///
+    /// #11285 — `statusInDetails` (the adopted headline's top-row control):
+    /// every state, waiting included, is said in the details and the label.
+    private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false) -> some View {
+        Button { showProbabilityDetails.toggle() } label: {
+            CompactEventPriceStatusView(status: vm.liveUpdateStatus,
+                sequence: vm.priceActivity?.sequence ?? 0,
+                receivedAt: vm.priceActivity?.receivedAt,
+                isDisclosure: true,
+                statusInDetails: statusInDetails)
+            .frame(maxWidth: Self.probabilityDetailsMaxWidth(at: dynamicTypeSize,
+                                                             statusInDetails: statusInDetails),
+                   minHeight: 44)
+            .frame(minWidth: 44, alignment: statusInDetails ? .trailing : .center)
+            .fixedSize(horizontal: false, vertical: true)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Probability confidence and update details. " +
+            (priceStreamingEligible ? LivePriceReceiptCue.accessibilityText(status: vm.liveUpdateStatus,
+                receivedAt: vm.priceActivity?.receivedAt) : ""))
+        .accessibilityHint(Self.probabilityDetailsHint(forecastShown: revealForecast11296 != nil))
+        // #9408 — open BELOW the button (on iOS, `.top` measured below; the
+        // default nil picked above, under the nav bar with 144pt to spare, and at
+        // Alex's XXXL text the content overflowed both edges). The reveal
+        // scrolls if even the lower space runs out.
+        .popover(isPresented: $showProbabilityDetails, arrowEdge: .top) {
+            FreshnessRevealView(status: vm.liveUpdateStatus,
+                lastReceivedAt: vm.priceActivity?.receivedAt, confidenceTier: confidenceTier,
+                forecast: revealForecast11296)
+                // idealWidth: the popover sizes from the IDEAL size; with only a
+                // max it measured the text unwrapped and came out 144pt tall.
+                .frame(idealWidth: 300, maxWidth: 300)
+                #if os(iOS)
+                .presentationCompactAdaptation(.popover)
+                #endif
+        }
+    }
+
+    // MARK: - Chart Header Bar (v2: title + freshness)
+
+    private func chartHeaderBar(_ event: EventDetail) -> some View {
+        HStack {
+            Text("Win Probability")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+            if isLive {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 6, height: 6)
+                    Text("Live")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.green)
+                }
+            } else if isFinished {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(.secondary)
+                        .frame(width: 6, height: 6)
+                    Text("Final")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+
+
+    // MARK: - Hero Section (v2)
+
+    /// Whether the hero draws the two team scores.
+    ///
+    /// #4002 — the gate was `(isLive || isFinished) && …`, so a SUSPENDED game
+    /// drew no score even when it had one. On `15298408` (Yankees @ Padres,
+    /// played 2026-09-06, `status='suspended'`, final 3–4) the navigation title
+    /// one line above the hero read "Yankees 3 - Padres 4" while the hero
+    /// itself printed nothing under either crest. A suspended game is the state
+    /// where the score matters MOST: it is the only thing anybody got.
+    static func showsScore(status: String?, away: Int?, home: Int?) -> Bool {
+        guard away != nil, home != nil else { return false }
+        return status == "live" || EventState.isFinished(status) || EventState.isSuspended(status)
+    }
+
+    /// Whether "where to watch" still answers a question anybody has.
+    ///
+    /// #4002 — the hero's broadcast chip had NO status gate, so `15298408`
+    /// offered "MLB.TV, Padres.TV, YES" two days after the game was abandoned,
+    /// next to a 1:10 PM start time. A broadcast listing is a promise about the
+    /// future; on a game that is over or will never be resumed it is #3821's
+    /// false promise worn as a chip, and Alex's standing ruling that settled
+    /// means settled binds a chip as tightly as it binds a hero.
+    static func showsBroadcast(status: String?, commenceTime: Date?, now: Date = Date()) -> Bool {
+        !EventState.isFinished(status)
+            && !EventState.isSuspendedAndStarted(status, commenceTime: commenceTime, now: now)
+    }
+
+    /// Whether the projected final score is still a projection of anything.
+    ///
+    /// #4002 — the gate was `!isFinished`, which asks whether the game is over
+    /// and NOT whether a final can still arrive. Measured on production over
+    /// the 7 days to 2026-09-08: **184 suspended games carrying a projection**
+    /// against 1 live one. On every one of those the grey pair was the only
+    /// numbers on a hero that carried no state label at all — a projected final
+    /// for a match nobody will ever grade.
+    ///
+    /// #4018 — the rule moved to `EventState.canStillBeGraded`, unchanged, because
+    /// the three market cards one scroll below this hero needed the same answer
+    /// and were each carrying their own `isFinished` copy instead. This stays as
+    /// the hero's name for it; the logic has exactly one home.
+    ///
+    /// #5697 AC2 — AND A PROJECTION OF THE FINAL NEEDS A GAME WHOSE STATE THE
+    /// READER CAN SEE. `canStillBeGraded` asks whether a final can still arrive;
+    /// it cannot ask whether the reader has anything to read the forecast
+    /// against. Production specimen `15311077` (Fukuoka SoftBank Hawks v Chiba
+    /// Lotte Marines, NPB), `status='live'`, both scores null, nearly two hours
+    /// past its own first pitch, served a projection captured minutes earlier:
+    /// the hero drew a confident `7 - 5.5` shaped exactly like a scoreline with
+    /// no score anywhere on it. The number is FRESH — that was measured, not
+    /// assumed — and it is still unreadable, because a projected FINAL only
+    /// means something against how much game is left, and a reader who cannot
+    /// see the score cannot tell the first inning from the ninth.
+    ///
+    /// BEFORE THE OFF THE PROJECTION IS THE HONEST THING and stays: nothing has
+    /// happened yet, so the frame is known and the forecast says just what it
+    /// means. It is withdrawn only once the game is underway, where a reader has
+    /// started expecting a score. Notice 34 — where a number cannot be shown
+    /// honestly the space is left empty rather than explained.
+    ///
+    /// THE PAIR, NOT A SIDE: `hasScore` is the hero's own `showsScore`, the very
+    /// value the score row is drawn from one line below. The question is what is
+    /// ON THE SCREEN beside the projection, not what the payload happens to
+    /// carry, so a status that draws no score withholds the forecast too.
+    ///
+    /// Twin of the web's `projectionHasGameStateToFrame` (#5803, `ade48eb95`).
+    /// It reuses `EventState.hasStarted`, whose nil-date default is TRUE where
+    /// the web's is false; that boundary is unreachable — production carries 0
+    /// events with a null `commence_time` (measured 2026-09-12) — and reusing
+    /// the shared predicate keeps one definition of "has started" rather than
+    /// growing the second one #4018 exists to prevent. It fails toward
+    /// withholding, which is the safe direction here.
+    static func showsProjection(
+        status: String?, commenceTime: Date?, hasScore: Bool, now: Date = Date()
+    ) -> Bool {
+        guard EventState.canStillBeGraded(status, commenceTime: commenceTime, now: now) else {
+            return false
+        }
+        let underway = status == "live"
+            || EventState.hasStarted(commenceTime: commenceTime, now: now)
+        return !underway || hasScore
+    }
+
+    /// #8320 — whether the hero carries the game's CONTEXT as well as its story.
+    ///
+    /// Alex, rage shake #150 on White Sox–Royals (15317520): "This whole area at
+    /// the top of the screen is overcrowded and clowny looking." The live hero
+    /// held eight things around one number: broadcast, start time, both records,
+    /// "Royals 48% → 53% since open", a sparkline, "Proj. 6-7" and
+    /// "Opened 52% – 48%". The full chart one card below already draws the path
+    /// the sparkline and both opening lines summarised.
+    ///
+    /// On a live game the hero keeps the story (state chip, crests, score, the
+    /// blended pair) and the context moves to the Game Info card, which already
+    /// held the broadcast and the start time. Nothing is withdrawn — every fact
+    /// is still on the page. Before the off the context IS the story (where to
+    /// watch, when, how the line has moved), and after the final the hero is a
+    /// verdict with the opening line as its caption, so both keep today's hero.
+    static func heroCarriesGameContext(status: String?) -> Bool {
+        status != "live"
+    }
+
+    /// #8320 — whether the bar's title may carry the score.
+    ///
+    /// The bar said "CHW 4 - KC 4" directly above a hero saying 4 and 4. The bar
+    /// takes the score over only once the hero has scrolled up under it; until
+    /// then it names the matchup. Measured in the scroll view's own space:
+    /// `heroBottom` is the hero's bottom edge and `viewportTop` is where content
+    /// stops being covered by the bar. `nil` (not laid out yet) keeps the score,
+    /// so a measurement that never arrives costs a duplicate and never a score.
+    static func navTitleShowsScore(heroBottom: CGFloat?, viewportTop: CGFloat) -> Bool {
+        guard let heroBottom else { return true }
+        return heroBottom <= viewportTop
+    }
+
+    /// The projected final as the page prints it, or nil where #5697's gate
+    /// withholds it. One spelling for the two places that can print it: the
+    /// hero before the off, Game Info while live (#8320).
+    ///
+    /// #2920 — once the game is live, the pair is the producer's marked in-play
+    /// one (`LiveProjectedFinal2920.page`, web's `eventPageProjectedPair`), so
+    /// this slot and the live card one tap back print the same final or none:
+    /// admitted, it prints under the gates below; served and refused, nothing;
+    /// not served, the ladders' in-game pair as web keeps it. The bare
+    /// `projected_*` keys are read only before the game, where they are the
+    /// sportsbooks' pregame pair the search card prints (#9034).
+    private func projectionText(_ event: EventDetail, hasScore: Bool) -> String? {
+        EventDetailView.projectionText(
+            event,
+            ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
+            ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
+            hasScore: hasScore)
+    }
+
+    /// The page's choice of pair, pure, so every arm is decided by behaviour:
+    /// the row, the ladders' pair `/history` served, whether the page prints a
+    /// score, and the caller's clock. When it prints one, that score is the
+    /// one the pair is checked against (#2920 W1).
+    static func projectionText(
+        _ event: EventDetail,
+        ladderHome: Double?, ladderAway: Double?,
+        hasScore: Bool,
+        now: Date = Date()
+    ) -> String? {
+        let live = LiveProjectedFinal2920.page(event, now: now)
+        var projected = (home: event.currentOdds?.projectedHomeScore,
+                         away: event.currentOdds?.projectedAwayScore)
+        switch live {
+        case .notLive: break
+        case .admitted(let printed): projected = (printed.admitted.home, printed.admitted.away)
+        case .withheld: return nil
+        case .absent: projected = (nil, nil)
+        }
+        let score: (home: Int, away: Int)?
+        if hasScore, let home = event.homeScore, let away = event.awayScore {
+            score = (home, away)
+        } else {
+            score = nil
+        }
+        let text = EventDetailView.projectionText(
+            sport: event.sport, status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            projectedHome: projected.home,
+            projectedAway: projected.away,
+            ladderHome: ladderHome,
+            ladderAway: ladderAway,
+            ladderWhileLive: live == .absent,
+            hasScore: hasScore,
+            score: score,
+            now: now)
+        // Soccer's lines settle on 90 minutes; the line says so, as web's
+        // label does.
+        if case .admitted(let printed) = live, printed.admitted.provenance.period == .regulation {
+            return text.map { "\($0) (90 min)" }
+        }
+        return text
+    }
+
+    /// #8617 — the projected final is withheld where the sportsbooks' spread is
+    /// not a margin. The served pair is solved from each sportsbook's spread
+    /// point and total, so its difference IS the spread point; in baseball that
+    /// is the ±1.5 run line whatever the matchup, so every MLB hero printed the
+    /// favourite winning by a run and a half — for a 55% coin flip on
+    /// `/events/15318166`. Same flag as the
+    /// Score Differential chart (`SportVocab.sportsbookSpreadIsAMargin`), and ux
+    /// ruled withhold rather than print the total: a total alone does not say
+    /// who wins, and the hero still carries the percentages.
+    ///
+    /// #9496 — BEFORE THE OFF, THE LADDERS ANSWER WHERE THE SPORTSBOOKS CANNOT.
+    /// `ladderHome`/`ladderAway` are `/history`'s `pm_spread_data.projected_final`
+    /// (Kalshi/Polymarket spread and total ladders, solved and source-checked
+    /// server-side). Web's `eventPageProjectedPair` rule, ported: pre-game the
+    /// sportsbooks' pair wins wherever it is a margin — it is the pair the search
+    /// card prints (#9034) — and the ladders' pair is used only where it is not.
+    /// A ladder margin is read off six thresholds either side of even, not one
+    /// pinned ±1.5 point, so #8617's run-line objection does not reach it; web
+    /// already prints it on baseball. Once the game is underway the caller
+    /// chooses (#2920): the admitted in-play pair as `projectedHome/Away`, or —
+    /// with no in-play object served — `ladderWhileLive` and no sportsbook pair.
+    ///
+    /// Whichever pair is chosen then passes web's hero gates: the sport must
+    /// score in the unit the pair is in (tennis quotes games, not sets), both
+    /// halves must be positive, and a sport that cannot end level never prints a
+    /// level final (#8156) — Red Sox–Yankees' `3.2 – 3.0` rounds to `3-3` and
+    /// is withheld. Notice 34: the space is left empty, not explained.
+    ///
+    /// #2920 W1 — and, given the `score` the page prints, a pair either of whose
+    /// rounded halves sits below its own side's score is withheld: points are
+    /// never taken back. Web's `projectedPairIsReachableFromTheScore`, per side,
+    /// after the rounding the line prints, equal reachable. It binds the
+    /// ladders' live pair, which nothing upstream checks against the game.
+    static func projectionText(
+        sport: String?, status: String?, commenceTime: Date?,
+        projectedHome: Double?, projectedAway: Double?,
+        ladderHome: Double? = nil, ladderAway: Double? = nil,
+        ladderWhileLive: Bool = false,
+        hasScore: Bool,
+        score: (home: Int, away: Int)? = nil,
+        now: Date = Date()
+    ) -> String? {
+        let vocab = SportVocab.forSport(sport)
+        guard showsProjection(
+                status: status, commenceTime: commenceTime,
+                hasScore: hasScore, now: now) else { return nil }
+        let underway = status == "live"
+            || EventState.hasStarted(commenceTime: commenceTime, now: now)
+        let pair: (home: Double, away: Double)
+        if vocab.sportsbookSpreadIsAMargin,
+           let phs = projectedHome, let pas = projectedAway, phs >= 0, pas >= 0 {
+            pair = (phs, pas)
+        } else if !underway || ladderWhileLive,
+                  // web's `hasDerivedSpread`: declared, and scored in its unit
+                  vocab.scoreboardCountsTheUnit, !vocab.unit.isEmpty,
+                  let lhs = ladderHome, let las = ladderAway {
+            pair = (lhs, las)
+        } else {
+            return nil
+        }
+        // Raw halves above zero, as web asks — a soccer `0.4` still prints `0`.
+        let home = Int(pair.home.rounded()), away = Int(pair.away.rounded())
+        guard pair.home > 0, pair.away > 0,
+              vocab.canEndInATie || home != away else { return nil }
+        if let score, home < score.home || away < score.away { return nil }
+        let text = "\(away)-\(home)"
+        return "Proj. \(vocab.scoreboardCountsTheUnit ? text : vocab.withUnit(text))"
+    }
+
+    /// The opening line, named, for Game Info on a live game (#8320). The hero's
+    /// copy was anchored between the two crests, so it could print a bare
+    /// "52% – 48%"; off the hero each number needs its team. #2085's pair rule
+    /// and #5271's draw withholding carry over unchanged.
+    private func openedText(_ event: EventDetail) -> String? {
+        guard let opened = DrawPricedWinner.printablePair(
+            away: event.openingOdds?.awayProbability,
+            home: event.openingOdds?.homeProbability,
+            sport: event.sport) else { return nil }
+        let named = TeamShortName.shortPair(
+            away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+        guard let awayOpen = opened.away else {
+            return "Opened \(named.home) \(formatProbability(opened.home))"
+        }
+        let openDuel = renderedDuelPercents(away: awayOpen, home: opened.home)
+        return "Opened \(named.away) \(formatProbability(awayOpen, renderedPercent: openDuel[0])) \u{2013} \(named.home) \(formatProbability(opened.home, renderedPercent: openDuel[1]))"
+    }
+
+    /// Both records, named, for Game Info on a live game (#8320).
+    private func recordsText(_ event: EventDetail) -> String? {
+        let named = TeamShortName.shortPair(
+            away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+        let parts = [
+            event.awayTeamData?.record.map { "\(named.away) \($0)" },
+            event.homeTeamData?.record.map { "\(named.home) \($0)" },
+        ].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func heroSection(_ event: EventDetail) -> some View {
+        let colors = teamColors(event)
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        let carriesContext = EventDetailView.heroCarriesGameContext(status: event.status)
+        let approvedPair = usesApprovedHeadlinePresentation9483(event)
+
+        // #3978 (Alex, D93 = A) — ONE decision, applied to both rows of the hero.
+        //
+        // `AnyLayout` rather than an `if/else` over two copies of the body:
+        // swapping the layout keeps the children's identity, so nothing inside
+        // re-initialises when the reader changes text size, and — the reason that
+        // matters here — there is exactly one copy of the hero to maintain. Two
+        // copies is how the three-column version and its replacement drift apart.
+        // `PoliticsView:330` already carries this idiom.
+        let stacked = dynamicTypeSize >= .xxLarge
+        let heroLayout = stacked
+            ? AnyLayout(EventHeroTeamLayout())
+            : AnyLayout(HStackLayout(spacing: 0))
+        let captionRidesPadding = stacked && !dynamicTypeSize.isAccessibilitySize
+        let heroLogo = Self.heroLogoSize(stacked: stacked, regular: logoSize)
+        let metaLayout = stacked
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 8))
+
+        // #9483 v476 phone fit — the adopted header's rows sit closer: its
+        // overhanging disclosure fills exactly this gap (see below).
+        return VStack(spacing: approvedPair ? Self.adoptedDisclosureOverhang9483 : 12) {
+            // Top meta row: status badge + countdown + broadcast + date
+            //
+            // Stacks with the rest. Left as a row it is the SECOND thing that
+            // bleeds: the `FINAL` chip was cut off the left edge while
+            // "Sep 5 at 6:40 PM" was cut off the right, in the same frame.
+            if approvedPair {
+                // A decided final's FINAL chip and its date share one row at
+                // default text; larger text stacks them, and so does every
+                // priced pair, whose chip may draw nothing and whose
+                // disclosure already holds the row's trailing side.
+                let decided = nflPairedHeadline(event, hasScore: hasScore)?.away.won != nil
+                let adoptedMetaLayout = decided && !stacked
+                    ? metaLayout : AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                HStack(alignment: .center, spacing: 12) {
+                    adoptedMetaLayout {
+                        // #6544 — the hero chip keeps its minute tick here too, and
+                        // at a final it is the existing FINAL chip (no second
+                        // winner sentence: the sides say Won/Lost).
+                        TimelineView(.periodic(from: .now, by: 60)) { _ in
+                            heroStatusBadge(event)
+                        }
+                        // The chip takes its ideal size whatever the disclosure beside
+                        // it measures, and settles as one unit: otherwise the live
+                        // dot's repeatForever pulse also animated the chip's first
+                        // layout and the dot wandered off the chip (v476 render).
+                        .fixedSize()
+                        .geometryGroup()
+                        // Before the game, when and where to watch still lead (the
+                        // same facts and gates as the meta row this replaces).
+                        if carriesContext, let context = adoptedPregameContext9483(event) {
+                            Text(context)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    // The page's one disclosure (#8320/#9483), on a priced pair only,
+                    // as the legacy pair mounts it: a decided final makes no
+                    // delivery or confidence claim. Game context stays in Game Info.
+                    if !decided {
+                        nflPairedDetails(event)
+                            // Its whole 44pt target stays, overhanging the card's
+                            // top inset and the gap below; it no longer makes the
+                            // row a 44pt row of its own. Larger text keeps the
+                            // full height, where the label itself can outgrow it.
+                            .padding(.vertical, stacked ? 0 : -Self.adoptedDisclosureOverhang9483)
+                    }
+                }
+            } else {
+            metaLayout {
+                // #6544 — THE TICK IS HERE NOW, and it has to be somewhere.
+                //
+                // The chip derives "In 4d 12h" from `commenceTime` on every
+                // render, so it only ages when something re-renders it. What did
+                // that until now was a view-wide 60-second `Timer` writing a
+                // `countdownText` @State — and the centre column's duplicate copy
+                // was that state's ONLY reader. SwiftUI re-renders a view only
+                // when the body read the value that changed, so deleting the
+                // duplicate without replacing the tick would have frozen the chip
+                // at whatever it said when the page appeared: a page left open
+                // over lunch still reading "In 4d 12h".
+                //
+                // `TimelineView` puts the tick on the one view that needs it,
+                // which is both smaller than the old machinery (the @State, the
+                // Timer, its start and its invalidation all go) and impossible to
+                // strand again — there is no second reader to lose. It is not
+                // gated on `scheduled`: a minute is a long interval beside the
+                // half-second refresh ring a live page already runs, and gating
+                // would put the clock back in a branch.
+                //
+                // #7019 AMENDS THE SENTENCE ABOVE: this is no longer the only
+                // thing ageing the chip. Wrapping the badge fixed the hero and
+                // left the four other `StatusBadge` call sites frozen — the My
+                // Stuff / Discover / Sports row, both search rows and the team
+                // schedule — so the tick moved onto the badge itself, which
+                // observes `MinuteClock.shared`. This wrapper is kept rather
+                // than deleted because it re-renders the WHOLE hero chip chain
+                // (live clock, FINAL, settled, suspended), not just the
+                // scheduled arm, and `HeroSaysTheCountdownOnce6544Tests
+                // .testTheChipStillTicks` pins it. Removing it would not freeze
+                // the countdown today; it would quietly narrow what re-renders.
+                TimelineView(.periodic(from: .now, by: 60)) { _ in
+                    heroStatusBadge(event)
+                }
+                // A `Spacer` pushes to both ends of a ROW; in a column it is a
+                // blank line that shoves the date away from the badge.
+                if !stacked { Spacer() }
+                // #8320 — on a live game both of these move to Game Info.
+                if carriesContext,
+                   let broadcast = event.espn?.broadcast,
+                   EventDetailView.showsBroadcast(
+                    status: event.status, commenceTime: event.commenceTime?.asDate) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "tv")
+                            .font(.system(size: 8))
+                        Text(broadcast)
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                // #8841 — an unannounced start prints its day and "TBD", never
+                // the placeholder's clock.
+                if carriesContext, event.startIsTbd == true,
+                   let tbd = RelativeTimeText.tbdText(
+                    for: event.commenceTime, relativeDays: false) {
+                    Text(tbd)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else if carriesContext,
+                   let commenceTime = event.commenceTime, let date = commenceTime.asDate {
+                    Text(date, format: .dateTime.month(.abbreviated).day().hour().minute())
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            }
+
+            // #9483 — the recognizable NFL page (design ref #10868 v105/v107):
+            // both chances lead, each under its own team with its pregame
+            // number, the actual score between them. Arms the paired headline
+            // does not adopt keep the hero below, unchanged.
+            if let paired = nflPairedHeadline(event, hasScore: hasScore) {
+                nflPairedHeadlineView(event, paired, colors: colors, stacked: stacked, hasScore: hasScore)
+            } else if let tennis = tennisFinalHeadline(event, hasScore: hasScore) {
+                // #9483 tennis — each player's chance before the match under
+                // their own name, beside the actual result in sets.
+                tennisFinalHeadlineView(tennis, colors: colors)
+            } else {
+            // At larger text sizes the probability takes its own full-width
+            // row FIRST and the competitors share the row beneath it (#10796;
+            // #9483 put the pair on top — `EventHeroTeamLayout`).
+            heroLayout {
+                // Away team logo + score
+                VStack(spacing: 6) {
+                    TeamLogoView(
+                        url: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
+                        teamName: event.awayTeam,
+                        color: colors.away,
+                        size: heroLogo,
+                        // #4624 — the hero knew the sport and did not pass it,
+                        // so a tennis player's circle took the compound-CLUB
+                        // fork and drew their initials instead of their surname.
+                        sportKey: event.sport,
+                        // #4720 — the hero draws BOTH circles, so the badge is
+                        // resolved against the other side and cannot print the
+                        // word the two clubs share.
+                        opponentName: event.homeTeam
+                    )
+                    Text(event.awayTeam)
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .lineLimit(stacked ? nil : 2)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.primary)
+                    if hasScore {
+                        Text("\(event.awayScore ?? 0)")
+                            .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(winnerColor(isAway: true, event: event))
+                    }
+                    if carriesContext, let record = event.awayTeamData?.record {
+                        Text(record)
+                            .font(.caption)
+                            .foregroundStyle(Color.primary)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+
+                // Giant probabilities centered
+                VStack(spacing: 4) {
+                    if isFinished {
+                        // Winner emphasis for completed games
+                        let outcome = heroOutcome(event)
+                        let homeWon = outcome == .home
+                        if let drawLabel = outcome.drawLabel {
+                            // #4915 — a draw IS a result, and this slot used to
+                            // throw it away: the tie branch printed the bare
+                            // status word in the loser's grey, so a 1–1 read as
+                            // "both teams lost" beside a decisive match's bold
+                            // "Munich Win". Same font as the verdict it sits in
+                            // for, and `.primary` because nobody lost here.
+                            Text(drawLabel)
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(.primary)
+                        } else if outcome == .undecided {
+                            // Over, and we cannot name a result — no score held
+                            // for a side. The neutral status word is all we can
+                            // honestly print (the `final_unresolved` state, said
+                            // in the verdict slot rather than in the number).
+                            Text("Final")
+                                .font(.title2.weight(.bold))
+                                .foregroundStyle(.secondary)
+                        } else {
+                            // #3430 — "Tigers Win" answered nothing on Clemson
+                            // 10 – LSU 51, because both sides shorten to
+                            // "Tigers". A winner's name is only a name if the
+                            // LOSER could not have been called it too, so the
+                            // pair decides even though one side is shown.
+                            let duel = TeamShortName.shortPair(
+                                away: event.awayTeam, home: event.homeTeam,
+                                sportKey: event.sport
+                            )
+                            let winnerName = homeWon ? duel.home : duel.away
+                            // #8419 — BOUNDED like the venue verdict below. The
+                            // pair's label is the FULL name whenever the short
+                            // one would collide, so "Seattle Sounders FC Win"
+                            // took this fixed-size column's whole ideal width
+                            // and cut the crest beside it to "Seattle Sounder…".
+                            Text("\(winnerName) Win")
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(homeWon ? colors.home : colors.away)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.7)
+                                .frame(maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
+                        }
+                        // Pre-game odds as secondary context.
+                        //
+                        // #8622 — the card's number, not the sportsbook median:
+                        // `prematch_odds` (served on settled events since #8324)
+                        // with `opening_odds` only as the fallback. "Opened" is
+                        // true of the fallback alone (`captionWord`).
+                        let pregame = PrematchReading.resolve(
+                            prematch: event.prematchOdds, opening: event.openingOdds)
+                        let pregameWord = pregame?.captionWord ?? "Opened"
+                        if let pregame, let opened = DrawPricedWinner.printablePair(
+                            away: pregame.awayProbability,
+                            home: pregame.homeProbability,
+                            sport: event.sport) {
+                            // #2085 — `opening_odds` is a complement pair too
+                            // (`opening_away_probability or round(1 - home, 4)`),
+                            // and it carries NO served percents at any deploy, so
+                            // this pair is always decided locally.
+                            //
+                            // #5271 — which also makes it the same lie as the
+                            // hero's on a draw-priced sport, and it withholds
+                            // the same slot. Named here even though the verdict
+                            // above it is too: this branch sits under
+                            // "{Winner} Win", so nothing else in the column is
+                            // carrying the subject for it.
+                            if let awayOpen = opened.away {
+                                let openDuel = pregame.percents
+                                Text("\(pregameWord) \(formatProbability(awayOpen, renderedPercent: openDuel[0])) – \(formatProbability(opened.home, renderedPercent: openDuel[1]))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                let named = TeamShortName.shortPair(
+                                    away: event.awayTeam, home: event.homeTeam,
+                                    sportKey: event.sport
+                                )
+                                // #5271 — rounded ALONE, as before: a pair's rounding is about
+                                // the complement this arm refuses to print.
+                                // #8419 — the same full name, so the same cap as
+                                // the verdict it sits under.
+                                Text("\(pregameWord) \(named.home) \(formatProbability(opened.home))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .lineLimit(2)
+                                    .frame(maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
+                            }
+                        }
+                    } else if EventState.showsVenueSettledVerdict(
+                        event.status,
+                        venueSettled: event.venueSettled,
+                        commenceTime: event.commenceTime?.asDate) {
+                        // #6381 — the slot that said **vs** over a match that
+                        // was played four days ago. Placed ABOVE the price pair
+                        // deliberately: a settled question's story is its
+                        // answer, and the two big percentages under two crests
+                        // are read as what the market thinks WILL happen. The
+                        // finished branch above resolves the same way — verdict
+                        // first, the pre-game number demoted to a caption.
+                        if let result = event.venueSettledResult {
+                            // VERBATIM, and it is an outcome NAME rather than a
+                            // scoreline: "Draw 0-0" in soccer, "Aryna Sabalenka
+                            // wins 2-0" in tennis (sets, not games). The
+                            // producer's contract says do not parse it and the
+                            // reason is that sentence — anything that split it
+                            // into two numbers would publish a tennis set score
+                            // as a game score.
+                            // 🔴 BOUNDED, AND THE FIRST DRAFT WAS NOT — the
+                            // after-shot caught it. This column is the hero's
+                            // inflexible middle: the two crest columns take
+                            // `.frame(maxWidth: .infinity)` and this one gets
+                            // its ideal width, which for a verdict like "Sion
+                            // Win" is fine and for "Brighton & Hove Albion wins
+                            // 5-0" is 31 characters at 20pt. On `15310517` that
+                            // pushed the whole hero card off BOTH screen edges —
+                            // the away crest clipped at the left, "COV" at the
+                            // right, the date cut off. The string is the
+                            // venue's, its length is not ours to choose, so the
+                            // slot has to accept any offered width instead.
+                            Text(result)
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(.primary)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(3)
+                                .minimumScaleFactor(0.55)
+                                .frame(maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
+                                .layoutPriority(-1)
+                        } else {
+                            // 370 of the issue's 426 rows are graded on props
+                            // alone, so there is no score to name and inventing
+                            // one from a prop is the fabricated-100% trap the
+                            // producer refuses on its own side.
+                            //
+                            // 🔴 THE BADGE ALREADY SAID IT — caught in the
+                            // after-shot, not by a test. This slot first
+                            // printed `venueSettledLabel`, and the badge three
+                            // points above prints the same constant, so event
+                            // 15304840 (Townsend v Sabalenka, 16 prop grades,
+                            // no scoreline) drew the word TWICE on one card:
+                            // the chip and then the hero, stacked. That is the
+                            // "two chips making one claim" shape this ship
+                            // removes from Finals, reintroduced two lines
+                            // down. The web half of the pair had it right in
+                            // prose all along — "a settled match with NO
+                            // graded score prints the badge alone".
+                            //
+                            // So: nothing. Not "vs" (it reads as a fixture,
+                            // which is the whole defect), not "no score"
+                            // (reads as 0-0), not the word again. The badge
+                            // carries the state and the crests carry the
+                            // matchup; an empty middle is the only thing here
+                            // that says nothing false.
+                            EmptyView()
+                        }
+                    } else if let odds = event.currentOdds,
+                              // #9470 — an `opening` hero prints the server's
+                              // pair and is named as an opening line.
+                              case let shown = OpeningLineHero.resolve(odds, for: event),
+                              let pair = DrawPricedWinner.printablePair(
+                                away: shown.awayProbability,
+                                home: shown.homeProbability,
+                                sport: event.sport) {
+                        let home = pair.home
+                        let oddsFontSize: CGFloat = sizeClass == .regular ? 36 : 28
+                        if let away = pair.away {
+                            // #2085 — THE HERO PAIR. `current_odds.away_probability`
+                            // is `round(1 - home, 6)` on the backend, so rounding the
+                            // two sides independently printed 101 whenever
+                            // `home * 100` landed on a half-percent (34 of 414
+                            // scheduled/live events, measured 2026-08-21). It could
+                            // print 101; it could never print 99.
+                            //
+                            // BOTH SERVED OR NEITHER. A served away beside a locally
+                            // derived home re-opens the same 101 from the other side,
+                            // and an older deploy can carry one field and not the
+                            // other, so the pair falls back whole.
+                            let percents = Self.heroPairPercents(shown, away: away, home: home)
+                            let awayPct = percents.away
+                            let homePct = percents.home
+                            HStack(spacing: 8) {
+                                Text(formatProbability(away, renderedPercent: awayPct))
+                                    .acceptedValueChange(heroValue(away: true), rising: heroRising(away: true), animates: heroMoves)
+                                    .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(colors.away)
+                                    .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
+                                                             valueChanged: vm.priceActivity.map { $0.previousAwayLabel != $0.awayLabel } ?? false,
+                                                             color: colors.away, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
+                                Text("\u{2013}")
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary.opacity(0.4))
+                                Text(formatProbability(home, renderedPercent: homePct))
+                                    .acceptedValueChange(heroValue(away: false), rising: heroRising(away: false), animates: heroMoves)
+                                    .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(colors.home)
+                                    .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
+                                                             valueChanged: vm.priceActivity.map { $0.previousHomeLabel != $0.homeLabel } ?? false,
+                                                             color: colors.home, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
+                            }
+                        } else {
+                            // #5271 — a draw-priced sport. There is one price
+                            // here, it is the home side's, and the slot the
+                            // other number used to fill is withheld rather
+                            // than filled with `1 − home` (see
+                            // `DrawPricedWinner`).
+                            //
+                            // NAMED, because withholding one of a pair breaks
+                            // the thing that attributed the other: the two
+                            // numbers were read off the crests they sat
+                            // between, and a lone number centred between two
+                            // crests belongs to neither. The finished branch
+                            // above already names its subject this way, and
+                            // takes the PAIR to do it (#3430) — "Tigers" is
+                            // not a name when both sides shorten to it.
+                            //
+                            // Rounded here and not through `duelPercents`:
+                            // that contract exists to stop a PAIR summing to
+                            // 101, and its answer for one side can be
+                            // `100 − other`, which is a number about a
+                            // complement this branch is refusing to print.
+                            let named = TeamShortName.shortPair(
+                                away: event.awayTeam, home: event.homeTeam,
+                                sportKey: event.sport
+                            )
+                            VStack(spacing: 2) {
+                                Text(named.home)
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(colors.home)
+                                    .lineLimit(1)
+                                Text(formatProbability(home))
+                                    .acceptedValueChange(heroValue(away: false), rising: heroRising(away: false), animates: heroMoves)
+                                    .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(colors.home)
+                                    .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
+                                                             valueChanged: vm.priceActivity.map { $0.previousHomeLabel != $0.homeLabel } ?? false,
+                                                             color: colors.home, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
+                            }
+                        }
+                        // #9483 — the pair's subject, now that "Win Probability"
+                        // sits behind the info button. Live, the pre-game
+                        // baseline rides under it (before the off the
+                        // since-open caption below already carries it).
+                        // The minute tick lets a quote age into "last
+                        // recorded" on a page left open with no new price.
+                        if EventHeadlinePhase9483.applies(
+                            status: event.status, isOpeningLine: shown.isOpeningLine) {
+                            headlinePhaseLabel(
+                                event, isOpeningLine: shown.isOpeningLine,
+                                baseline: event.status == "live"
+                                    ? EventHeadlinePhase9483.baselineText(
+                                        prematch: event.prematchOdds, opening: event.openingOdds,
+                                        sport: event.sport,
+                                        awayTeam: event.awayTeam, homeTeam: event.homeTeam)
+                                    : nil,
+                                maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
+                        }
+                        // Trend indicator (change since opening).
+                        //
+                        // #1830. The hero above reads "away – home" ("87 – 13"),
+                        // but this delta is computed on HOME and named no team.
+                        // An unlabelled "-27%" under "87 – 13" attaches, for the
+                        // reader, to whichever number they are tracking — the
+                        // leader — so Alex read it as the Red Sox FALLING 27
+                        // while they had in fact gone 60 → 87, up 27. Red on top
+                        // of that made good news look like bad news.
+                        //
+                        // Fix: name the team the delta belongs to, and state it
+                        // as that team's GAIN. Because away == 1 - home exactly,
+                        // "home fell 27" and "away rose 27" are the same fact;
+                        // reporting the riser means the caption is never a bare
+                        // signed number and its colour always matches its subject.
+                        //
+                        // #5271 — and that equivalence is what a draw breaks, so
+                        // WHO to name is `DrawPricedWinner`'s call, not this
+                        // view's: on a three-way market the points home shed are
+                        // not points the away side gained, and the caption says
+                        // so by naming home and keeping the sign.
+                        //
+                        // #3051 — and the SUBTRACTION is gone, not corrected.
+                        // The delta was computed on the raw probabilities while
+                        // the numbers above and below it are the rendered ones,
+                        // so `95` over `Opened 91` was captioned `+3`. The
+                        // caption now prints the two levels themselves
+                        // ("Sabalenka 91% → 95% since open"), which is the same
+                        // invariant with nothing left to round twice. Why the
+                        // levels and not `pp`: `SinceOpenCaption`.
+                        //
+                        // #8320 — before the off only. On a live game the chart
+                        // directly below draws the whole move, and Game Info
+                        // carries the opening line it started from.
+                        if carriesContext, let caption = SinceOpenCaption.caption(
+                            away: shown.awayProbability,
+                            home: shown.homeProbability,
+                            servedAwayPercent: shown.awayRenderedPercent,
+                            servedHomePercent: shown.homeRenderedPercent,
+                            openingAway: event.openingOdds?.awayProbability,
+                            openingHome: event.openingOdds?.homeProbability,
+                            sport: event.sport,
+                            // #3430 — #1830's whole fix was naming the team the
+                            // move belongs to. A label the other side shares
+                            // un-names it again, so take the pair.
+                            names: TeamShortName.shortPair(
+                                away: event.awayTeam, home: event.homeTeam,
+                                sportKey: event.sport
+                            )
+                        ),
+                           // #9470 — an opening line has no "since open".
+                           !shown.isOpeningLine {
+                            Text(caption.text)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(caption.isHome ? colors.home : colors.away)
+                        }
+                        // #490: hero confidence signal (1-3 bars), computed
+                        // client-side from the win-prob source count + whether the
+                        // line moved off open. Mirrors the web hero (lib/confidence.ts).
+                        let confidenceTier = Confidence.fromSources(
+                            sourceCount: event.winProbabilitySources?.count,
+                            hasMovement: event.openingOdds?.homeProbability
+                                .map { abs(home - $0) > 0.001 } ?? false
+                        )?.rawValue
+                        if shown.isOpeningLine {
+                            // #9470 — where the line opened, not a forecast:
+                            // no confidence bars, no delivery status (the page
+                            // is pre-game, so there is no stream to report).
+                            Text(OpeningLineHero.caption)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(minHeight: 44)
+                        } else {
+                            // #10830 — stacked, the caption's reserved slot was the
+                            // last row of the card: the band of "weigh empty space"
+                            // under Live updates (Alex, build 46). There it rides the
+                            // card's bottom padding instead (its one-line text sits
+                            // in the slot's top line). Accessibility sizes outgrow
+                            // that padding, and in a row the taller crest columns
+                            // set the card's height anyway, so both keep the slot
+                            // below, unchanged.
+                            probabilityDetails(confidenceTier: confidenceTier)
+                                .overlay(alignment: .bottom) {
+                                    if priceStreamingEligible && captionRidesPadding {
+                                        movementCaptionSlot(event, colors: colors)
+                                            .alignmentGuide(.bottom) { $0[.top] }
+                                    }
+                                }
+                        }
+                        // #9500 — any streamable status moves the hero, but an
+                        // opening line (#9470) still reports no delivery.
+                        if priceStreamingEligible && !shown.isOpeningLine && !captionRidesPadding {
+                            movementCaptionSlot(event, colors: colors)
+                        }
+                        // #8320 — #3313's live sparkline was drawn here, and it
+                        // is gone: it was a thumbnail of the full chart one card
+                        // below, which since #8320 starts on the first screen.
+                    } else {
+                        Text("vs")
+                            .font(.title2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.secondary)
+                        if priceStreamingEligible { probabilityDetails(confidenceTier: nil) }
+                    }
+                    // Projected final score.
+                    //
+                    // The unit is NAMED where the scoreboard counts something
+                    // else. On the live Pegula–Fernandez US Open match the hero
+                    // printed a bare "Proj. 13-13" two lines under a 1–1 SET
+                    // score: two numbers that read as a scoreline, in games,
+                    // for a match nobody scores in games. Naming the unit is
+                    // the smallest honest fix — the projection is real and
+                    // useful, it was simply anonymous.
+                    //
+                    // #3014's SPELLED-OUT LABEL IS RETIRED HERE, not overruled.
+                    // It existed for one population — live, and no score — where
+                    // "Proj. 2-3" was the only pair on the hero and read as the
+                    // score, so the word was spelled out to disambiguate it.
+                    // #5697 AC2 withdraws the projection on exactly that
+                    // population instead, which is the stronger form of the same
+                    // fix: there is no longer a pair there to be misread. That
+                    // left `projectionLabel` returning "Proj." for every input it
+                    // could still be called with, and three tests pinning a
+                    // string the app could no longer draw — a guard that passes
+                    // while proving nothing. Deleted rather than left standing.
+                    //
+                    // #8320 — on a live game it moves to Game Info with the rest
+                    // of the context; `projectionText` is the one spelling.
+                    if carriesContext, let projection = projectionText(event, hasScore: hasScore) {
+                        Text(projection)
+                            .font(.caption)
+                            .foregroundStyle(Color.primary)
+                    }
+                    // #6544 — THE COUNTDOWN USED TO BE PRINTED HERE TOO, and the
+                    // two copies could not disagree: one `formatCountdown`
+                    // (`FormattingUtilities.swift`), the same `commenceTime`, so
+                    // the hero said "In 4d 12h" in this slot and again in the chip
+                    // 250pt above it. The three conditions this arm carried —
+                    // a future commence time, not live, not finished — are exactly
+                    // the conditions under which `heroStatusBadge` reaches its
+                    // `scheduled` arm, so there was never an arrangement where
+                    // this copy was the only statement.
+                    //
+                    // The chip is the one that stays, on #6528's rule: the state
+                    // lives in `StatusBadge`, which is what says LIVE / FINAL /
+                    // Settled / "In 4d 12h" on cards, search rows and team
+                    // schedules alike, and the other slot carries only what the
+                    // chip cannot say. Here it carries nothing further — the meta
+                    // row already holds the date and the broadcast — so this slot
+                    // is simply gone rather than refilled.
+                    //
+                    // #8320 — the live game's opening line was printed here too;
+                    // it is in Game Info now (`openedText`), named.
+                }
+                // THE LINE THAT CAUSED #3978, and it is only wrong in one of the
+                // two arrangements. In a row, refusing to compress is right: this
+                // column holds "LSU Tigers Win" and a 36pt duel, and letting SwiftUI
+                // squeeze it produces `LSU Ti…` beside two logos with room to spare.
+                // In a COLUMN it is the whole defect — the centre column's ideal
+                // width at `.accessibility3` exceeds the phone, so a fixed size makes
+                // the hero wider than its parent, which then centres it and bleeds it
+                // off BOTH edges. Stacked, the column has the full width and needs no
+                // exemption; `horizontal: false` is a no-op, not a second behaviour.
+                .fixedSize(horizontal: !stacked, vertical: false)
+
+                // Home team logo + score
+                VStack(spacing: 6) {
+                    TeamLogoView(
+                        url: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
+                        teamName: event.homeTeam,
+                        color: colors.home,
+                        size: heroLogo,
+                        sportKey: event.sport,
+                        opponentName: event.awayTeam
+                    )
+                    Text(event.homeTeam)
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .lineLimit(stacked ? nil : 2)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.primary)
+                    if hasScore {
+                        Text("\(event.homeScore ?? 0)")
+                            .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(winnerColor(isAway: false, event: event))
+                    }
+                    if carriesContext, let record = event.homeTeamData?.record {
+                        Text(record)
+                            .font(.caption)
+                            .foregroundStyle(Color.primary)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            }
+
+            // #11296 — on a final, the sportsbooks' last pair before the
+            // scheduled start, one quiet line under whichever arm printed the
+            // actual result: the cards' one rule and one view, so the headline
+            // and the card one tap back print the same forecast or none. The
+            // result stays the headline's number; the pair reads away then
+            // home, as every arm above lays the teams out.
+            if let finalForecast = Self.finalForecast11296(event) {
+                FinalForecastLine11296(
+                    comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
+            }
+            // #11296 — live, on a page the paired headline does not adopt: the
+            // admitted in-play pair under the arm that printed the score, and
+            // the retained pregame pair under it. Game Info no longer repeats it.
+            if let liveForecast = genericLiveForecast11296(event, hasScore: hasScore) {
+                LiveHeadlineForecast11296(
+                    forecast: liveForecast, awayName: event.awayTeam, homeName: event.homeTeam)
+            }
+        }
+        // #9483 v476 — on the adopted pair the hero is the top of ONE card with
+        // the chart (see the page body): no own backdrop or corners, a short
+        // bottom inset and one hairline above the chart's title.
+        .padding(approvedPair ? .horizontal : .all)
+        .padding(.top, approvedPair ? 12 : 0)
+        .padding(.bottom, approvedPair ? 8 : 0)
+        .overlay(alignment: .bottom) {
+            if approvedPair { Divider().padding(.horizontal) }
+        }
+        .background {
+            if !approvedPair { Self.heroBackdrop(colors) }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: approvedPair ? 0 : 16))
+    }
+
+    /// #11296 — the headline's forecast line, by the rule both finished cards
+    /// use (`EventCardView.finalForecast11296`): finished only, the served
+    /// `pregame_projection`, and the actual period from the served
+    /// `final_score_period`. Nil draws nothing. Static so the suite reaches it.
+    static func finalForecast11296(_ event: EventDetail) -> FinalForecastComparison11296.Comparison? {
+        qualifiedFinalForecast11296(event)?.comparison
+    }
+
+    /// #9483 R2 — the headline's forecast with its served halves: the one
+    /// pregame expectation the finished page's cards compare the final with.
+    static func qualifiedFinalForecast11296(_ event: EventDetail) -> FinalForecastComparison11296.Qualified? {
+        guard EventState.isFinished(event.status) else { return nil }
+        return FinalForecastComparison11296.qualified(
+            sport: event.sport, status: event.status,
+            homeScore: event.homeScore, awayScore: event.awayScore,
+            actualPeriod: FinalForecastComparison11296.actualPeriod(
+                sport: event.sport, servedFinalScorePeriod: event.finalScorePeriod),
+            projection: event.pregameProjection)
+    }
+
+    /// #11296 — a LIVE headline's forecast: the producer's admitted in-play
+    /// pair, and the pair served from before the scheduled start when it can be
+    /// compared with it. Only when the page prints that admitted pair
+    /// (`projectionText` answered, through `LiveProjectedFinal2920.page`'s
+    /// admitted arm); the ladders' untyped pair and a refused object answer nil,
+    /// and keep printing where they print today. Static so the suite reaches it.
+    static func liveForecast11296(
+        _ event: EventDetail,
+        ladderHome: Double?, ladderAway: Double?,
+        hasScore: Bool,
+        now: Date = Date()
+    ) -> LivePregameComparison11296.Headline? {
+        guard case .admitted(let printed) = LiveProjectedFinal2920.page(event, now: now),
+              projectionText(event, ladderHome: ladderHome, ladderAway: ladderAway,
+                             hasScore: hasScore, now: now) != nil
+        else { return nil }
+        return LivePregameComparison11296.Headline(
+            current: printed,
+            baseline: LivePregameComparison11296.resolve(
+                status: event.status, sport: event.sport, commenceTime: event.commenceTime,
+                current: printed, projection: event.pregameProjection))
+    }
+
+    private func liveForecast11296(_ event: EventDetail, hasScore: Bool) -> LivePregameComparison11296.Headline? {
+        EventDetailView.liveForecast11296(
+            event,
+            ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
+            ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
+            hasScore: hasScore)
+    }
+
+    /// #11296 — the forecast the information popover describes: the same
+    /// decision, on the same headline row, that both hosts mount from — so it
+    /// opens on the pair the page prints and is nil wherever none prints.
+    private var revealForecast11296: LivePregameComparison11296.Headline? {
+        guard let served = vm.event else { return nil }
+        let event = vm.headline(served)
+        return liveForecast11296(event, hasScore: EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore))
+    }
+
+    /// #9483 A3 — the live card's pregame side: exactly when the live headline
+    /// prints its admitted retained pair (the same decision, on the same
+    /// headline row, as `revealForecast11296`), that pair's served halves
+    /// unrounded, as the finished card reads its qualified one. Nil otherwise,
+    /// and the card names its history point "Earlier forecast".
+    private func liveCardBaseline11296(_ served: EventDetail) -> (away: Double, home: Double)? {
+        let event = vm.headline(served)
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        return LivePregameComparison11296.servedHalves(
+            liveForecast11296(event, hasScore: hasScore), projection: event.pregameProjection)
+    }
+
+    /// #11296 — the same forecast on a live page the paired headline does not
+    /// adopt (soccer, college football, the other basketball leagues): the
+    /// generic hero prints it, and Game Info stops repeating it. Nil wherever
+    /// the paired headline prints its own, or no admitted pair prints.
+    private func genericLiveForecast11296(_ event: EventDetail, hasScore: Bool) -> LivePregameComparison11296.Headline? {
+        guard nflPairedHeadline(event, hasScore: hasScore) == nil else { return nil }
+        return liveForecast11296(event, hasScore: hasScore)
+    }
+
+    /// #11296 — the current group's one spoken sentence: the current pair, then
+    /// the retained one when it prints, each naming both teams.
+    static func projectionWithBaselineAccessibilityLabel11296(
+        figure: String, names: (away: String, home: String),
+        baseline: LivePregameComparison11296.Comparison?
+    ) -> String {
+        let current = projectionAccessibilityLabel9483(figure: figure, names: names)
+        guard let baseline else { return current }
+        return "\(current). "
+            + LivePregameComparison11296.spokenText(baseline, awayName: names.away, homeName: names.home)
+    }
+
+    /// The hero's team-tinted backdrop: its own on the legacy hero, the joined
+    /// headline + chart card's on the adopted pair.
+    static func heroBackdrop(_ colors: (away: Color, home: Color)) -> LinearGradient {
+        LinearGradient(
+            colors: [
+                colors.away.opacity(0.06),
+                Color.cardBackground,
+                colors.home.opacity(0.06),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    // MARK: - #9483 NFL cards
+
+    /// #10239 / #10549 — the ONE projected-points admission. The page body and
+    /// the NFL card reader (#9483) both read it here, so the differential, the
+    /// projected-points chart and the forecast card can never disagree on it.
+    private func projectedPointsInput(_ event: EventDetail) -> ProjectedFinalPointsSeries.Input? {
+        ProjectedFinalPointsMount.input(
+            sportKey: event.sport, eventStatus: event.status, history: vm.history,
+            finalHome: event.homeScore, finalAway: event.awayScore,
+            asOf: vm.historyArrivedAt)
+    }
+
+    private func nflNames(_ event: EventDetail) -> (away: String, home: String) {
+        TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+    }
+
+    private func nflCardDeck(
+        _ event: EventDetail, projectedInput: ProjectedFinalPointsSeries.Input?
+    ) -> [NFLEventCard9483] {
+        // #11284 — a finished MLB game deals its own five story slots from
+        // this event's deliveries; upcoming and live MLB deal none.
+        if MLBFinalPage11284.applies(sportKey: event.sport, status: event.status) {
+            return mlbFinalCards(event).map { .mlb($0) }
+        }
+        guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
+        // #9483 R2 — a finished page's card compares the final with the
+        // headline's own qualified forecast, not an earlier history point.
+        // A3 — a live one compares with the live headline's admitted pair.
+        let finish = NFLFinishCard9483.build(
+            projectedInput,
+            finalBaseline: Self.qualifiedFinalForecast11296(event).map { (away: $0.away, home: $0.home) },
+            liveBaseline: liveCardBaseline11296(event))
+        return NFLEventCardDeck9483.cards(
+            sportKey: event.sport,
+            finish: finish,
+            milestones: NFLRecognizablePage9483.isNFL(sportKey: event.sport)
+                ? NFLMilestoneCard9483.cards(
+                    props: vm.gameMarkets?.playerProps ?? [], eventStatus: event.status,
+                    commenceTime: event.commenceTime?.asDate,
+                    homeTeam: event.homeTeam, awayTeam: event.awayTeam)
+                : [],
+            ladders: nbaLadders(event, finish: finish))
+    }
+
+    /// #11284 — the final MLB stories, from the event, game-markets and
+    /// related-futures deliveries the page already holds, each fenced to
+    /// THIS event inside the builder, and the score the page prints.
+    private func mlbFinalCards(_ event: EventDetail) -> [MLBFinalCard11284] {
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        return MLBFinalDeck11284.cards(MLBFinalDeckInput11284(
+            eventID: event.id, sportKey: event.sport, status: event.status,
+            homeTeam: event.homeTeam, awayTeam: event.awayTeam,
+            homeScore: hasScore ? event.homeScore : nil, awayScore: hasScore ? event.awayScore : nil,
+            gameMarkets: vm.gameMarkets, relatedFutures: vm.relatedFutures))
+    }
+
+    /// #9483 NBA slice — the winning-margin and scoring ladders, from the
+    /// served question matrix of THIS event only, the score the page prints,
+    /// and the projected finish's pregame pair.
+    private func nbaLadders(_ event: EventDetail, finish: NFLFinishCard9483?) -> [NBALadderCard9483] {
+        guard NBAEventCards9483.applies(sportKey: event.sport),
+              let gameMarkets = vm.gameMarkets, gameMarkets.eventId == event.id else { return [] }
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        let names = nflNames(event)
+        let input = NBALadderCard9483.Input(
+            matrix: gameMarkets.gameQuestionMatrix, status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            homeScore: hasScore ? event.homeScore : nil, awayScore: hasScore ? event.awayScore : nil,
+            pregameProjection: finish?.ladderPregame,
+            homeShort: names.home, awayShort: names.away, now: displayNow())
+        return [NBALadderCard9483.margin(input), NBALadderCard9483.total(input)].compactMap { $0 }
+    }
+
+    /// #9483 v445 — the compact NBA story stream is mounted: an NBA page in
+    /// the actual compact horizontal size class (iPhone, compact iPad Split
+    /// View). Regular width keeps the ordinary deck.
+    private func nbaStreamMounted(_ event: EventDetail) -> Bool {
+        NBAEventCards9483.applies(sportKey: event.sport) && sizeClass == .compact
+    }
+
+    /// The stream's page inputs, or nil for the ordinary deck.
+    private func nbaStreamPage(_ event: EventDetail, cards: [NFLEventCard9483]) -> NBAStoryStreamView9483.Page? {
+        guard nbaStreamMounted(event) else { return nil }
+        let phase = cards.lazy.compactMap { card -> NBALadderCard9483.Phase? in
+            if case .ladder(let ladder) = card { return ladder.phase } else { return nil }
+        }.first ?? .before
+        return NBAStoryStreamView9483.Page(
+            eventID: event.id, phase: phase, compact: true,
+            supportsAutomaticScrollObservation: Self.observesPageScrollPhase,
+            coordinateSpace: Self.scrollSpace, signals: nbaStreamSignals,
+            // The finish card reads the history; the ladders read the game
+            // markets and the finish's pregame pair.
+            ready: NBAStoryStreamView9483.Page.deckReady(
+                history: vm.history, gameMarkets: vm.gameMarkets, eventID: event.id))
+    }
+
+    /// The page ScrollView reports its scroll phase only on iOS 18; iOS 17 is
+    /// manual-only.
+    static var observesPageScrollPhase: Bool {
+        if #available(iOS 18, *) { return true }
+        return false
+    }
+
+    /// The page's unobscured rectangle in `scrollSpace`. The reader behind the
+    /// scroll view IS the scroll view's frame, which sits inside the safe area:
+    /// its top is the bar's bottom and its bottom the tab bar's top, and
+    /// `scrollSpace` starts at its top-left (measured at 402 pt: scrollSpace
+    /// y 0 is screen y 116). So all of it is unobscured. Nil when it is empty.
+    static func usableViewport(size: CGSize) -> CGRect? {
+        guard size.width > 0, size.height > 0 else { return nil }
+        return CGRect(origin: .zero, size: size)
+    }
+
+    private var nflReaderPresented: Binding<Bool> {
+        Binding(get: { nflCards.openCardID != nil }, set: { if !$0 { nflCards.close() } })
+    }
+
+    /// The reader's match line, from the same values the headline prints.
+    /// Live, it carries the admitted quarter and clock (`PeriodLabel`, the
+    /// title's own rule), falling back to "Live" only when none is admitted.
+    private func nflReaderHeader(_ event: EventDetail) -> NFLReaderHeader9483 {
+        let names = nflNames(event)
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        let liveState = PeriodLabel.liveStatusText(period: event.espn?.period, gameClock: event.espn?.gameClock)
+        let state = isFinished ? "Final" : isLive ? (liveState.flatMap { $0.isEmpty ? nil : $0 } ?? "Live") : "Pregame"
+        let match = hasScore
+            ? "\(names.away) \(event.awayScore ?? 0)\u{2013}\(event.homeScore ?? 0) \(names.home) · \(state)"
+            : "\(names.away) vs \(names.home) · \(state)"
+        guard let headline = nflPairedHeadline(event, hasScore: hasScore) else {
+            return NFLReaderHeader9483(match: match, chances: "")
+        }
+        // After the final the score says who won; a second line saying it
+        // again is the repetition the large-text reader cannot afford.
+        if headline.away.won != nil { return NFLReaderHeader9483(match: match, chances: "") }
+        return NFLReaderHeader9483(
+            match: match,
+            chances: "Win chances · \(names.away) \(headline.away.figure) · \(names.home) \(headline.home.figure)")
+    }
+
+    private func nflReader(_ event: EventDetail) -> some View {
+        let projectedInput = projectedPointsInput(event)
+        let props = vm.gameMarkets?.playerProps ?? []
+        let deck = nflCardDeck(event, projectedInput: projectedInput)
+        // #9483 v445 W1/W3 — under the compact NBA stream the reader follows
+        // the shelf's APPLIED order (pending cards withheld from both); in
+        // regular width both keep the event's fallback order.
+        let cards = nbaStreamMounted(event) ? nflCards.appliedNBAOrder(eventID: event.id, fallback: deck) : deck
+        return NFLCardReader9483(
+            liveCards: cards,
+            liveHeader: nflReaderHeader(event),
+            awayName: nflNames(event).away, homeName: nflNames(event).home,
+            awayColor: teamColors(event).away, homeColor: teamColors(event).home,
+            state: nflCards,
+            liveRows: NFLCardReaderHold9483.rows(for: cards, in: props))
+    }
+
+    // MARK: - #9483 NFL paired headline
+
+    /// #2085 — THE HERO PAIR'S PERCENTS, for both headline arrangements (the
+    /// crest/centre/crest hero and #9483's NFL paired headline), so the two can
+    /// never round one price differently. `current_odds.away_probability` is
+    /// `round(1 - home, 6)` on the backend, so rounding the sides independently
+    /// printed 101; the served integers are used BOTH OR NEITHER, because a
+    /// served away beside a locally derived home re-opens the same 101 from the
+    /// other side.
+    static func heroPairPercents(_ shown: OpeningLineHero, away: Double, home: Double) -> (away: Int?, home: Int?) {
+        let duelFallback = complementDisplayPercents(away: away, home: home)
+        let bothServed = shown.awayRenderedPercent != nil && shown.homeRenderedPercent != nil
+        return (away: bothServed ? shown.awayRenderedPercent : duelFallback[0],
+                home: bothServed ? shown.homeRenderedPercent : duelFallback[1])
+    }
+
+    /// The NFL paired headline, or nil to keep today's hero. Reads the same
+    /// values the hero's centre column reads, in the same order, so the two can
+    /// never print different numbers for one price: the venue-settled verdict
+    /// and every unadopted arm decline (`NFLPairedHeadline9483`).
+    private func nflPairedHeadline(_ event: EventDetail, hasScore: Bool) -> NFLPairedHeadline9483? {
+        // #11284 — the final MLB page adopts the decided-final arm only: its
+        // status is finished, so the priced arms below are never reached.
+        guard MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status) else { return nil }
+        let score = hasScore ? (away: event.awayScore ?? 0, home: event.homeScore ?? 0) : nil
+        let pregame = PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds)
+        if isFinished {
+            let outcome = heroOutcome(event)
+            return NFLPairedHeadline9483.final(
+                homeWon: outcome == .home ? true : outcome == .away ? false : nil,
+                score: score, pregame: pregame)
+        }
+        guard !EventState.showsVenueSettledVerdict(
+                event.status, venueSettled: event.venueSettled,
+                commenceTime: event.commenceTime?.asDate),
+              let odds = event.currentOdds,
+              case let shown = OpeningLineHero.resolve(odds, for: event),
+              !shown.isOpeningLine,
+              let pair = DrawPricedWinner.printablePair(
+                away: shown.awayProbability, home: shown.homeProbability, sport: event.sport),
+              let away = pair.away
+        else { return nil }
+        // #2085 — the hero pair's own percents, from the one rule both
+        // arrangements read.
+        let percents = Self.heroPairPercents(shown, away: away, home: pair.home)
+        return NFLPairedHeadline9483.priced(
+            awayText: formatProbability(away, renderedPercent: percents.away),
+            homeText: formatProbability(pair.home, renderedPercent: percents.home),
+            live: event.status == "live", score: score, pregame: pregame)
+    }
+
+    private func nflPairedHeadlineView(
+        _ event: EventDetail, _ headline: NFLPairedHeadline9483,
+        colors: (away: Color, home: Color), stacked: Bool, hasScore: Bool
+    ) -> some View {
+        let names = TeamShortName.shortPair(
+            away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+        let priced = headline.away.won == nil
+        // The adopted NFL/NBA path uses two chance columns; score/projection share
+        // the row below. Existing source and state decisions remain unchanged.
+        // #11284 — the final MLB page is adopted too.
+        let adopted = MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status)
+        let centerRow = !stacked || headline.center != .versus
+        let sides = adopted && dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+            : AnyLayout(HStackLayout(alignment: .nflPairedFigure9483, spacing: 8))
+        return VStack(spacing: adopted ? 8 : 6) {
+            sides {
+                nflPairedSide(event, headline.away, name: names.away, isAway: true,
+                              color: colors.away, logo: event.awayTeamData?.logoSmall,
+                              opponent: event.homeTeam)
+                if !stacked && !adopted {
+                    nflPairedCenter(event, headline, colors: colors, movement: .reserved)
+                        .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
+                }
+                nflPairedSide(event, headline.home, name: names.home, isAway: false,
+                              color: colors.home, logo: event.homeTeamData?.logoSmall,
+                              opponent: event.awayTeam)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(adopted
+                ? adoptedPairAccessibilityLabel9483(event, headline, names: names)
+                : headline.accessibilityLabel(awayName: names.away, homeName: names.home))
+            // The live move caption sits under the score, but the row above is
+            // ONE VoiceOver element that ignores its children, so the caption
+            // inside it was unreachable (native review of ffa5f83d97). It draws
+            // here instead, outside that element, on the same line: the centre
+            // column again, its score invisible, aligned on the figures' line
+            // exactly as the reserved copy in the row is.
+            .overlay(alignment: Alignment(horizontal: .center, vertical: .nflPairedFigure9483)) {
+                if !stacked && !adopted {
+                    nflPairedCenter(event, headline, colors: colors, movement: .only)
+                        .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
+                }
+            }
+            if priced && adopted {
+                // The pair's subject and the finite movement cue sit with the
+                // chances they describe, above the score/projection divider.
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    nflPairedPhase(event)
+                    Spacer(minLength: 0)
+                    if priceStreamingEligible { movementCaptionSlot(event, colors: colors) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if priced {
+                // The pair's subject and its age, as the hero words it (#9483
+                // F1), on one line with the delivery control where it fits.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { nflPairedPhase(event); nflPairedDetails(event) }
+                    VStack(spacing: 2) { nflPairedPhase(event); nflPairedDetails(event) }
+                }
+            }
+            // Before the game the row would hold a lone "vs"; it shows only with a
+            // score or a projection, and a "vs" never takes a cell beside one.
+            let projection = projectionText(event, hasScore: hasScore)
+            if adopted, headline.center != .versus || projection != nil {
+                let resultLayout = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+                    : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 16))
+                resultLayout {
+                    if headline.center != .versus {
+                        nflPairedCenter(event, headline, colors: colors, movement: .omitted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if let projection = projectionText(event, hasScore: hasScore) {
+                        let figure = Self.projectionFigure9483(projection)
+                        let label = Text("Projected final")
+                        if headline.center == .versus {
+                            // #11285 (Alex, build 65) — before the game there is
+                            // no score to compare, so the projection is the row:
+                            // its label leading, both named teams' points
+                            // trailing. A lone figure left its right half empty.
+                            adoptedPregameProjection11285(figure: figure, label: label,
+                                                          names: names, colors: colors)
+                        } else {
+                            // Figure over caption in the score's own style, on its baseline.
+                            // #11296 — live, the retained pregame pair sits under
+                            // them in this same group, never a third column.
+                            let liveBaseline = liveForecast11296(event, hasScore: hasScore)?.baseline
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(figure)
+                                    .font(.system(size: eventHeadlineScoreSize9483, weight: .bold, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(Color.primary)
+                                    .fixedSize()
+                                label
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.5)
+                                    .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
+                                if let liveBaseline {
+                                    // Design 2026-10-22 — the retained pair is never
+                                    // larger than the current caption above it: the
+                                    // caption's own font and ceiling, still wrapping,
+                                    // never scaled down.
+                                    LivePregameBaselineLine11296(
+                                        comparison: liveBaseline, awayName: names.away, homeName: names.home,
+                                        font: .caption2)
+                                        .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
+                                        .padding(.top, 4)
+                                }
+                            }
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(Self.projectionWithBaselineAccessibilityLabel11296(
+                                figure: figure, names: names, baseline: liveBaseline))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .padding(.top, 8)
+                .overlay(alignment: .top) { Divider() }
+            } else if stacked && centerRow && !adopted {
+                nflPairedCenter(event, headline, colors: colors, movement: .shown)
+            }
+            // The admitted projection shares the composition (#5697's gate,
+            // `projectionText`'s one spelling); Game Info stops repeating it.
+            if !adopted, let projection = projectionText(event, hasScore: hasScore) {
+                Text(projection)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+            }
+        }
+    }
+
+    // MARK: - #9483 tennis completed-match headline
+
+    /// The completed tennis headline, or nil to keep today's hero. Reads what
+    /// the hero's finished branch reads — `heroOutcome`, the shown scoreboard
+    /// and `PrematchReading` — so the two can never disagree about one match.
+    private func tennisFinalHeadline(_ event: EventDetail, hasScore: Bool) -> TennisFinalHeadline9483? {
+        guard TennisFinalHeadline9483.applies(sportKey: event.sport, status: event.status) else { return nil }
+        return TennisFinalHeadline9483.resolve(
+            awayName: event.awayTeam, homeName: event.homeTeam, sportKey: event.sport,
+            outcome: heroOutcome(event),
+            score: hasScore ? (away: event.awayScore ?? 0, home: event.homeScore ?? 0) : nil,
+            pregame: PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds))
+    }
+
+    /// The adopted headline's anatomy (`nflPairedHeadlineView`): a column per
+    /// player, away first, the result row under a hairline. Accessibility
+    /// sizes stack the players, as the adopted pair does; nothing shrinks the
+    /// chart or the figures to fit.
+    private func tennisFinalHeadlineView(
+        _ headline: TennisFinalHeadline9483, colors: (away: Color, home: Color)
+    ) -> some View {
+        let sides = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+            : AnyLayout(HStackLayout(alignment: .nflPairedFigure9483, spacing: 12))
+        return VStack(alignment: .leading, spacing: 8) {
+            sides {
+                tennisFinalSide(headline.away, label: headline.chanceLabel, color: colors.away)
+                tennisFinalSide(headline.home, label: headline.chanceLabel, color: colors.home)
+            }
+            if let result = headline.result {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(result.figure)
+                        .font(.system(size: eventHeadlineScoreSize9483, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(Color.primary)
+                        .fixedSize()
+                    Text(result.caption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
+                .overlay(alignment: .top) { Divider() }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(headline.accessibilityLabel)
+        .accessibilityIdentifier("tennis-final-headline")
+    }
+
+    /// One player: full name (wrapping between words, never shrunk or cut),
+    /// Won/Lost, the chance at the headline's size and what it is.
+    private func tennisFinalSide(
+        _ side: TennisFinalHeadline9483.Side, label: String, color: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(side.name)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(color)
+                .fixedSize(horizontal: false, vertical: true)
+            if let won = side.won {
+                Label(won ? "Won" : "Lost", systemImage: won ? "checkmark" : "xmark")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+            }
+            Text(side.chance ?? TennisFinalHeadline9483.unavailableText)
+                .font(side.chance == nil ? .headline
+                      : .system(size: eventHeadlineChanceSize9483, weight: .black, design: .rounded).monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The pregame meta row's broadcast and start, as one line for the adopted
+    /// header: the same values and gates (`showsBroadcast`, TBD withholding).
+    private func adoptedPregameContext9483(_ event: EventDetail) -> String? {
+        var parts: [String] = []
+        if let broadcast = event.espn?.broadcast,
+           Self.showsBroadcast(status: event.status, commenceTime: event.commenceTime?.asDate) {
+            parts.append(broadcast)
+        }
+        if event.startIsTbd == true {
+            if let tbd = RelativeTimeText.tbdText(for: event.commenceTime, relativeDays: false) { parts.append(tbd) }
+        } else if let date = event.commenceTime?.asDate {
+            parts.append(date.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// #9483 v476 — `projectionText`'s figure without its "Proj. " abbreviation,
+    /// for the adopted row that labels it "Projected final". Nothing else is
+    /// touched, so a unit `projectionText` names stays.
+    static func projectionFigure9483(_ text: String) -> String {
+        text.hasPrefix("Proj. ") ? String(text.dropFirst("Proj. ".count)) : text
+    }
+
+    /// Label first, then each side's projected points where the figure is the
+    /// plain away–home pair `projectionText` writes; otherwise the figure as shown.
+    static func projectionAccessibilityLabel9483(figure: String, names: (away: String, home: String)) -> String {
+        if let pair = projectedPair11285(figure) {
+            return "Projected final, \(names.away) \(pair.away), \(names.home) \(pair.home)"
+        }
+        return "Projected final, \(figure)"
+    }
+
+    /// #11285 — the plain away–home pair `projectionFigure9483` prints, split
+    /// for the pregame row; nil for any other figure (a named unit), which
+    /// the row then prints whole.
+    static func projectedPair11285(_ figure: String) -> (away: Int, home: Int)? {
+        let sides = figure.split(separator: "-", omittingEmptySubsequences: false)
+        guard sides.count == 2, let away = Int(sides[0]), let home = Int(sides[1]) else { return nil }
+        return (away, home)
+    }
+
+    /// #11285 — the pregame projection as one compact full-width row under
+    /// the chances (Design's brief, Root 2018Z): the gated label (the caller's
+    /// one spelling, #5697) on the left, "49ers 24 – 21 Commanders" on the
+    /// right, away first as the chances are. Sized to fit one line on a 375pt
+    /// phone at the default text size (~296pt of 311pt for this pair); larger
+    /// text puts the pair, still right-aligned, under its label, then each
+    /// team on its own line — nothing shrinks or truncates. The points stay
+    /// below the chances' size. Spoken once, label first.
+    private func adoptedPregameProjection11285(
+        figure: String, label caption: Text,
+        names: (away: String, home: String), colors: (away: Color, home: Color)
+    ) -> some View {
+        let label = caption
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        return Group {
+            if let pair = Self.projectedPair11285(figure) {
+                let scoreline = HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    projectedTeam11285(names.away, color: colors.away)
+                    projectedPoints11285(pair.away)
+                    Text("\u{2013}").font(.headline).foregroundStyle(.secondary)
+                    projectedPoints11285(pair.home)
+                    projectedTeam11285(names.home, color: colors.home)
+                }
+                .fixedSize()
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        label.fixedSize()
+                        Spacer(minLength: 0)
+                        scoreline
+                    }
+                    VStack(alignment: .trailing, spacing: 2) {
+                        label.frame(maxWidth: .infinity, alignment: .leading)
+                        scoreline
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        label
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            projectedTeam11285(names.away, color: colors.away); projectedPoints11285(pair.away)
+                        }
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            projectedTeam11285(names.home, color: colors.home); projectedPoints11285(pair.home)
+                        }
+                    }
+                }
+            } else {
+                // A figure that is not a plain pair (a named unit) prints whole.
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    label
+                    Spacer(minLength: 0)
+                    Text(figure)
+                        .font(.headline.monospacedDigit())
+                        .foregroundStyle(Color.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.projectionAccessibilityLabel9483(figure: figure, names: names))
+        .accessibilityIdentifier("adopted-pregame-projection")
+    }
+
+    private func projectedTeam11285(_ name: String, color: Color) -> some View {
+        Text(name)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(color)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func projectedPoints11285(_ points: Int) -> some View {
+        Text("\(points)")
+            .font(.headline.monospacedDigit())
+            .foregroundStyle(Color.primary)
+            .fixedSize()
+    }
+
+    /// One adopted side's figure and baseline, visible and spoken, from the same
+    /// structured values: the live/final baseline is `PrematchReading` (the
+    /// paired helper's own input), never parsed from a caption.
+    struct AdoptedSide9483: Equatable {
+        let figure: String
+        let caption: String?
+        let spoken: String
+        let figureIsWord: Bool
+    }
+
+    static func adoptedSide9483(
+        _ side: NFLPairedHeadline9483.Side, isAway: Bool, live: Bool, pregame: PrematchReading?
+    ) -> AdoptedSide9483 {
+        let baseline = pregame.map { reading in
+            formatProbability(isAway ? reading.awayProbability : reading.homeProbability,
+                              renderedPercent: reading.percents[isAway ? 0 : 1])
+        }
+        let opening = pregame?.captionWord == "Opened"
+        if let won = side.won {
+            let word = opening ? "Pregame · opening" : "Pregame win chance"
+            let said = opening ? "pregame opening win chance" : "pregame win chance"
+            return AdoptedSide9483(
+                figure: baseline ?? "Unavailable", caption: word,
+                spoken: "\(won ? "won" : "lost"), \(said) \(baseline ?? "unavailable")",
+                figureIsWord: baseline == nil)
+        }
+        if live {
+            let word = opening ? "Pregame · opening" : "Pregame"
+            let said = opening ? "pregame opening" : "pregame"
+            return AdoptedSide9483(
+                figure: side.figure, caption: "\(word) \(baseline ?? "unavailable")",
+                spoken: "\(side.figure), \(said) \(baseline ?? "unavailable")", figureIsWord: false)
+        }
+        return AdoptedSide9483(
+            figure: side.figure, caption: side.pregame,
+            spoken: side.pregame.map { "\(side.figure), \($0)" } ?? side.figure, figureIsWord: false)
+    }
+
+    private func adoptedSide9483(_ event: EventDetail, _ side: NFLPairedHeadline9483.Side, isAway: Bool) -> AdoptedSide9483 {
+        let live = event.status == "live"
+        let pregame = (side.won != nil || live)
+            ? PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds) : nil
+        return Self.adoptedSide9483(side, isAway: isAway, live: live, pregame: pregame)
+    }
+
+    /// The adopted pair as one VoiceOver sentence, in reading order, from the
+    /// same values the sides draw.
+    private func adoptedPairAccessibilityLabel9483(
+        _ event: EventDetail, _ headline: NFLPairedHeadline9483, names: (away: String, home: String)
+    ) -> String {
+        var parts = [
+            "\(names.away) \(adoptedSide9483(event, headline.away, isAway: true).spoken)",
+            "\(names.home) \(adoptedSide9483(event, headline.home, isAway: false).spoken)",
+        ]
+        if case let .score(a, h, final) = headline.center {
+            parts.append("\(final ? "Final score" : "Score") \(names.away) \(a), \(names.home) \(h)")
+        }
+        return parts.joined(separator: ". ")
+    }
+
+    private func usesApprovedHeadlinePresentation9483(_ event: EventDetail) -> Bool {
+        MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status)
+            && nflPairedHeadline(event, hasScore: Self.showsScore(
+                status: event.status, away: event.awayScore, home: event.homeScore)) != nil
+    }
+
+    /// The pair's subject and age (#9483 F1) — ONE mount for both headline
+    /// arrangements, resolved on the hero quote's own clock each minute so a
+    /// quote ages into "last recorded" on a page left open with no new price.
+    private func headlinePhaseLabel(
+        _ event: EventDetail, isOpeningLine: Bool, baseline: String?, maxWidth: CGFloat?
+    ) -> some View {
+        TimelineView(.periodic(from: .now, by: 60)) { tick in
+            if let phase = EventHeadlinePhase9483.resolve(
+                status: event.status, commenceTime: event.commenceTime?.asDate,
+                isOpeningLine: isOpeningLine,
+                // #10090 — a preview's own observation time; unknown is undated.
+                observedAt: vm.displayedProbabilityObservedAt(event),
+                deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
+                now: displayNow(tick.date)) {
+                EventHeadlinePhaseLabel9483(phase: phase, baseline: baseline, maxWidth: maxWidth)
+            }
+        }
+    }
+
+    /// The NFL arrangement prints each side's pregame number under its own
+    /// chance, so its phase line carries no baseline.
+    private func nflPairedPhase(_ event: EventDetail) -> some View {
+        headlinePhaseLabel(event, isOpeningLine: false, baseline: nil, maxWidth: nil)
+    }
+
+    /// #490 — the hero's confidence tier, on the hero's own home price.
+    private func nflPairedDetails(_ event: EventDetail) -> some View {
+        let home = event.currentOdds.flatMap { OpeningLineHero.resolve($0, for: event).homeProbability }
+        return probabilityDetails(confidenceTier: Confidence.fromSources(
+            sourceCount: event.winProbabilitySources?.count,
+            hasMovement: home.flatMap { h in
+                event.openingOdds?.homeProbability.map { abs(h - $0) > 0.001 } } ?? false
+        )?.rawValue, statusInDetails: true)
+    }
+
+    private func nflPairedSide(
+        _ event: EventDetail, _ side: NFLPairedHeadline9483.Side, name: String, isAway: Bool,
+        color: Color, logo: String?, opponent: String
+    ) -> some View {
+        let adopted = MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status)
+        let finalPair = adopted && side.won != nil
+        let shown = adopted ? adoptedSide9483(event, side, isAway: isAway) : nil
+        let figure = shown?.figure ?? side.figure
+        let baselineCaption = shown.map { $0.caption } ?? side.pregame
+        return VStack(alignment: adopted || isAway ? .leading : .trailing, spacing: adopted ? 4 : 3) {
+            HStack(spacing: 6) {
+                if !isAway && !adopted { Spacer(minLength: 0) }
+                TeamLogoView(url: logo, teamName: isAway ? event.awayTeam : event.homeTeam,
+                             color: color, size: 24, sportKey: event.sport, opponentName: opponent)
+                // One line, shrunk before it hyphenates ("Sea-hawks" at AX sizes).
+                Text(name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(color)
+                    .lineLimit(adopted ? nil : 1)
+                    .minimumScaleFactor(adopted ? 1 : 0.5)
+                    .allowsTightening(!adopted)
+                if isAway || adopted { Spacer(minLength: 0) }
+            }
+            if finalPair {
+                Label(side.figure, systemImage: side.won == true ? "checkmark" : "xmark")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+            }
+            Text(figure)
+                .acceptedValueChange(finalPair ? figure : heroValue(away: isAway), rising: heroRising(away: isAway), animates: heroMoves)
+                .font(shown?.figureIsWord == true ? .headline : .system(size: adopted ? eventHeadlineChanceSize9483 : (sizeClass == .regular ? 40 : 34), weight: .black, design: .rounded).monospacedDigit())
+                .foregroundStyle(!finalPair && side.won == false ? Color.secondary : color)
+                .lineLimit(1)
+                .minimumScaleFactor(adopted ? 0.75 : 0.6)
+                .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
+                                         valueChanged: vm.priceActivity.map {
+                                             isAway ? $0.previousAwayLabel != $0.awayLabel
+                                                    : $0.previousHomeLabel != $0.homeLabel } ?? false,
+                                         color: color, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
+                // Outermost: set inside the value-change wrapper (a ZStack) it
+                // did not reach the row, and a shrunk name lifted one figure
+                // ~4pt off the other's line at AX-XL (native review).
+                .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
+            if let pregame = baselineCaption {
+                // The figure is a fixed size, so its caption may not outgrow it:
+                // at AX5 an unbounded "Pre-match 38%" wrapped to three lines
+                // larger than "55%" (native review). One line, shrunk like the
+                // name, and no larger than AX1.
+                Text(pregame)
+                    .font(adopted ? .caption : .caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(adopted ? nil : 1)
+                    .minimumScaleFactor(adopted ? 1 : 0.5)
+                    .dynamicTypeSize(...(adopted ? DynamicTypeSize.accessibility5 : Self.nflPairedCaptionTypeCeiling))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: adopted || isAway ? .leading : .trailing)
+    }
+
+    /// The headline's figures are fixed sizes, so its captions stop growing
+    /// here: past AX1 "Score" outgrew "27–24" and "Pre-match 38%" outgrew "55%".
+    static let nflPairedCaptionTypeCeiling = DynamicTypeSize.accessibility1
+
+    /// #9483 v476 phone fit — how far the adopted header's 44pt disclosure
+    /// target reaches past its row, above and below. The card's 12pt top inset
+    /// and the header's 10pt row gap hold it, so the row is the chip's height.
+    static let adoptedDisclosureOverhang9483: CGFloat = 10
+
+    /// Where the centre column's live move caption goes. The default row is one
+    /// VoiceOver element, so there the caption is `.reserved` (its room kept,
+    /// nothing drawn) and an overlay outside the element draws it `.only`.
+    enum NFLPairedMovement { case shown, reserved, only, omitted }
+
+    /// The score (or "vs") between the chances, with the live move caption
+    /// under it — the one slot in the headline that has the room.
+    private func nflPairedCenter(
+        _ event: EventDetail, _ headline: NFLPairedHeadline9483, colors: (away: Color, home: Color),
+        movement: NFLPairedMovement
+    ) -> some View {
+        // The adopted row (`.omitted`) reads left to right, so its caption leads too.
+        VStack(alignment: movement == .omitted ? .leading : .center, spacing: 2) {
+            Group {
+                switch headline.center {
+                case .versus:
+                    Text("vs")
+                        .font(.title3.weight(.medium))
+                        .foregroundStyle(.secondary)
+                case let .score(away, home, _):
+                    Text("\(away)\u{2013}\(home)")
+                        .font(.system(size: movement == .omitted ? eventHeadlineScoreSize9483 : 24,
+                                      weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(Color.primary)
+                        .fixedSize()
+                    if let caption = headline.centerCaption {
+                        Text(caption)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+                            .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
+                    }
+                }
+            }
+            // The row's one label already reads the score; stacked, this copy
+            // sits outside that element and VoiceOver read the score twice.
+            .accessibilityHidden(true)
+            .opacity(movement == .only ? 0 : 1)
+            if headline.away.won == nil && priceStreamingEligible && movement != .omitted {
+                movementCaptionSlot(event, colors: colors)
+                    .opacity(movement == .reserved ? 0 : 1)
+                    .accessibilityHidden(movement == .reserved)
+            }
+        }
+    }
+
+    /// The widest the hero's centre verdict may be, in points.
+    ///
+    /// 🔴 A CAP, NOT A LAYOUT — and it is here because `.frame(maxWidth: .infinity)`
+    /// did NOT hold it. Observed on the simulator, 2026-09-15 12:59 PT: with
+    /// that modifier and `lineLimit(3)`, "Brighton & Hove Albion wins 5-0"
+    /// (event `15310517`) still drew on one line and still pushed the whole hero
+    /// card off BOTH screen edges — the away crest clipped at the left, "COV" at
+    /// the right, the date cut off. (That intermediate frame was overwritten by
+    /// the next shot; the kept pair in `artifacts/native-181/` is the original
+    /// **vs** and the bounded result.) The two crest columns are
+    /// `.frame(maxWidth: .infinity)` siblings, so the row grants this slot its
+    /// ideal width first and an infinite maximum asks for MORE room, never less.
+    ///
+    /// 150pt is under a third of the 402pt iPhone 17 width with both crests and
+    /// their names drawn, and it is a MAXIMUM: every short verdict this slot has
+    /// ever held ("Sion Win", "Draw 0-0", "87 – 13") is narrower and centres
+    /// inside it unchanged, so nothing that fit before is being re-laid-out.
+    static let verdictSlotWidth: CGFloat = 150
+
+    /// The centre becomes a full-width row at the same size as the team layout.
+    static func heroVerdictWidth(at size: DynamicTypeSize) -> CGFloat? {
+        size >= .xxLarge ? nil : verdictSlotWidth
+    }
+
+    /// #11285 (Design, build 66) — the adopted headline's info-only control is
+    /// a compact 44pt target at the row's trailing edge. In the 150pt verdict
+    /// slot its lone glyph centred about 75pt inward; that slot is kept where
+    /// the control still prints status words.
+    static func probabilityDetailsMaxWidth(at size: DynamicTypeSize, statusInDetails: Bool) -> CGFloat? {
+        statusInDetails ? nil : heroVerdictWidth(at: size)
+    }
+
+    /// #11296 — what the info control opens, said before it is opened. The
+    /// delivery sentence is unchanged; it grows the forecast's clause only when
+    /// the popover will actually carry the forecast section (the same
+    /// `revealForecast11296` the popover reads), so it never promises details
+    /// that are not there.
+    nonisolated static func probabilityDetailsHint(forecastShown: Bool) -> String {
+        forecastShown
+            ? "Shows connection status, when the last probability update reached this phone, and the sportsbooks and times behind the projected scores"
+            : "Shows connection status and when the last probability update reached this phone"
+    }
+
+    // MARK: - Hero Status Badge
+
+    /// #4002 — the arms are ORDERED, and `suspended` has to come before the
+    /// default. The default hands `StatusBadge` the literal `"scheduled"` plus
+    /// the event's own `commenceTime`; `formatCountdown` returns nil for a date
+    /// in the past, so the badge fell through to `EmptyView` and a match played
+    /// four days ago wore no label whatsoever. Silence read as "about to start"
+    /// because everything else on the meta row — the date, the broadcast — is
+    /// pregame furniture.
+    @ViewBuilder
+    private func heroStatusBadge(_ event: EventDetail) -> some View {
+        if event.status == "live" {
+            StatusBadge(status: "live", gameClock: event.espn?.gameClock, period: event.espn?.period)
+        } else if EventState.isFinished(event.status) {
+            // Passes `commenceTime` it does not strictly need, so that "every
+            // non-literal status reaching StatusBadge carries a date" is a rule
+            // with no exceptions for its guard to have to encode. See #4021.
+            StatusBadge(status: event.status, commenceTime: event.commenceTime)
+        } else if EventState.isSuspendedAndStarted(
+            event.status, commenceTime: event.commenceTime?.asDate) {
+            // #6381 — `venueSettled` is handed to BOTH remaining arms, because
+            // both of them are wrong in the same way when the venue has graded
+            // the row: this one claims no result was reported, and the one
+            // below it shows a kick-off countdown. StatusBadge decides which
+            // sentence wins; this view does not duplicate that chain.
+            StatusBadge(
+                status: "suspended",
+                commenceTime: event.commenceTime,
+                // #9208 — "Canceled"/"Postponed" when ESPN said so.
+                period: event.espn?.period,
+                venueSettled: event.venueSettled == true,
+                // #5811 — both arms again, for the same reason as the flag
+                // above: each one claims the contest is unplayed.
+                venueClosedNoWinner: event.venueClosedNoWinner == true)
+        } else {
+            StatusBadge(
+                status: "scheduled",
+                commenceTime: event.commenceTime,
+                venueSettled: event.venueSettled == true,
+                startIsTbd: event.startIsTbd == true,
+                venueClosedNoWinner: event.venueClosedNoWinner == true)
+        }
+    }
+
+    // MARK: - ESPN
+
+    @ViewBuilder
+    private func espnSection(_ event: EventDetail) -> some View {
+        // #4002 — the broadcast chip is gated by the same rule as the hero's, or
+        // the "Game Info" card re-offers "MLB.TV, Padres.TV, YES" for a game that
+        // finished two days ago one scroll below the hero that stopped doing it.
+        let showsBroadcast = event.espn?.broadcast != nil
+            && EventDetailView.showsBroadcast(
+                status: event.status, commenceTime: event.commenceTime?.asDate)
+        let gameInfoHasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        // #8320 — what the live hero handed over. Empty on every other state,
+        // whose hero still carries it.
+        // #9483 — the NFL paired headline carries no records or opening line
+        // in any state, so Game Info holds them; it carries the projection, so
+        // Game Info does not repeat it.
+        let nflHeadline = nflPairedHeadline(event, hasScore: gameInfoHasScore) != nil
+        // #11296 — nor when the generic hero printed the admitted live pair.
+        let heroLiveForecast = genericLiveForecast11296(event, hasScore: gameInfoHasScore) != nil
+        let nflHandedOver: [(icon: String, text: String)] = nflHeadline ? [
+            recordsText(event).map { ("list.number", $0) },
+            openedText(event).map { ("flag", $0) },
+        ].compactMap { $0 } : []
+        let heroHandedOver: [(icon: String, text: String)] =
+            EventDetailView.heroCarriesGameContext(status: event.status) ? [] : [
+                recordsText(event).map { ("list.number", $0) },
+                openedText(event).map { ("flag", $0) },
+                nflHeadline || heroLiveForecast ? nil : projectionText(
+                    event,
+                    hasScore: gameInfoHasScore
+                ).map { ("chart.line.uptrend.xyaxis", $0) },
+            ].compactMap { $0 }
+        let handedOver = heroHandedOver.isEmpty ? nflHandedOver : heroHandedOver
+        let hasData = showsBroadcast || event.commenceTime != nil || !handedOver.isEmpty
+        if hasData {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Text("Game Info")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                }
+                HStack(spacing: 12) {
+                    if let broadcast = event.espn?.broadcast, showsBroadcast {
+                        HStack(spacing: 5) {
+                            Image(systemName: "tv")
+                                .font(.system(size: 10))
+                            Text(broadcast)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.secondary.opacity(0.08))
+                        .clipShape(Capsule())
+                    }
+                    if let commenceTime = event.commenceTime, let date = commenceTime.asDate {
+                        HStack(spacing: 5) {
+                            Image(systemName: "clock")
+                                .font(.system(size: 10))
+                            if isFinished {
+                                Text("Final · \(date, format: .dateTime.month(.abbreviated).day().hour().minute())")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                            } else if isLive {
+                                Text("Started \(date, format: .dateTime.hour().minute())")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                            } else if isSuspended {
+                                // #4002 — `isFinished` and `isLive` each had a
+                                // tensed arm and `suspended` fell to the one
+                                // written for a game that has not happened: on
+                                // 15301312 this chip read "Sep 4 at 2:00 AM",
+                                // the identical sentence it prints for a fixture
+                                // next week. It DID start; the date stays
+                                // because the day is the surprising part.
+                                Text("Started \(date, format: .dateTime.month(.abbreviated).day()) at \(date, format: .dateTime.hour().minute())")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                            } else if event.startIsTbd == true,
+                                      let tbd = RelativeTimeText.tbdText(
+                                        for: commenceTime, relativeDays: false) {
+                                // #8841 — the day, not the placeholder's clock.
+                                Text(tbd)
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                            } else {
+                                Text("\(date, format: .dateTime.month(.abbreviated).day()) at \(date, format: .dateTime.hour().minute())")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                            }
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.secondary.opacity(0.08))
+                        .clipShape(Capsule())
+                    }
+                }
+                // One per line: each carries two team names, so two side by
+                // side would clip on a phone before any text size change.
+                ForEach(handedOver, id: \.text) { item in
+                    HStack(spacing: 5) {
+                        Image(systemName: item.icon)
+                            .font(.system(size: 10))
+                        Text(item.text)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.secondary.opacity(0.08))
+                    .clipShape(Capsule())
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+            .background(Color.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+
+
+    // MARK: - Sources Toggle (v3)
+
+    /// #3410 — is there ANY probability evidence for this event, from any angle?
+    ///
+    /// Deliberately generous, and deliberately not a copy of the chart's own
+    /// `hasNoReadings`: this decides whether to offer a link to the model
+    /// breakdown, so it errs towards offering it. A single named source, a single
+    /// bookmaker quote or a single history point is enough. Only a game with none
+    /// of the three loses the link — the state photographed on 15305748 and
+    /// 15305758, where `win_prob_sources` is `{}` and every history array is empty.
+    ///
+    /// `history == nil` counts as evidence: that is the not-yet-loaded state, and
+    /// a link must not flicker away and back while a page settles.
+    static func hasAnyProbabilityEvidence(event: EventDetail, history: EventHistoryResponse?) -> Bool {
+        if !(event.winProbabilitySources ?? [:]).isEmpty { return true }
+        if !(event.bookmakerOdds ?? []).isEmpty { return true }
+        guard let history else { return true }
+        if !(history.history ?? []).isEmpty { return true }
+        if !(history.espnHistory ?? []).isEmpty { return true }
+        if !(history.winProbHistory ?? [:]).isEmpty { return true }
+        if !(history.bookmakerHistory ?? [:]).isEmpty { return true }
+        return false
+    }
+
+    /// The disclosure under the chart: what the blended number is made of.
+    ///
+    /// It used to say "Individual Sportsbooks" and list only `bookmakerOdds`, so
+    /// on an event whose blend also reads Kalshi and Polymarket the app named
+    /// neither — and the panel did not render at all for an event with prediction
+    /// markets but no book. Alex found it on the upcoming Shelton match, where
+    /// the API was serving all three legs fresh (kalshi 0.775 / polymarket 0.775 /
+    /// betting 0.7525, measured 19:08Z 2026-09-03) and the page credited ten
+    /// sportsbooks and nothing else.
+    ///
+    /// The blend stays the product — this names its inputs, it does not offer a
+    /// competing number to read. Contributing sources come first (that is the
+    /// question "where does 78% come from?"), the book-by-book table stays
+    /// underneath as the detail it always was.
+    @ViewBuilder
+    private func sourcesToggle(_ event: EventDetail) -> some View {
+        let sourceEntries = WinProbSourceCatalog.entries(from: event.winProbabilitySources)
+        // #4284 — the NAMED rows, not the payload. Unnameable keys draw no row, so
+        // asking `bookmakerOdds` here would open a disclosure onto an "INDIVIDUAL
+        // SPORTSBOOKS" heading with nothing under it. The list the header promises
+        // is the list this condition has to be about. #4406 widens the gap between
+        // the two: priceless keys draw no row either, so a game every book skipped
+        // now correctly draws no heading instead of a heading over eighteen names.
+        let bookmakers = Self.namedBookmakerRows(event.bookmakerOdds ?? [])
+        if !sourceEntries.isEmpty || !bookmakers.isEmpty {
+            VStack(spacing: 0) {
+                Divider()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showSources.toggle()
+                    }
+                } label: {
+                    HStack {
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Text(Self.sourcesToggleLabel(sourceCount: sourceEntries.count))
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.secondary)
+                                .rotationEffect(.degrees(showSources ? 180 : 0))
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+
+                if showSources {
+                    Divider()
+                    if !sourceEntries.isEmpty {
+                        sourceContent(event, entries: sourceEntries)
+                    }
+                    if !bookmakers.isEmpty {
+                        if !sourceEntries.isEmpty { Divider().padding(.horizontal, 16) }
+                        // #10863 — this table is each book's LATEST price, older
+                        // ones included and marked with their age, so its count
+                        // is not the "Based on N sportsbooks" count above it.
+                        Text(Self.bookmakerTableHeading(rowCount: bookmakers.count))
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                            .textCase(.uppercase)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 8)
+                        bookmakerContent(event)
+                    }
+                }
+            }
+            // #4107 — measured HERE, on the panel, rather than behind either
+            // list. Both lists draw rows of this width, but they render under
+            // independent conditions, so a measurement scoped to one of them is
+            // missing on every event that draws only the other. Publishing from
+            // the panel also means the width is already known when the reader
+            // expands the disclosure, instead of the first frame being sized on
+            // unclamped ink.
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: SourceRowWidthKey.self, value: geo.size.width)
+                }
+            )
+            .onPreferenceChange(SourceRowWidthKey.self) { width in
+                sourceRowWidth = width
+            }
+        }
+    }
+
+    /// The collapsed label names the count so the reader can tell there is more
+    /// than a book list behind the chevron without opening it.
+    ///
+    /// #9483 R3 — and it names WHICH number those sources make: the latest one.
+    /// The chart's key above it has its own "+ N sources" for the lines drawn
+    /// over time, and the two counts are rightly different (Packers: +5 traced
+    /// histories, 3 inputs to the latest number), so two bare "Sources" read as
+    /// one control disagreeing with itself.
+    static func sourcesToggleLabel(sourceCount: Int) -> String {
+        sourceCount > 0 ? "Latest number's sources (\(sourceCount))" : "Individual Sportsbooks"
+    }
+
+    /// #4233 — one row of either sources list, in whichever shape the model chose.
+    ///
+    /// Shared by `sourceContent` and `bookmakerContent` because the two lists sit
+    /// in one visual table under one disclosure: a reflow that reached only one of
+    /// them would put a stacked row directly above an inline one and read as a
+    /// rendering fault. #4107 was found the same way — the same defect fixed in
+    /// one of these two functions and not the other.
+    ///
+    /// The label's `lineLimit` reads `maximumLabelLines`, which is the number the
+    /// model used to decide this row's shape. Both are load-bearing together with
+    /// `.fixedSize` (#3966): `lineLimit` alone still truncates when a parent
+    /// proposes one line's height.
+    @ViewBuilder
+    ///
+    /// #4406 — `probabilities` is not optional here either. Both lists that call
+    /// this now carry a pair on every row (`WinProbSourceCatalog.Entry` always
+    /// did; `NamedBookmakerRow` does since #4406), so the two `if let`s this
+    /// function used to hold could only ever draw the state the issue
+    /// photographed: a label, and white space where the bar and the numbers go.
+    /// #7926 — `ageMark` is the optional second line under the label, and it is
+    /// nil on every caller that has no stamp to speak for. The mark goes INSIDE
+    /// the label's own fixed-width column rather than beside the numbers: the
+    /// column is measured from the label strings (`EventSourceLabelColumn`), so
+    /// anything added on the horizontal axis would either overflow a width this
+    /// row already computed or force the numbers to re-measure. The row is
+    /// already free to grow DOWNWARD — the label wraps to
+    /// `maximumLabelLines` under `fixedSize(horizontal: false, vertical: true)` —
+    /// so a second short line costs nothing the layout has not already budgeted.
+    private func sourceProbabilityRow(
+        label: String,
+        font: Font,
+        probabilities: (away: Double?, home: Double),
+        colors: (away: Color, home: Color),
+        columns: EventSourceLabelColumn.Columns,
+        detail: String? = nil,
+        ageMark: PriceAgeMarkView? = nil,
+        complementaryAway: Bool = false
+    ) -> some View {
+        let labelText = VStack(alignment: .leading, spacing: 1) {
+            Text(label)
+                .font(font)
+                .lineLimit(EventSourceLabelColumn.maximumLabelLines)
+                .fixedSize(horizontal: false, vertical: true)
+            // #10863 — the same downward slot the age mark uses, for the same
+            // reason: the column is measured from the labels, so a second line
+            // costs no width. No `lineLimit`: it wraps rather than truncating a
+            // count at large text.
+            if let detail {
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ageMark
+        }
+        .frame(width: columns.label, alignment: .leading)
+
+        Group {
+            switch columns.layout {
+            case .inline:
+                HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
+                    labelText
+                    probabilityBarAndNumbers(probabilities, colors: colors, columns: columns, complementaryAway: complementaryAway)
+                }
+            case .stacked:
+                VStack(
+                    alignment: .leading,
+                    spacing: EventSourceLabelColumn.stackedLineSpacing
+                ) {
+                    labelText
+                    HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
+                        probabilityBarAndNumbers(
+                            probabilities, colors: colors, columns: columns,
+                            complementaryAway: complementaryAway)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, EventSourceLabelColumn.horizontalPadding)
+        .padding(.vertical, 4)
+    }
+
+    /// The bar and the two percentages — the part of the row that stays together
+    /// on one line in both layouts.
+    ///
+    /// Read from the same model that sizes the label, so the two cannot drift:
+    /// the whole defect was a layout number that stopped describing its layout.
+    @ViewBuilder
+    private func probabilityBarAndNumbers(
+        _ probabilities: (away: Double?, home: Double),
+        colors: (away: Color, home: Color),
+        columns: EventSourceLabelColumn.Columns,
+        complementaryAway: Bool
+    ) -> some View {
+        // #5271 — a withheld away side still has a BAR, because the bar's two
+        // segments are a partition and the remainder is a true quantity: it is
+        // "this source does not have the home team winning". What it is not is
+        // the away team, so it loses the away team's colour along with its
+        // number and reads as the neutral rest of the whole.
+        ProbabilityBar(
+            awayProb: probabilities.away ?? (1 - probabilities.home),
+            homeProb: probabilities.home,
+            awayColor: probabilities.away == nil
+                ? Color.secondary.opacity(0.25)
+                : colors.away,
+            homeColor: colors.home,
+            height: 6
+        )
+        .frame(maxWidth: .infinity)
+
+        // #7984 — the two sides of one source are ONE rounding decision. Drawn
+        // independently, a venue on the half-percent grid put both on `.5` and
+        // half-up rounded both up: Polymarket `0.585` printed `42% 59%` under a
+        // Sportsbooks row reading `3% 97%`. The bar above is unaffected — it
+        // partitions the true doubles, not the printed integers.
+        let printed = duelProbabilityStrings(
+            away: probabilities.away, home: probabilities.home,
+            complementaryAway: complementaryAway)
+        Text(printed.away)
+            .font(.caption2.monospacedDigit())
+            .frame(width: columns.numeric, alignment: .trailing)
+        Text(printed.home)
+            .font(.caption2.monospacedDigit())
+            .frame(width: columns.numeric, alignment: .trailing)
+    }
+
+    /// One row per source feeding the blend: label, the same away–home pair the
+    /// hero reads, and the same bar the book table uses.
+    private func sourceContent(_ event: EventDetail, entries: [WinProbSourceCatalog.Entry]) -> some View {
+        let colors = teamColors(event)
+        // #4107 — sized against the labels THIS render draws, at THIS view's text
+        // size. The old 118pt literal was correct at `.large` and nowhere else:
+        // `Sportsbooks (14)` is 99.9pt at default and 142.1pt at xxxLarge, which
+        // is where Alex's truncation actually came from. See
+        // `EventSourceLabelColumn` for the measurements and for why
+        // `.minimumScaleFactor` is gone rather than raised.
+        //
+        // #4208 — and the two probability columns are sized here too, in the same
+        // call, because they are part of the cost the label clamps against. The
+        // strings passed are the ones this list will actually print, from BOTH
+        // columns: they share one width, so a `>99%` on either side binds both.
+        //
+        // #5271 — and the strings measured here are the ones the rows PRINT,
+        // which on a draw-priced sport is an em-dash where the away percent
+        // used to be. Measuring `1 - home` and then printing "—" would size
+        // this column against a string no row draws.
+        let printable = { (entry: WinProbSourceCatalog.Entry) in
+            DrawPricedWinner.printablePair(
+                away: 1 - entry.homeProbability,
+                home: entry.homeProbability,
+                sport: event.sport)
+        }
+        //
+        // #7984 — and the pair is rounded as one decision here too, through the
+        // same `duelProbabilityStrings` the rows draw with. Measuring the two
+        // sides independently while the row prints them jointly would size this
+        // column against a string no row draws, which is the #4208/#5271 trap
+        // from the other direction.
+        let columns = EventSourceLabelColumn.columns(
+            labels: entries.map(\.label),
+            values: entries.flatMap { entry -> [String] in
+                let printed = duelProbabilityStrings(
+                    away: printable(entry)?.away, home: entry.homeProbability,
+                    complementaryAway: true)
+                return [printed.away, printed.home]
+            },
+            availableWidth: sourceRowWidth,
+            typeSize: dynamicTypeSize)
+        return VStack(spacing: 0) {
+            ForEach(entries) { entry in
+                sourceProbabilityRow(
+                    label: entry.label,
+                    font: .caption.weight(.medium),
+                    probabilities: (
+                        away: printable(entry)?.away,
+                        home: entry.homeProbability
+                    ),
+                    colors: colors,
+                    columns: columns,
+                    detail: entry.detail,
+                    complementaryAway: true)
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    private func legendItem(color: Color, label: String) -> some View {
+        HStack(spacing: 4) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(color)
+                .frame(width: 14, height: 2)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// The away–home pair a bookmaker row draws, or `nil` if the book quoted no
+    /// price on this game — in which case, since #4406, there is no row.
+    ///
+    /// Extracted for #4208 so the width model and the row read the SAME rule. The
+    /// column is sized from the strings the list prints, and a row prints numbers
+    /// only when it has both sides — if this predicate and the row ever
+    /// disagreed, the column would be measured against a set of strings the view
+    /// does not draw, which is a width bug that no screenshot would show (the
+    /// column would simply be too wide, silently). They can no longer disagree:
+    /// this predicate is now what decides the row EXISTS, so every row the model
+    /// measures is a row the view draws, and every row the view draws has both.
+    private static func bookmakerProbabilities(
+        _ bm: BookmakerOdds
+    ) -> (away: Double, home: Double)? {
+        guard let away = bm.awayProbability ?? bm.awayMoneyline.map({ moneylineToProbability($0) }),
+              let home = bm.homeProbability ?? bm.homeMoneyline.map({ moneylineToProbability($0) })
+        else { return nil }
+        return (away, home)
+    }
+
+    /// One row the book table will actually draw: the brand a reader sees, and
+    /// the pair it prints.
+    ///
+    /// #4406 — `probabilities` is NOT optional, and that is the fix rather than a
+    /// tidy-up. A row is a name AND a number; a book with no number has no row.
+    /// Holding the pair as optional is what let twelve of eighteen rows reach the
+    /// screen as bare brands, and no ban-shaped guard can see that state because
+    /// it is an OMISSION — nothing wrong is written, a number is simply absent
+    /// (#4478's lesson from #2279). Making it non-optional makes the empty row
+    /// unrepresentable: the compiler, not a test, is what refuses it now.
+    struct NamedBookmakerRow: Identifiable {
+        /// The payload key. Stable across refreshes, and never drawn.
+        let id: String
+        /// The brand, resolved through `SourceLabels`. Never a raw key.
+        let label: String
+        let probabilities: (away: Double, home: Double)
+        /// When this book's price reached us — `bookmaker_odds[].captured_at`,
+        /// served on every priced row. Nil only where the payload omits it.
+        let capturedAt: String?
+
+        /// #7926 — THE WHOLE AGE DECISION FOR A SPORTSBOOK ROW, in a function a
+        /// test can reach rather than an expression inside a `body`. That is the
+        /// arrangement `FeedFuturesData.discoverPriceAgeMark` documents one file
+        /// over, and it exists for the same reason: the cadence here could
+        /// silently become `.futures` — which would hold the mark back for six
+        /// hours on a list restamped every two minutes, and hide exactly the rows
+        /// it is built to expose — while every assertion about `SourceAge` still
+        /// passed.
+        ///
+        /// `.live` is the bound because these rows ARE the surface
+        /// `SourceAge.liveStaleAfter` names in its own comment ("Sportsbook rows
+        /// and live blocks, restamped every 2 minutes by
+        /// `poll_live_prediction_markets`"), and it is web's `BookmakerTable`
+        /// threshold, so the two clients call the same books stale.
+        func priceAgeMark(
+            now: Date = Date(),
+            onReveal: ((String) -> Void)? = nil
+        ) -> PriceAgeMarkView? {
+            PriceAgeMarkView(
+                observedAt: capturedAt,
+                cadence: .live,
+                now: now,
+                onReveal: onReveal)
+        }
+    }
+
+    /// #10863 — the book table shows this many rows until the reader asks for
+    /// the rest. It is a display limit with a visible "Show all" control, never
+    /// a filter: `namedBookmakerRows` no longer caps, so every named, priced
+    /// book the route serves is reachable.
+    static let collapsedBookmakerRowLimit = 10
+
+    /// #10863 — the rows the table draws right now.
+    static func visibleBookmakerRows(
+        _ rows: [NamedBookmakerRow], showAll: Bool
+    ) -> [NamedBookmakerRow] {
+        showAll ? rows : Array(rows.prefix(collapsedBookmakerRowLimit))
+    }
+
+    /// #10863 — the table heading carries the TABLE's count, worded so it
+    /// cannot be read as the consensus count on the Sportsbooks row above.
+    static func bookmakerTableHeading(rowCount: Int) -> String {
+        "Latest probabilities from each sportsbook (\(rowCount))"
+    }
+
+    /// #10863 — the label of the control that reveals the rest of the table.
+    static func showAllBookmakersLabel(rowCount: Int, showingAll: Bool) -> String {
+        showingAll ? "Show fewer sportsbooks" : "Show all \(rowCount) sportsbooks"
+    }
+
+    /// The book table's rows: named and priced, in payload order.
+    ///
+    /// #4284 — this list used to draw `bm.bookmaker ?? "Unknown"`, so every event
+    /// page in the app printed `betonlineag`, `lowvig` and `betus` at readers
+    /// while `SourceLabels` two files away already knew them as BetOnline, LowVig
+    /// and BetUS. That is #4135's defect on a fifth surface, and `SourceLabels`
+    /// exists precisely because the passthrough — not the key — is the bug.
+    ///
+    /// 🔴 THE CAP IS APPLIED AFTER THE NAMING, NOT BEFORE. Take ten and then drop
+    /// the unnameable and a new key costs a *named* book its slot: the reader
+    /// loses a row they could have read, to a row we would not have drawn. Name
+    /// first, then take ten, and the table stays full.
+    ///
+    /// An unnameable key yields no row at all rather than its raw self. That is
+    /// the same rule `sportsbookChips(for:)` follows, and the reason the caller
+    /// must ask whether this array is empty rather than asking the payload
+    /// (`bookmakerOdds` non-empty no longer implies a table).
+    ///
+    /// #4406 — and a PRICELESS key yields no row either, for the same reason: a
+    /// section headed "Individual sportsbooks" whose rows are names with nothing
+    /// beside them tells the reader nothing and reads as broken. Measured on
+    /// production 2026-09-09, 45 of 180 `bookmaker_odds` rows across 11 games
+    /// carried `null` on both sides — 2 of 18 on a live game, 13 of 18 on a
+    /// completed one. It is a book that did not quote this game, not a settled-
+    /// game artifact, and there is nothing to say about it.
+    ///
+    /// 🔴 SO THE PRICE FILTER RUNS BEFORE THE CAP, exactly as the naming does,
+    /// and for the identical reason spelt out above. Drawn on the specimen in
+    /// the issue (15307197, eighteen books in alphabetical payload order): six of
+    /// the first ten quoted nothing, so cap-first drew four numbers and left
+    /// LowVig, MyBookie and Rebet — three real prices, at positions 14, 15 and 16
+    /// — outside the window unseen. Filtering first draws all seven. Both
+    /// orderings agree on every payload of ten or fewer, so only a fixture larger
+    /// than the cap can tell them apart.
+    /// #7926 — AND THE ROW CARRIES ITS OWN AGE, because the reader cannot tell a
+    /// live price from a pre-game one by looking at it. Measured on this event
+    /// page during the 2026-09-21 NFL game `14780545` at Q3, 145 minutes after
+    /// kickoff: of twelve priced books, eight were 2–18 minutes old and read
+    /// 92–98%, while `betus`, `betanysports`, `lowvig` and `betonlineag` were
+    /// 140–146 minutes old and read 71–73% — the opening line (the event opened
+    /// 28% – 72%), never replaced. Two of the four were captured BEFORE kickoff.
+    /// They drew in the same weight and the same order as the live ones, and by
+    /// Q4 — with the page's own header reading "Rams 100%" — four of the seven
+    /// rows still told the reader the Giants were live at 27–29%.
+    ///
+    /// A STALE ROW IS MARKED, NOT DROPPED, which is what web's `BookmakerTable`
+    /// does and is the honest shape: this is a real price that a real book
+    /// stopped moving, so it keeps its row and gains its age. Dropping it would
+    /// also put this function's cap back in play for the wrong reason — the
+    /// naming filter and the price filter above earn their place by never
+    /// costing a reader a row they could have read (#4284, #4406), and a
+    /// freshness filter would do exactly that.
+    ///
+    /// The cap is untouched: `capturedAt` is carried, never filtered on, so the
+    /// ordering both comments above reason about is the same ordering as before.
+    ///
+    /// #10863 — AND THERE IS NO DEFAULT CAP ANY MORE. A silent `prefix(10)`
+    /// here made the eleventh priced book onward unreachable from the page,
+    /// with nothing on screen saying a row was missing. The view now draws the
+    /// first `collapsedBookmakerRowLimit` and a "Show all N sportsbooks"
+    /// control; `limit` stays only for callers that ask for one explicitly.
+    /// The ordering argument above still holds for that view limit: naming and
+    /// pricing still run first, so the first ten are the first ten readable.
+    static func namedBookmakerRows(
+        _ bookmakers: [BookmakerOdds], limit: Int? = nil
+    ) -> [NamedBookmakerRow] {
+        let rows = bookmakers
+            .compactMap { bm -> NamedBookmakerRow? in
+                guard let key = bm.bookmaker,
+                      let label = SourceLabels.sportsbookName(for: key),
+                      let probabilities = bookmakerProbabilities(bm)
+                else { return nil }
+                return NamedBookmakerRow(
+                    id: key,
+                    label: label,
+                    probabilities: probabilities,
+                    capturedAt: bm.capturedAt)
+            }
+        guard let limit else { return rows }
+        return Array(rows.prefix(limit))
+    }
+
+    private func bookmakerContent(_ event: EventDetail) -> some View {
+        let colors = teamColors(event)
+        // #10863 — every named, priced row; the view decides how many are drawn.
+        let allRows = Self.namedBookmakerRows(event.bookmakerOdds ?? [])
+        let rows = Self.visibleBookmakerRows(allRows, showAll: showAllBookmakers)
+        // #4107 — the SAME defect as `sourceContent` above, one function down and
+        // in the same visual list: a hardcoded label column that never tracked
+        // Dynamic Type. This one was 90pt, which is the exact literal the Sources
+        // column was raised FROM. Photographed at xxxLarge on a 375pt phone it cut
+        // `betanysportsbook` and `betonlineag` to `betanysp…` / `betonline…` while
+        // the two rows above them — already fixed — read in full, which is a worse
+        // read than the original bug: it looks deliberate.
+        //
+        // Sized off the same `sourceRowWidth`, because both lists are children of
+        // the same disclosure and therefore the same width. Measured `.regular`,
+        // which is the face THIS list draws in.
+        //
+        // #4208 — as in `sourceContent`. Only rows carrying BOTH prices draw
+        // numbers, so the strings measured are the ones that survive that filter;
+        // measuring every bookmaker would charge the column for rows it never
+        // prints.
+        //
+        // #4406 moved that filter UPSTREAM into `namedBookmakerRows`, so this
+        // list is now every row and every row has a pair — the flatMap no longer
+        // needs to skip anything. The claim above is unchanged and now trivially
+        // true. The old "a list where no row has both draws no numbers at all"
+        // case is gone with it: such a list has no rows, so `sourcesToggle`
+        // draws no heading over it.
+        //
+        // #4284 — and the labels measured are the BRANDS, because the brands are
+        // what the rows draw. Sizing on the keys is not conservative, it is just
+        // wrong in both directions: `betonlineag` is 2 characters wider than
+        // "BetOnline", `betmgm` 2 narrower than "BetMGM". The column and the row
+        // read one array now, so they cannot describe different strings.
+        //
+        // #5271 — a book's away price is SERVED rather than derived here, so the
+        // hero's complement is not what is wrong with it. What is wrong is the
+        // same thing: on the Braunschweig–Dresden specimen BetMGM printed
+        // `53% 47%`, a pair summing to exactly 100 on a match that can be drawn.
+        // The book quotes three outcomes; the pair we store and serve is that
+        // quote normalised two ways with the draw discarded (#1011), so the 53%
+        // beside the away crest is not that team's chance of winning either.
+        //
+        // Withheld at DISPLAY time and not in `namedBookmakerRows`, so #4406's
+        // rule is untouched: a row still needs both prices to exist at all, and
+        // still always carries a number, because the home side always survives.
+        let printable = { (row: NamedBookmakerRow) in
+            DrawPricedWinner.printablePair(
+                away: row.probabilities.away,
+                home: row.probabilities.home,
+                sport: event.sport)
+        }
+        //
+        // #7984 — as in `sourceContent`, and #4233's rule is why it is here at
+        // all: these two lists are one visual table, so a pair rule applied to
+        // one of them would put a 101 directly beneath a 100. A book's away price
+        // is served rather than derived, so most of these pairs are not exact
+        // complements and `renderedDuelPercents` leaves them alone; 6 of 557 on
+        // production were complements printing 101, and those are the ones this
+        // moves.
+        let columns = EventSourceLabelColumn.columns(
+            labels: rows.map(\.label),
+            values: rows.flatMap { row -> [String] in
+                let printed = duelProbabilityStrings(
+                    away: printable(row)?.away, home: row.probabilities.home)
+                return [printed.away, printed.home]
+            },
+            availableWidth: sourceRowWidth,
+            typeSize: dynamicTypeSize,
+            weight: .regular)
+        return VStack(spacing: 0) {
+            ForEach(rows) { row in
+                // #7926 — the mark is built ONCE and read twice: it decides both
+                // whether the age is drawn and whether the row is dimmed, so the
+                // two can never disagree about which books are stale. Asking
+                // `SourceAge.isStale` again here would be a second evaluation of
+                // the same rule against a second `Date()`.
+                let mark = row.priceAgeMark()
+                sourceProbabilityRow(
+                    label: row.label,
+                    font: .caption,
+                    probabilities: (
+                        away: printable(row)?.away,
+                        home: row.probabilities.home
+                    ),
+                    colors: colors,
+                    columns: columns,
+                    ageMark: mark)
+                    // Web's `BookmakerTable` draws a stale row at `opacity-60`.
+                    // The same value, so a book that looks secondary on one
+                    // client looks secondary on the other.
+                    .opacity(mark == nil ? 1 : 0.6)
+            }
+            if allRows.count > Self.collapsedBookmakerRowLimit {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showAllBookmakers.toggle()
+                    }
+                } label: {
+                    Text(Self.showAllBookmakersLabel(
+                        rowCount: allRows.count, showingAll: showAllBookmakers))
+                        .font(.caption.weight(.medium))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .padding(.horizontal, EventSourceLabelColumn.horizontalPadding)
+                .accessibilityIdentifier("event.sources.showAllBookmakers")
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - League Page Link
+
+    private static let sportKeyToLeague: [String: (slug: String, label: String)] = [
+        "basketball_nba": ("nba", "NBA"),
+        "americanfootball_nfl": ("nfl", "NFL"),
+        "baseball_mlb": ("mlb", "MLB"),
+        "icehockey_nhl": ("nhl", "NHL"),
+        "basketball_ncaab": ("ncaab", "NCAA Basketball"),
+        "americanfootball_ncaaf": ("ncaaf", "NCAA Football"),
+        "basketball_wnba": ("wnba", "WNBA"),
+        "soccer_usa_mls": ("mls", "MLS"),
+        "soccer_epl": ("epl", "EPL"),
+    ]
+
+    @ViewBuilder
+    private func leaguePageLink(_ event: EventDetail) -> some View {
+        if let sport = event.sport, let league = Self.sportKeyToLeague[sport] {
+            NavigationLink(value: Route.leagueGrid(slug: league.slug)) {
+                HStack {
+                    HStack(spacing: 6) {
+                        Text("🏆")
+                            .font(.subheadline)
+                        Text("\(league.label) Championship Grid")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding()
+                .background(Color.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Sport Category Mapping
+
+    private struct SportCategory {
+        let key: String
+        let name: String
+    }
+
+    private func sportCategoryForKey(_ sportKey: String) -> SportCategory? {
+        let key = sportKey.lowercased()
+        if key.hasPrefix("basketball_") { return SportCategory(key: "basketball", name: "Basketball") }
+        if key.hasPrefix("americanfootball_") { return SportCategory(key: "football", name: "Football") }
+        if key.hasPrefix("baseball_") { return SportCategory(key: "baseball", name: "Baseball") }
+        if key.hasPrefix("icehockey_") { return SportCategory(key: "hockey", name: "Hockey") }
+        if key.hasPrefix("soccer_") { return SportCategory(key: "soccer", name: "Soccer") }
+        if key.hasPrefix("mma_") { return SportCategory(key: "mma", name: "MMA") }
+        if key.hasPrefix("golf_") { return SportCategory(key: "golf", name: "Golf") }
+        return nil
+    }
+
+    // MARK: - Helpers
+
+    /// Compute the most recent game play point from history data for default card display.
+    private func lastPlayPoint(event: EventDetail) -> GamePlayPoint? {
+        guard let history = vm.history else { return nil }
+
+        let espn = history.espnHistory
+        let lastEspn = espn?.last
+
+        // Get probability from the best available source
+        // Sorted by source so a tie on the latest time resolves the same way on
+        // every open, not by Dictionary order (#8509).
+        // #8651 — read once per payload (`EventHistoryDigest`); this runs on
+        // every page rebuild.
+        let lastWp = vm.historyDigest?.latestWinProb
+        let lastHist = history.history.last
+
+        let homeProb = lastWp?.homeProbability
+            ?? lastHist?.homeProbability
+            ?? 0.5
+
+        return GamePlayPoint(
+            timestamp: lastEspn?.timestamp ?? lastWp?.timestamp ?? lastHist?.timestamp ?? "",
+            homeProb: homeProb,
+            // #5271 — nil on a draw-priced sport rather than the complement.
+            awayProb: DrawPricedWinner.printablePair(
+                away: 1.0 - homeProb, home: homeProb, sport: event.sport)?.away,
+            homeScore: lastEspn?.homeScore ?? event.homeScore,
+            awayScore: lastEspn?.awayScore ?? event.awayScore,
+            period: lastEspn?.period,
+            clock: lastEspn?.gameClock
+        )
+    }
+
+    /// The hero's one reading of who won, server-first (#4915).
+    private func heroOutcome(_ event: EventDetail) -> EventOutcome {
+        EventOutcome.resolve(
+            status: event.status,
+            homeScore: event.homeScore,
+            awayScore: event.awayScore,
+            servedResult: event.heroSettledResult
+        )
+    }
+
+    private func winnerColor(isAway: Bool, event: EventDetail) -> Color {
+        guard isFinished else { return .primary }
+        // #4915 — this was two strict comparisons over `?? 0`, and on a level
+        // result NEITHER can be true, so the grey that means "this team lost"
+        // was painted on both sides of every draw. Only the loser gets it now.
+        return heroOutcome(event).isLoser(isAway: isAway) ? .secondary : .primary
+    }
+
+    private func metadataItem(title: String, value: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.subheadline)
+                .fontWeight(.medium)
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Refresh Status
+
+    private var refreshIndicator: RefreshIndicator {
+        Self.refreshIndicator(
+            status: vm.event?.status,
+            streamDelivering: vm.streamDelivering,
+            pushedPrice: vm.streamHasPushedPrice)
+    }
+
+    // Delivery status is plain text under the title; manual refresh is a
+    // separate control. The compatibility helper below still feeds older charts.
+
+    /// Quote delivery and fallback are visible for the same eligible phases
+    /// the VM connects; sports LIVE labels still use the actual game status.
+    static func showsRefreshStatus(status: String?) -> Bool { EventPriceStreaming.isEligible(status) }
+
+    /// What the refresh control is entitled to say.
+    ///
+    /// C43 allowed a countdown only when a request was actually scheduled;
+    /// live push (#2687) added the stream state, because a delivering stream
+    /// stands the 30-second poll down and a countdown to it froze at 0. #8320
+    /// then took the countdown out of the reader's view entirely. What is left
+    /// is the distinction that matters to a reader: nothing refreshes (hidden),
+    /// the page is being polled (a refresh control, no promise), or updates are
+    /// being pushed (say so).
+    enum RefreshIndicator: Equatable {
+        case hidden
+        case polling
+        case streaming
+    }
+
+    /// `pushedPrice` (#8320): a stream that has OPENED is not a stream that has
+    /// delivered. The green dot waits for the first pushed price on the page;
+    /// until then — and after any fall back to polling — the page is honestly
+    /// being polled, whatever the socket is doing.
+    static func refreshIndicator(
+        status: String?, streamDelivering: Bool, pushedPrice: Bool
+    ) -> RefreshIndicator {
+        guard showsRefreshStatus(status: status) else { return .hidden }
+        guard pushedPrice else { return .polling }
+        return streamDelivering ? .streaming : .polling
+    }
+}
+
+/// #8320 / #8651 — whether the bar should state the score (`nil`: the hero was
+/// never measured, which keeps the score). A decision and not a position, so the
+/// page hears a change only when the hero crosses the bar, not on every
+/// scrolled frame.
+private struct NavShowsScorePreferenceKey: PreferenceKey {
+    static let defaultValue: Bool? = nil
+    static func reduce(value: inout Bool?, nextValue: () -> Bool?) {
+        value = nextValue() ?? value
+    }
+}
+
+/// #9483 v445 — the page's unobscured rectangle in `scrollSpace`.
+private struct UsableViewportPreferenceKey: PreferenceKey {
+    static let defaultValue: CGRect? = nil
+    static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
+        value = nextValue() ?? value
+    }
+}
+
+/// #9483 v445 — iOS 18: the page's scroll phase, for the NBA stream. Only an
+/// idle page can begin a fresh dwell.
+private struct PageScrollPhase9483: ViewModifier {
+    let signals: NBAStoryStreamView9483.Signals
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content.onScrollPhaseChange { _, phase in
+                let scrolling = phase != .idle
+                if signals.pageIsScrolling != scrolling { signals.pageIsScrolling = scrolling }
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// #8320 — how much of the scroll view the bar covers, in the same space.
+private struct ScrollViewportTopPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+// MARK: - Game Segments
+
+private struct GameSegmentsView: View {
+    let history: EventHistoryResponse?
+    var lineScore: EventBoxScoreData?
+    var isFinished: Bool = false
+    var sportKey: String?
+    let homeTeam: String
+    let awayTeam: String
+    let homeTeamColor: Color
+    let awayTeamColor: Color
+    var homeTeamAbbrev: String?
+    var awayTeamAbbrev: String?
+    var finalHomeScore: Int?
+    var finalAwayScore: Int?
+
+    /// #3273. The team column is 44pt by the UX-P090 geometry — that width is what
+    /// keeps the TOTAL column on screen, so it cannot simply grow. The old fallback
+    /// handed it a whole nickname ("Buckeyes"), which SwiftUI then truncated to
+    /// `Bu…`; on Alex's Ball State @ Ohio State specimen the served event carries
+    /// `home_team_data: null`, so the fallback is what ran. Measured 2026-09-05:
+    /// 154 of 1,008 teams across the eight sports this card draws for have no
+    /// abbreviation (35% of wncaab), so this path is not an edge case.
+    ///
+    /// A real abbreviation is always preferred. Failing that, emit three uppercase
+    /// letters, which fits the column: an intentional short form reads as an
+    /// abbreviation where `Bu…` reads as a rendering fault. Both properties are
+    /// `abbreviationPair`'s, so this card keeps them by delegating.
+    ///
+    /// #3430 — the two rows of this table are the two competitors, stacked, and
+    /// the reader tells them apart by these labels alone. Clemson–LSU drew `TIG`
+    /// above `TIG`, so the badges come from the pair rule, which widens both
+    /// names until they separate before taking three glyphs. The served
+    /// abbreviations still win — unless they collide with each other, which
+    /// `teams.abbreviation` being wrong for hundreds of rows (#3353) makes real.
+    private var badges: (away: String, home: String) {
+        let pair = TeamShortName.abbreviationPair(
+            away: awayTeam, home: homeTeam,
+            awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev
+        )
+        return (pair.away.isEmpty ? "Away" : pair.away,
+                pair.home.isEmpty ? "Home" : pair.home)
+    }
+
+    private var homeShort: String { badges.home }
+
+    private var awayShort: String { badges.away }
+
+    var body: some View {
+        if let breakdown = SegmentBreakdown(
+            history: history,
+            lineScore: lineScore,
+            isFinished: isFinished,
+            sportKey: sportKey,
+            finalHomeScore: finalHomeScore,
+            finalAwayScore: finalAwayScore
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Game Segments")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    // #9067 — a card with a `·` is no longer drawn
+                    // (`StoredLineScore.isDrawable`), so the caption no longer
+                    // explains one.
+                    Text("Score by period")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                // UX-P090 — THE TOTAL COLUMN WAS OFF THE RIGHT EDGE OF EVERY IPHONE,
+                // and #1831 is what put it there. Before the 1…N inning ladder this
+                // row rendered only the innings the poller observed — often three —
+                // so it fit. Rendering all nine (correctly) widened it past the
+                // screen, and with `showsIndicators: false` there was no affordance
+                // saying so: the reader saw innings 1-7 and no total, on a card
+                // whose entire job is reconciling the splits with the score.
+                //
+                // Measured at the old geometry (54pt label + 9×28pt + 28pt total,
+                // 12pt gaps, 32pt card padding) the row is 486pt against a 393pt
+                // iPhone 16 and a 375pt SE — over by 93pt and 111pt.
+                //
+                // Retuned to 44 + 9×22 + 26 with 4pt gaps = 338pt, so a regulation
+                // nine-inning game fits the NARROWEST supported phone with room
+                // spare, and a 10th inning (364pt) still fits. 22pt holds a
+                // two-digit monospaced caption ("12" ≈ 14pt).
+                //
+                // #4089 — past that (extras, or the accessibility text sizes) the
+                // team names and the total stay pinned and only the periods
+                // scroll; the whole row used to scroll, so `T` was the first
+                // thing off screen. The layout lives on `GameSegmentsTable`.
+                GameSegmentsTable(
+                    columns: breakdown.segments.map {
+                        LineScoreColumn(label: $0.label, away: $0.away, home: $0.home)
+                    },
+                    awayBadge: awayShort,
+                    homeBadge: homeShort,
+                    awayColor: awayTeamColor,
+                    homeColor: homeTeamColor,
+                    awayTotal: breakdown.awayTotal,
+                    homeTotal: breakdown.homeTotal
+                )
+            }
+            .padding()
+            .background(Color.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+    }
+}
+
+/// Per-segment scoring reconstructed from win-probability polling.
+///
+/// #1831. This card is NOT fed a line score — no upstream payload carries one
+/// (`box_score_data.scoring_plays` is `[]` and there is no `linescore` key), so
+/// the splits are inferred from whatever periods the pollers happened to
+/// observe. On Alex's 2026-08-13 Sox–Jays specimen that was innings 2, 4 and 8
+/// out of nine, and the card rendered `2 4 8` with a total of 5 beside a
+/// scoreboard reading 7.
+///
+/// Two rules now hold, and between them the card can be sparse but never wrong:
+///
+/// 1. **A split is only reported when it is knowable.** Inning N's runs are
+///    `cumulative(N) - cumulative(N-1)`, so both must have been observed. With a
+///    gap the runs belong to the *span*, not to the inning that closed it —
+///    attributing them to N is what put four Red Sox runs in the 8th. An
+///    unknowable split is never printed as `0`, and since #9067 (rage #165) it
+///    is not printed as `·` either: a ladder with any unknown split is not
+///    drawn (`StoredLineScore.isDrawable`).
+/// 2. **The totals come from the scoreboard**, not from summing observed
+///    segments, so this card cannot contradict the hero above it.
+///
+/// #9067 — ESPN's linescore IS ingested now (`box_score_data.home_period_scores`)
+/// and, when the payload carries it, `StoredLineScore` builds the card from it
+/// instead: the inference above broke its "never wrong" promise on every live
+/// game whose scoreboard ran ahead of the last polled row (rage #159). What
+/// follows is the fallback for a payload without the arrays.
+/// Internal (not private) so the #9067 tests can build the real card from a
+/// decoded payload rather than reading this file as text.
+struct SegmentBreakdown {
+    let segments: [GameSegment]
+    let homeTotal: Int
+    let awayTotal: Int
+
+    init?(
+        history: EventHistoryResponse?,
+        lineScore: EventBoxScoreData? = nil,
+        isFinished: Bool = false,
+        sportKey: String?,
+        finalHomeScore: Int? = nil,
+        finalAwayScore: Int? = nil
+    ) {
+        if let columns = StoredLineScore.columns(
+            homePeriods: lineScore?.homePeriodScores,
+            awayPeriods: lineScore?.awayPeriodScores,
+            sportKey: sportKey,
+            homeTotal: finalHomeScore,
+            awayTotal: finalAwayScore,
+            isFinished: isFinished
+        ), StoredLineScore.isDrawable(home: columns.map(\.home), away: columns.map(\.away)) {
+            let segments = columns.map {
+                GameSegment(label: $0.label, home: $0.home, away: $0.away)
+            }
+            let homeTotal = finalHomeScore
+                ?? columns.reduce(0) { $0 + ($1.home.points ?? 0) }
+            let awayTotal = finalAwayScore
+                ?? columns.reduce(0) { $0 + ($1.away.points ?? 0) }
+            self.segments = segments
+            self.homeTotal = homeTotal
+            self.awayTotal = awayTotal
+            return
+        }
+
+        guard let espnHistory = history?.espnHistory else { return nil }
+
+        // #4961 — baseball reads each row's half-inning, so a run scored after an
+        // inning's last polled row is not credited to the next inning.
+        let isBaseball = (sportKey?.lowercased() ?? "").hasPrefix("baseball_")
+        if isBaseball {
+            let polled = espnHistory
+                .compactMap { point -> (Date, HalfInningLineScore.Snapshot)? in
+                    guard let period = point.period,
+                          let homeScore = point.homeScore,
+                          let awayScore = point.awayScore,
+                          let date = point.timestamp.asDate else { return nil }
+                    return (date, .init(period: period, homeScore: homeScore, awayScore: awayScore))
+                }
+                .sorted { $0.0 < $1.0 }
+                .map(\.1)
+            if let rows = HalfInningLineScore.rows(
+                polled, isFinished: isFinished,
+                homeFinal: finalHomeScore, awayFinal: finalAwayScore
+            ) {
+                guard let squared = StoredLineScore.squared(
+                    home: rows.home, away: rows.away,
+                    homeTotal: finalHomeScore, awayTotal: finalAwayScore,
+                    lastObserved: rows.lastObserved
+                ), StoredLineScore.isDrawable(home: squared.home, away: squared.away)
+                else { return nil }
+                let segments = squared.home.indices.map {
+                    GameSegment(label: String($0 + 1), home: squared.home[$0], away: squared.away[$0])
+                }
+                let resolvedHome = finalHomeScore ?? polled.last?.homeScore ?? 0
+                let resolvedAway = finalAwayScore ?? polled.last?.awayScore ?? 0
+                guard segments.contains(where: { $0.home.points != nil || $0.away.points != nil }),
+                      resolvedHome + resolvedAway > 0
+                else { return nil }
+                self.segments = segments
+                self.homeTotal = resolvedHome
+                self.awayTotal = resolvedAway
+                return
+            }
+        }
+
+        let cumulativeByPeriod = espnHistory
+            .compactMap { point -> CumulativeSegment? in
+                guard let rawPeriod = point.period,
+                      let homeScore = point.homeScore,
+                      let awayScore = point.awayScore,
+                      let date = point.timestamp.asDate else {
+                    return nil
+                }
+
+                let label = Self.formatPeriodLabel(rawPeriod)
+                guard !label.isEmpty else { return nil }
+                return CumulativeSegment(
+                    label: label,
+                    date: date,
+                    homeScore: homeScore,
+                    awayScore: awayScore
+                )
+            }
+            .sorted { $0.date < $1.date }
+
+        guard !cumulativeByPeriod.isEmpty else { return nil }
+
+        var latestByLabel: [String: CumulativeSegment] = [:]
+        var orderedLabels: [String] = []
+
+        for point in cumulativeByPeriod {
+            if latestByLabel[point.label] == nil {
+                orderedLabels.append(point.label)
+            }
+            latestByLabel[point.label] = point
+        }
+
+        // Baseball gets an explicit inning LADDER (1…9, extended for extras)
+        // rather than "whatever the poller saw". Every other sport keeps the
+        // observed-labels behaviour unchanged — this change is scoped to the
+        // sport whose card was wrong.
+        let renderedLabels: [String]
+        if isBaseball {
+            let observed = orderedLabels.compactMap(Int.init)
+            let lastInning = max(9, observed.max() ?? 9)
+            renderedLabels = (1...lastInning).map(String.init)
+        } else {
+            renderedLabels = orderedLabels
+        }
+
+        var previousCumulative: (home: Int, away: Int)? = (0, 0)
+        var segments: [GameSegment] = []
+        var lastObserved: CumulativeSegment?
+
+        for label in renderedLabels {
+            guard let point = latestByLabel[label] else {
+                // Never observed. The split is unknown, and so is the split of
+                // whichever segment closes the gap — reset the baseline.
+                segments.append(GameSegment(label: label, homeScore: nil, awayScore: nil))
+                previousCumulative = nil
+                continue
+            }
+
+            defer {
+                previousCumulative = (point.homeScore, point.awayScore)
+                lastObserved = point
+            }
+
+            guard let previous = previousCumulative else {
+                // Observed, but the preceding segment was not, so the runs since
+                // then cannot be attributed to this one alone.
+                segments.append(GameSegment(label: label, homeScore: nil, awayScore: nil))
+                continue
+            }
+
+            let homeSegmentScore = point.homeScore - previous.home
+            let awaySegmentScore = point.awayScore - previous.away
+            guard homeSegmentScore >= 0, awaySegmentScore >= 0 else {
+                // A cumulative score that went DOWN means these rows describe
+                // two different games. Refuse the whole card rather than render
+                // a negative inning.
+                return nil
+            }
+            segments.append(
+                GameSegment(label: label, homeScore: homeSegmentScore, awayScore: awaySegmentScore)
+            )
+        }
+
+        // Totals: prefer the scoreboard, so this card can never disagree with
+        // the hero. Fall back to the last cumulative we actually observed.
+        let resolvedHome = finalHomeScore ?? lastObserved?.homeScore ?? 0
+        let resolvedAway = finalAwayScore ?? lastObserved?.awayScore ?? 0
+
+        // #9067 — on a live game the baseball ladder's innings after the last
+        // observed one have not been played yet: blank, the way the stored
+        // line score draws them, not a `·` gap that would hide the card.
+        let lastObservedIndex = renderedLabels.lastIndex { latestByLabel[$0] != nil } ?? -1
+        if !isFinished {
+            for index in segments.indices where index > lastObservedIndex {
+                segments[index] = GameSegment(label: segments[index].label, home: .notPlayed, away: .notPlayed)
+            }
+        }
+
+        // #9067 — and the segments may not add up to something those totals
+        // disagree with (`StoredLineScore.squared`).
+        guard let squared = StoredLineScore.squared(
+            home: segments.map(\.home), away: segments.map(\.away),
+            homeTotal: finalHomeScore, awayTotal: finalAwayScore,
+            lastObserved: lastObservedIndex
+        ) else { return nil }
+        segments = segments.indices.map {
+            GameSegment(label: segments[$0].label, home: squared.home[$0], away: squared.away[$0])
+        }
+
+        // #9067 (rage #165) — a ladder with any unknown split is not drawn.
+        guard StoredLineScore.isDrawable(home: squared.home, away: squared.away),
+              segments.contains(where: { $0.home.points != nil || $0.away.points != nil }),
+              resolvedHome + resolvedAway > 0
+        else { return nil }
+
+        self.segments = segments
+        self.homeTotal = resolvedHome
+        self.awayTotal = resolvedAway
+    }
+
+    /// #3273. The card used to run its OWN period parser, and that parser read
+    /// the GAME CLOCK: ESPN writes the clock as a PREFIX (`"14:54 - 1st Quarter"`),
+    /// so taking the first number in the string headed a football card
+    /// `Q14 · Q8 · Q5 · Q1 ... Q4` — thirteen columns on a four-quarter game, of
+    /// which one was right by accident (`"End of 1st Quarter"` carries no clock).
+    ///
+    /// The parser it should have been calling already existed. #1832 deleted the
+    /// duplicate period-label implementations and left `PeriodLabel.normalize` as
+    /// the single source — but its ratchet
+    /// (`frontend/__tests__/ios/periodLabelSingleSource.test.ts`) enumerated its
+    /// consumers by NAME, and this file was never in the list, so a third copy
+    /// grew here unwatched and drifted. That guard now DISCOVERS consumers instead
+    /// of listing them.
+    ///
+    /// What is left here is the one thing genuinely local to this card: its column
+    /// vocabulary. The 22pt column is sized for digits (UX-P090), so an inning is
+    /// `9`, not the chart's self-explaining `9th`; and a status that is not a
+    /// period at all gets no column. Anything the shared parser cannot name is
+    /// dropped rather than guessed.
+    ///
+    /// Measured against every distinct period string in production (10,665
+    /// sport/period pairs, 2026-09-05): 10,159 change, and the resulting label
+    /// vocabulary is closed — football `Q1`-`Q4`; basketball `Q1`-`Q4`, `1H`,
+    /// `2H`, `OT`-`4OT`; baseball `1`-`13`. No clock reading can reach a header.
+    /// Note this needs no sport key: `ncaab` plays halves and `wncaab` plays
+    /// quarters under the same `basketball_` prefix, so reading the noun out of
+    /// the data is the only thing that can label both correctly.
+    private static func formatPeriodLabel(_ rawPeriod: String) -> String {
+        PeriodLabel.columnLabel(rawPeriod)
+    }
+}
+
+struct GameSegment: Identifiable {
+    let label: String
+    /// `.unknown` when this segment's split was never observed — never `0`, and
+    /// since #9067 a card holding one is not drawn at all.
+    let home: LineScoreCell
+    let away: LineScoreCell
+
+    var id: String { label }
+
+    init(label: String, home: LineScoreCell, away: LineScoreCell) {
+        self.label = label
+        self.home = home
+        self.away = away
+    }
+
+    /// The `espn_history` inference's shape: a split is known or it is not.
+    init(label: String, homeScore: Int?, awayScore: Int?) {
+        self.init(
+            label: label,
+            home: homeScore.map(LineScoreCell.score) ?? .unknown,
+            away: awayScore.map(LineScoreCell.score) ?? .unknown
+        )
+    }
+}
+
+private struct CumulativeSegment {
+    let label: String
+    let date: Date
+    let homeScore: Int
+    let awayScore: Int
+}
+
+// MARK: - Line Movement Explainer
+
+private struct LineMovementExplainerView: View {
+    let analysis: LineMovementResponse
+    let homeTeam: String
+    let awayTeam: String
+    let homeColor: Color
+    let awayColor: Color
+
+    private var featuredMovements: [LineMovement] {
+        Array(analysis.movements.prefix(2))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.blue)
+                Text("Why the Line Moved")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Spacer()
+            }
+
+            if let explanation = cleanedText(analysis.explanation) {
+                Text(explanation)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let disagreement = analysis.disagreementData,
+               let disagreementText = cleanedText(analysis.disagreementExplanation) {
+                disagreementBlock(disagreement, text: disagreementText)
+            }
+
+            if !featuredMovements.isEmpty {
+                VStack(spacing: 8) {
+                    ForEach(featuredMovements, id: \.timestampStart) { movement in
+                        movementRow(movement)
+                    }
+                }
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func disagreementBlock(_ disagreement: LineMovementDisagreement, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.left.and.right")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("\(sourceName(disagreement.source)) differs by \(formatProbability(disagreement.divergence))")
+                    .font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(.orange)
+
+            HStack(spacing: 8) {
+                probabilityPill(
+                    label: "Sportsbooks",
+                    value: disagreement.sportsbookHomeProb,
+                    color: homeColor
+                )
+                probabilityPill(
+                    label: sourceName(disagreement.source),
+                    value: disagreement.predictionMarketHomeProb,
+                    color: .orange
+                )
+            }
+
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func movementRow(_ movement: LineMovement) -> some View {
+        let beneficiary = movement.change >= 0 ? homeTeam : awayTeam
+        let color = movement.change >= 0 ? homeColor : awayColor
+
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: movement.change >= 0 ? "arrow.up.right" : "arrow.down.left")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(color)
+                .frame(width: 18, height: 18)
+                .background(color.opacity(0.12))
+                .clipShape(Circle())
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(beneficiary)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Text("+\(formatProbability(movement.magnitude))")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(color)
+                    if movement.isMajor {
+                        Text("Major")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.red)
+                            .clipShape(Capsule())
+                    }
+                }
+
+                if let context = cleanedText(movement.context) {
+                    Text(context)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("\(formatProbability(movement.homeProbBefore)) to \(formatProbability(movement.homeProbAfter)) home win probability")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func probabilityPill(label: String, value: Double, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(formatProbability(value))
+                .font(.caption.monospacedDigit().weight(.bold))
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func sourceName(_ source: String) -> String {
+        switch source.lowercased() {
+        case "kalshi": return "Kalshi"
+        case "polymarket": return "Polymarket"
+        default: return source.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    private func cleanedText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+// MARK: - #4974 Stored Checkpoints (caller)
+
+/// Whether this appearance of the page may read a finished game's stored
+/// checkpoints, and which of its loads opened it.
+///
+/// `generation` moves on every page load and every disappearance, so a load
+/// that finishes after a newer one started — or after the page left — cannot
+/// reopen readiness. `revision` moves only when a load opens it, so each
+/// successful page load is one new key and so one fresh read.
+nonisolated struct PublicationCaller4974: Equatable, Sendable {
+    private(set) var generation = 0
+    private(set) var ready = false
+    private(set) var revision = 0
+
+    /// A page load is starting, or the page left: not ready, and every load
+    /// already in flight is stale. Returns the new generation.
+    @discardableResult
+    mutating func suspend() -> Int {
+        generation &+= 1
+        ready = false
+        return generation
+    }
+
+    /// The load holding `generation` succeeded: ready, with a new revision, in
+    /// one write. Refused for any load that is no longer the latest.
+    @discardableResult
+    mutating func open(ifCurrent generation: Int) -> Bool {
+        guard generation == self.generation else { return false }
+        ready = true
+        revision &+= 1
+        return true
+    }
+}
+
+/// What a run of the page's checkpoint task does.
+nonisolated enum PublicationTaskAction4974: Equatable, Sendable {
+    /// Make no call: the appearance is not ready, or the page and its view
+    /// model disagree on the game — the view model would fetch its own.
+    case withhold
+    /// Call `adoptPublicationJourney()`: it reads for this page's finished
+    /// game, and clears without a request for anything else.
+    case adopt
+}
+
+/// The page's checkpoint-task key. Identity, finished state (not the raw
+/// status: `completed` and `closed` are one key) and readiness only — never a
+/// receipt, a load time, a score or the whole event, so an unchanged re-render
+/// or refresh is never a second read.
+nonisolated struct PublicationTaskKey4974: Hashable, Sendable {
+    let pageEventId: Int
+    let vmEventId: Int
+    let detailEventId: Int?
+    let finished: Bool
+    let ready: Bool
+    let revision: Int
+
+    init(pageEventId: Int, vmEventId: Int, event: EventDetail?, caller: PublicationCaller4974) {
+        self.pageEventId = pageEventId
+        self.vmEventId = vmEventId
+        self.detailEventId = event?.id
+        self.finished = EventState.isFinished(event?.status)
+        self.ready = caller.ready
+        self.revision = caller.revision
+    }
+
+    var action: PublicationTaskAction4974 {
+        guard pageEventId == vmEventId, ready else { return .withhold }
+        return .adopt
+    }
+}
+
+extension EventDetailView {
+    /// One run of the page's checkpoint task: the whole body of its
+    /// `.task(id:)`, here so a test drives the code the page runs.
+    @MainActor
+    static func runPublicationTask(for key: PublicationTaskKey4974, vm: EventDetailViewModel) async {
+        guard key.action == .adopt, !Task.isCancelled else { return }
+        await vm.adoptPublicationJourney()
+    }
+
+    /// One page load. Suspends readiness, awaits the existing `vm.load()`, then
+    /// reopens it only if this load is still uncancelled and the latest, and it
+    /// actually succeeded for this page: no page error, and the view model and
+    /// its detail are this page's game. `load()` returns nothing and keeps its
+    /// own failure, so completion alone is not success. A failed load leaves
+    /// readiness closed and starts no read.
+    @MainActor
+    static func loadPage(pageEventId: Int, vm: EventDetailViewModel,
+                         caller: Binding<PublicationCaller4974>) async {
+        let generation = caller.wrappedValue.suspend()
+        await vm.load()
+        guard !Task.isCancelled,
+              vm.error == nil, vm.eventId == pageEventId, vm.event?.id == pageEventId
+        else { return }
+        caller.wrappedValue.open(ifCurrent: generation)
+    }
+
+    /// The one window both page charts are handed as `forcedDomain`: the
+    /// legacy `SharedChartWindow` window for the page's selected range, then
+    /// `publicationSharedChartDomain`. Static so a test computes exactly what
+    /// the page computes.
+    static func pageSharedChartDomain(
+        event: EventDetail?, history: EventHistoryResponse?, range: OddsTimeRange,
+        journey: PublicationJourney4974.Journey?, key: PublicationTaskKey4974,
+        now: Date = Date()
+    ) -> ClosedRange<Date>? {
+        let legacyDomain = pageLegacyChartDomain(event: event, history: history, range: range, now: now)
+        return publicationSharedChartDomain(legacyDomain, journey: journey, key: key)
+    }
+
+    /// The `legacyDataDomain` both page charts are handed: the unchanged page
+    /// window, only when the chart's journey guard admits a journey; else `nil`,
+    /// each chart's exact prior behaviour. Static so a test computes exactly
+    /// what the page computes.
+    static func pageLegacyChartDataDomain(
+        event: EventDetail?, history: EventHistoryResponse?, range: OddsTimeRange,
+        journey: PublicationJourney4974.Journey?, key: PublicationTaskKey4974,
+        now: Date = Date()
+    ) -> ClosedRange<Date>? {
+        guard chartPublicationJourney(journey, key: key) != nil else { return nil }
+        return pageLegacyChartDomain(event: event, history: history, range: range, now: now)
+    }
+
+    /// The unchanged page window for legacy observations, shared by both charts.
+    static func pageLegacyChartDomain(
+        event: EventDetail?, history: EventHistoryResponse?, range: OddsTimeRange,
+        now: Date = Date()
+    ) -> ClosedRange<Date>? {
+        guard let event else { return nil }
+        return SharedChartWindow.domain(
+            status: event.status, commenceTime: event.commenceTime,
+            history: history, range: range, sportKey: event.sport, now: now)
+    }
+
+    /// Both page charts keep one selected time window. Stored checkpoint
+    /// insertion times can be later than the last legacy game observation, so
+    /// the end reaches the latest checkpoint the chart is handed. The selected
+    /// lower bound (All / Since Start) remains unchanged. Legacy observations
+    /// and the score carry retain pageLegacyChartDomain; this wider axis only
+    /// admits the stored checkpoint timestamps beyond that original window.
+    static func publicationSharedChartDomain(
+        _ legacyDomain: ClosedRange<Date>?,
+        journey: PublicationJourney4974.Journey?, key: PublicationTaskKey4974
+    ) -> ClosedRange<Date>? {
+        guard let legacyDomain,
+              let current = chartPublicationJourney(journey, key: key),
+              let latest = current.checkpoints.map(\.date)
+                .filter({ $0 >= legacyDomain.lowerBound }).max()
+        else { return legacyDomain }
+        // Preserve the page window's existing 30-second breathing room. This
+        // is axis padding, not another observation or a held probability.
+        let upper = max(legacyDomain.upperBound, latest.addingTimeInterval(30))
+        return legacyDomain.lowerBound...upper
+    }
+
+    /// The journey the chart is handed: the held one only when page, view
+    /// model, detail and journey all name one game, that game is finished and
+    /// this appearance is ready. Else `nil`, whatever the view model holds.
+    static func chartPublicationJourney(
+        _ held: PublicationJourney4974.Journey?, key: PublicationTaskKey4974
+    ) -> PublicationJourney4974.Journey? {
+        guard let held, key.ready, key.finished,
+              key.vmEventId == key.pageEventId,
+              key.detailEventId == key.pageEventId,
+              held.eventId == key.pageEventId
+        else { return nil }
+        return held
+    }
+}
+
+/// #9483 — the NFL paired headline's shared line: both chances and the score
+/// between them sit on it, whatever the names above them do.
+private extension VerticalAlignment {
+    enum NFLPairedFigure9483: AlignmentID {
+        static func defaultValue(in d: ViewDimensions) -> CGFloat { d[VerticalAlignment.center] }
+    }
+    static let nflPairedFigure9483 = VerticalAlignment(NFLPairedFigure9483.self)
+}

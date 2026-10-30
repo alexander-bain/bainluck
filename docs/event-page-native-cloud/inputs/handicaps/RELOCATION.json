@@ -1,0 +1,7 @@
+{
+  "source": "libfile_497dce3250988191bc7c28739e0654ce",
+  "version": 1,
+  "archive_sha256": "58817ff53654c20a42f086fe8fceee7b686398b1b5104cefdddb62e39719dd2b",
+  "mapping": "Archive relative paths retained unchanged beneath docs/event-page-native-cloud/inputs/handicaps/",
+  "historical_manifest_fields": "Producer status remains historical; see CONSUMER-ACK.json for actual verified import."
+}

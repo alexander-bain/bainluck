@@ -1714,3 +1714,287 @@ final class OriginalHandicapCard9483Tests: XCTestCase {
         XCTAssertEqual(wordy.openHint, "Opens the original \(condition) prop.")
     }
 }
+
+// MARK: - Live handicap source preparation (NOT_RUN)
+
+/// RETAINED: event 15327807, exact original IDs, 43.5/54.5% observations at
+/// 2026-10-12T06:58:25.957874Z before the verified 10:55Z start; score captured
+/// 12:20:44.471140Z, sets 0–1, games 8–10. Raw histories and prototype are
+/// pinned in TENNIS-LIVE-HANDICAP-RETAINED-CASES.json. Later 99.95/87% quotes
+/// and the set market's 47% opening are NOT current/baseline replacements.
+/// CONSTRUCTED: scope/identity association, predicate/display copy, formatted
+/// provenance, progress statistic and all contradictory/pathology controls.
+/// These tests prepare source contracts, not real bindings or native fidelity.
+@MainActor
+final class OriginalLiveHandicapCard9483Tests: XCTestCase {
+    private typealias H = OriginalHandicapCard9483
+    private typealias M = OriginalMarketDetails9483
+    private let scope = "constructed:tennis-live:15327807:handicaps"
+    private let beforeAt = "2026-10-12T06:58:25.957874+00:00"
+    private let startAt = "2026-10-12T10:55:00+00:00"
+    private let scoreAt = "2026-10-12T12:20:44.471140+00:00"
+    private let beforeWords = "Polymarket · recorded Sun, Oct 11, 2026, 11:58 PM PDT, before the match"
+    private let actualWords = "ESPN · captured Mon, Oct 12, 2026, 5:20 AM PDT"
+    private let setID = M.Identity(source: "polymarket", market: "65197801", side: "245152788")
+    private let gameID = M.Identity(source: "polymarket", market: "65212323", side: "245201950")
+
+    private var words: H.Words {
+        H.Words(eyebrow: "HANDICAPS · DIFFERENT UNITS", title: "A set secured. Games still unfolding.",
+                explanationTitle: "How these props work", explanation: ["These original conditions remain separate."],
+                tapInvitation: "Open an original prop.", scopeUnavailable: "Handicap props unavailable in this update",
+                panelUnavailable: "Prop unavailable in this update", comparisonUnavailable: "Comparison unavailable")
+    }
+
+    private func original(_ game: Bool = false, mode: M.Mode = .comparison(.current),
+                          id: M.Identity? = nil, before: M.Reading? = nil,
+                          later: M.Reading? = .missing("Unavailable"),
+                          grade: M.Grade? = nil) -> M.Original {
+        M.Original(identity: id ?? (game ? gameID : setID),
+                   title: game ? "Game Spread: Arthur Fils (-4.5) vs Botic van de Zandschulp (+4.5)"
+                               : "Set Handicap: Arthur Fils (-1.5) vs Botic van de Zandschulp (+1.5)",
+                   outcome: "Botic van de Zandschulp", mode: mode,
+                   pregame: before ?? .value(game ? "54.5%" : "43.5%", placement: game ? 0.545 : 0.435,
+                                             provenance: beforeWords),
+                   later: later, grade: grade,
+                   about: M.About(source: "Polymarket", rules: .unavailable("Rules unavailable"), provenance: [],
+                                  historicalQuote: M.HistoricalQuote(text: game ? "87%" : "99.95%",
+                                                                     recorded: "Historical quote, not current")))
+    }
+
+    private func panel(_ game: Bool = false, id: M.Identity? = nil, actual: H.Actual? = nil,
+                       pending: String? = "Result pending") -> H.Panel {
+        var result = H.Panel(original: id ?? (game ? gameID : setID), subject: "Zandschulp",
+                             predicate: game ? "Zandschulp +4.5 games" : "Zandschulp +1.5 sets",
+                             condition: game ? "+4.5 games" : "+1.5 sets",
+                             actual: actual ?? (game
+                                ? .pair(H.Pair(caption: "Games so far", first: H.PairSide(figure: "8", name: "Fils"),
+                                               relation: "behind", second: H.PairSide(figure: "10", name: "Zandschulp"),
+                                               provenance: actualWords, spoken: "Games so far: Fils 8, Zandschulp 10"))
+                                : .count(H.Count(figure: "1", unit: "set won", blocks: [true, false],
+                                                 provenance: actualWords, spoken: "Zandschulp 1 set won"))),
+                             resultMark: .positive, openHint: "Open the original prop.")
+        result.pendingMarketContext = pending
+        if game, actual == nil {
+            result.liveProgress = H.DisplayStat(figure: "+2", unit: "games ahead", provenance: actualWords,
+                                                spoken: "Zandschulp +2 games ahead")
+        }
+        return result
+    }
+
+    private func input(phase: H.Phase = .during, enabled: Bool = true, originals: [M.Original]? = nil,
+                       panels: [H.Panel]? = nil, held: M.Selection? = nil, scope: String? = nil) -> H.Input {
+        H.Input(phase: phase, catalogue: M.Catalogue(scope: scope ?? self.scope,
+                                                    originals: originals ?? [original(), original(true)]),
+                held: held, groups: [H.Group(heading: "", panels: panels ?? [panel(), panel(true)])],
+                words: words, showsDuringPlay: enabled)
+    }
+
+    private func shown(_ panel: H.Panel, _ input: H.Input, file: StaticString = #filePath,
+                       line: UInt = #line) throws -> H.LiveShown {
+        guard case .live(let value)? = H.state(panel, in: input) else {
+            XCTFail("Expected live presentation", file: file, line: line)
+            throw NSError(domain: "LiveHandicapPreparation", code: 1)
+        }
+        return value
+    }
+
+    func testExplicitTrueDuringGateAndUnchangedBeforeFinal() throws {
+        XCTAssertEqual(input().phase, .during)
+        XCTAssertTrue(H.isShown(input()))
+        XCTAssertFalse(H.isShown(input(enabled: false)))
+        for enabled in [false, true] {
+            let before = input(phase: .before, enabled: enabled)
+            XCTAssertFalse(H.isShown(before))
+            XCTAssertNil(H.state(panel(), in: before))
+            XCTAssertNil(H.action(panel(), in: before, onSelect: { _ in XCTFail("passive callback") }))
+        }
+        let originals = [original(mode: .result, grade: M.Grade(words: "Owner result", provenance: nil))]
+        let defaultFinal = input(phase: .final, enabled: false, originals: originals, panels: [panel()])
+        let optedFinal = input(phase: .final, originals: originals, panels: [panel()])
+        XCTAssertEqual(H.state(panel(), in: defaultFinal), H.state(panel(), in: optedFinal))
+        XCTAssertEqual(H.spoken(panel(), in: defaultFinal), H.spoken(panel(), in: optedFinal))
+        XCTAssertFalse(H.spoken(panel(), in: optedFinal).contains("Market context"))
+    }
+
+    func testRetainedIndependentBaselinesAndClocksDoNotBorrowHistoricalQuotes() throws {
+        XCTAssertLessThan(beforeAt, startAt)
+        XCTAssertLessThan(startAt, scoreAt)
+        let values = try [shown(panel(), input()), shown(panel(true), input())]
+        XCTAssertEqual(values.map { $0.readings[0].text }, ["43.5%", "54.5%"])
+        XCTAssertEqual(try XCTUnwrap(values[0].readings[0].placement), 0.435, accuracy: 0.000001)
+        XCTAssertEqual(try XCTUnwrap(values[1].readings[0].placement), 0.545, accuracy: 0.000001)
+        for value in values {
+            XCTAssertEqual(value.readings[0].provenance, beforeWords)
+            XCTAssertEqual(value.readings[1].label, "Current chance")
+            XCTAssertEqual(value.readings[1].text, "Unavailable")
+            XCTAssertNil(value.readings[1].placement)
+            XCTAssertNil(value.result)
+            XCTAssertNil(value.mark)
+            XCTAssertEqual(value.pendingMarketContext, "Result pending")
+        }
+        let spoken = H.spoken(panel(), in: input())
+        XCTAssertFalse(spoken.contains("99.95%"))
+        XCTAssertFalse(spoken.contains("47%"))
+        XCTAssertTrue(spoken.contains(beforeWords))
+        XCTAssertTrue(spoken.contains(actualWords))
+    }
+
+    func testAllOwnerModesUseTheirExactContentWithoutCoercion() throws {
+        let modes: [M.Mode] = [.pregame, .comparison(.current), .comparison(.recorded), .result]
+        for mode in modes {
+            let supplied = original(mode: mode, later: .value("62%", placement: 0.62, provenance: "Later clock"),
+                                    grade: M.Grade(words: "Resolved No", provenance: "Settlement clock"))
+            let card = input(originals: [supplied], panels: [panel()])
+            let live = try shown(panel(), card)
+            let content = try XCTUnwrap(M.content(catalogue: card.catalogue, selection: H.selection(panel(), in: card)))
+            XCTAssertEqual(card.catalogue?.originals.first?.mode, mode)
+            XCTAssertEqual(live.readings, content.readings)
+            XCTAssertEqual(live.result, content.result)
+            switch mode {
+            case .comparison:
+                XCTAssertEqual(live.pendingMarketContext, "Result pending")
+                XCTAssertNil(live.result)
+                XCTAssertNil(live.mark)
+            case .pregame:
+                XCTAssertEqual(live.readings.count, 1)
+                XCTAssertNil(live.pendingMarketContext)
+                XCTAssertNil(live.mark)
+            case .result:
+                XCTAssertEqual(live.readings.count, 1)
+                XCTAssertNil(live.pendingMarketContext)
+                XCTAssertEqual(live.result?.words, "Resolved No")
+                XCTAssertEqual(live.mark, .positive, "decoration remains owner supplied, never inferred")
+            }
+        }
+    }
+
+    func testPhysicalUnitsAndPendingMarketRemainSeparateInSpeech() {
+        let setWords = H.spoken(panel(), in: input())
+        let gameWords = H.spoken(panel(true), in: input())
+        XCTAssertTrue(setWords.contains("+1.5 sets"))
+        XCTAssertTrue(setWords.contains("Actual: Zandschulp 1 set won"))
+        XCTAssertTrue(gameWords.contains("+4.5 games"))
+        XCTAssertTrue(gameWords.contains("Actual: Zandschulp +2 games ahead"))
+        for value in [setWords, gameWords] {
+            XCTAssertTrue(value.contains("Current chance: Unavailable"))
+            XCTAssertTrue(value.contains("Market context: Result pending"))
+            XCTAssertFalse(value.contains("Original market result:"))
+            XCTAssertFalse(value.contains("100%"))
+        }
+    }
+
+    func testMissingOriginalAndMissingScopeKeepConditionAndActualWithoutMarketAction() {
+        let missing = input(originals: [])
+        let noScope = input(scope: " \n")
+        let noCatalogue = H.Input(phase: .during, catalogue: nil, held: nil,
+                                  groups: input().groups, words: words, showsDuringPlay: true)
+        for card in [missing, noScope, noCatalogue] {
+            XCTAssertNil(H.selection(panel(), in: card))
+            XCTAssertNotNil(H.state(panel(), in: card))
+            let value = H.spoken(panel(), in: card)
+            XCTAssertTrue(value.contains("+1.5 sets"))
+            XCTAssertTrue(value.contains("1 set won"))
+            XCTAssertFalse(value.contains("43.5%"))
+            XCTAssertFalse(value.contains("Result pending"))
+            XCTAssertNil(H.action(panel(), in: card, onSelect: { _ in XCTFail("unavailable action") }))
+        }
+    }
+
+    func testMissingActualKeepsOriginalChanceAndMissingBeforeKeepsProgress() throws {
+        let missingActual = panel(actual: .missing("Score unavailable"))
+        let card = input(panels: [missingActual])
+        XCTAssertEqual(try shown(missingActual, card).readings[0].text, "43.5%")
+        XCTAssertTrue(H.spoken(missingActual, in: card).contains("Actual: Score unavailable"))
+        let missingBefore = input(originals: [original(before: .missing("Before unavailable"))], panels: [panel()])
+        XCTAssertEqual(try shown(panel(), missingBefore).readings[0].text, "Before unavailable")
+        XCTAssertTrue(H.spoken(panel(), in: missingBefore).contains("1 set won"))
+        XCTAssertNotNil(H.selection(panel(), in: missingBefore))
+    }
+
+    func testZeroAndInvalidGeometryRetainOwnTextAndAction() throws {
+        let positions: [Double?] = [0, nil, .nan, .infinity, -0.1, 1.1]
+        for position in positions {
+            let card = input(originals: [original(before: .value("0%", placement: position, provenance: nil))],
+                             panels: [panel()])
+            let reading = try shown(panel(), card).readings[0]
+            XCTAssertEqual(reading.text, "0%")
+            XCTAssertTrue(reading.isValue)
+            if position == 0 { XCTAssertEqual(reading.placement, 0) } else { XCTAssertNil(reading.placement) }
+            XCTAssertNotNil(H.action(panel(), in: card, onSelect: { _ in }))
+        }
+    }
+
+    func testExactIdentityUniqueAssociationAndWithdrawalFailClosed() {
+        let foreign = M.Identity(source: "polymarket", market: "foreign", side: "245152788")
+        let blank = M.Identity(source: " ", market: "65197801", side: "245152788")
+        let cases: [(H.Panel, H.Input)] = [
+            (panel(), input(originals: [original(), original()], panels: [panel()])),
+            (panel(), input(panels: [panel(), panel()])),
+            (panel(), input(originals: [original(true)], panels: [panel()])),
+            (panel(id: foreign), input(panels: [panel(id: foreign)])),
+            (panel(id: blank), input(originals: [original(id: blank)], panels: [panel(id: blank)]))
+        ]
+        for (item, card) in cases {
+            XCTAssertNil(H.selection(item, in: card))
+            XCTAssertNil(H.action(item, in: card, onSelect: { _ in XCTFail("borrowed action") }))
+            XCTAssertFalse(H.spoken(item, in: card).contains("43.5%"))
+            XCTAssertTrue(H.spoken(item, in: card).contains("1 set won"))
+        }
+    }
+
+    func testIgnoredNaNLaterDoesNotClosePregameOrResultOriginal() throws {
+        let modes: [M.Mode] = [.pregame, .result]
+        for mode in modes {
+            let card = input(originals: [original(mode: mode,
+                                                 later: .value("Ignored", placement: .nan, provenance: nil))],
+                             panels: [panel()])
+            XCTAssertNotNil(H.selection(panel(), in: card))
+            XCTAssertEqual(try shown(panel(), card).readings.count, 1)
+            XCTAssertFalse(H.spoken(panel(), in: card).contains("Ignored"))
+        }
+    }
+
+    func testHeldRefreshUsesSameIdentityAndRealCallbackOnly() throws {
+        let held = M.Selection(scope: scope, identity: setID)
+        let card = input(held: held)
+        var calls: [M.Selection] = []
+        let action = try XCTUnwrap(H.action(panel(), in: card, onSelect: { calls.append($0) }))
+        XCTAssertTrue(calls.isEmpty, "rendering/action construction is passive")
+        XCTAssertTrue(H.isSelected(panel(), in: card))
+        action()
+        XCTAssertEqual(calls, [held])
+        XCTAssertNil(H.action(panel(), in: card, onSelect: nil))
+        XCTAssertFalse(H.showsTapInvitation(card, onSelect: nil))
+        XCTAssertTrue(H.showsTapInvitation(card, onSelect: { _ in }))
+        let refreshed = input(originals: [original(later: .value("60%", placement: 0.6, provenance: "Own new clock"))],
+                              panels: [panel()], held: held)
+        XCTAssertTrue(H.isSelected(panel(), in: refreshed))
+        XCTAssertEqual(try shown(panel(), refreshed).readings[1].text, "60%")
+        XCTAssertEqual(try shown(panel(), refreshed).readings[1].provenance, "Own new clock")
+        let withdrawn = input(originals: [], panels: [panel()], held: held)
+        XCTAssertFalse(H.isSelected(panel(), in: withdrawn))
+        XCTAssertFalse(H.isSelected(panel(), in: input(held: M.Selection(scope: "other", identity: setID))))
+    }
+
+    func testPendingWithdrawalAndResultWithoutGradeHaveNoDecoration() throws {
+        let noNote = panel(pending: " \n")
+        XCTAssertNil(try shown(noNote, input(panels: [noNote])).pendingMarketContext)
+        let result = try shown(panel(), input(originals: [original(mode: .result)], panels: [panel()]))
+        XCTAssertEqual(result.result?.words, M.resultUnavailable)
+        XCTAssertNil(result.mark)
+        XCTAssertNil(result.pendingMarketContext)
+    }
+
+    func testLayoutPlanningStacksWholePanelsAtNarrowAndAccessibilitySizes() {
+        XCTAssertEqual(OriginalHandicapLayout9483.minimumTarget, 44)
+        XCTAssertNil(OriginalHandicapLayout9483.sharedWidth(available: 280, ideals: [180, 190], spacing: 10,
+                                                           accessibilitySize: false))
+        XCTAssertNil(OriginalHandicapLayout9483.sharedWidth(available: 900, ideals: [180, 190], spacing: 10,
+                                                           accessibilitySize: true))
+        XCTAssertEqual(OriginalHandicapLayout9483.sharedWidth(available: 500, ideals: [180, 190], spacing: 10,
+                                                             accessibilitySize: false), 245)
+        XCTAssertTrue(ProbabilityDetailsLayout9483.alwaysStacks(readings: 1, accessibilitySize: false))
+        // Arithmetic only: actual compact/wide/AX rendering, VoiceOver and 44pt
+        // hit-area qualification remain NOT_RUN, as do all tests in this appendix.
+    }
+}

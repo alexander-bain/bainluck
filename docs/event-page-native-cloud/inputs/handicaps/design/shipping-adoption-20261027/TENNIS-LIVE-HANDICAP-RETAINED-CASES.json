@@ -1,0 +1,259 @@
+{
+  "at": "2026-10-30T00:12:37.062261+00:00",
+  "status": "PREPARED_NEXT_SOURCE_NOT_ASSIGNED",
+  "route": "tennis-live",
+  "phase": "live",
+  "required_card": "Set and game handicaps",
+  "reuse_candidate": {
+    "ship": "Shared original-market Details/chooser and final handicap expectation panels",
+    "source_base": "6c73734af6d7f83f252ace8ed921eb0fcae766e3",
+    "head": "2f55cc13e912765dc2b099f78b896278cf85247c",
+    "contribution_commits_in_order": [
+      "a91674c8c04da4ab70de0aa7374b4e7b474efa62",
+      "eacf9763a70d172861be40273f8570d2cd69952f",
+      "dc2d67eb7319f9aa975615221ee0f189fe277779",
+      "0d2e44a5de3b15b14569919a19532290f20cf00e",
+      "b04a7a902f28706df9ed88fdd5ad03b01a84c712",
+      "8c8b6cf3cb7508478ccb296be6addac04ce79a78",
+      "671e16c8be135b229aec542c9d14a8c33e3b8fa4",
+      "2f55cc13e912765dc2b099f78b896278cf85247c"
+    ],
+    "files": [
+      {
+        "path": "ios/Bain Luck/Bain Luck/Components/LadderOriginalProbabilityDetails9483.swift",
+        "blob": "2707899e503bc1a7b4c595b5e0b9e88700318177",
+        "sha256": "72463696b760420b14bcdd399aa6f9ae0b0bb4b30574ca2200cc4ec83e5d6e36"
+      },
+      {
+        "path": "ios/Bain Luck/BainLuckTests/LadderOriginalProbabilityDetails9483Tests.swift",
+        "blob": "5a570e6e8e0c5b1c7b7792f46a7c859f235e2f0e",
+        "sha256": "47e61a7f5e65fe644ec0017b4a3327f49c1ce7f5166c60b30f6317f4cc58377b"
+      }
+    ],
+    "design_intake": "shipping-adoption-20261027/TENNIS-HANDICAP-2F55CC13-DESIGN-INTAKE.md",
+    "stage": "SOURCE_ACCEPTED_PARKED",
+    "compiled": false,
+    "tests_executed": false,
+    "independently_reviewed": false,
+    "integrated": false,
+    "carrying_testflight": false,
+    "phone_accepted": false,
+    "prior_design_intakes": [
+      "shipping-adoption-20261027/ORIGINAL-MARKET-DETAILS-0D2E44A5-DESIGN-INTAKE.md",
+      "shipping-adoption-20261027/CRICKET-ORIGINAL-CHOOSER-8C8B6CF3-DESIGN-INTAKE.md"
+    ]
+  },
+  "implementation_worktree": "/tmp/wt-ux-9483-ladder-details",
+  "implementation_branch": "ux/9483-ladder-original-details",
+  "preserve_tests": 60,
+  "source_receipts": [
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/LiveTennis.tsx",
+      "sha256": "50561474469e614c51d058107b2a312180376c5a554171bc5dc1a478dce51568"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/liveTennis.css",
+      "sha256": "93adee379697ec1c20ea3f9d743e70f5b35ec03bcbdfc762feaceef6a7589dc3"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/liveTennis.json",
+      "sha256": "99d3b5d26f5d49a9d0e45ffcbd192d04dd28031e569545dff5f7ccbc656ac96b"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/src/tennisFocus.ts",
+      "sha256": "5b01f01bfdc84f79cb32ce0a255aa5a8a42807038409173d60739c4645dba41c"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/live-tennis-source-binding-20261026/README.md",
+      "sha256": "4bc6156813aa3220a7bb1394e527e39392add39bb9b91dbfba82c3c4e680d03c"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/shipping-adoption-20261027/TENNIS-HANDICAP-2F55CC13-DESIGN-INTAKE.md",
+      "sha256": "3d69ba9639ae0b6df4286f2cc52bc565e4ad091d41be53c8f9994b028db74079"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/totals-final-forecast-binding-20261024/prototype/tests/live-tennis-source-bindings.json",
+      "sha256": "e18cbb25de19f8a105b09ba9393a3158c3712292729175da10f805d7926ec449"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/tennis-live-evidence-v86/raw/prop-65197801-history.json",
+      "sha256": "a22def27b779df9975b1c3f857dfcfea45aa06e23f4a7e6f296e6191c8f05d2c"
+    },
+    {
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/tennis-live-evidence-v86/raw/prop-65212323-history.json",
+      "sha256": "adbc3f067ce841c8efed7f6a87a959435be385b8d0b474b4479ac647947fa45b"
+    }
+  ],
+  "retained": {
+    "event_id": 15327807,
+    "verified_start": "2026-10-12T10:55:00+00:00",
+    "score_capture_at": "2026-10-12T12:20:44.471140+00:00",
+    "match_sets": [
+      0,
+      1
+    ],
+    "sets": [
+      [
+        5,
+        7
+      ],
+      [
+        3,
+        3
+      ]
+    ],
+    "aggregate_games": [
+      8,
+      10
+    ],
+    "originals": [
+      {
+        "key": "65197801:245152788",
+        "marketID": 65197801,
+        "outcomeID": 245152788,
+        "label": "Zandschulp +1.5 sets",
+        "category": "Handicaps",
+        "baseline": {
+          "value": 0.435,
+          "at": "2026-10-12T06:58:25.957874+00:00"
+        },
+        "lastQuote": {
+          "value": 0.9995,
+          "at": "2026-10-12T12:01:17.024578+00:00"
+        },
+        "current": null,
+        "currentLabel": "No recent price",
+        "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+        "impossible": false,
+        "result": "Result pending",
+        "original": {
+          "market_name": "Set Handicap: Arthur Fils (-1.5) vs Botic van de Zandschulp (+1.5)",
+          "outcome_name": "Botic van de Zandschulp",
+          "observed_at": "2026-10-12T12:01:17.024578+00:00",
+          "contributor_outcome_ids": [
+            245152788
+          ],
+          "threshold": null,
+          "probability": 0.9995,
+          "source": "polymarket",
+          "is_winner": null,
+          "resolution_source": null,
+          "_market_id": 65197801
+        },
+        "laterDetail": {
+          "id": 245152788,
+          "name": "Botic van de Zandschulp",
+          "probability": 0.9995,
+          "american_odds": 130,
+          "rank": 1,
+          "rank_change_24h": null,
+          "probability_change_24h": null,
+          "opening_probability": 0.47,
+          "opening_american_odds": 113,
+          "is_winner": null,
+          "resolution_source": null,
+          "last_updated": "2026-10-12T12:01:17.024578+00:00",
+          "price_changed_at": "2026-10-12T12:01:17.024578+00:00"
+        }
+      },
+      {
+        "key": "65212323:245201950",
+        "marketID": 65212323,
+        "outcomeID": 245201950,
+        "label": "Zandschulp +4.5 games",
+        "category": "Handicaps",
+        "baseline": {
+          "value": 0.545,
+          "at": "2026-10-12T06:58:25.957874+00:00"
+        },
+        "lastQuote": {
+          "value": 0.87,
+          "at": "2026-10-12T12:18:15.628011+00:00"
+        },
+        "current": null,
+        "currentLabel": "No recent price",
+        "priceReason": "The capture does not establish a reliable current market price. A feed observation or changed price alone does not prove recent trading.",
+        "impossible": false,
+        "result": "Result pending",
+        "original": {
+          "market_name": "Game Spread: Arthur Fils (-4.5) vs Botic van de Zandschulp (+4.5)",
+          "outcome_name": "Botic van de Zandschulp",
+          "observed_at": "2026-10-12T12:18:15.628011+00:00",
+          "contributor_outcome_ids": [
+            245201950
+          ],
+          "threshold": null,
+          "probability": 0.87,
+          "source": "polymarket",
+          "is_winner": null,
+          "resolution_source": null,
+          "_market_id": 65212323
+        },
+        "laterDetail": {
+          "id": 245201950,
+          "name": "Botic van de Zandschulp",
+          "probability": 0.87,
+          "american_odds": -120,
+          "rank": 1,
+          "rank_change_24h": null,
+          "probability_change_24h": null,
+          "opening_probability": 0.545,
+          "opening_american_odds": -120,
+          "is_winner": null,
+          "resolution_source": null,
+          "last_updated": "2026-10-12T12:18:15.628011+00:00",
+          "price_changed_at": "2026-10-12T12:18:15.628011+00:00"
+        }
+      }
+    ]
+  },
+  "raw_baseline_evidence": [
+    {
+      "market_id": 65197801,
+      "outcome_id": 245152788,
+      "name": "Botic van de Zandschulp",
+      "prestart_observation": {
+        "timestamp": "2026-10-12T06:58:25.957874+00:00",
+        "probability": 0.435,
+        "american_odds": null,
+        "bookmaker": "consensus"
+      },
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/tennis-live-evidence-v86/raw/prop-65197801-history.json"
+    },
+    {
+      "market_id": 65212323,
+      "outcome_id": 245201950,
+      "name": "Botic van de Zandschulp",
+      "prestart_observation": {
+        "timestamp": "2026-10-12T06:58:25.957874+00:00",
+        "probability": 0.545,
+        "american_odds": null,
+        "bookmaker": "consensus"
+      },
+      "path": "/Users/bain/bainluck/artifacts/discovery-containers-release-plan/event-page-design-20261011/tennis-live-evidence-v86/raw/prop-65212323-history.json"
+    }
+  ],
+  "constructed_owner_presentation": {
+    "set_context": "Zandschulp1set won, separate from original result pending",
+    "game_context": "Zandschulp+2games ahead, independently supplied display from approved mount; no leaf score arithmetic",
+    "probabilities": "43.5%/54.5% from exact original histories, independent of later opening_probability47% or quotes99.95%/87%",
+    "contracts": "Owner proves the subject/predicate/unit and actual association, no title parser or handicap arithmetic",
+    "mode": "Preserve each exact OriginalMarketDetails owner mode and its content; never force.result or.final to reuse final helpers",
+    "pending_context": "If needed, owner supplies a small phase-specific note for still-pending original markets, separately from physical state and original admitted grade. No new result/currentness enum or admission policy.",
+    "progress_contract": "Prefer existing count/pair actual context; a small owner-supplied live display-stat may express the approved +2games-ahead headline without repurposing set counts, score parsing or arithmetic. It is presentation only; Native owns its association and formatting.",
+    "market_context": "Use existing Details.content in the actual owner mode. A small pending-market note may accompany comparison-mode content; it is not a second grade channel and never overrides a result-mode grade."
+  },
+  "source_assignment": false,
+  "active_outcome_created": false,
+  "new_package_or_path": false,
+  "downstream_grant": false,
+  "whole_route_or_phase_credit": false,
+  "proposed_unchanged_component_prefix": {
+    "bytes": 43673,
+    "sha256": "aac022c67478599d1d2b6200475a561db4b8f522e88231459f9b7f7262fe6276",
+    "boundary": "Original Details/chooser core before handicap presentation section; no source assignment"
+  },
+  "implementation_parent": "2f55cc13e912765dc2b099f78b896278cf85247c",
+  "source_base": "6c73734af6d7f83f252ace8ed921eb0fcae766e3",
+  "allowed_scope": "Only two existing presentation/test paths; preserve43673-byte Details/chooser prefix and whole60-test parent. Bounded nonbreaking opt-in changes inside handicap presentation section, plus appended helpers/tests, only after a separate admission."
+}

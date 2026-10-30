@@ -1016,7 +1016,8 @@ struct OriginalMarketChooserView9483: View {
 /// reads no later quote, formats no number or date and infers no grade: a
 /// result decoration shows only beside the original's own supplied grade.
 ///
-/// Before and during play the card shows nothing. Selection, Details, Back,
+/// By default before and during play the card shows nothing. An explicit
+/// during-play option preserves the owner phase and market mode. Selection, Details, Back,
 /// focus, held refresh and withdrawal, and the explanation's disclosure stay
 /// with the host; with no callback the panels are static and no tap is asked
 /// for. The Details and chooser above are unchanged.
@@ -1062,6 +1063,15 @@ enum OriginalHandicapCard9483 {
         let spoken: String
     }
 
+    /// A compact owner-formatted progress statistic, not a set count or a
+    /// calculated score difference. Native proves its association independently.
+    struct DisplayStat: Equatable {
+        let figure: String
+        let unit: String
+        let provenance: String?
+        let spoken: String
+    }
+
     /// Context, never a grade: it neither selects nor settles an original.
     enum Actual: Equatable {
         case count(Count)
@@ -1097,6 +1107,11 @@ enum OriginalHandicapCard9483 {
         let resultMark: ResultMark?
         /// "Opens the original +1.5 sets prop." — only when the panel acts.
         let openHint: String
+        /// Owner-updated market context; admitted only with live comparison
+        /// content, never used as a grade or inferred from physical progress.
+        var pendingMarketContext: String? = nil
+        /// Optional compact live statistic; owner proves its association with actual.
+        var liveProgress: DisplayStat? = nil
     }
 
     struct Group: Equatable {
@@ -1130,6 +1145,8 @@ enum OriginalHandicapCard9483 {
         let held: Details.Selection?
         let groups: [Group]
         let words: Words
+        /// Nonbreaking opt-in. It does not change the final presentation.
+        var showsDuringPlay: Bool = false
     }
 
     /// A placed panel's final readings, from the Details' own content.
@@ -1141,7 +1158,16 @@ enum OriginalHandicapCard9483 {
         let mark: ResultMark?
     }
 
+    /// Bounded presentation of the existing content, with no new market policy.
+    struct LiveShown: Equatable {
+        let readings: [Details.ShownReading]
+        let result: Details.ShownResult?
+        let mark: ResultMark?
+        let pendingMarketContext: String?
+    }
+
     enum State: Equatable {
+        case live(LiveShown)
         case shown(Shown)
         /// The exact original resolves but is not in result mode; it still opens.
         case comparisonUnavailable(String)
@@ -1159,12 +1185,16 @@ enum OriginalHandicapCard9483 {
 
     static let actualLabel = "Actual"
 
-    /// Final only. Before and during play no panel, chance, result or action exists.
+    /// Final by default; live only on the true during phase with explicit opt-in.
     static func isShown(_ input: Input) -> Bool {
-        input.phase == .final
+        input.phase == .final || isLive(input)
     }
 
-    /// The catalogue, on the final, with a nonblank scope; else no panel resolves.
+    static func isLive(_ input: Input) -> Bool {
+        input.phase == .during && input.showsDuringPlay
+    }
+
+    /// The catalogue, in a displayed phase, with a nonblank scope; else no panel resolves.
     static func catalogue(_ input: Input) -> Details.Catalogue? {
         guard isShown(input), let catalogue = input.catalogue, nonBlank(catalogue.scope) != nil else { return nil }
         return catalogue
@@ -1190,11 +1220,25 @@ enum OriginalHandicapCard9483 {
     /// pregame reading and its own result; any other mode keeps the comparison
     /// unavailable rather than reading a later chance as final.
     static func state(_ panel: Panel, in input: Input) -> State? {
-        guard let catalogue = catalogue(input) else { return nil }
+        guard isShown(input) else { return nil }
+        guard let catalogue = catalogue(input) else {
+            return isLive(input) ? .unavailable(nonBlank(input.words.scopeUnavailable) ?? Details.unavailable) : nil
+        }
         guard let selection = selection(panel, in: input),
               let original = Details.original(in: catalogue, selection: selection),
               let content = Details.content(catalogue: catalogue, selection: selection) else {
             return .unavailable(nonBlank(input.words.panelUnavailable) ?? Details.unavailable)
+        }
+        if isLive(input) {
+            let pending: String?
+            if case .comparison = original.mode {
+                pending = nonBlank(panel.pendingMarketContext)
+            } else {
+                pending = nil
+            }
+            let graded = content.result != nil && original.grade.flatMap { nonBlank($0.words) } != nil
+            return .live(LiveShown(readings: content.readings, result: content.result,
+                                   mark: graded ? panel.resultMark : nil, pendingMarketContext: pending))
         }
         guard original.mode == .result, let chance = content.readings.first, let result = content.result else {
             return .comparisonUnavailable(nonBlank(input.words.comparisonUnavailable) ?? Details.unavailable)
@@ -1248,13 +1292,29 @@ enum OriginalHandicapCard9483 {
     /// with its own provenance, then the original's result — each named.
     static func spoken(_ panel: Panel, in input: Input) -> String {
         guard let state = state(panel, in: input) else { return "" }
+        if case .live(let shown) = state {
+            var parts = [nonBlank(panel.predicate) ?? nonBlank(input.words.panelUnavailable) ?? Details.unavailable]
+            if let condition = nonBlank(panel.condition) { parts.append(condition) }
+            for reading in shown.readings {
+                parts.append("\(reading.label): \(reading.text)" + (reading.provenance.map { ", \($0)" } ?? ""))
+            }
+            parts.append(isLive(input) ? spokenLiveActual(panel) : spokenActual(panel.actual))
+            if let result = shown.result {
+                parts.append("\(Details.resultLabel): \(result.words)" + (result.provenance.map { ", \($0)" } ?? ""))
+            }
+            if let pending = shown.pendingMarketContext { parts.append("Market context: \(pending)") }
+            return parts.joined(separator: ". ") + "."
+        }
         var parts = [nonBlank(panel.predicate) ?? nonBlank(input.words.panelUnavailable) ?? Details.unavailable]
+        if isLive(input), let condition = nonBlank(panel.condition) { parts.append(condition) }
         if case .shown(let shown) = state {
             let chance = shown.chance
             parts.append(chance.provenance.map { "\(chance.label) \(chance.text), \($0)" } ?? "\(chance.label): \(chance.text)")
         }
-        parts.append(spokenActual(panel.actual))
+        parts.append(isLive(input) ? spokenLiveActual(panel) : spokenActual(panel.actual))
         switch state {
+        case .live:
+            break // Handled above without borrowing final channels.
         case .shown(let shown):
             parts.append("\(Details.resultLabel): \(shown.result.words)"
                          + (shown.result.provenance.map { ", \($0)" } ?? ""))
@@ -1262,6 +1322,11 @@ enum OriginalHandicapCard9483 {
             parts.append(words)
         }
         return parts.joined(separator: ". ") + "."
+    }
+
+    static func spokenLiveActual(_ panel: Panel) -> String {
+        guard let stat = panel.liveProgress else { return spokenActual(panel.actual) }
+        return "\(actualLabel): \(nonBlank(stat.spoken) ?? "\(stat.figure) \(stat.unit)"), \(actualProvenance(stat.provenance))"
     }
 
     static func spokenActual(_ actual: Actual) -> String {
@@ -1369,7 +1434,7 @@ struct OriginalHandicapCardView9483: View {
         if Model.isShown(input) {
             VStack(alignment: .leading, spacing: 18) {
                 header
-                if Model.catalogue(input) != nil {
+                if Model.catalogue(input) != nil || Model.isLive(input) {
                     ForEach(Array(input.groups.enumerated()), id: \.offset) { index, group in
                         groupView(group, index: index)
                     }
@@ -1447,13 +1512,31 @@ struct OriginalHandicapCardView9483: View {
             if let subject = Model.nonBlank(panel.subject) {
                 Text(subject).font(.headline)
             }
+            if Model.isLive(input), let condition = Model.nonBlank(panel.condition) {
+                Text(condition).font(.subheadline.weight(.semibold))
+            }
             switch Model.state(panel, in: input) {
+            case .live(let shown)?:
+                ForEach(shown.readings, id: \.label) { reading in
+                    chance(reading)
+                }
+                liveActual(panel)
+                if let originalResult = shown.result, let before = shown.readings.first {
+                    result(Model.Shown(chance: before, result: originalResult, mark: shown.mark),
+                           condition: panel.condition, acts: acts)
+                }
+                if let pending = shown.pendingMarketContext {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Market context").font(.caption).foregroundStyle(.secondary)
+                        Text(pending).font(.subheadline.weight(.semibold))
+                    }
+                }
             case .shown(let shown)?:
                 chance(shown.chance)
                 actual(panel.actual)
                 result(shown, condition: panel.condition, acts: acts)
             case .comparisonUnavailable(let words)?, .unavailable(let words)?:
-                actual(panel.actual)
+                if Model.isLive(input) { liveActual(panel) } else { actual(panel.actual) }
                 Text(words)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -1486,15 +1569,31 @@ struct OriginalHandicapCardView9483: View {
         }
     }
 
+    private func liveActual(_ panel: Model.Panel) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(Model.actualLabel).font(.caption).foregroundStyle(.secondary)
+            if let stat = panel.liveProgress {
+                progressFigure(stat.figure, unit: stat.unit)
+            } else {
+                actual(panel.actual)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     /// The actual's provenance is spoken, not printed in the compact panel.
     @ViewBuilder
     private func actual(_ actual: Model.Actual) -> some View {
         switch actual {
         case .count(let count):
             VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(count.figure).font(.system(size: countSize, weight: .bold).monospacedDigit())
-                    Text(count.unit).font(.footnote).foregroundStyle(.secondary)
+                if Model.isLive(input) {
+                    progressFigure(count.figure, unit: count.unit)
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(count.figure).font(.system(size: countSize, weight: .bold).monospacedDigit())
+                        Text(count.unit).font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
                 if !count.blocks.isEmpty {
                     HStack(spacing: 4) {
@@ -1514,6 +1613,16 @@ struct OriginalHandicapCardView9483: View {
             Text(Model.nonBlank(words) ?? OriginalMarketDetails9483.unavailable)
                 .font(.subheadline.weight(.semibold))
         }
+    }
+
+    /// Stacked, bounded figure/unit avoids an unbreakable progress group at AX.
+    private func progressFigure(_ figure: String, unit: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(figure).font(.system(size: countSize, weight: .bold).monospacedDigit())
+            Text(unit).font(.footnote).foregroundStyle(.secondary)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Filled for a set won, outlined otherwise — shape, not colour alone.

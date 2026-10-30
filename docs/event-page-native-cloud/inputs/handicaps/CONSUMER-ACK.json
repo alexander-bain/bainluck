@@ -1,0 +1,21 @@
+{
+  "at": "2026-10-30T00:48:58.849299+00:00",
+  "status": "CONSUMER_VERIFIED_CONTRACT_ACCEPTED",
+  "base": "6c73734af6d7f83f252ace8ed921eb0fcae766e3",
+  "parent": "2f55cc13e912765dc2b099f78b896278cf85247c",
+  "parent_tree": "043c00ea9f55fffcbd0ed7bc73468cfb85fe458c",
+  "branch": "codex/dot-event-design-source",
+  "archive_bytes": 327024,
+  "archive_sha256": "58817ff53654c20a42f086fe8fceee7b686398b1b5104cefdddb62e39719dd2b",
+  "manifest_sha256": "86df8cab1029cd22e8142cd2acfe32e9bd5dc2492c334c3be5c8d3a918eb4956",
+  "manifest_files_verified": 52,
+  "bundle_prerequisite": "efe320d0ac04c18c7ec6142d16dc0f0981bcb64b",
+  "bundle_verify_exit": 0,
+  "parent_source_exact": true,
+  "parent_tests_exact": true,
+  "core_prefix_exact": true,
+  "contract": "README.md and CLAIM.json accepted without scope expansion; live then conditional default-off pregame only. Design retains central tracker and source acceptance. Native/Integrator qualification remains unpaid.",
+  "remote_publication": "Not completed: CLI lacks authentication; remote branch absent at last check. Existing connector supports future writes once exact parent seed available.",
+  "design_notification": "Acknowledgment send timed out; child read showed no admitted new turn. Desktop then disconnected. No Design intake acknowledgment claimed.",
+  "native_qualification": "NOT_RUN"
+}
