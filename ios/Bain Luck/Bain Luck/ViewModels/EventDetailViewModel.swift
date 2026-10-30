@@ -177,6 +177,10 @@ final class EventDetailViewModel: ObservableObject {
     /// floor survives every reset: epochs only rise.
     private var blendPreviewReader = BlendPreviewReader.empty
     private var blendPreviewExpiry: Task<Void, Never>?
+    /// #10090 — the preview a commit floor withdrew from `blendPreviewReader`
+    /// that the folded hero still shows until the commit's combined result is
+    /// decided (`BlendPreview.heldAcrossCommitFloor`); nil when none is.
+    private var floorHandover: BlendPreviewState?
 
     /// #8320: a successful stream-triggered authoritative fold read also
     /// delivers a price. Socket open / cached unchanged reads do not.
@@ -1309,6 +1313,7 @@ final class EventDetailViewModel: ObservableObject {
                     self.provenanceRefetchFrame = nil
                     self.trailingProvenanceFrame = nil
                     self.awaitingFoldedResult = false
+                    self.endFloorHandover()
                     // The dot and fast polling reflect the outage immediately.
                     // A recoverable outage does not invalidate a price already
                     // observed; load() checks terminal refusal before using it.
@@ -1534,7 +1539,7 @@ final class EventDetailViewModel: ObservableObject {
         guard let open = PreviewEnvelopeV3.decode(raw, kind: .open, eventId: eventId) else { return }
         let next = BlendPreview.readerOpenedV3(blendPreviewReader, open)
         guard next != blendPreviewReader else { return }
-        let withdrawn = next.held == nil && blendPreviewReader.held != nil
+        let withdrawn = next.held == nil && (blendPreviewReader.held != nil || floorHandover != nil)
         blendPreviewReader = next
         if withdrawn { publishPreview(nil, at: previewNow()) }
     }
@@ -1552,19 +1557,40 @@ final class EventDetailViewModel: ObservableObject {
         let waited = receivedAt.map { max(0, ProcessInfo.processInfo.systemUptime - $0) } ?? 0
         let next = BlendPreview.readerAfterV3(blendPreviewReader, envelope, frame: frame,
                                               eventId: eventId, now: current - waited)
-        guard next != blendPreviewReader else { return }
+        // During a commit floor's hand-over any frame of this page decides
+        // afresh: a revoke withdraws at once even when it moves no evidence.
+        guard next != blendPreviewReader || floorHandover != nil else { return }
         let shown = blendPreview
         blendPreviewReader = next
         publishPreview(next.held, at: current)
         if let held = next.held, held != shown { LiveTimingSeam.modelPreviewAdopted(held, reader: next) }
     }
 
+    /// The reader takes the floor at once. On a folded page the hero keeps the
+    /// preview it withdrew until the commit's combined result is decided
+    /// (`BlendPreview.heldAcrossCommitFloor`), so it never falls back to the
+    /// older committed value in between.
     @MainActor
     private func receivePreviewFloor(_ raw: String) {
-        let next = BlendPreview.readerAfterCommitFloor(blendPreviewReader, raw: raw, eventId: eventId)
-        guard next != blendPreviewReader else { return }
+        guard case .floor(let floor) = BlendPreview.commitFloorControl(raw: raw, eventId: eventId) else { return }
+        let next = BlendPreview.readerAfterCommitFloor(blendPreviewReader, floor)
+        guard next != blendPreviewReader || floorHandover != nil else { return }
         blendPreviewReader = next
-        publishPreview(next.held, at: previewNow())
+        let current = previewNow()
+        if let kept = BlendPreview.heldAcrossCommitFloor(blendPreview, floor: floor, after: next,
+                                                          held: event, now: current) {
+            publishPreview(kept, at: current)
+            floorHandover = kept
+        } else {
+            publishPreview(next.held, at: current)
+        }
+    }
+
+    /// Ends a commit floor's hand-over: the committed value now shows.
+    @MainActor
+    private func endFloorHandover() {
+        guard floorHandover != nil else { return }
+        publishPreview(nil, at: previewNow())
     }
 
     /// Clears only the held preview and ends the v3 session; keeps the domain,
@@ -1581,6 +1607,7 @@ final class EventDetailViewModel: ObservableObject {
     private func publishPreview(_ held: BlendPreviewState?, at: TimeInterval) {
         blendPreviewExpiry?.cancel()
         blendPreviewExpiry = nil
+        floorHandover = nil
         if blendPreview != held { blendPreview = held }
         guard let held else { return }
         // Capped at a day: `ttl_ms` may be any safe integer, and converting a
@@ -1664,6 +1691,9 @@ final class EventDetailViewModel: ObservableObject {
         // raw-row rule: those can only refuse a folded hero and re-read it.
         let wasAwaitingFoldedResult = awaitingFoldedResult
         if frame.foldedResult { awaitingFoldedResult = false }
+        // A commit floor's hand-over lasts until the page decides this result,
+        // whichever way it goes.
+        defer { if frame.foldedResult { endFloorHandover() } }
         switch LiveEventPriceReconciliation.foldedQuoteDecision(frame, held: current) {
         case .adopt(let quote):
             LiveEventPriceReconciliation.adoptingFoldedQuote(quote, into: &current)
